@@ -170,7 +170,8 @@ class Exits:
 class Runtime:
     """`OmsRuntime` as the route reads it: no `route`, no switches, no flag (C-2.6). `stopped`
     makes `run` refuse, as the runtime does once its stop has begun; `broken` makes the service's
-    run raise."""
+    run raise; `lane_lost` makes it refuse, as the lane's bridge does once the lane has stopped
+    after the scope answered."""
 
     state: str = "ok"
     store: Store = field(default_factory=Store)
@@ -178,6 +179,7 @@ class Runtime:
     tasks: list[asyncio.Task[Response]] = field(default_factory=list)
     stopped: bool = False
     broken: bool = False
+    lane_lost: bool = False
     gone: bool = False
 
     @property
@@ -186,6 +188,8 @@ class Runtime:
             raise OmsNotReady
         if self.broken:
             return _Broken(CancelAll(self.store, self.exits))
+        if self.lane_lost:
+            return _LaneLost(CancelAll(self.store, self.exits))
         return CancelAll(self.store, self.exits)
 
     def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]:
@@ -207,6 +211,20 @@ class _Broken:
 
     async def run(self, *args: Any, **kwargs: Any) -> CancelAllOutcome:
         raise ExceptionGroup("a worker broke", [ValueError("a defect")])  # as a TaskGroup fails
+
+
+@dataclass
+class _LaneLost:
+    """A service whose scope answers and whose run finds the lane stopped: `OnLaneCancelAll`'s
+    `run` once the lane has stopped between its scope's answer and the run's hop."""
+
+    real: CancelAll
+
+    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> ScopedAccounts:
+        return await self.real.scope(scope, request)
+
+    async def run(self, *args: Any, **kwargs: Any) -> CancelAllOutcome:
+        raise OmsNotReady
 
 
 def _principals() -> Principals:
@@ -660,6 +678,20 @@ async def test_a_run_that_raises_answers_500_pages_and_keeps_nothing() -> None:
     assert world.pager.pages == ["orders_cancel_all_failed"]
     assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is None
     assert world.refused("internal_error") == 1
+
+
+async def test_a_lane_stopped_after_the_scope_answers_not_ready_unpaged_and_frees_the_key() -> None:
+    """The run's hop finds the lane stopped after the scope answered: the counted `503` D1b's
+    route answers for it, never the paged `500`, with nothing sent, recorded or kept."""
+    world = World()
+    world.oms.lane_lost = True
+    answer = await post(world, "owner", {})
+    assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
+    assert answer.headers.get("retry-after") == "5"
+    assert (world.pager.pages, world.records(), world.oms.exits.cancelled) == ([], [], [])
+    assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is None
+    assert (world.refused("oms_not_ready"), world.refused("internal_error")) == (1, 0)
+    assert not isinstance(world.oms.exits.guard.claim(USER, "cancel_all", KEY), ExitOutcome)
 
 
 async def test_cancel_all_reads_no_arm_token_switch_or_flag() -> None:
