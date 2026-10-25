@@ -1138,3 +1138,40 @@ async def test_over_the_real_exit_service_each_member_is_written_ahead_of_the_on
     }  # fmt: skip
     methods = [call.method for call in venue.calls]
     assert methods.count("cancel_all") == 1 and "cancel_order" not in methods
+
+
+async def test_a_run_cut_short_mid_fold_leaves_each_order_to_b1_its_cancel_sent_once(
+    exit_rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lane binding (20 Sec.6.2): the runtime's stop cancels the cancel-all run once its drain
+    passes, here while the fold's call waits for its slot. Each member was written ahead, and its
+    cancel stays with B1 (the exit service's shielded send): the fold is abandoned with nothing
+    sent, and each order's own cancel goes out once. None unwritten-ahead, none sent twice."""
+    rig = exit_rig
+    first, second = await _entry(rig, 1), await _entry(rig, 2)
+    venue, clock, held = rig.port.demo, _Clock(), asyncio.Event()
+
+    async def slot_wait(seconds: float) -> None:
+        await held.wait()
+
+    spacer = CancelAllSpacer(monotonic=clock, sleep=slot_wait)
+    assert await spacer.turn(cr.ref().uid, deadline=clock.now + 5)  # the fold's call then waits
+    folds = CancelAllCoalescer(venue, spacer=spacer, monotonic=clock, sleep=_never)
+    router = TradingRouter({"demo": folds, "live": rig.port.live}, lane_waits=cr.LANE_WAITS)
+    monkeypatch.setattr(rig.port.port, "_router", router)
+    service = CancelAll(rig.port.orders, exits_of(rig), folds=(folds, rig.port.accounts))
+    ask = _request(exclude_reduce_only=False)
+    async with asyncio.timeout(5):
+        scoped = await service.scope(OwnerScope(OWNER), ask)
+        run = asyncio.create_task(service.run(scoped, ask, actor=actor(OWNER), request_id=REQUEST))
+        await rig.quiet()
+        assert requests(rig, "orders.cancel") == [("success", "cancel_all")] * 2
+        assert "cancel_all" not in [call.method for call in venue.calls]  # waiting for its slot
+        run.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await run
+        await rig.quiet()
+    methods = [call.method for call in venue.calls]
+    assert methods.count("cancel_order") == 2 and "cancel_all" not in methods
+    states = [await rig.port.orders.get(cr.ACCOUNT, row.id) for row in (first, second)]
+    assert [None if row is None else row.lifecycle_state for row in states] == ["cancelled"] * 2

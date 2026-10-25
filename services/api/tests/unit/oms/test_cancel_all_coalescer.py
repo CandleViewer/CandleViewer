@@ -519,6 +519,25 @@ async def test_a_leader_cut_short_before_the_call_leaves_abandons_the_fold() -> 
     assert [o.order_link_id for o in await venue.open_orders(_REF, _BTC)] == _ids("b")
 
 
+async def test_a_fold_waiting_for_its_slot_holds_nothing_another_cancel_needs() -> None:
+    """The lane binding (20 Sec.6.2): a fold waiting out its UID's second holds no lock or slot
+    another call needs, so a cancel of an order outside it goes to the venue at once."""
+    venue = _venue("a", "b", "other")
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")):
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            assert sleeps.asked == [1.0, 1.0] and not last.done()  # the call waits for its slot
+            assert (await port.cancel_order(_cancel("other"))).ok
+            assert _methods(venue) == ["cancel_order"]
+            sleeps.passed.set()
+            assert (await first).ok and (await last).ok
+    assert _methods(venue) == ["cancel_order", "cancel_all"]
+
+
 async def test_a_leader_cut_short_once_its_call_has_left_leaves_the_call_to_answer_each() -> None:
     """L1: once the call has left, no member's cancellation cuts it short. Its acks answer every
     member, the one cut short too should it ask again, and nothing is sent again."""
