@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Coroutine
+from collections.abc import AsyncIterator, Coroutine
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -28,6 +28,16 @@ from candleviewer.oms.cancel_all_fold import (
 )
 
 _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
+
+
+@pytest.fixture(autouse=True)
+async def _hang_guard() -> AsyncIterator[None]:
+    """CR-S4F-17: a fold that never answers (a mutant's hang) fails its test within 5 s rather
+    than hanging the run: every task of the test's loop still running then is cancelled."""
+    loop = asyncio.get_running_loop()
+    guard = loop.call_later(5.0, lambda: [task.cancel() for task in asyncio.all_tasks(loop)])
+    yield
+    guard.cancel()
 
 
 def _resting(link: str, kind: Any = "order") -> Order:

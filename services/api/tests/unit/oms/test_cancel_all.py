@@ -41,10 +41,17 @@ from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.exits import ExitOutcome
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms.recovery import FINALS
+from candleviewer.oms.repository import OrderEventRepository
+from candleviewer.oms.routing import TradingRouter
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.errors import StorageTierUnavailable
+from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow, OrderStoreError
+from tests.unit.oms import command_rig as cr
 from tests.unit.oms import order_rig as orr
+from tests.unit.oms import submit_rig as sr
+from tests.unit.oms.submit_rig import SubmitRig
+from tests.unit.oms.test_exits import OWNER, REQUEST, actor, exits_of, requests
 
 _A, _B = UUID(int=0xA), UUID(int=0xB)
 _ACTOR, _REQUEST = SubmitActor(user_id=UUID(int=0x100), role="manager"), UUID(int=0x200)
@@ -562,9 +569,10 @@ class _Venue(FakeTradingPort):
 
 class _PortExits:
     """The exit service as B1's command port reaches the venue: each order's write-ahead, then its
-    `cancel_order` through the fold port, its ack read as the outcome. `refuse` names orders
-    refused before their send (no write-ahead, no venue call); `refs` holds each account's ref
-    other than account A's."""
+    `cancel_order` through the fold port, its ack read as the outcome, each order taking its own
+    turns before its write-ahead and after it, so members started together interleave (CR-S4F-16).
+    `refuse` names orders refused before their send (no write-ahead, no venue call); `refs` holds
+    each account's ref other than account A's; `peak` is the most members in it at once."""
 
     def __init__(
         self,
@@ -590,7 +598,9 @@ class _PortExits:
         self.running += 1
         self.peak = max(self.peak, self.running)
         try:
+            await _turns(row.id.int % 3)  # not in lock step: the write-aheads interleave
             self.log.append(("ahead", row.order_link_id))
+            await _turns(2 - row.id.int % 3)  # and so do the arrivals
             account = self.refs.get(row.exchange_account_id, _FOLD_REF)
             request = CancelOrderRequest(
                 account=account, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
@@ -599,6 +609,12 @@ class _PortExits:
         finally:
             self.running -= 1
         return _CANCELLED if ack.ok else _refused("exchange_error", status=502)
+
+
+async def _turns(n: int) -> None:
+    """`n` turns of the loop, so members that start together do not step in lock step."""
+    for _ in range(n):
+        await asyncio.sleep(0)
 
 
 class _Accounts:
@@ -1061,3 +1077,64 @@ async def test_on_b1_a_leader_whose_push_beats_the_calls_answer_leaves_it_to_ans
             await b1.quiet()
     assert await _b1_states(b1, o1, o2) == ["cancelled", "cancelled"]
     assert [c.method for c in venue.calls] == ["cancel_all"]
+
+
+# --- CR-S4F-16: the fold over the real exit service ----------------------------------------------
+
+
+@pytest.fixture
+async def exit_rig() -> AsyncIterator[SubmitRig]:
+    """The real exit service's rig (`submit_rig`): the real B1 facade, the command port and the
+    fake venue, as `test_exits.py` runs them."""
+    async with sr.rigged() as built:
+        built.store.seed_owner(OWNER)
+        yield built
+
+
+async def _entry(rig: SubmitRig, n: int) -> OrderRow:
+    """The rig's limit buy entry under request `n`'s own key, sent and resting: `submitted`."""
+    outcome = await rig.submit(sr.entry(), sr.context(client_ref=UUID(int=0xE000 + n)))
+    await rig.quiet()
+    assert outcome.order_id is not None
+    row = await rig.port.orders.get(cr.ACCOUNT, outcome.order_id)
+    assert row is not None and rig.machines.state(row.id) == ("submitted", "not_required")
+    return row
+
+
+async def test_over_the_real_exit_service_each_member_is_written_ahead_of_the_one_call(
+    exit_rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """CR-S4F-16 (C-2.9): over the real exit service and B1 facade, a covered fold of two orders.
+    At the venue's one cancel-all, each order's `orders.cancel` record and its B1
+    `cancel_request` step row are already written; both orders end `cancelled`."""
+    rig = exit_rig
+    first, second = await _entry(rig, 1), await _entry(rig, 2)
+    venue, clock = rig.port.demo, _Clock()
+    folds = CancelAllCoalescer(
+        venue, spacer=CancelAllSpacer(monotonic=clock, sleep=_never), monotonic=clock, sleep=_never
+    )
+    router = TradingRouter({"demo": folds, "live": rig.port.live}, lane_waits=cr.LANE_WAITS)
+    monkeypatch.setattr(rig.port.port, "_router", router)  # B1's command port meets the fold
+    events, seen = OrderEventRepository(rig.store), dict[str, object]()
+    sent = venue.cancel_all
+
+    async def cancel_all(account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
+        seen["records"] = requests(rig, "orders.cancel")
+        seen["steps"] = [
+            [event.kind for event in await events.list_for_order(cr.ACCOUNT, row.id)][-1]
+            for row in (first, second)
+        ]
+        return await sent(account, symbol)
+
+    monkeypatch.setattr(venue, "cancel_all", cancel_all)
+    service = CancelAll(rig.port.orders, exits_of(rig), folds=(folds, rig.port.accounts))
+    ask = _request(exclude_reduce_only=False)
+    async with asyncio.timeout(5):
+        scoped = await service.scope(OwnerScope(OWNER), ask)
+        got = await service.run(scoped, ask, actor=actor(OWNER), request_id=REQUEST)
+    assert got.accounts == (AccountCancels(cr.ACCOUNT, affected=2, error=None),)
+    assert seen == {
+        "records": [("success", "cancel_all")] * 2, "steps": ["cancel_request"] * 2,
+    }  # fmt: skip
+    methods = [call.method for call in venue.calls]
+    assert methods.count("cancel_all") == 1 and "cancel_order" not in methods

@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import inspect
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from decimal import Decimal
 from typing import Any, cast
 from uuid import UUID
@@ -38,6 +38,16 @@ _ACCOUNT = AccountId(UUID("5b1c9d2e-7f30-4a6b-8c4d-2e3f4a5b6c7d"))
 _REF = AccountRef(account_id=_ACCOUNT, uid="100001", environment="demo", key_ref=str(UUID(int=1)))
 _BTC = Symbol("BTCUSDT")
 _NAMES = ("a", "b", "c", "d", "stop", "tp", "other")
+
+
+@pytest.fixture(autouse=True)
+async def _hang_guard() -> AsyncIterator[None]:
+    """CR-S4F-17: a fold that never answers (a mutant's hang) fails its test within 5 s rather
+    than hanging the run: every task of the test's loop still running then is cancelled."""
+    loop = asyncio.get_running_loop()
+    guard = loop.call_later(5.0, lambda: [task.cancel() for task in asyncio.all_tasks(loop)])
+    yield
+    guard.cancel()
 
 
 def _id(name: str) -> str:
