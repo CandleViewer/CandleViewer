@@ -6,7 +6,8 @@ symbol/interval/month against a closed charset *before* any join (SR-097), so `.
 reaches the filesystem. The scan is bounded: only the months the (already capped) window
 touches are opened, only manifest-listed + verified files are read, the DuckDB statement is
 fully parameterised, `LIMIT` is pushed down, and the blocking call runs off the event loop
-under a timeout (C-2.18) that interrupts the DuckDB connection.
+under a timeout (C-2.18) that interrupts the read's DuckDB cursor. Reads share one in-memory
+DuckDB instance per reader, each on its own `cursor()` (#2523): no per-read connect/close.
 """
 
 from __future__ import annotations
@@ -110,9 +111,62 @@ class ParquetKlineReader:
         self._events: SystemEventSink = events or LoggingSystemEventSink()
         self._timeout_s = timeout_s
         self._max_rows = max_rows
-        # C-2.18: bound concurrent DuckDB scans (each is a thread + an in-memory instance).
+        # C-2.18: bound concurrent DuckDB scans (each is a thread + a cursor on the one shared
+        # in-memory instance, so `memory_limit` / `threads` cap all of them together).
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
         self._verified: dict[Path, tuple[int, int]] = {}
+        self._db: _SharedDuckDB | None = None
+
+    def close(self) -> None:
+        """Release the shared DuckDB instance; it closes once no read still holds a cursor.
+        A later read opens a fresh one."""
+        if self._db is not None:
+            self._retire(self._db)
+
+    def _retire(self, db: _SharedDuckDB) -> None:
+        # Closing the instance closes its cursors, so an in-flight read keeps it open until
+        # its worker returns (`_release`). Only the event loop thread runs this.
+        if self._db is db:
+            self._db = None
+        db.retired = True
+        if db.users == 0:
+            db.con.close()
+
+    def _shared(self) -> _SharedDuckDB:
+        """The shared instance, opened on first use. Limits go through connect-config."""
+        if self._db is None:
+            con = duckdb.connect(
+                ":memory:", config={"memory_limit": _MEMORY_LIMIT, "threads": str(_THREADS)}
+            )
+            self._db = _SharedDuckDB(con)
+        return self._db
+
+    def _cursor(self) -> tuple[_SharedDuckDB, duckdb.DuckDBPyConnection]:
+        """A cursor for one read. A broken instance (`cursor()` fails) is retired and replaced
+        once; if the fresh one fails too, the read fails typed (503)."""
+        db = self._shared()
+        try:
+            cur = db.con.cursor()
+        except duckdb.Error:
+            self._retire(db)
+            db = self._shared()
+            try:
+                cur = db.con.cursor()
+            except duckdb.Error as exc:
+                self._retire(db)
+                raise ColdKlineReadError(f"cold kline read failed: {type(exc).__name__}") from exc
+        db.users += 1
+        return db, cur
+
+    def _release(self, db: _SharedDuckDB, task: asyncio.Task[list[ColdKlineRow]]) -> None:
+        """Done-callback of a read's worker task (event loop thread). Any failure other than
+        our own timeout's interrupt retires the instance, so a poisoned one is never reused."""
+        db.users -= 1
+        exc = None if task.cancelled() else task.exception()
+        if exc is not None and not isinstance(exc.__cause__, duckdb.InterruptException):
+            self._retire(db)
+        elif db.retired and db.users == 0:
+            db.con.close()
 
     def _partition(self, symbol: str, interval: str, ym: str) -> ColdPaths:
         return self._registry.resolve_partition(
@@ -159,21 +213,30 @@ class ParquetKlineReader:
             return await self._query_unbounded(files, lo, hi)
 
     async def _query_unbounded(self, files: list[str], lo: int, hi: int) -> list[ColdKlineRow]:
-        # N4: connect BEFORE the worker thread starts so `interrupt()` can never be a no-op.
-        # Limits go through connect-config (no SQL text). The worker closes the connection.
-        con = duckdb.connect(
-            ":memory:", config={"memory_limit": _MEMORY_LIMIT, "threads": str(_THREADS)}
-        )
+        # N4: take this read's cursor BEFORE the worker thread starts so `interrupt()` can never
+        # be a no-op; it interrupts this cursor only (#2523). The worker closes the cursor.
+        db, cur = self._cursor()
         task = spawn(
-            asyncio.to_thread(_read_rows, con, files, lo, hi, self._max_rows),
+            asyncio.to_thread(_read_rows, cur, files, lo, hi, self._max_rows),
             name="cold-kline-read",
         )
+        task.add_done_callback(lambda t: self._release(db, t))
         try:
             async with asyncio.timeout(self._timeout_s):
                 return await asyncio.shield(task)
         except TimeoutError as exc:
-            con.interrupt()
+            cur.interrupt()
             raise ColdKlineReadTimeout(f"cold kline read exceeded {self._timeout_s}s") from exc
+
+
+@dataclass(slots=True, eq=False)
+class _SharedDuckDB:
+    """The reader's one in-memory DuckDB instance; each read runs on its own `cursor()` (a
+    connection to the same database, one per worker thread, as DuckDB documents)."""
+
+    con: duckdb.DuckDBPyConnection
+    users: int = 0  # reads holding a cursor (event loop thread only)
+    retired: bool = False
 
 
 def _stamps(files: list[Path]) -> dict[Path, tuple[int, int]]:
@@ -193,19 +256,19 @@ def _column(table: pa.Table, name: str, default: object) -> list[Any]:
 
 
 def _read_rows(
-    con: duckdb.DuckDBPyConnection,
+    cur: duckdb.DuckDBPyConnection,
     files: list[str],
     lo: int,
     hi: int,
     max_rows: int,
 ) -> list[ColdKlineRow]:
     try:
-        con.execute("SET TimeZone = 'UTC'")
+        cur.execute("SET TimeZone = 'UTC'")
         # union_by_name tolerates schema drift; optional columns default in Python. Dedup on
         # ts happens before LIMIT so duplicate part-file rows never eat the cap. #2523: `ts`
         # leaves DuckDB as int64 epoch us (the WHERE still binds the stored TIMESTAMPTZ, so the
         # predicate is pushed into the scan), never as tz-aware datetimes built in Python.
-        table = con.execute(
+        table = cur.execute(
             "SELECT * REPLACE (epoch_us(ts) AS ts) "
             "FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
             "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
@@ -216,7 +279,7 @@ def _read_rows(
     except duckdb.Error as exc:
         raise ColdKlineReadError(f"cold kline read failed: {type(exc).__name__}") from exc
     finally:
-        con.close()
+        cur.close()  # N4: the worker closes its own cursor; the shared instance stays open
     # Column-wise: one `to_pylist` per column, no per-row dicts (#2523).
     out = [
         ColdKlineRow(
