@@ -109,11 +109,13 @@ def test_pair_unbound_live_row_its_link_names_waits_for_its_bind(push: Push, sta
     assert pg.pair(push, pg.Reads(None, named)) == pg.WaitOnRow(named)
 
 
-def test_pair_named_row_held_final_or_bound_is_passed_over() -> None:
+@pytest.mark.parametrize(
+    "over", [{"state": "held"}, {"state": "filled"}, {"exchange_order_id": "other"}], ids=str
+)
+def test_pair_named_row_held_final_or_bound_is_passed_over(over: dict[str, Any]) -> None:
     """Derived: the row a fill's order link id names is held, final, or bound to another order."""
-    for over in ({"state": "held"}, {"state": "filled"}, {"exchange_order_id": "other"}):
-        named = _row(**({"exchange_order_id": None} | over))
-        assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, named)) == pg.NeedOrder(XID)
+    named = _row(**({"exchange_order_id": None} | over))
+    assert pg.pair(_fill(orderLinkId=link()), pg.Reads(None, named)) == pg.NeedOrder(XID)
 
 
 @pytest.mark.parametrize("push", OURS, ids=["fill", "order"])
@@ -129,6 +131,7 @@ def test_pair_failed_or_cut_short_read_decides_nothing() -> None:
 
 
 def test_pair_fills_order_read_finding_none_is_undecided_as_an_empty_read() -> None:
+    """Derived: a completed read of the fill's order that found none is kept, `empty_read` true."""
     assert pg.pair(FILL, _none(order=None)) == pg.Undecided(empty_read=True)
 
 
@@ -208,23 +211,29 @@ def test_pair_stop_claim_no_live_record_matches_has_no_intent() -> None:
         )
 
 
-def test_pair_read_answering_another_accounts_or_orders_row_is_refused() -> None:
-    """Derived: a store or adapter defect, never paired (C-12.4)."""
-    other = {"exchange_account_id": ACCOUNT_B}
+@pytest.mark.parametrize("push", OURS, ids=["fill", "order"])
+def test_pair_read_answering_another_accounts_or_orders_row_is_refused(push: Push) -> None:
+    """Derived: a store or adapter defect, never paired (C-12.4), for a fill and an order push alike
+    (so an ownership check special-cased to one of them dies); a fill's order and stops too."""
+    other, mine = {"exchange_account_id": ACCOUNT_B}, push.order_link_id
     keys = ({"position_idx": 1}, {"symbol": "ETHUSDT"}, other)
-    for reads in (
+    reads = [
         pg.Reads(bound=_row(**other)),
         pg.Reads(bound=_row(exchange_order_id="other")),
-        pg.Reads(None, _row(**other, order_link_id=FILL.order_link_id, exchange_order_id=None)),
-        pg.Reads(None, _row(**other, order_link_id=FILL.order_link_id)),  # bound to XID: the race
+        pg.Reads(None, _row(**other, order_link_id=mine, exchange_order_id=None)),
+        pg.Reads(None, _row(**other, order_link_id=mine)),  # bound to XID: the race
         pg.Reads(None, _row(order_link_id=link(seq=9), exchange_order_id=None)),
         pg.Reads(None, _row(order_link_id=link(seq=9))),  # bound to XID under another link
-        _none(order=_order(orderId="other")),
-        _none(order=_order(orderId=XID).model_copy(update={"account_id": ACCOUNT_B})),
-        *(_none(order=READ, stops=(_record(**key),)) for key in keys),
-    ):
+    ]
+    if isinstance(push, Execution):
+        reads += [
+            _none(order=_order(orderId="other")),
+            _none(order=_order(orderId=XID).model_copy(update={"account_id": ACCOUNT_B})),
+            *(_none(order=READ, stops=(_record(**key),)) for key in keys),
+        ]
+    for answer in reads:
         with pytest.raises(pg.PairingRefused):
-            pg.pair(FILL, reads)
+            pg.pair(push, answer)
 
 
 def test_pair_only_an_order_or_a_trade_execution_is_paired() -> None:

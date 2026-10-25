@@ -1,0 +1,129 @@
+"""The private-stream push core's test rig (E29-T05 #848, S4b): one scripted double for every
+port of `StreamPushes`, over a fake monotonic clock that its reads advance. Rows and fills are
+derived in-test from #4135's transcribed frames, through the adapter's own parser (C-13.5). No
+network."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, field, fields
+from typing import Any
+from uuid import UUID
+
+from candleviewer.exchange.base.models import Execution, PrivateEvent
+from candleviewer.exchange.bybit import private_parse as pp
+from candleviewer.oms.pairing import ToRecordedStop
+from candleviewer.oms.push_mapping import ForPairing, route
+from candleviewer.oms.stream_push import StreamPushes
+from candleviewer.storage.repositories.orders import OrderRow
+from tests.unit.exchange.bybit._private import linear_order, push, row
+from tests.unit.exchange.bybit._trading import ACCOUNT_A, NOW_US, account, link
+
+XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"
+
+
+def event(topic: str, **values: Any) -> PrivateEvent:
+    body = linear_order(**values) if topic == "order" else row("execution") | values
+    pushed = pp.classify(push(topic, body))
+    assert isinstance(pushed, pp.Push)
+    [out] = pp.read_push(pushed, account(), now_us=NOW_US)
+    return out
+
+
+def order_row(**over: Any) -> OrderRow:
+    values: dict[str, Any] = {f.name: None for f in fields(OrderRow)}
+    values |= {"id": UUID(int=1), "exchange_account_id": ACCOUNT_A, "order_link_id": link()}
+    return OrderRow(**(values | {"state": "accepted", "exchange_order_id": XID} | over))
+
+
+@dataclass
+class Rig:
+    """Answers by port name; `cost` seconds pass per read; `raises` and `hang` script failures."""
+
+    answers: dict[str, Any] = field(default_factory=dict)
+    raises: dict[str, BaseException] = field(default_factory=dict)
+    hang: set[str] = field(default_factory=set)
+    push_errors: list[BaseException] = field(default_factory=list)  # consumed, one per delivery
+    cost: float = 0.0
+    now: float = 100.0
+    calls: list[str] = field(default_factory=list)
+    pushed: list[tuple[UUID, str, dict[str, Any]]] = field(default_factory=list)
+    counts: list[str] = field(default_factory=list)
+    pages: list[str] = field(default_factory=list)
+    taken: list[ToRecordedStop] = field(default_factory=list)
+    opened: list[tuple[str, str]] = field(default_factory=list)
+    _shared: StreamPushes | None = None
+
+    def streams(self, **kw: Any) -> StreamPushes:
+        ports: dict[str, Any] = dict.fromkeys(("target", "reads", "fill_orders", "lockout"), self)
+        ports |= dict.fromkeys(("handovers", "stops", "no_intent", "counts", "pager"), self)
+        return StreamPushes(**(ports | {"monotonic": lambda: self.now} | kw))
+
+    async def run(self, ev: PrivateEvent, **kw: Any) -> None:
+        r = route(ev)
+        assert isinstance(r, ForPairing)
+        if kw or self._shared is None:
+            self._shared = self.streams(**kw)  # one per rig: its paged-order set lives on it
+        await self._shared.handle(ACCOUNT_A, ev, r)
+
+    async def _hit(self, name: str) -> Any:
+        self.calls.append(name)
+        self.now += self.cost
+        if name in self.hang:
+            await asyncio.Event().wait()
+        if name in self.raises:
+            raise self.raises[name]
+        return self.answers.get(name)
+
+    async def get_by_exchange_order_id(self, account_id: UUID, xid: str) -> Any:
+        return await self._hit("bound")
+
+    async def get_by_link_id(self, account_id: UUID, order_link_id: str) -> Any:
+        return await self._hit("named")
+
+    async def order_of(self, account_id: UUID, xid: str, symbol: str) -> Any:
+        return await self._hit("order")
+
+    async def live_for_key(self, account_id: UUID, symbol: str, position_idx: int) -> Any:
+        return await self._hit("stops") or ()
+
+    async def for_exchange_order(self, account_id: UUID, xid: str) -> Any:
+        return await self._hit("for_exchange_order") or ()
+
+    async def push(self, account_id: UUID, order_id: UUID, event: str, payload: Any) -> None:
+        self.calls.append("push")
+        self.pushed.append((order_id, event, dict(payload)))
+        if self.push_errors:
+            raise self.push_errors.pop(0)
+
+    async def open(self, account_id: UUID, *, finding: str, key: str) -> None:
+        self.calls.append("lockout")
+        self.opened.append((finding, key))
+        await self._hit_raise("lockout")
+
+    async def exchange_placed(self, account_id: UUID, *, finding: str, key: str) -> None:
+        self.calls.append("exchange_placed")
+
+    async def hand_over_execution(
+        self, account_id: UUID, execution: Execution, *, empty_read: bool = False
+    ) -> None:
+        self.calls.append(f"handover:{empty_read}")
+        await self._hit_raise("handover")
+
+    async def take(self, account_id: UUID, decision: ToRecordedStop, *rest: Any) -> None:
+        self.calls.append("take")
+        self.taken.append(decision)
+        if "take" in self.raises:
+            if "on_take" in self.answers:
+                self.answers["on_take"]()
+            raise self.raises["take"]
+
+    async def _hit_raise(self, name: str) -> None:
+        if name in self.raises:
+            raise self.raises[name]
+
+    def count(self, outcome: str) -> None:
+        self.counts.append(outcome)
+
+    def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
+        self.pages.append(summary)
