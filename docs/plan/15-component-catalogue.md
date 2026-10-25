@@ -279,6 +279,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: track `color.surface.hover`, 8 px from `space.inset.xs` padding, `radius.badge`; fill `color.action.primary.default` (default), `color.status.success.default`, `color.status.warning.strong`, `color.status.danger.default`; label `type.ui.label` and value `type.num.sm`, both `color.text.secondary`; `space.stack.xs`, `space.inset.xs`; a new value moves the fill over `motion.duration.normal` (motion-reduce: a step). (Replaces `color.track`, which is not a shipped token; `color.action.primary` read as `.default`.)
 - **Storybook**: Default, WithLabel, AllTones, Meter, Unlabelled.
 - **Tests**: unit, visual, axe.
+- **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E08-D11 M7; `transform: scaleX` per sample over `normal`, steps under reduce; the "{n} %" text carries it — PROPOSED).
 
 ### CMP-024 Sparkline
 
@@ -334,7 +335,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected, Band, LivePolite, ProtectionPendingSolidEdge, ChartStrip, BarRebuildProgress.
 - **Tests**: unit, visual, axe, live-region announcement test (assertive vs polite, flap-collapse).
 - **As built (E05-S02)**: `edge` is not built: the hatched edge waits for the PROPOSED `pattern.hatch.unprotected` token and is deferred (#265 ruling 6), so every callout draws the solid 2 px edge and the Unprotected story is ProtectionPendingSolidEdge (the solid edge, not dismissible while the stop is missing); the flap-collapse ("Connection unstable") is owned by CMP-077, which holds the connection state, and the callout announces each state entry it is given once; both connection tones draw the `disconnected` glyph until E17-D02 CR-8's glyphs are registered; the "What changed" disclosure (E05-D02 §6 H15 (3)) is held and the dismissal is a cut until the E05-D03 motion recipe.
-- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the `connection-*` tones appear at 0 ms and dismiss with a `fast` opacity fade; fill and announcements are debounced on the clearing side only — PROPOSED).
+- **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the `connection-*` tones appear at 0 ms and dismiss with a `fast` opacity fade; fill and announcements are debounced on the clearing side only — PROPOSED) · [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13; the tamper, maintenance and `fail_closed` banners appear and clear at 0 ms in both modes, never sliding or fading — PROPOSED).
 - **Named pattern — Bar rebuild progress (E12-D09)**: in `placement="chart-strip"`: from 0 to 600 ms nothing but the toolbar's pending mark; from 600 ms to 2 s CMP-038 text; after 2 s CMP-023 determinate with a CMP-001 `Cancel` on the strip and the time left; total unknown: CMP-038 text with its explanation (E12-D02 D-5); `Esc` cancels last in E12-D02 D-11's chain; updates at most 4 Hz (PROPOSED), never per frame; the panel's polite region speaks once each at the build's start ("Building the chart as Volume 75 BTC bars. Escape cancels."), completion, cancel or refusal, never progress (E12-D02 §7; CMP-023 is never a live region); Cancel restores instantly from the series already on screen, and the parameter field shows the previous value with an explanation (E12-D02 D-6); `Cancel` is the strip's, never CMP-038's `onCancel`; tokens and stories are CMP-023's, CMP-038's and CMP-001 `ghost` `sm`'s; who may start a shared build stays the build contract's (G-2).
 
 ### CMP-029 Skeleton-Chart placeholder
@@ -513,6 +514,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Standard, TypedConfirm, HoldToConfirm(with keyboard fallback demo), Busy, PartialFailure, ConfirmGated, OrderConfirm. **E35-D02 —** RuleDisarm.
 - **Tests**: unit, visual, axe, keyboard-only path for hold-variant (explicit CI gate per a11y standard §3.1.4).
 - **As built (E05-S03)**: no `initialFocus` prop: focus always starts on Cancel (H32). Adds `confirmVariant?: "danger"|"buy"|"sell"|"primary"` (default `danger`), `restatementLabel?` (default "What this does"), `typedInstruction?` (default "Type {token} to confirm"), `armedLabel?` (default "Press again to {effect}"), `summaryLoading?` (Confirm natively disabled until the summary loads), `failure?: {message, retry?, details?}` (the partial-failure state), `confirmDisabledReason?` (the gated Confirm), `size?`, `fallbackFocusRef?` and an injected `now?` clock. `onConfirm(meta)` carries `{variant, gate, elapsedMs}`, where `gate` is `click`, `typed`, `pointer-hold`, `key-hold` or `double-press` (the audit hook under Observability); `onCancel(reason)` adds `cancel` and `timeout` to CMP-043's reasons. Storybook ships Standard, Guard, Typed, TypedMatch, Hold, HoldReleasedEarly, Holding, Armed, HoldKeyboard (the keyboard path), HoldReducedMotion, Busy, PartialFailure, ConfirmGated, OrderConfirm, CountingDown, TimedOut, LongText and a contrast pair; no RuleDisarm story yet. The gate × state matrix for E05-X02 is in `docs/plan/qa/E05-S03-qa-handoff.md`.
+- **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E09-D08 D2; the scrim fades over `normal`, the card is a cut focused in frame 0, the exit `fast` — PROPOSED).
 
 ### CMP-045 Toast / Notification
 
@@ -537,6 +539,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tests**: unit, visual, axe, focus-trap test.
 - **As built (E05-S03)**: `width?` is the host's width in CSS px (default 480); `busy?` sets `aria-busy` on the body while the host renders its CMP-015 rows; adds `footer?`, `fallbackFocusRef?`, `id?` and `className?`; `onOpenChange(open, reason)` adds the reason, `"escape"|"scrim"|"close"`, as CMP-043's. Storybook adds HostWidthAndName, LongText, FallbackReturn and a contrast pair.
 - **E40-D02 (#1013; [E40-D02.md](../design/E40/E40-D02.md) §7.4; owner approval pending)**: the `alert-detail` drawer (SCR-092): non-modal (`modal: false`, `role="dialog"`), the built default width of 480 px, sliding over the right edge of the workspace and the docked CMP-209 rail at `elevation.popover`, never a wider dock, so the chart never lays out again; focus moves to its heading on a user action and returns to the opener, or to the bell when the opener has gone.
+- **Motion spec**: [E42-D04.md](../design/E42/E42-D04.md) (E42-D04 §13, after E40-D02 §8; `translateX` over `normal`, focus placed in frame 0, instant under reduce — PROPOSED).
 
 ### CMP-047 DatePicker / DateRangePicker
 
@@ -606,10 +609,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-053 Pagination
 
 - **Tier**: Molecule · **Purpose**: page/cursor navigation for long lists (audit log, journal) not using infinite virtualization.
-- **Props**: `page` · `pageCount?` · `cursor?/onNext/onPrev` · `pageSize?/onPageSizeChange`.
-- **A11y**: `nav aria-label="Pagination"`, current page `aria-current="page"`.
+- **Props**: `page` · `pageCount?` · `cursor?/onNext/onPrev` · `onNewest?` (cursor mode: back to the newest page) · `blockedReason?` (every button disabled with it, as after a `429`) · `pageSize?/onPageSizeChange`.
+- **A11y**: `nav aria-label="Pagination"`, current page `aria-current="page"`; in cursor mode no page is current, so no `aria-current`, and the buttons read Newest, Newer and Older (E42-D04 §4); a button with nothing in its direction, or every button given `blockedReason`, stays focusable, disabled with its reason through CMP-079, a CMP-019 `lock` leading the label (`docs/design/E09/E09-D09.md` §2.2).
 - **Tokens**: `color.action.*`.
-- **Storybook**: Default, CursorMode.
+- **Storybook**: Default, CursorMode, CursorKeyset, RateLimited.
 - **Tests**: unit, visual, axe, keyboard.
 
 ### CMP-054 SearchBox
@@ -1015,12 +1018,12 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-095 FeatureFlagChip (visible-in-UI flag indicator, admin/dev only)
 
-- **Tier**: Atom (chrome, owner-only) · **Purpose**: small marker on screens gated by an unreleased feature flag, visible only to owner role for QA purposes.
+- **Tier**: Atom (chrome, owner-only) · **Purpose**: small marker on screens gated by an unreleased feature flag, visible only to owner role for QA purposes. It is not drawn on SCR-145, whose rows carry the flag itself (CMP-179).
 - **Props**: `flagKey`.
-- **A11y**: `aria-label="Feature flag: {flagKey}"`.
-- **Tokens**: `color.chip.dev`.
+- **A11y**: visible text "Flag: {flagKey}", which is also its accessible name; never colour or an icon alone.
+- **Tokens**: `color.status.info.subtle` (fill), `color.status.info.strong` (glyph) and `color.text.primary` (text) until `color.chip.dev` exists (E42-D02 DS-4).
 - **Storybook**: Default.
-- **Tests**: unit, visual.
+- **Tests**: unit, visual, axe.
 
 ### CMP-096 WhatsNewPanel
 
@@ -1051,7 +1054,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-099 PrintExportBar
 
-- **Tier**: Molecule · **Purpose**: export controls (CSV/PDF) for journal/audit/strategy reports.
+- **Tier**: Molecule · **Purpose**: export controls (CSV/PDF) for journal and strategy reports. Not used for the audit log, whose export is one signed format of a time window run as a job behind a step-up (`docs/design/E42/E42-D04.md` §8).
 - **Props**: `formats: ("csv"|"pdf")[]` · `onExport(format)` · `loading?`.
 - **A11y**: each format is a distinct labelled button, loading state per CMP-038.
 - **Tokens**: inherits CMP-001.
@@ -2164,10 +2167,11 @@ interface AuditEntry {
 
 ### CMP-174 AuditFilterBar
 
-- **Tier**: Molecule (owner/admin) · **Purpose**: filter the audit log by actor/action/target/date-range.
-- **Props**: `filters` · `onChange` · `actorOptions` · `actionOptions`.
-- **Tokens**: inherits CMP-055 FilterBar.
-- **Storybook**: Default.
+- **Tier**: Molecule (owner/admin) · **Purpose**: filter the audit log by date range (UTC), actor, action, subject, outcome, severity, IP and full-text search, and the loaded rows by environment; the filter set is URL state and a change resets the cursor.
+- **Props**: `filters` (the generated `queryAuditLog` query parameters) · `onChange` · `actorOptions` · `actionOptions: {code, label}[]` (the registered vocabulary) · `view: "raw" | "own"` (`own` fixes Actor to the caller and renders IP, Search and Environment disabled with a reason through CMP-079, never removed) · `environmentScope: "page"` · `blockedReason?` (a reason-vocabulary key: every control disabled with it, as after a `429`) · `errors?` (`422` field errors).
+- **A11y**: `<form role="search" aria-label="Filter the audit log">`; every control has a visible label; From and To say UTC; a `422` moves focus to its field, which carries the error by `aria-describedby`, and announces nothing; the result count is announced once, politely; there is no page-number control; in the `own` view Actor, IP, Search and Environment stay, and given `blockedReason` every control does, each disabled with its reason through CMP-079 (`aria-disabled`, never `disabled`), a CMP-019 `lock` leading the label; a disabled field or picker is also read-only (`readonly`, `aria-readonly`), so typing, arrows, paste, Enter and Space change nothing (`docs/design/E09/E09-D09.md` §2.2; E42-D04 §12.1).
+- **Tokens**: inherits CMP-055 FilterBar; `space.field.gap`, `color.text.secondary` (labels; a disabled control's reason), `color.text.tertiary` (a disabled control's label and `lock`), `color.surface.raised` with a `color.border.default` hairline (a disabled control), `color.text.primary` with the `color.status.danger.strong` octagon (errors).
+- **Storybook**: Default, Applied, OwnView, Invalid, EnvironmentFacet, RateLimited.
 - **Tests**: unit, visual, axe.
 
 ### CMP-175 KeyPermissionBadge
@@ -2206,10 +2210,11 @@ interface AuditEntry {
 
 ### CMP-179 FeatureFlagRow (admin feature flags screen)
 
-- **Tier**: Molecule (owner/admin) · **Purpose**: one flag row — key, description, environment scope, enabled toggle, rollout note.
-- **Props**: `flag: FeatureFlagRowData` · `onToggle`.
-- **Tokens**: inherits CMP-004 Toggle.
-- **Storybook**: Default, EnvScoped.
+- **Tier**: Molecule (owner/admin) · **Purpose**: one flag row — the served description, the key, the deployment value and, when it differs, the caller's own value, the derived scope, who changed it and when, notes (overrides, fail-closed, unreadable, requires reload) and one Change control that opens the rung dialog; a blocked flag keeps that control, disabled with its reason and link, never removed.
+- **Props**: `flag: FeatureFlag` (generated; the row shows `default_value` and, when it differs, `value`) · `group: "safety" | "gated" | "rollout" | "other"` · `resolution: "stored" | "fail_closed"` · `blockedReason?` (a reason-vocabulary key) · `blockedHref?` · `changeHref?` (a link in place of the Change control, as "→ Maintenance" on `maintenance.mode`) · `affectsOrderEntry?` · `affectsDesktop?` · `requiresReload?` · `state: "idle" | "saving" | "refused" | "unknown"` (`saving`, `refused` and `unknown` render in the rung dialog; the row's values stay as they are) · `onChange` (opens the rung dialog; the row never flips on its own) · `onHistory` · `onRevert?`.
+- **A11y**: a CMP-049 table row; the Change control is a button named by the description, the key and the deployment value ("… deployment OFF"), never "on/off"; the values are text; a blocked flag's control is `aria-disabled="true"` (never `disabled`) with its reason in the DOM by `aria-describedby` and a visible link; a CMP-019 `lock` (`decorative=false`, "Not available") leads its label; CMP-079 wraps it with `blockedReason` as `reason`; Enter or Space re-shows the reason and sends nothing; group headings are `h2`; the CMP-093 marker joins the control's description only while it is enabled.
+- **Tokens**: `color.surface.raised`, `color.text.primary`, `color.text.secondary` (a blocked control's reason), `color.text.tertiary` (its label and `lock`), `color.border.default` (its hairline), `color.status.warning.subtle` and `.strong` (fail-closed and unreadable notes; the "Affects …" marks, a CMP-011 Tag with the triangle), `color.status.info.subtle` and `.strong` ("Requires reload"), `type.num.sm` (the key), `size.control.comfortable`.
+- **Storybook**: Default, SafetyFlag, Gated, AffectsOrderEntry, AffectsDesktop, Overrides, OwnerOverride, YourResolved, Unreadable, FailClosed, RequiresReload, MaintenanceLink, Revert, Saving, Refused, OutcomeUnknown.
 - **Tests**: unit, visual, axe.
 
 ---

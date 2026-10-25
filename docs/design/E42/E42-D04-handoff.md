@@ -6,13 +6,13 @@ contracts (`docs/design/E42/E42-D04.md` §16, D04:740-754) — **CMP-173 AuditRo
 each gets a block below; the components it only composes get one placement line each and link their own checklists.
 **Shape:** E30-D03's (and E39-D02's): Tables 1–5, the Density table and the Essential-exceptions table appear once each
 with a leading `Component` column instead of once per block. **This file decides nothing:** every row cites the spec
-line that decides it. Prop and story names are Appendix A's text (D04:953-989), which lands in `15` in the boards PR;
+line that decides it. Prop and story names are Appendix A's text (D04:953-991), which lands in `15` in the boards PR;
 they are PROPOSED until owner approval (D04:3-8).
 
 **Key.** `D04:n` = a line of `docs/design/E42/E42-D04.md` at this branch; `D03` = `docs/design/E42/E42-D03.md`;
 `D09` = `docs/design/E09/E09-D09.md`; `Y`, `W`, `M`, `svc/` and `tok` as D04's key (D04:10-17). `15` entries are
 read at `origin/main` `43d1145e6`, where the six contracts above are still the text D04 quotes as "Old" (verbatim at
-`b7154f951`). CMP-173's base is E42-D03's Appendix A text (merged as `58660d32f`), which reaches `15` with E42-D03's
+`b7154f951`); this branch applies Appendix A's rows but CMP-173's on `main`'s text (`cba937ef0`). CMP-173's base is E42-D03's Appendix A text (merged as `58660d32f`), which reaches `15` with E42-D03's
 boards PR (#886); until then `15`'s CMP-173 is the pre-D03 entry. **Merged contracts read, per the orchestrator's
 2026-10-25 rulings for E42-D03:** CMP-044 is the entry #4414 merged (a natively disabled typed Confirm, `role?`), never
 E42-D03's Appendix A rows; D04 composes no CMP-138. The `origin/main` pin and every `D04:n` are refreshed at the
@@ -28,7 +28,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       `scr135-tamper-failed`, 67 `diff-sheet` (every value kind and the three record shapes, both forms) and 69
       `redlines`, its integrity line on 34 `scr136-after-break`; PNGs `docs/design/E42/img/E42-D04-NN-<slug>.png`;
       board 68 `component-sheet` is not drawn — the text binds (D04:74, :79)
-- [ ] **Variants × States matrix** — PENDING with the boards: the 15 stories of Appendix A (D04:966), each mapped to
+- [ ] **Variants × States matrix** — PENDING with the boards: the 15 stories of Appendix A (D04:968), each mapped to
       its §4–§6 state in Table 1
 - [x] **Keyboard table** — Table 2: the row lives in CMP-049's APG grid (one tab stop, roving `tabindex`; ↑ ↓ rows,
       ← → cells, Home / End, PgUp / PgDn); Space expands, Enter opens SCR-136; the diff row's Copy and disclosure
@@ -37,7 +37,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [x] **Accessible name / role table** — Table 3: the expander a button with `aria-expanded` and `aria-controls`; the
       expanded diff a `<dl>` per changed field with visible Before / After (Requested for a refused or intent record);
       severity and outcome words, the glyph `aria-hidden`; a selected row `aria-selected="true"` with the `check`
-      glyph (D04:149, :335-340, :963)
+      glyph (D04:149, :335-340, :965)
 - [x] **Live data** — Table 5: a row announces nothing; new entries come from page 1's 30 s re-read as a pill, never
       spliced, announced once by the page's polite region (D5, §12; D04:140, :594)
 - [x] **Motion pair** — Table 4: expansion is a cut in both modes, heights never animate (M4, D04:631; S-5,
@@ -46,7 +46,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       column at 1280 (D04:211) and names no compact values; board 69 `redlines` measures the drawn density (D04:74);
       Density table
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — Appendix A's Tokens row (D04:964) over D03's: `type.num.sm`, `color.text.{primary,secondary,tertiary}`,
+- [x] **Tokens used** — Appendix A's Tokens row (D04:966) over D03's: `type.num.sm`, `color.text.{primary,secondary,tertiary}`,
       `color.status.danger.strong` (the octagon and the `border.thick` high rule), `color.status.warning.strong`
       (the triangle), `font.weight.semibold`; the selected row `color.surface.selected` with the `check` in
       `color.text.primary` and its meta in `color.text.secondary` (D14, D04:149, :715); none invented, stand-ins as
@@ -71,19 +71,19 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Final Penpot link** — PENDING (the boards PR, §0): page `E42-D04`; the bar is drawn on board 02
       `scr135-populated` and redlined on 69; its Applied, OwnView, Invalid and RateLimited states are boards 06, 25,
       17 and 16, not drawn — the text binds (D04:69, :79)
-- [ ] **Variants × States matrix** — PENDING with the boards: the six stories of Appendix A (D04:972); Table 1
+- [ ] **Variants × States matrix** — PENDING with the boards: the six stories of Appendix A (D04:974); Table 1
 - [x] **Keyboard table** — Table 2: the controls in reading order after the incident banner and before the pill
       (D04:266-267); a `422` moves focus to the first field in error (D04:252); a T2 field or picker is also
-      read-only, so typing, arrows and paste change nothing, and Enter or Space re-shows its reason (D04:607, :970)
+      read-only, so typing, arrows and paste change nothing, and Enter or Space re-shows its reason (D04:607, :972)
 - [x] **Accessible name / role table** — Table 3: `<form role="search" aria-label="Filter the audit log">`; a visible
-      label on every control; From and To say UTC; errors by `aria-describedby` (D04:970)
+      label on every control; From and To say UTC; errors by `aria-describedby` (D04:972)
 - [x] **Live data** — Table 5: the rows-shown count after the Environment facet, polite once, never a total (AL-6,
       D04:241, :594); a field's `422` announces nothing (D04:596)
 - [x] **Motion pair** — Table 4: filter → results is a one-frame swap, `audit.slow` at 400 ms (M17, D04:644)
 - [ ] N/A — **Density notes**: as CMP-173's line (D04:697); D04 names no compact values; at 200 % the bar wraps into
       a "Filters" disclosure (AL-28, D04:263)
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — Appendix A's Tokens row (D04:971): CMP-055's, `space.field.gap`, `color.text.secondary`,
+- [x] **Tokens used** — Appendix A's Tokens row (D04:973): CMP-055's, `space.field.gap`, `color.text.secondary`,
       `color.text.tertiary`, `color.surface.raised` with a `color.border.default` hairline (a T2 control),
       `color.text.primary` with the `color.status.danger.strong` octagon (errors); Penpot token sets as CMP-173's line
 - [x] **Data contract confirmed** — `queryAuditLog`'s parameters (Y:9509-9565): `from` inclusive, `to` exclusive,
@@ -101,24 +101,24 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 - [ ] **Final Penpot link** — PENDING (the boards PR, §0): page `E42-D04`; the row is drawn on board 41
       `scr145-live-blocked` (the Gated row, for the security reviewer); FF-2's populated page (board 39), FF-12's
       fail-closed page (board 49) and the rest are not drawn — the text binds (D04:71, :79)
-- [ ] **Variants × States matrix** — PENDING with the boards: the 16 stories of Appendix A (D04:977); Saving, Refused
-      and OutcomeUnknown render in the rung dialog with the row unchanged (D04:746, :974); Table 1
+- [ ] **Variants × States matrix** — PENDING with the boards: the 16 stories of Appendix A (D04:979); Saving, Refused
+      and OutcomeUnknown render in the rung dialog with the row unchanged (D04:746, :976); Table 1
 - [x] **Keyboard table** — Table 2: per row Change… → History (→ Revert); the live row Change… → Security centre →
       History; `maintenance.mode` → Maintenance → History; a T2 control keeps its stop, and Enter or Space re-shows
       its reason, polite once, and sends nothing (D04:493-494, :502, :517-518); Change… acts once per press (D04:601)
 - [x] **Accessible name / role table** — Table 3: a CMP-049 table row, one table per `h2` group captioned by it, not
       an arrow grid (FF-2, D04:500); the Change button named by description, key and deployment value, never
       "on/off"; a blocked control `aria-disabled="true"`, its reason by `aria-describedby` at mount, a visible link
-      (D19, D20; D04:154-155, :490-495, :975)
+      (D19, D20; D04:154-155, :490-495, :977)
 - [x] **Live data** — Table 5: a push from another session swaps the row in one frame, and an open dialog keeps its
       draft and meets `409` on confirm (D04:518-519); `flags.applied` polite once on the answer (FF-7, D04:505);
       `fail_closed` assertive once through the shell's region (FF-12, D04:510, :592)
 - [x] **Motion pair** — Table 4: a flag's value flips in one frame on the server's answer, never animated (M9,
       D04:636; S-2, S-4, D04:653-656); "Saving…" is M14's in-flight spinner in the dialog (D04:641)
-- [ ] N/A — **Density notes**: as CMP-173's line (`size.control.comfortable`, D04:976); at 200 % rows reflow to
+- [ ] N/A — **Density notes**: as CMP-173's line (`size.control.comfortable`, D04:978); at 200 % rows reflow to
       stacked cards (FF-15, D04:513)
 - [x] **Essential-exceptions log** — none
-- [x] **Tokens used** — Appendix A's Tokens row (D04:976): `color.surface.raised`, `color.text.{primary,secondary,tertiary}`,
+- [x] **Tokens used** — Appendix A's Tokens row (D04:978): `color.surface.raised`, `color.text.{primary,secondary,tertiary}`,
       `color.border.default`, `color.status.warning.subtle` and `.strong` (fail-closed and unreadable
       notes; the "Affects …" marks as a CMP-011 Tag with the triangle), `color.status.info.subtle` and `.strong`
       ("Requires reload"), `type.num.sm` (the key), `size.control.comfortable`; CMP-004's tokens dropped with the
@@ -138,22 +138,22 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank line at Done
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
-- [ ] N/A — **Final Penpot link**: the chip is not drawn on SCR-145 (D04:747, :978); its variants are board 68
+- [ ] N/A — **Final Penpot link**: the chip is not drawn on SCR-145 (D04:747, :980); its variants are board 68
       `component-sheet`, not drawn — the text binds (D04:74)
 - [ ] N/A — **Variants × States matrix**: one story, Default, kept (D04:747); the change is its visible text and
       tokens, not a new state
-- [x] **Keyboard table** — Table 2: static text, no Tab stop of its own (D04:979)
+- [x] **Keyboard table** — Table 2: static text, no Tab stop of its own (D04:981)
 - [x] **Accessible name / role table** — Table 3: visible text "Flag: {flagKey}", also its accessible name; never
-      colour or an icon alone (D04:979)
+      colour or an icon alone (D04:981)
 - [ ] N/A — **Live data**: static chrome
 - [x] **Motion pair** — Table 4: none animated
 - [ ] N/A — **Density notes**: an inline atom with no target of its own
 - [x] **Essential-exceptions log** — none
 - [x] **Tokens used** — `color.status.info.subtle` (fill), `color.status.info.strong` (glyph), `color.text.primary`
-      (text) until `color.chip.dev` exists (D02 DS-4; D04:699, :980; CG-24, D04:902); Penpot token sets as CMP-173's
+      (text) until `color.chip.dev` exists (D02 DS-4; D04:699, :982; CG-24, D04:902); Penpot token sets as CMP-173's
       line
 - [ ] N/A — **Data contract confirmed**: pure chrome (`flagKey`, a registry key)
-- [ ] **Contrast and CVD** — PENDING: as CMP-173's line; Tests add axe (D04:981)
+- [ ] **Contrast and CVD** — PENDING: as CMP-173's line; Tests add axe (D04:983)
 - [x] **Design QA checklist (16 §12)** and the **a11y acceptance-criteria template (05 §10)** — §A and §B below
 - [ ] **Sign-off** — owner approval pending (#887)
 
@@ -163,7 +163,7 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
 (docs/plan/16-design-system-brief.md §11.4, §13.3).
 
 - [ ] N/A — **Final Penpot link**: the contract changes its purpose only — not used for the audit log (Q9 default
-      (b), D04:179, :748, :982); SCR-135 composes CMP-001, CMP-093 and CMP-023 instead (§8, D04:420-425)
+      (b), D04:179, :748, :984); SCR-135 composes CMP-001, CMP-093 and CMP-023 instead (§8, D04:420-425)
 - [ ] N/A — **Variants × States matrix**: Default and Exporting are unchanged
 - [ ] N/A — **Keyboard table**: unchanged
 - [ ] N/A — **Accessible name / role table**: unchanged
@@ -187,13 +187,13 @@ Rule: every line is `[x]` with its evidence, or `[ ] N/A — <reason>`. No blank
       (page 1: Newest and Newer T2 `admin.newest`) and redlined on 69; AL-9's end (board 09) and AL-16's RateLimited
       (board 16) are not drawn — the text binds (D04:69, :237, :244, :251)
 - [ ] **Variants × States matrix** — PENDING with the boards: Default, CursorMode, CursorKeyset, RateLimited
-      (D04:985); Table 1
+      (D04:987); Table 1
 - [x] **Keyboard table** — Table 2: [Newest] [Newer] [Older] after the grid, before Run tamper check; once a press
       has loaded its page, focus moves to the page's first row; a failed or refused read keeps focus on the button and
       the cursors; after `400 invalid_cursor` Newer and Older stay enabled (D04:266-275); a T2 button keeps its stop
       and re-shows its reason (D04:607)
 - [x] **Accessible name / role table** — Table 3: `nav aria-label="Pagination"`; in cursor mode no `aria-current`;
-      no page number or total (D4, D04:139, :984)
+      no page number or total (D4, D04:139, :986)
 - [x] **Live data** — Table 5: `audit.end` polite once at `has_more: false` (AL-9, D04:244); the count is the rows
       shown, never a total (D04:594)
 - [x] **Motion pair** — Table 4: a page change is a one-frame swap; the newest page lands in one frame and the scroll
@@ -239,7 +239,7 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | Component | Story              | D04 state (cite)                                                              | Board (drawn ★ = one of §0's ten) | Notes                                             |
 | --------- | ------------------ | ----------------------------------------------------------------------------- | --------------------------------- | ------------------------------------------------- |
 | CMP-173   | Default            | AL-2 populated, page checked (D04:237)                                        | 02 ★                              | D03's story                                       |
-| CMP-173   | ExpandedDiff       | AL-3 row expanded, §6's full form (D04:238, :339-340)                         | 03 (not drawn); 67 ★ sheet        | D03's story; `<dl>`, never a code block (D04:963) |
+| CMP-173   | ExpandedDiff       | AL-3 row expanded, §6's full form (D04:238, :339-340)                         | 03 (not drawn); 67 ★ sheet        | D03's story; `<dl>`, never a code block (D04:965) |
 | CMP-173   | SystemActor        | AL-5 `system:maintenance` (D04:240)                                           | 05 (not drawn)                    | D03's story                                       |
 | CMP-173   | Compact            | SCR-122's change summary; FF-14's history rows (D04:333-334, :512)            | 51 (not drawn)                    | D03's story; the inline form (§6)                 |
 | CMP-173   | CompactDenied      | a refused record in the request shape, inline (D04:354, :512)                 | 51 (not drawn)                    | D03's story                                       |
@@ -252,7 +252,7 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | CMP-173   | WriteAhead         | "Started" / "Intent", never "Success" (D3, D04:138)                           | 02 ★                              | `audit.result_started`, `audit.result_intent`     |
 | CMP-173   | OwnProjection      | AL-25 "My activity" (D04:260)                                                 | 25 (not drawn)                    | `rec.hidden` in the projected cells               |
 | CMP-173   | DeletedActor       | `deleted-user-3f9a…`, no link, a labelled target (CG-33; D04:240)             | 05 (not drawn)                    | the grid cuts it to 4 hex and "…" (D04:678)       |
-| CMP-173   | AfterBreak         | at or after `first_bad_id`, expanded row and SCR-136 only (D04:317, :962)     | 34 ★                              | never the collapsed row                           |
+| CMP-173   | AfterBreak         | at or after `first_bad_id`, expanded row and SCR-136 only (D04:317, :964)     | 34 ★                              | never the collapsed row                           |
 | CMP-174   | Default            | AL-2 (D04:237)                                                                | 02 ★                              | —                                                 |
 | CMP-174   | Applied            | AL-6 filtered, the applied set as text (D04:241)                              | 06 (not drawn)                    | URL state (D04:231-232)                           |
 | CMP-174   | OwnView            | AL-25: Actor fixed, IP, Search, Environment T2 `rbac.owner_only` (D04:260)    | 25 (not drawn)                    | `view: "own"`                                     |
@@ -275,8 +275,8 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | CMP-179   | Saving             | FF-7 "Saving…" in the dialog (D04:505)                                        | 44 (not drawn)                    | the row unchanged                                 |
 | CMP-179   | Refused            | FF-10, FF-11 in the dialog (D04:508-509)                                      | 47, 48 (not drawn)                | the row unchanged                                 |
 | CMP-179   | OutcomeUnknown     | FF-13 `flags.store_down`, `flags.checking` (D04:511)                          | 50 (not drawn)                    | never "Nothing was changed."                      |
-| CMP-095   | Default            | visible "Flag: {flagKey}" (D04:979)                                           | 68 (not drawn)                    | not on SCR-145                                    |
-| CMP-099   | Default, Exporting | unchanged; not used for the audit log (D04:982)                               | —                                 | —                                                 |
+| CMP-095   | Default            | visible "Flag: {flagKey}" (D04:981)                                           | 68 (not drawn)                    | not on SCR-145                                    |
+| CMP-099   | Default, Exporting | unchanged; not used for the audit log (D04:984)                               | —                                 | —                                                 |
 | CMP-053   | Default            | unchanged                                                                     | —                                 | —                                                 |
 | CMP-053   | CursorMode         | unchanged (`15`)                                                              | —                                 | —                                                 |
 | CMP-053   | CursorKeyset       | AL-2 page 1, AL-9 `has_more: false`: Newest, Newer, Older (D04:237, :244)     | 02 ★; 09 (not drawn)              | `admin.newest`, `admin.oldest`                    |
@@ -291,7 +291,7 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | CMP-173   | Enter                                   | opens SCR-136; while it is open, ↑ ↓ in the grid keep the drawer on the selected row; once per press                 | the drawer's `h2`                                                      | none                           | D14; D04:149, :269      |
 | CMP-173   | Esc (in SCR-136)                        | closes the drawer                                                                                                    | the row                                                                | none (Esc is the drawer's own) | D04:323-324             |
 | CMP-174   | Tab / Shift+Tab                         | the filters in reading order, between the incident banner and the pill                                               | the next control                                                       | none                           | D04:266-267             |
-| CMP-174   | typing, arrows, paste on a T2 field     | change nothing (`readonly`, `aria-readonly` on a picker)                                                             | unchanged                                                              | none                           | D04:607, :970           |
+| CMP-174   | typing, arrows, paste on a T2 field     | change nothing (`readonly`, `aria-readonly` on a picker)                                                             | unchanged                                                              | none                           | D04:607, :972           |
 | CMP-174   | Enter / Space on a T2 control           | stages and sends nothing; the reason is re-shown inline, polite once                                                 | unchanged                                                              | none                           | D04:595, :607           |
 | CMP-174   | [Clear filters] (AL-7, AL-26)           | clears the set and reads page 1                                                                                      | page 1's first row, once loaded                                        | none                           | D04:242, :274-275       |
 | CMP-179   | Tab / Shift+Tab                         | Change… → History (→ Revert); live row Change… → Security centre → History; `maintenance.mode` Maintenance → History | the next control                                                       | none                           | D04:502, :517-518       |
@@ -299,24 +299,24 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | CMP-179   | Enter / Space on the live row's Change… | sends nothing; `admin.live_gate` re-shown inline beside the Security centre link, polite once per press              | unchanged                                                              | none                           | FF-4; D04:494, :502     |
 | CMP-053   | Enter / Space on Newest / Newer / Older | loads that page; once per press                                                                                      | the page's first row once loaded; a failed read keeps it on the button | none                           | D04:270-273             |
 | CMP-053   | Enter / Space on a T2 button            | loads nothing; re-shows its reason (`admin.newest`, `admin.oldest`, `admin.rate_limited`)                            | unchanged                                                              | none                           | D04:275, :607           |
-| CMP-095   | —                                       | static text, no stop                                                                                                 | —                                                                      | none                           | D04:979                 |
+| CMP-095   | —                                       | static text, no stop                                                                                                 | —                                                                      | none                           | D04:981                 |
 
 ### Table 3 — Accessible name / role
 
 | Component | Element              | Role                                    | Accessible name (source)                                                                | States / properties                                                                                                                                     |
 | --------- | -------------------- | --------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CMP-173   | the row              | `row` in CMP-049's `grid` (`gridcell`s) | its cells' words (time, actor, action label, target, environment, IP, severity, result) | `aria-rowindex` when virtualised; `aria-selected="true"` and the `check` glyph (`aria-hidden`) on the selected row (D14, D04:149)                       |
-| CMP-173   | the expander         | `button`                                | the row it expands                                                                      | `aria-expanded`, `aria-controls` (D04:963)                                                                                                              |
+| CMP-173   | the expander         | `button`                                | the row it expands                                                                      | `aria-expanded`, `aria-controls` (D04:965)                                                                                                              |
 | CMP-173   | the expanded diff    | `dl` per changed field, a nested `dl`   | the field path; the terms Before / After, or Requested (D04:338-340, :354)              | the status word (Added, Removed, Changed) as text, never colour or strike-through (D04:341-342); the arrow `aria-hidden`, read "changed from OFF to ON" |
-| CMP-173   | severity, outcome    | text                                    | the enum's word; "Started" / "Intent" on a write-ahead record (D2, D3)                  | the octagon or triangle `aria-hidden`; high rows add the rule and the weight (D04:137-138, :963)                                                        |
+| CMP-173   | severity, outcome    | text                                    | the enum's word; "Started" / "Intent" on a write-ahead record (D2, D3)                  | the octagon or triangle `aria-hidden`; high rows add the rule and the weight (D04:137-138, :965)                                                        |
 | CMP-173   | a secret-kind value  | text                                    | "Secret — never recorded" and its siblings (§6, D04:359-361)                            | the `lock` glyph decorative (D04:607); nothing hashed client-side (D16)                                                                                 |
-| CMP-174   | the bar              | `search` (`form`)                       | "Filter the audit log"                                                                  | errors by `aria-describedby` (D04:970)                                                                                                                  |
-| CMP-174   | a T2 field or picker | its native role                         | its visible label, the `lock` ("Not available") leading it                              | `aria-disabled="true"`, `readonly` / `aria-readonly`, `aria-describedby` → the reason or the one notice (D04:607-608, :970)                             |
+| CMP-174   | the bar              | `search` (`form`)                       | "Filter the audit log"                                                                  | errors by `aria-describedby` (D04:972)                                                                                                                  |
+| CMP-174   | a T2 field or picker | its native role                         | its visible label, the `lock` ("Not available") leading it                              | `aria-disabled="true"`, `readonly` / `aria-readonly`, `aria-describedby` → the reason or the one notice (D04:607-608, :972)                             |
 | CMP-179   | the row              | `row` in a CMP-049 `table`              | its cells' words                                                                        | one table per group, captioned by its `h2` (FF-2, D04:500)                                                                                              |
-| CMP-179   | Change…              | `button`                                | the description, the key and the deployment value ("… deployment OFF"), never "on/off"  | blocked: `aria-disabled="true"`, never `disabled`, `aria-describedby` → the reason at mount, a visible link (D04:154-155, :492-494, :975)               |
+| CMP-179   | Change…              | `button`                                | the description, the key and the deployment value ("… deployment OFF"), never "on/off"  | blocked: `aria-disabled="true"`, never `disabled`, `aria-describedby` → the reason at mount, a visible link (D04:154-155, :492-494, :977)               |
 | CMP-179   | values               | text                                    | `flags.deployment`, `flags.your_*`, `flags.fail_closed_value`                           | they change only on the server's answer (D19, D04:154)                                                                                                  |
-| CMP-053   | the pager            | `navigation`                            | "Pagination"                                                                            | cursor mode: no `aria-current`; a T2 button `aria-disabled`, its `lock` leading the label, `aria-describedby` → its reason (D04:984)                    |
-| CMP-095   | the chip             | text                                    | "Flag: {flagKey}" (visible)                                                             | never colour or an icon alone (D04:979)                                                                                                                 |
+| CMP-053   | the pager            | `navigation`                            | "Pagination"                                                                            | cursor mode: no `aria-current`; a T2 button `aria-disabled`, its `lock` leading the label, `aria-describedby` → its reason (D04:986)                    |
+| CMP-095   | the chip             | text                                    | "Flag: {flagKey}" (visible)                                                             | never colour or an icon alone (D04:981)                                                                                                                 |
 
 ### Table 4 — Motion pair
 
@@ -346,7 +346,7 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 
 | Component         | Mode                | Row / control height                            | Padding tokens                                         | Smallest target                                 |
 | ----------------- | ------------------- | ----------------------------------------------- | ------------------------------------------------------ | ----------------------------------------------- |
-| CMP-173, 174, 179 | comfortable (admin) | `size.control.comfortable` (D04:697, :976)      | `space.inset.{lg,xl}`, `space.stack.{sm,md}` (D04:697) | the expander cell, 24 px wide at 1280 (D04:211) |
+| CMP-173, 174, 179 | comfortable (admin) | `size.control.comfortable` (D04:697, :978)      | `space.inset.{lg,xl}`, `space.stack.{sm,md}` (D04:697) | the expander cell, 24 px wide at 1280 (D04:211) |
 | CMP-053           | comfortable (admin) | `size.control.comfortable`                      | —                                                      | a pager button                                  |
 | all six           | compact             | not specified by D04 (open point for the owner) | —                                                      | —                                               |
 
@@ -396,5 +396,5 @@ enabled (D8, §12.1; D04:143, :608). CMP-015 Skeleton (AL-1, FF-1, MM-10), CMP-0
 | ------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------- | ---------------------------------- |
 | SCR-135 | find a high-severity record, read its diff, and see whether the log holds | Signed export → export line → incident banner → filters → pill → the grid (one stop) → paging → Run tamper check; Space expands, Enter opens SCR-136 (D04:266-275) | the incident's `role="alert"` once per episode; counts, new entries and check results polite once through one page region (§12, D04:592-594); words for every status | severity and outcome as words, glyphs and the high rule (D2; D04:736-738); forced colours (D04:734) | §15 (D04:705-726) | expansion a cut; statuses one frame (M4, M9)        | axe 0 serious / critical — E42-S04 |
 | SCR-136 | step through records and copy a hash                                      | heading in frame 0 → Previous → Next → Close → copies and links → Show raw record → the raw `<pre>`; Esc back to the row; `Ctrl+\` reaches CMP-211 (D04:322-325)   | the heading on focus; "Copied" polite once; a withheld raw record is a notice, not T2 (AD-3, D04:315)                                                                | the integrity line's words (AD-5); the selected row's `check` (D14)                                 | §15's drawer rows | the drawer instant under reduce (M1, M2)            | axe 0 serious / critical — E42-S04 |
-| SCR-145 | change an ordinary flag, and find that live trading cannot be set here    | search → clear → per group Change… → History (→ Revert); the live row's T2 Change… re-shows its reason (D04:517-518)                                               | the dialog's description once; `flags.applied` polite once; `fail_closed` assertive once; a T2 press polite once (§12)                                               | values as ON / OFF words; notes as tags with the triangle (D04:976)                                 | §15's T2 rows     | values flip in one frame (M9); "Saving…" M14's twin | axe 0; keyboard E2E — E42-S05      |
+| SCR-145 | change an ordinary flag, and find that live trading cannot be set here    | search → clear → per group Change… → History (→ Revert); the live row's T2 Change… re-shows its reason (D04:517-518)                                               | the dialog's description once; `flags.applied` polite once; `fail_closed` assertive once; a T2 press polite once (§12)                                               | values as ON / OFF words; notes as tags with the triangle (D04:978)                                 | §15's T2 rows     | values flip in one frame (M9); "Saving…" M14's twin | axe 0; keyboard E2E — E42-S05      |
 | SCR-148 | turn maintenance on and off                                               | Turn on… → the window section's T2 fields; the rung-2 and rung-4 dialogs as §11 and §12 (D04:561, :600)                                                            | the notice assertive once on entry, polite on exit (D26, D04:161); the dialog's description once                                                                     | the status line's words; the banner's words and glyph (D04:736-738)                                 | §15's banner rows | banners at 0 ms; the scrim's twin (M5, M10, M11)    | axe 0; keyboard E2E — E42-S05      |
