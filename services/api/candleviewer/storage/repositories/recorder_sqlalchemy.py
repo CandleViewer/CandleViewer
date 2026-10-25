@@ -156,10 +156,21 @@ _CLOSE_SESSION = sa.text(
     "state = CAST(CASE WHEN :reason = 'error' THEN 'error' ELSE 'stopped' END AS recording_state), "
     "end_reason = :reason WHERE id = CAST(:id AS uuid) AND ended_at IS NULL RETURNING 1"
 )
+# A gap already covered by a row of the same session, stream, cause and start (its end at or past
+# this one) is not written again: a retried crash recovery (the runtime retries a failed startup)
+# asks for the same windows, and `recording_gaps` is append-only (0011 revokes DELETE), so a repeat
+# could never be removed. A longer window with the same start still lands (readers union rows).
+# Each parameter is typed once, in the derived table (see `_RECORD_LIVE_GAP`'s 42P08 note). No
+# unique index backs it: one process per env writes these, its session manager under `_lock`.
 _RECORD_GAP = sa.text(
     "INSERT INTO recording_gaps (recording_session_id, symbol, stream, gap_start, gap_end, "
-    "cause) VALUES (CAST(:sid AS uuid), :symbol, CAST(:stream AS stream_kind), :gs, :ge, "
-    ":cause) RETURNING id"
+    "cause) SELECT k.sid, :symbol, k.stream, k.gs, k.ge, k.cause FROM "
+    "(SELECT CAST(:sid AS uuid) AS sid, CAST(:stream AS stream_kind) AS stream, "
+    "CAST(:gs AS timestamptz) AS gs, CAST(:ge AS timestamptz) AS ge, "
+    "CAST(:cause AS text) AS cause) AS k "
+    "WHERE NOT EXISTS (SELECT 1 FROM recording_gaps g WHERE g.recording_session_id = k.sid "
+    "AND g.stream = k.stream AND g.cause = k.cause AND g.gap_start = k.gs "
+    "AND g.gap_end >= k.ge) RETURNING id"
 )
 # E16-T03 StreamWriter: both target the symbol's live session in `:env` (ix_recs_live), newest
 # first. A session's env is its recorded row's (`recording_sessions` has no `env`, 21 Sec.3.6.2),
@@ -393,7 +404,8 @@ class SqlAlchemyRecorderRepository:
         gap_start: datetime,
         gap_end: datetime,
         cause: str,
-    ) -> int:
+    ) -> int | None:
+        """The new gap's id, or None when this window is already written (`_RECORD_GAP`)."""
         rows = await self._all(
             _RECORD_GAP,
             {
@@ -405,7 +417,7 @@ class SqlAlchemyRecorderRepository:
                 "cause": cause,
             },
         )
-        return int(rows[0]["id"])
+        return int(rows[0]["id"]) if rows else None
 
     async def add_session_counters(
         self,

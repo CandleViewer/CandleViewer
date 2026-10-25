@@ -57,7 +57,7 @@ class IntegrityStore(Protocol):
         gap_start: datetime,
         gap_end: datetime,
         cause: str,
-    ) -> int: ...
+    ) -> int | None: ...
 
     async def mark_gap_backfilled(self, gap_id: int, source: str) -> bool: ...
 
@@ -183,7 +183,7 @@ class IntegrityJob:
                                     [Span(a, b)], report)  # fmt: skip
                 continue
             async with asyncio.timeout(self._timeout_s):
-                await self._store.record_gap(
+                gap_id = await self._store.record_gap(
                     session_id=sid,
                     symbol=symbol,
                     stream="orderbook_delta",
@@ -191,6 +191,8 @@ class IntegrityJob:
                     gap_end=to_dt(b),
                     cause="seq_jump",
                 )
+            if gap_id is None:
+                continue  # already written
             report.gaps_written += 1
             recorder_integrity_anomalies_total.labels(kind="gap").inc()
             self._on_write(symbol)

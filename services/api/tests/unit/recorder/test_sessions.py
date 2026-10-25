@@ -17,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer.audit.writer import AuditWriter
 from candleviewer.exchange.bybit.public_ws import stream_for_topic
+from candleviewer.recorder.metrics import recorder_gap_seconds_total
 from candleviewer.recorder.models import RecorderSetChanged
 from candleviewer.recorder.sessions import (
     DEFAULT_STREAMS,
@@ -189,6 +190,42 @@ async def test_crash_recovery_closes_process_restart_with_gap_from_last_event() 
     assert await store.list_live_sessions("live") == []
 
 
+class _CutBeforeClose(MemRecorderStore):
+    """The first close fails, as a crash or a timeout between the gap rows and the close would."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cut = True
+
+    async def close_session_at(
+        self, session_id: str, *, reason: str, ended_at: datetime, error: bool = False
+    ) -> bool:
+        if self.cut:
+            self.cut = False
+            raise OSError("cut")
+        return await super().close_session_at(
+            session_id, reason=reason, ended_at=ended_at, error=error
+        )
+
+
+async def test_crash_recovery_retried_after_a_cut_writes_and_counts_each_gap_once() -> None:
+    """A retried startup (S4a's runtime) re-runs recovery after a cut between the gap rows and
+    the close: the rows are append-only, so each window is written, and counted, once."""
+    store = _CutBeforeClose()
+    await _crashed(store, LIVE)
+    seconds = recorder_gap_seconds_total.labels(symbol="BTCUSDT")
+    before = float(seconds._value.get())
+    fresh = SessionManager(store, now_us=UsClock(T0 + 9), audit=FakeAudit(), config=LIVE)
+    with pytest.raises(OSError):
+        await fresh.recover_on_startup(T0 + 9)
+    assert await fresh.recover_on_startup(T0 + 9) == 1
+    wins = store.gap_windows("process_restart")
+    assert sorted(w[0] for w in wins) == sorted(DEFAULT_STREAMS)
+    assert float(seconds._value.get()) - before == pytest.approx(
+        len(DEFAULT_STREAMS) * 9e-6, abs=1e-9
+    )
+
+
 async def test_crash_recovery_without_events_gaps_from_started_at() -> None:
     store = MemRecorderStore()
     dead = SessionManager(store, now_us=UsClock(T0), audit=FakeAudit(), config=LIVE)
@@ -321,7 +358,7 @@ class _LoggingStore(MemRecorderStore):
         super().__init__()
         self.log = log
 
-    async def record_gap(self, **kw: Any) -> int:
+    async def record_gap(self, **kw: Any) -> int | None:
         self.log.append(f"gap:{kw['symbol']}")
         return await super().record_gap(**kw)
 
