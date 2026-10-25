@@ -492,3 +492,31 @@ async def test_on_ready_runs_once_after_the_startup_and_before_readiness(
         await rig.sleep.parked()
     assert seen == [False] and rig.rt.startup_complete and rig.names.count(GATE) == 1
     assert any(e["event"] == "recorder_on_ready_failed" for e in logs) is fails
+
+
+async def test_a_failed_on_ready_degrades_health_with_its_class_only_and_is_not_retried(
+    rig: Rig,
+) -> None:
+    async def hook() -> None:
+        raise OSError("secret pg message")
+
+    rig.rt._on_ready = hook
+    await rig.rt.start()
+    await rig.sleep.parked()
+    report = rig.rt.health()
+    assert report.status is HealthStatus.DEGRADED and rig.rt.startup_complete
+    assert "on_ready_failed error=OSError" in report.detail and "secret" not in report.detail
+    assert rig.names.count(GATE) == 1  # the startup was not retried
+
+
+async def test_the_tick_runs_the_heal_after_the_policy_and_a_failing_heal_is_isolated(
+    rig: Rig,
+) -> None:
+    heal = AsyncMock(side_effect=OSError("down"))
+    rig.rt._heal = heal
+    with capture_logs() as logs:
+        await rig.rt.start()
+        await rig.sleep.parked()
+    heal.assert_awaited_once()
+    assert ("recorder_tick_failed", "heal") in [(e["event"], e.get("step")) for e in logs]
+    assert rig.rt.health().status is HealthStatus.OK

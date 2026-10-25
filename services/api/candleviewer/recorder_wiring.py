@@ -144,7 +144,11 @@ class _FanOut:
     async def publish(self, topic: Topic, event: RecorderSetChanged | RecorderCapRefused) -> None:
         if isinstance(event, RecorderSetChanged):
             entry = self.entries().get(event.symbol)  # the event carries no streams: the entry does
-            await self.sessions.on_set_changed(event, entry.streams if entry else ())
+            try:  # a failing store must not leave the symbol on paper only: the tick heals it
+                await self.sessions.on_set_changed(event, entry.streams if entry else ())
+            except Exception as exc:  # never a CancelledError
+                logger().error("recorder_fanout_sessions_failed", symbol=event.symbol,
+                               error=type(exc).__name__)  # fmt: skip
             self.writer.on_set_changed(event)
         await self._bus.publish(topic, event)
 
@@ -243,14 +247,15 @@ def build_recorder(
     fan_out.sessions, fan_out.writer, fan_out.entries = manager, writer, policy.effective_set
     policy.observe_states(manager.on_b11_state)
 
-    async def on_ready() -> None:
-        """A restored chart published nothing, so it has no session and no writer lane (S3a
-        findings 1 and 2): open each effective symbol's session with its streams, seed the writer.
-        A symbol that fails is logged and starves no other."""
-        current = policy.effective_set()
-        writer.seed(list(current))
-        for symbol, entry in current.items():
+    async def open_missing() -> None:
+        """Open the session of each effective symbol that has none, with the entry's streams: a
+        restored chart published nothing (S3a findings 1 and 2) and a fan-out whose sessions step
+        failed left one open (SEC-B1). A symbol that fails is logged and starves no other."""
+        for symbol, entry in policy.effective_set().items():
+            if manager.live_session(symbol) is not None:
+                continue
             try:
+                # mirrors policy.py `_publish` (~1103) and `_entry` (~1136): no helper exists
                 event = RecorderSetChanged(
                     symbol=symbol, change="added", reason=entry.reason, reasons=entry.reasons,
                     priority=PRIORITY[entry.reason], auto_evictable=entry.reason != "manual",
@@ -258,12 +263,18 @@ def build_recorder(
                 )  # fmt: skip
                 await manager.on_set_changed(event, entry.streams)
             except Exception as exc:
-                logger().error("recorder_on_ready_open_failed", symbol=symbol,
+                logger().error("recorder_session_open_failed", symbol=symbol,
                                error=type(exc).__name__)  # fmt: skip
+
+    async def on_ready() -> None:
+        """Seed the writer with the restored set, then open what it lacks."""
+        writer.seed(list(policy.effective_set()))
+        await open_missing()
 
     runtime = RecorderRuntime(
         policy=policy, sessions=manager, writer=writer, restore_b11=restore_b11,
         seed=NoPositionSource(env), process_start_us=clocks.process_start_us, env=env,
         clock=clocks.mono_s, sleep=clocks.sleep, rng=clocks.rng, bounds=bounds, on_ready=on_ready,
+        heal=open_missing,
     )  # fmt: skip
     return ComposedRecorder(policy, rows, budget, env, manager, writer, runtime, on_ready)
