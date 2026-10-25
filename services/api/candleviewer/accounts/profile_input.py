@@ -49,7 +49,8 @@ class ProfileFieldError:
         return entry
 
 
-_NATIVE_STOP_OFF: Final = ProfileFieldError(
+#: Public: the store's `ap_native_sl` answers with this entry too (#906 D2-4 R1C-06).
+NATIVE_STOP_OFF: Final = ProfileFieldError(
     "require_native_stop",
     "native_stop_mandatory",
     "Every order carries a native stop-loss, so it cannot be turned off.",
@@ -68,7 +69,7 @@ _NULL_CAPS: Final = ProfileFieldError(
 )
 #: The rules `schema_errors` can answer with, each in the contract's or the model's own words.
 SCHEMA_RULES: Final = frozenset(
-    e.rule for e in (_NATIVE_STOP_OFF, _NOT_TRUE, _STOP_IN_R, _NULL_STOP, _NULL_CAPS)
+    e.rule for e in (NATIVE_STOP_OFF, _NOT_TRUE, _STOP_IN_R, _NULL_STOP, _NULL_CAPS)
 )
 #: The rules `check_profile_input` can answer with (`ProfileRejected`'s first pass).
 FIRST_PASS_RULES: Final = frozenset(
@@ -99,7 +100,7 @@ def schema_errors(
         if raw.get("risk_caps", {}) is None:
             own.append(_NULL_CAPS)
         if flag is False:
-            own.append(_NATIVE_STOP_OFF)
+            own.append(NATIVE_STOP_OFF)
         elif flag is not True:  # the model takes 1 and 1.0 for True (R1S-06)
             own.append(_NOT_TRUE)
     named = {e.field for e in own}
@@ -269,7 +270,8 @@ _LOSS_BOUNDS: Final = (
 #: as issuecomment-6357453369)): `name` holds no C0 control and no lone surrogate.
 #: A U+0000 or a lone surrogate (no UTF-8 form; see `domain.text`) would be a driver 500, not a 422.
 _C0: Final = re.compile(r"[\x00-\x1f]")
-_OWN_OPERATION: Final = ProfileFieldError(
+#: Public: the store's `default_moves_alone` answers with this entry too (#906 D2-5).
+DEFAULT_HAS_OWN_OPERATION: Final = ProfileFieldError(
     "is_default", "default_has_own_operation", "The default binding has its own operation."
 )
 _CONTROL_IN_NAME: Final = ProfileFieldError(
@@ -360,7 +362,7 @@ def check_profile_input(
     members pass `range` and `precision`."""
     errors: list[ProfileFieldError] = []
     if bool(body.get("is_default")) != bool(stored_is_default):  # P1: a create counts as false
-        errors.append(_OWN_OPERATION)
+        errors.append(DEFAULT_HAS_OWN_OPERATION)
     name = body.get("name")
     if not isinstance(name, str):
         raise TypeError("name is not a string")

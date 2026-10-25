@@ -28,6 +28,7 @@ The REST reads, `read_profiles` and `read_profile` (#906 D1b), and the writes `c
 `update_profile` (D2-3) answer a profile with its row's `created_at` (`StoredProfile`); a stored
 row the store or the model cannot read is `ProfileUnavailableError`, logged by its error class
 alone, as the order path's cache fails closed (SR-E28-24), from every write too, once committed.
+`ArmedRules` is the rules store's read of a delete's armed-rule blockers (ruling B6).
 
 A write the store committed is announced through the optional `changes` port (`ProfilesChanged`,
 24 Sec.9.2, #906 D3a), once the cache is invalidated and before its row is read back: its rows'
@@ -40,7 +41,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Protocol
 from uuid import UUID
 
 import structlog
@@ -149,6 +150,28 @@ class DefaultBinding:
     account_id: UUID
     profile_id: UUID
     version: int
+
+
+#: The armed rules a refused delete names (22's `deleteAccountProfile`); the port reads one more,
+#: so the refusal can say that there are more.
+ARMED_SHOWN: Final = 10
+
+
+@dataclass(frozen=True, slots=True)
+class ArmedRule:
+    """A rule scoped to an account: while it is armed, no profile of the account is deleted
+    (ruling B6)."""
+
+    rule_id: UUID
+    name: str
+
+
+class ArmedRules(Protocol):
+    """The rules store's read of an account's armed rules, bound in the composition root."""
+
+    async def armed_on(self, account_id: UUID) -> tuple[ArmedRule, ...]:
+        """Armed, live rules with `scope='account'` on the account, by lower(name), id; at most
+        ARMED_SHOWN + 1."""
 
 
 class ProfilesRepository:
