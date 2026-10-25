@@ -374,24 +374,28 @@ def make_cancel_all_router(
             answer = functools.partial(exit_problem, outcome)
             return await recorded(accounts, caller, "guard", outcome.code or "rate_limited", answer)
 
+        def faulted(exc: Exception) -> Response:
+            """A defect in step 11's task, `run_claimed`'s answer in that task: the paged `500`,
+            nothing kept; each cancel already sent stays with B1."""
+            page("orders_cancel_all_failed", error=type(exc).__name__)
+            return refused(OmsError("cancel-all's run failed"))
+
         async def cancels() -> Response:
-            """Step 11's task: the cancels' `200`, kept for 24 h by the task itself."""
+            """Step 11's task: the cancels' `200`, kept for 24 h by the task itself; a defect it
+            raises is `faulted`'s answer."""
             try:
                 outcome = await service.run(
                     accounts, asked, actor=caller.actor, request_id=caller.request_id
                 )
-                out = JSONResponse(_result(outcome), 200)
-                kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
             except OmsNotReady:  # the lane stopped after the scope answered: counted, never paged
                 return refused(OmsNotReady())
-            except Exception as exc:  # a defect: each cancel already sent stays with B1
-                page("orders_cancel_all_failed", error=type(exc).__name__)
-                return refused(OmsError("cancel-all's run failed"))
+            out = JSONResponse(_result(outcome), 200)
+            kept.put(*held, StoredResponse(digest, 200, bytes(out.body), None))
             return out
 
         try:
             return await run_claimed(
-                oms, snapshot.user_id, _EXIT, key, cancels, refused=guard_refused
+                oms, snapshot.user_id, _EXIT, key, cancels, refused=guard_refused, faulted=faulted
             )
         except OmsNotReady:  # the runtime began its stop after step 3: nothing ran
             return refused(OmsNotReady())
