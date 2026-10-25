@@ -339,6 +339,9 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             assert (exits.machines, exits.commands) == (
                 parts.submission._machines, parts.submission._commands,
             )  # fmt: skip
+            # and read the profile cache, the serving loop's, through the pipeline's one bridge
+            assert exits.profiles is parts.submission._deps.profiles
+            assert isinstance(exits.profiles, oms_wiring.ServedProfiles)
             assert exits.environment == parts.route.environment == "demo"
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
@@ -628,8 +631,8 @@ async def test_the_exit_routes_reach_the_exit_service_on_the_lane() -> None:
 async def test_on_a_stopped_or_unanswering_lane_the_exit_service_is_not_ready() -> None:
     """As the submit's (CR-S3L1B-07): a lane that stopped is `OmsNotReady` for each of the exit
     service's calls, unrun; its reads are bounded by `HOP_TIMEOUT_S` and `OmsNotReady` past it,
-    while a refusal's record and a cancel wait out the service's own bounds, so the lane's timeout
-    is not one they get."""
+    while a refusal's record, a cancel and an amend wait out the service's own bounds, so the
+    lane's timeout is not one they get."""
     async with started(World().runtime()) as runtime:
         parts, nothing = runtime._composed(), cast(Any, None)
         for error in (LaneStopped("stopped"), TimeoutError()):
@@ -643,7 +646,9 @@ async def test_on_a_stopped_or_unanswering_lane_the_exit_service_is_not_ready() 
                 await exits.deny(nothing, "cancel", nothing, actor=nothing, request_id=None)
             with pytest.raises(written):
                 await exits.cancel_admitted(nothing, actor=nothing, reason="user", request_id=None)
-            assert lane.bounds == [HOP_TIMEOUT_S, HOP_TIMEOUT_S, None, None]
+            with pytest.raises(written):
+                await exits.amend(nothing, nothing, caller=nothing, expected_seq=None)
+            assert lane.bounds == [HOP_TIMEOUT_S, HOP_TIMEOUT_S, None, None, None]
 
 
 async def test_the_exit_routes_in_flight_guard_is_read_in_place_and_theirs_alone() -> None:
