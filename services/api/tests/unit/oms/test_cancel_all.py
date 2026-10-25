@@ -16,6 +16,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.domain.order_link import account_tag
 from candleviewer.domain.primitives import AccountId, Symbol
@@ -568,14 +569,16 @@ class _PortExits:
 
 
 class _Accounts:
-    def __init__(self, fail: bool = False) -> None:
-        self.fail, self.asked = fail, 0
+    """The fold port's account read: `ref`, or a store fault with `fail`."""
+
+    def __init__(self, fail: bool = False, ref: AccountRef = _FOLD_REF) -> None:
+        self.fail, self.ref, self.asked = fail, ref, 0
 
     async def trading_account(self, account_id: AccountId) -> AccountRef:
         self.asked += 1
         if self.fail:
             raise StorageTierUnavailable("postgres unreachable (OSError)")
-        return _FOLD_REF
+        return self.ref
 
 
 class _Fold:
@@ -676,6 +679,28 @@ async def test_an_account_the_fold_cannot_read_stays_on_per_order_cancels() -> N
     got = await fold.run()
     assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
     assert [c.method for c in fold.venue.calls] == ["cancel_order", "cancel_order"]
+
+
+async def test_an_account_read_that_answers_another_account_never_folds() -> None:
+    """L2 (CR-S4F-11; SR-E27-21, as the command port's and the router's reads check it): the fold
+    port's account read answers another account's ref, a defect. Nothing is read or sent with it:
+    the account stays on per-order cancels, and the WARNING carries no identifier."""
+    other = AccountRef(
+        account_id=AccountId(_B), uid="100002", environment="demo", key_ref=str(UUID(int=2))
+    )
+    fold = _Fold(
+        [_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2)],
+        accounts=_Accounts(ref=other),
+    )  # fmt: skip
+    with capture_logs() as logs:
+        got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["cancel_order", "cancel_order"]
+    [warned] = [e for e in logs if e["event"] == "oms_cancel_all_fold_account_mismatch"]
+    assert warned["log_level"] == "warning"
+    assert not [
+        v for v in warned.values() for a in (_A, _B, "100001", "100002") if str(a) in str(v)
+    ]
 
 
 async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:
