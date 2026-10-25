@@ -860,6 +860,7 @@ def test_a_foreign_account_and_an_absent_one_answer_identically_and_both_are_aud
         answers.append(resp)
         medians.append(statistics.median(times))
         records.append(_denials(world))
+        assert resp.status_code >= 400, f"{key} {role}: a non-Owner was admitted on {account}"
         refused = resp.status_code in (403, 404)  # else the CI app answers before any scope check
         want = [str(account)] * 5 if refused else []
         assert [r["object_id"] for r in records[-1]] == want, records[-1]
