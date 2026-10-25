@@ -168,11 +168,91 @@ async def test_capture_rest_records_one_redacted_public_reply(tmp_path: Path) ->
     for bad in (
         "/v5/position/list",
         "/v5/market/../account/info",
-    ):  # never a private route
+        "/v5/market/risk-limit#x",
+        "/v5/market/%2e%2e/account/info",
+        "/v5/market\\..\\account",
+        "//v5/market/risk-limit",
+        "/v5/market//risk-limit",
+        "/v5/market/risk-limit?symbol=BTCUSDT",
+    ):  # an allowlist: never a private route
         with pytest.raises(capture_fixture.CaptureError, match="public"):
             await capture_fixture.capture_rest(bad, {}, out, get=get)
     with pytest.raises(capture_fixture.CaptureError, match="cap"):
         await capture_fixture.capture_rest("/v5/market/risk-limit", {}, out, get=get, size_cap=10)
+
+
+def _getter(status: int, body: str) -> capture_fixture.Getter:
+    async def get(url: str, params: Mapping[str, str]) -> tuple[int, str]:
+        return status, body
+
+    return get
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "match"),
+    [
+        (503, _RL_REPLY, "HTTP 503"),
+        (200, _RL_REPLY.replace('"retCode":0', '"retCode":10006'), "retCode 0"),
+        (200, "[]", "retCode 0"),
+        (200, "<html>busy</html>", "not JSON"),
+    ],
+)
+async def test_capture_rest_refuses_a_non_ok_reply(
+    tmp_path: Path, status: int, body: str, match: str
+) -> None:
+    out = tmp_path / "r.json"
+    with pytest.raises(capture_fixture.CaptureError, match=match):
+        await capture_fixture.capture_rest(
+            "/v5/market/risk-limit", {}, out, get=_getter(status, body)
+        )
+    assert not out.exists()
+
+
+async def test_capture_rest_aborts_when_the_reply_still_leaks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(capture_fixture, "redact", lambda s: s)  # simulate a redactor regression
+    out = tmp_path / "r.json"
+    with pytest.raises(capture_fixture.CaptureError, match="secret patterns"):
+        await capture_fixture.capture_rest(
+            "/v5/market/risk-limit", {}, out, get=_getter(200, _RL_REPLY)
+        )
+    assert not out.exists()
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["api_key", "apiKey", "API_KEY", "sign", "Signature", "timestamp", "recv_window", "TOKEN"],
+)
+async def test_capture_rest_refuses_credential_shaped_params(tmp_path: Path, key: str) -> None:
+    calls: list[str] = []
+
+    async def get(url: str, params: Mapping[str, str]) -> tuple[int, str]:
+        calls.append(url)
+        return 200, _RL_REPLY
+
+    with pytest.raises(capture_fixture.CaptureError, match="credential"):
+        await capture_fixture.capture_rest(
+            "/v5/market/risk-limit", {"symbol": "BTCUSDT", key: "x"}, tmp_path / "r.json", get=get
+        )
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--param", "symbol"],  # no `=`
+        ["--param", "=BTCUSDT"],  # empty key
+        ["--param", "symbol=BTCUSDT", "--param", "symbol=ETHUSDT"],  # duplicate key
+        ["--frames", "5"],  # WS-only option
+        ["--topic", _T],  # the two modes are mutually exclusive
+    ],
+)
+def test_capture_cli_rest_mode_rejects_bad_arguments(tmp_path: Path, extra: list[str]) -> None:
+    argv = ["--rest-path", "/v5/market/risk-limit", "--out", str(tmp_path / "r.json"), *extra]
+    with pytest.raises(SystemExit) as exc:
+        capture_fixture.main(argv, get=_getter(200, _RL_REPLY))
+    assert exc.value.code == 2 and not (tmp_path / "r.json").exists()
 
 
 def test_capture_cli_rest_mode_uses_injected_getter(tmp_path: Path) -> None:

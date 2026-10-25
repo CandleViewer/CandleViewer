@@ -4,13 +4,16 @@
         --out packages/fixtures/bybit/<date>/ws/clean_publicTrade_BTCUSDT.jsonl
 
 S-RL (#913): `--rest-path` records ONE public market REST reply instead (`GET` on
-`api.bybit.com`, a `/v5/market/` path only, query params from `--param k=v`):
+`api.bybit.com`, a `/v5/market/<name>` path only, query params from `--param k=v`):
 
     python tools/fixtures/capture_fixture.py --rest-path /v5/market/risk-limit \
         --param category=linear --param symbol=BTCUSDT \
         --out packages/fixtures/bybit/<date>/rest/risk_limit_BTCUSDT.json
 
-There is no auth path in either mode: no header, key or signature is ever built or sent.
+There is no auth path in either mode: no header, key or signature is ever built or sent,
+and a credential-shaped `--param` key is refused. Only an HTTP 200 reply with `retCode` 0 is
+recorded; the reply is streamed and the capture aborts once it passes `--size-cap` bytes.
+`--frames` belongs to the WS mode and is rejected with `--rest-path`.
 Public data only (no credentials are ever read: private fixtures are E29).
 Every frame is passed through `redact()` and re-checked with `find_leaks()`
 before it is written; a frame that still leaks aborts the capture. Output is
@@ -22,7 +25,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import functools
 import json
+import re
 import sys
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -33,7 +38,7 @@ from typing import Any, Protocol
 if __package__ in (None, ""):  # pragma: no cover - script entry
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from tools.fixtures.redact import find_leaks, redact
+from tools.fixtures.redact import _SENSITIVE_KEYS, find_leaks, redact
 
 #: Mainnet public stream (demo has no public feed of its own, C-2.11).
 PUBLIC_URL = "wss://stream.bybit.com/v5/public/linear"
@@ -44,6 +49,11 @@ PUBLIC_REST_URL = "https://api.bybit.com"
 REST_HOST = "api.bybit.com"
 #: The only path prefix the REST mode will call: public market data, never a private route.
 PUBLIC_REST_PREFIX = "/v5/market/"
+#: Allowlist for the whole path: one lowercase segment under the prefix, nothing else.
+_PUBLIC_REST_PATH = re.compile(r"/v5/market/[a-z0-9-]+")
+#: Query keys that would only ever carry auth (the redactor's key list plus Bybit's signing inputs).
+_CREDENTIAL_PARAM = re.compile(rf"(?:{_SENSITIVE_KEYS}|timestamp|recv_window|recvWindow)", re.I)
+DEFAULT_FRAMES = 500
 
 
 class Socket(Protocol):
@@ -150,13 +160,20 @@ async def capture_rest(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> CaptureResult:
     """GET one public market reply, redact and leak-check it, write file + manifest entry."""
-    if not path.startswith(PUBLIC_REST_PREFIX) or "?" in path or ".." in path:
-        raise CaptureError(f"only public {PUBLIC_REST_PREFIX}* paths may be recorded: {path!r}")
+    if not _PUBLIC_REST_PATH.fullmatch(path):
+        raise CaptureError(f"only public {PUBLIC_REST_PREFIX}<name> paths are recorded: {path!r}")
+    refused = sorted(k for k in params if _CREDENTIAL_PARAM.fullmatch(k))
+    if refused:
+        raise CaptureError(f"credential-shaped query keys are never sent: {refused}")
     status, body = await get(PUBLIC_REST_URL + path, dict(params))
+    if status != 200:
+        raise CaptureError(f"HTTP {status}: only a 200 reply is recorded")
     try:
-        json.loads(body)
+        doc = json.loads(body)
     except ValueError as exc:
         raise CaptureError(f"HTTP {status}: the reply is not JSON") from exc
+    if not isinstance(doc, dict) or doc.get("retCode") != 0:
+        raise CaptureError("only a retCode 0 reply is recorded")
     clean = redact(body.strip())  # the body as received, never re-serialised
     leaks = find_leaks(clean)
     if leaks:
@@ -179,18 +196,24 @@ async def capture_rest(
     return CaptureResult(frames=1, bytes_written=size, manifest=entry)
 
 
-async def _http_get(url: str, params: Mapping[str, str]) -> tuple[int, str]:  # pragma: no cover
-    """Real network, manual only: a bare public GET, no headers."""
+async def _http_get(
+    url: str, params: Mapping[str, str], *, max_bytes: int = DEFAULT_SIZE_CAP
+) -> tuple[int, str]:  # pragma: no cover - real network, manual only
+    """A bare public GET, no headers, no proxy/netrc from the environment. The body is
+    streamed and the capture aborts once it passes `max_bytes`."""
     import httpx
 
-    async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
-        resp = await client.get(url, params=dict(params))
-        return resp.status_code, resp.text
+    async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False) as client:
+        async with client.stream("GET", url, params=dict(params)) as resp:
+            buf = bytearray()
+            async for chunk in resp.aiter_bytes():
+                buf += chunk
+                if len(buf) > max_bytes:
+                    raise CaptureError(f"reply exceeds the {max_bytes}-byte cap; narrow --param")
+            return resp.status_code, buf.decode(resp.encoding or "utf-8")
 
 
-async def _ws_connect(
-    url: str,
-) -> Socket:  # pragma: no cover - real network, manual only
+async def _ws_connect(url: str) -> Socket:  # pragma: no cover - real network, manual only
     from websockets.asyncio.client import connect as ws_connect
 
     conn = await ws_connect(url, open_timeout=10, ping_interval=20)
@@ -209,31 +232,48 @@ async def _ws_connect(
     return _S()
 
 
+def _parse_params(p: argparse.ArgumentParser, items: list[str]) -> dict[str, str]:
+    params: dict[str, str] = {}
+    for kv in items:
+        k, sep, v = kv.partition("=")
+        if not sep or not k:
+            p.error(f"--param must be k=v with a non-empty key: {kv!r}")
+        if k in params:
+            p.error(f"--param {k!r} given twice")
+        params[k] = v
+    return params
+
+
 def main(
     argv: list[str] | None = None,
     *,
     connect: Connector = _ws_connect,
-    get: Getter = _http_get,
+    get: Getter | None = None,
 ) -> int:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0] if __doc__ else None)
     mode = p.add_mutually_exclusive_group(required=True)
     mode.add_argument("--topic")
     mode.add_argument("--rest-path")
     p.add_argument("--param", action="append", default=[], help="k=v query param (REST mode)")
-    p.add_argument("--frames", type=int, default=500)
+    p.add_argument("--frames", type=int, help=f"WS mode only (default {DEFAULT_FRAMES})")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--event", default="clean window")
     p.add_argument("--size-cap", type=int, default=DEFAULT_SIZE_CAP)
     ns = p.parse_args(argv)
+    if ns.rest_path and ns.frames is not None:
+        p.error("--frames applies to --topic only")
+    params = _parse_params(p, ns.param)
+    getter: Getter = get or functools.partial(_http_get, max_bytes=ns.size_cap)
+    frames = DEFAULT_FRAMES if ns.frames is None else ns.frames
     try:
         if ns.rest_path:
-            params = {k: v for k, _, v in (kv.partition("=") for kv in ns.param)}
             job = capture_rest(
-                ns.rest_path, params, ns.out, get=get, notable_event=ns.event, size_cap=ns.size_cap
-            )
+                ns.rest_path, params, ns.out, get=getter, notable_event=ns.event,
+                size_cap=ns.size_cap,
+            )  # fmt: skip
             res = asyncio.run(job)
         else:
-            res = asyncio.run(capture(ns.topic, ns.out, max_frames=ns.frames, connect=connect,
+            res = asyncio.run(capture(ns.topic, ns.out, max_frames=frames, connect=connect,
                                       notable_event=ns.event, size_cap=ns.size_cap))  # fmt: skip
     except CaptureError as exc:
         print(f"capture aborted: {exc}", file=sys.stderr)
