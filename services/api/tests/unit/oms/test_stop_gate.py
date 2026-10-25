@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -458,6 +458,43 @@ async def test_a_void_that_committed_pages_once_though_a_later_write_of_its_read
     assert (status(rig, voided), status(rig, kept)) == ("void", "pending")
     assert rig.pager.calls == [FILL_VOID.format(voided.id)]
     assert (rig.count("entry_filled_stop_absent"), rig.count("read_failed")) == (1, 1)
+
+
+async def test_a_put_that_finds_the_rows_in_force_moved_since_its_read_is_a_stale_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S2D-03 (option b): an end (E29-T05's, simulated) lands on the key's row in force between
+    the read and its put. The put loses its compare-and-set and writes nothing; the gate logs the
+    failed resolution with `reason="stale_read"`, counts it `read_failed` and cools the key, its
+    bounds and pages as for any failure. The request stays pending, and the next ask reads the key
+    again and puts it in force."""
+    rig = build()
+    ended = await request(rig, trigger_price=Decimal(59000))
+    await rig.stops.put_in_force(cr.ACCOUNT, [ended], in_force=(), at=cr.T0)
+    row = await request(rig)
+    rig.venue.seed_position(cr.position(stop_loss=cr.STOP))
+    read = rig.stops.in_force_for_key
+
+    async def ends(account_id: Any, symbol: str, position_idx: int) -> Any:
+        rows = await read(account_id, symbol, position_idx)
+        stored = rig.store._stops[ended.id]
+        rig.store._stops[ended.id] = replace(stored, status="ended", closed_at=cr.T0)
+        return rows
+
+    monkeypatch.setattr(rig.stops, "in_force_for_key", ends)
+    with capture_logs() as logs:
+        await refused(rig)
+        await rig.idle()
+    failed = [
+        (e["failure"], e.get("reason")) for e in logs if e["event"] == "oms_stop_resolution_failed"
+    ]
+    assert failed == [("StaleRecordedStop", "stale_read")]
+    assert rig.count("read_failed") == 1 and KEY in rig.gate._cooling and rig.pager.calls == []
+    assert (status(rig, row), status(rig, ended)) == ("pending", "ended")
+    monkeypatch.undo()
+    await rig.gate.clear(KEY, wait_s=5.0, protective=True)  # the next ask reads the key again
+    assert status(rig, row) == "in_force" and rig.venue.reads() == 2
+    assert rig.count("in_force") == 1
 
 
 @pytest.mark.parametrize(

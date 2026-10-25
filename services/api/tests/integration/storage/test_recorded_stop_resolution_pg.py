@@ -27,6 +27,7 @@ from tests.unit.oms.recorded_stop_contract import (
     RecordedStopContract,
     StopGateContract,
     now_of,
+    read_in_force,
     repo,
     request,
 )
@@ -60,10 +61,11 @@ async def test_an_order_step_and_a_read_racing_on_an_entrys_rows_never_deadlock(
         rows = await request(h, account, profile, moves=(sc.SEND,))  # in flight, its entry sent
         order = cast(Any, SimpleNamespace(exchange_account_id=account, id=rows[0].order_id))
         settle = (sc.ACK, sc.REFUSED)[n % 2]  # entry_stops "answered", then "void"
+        seen = await read_in_force(h, account)  # the read's rows in force: none (SEC-S2D-03)
         read = (
             repo(h).resolve(account, rows, "in_flight_resolved", at=AT, write_ahead=AUDITED)
             if n // 2 % 2 == 0
-            else repo(h).put_in_force(account, rows, at=AT)
+            else repo(h).put_in_force(account, rows, in_force=seen, at=AT)
         )
         done = await asyncio.gather(settle(h, order), read, return_exceptions=True)
         failed = [e for e in done if isinstance(e, BaseException)]
