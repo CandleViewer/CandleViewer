@@ -9,6 +9,10 @@ what Postgres did not take stays for cv-api's boot fold-in (R2d). The KEK proof 
 `prove_kek_possession`, which never enrols (O1); the live recovery-code rule is the reset
 service's (ADR-0009 Amendment 1; O3 kept). cv-api imports neither this module nor the flow (S8),
 which is why this is not `admin.wiring`: the composition root imports that one.
+
+`build_bootstrap_owner_ports` composes the bootstrap-Owner flow's ports the same way (#4479 C2),
+over that CLI's own Postgres side (`BootstrapOwnerStores`: the mint, no reset store, DC-4479-17);
+its trails take `BOOTSTRAP_OWNER_ACTIONS` only, so neither CLI can journal the other's records.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from candleviewer.admin.audited import audit_exempt, audited, declaration
+from candleviewer.admin.bootstrap_owner import BootstrapOwnerPorts
 from candleviewer.admin.breakglass import (
     ATTEMPT,
     REFUSED,
@@ -33,6 +38,7 @@ from candleviewer.admin.errors import BreakGlassUnavailable
 from candleviewer.audit.actions import UnknownAuditAction
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.journal import (
+    BOOTSTRAP_OWNER_ACTIONS,
     BREAK_GLASS_ACTIONS,
     JOURNAL_FILE,
     HostFsUnavailable,
@@ -45,6 +51,7 @@ from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.wal import AuditWal
 from candleviewer.audit.writer import AuditWriter
+from candleviewer.auth.bootstrap_owner import BootstrapOwnerService, BootstrapOwnerStore
 from candleviewer.auth.break_glass import BreakGlassResetService, BreakGlassResetStore
 from candleviewer.observability.context import run_in_thread
 from candleviewer.secrets import KcvStore, KekCheckResult, prove_kek_possession
@@ -98,6 +105,50 @@ def build_break_glass_ports(
         api_running=stores.others_connected,  # R2c: another session of the database role
         resolve_owner=resolve_owner,
         reset=reset,
+        terminal=terminal,
+    )
+
+
+class BootstrapOwnerStores(Protocol):
+    """The bootstrap CLI's Postgres side, every store on one pool
+    (`SqlAlchemyBootstrapOwnerDatabase`): the journal's, the KEK proof's and the mint's."""
+
+    @property
+    def audit_log(self) -> AuditRepository: ...
+    @property
+    def kcv(self) -> KcvStore: ...
+    @property
+    def bootstrap_owners(self) -> BootstrapOwnerStore: ...
+    async def reachable(self) -> bool: ...
+    async def others_connected(self) -> bool: ...
+
+
+def build_bootstrap_owner_ports(
+    settings: Settings, stores: BootstrapOwnerStores, terminal: Terminal
+) -> BootstrapOwnerPorts:
+    """The bootstrap flow's ports over `stores`, `terminal` and the configured environment, as
+    break-glass's are built; its trails take only its own actions. No I/O."""
+
+    async def open_journal() -> AuditTrail:
+        return await _open_journal(
+            settings.audit_wal_path, stores.audit_log, BOOTSTRAP_OWNER_ACTIONS
+        )
+
+    async def open_direct() -> AuditTrail | None:
+        if not await stores.reachable():
+            return None
+        return _DirectTrail(stores.audit_log, BOOTSTRAP_OWNER_ACTIONS)
+
+    async def prove_kek() -> KekCheckResult:
+        return await prove_kek_possession(settings, stores.kcv)
+
+    bootstrap = BootstrapOwnerService(stores.bootstrap_owners, environment=settings.environment)
+    return BootstrapOwnerPorts(
+        open_journal=open_journal,
+        open_direct=open_direct,
+        prove_kek=prove_kek,
+        api_running=stores.others_connected,  # R2c: another session of the database role
+        bootstrap=bootstrap,
         terminal=terminal,
     )
 
@@ -160,7 +211,7 @@ class _JournalTrail:
         self._writer, self._lock, self._journal = writer, lock, journal
         self._admitted = _declared(type(self), admitted)
 
-    @audited(ATTEMPT, REFUSED, RESET)
+    @audited(ATTEMPT, REFUSED, RESET, *sorted(BOOTSTRAP_OWNER_ACTIONS))
     async def emit(self, action: str, **fields: Any) -> None:
         _admit(action, self._admitted)
         await self._writer.emit(action, **fields)
@@ -190,7 +241,7 @@ class _DirectTrail:
     ) -> None:
         self._audit_log, self._admitted = audit_log, _declared(type(self), admitted)
 
-    @audited(ATTEMPT, REFUSED, RESET)
+    @audited(ATTEMPT, REFUSED, RESET, *sorted(BOOTSTRAP_OWNER_ACTIONS))
     async def emit(self, action: str, **fields: Any) -> None:
         _admit(action, self._admitted)
         states = {key: redact(fields.get(key)) for key in ("before_state", "after_state")}

@@ -11,8 +11,9 @@ own: it runs on the host, with the KEK, while cv-api is stopped. Nothing cv-api 
   `TYPE_CHECKING` imports included, and the `__init__` of each package a chain enters), or holds
   one's dotted name for `importlib` to load.
 
-The bootstrap-Owner mint (#4479) shares that boundary: its service and store are dark too, so
-cv-api never holds a writer that can mint an Owner invite (C2 adds its entry point and flow).
+The bootstrap-Owner CLI (#4479) shares that boundary: its entry point, flow, service and store
+are dark too, so cv-api never holds a writer that can mint an Owner invite, and no route, topic
+or operation is named for it.
 
 A route or topic that must be named for break-glass is a Sec.3.6.1 review first, then a change here.
 """
@@ -33,12 +34,14 @@ from candleviewer.app import create_app
 from candleviewer.ws.topics import TOPIC_REGISTRY
 
 #: The CLI's modules: its entry point, flow, port composition and Postgres side; and the
-#: bootstrap-Owner mint's service and store (#4479 C1).
+#: bootstrap-Owner CLI's entry point and flow (#4479 C2), service and store (C1).
 DARK = (
     "candleviewer.breakglass",
     "candleviewer.admin.breakglass",
     "candleviewer.admin.breakglass_wiring",
     "candleviewer.storage.repositories.break_glass_cli_sqlalchemy",
+    "candleviewer.bootstrap_owner",
+    "candleviewer.admin.bootstrap_owner",
     "candleviewer.auth.bootstrap_owner",
     "candleviewer.storage.repositories.bootstrap_owner_sqlalchemy",
 )
@@ -50,7 +53,7 @@ SERVED = (
     "candleviewer.main",
     "candleviewer.server",
 )
-_NAMED = re.compile(r"break[-_ ]?glass", re.IGNORECASE)
+_NAMED = re.compile(r"break[-_ ]?glass|bootstrap[-_ ]?owner", re.IGNORECASE)
 _PKG = Path(candleviewer.__file__).resolve().parent
 
 

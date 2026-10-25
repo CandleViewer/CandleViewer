@@ -36,9 +36,11 @@ from candleviewer.observability.metrics_runtime import (
 #: `_safe`: `net_binding_safe`, the 1/0 mesh-guard gauge named by E09-T04 (US-ONB-008).
 #: `_events`: `auth_break_glass_unresolved_events`, a gauge of unresolved system events (#2496).
 #: `_attempts`: `auth_break_glass_attempts`, a gauge of CLI runs on record in `audit_log` (#2496).
+#: `_bootstraps`: `auth_owner_bootstraps`, a gauge of Owner grants on record there (#4479 C2).
 #: `_ratio`: `replay_achieved_speed_ratio`, named by E26-T03 (Prometheus' base unit for ratios).
 _UNIT_SUFFIX = re.compile(
-    r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts|ratio)$"
+    r"_(seconds|bytes|total|depth|state|in_use|remaining|ms|mb|rows|safe|events|attempts"
+    r"|bootstraps|ratio)$"
 )
 #: The samples a histogram serves beside its base name.
 _SAMPLES = ("_bucket", "_count", "_sum")

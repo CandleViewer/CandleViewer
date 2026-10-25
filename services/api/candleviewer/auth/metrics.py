@@ -267,17 +267,26 @@ auth_break_glass_attempts = Gauge(
 # SR-023 (#4479 ruling 7): bootstrap Owner grants this process committed (`InviteService`, after
 # the commit that also wrote the critical `auth`/`owner_bootstrapped` system event). At most one
 # per database: once an Owner is active no bootstrap invite activates. No label; the
-# `users.owner_bootstrapped` audit row names the user. No alert rule yet (#4479 C2).
+# `users.owner_bootstrapped` audit row names the user. No alert rule reads it, since it resets
+# with the process: `AuthOwnerBootstrapped` reads `auth_owner_bootstraps` (below), which does not.
 auth_owner_bootstrap_events = Gauge(
     "auth_owner_bootstrap_events",
     "Bootstrap Owner grants committed by this process (users.owner_bootstrapped records).",
 )
+# SR-023 (#4479 C2): how many bootstrap Owner grants `audit_log` holds a record of, counted as the
+# CRITICAL `users.owner_bootstrapped` rows, each written ahead in its grant's transaction. It only
+# rises and, unlike the gauge above, survives a restart. `BreakGlassNotice` sets it from each
+# successful read (at boot, then every refresh) and `AuthOwnerBootstrapped` pages when it rises.
+auth_owner_bootstraps = Gauge(
+    "auth_owner_bootstraps",
+    "Bootstrap Owner grants recorded in audit_log (users.owner_bootstrapped rows); only rises.",
+)
 # SR-125 (#2496 review, detection health): one per failed read of the break-glass state (a
 # timeout, a database error, a revoked grant), counted per statement by `BreakGlassNotice`. A
-# failed read keeps the last value of the gauges above, which is 0 in a fresh process, and their
+# failed read keeps the last value of its gauge above, which is 0 in a fresh process, and the
 # `absent()` guards cannot see it (the series exist), so without this counter a reader that cannot
-# read leaves both pages silent and nothing says so. `AuthBreakGlassStateReadFailing` is a ticket
-# on it. No label: the log line names the statement and the error class.
+# read leaves all three pages silent and nothing says so. `AuthBreakGlassStateReadFailing` is a
+# ticket on it. No label: the log line names the statement and the error class.
 auth_break_glass_state_read_failures_total = Counter(
     "auth_break_glass_state_read_failures_total",
     "Failed reads of the break-glass state from Postgres (the gauges keep their last value).",
@@ -408,6 +417,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_break_glass_attempts",
         "auth_break_glass_state_read_failures_total",
         "auth_owner_bootstrap_events",  # #4479
+        "auth_owner_bootstraps",  # #4479 C2
         "auth_view_as_pending_end_rows",  # #3085
         # SR-029 revoke-to-close latency, observed by the WS hub and the per-user close (#3415)
         "auth_revocation_latency_seconds",

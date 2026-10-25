@@ -141,11 +141,11 @@ Both decision and code remain as stated until the owner decides; this section do
 - **First successful sign-in** is the first session inserted for that user with MFA satisfied.
   The password step alone proves only possession of a secret that could have been taken with the
   invite, and resolving the event before MFA would hide exactly the takeover it exists to surface.
-- **The alert source** is the durable pair, the CRITICAL `users.owner_bootstrapped` record and
-  its incident: C2's alert is keyed on it, rises-only, and read at boot exactly as
-  `auth_break_glass_attempts` is. The one-off `system_events` row is the live notice, never the
-  evidence (e09 U46).
+- **The alert source** is the CRITICAL `users.owner_bootstrapped` record: C2's
+  `AuthOwnerBootstrapped` pages on the count of those rows in `audit_log`, rises-only and read at
+  boot exactly as `auth_break_glass_attempts` is. The incident, a one-off `system_events` row, is
+  the live notice, never the evidence (e09 U46).
 - **Unchanged.** No API path writes the marker. Every other invite keeps the #2109 downgrade. A
   bootstrap invite is rejected `revoked` once another Owner exists, from `GET /invites/{token}`
   to `/confirm`, and nothing is activated.
-- **Threats.** `docs/security/threat-models/e09-auth-rbac.md` U46 to U48 and §3.6.1.
+- **Threats.** `docs/security/threat-models/e09-auth-rbac.md` U46 to U50 and §3.6.1.

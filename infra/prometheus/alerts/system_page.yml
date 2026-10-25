@@ -189,6 +189,31 @@ groups:
         annotations:
           summary: "A break-glass run was recorded on this host: review the audit log"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authbreakglassattempted"
+      - alert: AuthOwnerBootstrapped
+        # #4479 C2 (SR-023, threat model U46): a first Owner was made through the offline
+        # bootstrap invite. The gauge counts the CRITICAL `users.owner_bootstrapped` rows, one per
+        # grant, written ahead in the grant's own transaction: it only rises and is read at boot
+        # and every refresh, as auth_break_glass_attempts is. PR-B's `auth`/`owner_bootstrapped`
+        # system event and its gauge auth_owner_bootstrap_events are not the source: the event
+        # resolves at the redeemer's first MFA sign-in, a thief's too, and the gauge resets on a
+        # restart. It pages on a rise against the maximum of the 7 days before the last 15
+        # minutes, as AuthBreakGlassAttempted does, or on a count above 0 with no sample there at
+        # all: a Prometheus that first scrapes cv-api after the redemption has nothing to compare
+        # with, and the grant still pages. That second arm also pages once on a bootstrapped
+        # database for a Prometheus that lost its history, or a cv-api down for more than 7 days:
+        # a false alarm on the safe side. Either way the page ends 15 minutes after the first
+        # scrape that shows the count. No user label (the audit rows say who and from where); a
+        # component of its own.
+        # #2931: an event page, so no [RESOLVED] message follows the window.
+        expr: max by (env) (max_over_time(auth_owner_bootstraps[15m])) > max by (env) (max_over_time(auth_owner_bootstraps[7d] offset 15m)) or (max by (env) (max_over_time(auth_owner_bootstraps[15m])) > 0 unless max by (env) (max_over_time(auth_owner_bootstraps[7d] offset 15m)))
+        for: 0m
+        labels:
+          severity: page
+          component: auth_owner_bootstrap
+          resolves: window
+        annotations:
+          summary: "A first Owner was bootstrapped on this host: review the audit log"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authownerbootstrapped"
       - alert: AuthAuditOutcomesLostBurst
         # #2914 (04-security-program.md section 8.3 rule 2): more than 5 outcome audit records lost
         # in 15 minutes, so the audit sink is failing while sessions are still being revoked. Its

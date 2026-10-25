@@ -40,7 +40,10 @@ import structlog
 from candleviewer.admin.audited import audit_exempt, audited
 from candleviewer.admin.errors import BreakGlassUnavailable
 from candleviewer.audit.actions import validate_action
-from candleviewer.audit.journal import ACTOR  # every record's `actor_label` (R3): no user acts
+from candleviewer.audit.journal import (
+    ACTOR,  # every record's `actor_label` (R3): no user acts
+    BOOTSTRAP_OWNER_ACTIONS,  # `_Records.write` (DC-4479-18)
+)
 from candleviewer.audit.models import AuditOutcome, ExchangeEnv, Severity
 from candleviewer.auth.break_glass import BreakGlassRefusal, BreakGlassResetService
 from candleviewer.auth.errors import BreakGlassRefused
@@ -336,7 +339,7 @@ class _Records:
             raise Interrupted(name)
         return task.result()
 
-    @audited(ATTEMPT, REFUSED, RESET)
+    @audited(ATTEMPT, REFUSED, RESET, *sorted(BOOTSTRAP_OWNER_ACTIONS))
     async def write(
         self, action: str, outcome: AuditOutcome, reason: str | None, state: _State
     ) -> None:

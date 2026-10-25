@@ -71,6 +71,9 @@ class _Events:
     async def break_glass_attempt_count(self) -> int:
         return self.attempts
 
+    async def owner_bootstrap_count(self) -> int:
+        return 0  # the third read has its own tests: test_owner_bootstraps_metric.py
+
 
 class _Ticks:
     """The refresher's interval clock: each `sleep` parks until `tick()` lets one interval pass."""
@@ -321,6 +324,9 @@ async def test_hung_read_is_bounded_by_the_timeout() -> None:
         async def break_glass_attempt_count(self) -> int:
             await asyncio.Event().wait()
             return 1
+
+        async def owner_bootstrap_count(self) -> int:
+            return 0
 
     source = BreakGlassNotice(_Hung(), timeout_s=0.0)  # a deadline already due
     async with asyncio.timeout(5):  # an unbounded wait on a read fails here
