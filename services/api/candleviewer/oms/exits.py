@@ -172,8 +172,9 @@ _CANCELLABLE: Final = frozenset({"submitted", "triggered", "partially_filled"})
 _SETTLING: Final = frozenset({"validated", "submitting", "amend_pending", "cancel_pending"})
 _SIDES: Final[Mapping[str, Side]] = {"Buy": "buy", "Sell": "sell"}
 _TYPES: Final[Mapping[str, Literal["market", "limit"]]] = {"Market": "market", "Limit": "limit"}
-#: The retry codes of cancel-all's `retryable` (the 12:30Z ruling): nothing sent, may pass later.
-_RETRYABLE: Final = frozenset({"store_unavailable", "exchange_rate_limited"})
+#: The retry codes of cancel-all's `retryable` (the 12:30Z ruling; `oms_not_ready`, the 2026-10-25
+#: 06:56Z one): nothing sent, may pass later.
+_RETRYABLE: Final = frozenset({"store_unavailable", "exchange_rate_limited", "oms_not_ready"})
 #: Q3's rules the command port answers in capitals, which this service checks first.
 _TPSL_RULES: Final = frozenset({
     "reduce_only_tpsl", "native_stop_required", "tpsl_clear_unsupported", "tpsl_partial_mode",
@@ -226,7 +227,8 @@ class ExitOutcome:
     @property
     def retryable(self) -> bool:
         """Cancel-all's `retryable`: a refusal that sent nothing and may pass later
-        (`store_unavailable`, `exchange_rate_limited`), or a wait that ran out (`timeout`)."""
+        (`store_unavailable`, `exchange_rate_limited`, `oms_not_ready`), or a wait that ran out
+        (`timeout`)."""
         if self.kind == "unknown":
             return self.unknown_reason == "timeout"
         return self.code in _RETRYABLE

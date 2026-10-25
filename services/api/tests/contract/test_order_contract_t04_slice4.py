@@ -667,6 +667,17 @@ def test_the_1230z_rulings_word_the_deadline_the_retryable_flags_and_an_unbound_
     )
 
 
+def test_the_0656z_ruling_makes_a_not_ready_cancel_retryable() -> None:
+    """The orchestrator's ruling of 2026-10-25 06:56Z (2): `oms_not_ready`, the gateway's
+    backpressure (S4-D2a's SEC-S4D2A-01) or the exit service closing, is transient, so cancel-all
+    reports it `retryable`."""
+    assert not _missing(
+        _CANCEL_ALL,
+        "true for `oms_not_ready`, which passes (the gateway's backpressure, or the exit service "
+        "closing at shutdown; the orchestrator's ruling of 2026-10-25 06:56Z)",
+    )
+
+
 def test_the_1742z_ruling_passes_another_per_order_refusal_through_cancel_all() -> None:
     """The orchestrator's 17:42Z ruling (S4-E): a refusal of the per-order cancel that the list does
     not name keeps its code and is not retryable; an order that ended otherwise first is, like a
