@@ -41,8 +41,8 @@ rules:
       # route (#2421): the matched route TEMPLATE (`scope["route"].path`), never the raw path,
       #   plus `unmatched`; bounded by the app's route table; max_series=1000 as a backstop.
       # permission, route, role, also (#902, authz_denied_by_route_total): the clamped permission
-      #   (or `other`), the route template (`unmatched`, `ws`) and normalise_role; max_series=1000,
-      #   about one permission per route template x 4 roles + unmatched/ws.
+      #   (or `other`), the route template (`unmatched`, `ws`) and normalise_role; max_series=1040,
+      #   206 (permission, route template) pairs + unmatched/ws, x 4 roles, x 1.25 (#4530).
       # rule (E14-T01): drawing write conflicts {version_conflict, target_unavailable,
       #   id_unavailable, idempotency_key_reuse}; max_series=4.
       # status_class (#2421): {1xx, 2xx, 3xx, 4xx, 5xx}.
