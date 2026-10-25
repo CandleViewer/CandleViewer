@@ -339,13 +339,17 @@ def test_the_demo_host_overlay_reads_the_names_the_host_was_provisioned_with() -
 
 
 def test_env_example_lists_every_one_and_leaves_the_sensitive_ones_blank() -> None:
+    """And the two every overlay command needs, which `bootstrap-owner` requires with `:?`."""
     example = "\n" + ENV_EXAMPLE.read_text(encoding="utf-8")
-    assert HOST_NAMES <= set(re.findall(r"^([A-Z][A-Z0-9_]*)=", example, re.MULTILINE))
+    listed = set(re.findall(r"^([A-Z][A-Z0-9_]*)=", example, re.MULTILINE))
+    assert HOST_NAMES | {"CV_ENVIRONMENT", "CV_PG_DSN"} <= listed
     assert [name for name in sorted(BLANK) if f"\n{name}=\n" not in example] == []
 
 
 ENV = "services.api.environment"
 KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "10001", "mode": 0o400}
+LANE_MOUNT = KEK_MOUNT | {"source": "cv_audit_lane_key", "target": "cv_audit_lane_key"}
+BIND = {"type": "none", "o": "bind", "device": "/srv/cv-data"}  # a host bind in disguise (L3)
 
 
 @pytest.mark.parametrize(
@@ -360,6 +364,12 @@ KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "100
         ("services.api.ports", ["8000:8000"], "not explicitly bound to 127.0.0.1"),
         (f"{ENV}.CV_AUTH_PEPPER", "pepper-in-the-repo", "CV_AUTH_PEPPER is committed here"),
         (f"{ENV}.CV_EGRESS_IP", "${CV_EGRESS_IP:-unset}", "CV_EGRESS_IP is committed here"),
+        (f"{ENV}.CV_AUTH_PEPPER", "${CV_AUTH_PEPPER:-}", "CV_AUTH_PEPPER is committed here"),
+        (f"{ENV}.CV_EGRESS_IP", "${CV_EGRESS_IP:-}", "CV_EGRESS_IP is committed here"),
+        (f"{ENV}.CV_STORAGE_BACKEND", "${CV_STORAGE_BACKEND:-}", "CV_STORAGE_BACKEND is committed"),
+        (f"{ENV}.CV_MESH_CIDRS_CSV", "${CV_MESH_CIDRS_CSV:-}", "CV_MESH_CIDRS_CSV is committed"),
+        (f"{ENV}.CV_AUTH_CSRF_KEY_HEX", "${CV_AUTH_TOTP_KEY_HEX:?x}",
+         "CV_AUTH_CSRF_KEY_HEX is committed here"),
         (f"{ENV}.CV_KEK_HANDLE", "/run/secrets/other", "CV_KEK_HANDLE is not /run/secrets/cv_kek"),
         (f"{ENV}.CV_KEK_HANDLE", None, "CV_KEK_HANDLE is not /run/secrets/cv_kek"),
         ("secrets.cv_kek", {"file": "${CV_KEK_FILE:-/etc/kek.bin}"}, "secret 'cv_kek' is not"),
@@ -367,10 +377,19 @@ KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "100
         ("secrets.cv_kek", {"file": "./kek.bin"}, "secret 'cv_kek' is not"),
         ("secrets.cv_kek", {"environment": "CV_KEK_FILE"}, "secret 'cv_kek' is not"),
         ("secrets.cv_kek", None, "secret 'cv_kek' is not"),
+        ("secrets.cv_audit_lane_key", {"file": "${CV_AUDIT_LANE_MAC_SOURCE:-/dev/null}"},
+         "secret 'cv_audit_lane_key' is not"),
+        ("secrets.cv_audit_lane_key", None, "secret 'cv_audit_lane_key' is not"),
+        ("secrets.cv_kek_hex", {"environment": "CV_KEK_HEX"}, "declares only cv_kek and"),
+        ("secrets.cv_owner_dsn", {"environment": "CV_PG_OWNER_DSN"}, "declares only cv_kek and"),
         ("services.api.secrets", [KEK_MOUNT | {"mode": 0o444}], "does not mount cv_kek"),
         ("services.api.secrets", [KEK_MOUNT | {"uid": "0"}], "does not mount cv_kek"),
         ("services.api.secrets", [KEK_MOUNT, KEK_MOUNT], "does not mount cv_kek"),
         ("services.api.secrets", None, "does not mount cv_kek"),
+        ("services.api.secrets", [KEK_MOUNT, {"source": "cv_kek_hex"}], "mounts a secret that"),
+        ("services.api.secrets", [KEK_MOUNT, {"source": "cv_kek_hex", "target": "cv_kek"}],
+         "mounts a secret that"),
+        ("services.api.secrets", [KEK_MOUNT, LANE_MOUNT | {"mode": 0o444}], "mounts a secret that"),
         ("services.api.ulimits", {"core": -1}, "ulimits.core"),
         ("services.api.ulimits", None, "ulimits.core"),
         ("services.api.volumes", ["/srv/cv-data:/data"], "never a bind mount"),
@@ -378,34 +397,72 @@ KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "100
         ("services.api.volumes", ["undeclared:/data"], "this file declares"),
         ("services.api.volumes", ["cv-api-data:/data", "/etc/candleviewer:/x:ro"], "alone"),
         ("services.api.volumes", None, "alone"),
+        ("volumes.cv-api-data", {"driver_opts": BIND}, "not cv-api-data alone with no option"),
+        ("volumes.cv-api-data", {"driver": "local"}, "not cv-api-data alone with no option"),
+        ("volumes.cv-api-data", {"external": True}, "not cv-api-data alone with no option"),
+        ("volumes.cv-audit-data", {"driver_opts": BIND}, "not cv-api-data alone with no option"),
         ("services.migrate.environment.CV_PG_DSN", "${CV_PG_DSN:?x}", "CV_PG_DSN is not"),
         (f"{ENV}.CV_PG_OWNER_DSN", "${CV_PG_OWNER_DSN:?x}", "only migrate may"),
     ],
     ids=["other-service", "top-level-key", "api-build", "api-writable-root", "migrate-entrypoint",
-         "wildcard-port", "bare-port", "committed-secret", "committed-default", "other-handle",
-         "no-handle", "kek-file-default", "kek-file-optional", "kek-file-literal",
-         "kek-environment-secret", "no-kek-secret", "kek-mode-0444", "kek-uid-0", "kek-twice",
-         "kek-not-mounted", "core-unlimited", "no-ulimits", "data-bind", "data-bind-long",
-         "data-undeclared", "extra-bind", "no-data", "migrate-app-dsn", "api-owner-dsn"],
+         "wildcard-port", "bare-port", "committed-secret", "committed-default",
+         "pepper-may-be-empty", "egress-may-be-empty", "backend-may-be-empty", "mesh-may-be-empty",
+         "swapped-variable", "other-handle", "no-handle", "kek-file-default", "kek-file-optional",
+         "kek-file-literal", "kek-environment-secret", "no-kek-secret", "lane-key-default",
+         "no-lane-key", "extra-kek-secret", "owner-dsn-secret", "kek-mode-0444", "kek-uid-0",
+         "kek-twice", "kek-not-mounted", "api-extra-secret", "api-secret-onto-the-handle",
+         "api-lane-mode-0444", "core-unlimited", "no-ulimits", "data-bind", "data-bind-long",
+         "data-undeclared", "extra-bind", "no-data", "data-driver-opts", "data-driver",
+         "data-external", "audit-volume-redeclared", "migrate-app-dsn", "api-owner-dsn"],
 )  # fmt: skip
 def test_demo_host_overlay_lint_refuses(path: str, value: object, why: str) -> None:
     errors = lint_compose.check_demo_host_overlay(_demo_host(path, value))
     assert any(why in error for error in errors), errors
 
 
+@pytest.mark.parametrize(
+    ("path", "value"),
+    [
+        ("services.api.secrets", [KEK_MOUNT, LANE_MOUNT]),
+        (f"{ENV}.CV_ALLOWED_ORIGINS", "${CV_ALLOWED_ORIGINS:?x}"),
+        ("volumes.cv-api-data", {}),
+    ],
+    ids=["api-restates-the-lane-key", "origins-required", "data-volume-empty-mapping"],
+)
+def test_demo_host_overlay_lint_accepts(path: str, value: object) -> None:
+    """api reads the base file's lane key, so the overlay may restate that mount exactly."""
+    assert lint_compose.check_demo_host_overlay(_demo_host(path, value)) == []
+
+
 # DC-4479-02: #4479's CLI prints the Owner's invite token once; it runs in its own service, whose
 # output no logging driver keeps, never as `run ... api`.
 BOOT = "services.bootstrap-owner"
-LANE_MOUNT = KEK_MOUNT | {"source": "cv_audit_lane_key", "target": "cv_audit_lane_key"}
+#: The orchestrator's ruling (b): what the CLI reads, and nothing else (no lane key, no egress
+#: address, no auth keys).
+BOOT_ENV = {"CV_ENVIRONMENT", "CV_PG_DSN", "CV_KEK_SOURCE", "CV_KEK_HANDLE", "CV_KEK_VERSION",
+            "CV_AUDIT_WAL_PATH"}  # fmt: skip
 
 
 def test_the_bootstrap_owner_service_is_cvapis_twin_for_the_cli_and_logs_nothing() -> None:
     boot = _demo_host()["services"]["bootstrap-owner"]
     assert boot["logging"] == {"driver": "none"} and boot["profiles"] == ["bootstrap-owner"]
     assert boot["entrypoint"] == ["python", "-m", "candleviewer.bootstrap_owner"]
-    assert "ports" not in boot and boot["secrets"] == [KEK_MOUNT, LANE_MOUNT]
+    assert "ports" not in boot and boot["secrets"] == [KEK_MOUNT]
+    assert set(boot["environment"]) == BOOT_ENV
     # cv-api's database role (the CLI's probe looks for its other sessions), never the owner's
     assert boot["environment"]["CV_PG_DSN"].startswith("${CV_PG_DSN:?")
+
+
+def test_the_bootstrap_shares_cv_apis_audit_wal_on_its_volume() -> None:
+    """The CLI's journal and the run lock it shares with cv-api sit beside cv-api's audit WAL:
+    one path (absolute, no `..`) on the one volume both mount (vw2)."""
+    api = yaml.safe_load(COMPOSE_PATH.read_text(encoding="utf-8"))["services"]["api"]
+    boot = _demo_host()["services"]["bootstrap-owner"]
+    wal = api["environment"]["CV_AUDIT_WAL_PATH"]
+    assert boot["environment"]["CV_AUDIT_WAL_PATH"] == wal == f"{lint_compose.AUDIT_DIR}/audit.wal"
+    assert wal.startswith("/") and ".." not in wal.split("/")
+    mount = f"cv-audit-data:{wal.rpartition('/')[0]}"
+    assert mount in api["volumes"] and boot["volumes"] == [mount]
 
 
 @pytest.mark.parametrize(
@@ -421,22 +478,30 @@ def test_the_bootstrap_owner_service_is_cvapis_twin_for_the_cli_and_logs_nothing
         (f"{BOOT}.entrypoint", None, "entrypoint is not"),
         (f"{BOOT}.command", ["--owner", "owner@example.invalid"], "command is not set"),
         (f"{BOOT}.secrets", [KEK_MOUNT, LANE_MOUNT, {"source": "alert_deadman_url"}],
-         "a secret that is not one of the api's"),
-        (f"{BOOT}.secrets", [KEK_MOUNT | {"mode": 0o444}], "a secret that is not one of the api's"),
-        (f"{BOOT}.secrets", [LANE_MOUNT], "a secret that is not one of the api's"),
+         "mounts a secret that is not"),
+        (f"{BOOT}.secrets", [KEK_MOUNT | {"mode": 0o444}], "mounts a secret that is not"),
+        (f"{BOOT}.secrets", [LANE_MOUNT], "mounts a secret that is not"),
+        (f"{BOOT}.secrets", [KEK_MOUNT, LANE_MOUNT], "mounts a secret that is not"),
         (f"{BOOT}.build", {"context": "../..", "dockerfile": "x"}, "the api's image from this"),
         (f"{BOOT}.pull_policy", "missing", "the api's image from this checkout"),
         (f"{BOOT}.read_only", False, "read_only is not true"),
         (f"{BOOT}.ulimits", None, "ulimits.core"),
         (f"{BOOT}.volumes", ["/srv/audit:/var/lib/candleviewer/audit"], "the audit volume alone"),
+        (f"{BOOT}.volumes", ["cv-other:/var/lib/candleviewer/audit"], "the audit volume alone"),
         (f"{BOOT}.volumes", None, "the audit volume alone"),
         (f"{BOOT}.environment.CV_PG_DSN", "${CV_PG_OWNER_DSN:?x}", "only migrate may"),
         (f"{BOOT}.environment.CV_PG_DSN", "postgresql+asyncpg://postgres/cv", "committed here"),
+        (f"{BOOT}.environment.CV_AUTH_PEPPER", "${CV_AUTH_PEPPER:?x}", "environment is not"),
+        (f"{BOOT}.environment.CV_EGRESS_IP", "${CV_EGRESS_IP:?x}", "environment is not"),
+        (f"{BOOT}.environment.CV_KEK_VERSION", None, "environment is not"),
+        (f"{BOOT}.environment.CV_AUDIT_WAL_PATH", "${CV_AUDIT_WAL_PATH:?x}",
+         "CV_AUDIT_WAL_PATH is not cv-api's"),
     ],
     ids=["missing", "json-file-log", "no-logging", "no-profile", "core-profile", "port",
          "server-entrypoint", "no-entrypoint", "command", "foreign-secret", "kek-mode-0444",
-         "no-kek", "other-dockerfile", "pulled-image", "writable-root", "no-ulimits",
-         "audit-bind", "no-audit-volume", "owner-dsn", "committed-dsn"],
+         "no-kek", "lane-key", "other-dockerfile", "pulled-image", "writable-root", "no-ulimits",
+         "audit-bind", "other-audit-volume", "no-audit-volume", "owner-dsn", "committed-dsn",
+         "auth-pepper", "egress-address", "no-kek-version", "own-wal-path"],
 )  # fmt: skip
 def test_demo_host_overlay_lint_refuses_a_bootstrap_owner_that(
     path: str, value: object, why: str
@@ -452,6 +517,18 @@ def test_main_without_arguments_also_lints_the_demo_host_overlay(
     broken.write_text("services:\n  api:\n    privileged: true\n", encoding="utf-8")
     monkeypatch.setattr(lint_compose, "DEMO_HOST_OVERLAY", broken)
     assert lint_compose.main([]) == 1
+    assert "privileged is not set by the demo-host overlay" in capsys.readouterr().err
+
+
+def test_main_lints_a_named_overlay_by_its_own_rule(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """N1: `lint_compose.py <file>` applies rule 4 or rule 6 when the name is an overlay's."""
+    assert lint_compose.main([str(DEMO_HOST_PATH)]) == 0
+    assert lint_compose.main([str(DEPLOY_OVERLAY_PATH)]) == 0
+    broken = tmp_path / "docker-compose.demo-host.yml"
+    broken.write_text("services:\n  api:\n    privileged: true\n", encoding="utf-8")
+    assert lint_compose.main([str(broken)]) == 1
     assert "privileged is not set by the demo-host overlay" in capsys.readouterr().err
 
 
