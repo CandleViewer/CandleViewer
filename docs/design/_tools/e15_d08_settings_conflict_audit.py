@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import itertools
 import json
 import re
 import sys
@@ -89,7 +90,7 @@ STATUS_WORDS = ("text-first", "PROPOSED unless RULED", "boards PENDING", "≤ 10
 FORBIDDEN = (
     r"/(?:ho[m]e|Users)/[^/\s]+/",
     r"\b[A-Za-z]:\\(?:Users|Documents and Settings)\\",
-    r"\\\\[\w.-]+\\[\w$.-]+",
+    r"\\\\[\w$.-]+\\[\w$.-]+",
     r"penpot\.[a-z0-9-]+\.[a-z]{2,}",
     r"team-i[d]=",
     r"file-i[d]=",
@@ -136,6 +137,7 @@ DOC_PATHS = {
 }
 EN_DASH = "\u2013"
 TIMES = "\u00d7"
+MINUS = "\u2212"
 CITE_RE = (
     r"`(04|05|11|14|15|16|21|22|23|BL|D01|D02|FL|S3|S4|D09|E16D03|README):(\d+)(?:"
     + EN_DASH
@@ -364,6 +366,7 @@ D02 | 413 | Apply on a clean working copy replaces it at once
 D02 | 417 | ### 5.7 SCR-029 Unsaved-changes and conflict dialog
 D02 | 433 | Save layout writes Layout 1 (`updateLayout`) and then applies the preset
 D02 | 439 | Saved now (14:05:12)
+D02 | 443 | Keep mine replaces the version saved at 14:05. Load theirs discards your
 D02 | 449 | Keep mine writes with the fresh token
 D02 | 498 | ### 5.10 SCR-025 Workspace settings
 D02 | 502 | unique per user, case-insensitive; "That name is already in use."
@@ -655,11 +658,13 @@ EXIT_RE = (
 )
 GATED_RE = (
     r"\bT2\b|\block(?:ed)?\b|\bpadlock\b|\U0001f512|aria-disabled|\bdisabled\b|\bunavailable\b"
-    r"|\bgated\b|\bblocked\b|\bgr[ae]yed\b|\bdimmed\b"
+    r"|\bgated\b|\bblocked\b|\bgr[ae]yed\b|\bdimmed\b|\bheld\b|\bhidden\b|\binactive\b"
+    r"|\bcannot be (?:pressed|used)\b|\bunusable\b"
 )
 NEGATED_RE = (
     r"\b(?:never|not|no|nor)\b (?:the |a |by |as )?"
-    r"(?:T2|gated|lock(?:ed)?|`?disabled`?|`aria-disabled`|unavailable|dimmed)\b"
+    r"(?:T2|gated|lock(?:ed)?|`?disabled`?|`aria-disabled`|unavailable|dimmed|held|hidden"
+    r"|inactive)\b"
 )
 # A planned inset (BQ-2 RULED) is a fixed sentence with three free parts: its place, its words and
 # its caption (MJ4: an allow-list); the free parts are then read for control and dimming words.
@@ -681,8 +686,17 @@ DIM_RE = (
 )
 T2_DIM_RE = r"opacity\.disabled|color\.text\.disabled"
 # An environment control on SCR-025 (BQ-8 RULED: none at all, not even contract-pending), read in
-# every SCR-025 frame row and in the table rows of §0, §2 and §8.
+# every SCR-025 frame row, in all of §0 and §2 — prose and tables (MAJOR-1: in a text-first spec
+# the prose is binding) — and in §8's table rows; the two sentences that state the absence are the
+# only environment words §0 and §2 may hold, each read as written.
 ENV_RE = r"(?i:\benvironments?\b|\btestnet\b)|\b(?:LIVE|Live|DEMO|Demo)\b|\bCMP-07[45]\b"
+ENV_ALLOWED = (
+    "**No environment control (BQ-8 RULED).** The environment comes from the account a panel acts "
+    "on and is never stored in a layout (D-7 `D02:125`; C-2.11), so SCR-025 draws no environment "
+    "control, no pin and no warning.",
+    "A workspace write is scope `self`, so the account and environment legs never apply to it "
+    f"(`D02:635{EN_DASH}640`).",
+)
 # id | a ticket route (yes / no) | the words its Route cell holds | the frame it opens, or "none"
 # (no dialog: the working copy is kept and the tab keeps its `*`).
 ENTRY_TABLE = """
@@ -724,7 +738,7 @@ Revert Layout 1 to the version saved at 13:40? Your unsaved changes are lost. | 
 Discard unsaved changes? | S4 | SCR-025/discard-prompt
 Keep editing | S4 | SCR-025/discard-prompt
 This workspace isn't saved. | D02 | SCR-025/viewer-read-only
-"""
+""" + (f"min(size, 100vw {MINUS} 2 {TIMES} space.inset.lg) | S4 | SCR-025/reflow-200\n")
 # The name rules (AC 6; BQ-4 RULED): rule -> (the error line, the summary link). `{max}` is `22`'s.
 INVALID_RULES = {
     "empty": ("Enter a name.", "Name: enter a name."),
@@ -816,9 +830,29 @@ A3_SENTENCE = (
 EXITS_ROW = "Cancel, `Esc`, Close, Keep editing, Discard changes, Load theirs, Revert to saved"
 PLANNED_CLAIMS = (
     (2, "never a control, never T2, never dimmed"),
-    (2, "all at full strength; no CMP"),
     (5, "an absence is never a lock, never T2 and never dimmed"),
     (7, "full strength, never dimmed"),
+)
+# §2.3's planned row, whole (MAJOR-2: its place, its look and its focus cell are all binding, so
+# any edit of it is a FAIL), and the rows that restate the absence: the ruled BQ-2 outcome, the
+# default frame's row and the decision D08-D3.
+PLANNED_ROW = (
+    "planned-description, planned-defaults, planned-density, planned-theme",
+    "the board's annotation layer only, at the place its fieldset would take (Description under "
+    "Name; Defaults for new panels between Workspace and Startup and saving; Appearance after "
+    "Startup and saving, Density then Theme override): a `color.surface.raised` box, "
+    "`radius.card`, padding `space.inset.md`; the `planned` stamp in `type.ui.label` + "
+    "`color.text.primary`, the field words in `type.ui.body` + `color.text.secondary`, the caption "
+    "in `type.ui.caption` + `color.text.secondary`, all at full strength; no CMP",
+    "nothing in the shipped dialog: no Tab stop, no name, no announcement",
+)
+PLANNED_ROW_CLAIMS = (
+    ("BQ-2", "never a control, never T2, never dimmed"),
+    ("`SCR-025/default`", "the four planned insets live in the board's annotation layer only"),
+    (
+        "D08-D3",
+        "live on board 01's annotation layer only, and the shipped dialog renders none of them",
+    ),
 )
 T2_ONCE = (
     "E09-D09's decision rule decides every control here",
@@ -852,6 +886,48 @@ EXEMPT = {
     "contrast-fail": "a pair's ratio is measured from the token JSON; §7's cells are pinned",
     "reason-form": "checks REASONS_TABLE, this tool's own table, for length and full stop",
     "reconcile": "checks RECONCILE_TABLE against CITED_TABLE and KIND_TABLE, tool tables",
+}
+# §8's fixture column (MINOR-3 (c)): per key, the variables its templates are rendered with
+# beyond the shared ones (`{workspace}`, `{layout}`, `{preset}`, `{user}`, `{max}`, `{name}`);
+# a value naming a fixture or a contract fact is read from the tool, never typed. The diff keys
+# render from the tool's summaries of the two fixtures.
+DECK_VARS = {
+    "e15.settings.name.counter": {"n": "name_max+1"},
+    "e15.settings.summary.title": {"n": "one_invalid"},
+    "e15.settings.fix_fields": {"n": "one_invalid"},
+    "e15.settings.summary.link": {"message": "invalid_links"},
+    "e15.settings.startup.help": {"workspace": "other_workspace"},
+    "e15.delete.body": {"n": "layouts"},
+    "e15.revert.title": {"hh:mm": "saved_time"},
+    "e15.revert.done": {"hh:mm": "saved_time"},
+    "e15.conflict.col_saved": {"hh:mm:ss": "conflict_time"},
+    "e15.conflict.loaded": {"hh:mm": "conflict_hhmm"},
+    "e15.conflict.confirm.title": {"hh:mm": "conflict_hhmm"},
+    "e15.conflict.row_sentence": {"label": "row_label", "mine": "row_mine", "saved": "row_saved"},
+}
+DECK_FIXTURE_RE = r" · fixtures? (?=\")"
+# The fixture strings §2, §3, §4 and §6 restate outside the frame rows (MINOR-3 (c)): section,
+# the template (rendered with the tool's name maximum and times) and how many times its non-frame
+# lines print it.
+RESTATED = (
+    (2, '"Up to {max} characters. Each workspace needs its own name."', 1),
+    (2, '"{{n}} of {max} characters"', 1),
+    (2, '"Use at most {max} characters."', 1),
+    (2, '"Name: use at most {max} characters."', 1),
+    (3, "Revert {layout} to the version saved at {saved}? Your unsaved changes are lost.", 1),
+    (3, "{layout} reverted to the version saved at {saved}.", 1),
+    (4, "Replace the version saved at {conflict}?", 1),
+    (4, "Saved now ({conflict_full})", 1),
+    (4, "Keep mine replaces the version saved at {conflict}.", 1),
+    (6, "Saved now ({conflict_full})", 1),
+)
+# A marker that cannot sit beside its number (it would land inside a copy-ready code span) is
+# detached: (the row id, the key) -> how many times the line prints its value (MINOR-3 (b): every
+# occurrence on the line is counted, so a bumped one is a FAIL).
+DETACHED = {
+    ("D08-A10", "contract.name_min"): 1,
+    ("D08-A10", "contract.name_max"): 2,
+    ("D08-A17", "contract.conflict_ms"): 2,
 }
 MARKER_RE = r"<!-- audit:([A-Za-z0-9_.-]+)=(\S+) -->"
 MARKER_LOOSE_RE = r"<!--\s*audit:[^\n]*?(?:-->|$)"
@@ -1919,7 +1995,7 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
     """The numbered sections in order (MJ7), then §5, §5.1, §6, §7, §8, §11 and §12: the one T2
     paragraph and its not-T2 list, T2 stated once, the exits row and sentence, the planned insets'
     absence restated, the measured tables, the deck, the G-rows, the sign-off items; and no
-    environment control anywhere SCR-025 is described (§0, §2, §8)."""
+    environment control anywhere SCR-025 is described (all of §0 and §2, §8's rows)."""
     bad: list[str] = []
     heads = re.findall(r"^## (\d+)\. ", spec, MULTI)
     if heads != SECTIONS:
@@ -1942,7 +2018,15 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
     for n, claim in PLANNED_CLAIMS:
         if claim not in section(spec, n, n + 1):
             bad.append(fail("planned-claims", f"§{n} lost the planned insets' {claim!r}"))
+    planned = [cells(r) for r in table_rows(section(spec, 2, 3)) if r.startswith("| planned-")]
+    if [tuple(c) for c in planned] != [PLANNED_ROW]:
+        bad.append(fail("planned-row", "§2.3's planned row is not the fixed row (BQ-2 RULED)"))
+    for rid, claim in PLANNED_ROW_CLAIMS:
+        found = re.findall(rf"^\| {re.escape(rid)} +\|.*$", spec, MULTI)
+        if len(found) != 1 or claim not in found[0]:
+            bad.append(fail("planned-claims", f"the {rid} row lost the planned insets' {claim!r}"))
     bad += measured_gates(s7, ctx)
+    bad += deck_fixture_gates(s8, ctx.facts) + restated_gates(spec, ctx.facts)
     strings = re.findall(r'^\| `[^`]+` +\|[^|\n]*\| ("[^|\n]*")', s8, MULTI)
     for pat in BANNED_COPY:
         bad += [
@@ -1967,11 +2051,98 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
         for i in checklist_items(ctx.t)
         if i not in s12
     ]
-    scope = table_rows(section(spec, 0, 1)) + table_rows(section(spec, 2, 3)) + table_rows(s8)
+    prose = section(spec, 0, 1) + section(spec, 2, 3)
+    for allowed in ENV_ALLOWED:
+        prose = prose.replace(allowed, "", 1)
+    scope = [ln for ln in prose.split("\n") if ln.strip()] + table_rows(s8)
     scope.append(first(r"(\*\*Not drawn — the text is binding[^\n]*)", spec))
     for row in scope:
         if re.search(ENV_RE, row) and not re.match(FRAME_RE, row):
             bad.append(fail("env", f"environment control where SCR-025 is drawn: {row[:60]!r}"))
+    return bad
+
+
+def deck_values(facts: dict[str, Any]) -> dict[str, list[str]]:
+    """The values §8's fixture column is rendered from: FIXTURE and the contract facts."""
+    fx, (label, (mine, saved)) = FIXTURE, next(iter(facts["conflict_table"].items()))
+    links = [link.format(max=facts["name_max"]) for _, link in INVALID_RULES.values()]
+    return {
+        "workspace": [fx["workspace"]],
+        "other_workspace": [fx["other_workspace"]],
+        "layout": [fx["layout"]],
+        "preset": [fx["preset"]],
+        "user": [fx["target"]],
+        "max": [str(facts["name_max"])],
+        "name": [f"{fx['layout']} (mine)"],
+        "name_max+1": [str(facts["name_max"] + 1)],
+        "one_invalid": ["1"],
+        "invalid_links": [x.removeprefix("Name: ") for x in links],
+        "layouts": [str(fx["layouts"])],
+        "saved_time": [facts["saved_time"]],
+        "conflict_time": [facts["conflict_time"]],
+        "conflict_hhmm": [facts["conflict_time"][:5]],
+        "row_label": [label],
+        "row_mine": [mine],
+        "row_saved": [saved],
+    }
+
+
+def deck_fixture_gates(s8: str, facts: dict[str, Any]) -> list[str]:
+    """§8's fixture column, rendered (MINOR-3 (c)): every fixture string is one of its row's
+    templates with the tool's values, or (a diff key) one of the tool's summary lines in that
+    key's form (DIFF_TEMPLATES; the row's own templates are the `template` gate's)."""
+    values, bad = deck_values(facts), []
+    lines = render_summary(FIXTURE["ac3"]) + render_summary(FIXTURE["overflow"])
+    for row in re.findall(r"^\| `[a-z0-9_.]+` +\|.*$", s8, MULTI):
+        c = cells(row)
+        if len(c) < 4 or not re.search(DECK_FIXTURE_RE, c[2]):
+            continue
+        key, (head, tail) = c[0].strip("`"), re.split(DECK_FIXTURE_RE, c[2], maxsplit=1)
+        names = {"workspace": "workspace", "layout": "layout", "preset": "preset", "user": "user"}
+        names |= {"max": "max", "name": "name"} | DECK_VARS.get(key, {})
+        renders: set[str] = set()
+        for form in DIFF_TEMPLATES.get(key.removeprefix("e15.diff."), ()):
+            pattern = re.escape(form).replace(r"\{n\}", r"\d+").replace(r"\{items\}", ".+")
+            renders |= {x for x in lines if re.fullmatch(pattern, x)}
+        for template in re.findall(r'"([^"]*)"', head):
+            if key.startswith("e15.diff."):
+                continue
+            slots = re.findall(r"\{([a-z:_]+)\}", template)
+            if any(x not in names for x in slots):
+                continue
+            for combo in itertools.product(*(values[names[x]] for x in slots)):
+                out = template
+                for slot, value in zip(slots, combo, strict=True):
+                    out = out.replace("{" + slot + "}", value)
+                renders.add(out)
+        for fixture in re.findall(r'"([^"]*)"', tail):
+            if fixture not in renders:
+                bad.append(
+                    fail(
+                        "deck-fixture",
+                        f"§8 {key}: fixture {fixture!r} is not its rendered template",
+                    )
+                )
+    return bad
+
+
+def restated_gates(spec: str, facts: dict[str, Any]) -> list[str]:
+    """The fixture strings §2, §3, §4 and §6 restate outside the frame rows, rendered (MINOR-3
+    (c))."""
+    bad: list[str] = []
+    times = {
+        "max": str(facts["name_max"]),
+        "layout": FIXTURE["layout"],
+        "saved": facts["saved_time"],
+        "conflict": facts["conflict_time"][:5],
+        "conflict_full": facts["conflict_time"],
+    }
+    for n, template, want in RESTATED:
+        prose = [ln for ln in section(spec, n, n + 1).split("\n") if not re.match(FRAME_RE, ln)]
+        text = template.format(**times)
+        have = "\n".join(prose).count(text)
+        if have != want:
+            bad.append(fail("restated", f"§{n} prints {text!r} {have} times, {want} expected"))
     return bad
 
 
@@ -2137,10 +2308,19 @@ def marker_gates(spec: str, numbers: dict[str, Any]) -> list[str]:
             bad.append(
                 fail("marker-visible", f"printed {number.group(1)} beside audit:{key}={val}")
             )
-        elif not number and not re.search(rf"(?<![\d.:]){re.escape(val)}(?![\d.:])", before):
-            bad.append(
-                fail("marker-visible", f"audit:{key}={val} with no {val} before it on its line")
-            )
+        elif not number:
+            end = spec.find("\n", m.end())
+            line = re.sub(MARKER_RE, "", spec[spec.rfind("\n", 0, m.start()) + 1 : end])
+            want = DETACHED.get((first(r"^\| (D08-[A-Z]\d+) ", line), key))
+            have_n = len(re.findall(rf"(?<![\d.:]){re.escape(val)}(?![\d.:])", line))
+            if have_n != want:
+                bad.append(
+                    fail(
+                        "marker-visible",
+                        f"audit:{key}={val} detached: its line prints {val} {have_n} times, "
+                        f"{want} expected",
+                    )
+                )
     for key, want in MARKERS.items():
         have_n = len(re.findall(rf"audit:{re.escape(key)}=", spec))
         if have_n < want:
@@ -3374,6 +3554,197 @@ def section_mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "X143-marker-count",
             sub(" (2 <!-- audit:light_twins=2 --> light twins)", " (2 light twins)"),
             "[marker-count] audit:light_twins appears 1 times, 2 expected",
+        ),
+        # Fold r2 (the delta r1): MAJOR-1 — an environment control in §0's or §2's prose (X148 is
+        # the lens's M16d:prose-2.3).
+        (
+            "X148-env-prose-2.3",
+            sub(
+                "the anatomy of §2.2 holds unless the row says otherwise.",
+                "the anatomy of §2.2 holds unless the row says otherwise. Startup also holds a "
+                "Default environment for new panels select (DEMO or LIVE).",
+            ),
+            "[env] environment control where SCR-025 is drawn",
+        ),
+        (
+            "X149-env-prose-2.1",
+            sub(
+                "### 2.1 Frames (binding; the tool gates every row)\n\n",
+                "### 2.1 Frames (binding; the tool gates every row)\n\nEvery frame draws the "
+                "CMP-075 LIVE pill beside the title.\n\n",
+            ),
+            "[env] environment control where SCR-025 is drawn",
+        ),
+        (
+            "X150-env-prose-0",
+            sub(
+                "**Reconciliation rule:**",
+                "Board 01 draws an Environment dropdown, LIVE or DEMO. **Reconciliation rule:**",
+            ),
+            "[env] environment control where SCR-025 is drawn",
+        ),
+        # MAJOR-2 — §2.3's planned row (X151 is the lens's M5z:s2.3-row), the BQ-2 row (X154, the
+        # lens's M5z:s2-prose regex), D08-D3 and the default frame's row.
+        (
+            "X151-planned-row",
+            row_fn(
+                r"^\| planned-description, .*$",
+                lambda ln: ln.replace(
+                    "the board's annotation layer only", "the dialog, as a field well", 1
+                ),
+            ),
+            "[planned-row] §2.3's planned row is not the fixed row",
+        ),
+        (
+            "X152-planned-row-focus",
+            row_fn(
+                r"^\| planned-description, .*$",
+                lambda ln: ln.replace(
+                    "nothing in the shipped dialog: no Tab stop",
+                    "a Tab stop each in the shipped dialog",
+                    1,
+                ),
+            ),
+            "[planned-row] §2.3's planned row is not the fixed row",
+        ),
+        (
+            "X153-planned-row-dim",
+            row_fn(
+                r"^\| planned-description, .*$",
+                lambda ln: ln.replace(
+                    "a `color.surface.raised` box,",
+                    "a `color.surface.raised` box at `opacity.disabled`,",
+                    1,
+                ),
+            ),
+            "[planned-row] §2.3's planned row is not the fixed row",
+        ),
+        (
+            "X168-default-planned",
+            frame_sub(
+                "SCR-025/default",
+                "live in the board's annotation layer only",
+                "live in the dialog, as a field well",
+            ),
+            "[planned-claims] the `SCR-025/default` row lost",
+        ),
+        (
+            "X169-restated-name-help",
+            row_fn(
+                r"^\| more than 40 .*$",
+                lambda ln: ln.replace(
+                    '"Use at most 40 characters."', '"Use at most 41 characters."'
+                ),
+            ),
+            "[restated] §2 prints",
+        ),
+        (
+            "X154-bq2-planned",
+            line_sub("| BQ-2 ", "never a control, never T", "a CMP-009 select, never T"),
+            "[planned-claims] the BQ-2 row lost",
+        ),
+        (
+            "X155-d3-planned",
+            line_sub(
+                "| D08-D3 ",
+                "live on board 01's annotation layer only, and the shipped dialog renders none "
+                "of them",
+                "are drawn in the dialog as field wells",
+            ),
+            "[planned-claims] the D08-D3 row lost",
+        ),
+        # MINOR-2 — the exits never held or hidden.
+        (
+            "X156-exit-held",
+            frame_sub(
+                "SCR-025/delete-confirm",
+                "footer: Cancel (`secondary`)",
+                "footer: Cancel (`secondary`, held until the save returns)",
+            ),
+            "[exit-gated] exit drawn gated in SCR-025/delete-confirm",
+        ),
+        (
+            "X157-exit-hidden",
+            frame_sub(
+                "SCR-025/default",
+                f"the close {TIMES} named",
+                f"the close {TIMES} hidden under view-as, named",
+            ),
+            "[exit-gated] exit drawn gated in SCR-025/default",
+        ),
+        # MINOR-3 — the S4 formula, a detached marker's line, §8's fixtures, the restatements.
+        (
+            "X158-reflow-formula",
+            frame_sub(
+                "SCR-025/reflow-200", f"2 {TIMES} space.inset.lg", f"3 {TIMES} space.inset.lg"
+            ),
+            "[upstream-frame] frame SCR-025/reflow-200",
+        ),
+        (
+            "X159-detached-marker",
+            line_sub("| D08-A10 ", "Use at most 40 characters.", "Use at most 41 characters."),
+            "[marker-visible] audit:contract.name_max=40 detached",
+        ),
+        (
+            "X160-deck-counter",
+            sec_fn(8, lambda t: t.replace('fixture "41/40"', 'fixture "42/40"', 1)),
+            "[deck-fixture] §8 e15.settings.name.counter",
+        ),
+        (
+            "X161-deck-time",
+            sec_fn(
+                8,
+                lambda t: t.replace(
+                    'fixture "Replace the version saved at 14:05?"',
+                    'fixture "Replace the version saved at 14:06?"',
+                    1,
+                ),
+            ),
+            "[deck-fixture] §8 e15.conflict.confirm.title",
+        ),
+        (
+            "X162-restated-revert",
+            sub(
+                '"Layout 1 reverted to the version saved at 13:40.". Focus',
+                '"Layout 1 reverted to the version saved at 13:41.". Focus',
+            ),
+            "[restated] §3 prints",
+        ),
+        (
+            "X163-restated-overwrite",
+            sub(
+                'titled "Replace the version saved at 14:05?"',
+                'titled "Replace the version saved at 14:06?"',
+            ),
+            "[restated] §4 prints",
+        ),
+        (
+            "X164-restated-col",
+            sec_fn(
+                6,
+                lambda t: t.replace('"Saved now (14:05:12)"', '"Saved now (14:05:13)"', 1),
+            ),
+            "[restated] §6 prints",
+        ),
+        # MINOR-4 — a WSL share path.
+        (
+            "X165-unc-wsl",
+            sub("**Key.**", "**Key.** (" + "\\\\" + "wsl$\\Ubuntu\\home\\someone)"),
+            "[forbidden] spec: forbidden text",
+        ),
+        # NIT-2 — the two per-site branches no mutation reached.
+        (
+            "X166-clean-star-producer",
+            frame_sub("SCR-025/delete-confirm", 'title "Delete Scalping?"', "title `Scalping *`"),
+            "[clean-star] clean frame SCR-025/delete-confirm draws a dirty `*` in its Shows cell",
+        ),
+        (
+            "X167-entry-dialog-unmapped",
+            row_fn(
+                r"^\| E12 +\|.*$",
+                lambda ln: ln.replace("| `SCR-025/discard-prompt` (H36", "| the prompt (H36", 1),
+            ),
+            "[entry-unmapped] entry point unmapped: E12",
         ),
     ]
 
