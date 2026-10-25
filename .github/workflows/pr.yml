@@ -323,11 +323,11 @@ jobs:
               # Python the product scan reads that no other security-starting filter selects. No
               # py-lane suite needs these to start: governance (every PR) tests the zap, triage,
               # ga_defects, contracts and errorcodes tools, and the contract lane (`protocol`) also
-              # runs the last two; nothing in CI tests .claude/hooks or spikes/storage. A change to
-              # one starts the scan (#4355).
+              # runs the last two; nothing in CI tests .claude/hooks or spikes/. A change to one
+              # starts the scan (#4355); every spike's prototype is covered, not only storage (#968).
               - '.claude/hooks/**'
               - 'security/zap/**'
-              - 'spikes/storage/**'
+              - 'spikes/**'
               - 'tools/contracts/**'
               - 'tools/errorcodes/**'
               - 'tools/ga_defects/**'
