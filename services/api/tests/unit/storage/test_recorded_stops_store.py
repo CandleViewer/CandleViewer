@@ -142,6 +142,9 @@ def _built() -> dict[str, Any]:
         "in_force_statement": mod.in_force_statement(_ACCOUNT, _rows(_row(_SL)), _T),
         "in_force_for_key_statement": mod.in_force_for_key_statement(_ACCOUNT, "BTCUSDT", 0),
         "resolve_statement": mod.resolve_statement(_ACCOUNT, _rows(_row(_SL)), "answered", _T),
+        "end_statement": mod.end_statement(
+            _ACCOUNT, _rows(_row(_SL, status="in_force", answered_at=_T, in_force_at=_T)), _T
+        ),
     }
 
 
@@ -904,6 +907,66 @@ async def test_a_resolve_locks_then_sets_every_row_or_none_audited_before_its_co
                                  position_state="open", write_ahead=audit)  # fmt: skip
     assert seen[-1][:2] == ([_SL], "open") and voided.commits == 1  # optional: given to the hook
     assert stale.commits == 0 and len(stale.statements) == 2
+
+
+def test_the_end_statement_compares_each_row_as_read_and_sets_status_and_closed_at_only() -> None:
+    """21 Sec.3.3.11 "Ends with its position": each row only on its key, `status` and `answered_at`
+    as read, in the account; `status` and `closed_at` are all it writes (R-5, set-once times)."""
+    rows = _rows(_row(_SL, status="in_force", answered_at=_T, in_force_at=_T),
+                 _row(_TP, kind="take_profit", answered_at=_T))  # fmt: skip
+    stmt = mod.end_statement(_ACCOUNT, rows, _LATER)
+    assert _sets(stmt) == "status=$1::VARCHAR, closed_at=$2::TIMESTAMP WITH TIME ZONE"
+    sql = _sql(stmt)
+    for term in ("id = $", "symbol = $", "position_idx = $", "status = $",
+                 "answered_at IS NOT DISTINCT FROM "):  # fmt: skip
+        assert sql.count(f"recorded_stops.{term}") == 2, term
+    assert sql.count("recorded_stops.exchange_account_id = $") == 1
+    params = stmt.compile(dialect=_ASYNCPG).params
+    assert (params["status_1"], params["status_2"]) == ("in_force", "pending")
+
+
+@pytest.mark.filterwarnings("error::sqlalchemy.exc.SADeprecationWarning")
+def test_the_end_statement_of_no_rows_matches_none_not_the_whole_account() -> None:
+    """SEC-S2D-01: the builder is exported and callable without `check_end` (P1 does), and an empty
+    `or_()` is no condition: the account's every row. It starts from `false()`, so no rows match no
+    row, the account predicate stays, and SQLAlchemy's empty-`or_()` warning is never raised."""
+    sql = _sql(mod.end_statement(_ACCOUNT, [], _LATER))
+    where = sql.split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0]
+    assert where == "recorded_stops.exchange_account_id = $3::UUID AND false"
+
+
+async def test_an_end_locks_then_ends_every_row_or_none_audited_before_its_commit() -> None:
+    ended = {"status": "ended", "answered_at": _T, "closed_at": _LATER}
+    rows = _rows(_row(_SL, status="in_force", answered_at=_T, in_force_at=_T),
+                 _row(_TP, kind="take_profit", answered_at=_T))  # fmt: skip
+    returned = [_row(_TP, kind="take_profit", **ended), _row(_SL, in_force_at=_T, **ended)]
+    rel = _Rel([], returned)
+    seen: list[tuple[list[uuid.UUID], int]] = []
+
+    async def audit(done: tuple[RecordedStopRow, ...]) -> None:
+        seen.append(([row.id for row in done], rel.commits))
+
+    done = await _store(rel).end(_ACCOUNT, rows, at=_LATER, write_ahead=audit)
+    assert [r.id for r in done] == [_SL, _TP] and seen == [([_SL, _TP], 0)]  # in the order given
+    assert rel.commits == 1
+    lock, update = (_sql(s) for s in rel.statements)  # the named rows, not the key's live rows
+    assert "recorded_stops.id IN (" in lock
+    assert lock.endswith("ORDER BY recorded_stops.id FOR UPDATE")
+    assert update.startswith("UPDATE recorded_stops SET ")
+
+    async def hangs(done: tuple[RecordedStopRow, ...]) -> None:
+        await asyncio.Event().wait()
+
+    for script, raised in (([], StaleRecordedStop), (returned, WriteAheadTimeout)):
+        late = _Rel([], script)
+        store = mod.SqlAlchemyRecordedStopStore(cast(Any, late), audit_timeout_s=0.01)
+        with pytest.raises(raised):
+            await store.end(_ACCOUNT, rows, at=_LATER, write_ahead=hangs)
+        assert late.commits == 0
+    idle = _Rel()
+    with pytest.raises(ValueError, match="pending and answered"):  # an unanswered row never ends
+        await _store(idle).end(_ACCOUNT, _rows(_row(_SL)), at=_LATER)
+    assert idle.statements == []
 
 
 async def test_the_store_reads_a_keys_rows_in_force_by_kind() -> None:

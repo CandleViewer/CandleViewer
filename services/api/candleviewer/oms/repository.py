@@ -72,6 +72,7 @@ from candleviewer.storage.repositories.positions import (
 from candleviewer.storage.repositories.recorded_stops import (
     SWEEP_REASON,
     UX_RS_IN_FLIGHT,
+    EndWriteAhead,
     FillPosition,
     InForce,
     InForceWriteAhead,
@@ -83,6 +84,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     ResolveOutcome,
     ResolveWriteAhead,
     SettleWriteAhead,
+    StopEnd,
     StopOutcome,
     SweepScope,
     SweepWriteAhead,
@@ -650,6 +652,27 @@ class RecordedStopRepository:
         except WriteAheadTimeout:
             raise AuditNotDurable("the resolve's write-ahead audit did not land in time") from None
         _log_stops("oms_stops_resolved", done, outcome=outcome)
+        return done
+
+    async def end(
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        at: datetime,
+        write_ahead: EndWriteAhead | None = None,
+    ) -> tuple[RecordedStopRow, ...]:
+        """`RecordedStopStore.end` (21 Sec.3.3.11 "Ends with its position"): the caller names the
+        rows, as read, every one in force for the key and the answered ones its read lets end;
+        `StaleRecordedStop` passes through, nothing written. No `sl.*` record of its own; a hook
+        given is awaited, `AuditNotDurable` past its bound. Logs ids, kinds and each row's end."""
+        try:
+            with self._timer.measure("recorded_stops"):
+                done = await self._store.end(account_id, rows, at=at, write_ahead=write_ahead)
+        except WriteAheadTimeout:
+            raise AuditNotDurable("the end's write-ahead audit did not land in time") from None
+        for how in get_args(StopEnd):  # one source for the two ends' names
+            _log_stops("oms_stops_ended", [r for r in done if r.end == how], end=how)
         return done
 
 
