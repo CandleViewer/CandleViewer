@@ -13,6 +13,7 @@ code path CI's `generated-code` check runs, not a hand-simulated shortcut.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import subprocess
@@ -199,13 +200,158 @@ def test_only_the_rest_run_passes_the_strict_types(
         *, input_file_type: str, output_path: Path, extra: tuple[str, ...] = (), **_: Any
     ) -> None:
         runs.append((input_file_type, extra))
-        output_path.write_text("from __future__ import annotations\n", encoding="utf-8")
+        marked = "--use-missing-sentinel" in extra  # the sentinel run types the member its way
+        member = "str | MISSING = MISSING" if marked else "str | None = None"
+        output_path.write_text(f"{_BOX_MODULE}    plain: {member}\n", encoding="utf-8")
 
     monkeypatch.setattr(gen, "_run_datamodel_codegen", fake)
     for name in ("REST_OUT", "WS_OUT", "CONTRACT_OUT"):
         monkeypatch.setattr(gen, name, tmp_path / name)
     gen.generate()
-    assert runs == [("openapi", gen._STRICT_SCALARS), ("jsonschema", ())]
+    sentinel = (*gen._STRICT_SCALARS, "--use-missing-sentinel")
+    assert runs == [("openapi", gen._STRICT_SCALARS), ("openapi", sentinel), ("jsonschema", ())]
+
+
+#: A codegen output of one model, whose member each fake run types its own way.
+_BOX_MODULE = "from __future__ import annotations\n\n\nclass Box(BaseModel):\n"
+
+
+def test_a_sentinel_run_that_marks_nothing_stops_the_generator(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R1S-01: a sentinel run whose shape changed (a renamed `MISSING`, a flag gone quiet) marks no
+    member; the generator stops, never writes a module that refuses no `null`."""
+    gen = _generator()
+
+    def fake(*, output_path: Path, **_: Any) -> None:
+        output_path.write_text(f"{_BOX_MODULE}    plain: str | None = None\n", encoding="utf-8")
+
+    monkeypatch.setattr(gen, "_run_datamodel_codegen", fake)
+    for name in ("REST_OUT", "WS_OUT", "CONTRACT_OUT"):
+        monkeypatch.setattr(gen, name, tmp_path / name)
+    with pytest.raises(RuntimeError, match="marked no member"):
+        gen.generate()
+
+
+# What `--use-missing-sentinel` emits: an optional member with no default is `X | MISSING`.
+_SENTINEL_BLOCK = """\
+class Box(BaseModel):
+    plain: str | MISSING = MISSING
+    nullable: str | None | MISSING = MISSING
+    anything: Any | MISSING = MISSING
+    mapping: dict[str, int | None] | MISSING = MISSING
+    bounded: Annotated[int | MISSING, Field(ge=1)] = MISSING
+    required: str
+    defaulted: int = 1
+"""
+
+
+def test_the_sentinel_run_marks_the_optional_members_that_refuse_null() -> None:
+    """`None` or `Any` at the top of a member's union lets it be `null`; inside a `dict`, not."""
+    marked = _generator()._null_refused_members(_SENTINEL_BLOCK)
+    assert marked == {"Box": ["plain", "mapping", "bounded"]}
+
+
+# The normal output of five classes, each of which the sentinel run marks one member of.
+_NULL_BLOCK = """\
+from pydantic import (
+    BaseModel,
+)
+class Parent(BaseModel):
+    a: str | None = None
+class Child(Parent):
+    b: str | None = None
+class Shown(Parent):
+    c: str | None = None
+class Base(BaseModel):
+    d: str | None = None
+    f: int = 1
+class Sent(Base):
+    e: str | None = None
+"""
+_MARKED = {"Parent": ["a"], "Child": ["b"], "Shown": ["c"], "Base": ["d"], "Sent": ["e"]}
+_REQUESTED = {"Parent", "Child", "Sent"}
+
+
+def test_each_marked_class_gets_one_refusal_of_its_own() -> None:
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    assert [line.strip() for line in patched.splitlines() if "= field_validator(" in line] == [
+        '__null_refused = field_validator("a", mode="before")(_refuse_null)',
+        '__null_refused = field_validator("b", mode="before")(_refuse_null)',
+        '_Parent__null_refused = field_validator("a", mode="before")(_take_null)',
+        '_Base__null_refused = field_validator("d", mode="before")(_refuse_null)',
+        '__null_refused = field_validator("e", mode="before")(_refuse_null)',
+    ]
+
+
+def test_a_subclass_keeps_its_parents_null_refusals() -> None:
+    """No request model extends another on this contract, so a fixture shows the mangled names at
+    work: `Child` keeps `Parent`'s refusal; `Shown`, which no request body reaches, takes `null`
+    again; `Sent` refuses its base's `d`, which `Base` itself takes."""
+    namespace: dict[str, Any] = {}
+    patched = _generator()._add_null_refusals(_NULL_BLOCK, _MARKED, _REQUESTED)
+    code = compile(patched, "<patched>", "exec", dont_inherit=True)
+    exec(code, namespace)  # noqa: S102 - the generator's own output for a fixed fixture
+    probes = [("Parent", "a"), ("Child", "a"), ("Child", "b"), ("Shown", "a"), ("Shown", "c")]
+    probes += [("Base", "d"), ("Sent", "d"), ("Sent", "e")]
+    taken = [(name, member) for name, member in probes if _takes_null(namespace[name], member)]
+    assert taken == [("Shown", "a"), ("Shown", "c"), ("Base", "d")]
+
+
+def _takes_null(model: Any, member: str) -> bool:
+    try:
+        model.model_validate({member: None})
+    except ValidationError:
+        return False
+    return True
+
+
+@pytest.mark.parametrize(
+    ("marked", "says"),
+    [({"Gone": ["a"]}, "does not define"), ({"Base": ["f"]}, "not `= None` here")],
+    ids=["class", "default"],
+)
+def test_a_mark_the_models_cannot_hold_stops_the_generator(
+    marked: dict[str, list[str]], says: str
+) -> None:
+    """Each disagreement between the two runs stops the generator with its own message (R1C-03)."""
+    with pytest.raises(RuntimeError, match=f"{says}; update _null_refused_members"):
+        _generator()._add_null_refusals(_NULL_BLOCK, marked, _REQUESTED)
+
+
+def test_a_module_without_the_pydantic_import_tuple_stops_the_generator() -> None:
+    source = "from pydantic import BaseModel\nclass Box(BaseModel):\n    a: str | None = None\n"
+    with pytest.raises(RuntimeError, match="no pydantic import tuple"):
+        _generator()._add_null_refusals(source, {"Box": ["a"]}, {"Box"})
+
+
+def test_a_refusal_lands_after_its_class_whatever_its_text_holds() -> None:
+    """Only `\\n` ends a line for the tokenizer: a U+2028 in a docstring does not move the
+    refusal into the brackets of the class's last member (R1C-02)."""
+    source = (
+        "from pydantic import (\n    BaseModel,\n)\nclass Box(BaseModel):\n"
+        '    """One\u2028two."""\n    a: (\n        str | None\n    ) = None\n'
+    )
+    patched = _generator()._add_null_refusals(source, {"Box": ["a"]}, {"Box"})
+    box = next(n for n in ast.parse(patched).body if isinstance(n, ast.ClassDef))
+    assert [ast.unparse(m.targets[0]) for m in box.body if isinstance(m, ast.Assign)] == [
+        "__null_refused"
+    ]
+
+
+def test_the_request_walk_follows_a_shared_body_and_a_bases_members() -> None:
+    """A `requestBodies` entry's schema is a root, and what a reached class's base names is
+    reached through the subclass (R1C-05)."""
+    body = {"content": {"application/json": {"schema": {"$ref": "#/components/schemas/Child"}}}}
+    spec = {
+        "paths": {"/x": {"post": {"requestBody": {"$ref": "#/components/requestBodies/Shared"}}}},
+        "components": {"requestBodies": {"Shared": body}},
+    }
+    source = (
+        "class Held(BaseModel):\n    x: int\nclass Base(BaseModel):\n    held: Held | None = None\n"
+        "class Child(Base):\n    y: int\nclass Other(BaseModel):\n    z: int\n"
+    )
+    assert _generator()._request_models(spec, source) == {"Child", "Held"}
 
 
 def test_ws_models_module_imports_cleanly(generated_ws_module) -> None:  # type: ignore[no-untyped-def]

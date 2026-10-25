@@ -466,14 +466,14 @@ def test_mfa_required_false_400(b16_audit: RecordingAuditSink, spec: Any, role: 
 
 @pytest.mark.parametrize("role", _ROLES)
 def test_mfa_required_null_400(b16_audit: RecordingAuditSink, spec: Any, role: str) -> None:
-    """O3 (C-12.2), the route's own line behind the generated `Literal[True]`: `mfa_required:
+    """O3 (C-12.2), refused by the generated model since #906 slice G2b: `mfa_required:
     null` (the contract has no `null` there) is 400 `validation_failed` naming the field, never
     a silent no-op, before any lookup or step-up; nothing changes."""
     env = _Env(b16_audit, _principal("owner", spec), _user(M, (role,)))
     r = env.patch(M, {"mfa_required": None})
     _conforms(spec, "/users/{userId}", "patch", r)
     assert (r.status_code, r.json()["code"]) == (400, "validation_failed")
-    assert r.json()["detail"] == "not nullable: mfa_required"
+    assert r.json()["detail"] == "the request does not match its schema: mfa_required"
     assert env.log == [] and env.store.users[M]["mfa_required"] is True
 
 

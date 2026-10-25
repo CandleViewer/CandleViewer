@@ -59,8 +59,8 @@ TRENDLINE: dict[str, Any] = {
 
 
 def wire(data: dict[str, Any], model: str = "DrawingInput") -> dict[str, Any]:
-    """`data` as a contract-generated client sends it: generated model, `exclude_unset=True` (the
-    models accept null for non-nullable optionals). Malformed payloads are sent raw. Needs #2380."""
+    """`data` as a contract-generated client sends it: generated model, `exclude_unset=True` (a
+    client sends only what it sets). Malformed payloads are sent raw. Needs #2380."""
     assert hasattr(openapi_models, "DrawingBatchRequest"), "closed drawings contract not merged"
     cls = getattr(openapi_models, model)
     return dict(cls.model_validate(data).model_dump(mode="json", exclude_unset=True))

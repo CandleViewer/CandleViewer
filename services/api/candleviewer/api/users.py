@@ -867,8 +867,6 @@ UPDATE_USER_QUERY: Final = frozenset({_ACKNOWLEDGE})
 _NO_SESSION: Final = "no such session of this user"
 #: The `UpdateUserRequest` fields a 400 may name: the contract's own, never a client's key.
 _PATCH_FIELDS: Final = frozenset({"display_name", "status", "roles", "mfa_required"})
-#: Fields whose `null` the generated model accepts but the contract does not (no `null` type).
-_NOT_NULL: Final = ("status", "roles", "mfa_required")
 #: An `If-Match` that can match no representation: `*`, a list, two header lines.
 _NEVER_MATCHES: Final = '"never-matches"'
 _STALE: Final = "the user changed since it was read"
@@ -975,9 +973,6 @@ async def _patch_body(request: Request) -> api.UpdateUserRequest | JSONResponse:
         listed = f": {', '.join(named)}" if named else ""
         detail = f"the request does not match its schema{listed}"
         return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
-    sent = body.model_fields_set
-    if nulls := [name for name in _NOT_NULL if name in sent and getattr(body, name) is None]:
-        return _registered(ErrorCode.VALIDATION_FAILED, 400, f"not nullable: {', '.join(nulls)}")
     if body.display_name is not None and "\x00" in body.display_name:
         return _registered(ErrorCode.VALIDATION_FAILED, 400, "display_name holds a NUL character")
     return body
