@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Coroutine
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -36,15 +36,23 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
 from candleviewer.oms.errors import (
+    OMS_NOT_READY_RETRY_AFTER_S,
     OmsNotReady,
     OrderMachinesFull,
     StoreUnavailable,
     TradingDisabled,
 )
 from candleviewer.oms.fakes import InMemorySubmissionStore
+from candleviewer.oms.ports import RequestRecord, SubmitActor
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrder, OrderRow
+from candleviewer.storage.repositories.accounts import OwnerScope
+from candleviewer.storage.repositories.orders import (
+    ORDER_STATE_OF,
+    NewOrder,
+    OrderRow,
+    ScopedOrder,
+)
 from tests.unit.api.test_order_acceptance import schema
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
@@ -56,6 +64,9 @@ SECOND = UUID("0e000000-0000-4000-8000-0000000000cc")  # another Owner
 VIEWER = UUID("0e000000-0000-4000-8000-0000000000dd")
 KEY = UUID("9b2f7c1e-4d3a-4f6b-8a0c-5e1d2c3b4a59")
 TRACE = UUID("7d3c9a2e-1f4b-4c8d-9e0a-2b3c4d5e6f70")  # an `X-Correlation-Id`, a UUIDv4
+PEER = "100.64.0.7"  # the address each request comes from, a tailnet peer's
+#: The Owner's requests' actor, as each record names it (C-2.9): user, role, session, address.
+ACTOR = SubmitActor(OWNER, "owner", sr.SESSION, PEER)
 _TRADE = frozenset({Permission.ORDERS_WRITE, Permission.ORDERS_READ})
 _FORMATS = Draft202012Validator.FORMAT_CHECKER
 _ORDER = Draft202012Validator(schema("Order"), format_checker=_FORMATS)
@@ -65,16 +76,18 @@ _OK: dict[str, Any] = {"ok": True}
 
 def principal(who: str) -> TradingPrincipal:
     """An Owner (`owner`, `second`), a viewer, or a Manager of `cr.ACCOUNT`: the order's creator
-    (`creator`), another user (`other`), on a view-only (`view_only`) or frozen grant, or none."""
+    (`creator`, or `creator_frozen` once its grant is frozen), another user (`other`), on a
+    view-only (`view_only`) or frozen grant, or none."""
     if who in ("owner", "second"):
         owner = OWNER if who == "owner" else SECOND
         snap = PrincipalSnapshot(owner, frozenset({"owner"}), frozenset(Permission))
     elif who == "viewer":
         snap = PrincipalSnapshot(VIEWER, frozenset({"viewer"}), frozenset({Permission.ORDERS_READ}))
     else:
-        grant = AccountGrant(cr.ACCOUNT, True, who != "view_only", who == "frozen")
+        frozen = who in ("frozen", "creator_frozen")
+        grant = AccountGrant(cr.ACCOUNT, True, who != "view_only", frozen)
         grants = () if who == "ungranted" else (grant,)
-        user = sr.USER if who == "creator" else OTHER
+        user = sr.USER if who in ("creator", "creator_frozen") else OTHER
         snap = PrincipalSnapshot(user, frozenset({"manager"}), _TRADE, grants)
     return TradingPrincipal(sr.SESSION, snap)
 
@@ -165,6 +178,13 @@ class World:
         """The 24 Sec.8.4 step each of the service's records names (`deny`'s `step`), else None."""
         return [r.detail.get("step") for r, _ in self.audits.written[self.since :]]
 
+    def named(self) -> list[object]:
+        """Whom and which request each of the service's records names: (actor, request id)."""
+        return [
+            (r.actor, r.request_id) if isinstance(r, RequestRecord) else r
+            for r, _ in self.audits.written[self.since :]
+        ]
+
     def refused(self, code: str) -> float:
         labels = {"env": "demo", "operation": "cancel", "code": code}
         return self.metrics.registry.get_sample_value("oms_exit_refused_total", labels) or 0.0
@@ -196,7 +216,8 @@ async def delete(
     headers = {"authorization": f"Bearer {who}", "x-correlation-id": str(TRACE)}
     if key is not None:
         headers["idempotency-key"] = str(key)
-    async with AsyncClient(transport=ASGITransport(app=world.app()), base_url="http://t") as c:
+    transport = ASGITransport(app=world.app(), client=(PEER, 4321))
+    async with AsyncClient(transport=transport, base_url="http://t") as c:
         return await c.delete(f"/orders/{order}", headers=headers)
 
 
@@ -271,6 +292,14 @@ _STEPS: list[tuple[str, Any, str, str, UUID | None, int, str, list[tuple[str, st
     ("9_stopping", lambda w: setattr(w.oms, "stopped", "run"), "owner", "row", KEY, 503,
      "oms_not_ready", []),
 ]  # fmt: skip
+#: 22's members of a step's problem: its `retry_after_seconds`, `Retry-After` alike, where 22
+#: gives one (`oms_not_ready`'s, the in-flight guard's), and the field of each `errors[]` entry.
+_RETRY = {
+    "3_starting": OMS_NOT_READY_RETRY_AFTER_S, "3_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+    "9_in_flight": ex.IN_FLIGHT_RETRY_AFTER_S, "9_full": ex.IN_FLIGHT_RETRY_AFTER_S,
+    "9_stopping": OMS_NOT_READY_RETRY_AFTER_S,
+}  # fmt: skip
+_FIELDS = {"1_not_an_id": ["orderId"], "7_no_key": ["Idempotency-Key"]}
 
 
 @pytest.mark.parametrize("case", _STEPS, ids=[case[0] for case in _STEPS])
@@ -285,10 +314,33 @@ async def test_each_step_refuses_before_the_next_runs(case: Any) -> None:
     assert (answer.status_code, body["code"], world.actions()) == (status, code, records)
     assert world.steps() == ([_STEP_OF[name]] if name in _STEP_OF else [])
     assert (machines.sent, world.oms.tasks, world.refused(code)) == ([], [], 1)
-    if "retry_after_seconds" in body:  # oms_not_ready, and the guard's 1
-        assert answer.headers["retry-after"] == str(body["retry_after_seconds"])
+    retry = _RETRY.get(name)
+    assert (body.get("retry_after_seconds"), answer.headers.get("retry-after")) == (
+        retry, None if retry is None else str(retry),
+    )  # fmt: skip
+    assert [error["field"] for error in body.get("errors", [])] == _FIELDS.get(name, [])
     if name == "9_stopping":  # the runtime refused the run: the claim is released
         assert callable(world.oms.service.guard.claim(OWNER, "cancel", KEY))
+
+
+#: Two steps refusing at once, the runtime not ready (step 3): the earlier answers and is the one
+#: counted, the later never runs (24 Sec.8.4, each before the next). (who, order) -> (status,
+#: code, records, the later step's code).
+_PAIRS: list[tuple[str, str, str, int, str, list[tuple[str, str]], str]] = [
+    ("2_before_3", "viewer", "row", 403, "forbidden",
+     [("rbac.denied", "missing_permission:orders:write:none")], "oms_not_ready"),
+    ("3_before_4", "owner", "missing", 503, "oms_not_ready", [], "not_found"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("case", _PAIRS, ids=[case[0] for case in _PAIRS])
+async def test_of_two_refusing_steps_the_earlier_answers(case: Any) -> None:
+    _, who, order, status, code, records, later = case
+    world, machines, row, _ = await scripted_world()
+    world.oms.state = "starting"
+    answer = await delete(world, {"row": row.id, "missing": uuid4()}[order], who)
+    assert (answer.status_code, answer.json()["code"], world.actions()) == (status, code, records)
+    assert (world.refused(code), world.refused(later), machines.sent) == (1, 0, [])
 
 
 def _no(code: str, **more: Any) -> dict[str, Any]:
@@ -341,9 +393,29 @@ async def test_each_answer_is_22s_from_the_exit_services_outcome(case: Any) -> N
         return
     _PROBLEM.validate(body)
     assert (body["code"], world.refused(got)) == (got, 1)
+    assert body.get("retry_after_seconds") == (None if retry is None else int(retry))
     # recorded by the service before it is answered, its own refusal naming no route step
     assert (world.actions()[-1], world.steps()[-1]) == ((_DENIED, got), None)
     assert body.get("exchange") == ({"ret_code": 110003} if status == 502 else None)
+
+
+async def test_a_202_is_the_order_read_again_never_the_scopes_earlier_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """22 `cancelOrder`'s `202` renders the row the exit service read again once B1's step
+    settled (`ExitOutcome.row`), never the one the scope read before the cancel: a part filled
+    meanwhile shows in it."""
+    world, _, row, port = await scripted_world("submitted", "cancelled")
+    filled = replace(row, cum_exec_qty=Decimal("0.004"), avg_price=Decimal("59990"))
+
+    async def read_again(account_id: UUID, order_id: UUID) -> OrderRow | None:
+        return filled if (account_id, order_id) == (cr.ACCOUNT, row.id) else None
+
+    monkeypatch.setattr(port.orders, "get", read_again)
+    answer = await delete(world, row.id)
+    assert answer.status_code == 202
+    _ORDER.validate(answer.json())
+    assert (answer.json()["filled_qty"], answer.json()["avg_fill_price"]) == ("0.004", "59990")
 
 
 async def test_a_scope_that_cannot_be_read_is_503_unrecorded_and_counted() -> None:
@@ -360,15 +432,43 @@ async def test_a_scope_that_cannot_be_read_is_503_unrecorded_and_counted() -> No
 async def test_a_viewer_is_403_its_record_naming_the_order_and_still_403_unrecorded(
     lands: bool,
 ) -> None:
-    """Step 2: `orders:write`, audited `rbac.denied` naming the order asked for and the request,
-    a 403 even when that record cannot be written (24 Sec.8.4)."""
+    """Step 2: `orders:write`, audited `rbac.denied` naming the order asked for, the request, its
+    session and its source address, a 403 even when that record cannot be written, and counted
+    either way (24 Sec.8.4)."""
     world, _, row, _ = await scripted_world()
     world.audit.fail = not lands
     answer = await delete(world, row.id, "viewer")
     assert (answer.status_code, answer.json()["code"]) == (403, "forbidden")
     assert answer.json()["required_permissions"] == ["orders:write"]
-    named = [(e["object_kind"], e["object_id"], e["request_id"]) for e in world.audit.records]
-    assert named == ([("order", str(row.id), TRACE)] if lands else [])
+    named = [
+        (e["object_kind"], e["object_id"], e["request_id"], e["session_id"], e["actor_ip"])
+        for e in world.audit.records
+    ]
+    assert named == ([("order", str(row.id), TRACE, sr.SESSION, PEER)] if lands else [])
+    assert world.refused("forbidden") == 1
+
+
+@pytest.mark.parametrize(
+    ("change", "status", "records"),
+    [
+        (_claimed(KEY), 409, [(_DENIED, "idempotency_in_flight")]),
+        (None, 202, [(_DENIED, "user"), (_DENIED, "cancelled")]),
+    ],
+    ids=["refused_at_the_guard", "cancelled"],
+)
+async def test_each_record_a_cancel_causes_names_its_principal_and_its_request(
+    change: Callable[[World], None] | None, status: int, records: list[tuple[str, str]]
+) -> None:
+    """C-2.9, #3990: the route's own refusal (`deny`) and the cancel it hands the exit service
+    (`cancel_admitted`), its intent and its outcome, each name the principal (user, role, session,
+    address) and the request's `X-Correlation-Id`, which `test_audit_request_id_carried` (its
+    `emit` and `enforce` calls) cannot see here."""
+    world, _, row, _ = await scripted_world("submitted", "cancelled")
+    if change is not None:
+        change(world)
+    assert (await delete(world, row.id)).status_code == status
+    assert world.actions() == records
+    assert world.named() == [(ACTOR, TRACE)] * len(records)
 
 
 async def test_a_route_refusal_whose_record_cannot_land_is_503_audit_unavailable() -> None:
@@ -512,6 +612,41 @@ async def test_a_foreign_order_is_answered_as_a_missing_id_only_the_real_one_rec
     assert shapes[0][0] == 404 and shapes[0] == shapes[1] == shapes[2]
     assert world.actions() == [("rbac.denied", ex.NOT_GRANTED)] * 2
     assert (seen, rig.calls().count("cancel_order")) == ([], 0)
+
+
+async def test_a_kept_202_is_withheld_from_its_principal_once_its_access_is_lost(
+    rig: SubmitRig,
+) -> None:
+    """24 Sec.8.4, SR-E29-13: the 24 h record is read after the scope, so a Manager whose grant
+    was frozen since its cancel reads no outcome back under its key, only the `404` any order
+    outside its scope gets, recorded; the record still holds the `202`, the repeat's answer once
+    the grant is live again, nothing sent twice."""
+    row = await tx.placed(rig)
+    world = granted(rig, "creator")
+    first = await delete(world, row.id, "creator")
+    assert first.status_code == 202
+    rig.store.seed_access(sr.USER, cr.ACCOUNT, trade=True, frozen=True)  # the store's grant
+    lost = await delete(world, row.id, "creator_frozen")  # and the session's snapshot
+    assert (lost.status_code, lost.json()["code"]) == (404, "not_found")
+    assert "idempotency-replayed" not in lost.headers
+    rig.store.seed_access(sr.USER, cr.ACCOUNT, trade=True)  # live again
+    again = await delete(world, row.id, "creator")
+    assert (again.status_code, again.headers["idempotency-replayed"]) == (202, "true")
+    assert again.content == first.content and rig.calls().count("cancel_order") == 1
+    cancelled = [(_DENIED, "user"), (_DENIED, "cancelled")]
+    assert world.actions() == [*cancelled, ("rbac.denied", ex.NOT_GRANTED)]
+
+
+async def test_a_202_names_the_orders_trade_group_and_leg(rig: SubmitRig) -> None:
+    """22 `Order`: the `202` carries the group the scope read the order in, and its leg."""
+    row = await tx.placed(rig)
+    scoped = await rig.port.orders.get_in_scope(OwnerScope(OWNER), row.id, environment="demo")
+    assert isinstance(scoped, ScopedOrder)
+    assert None not in (scoped.trade_group_id, row.trade_group_leg_id)
+    answer = await delete(granted(rig, "owner"), row.id)
+    assert answer.status_code == 202
+    group, leg = answer.json()["trade_group_id"], answer.json()["trade_group_leg_id"]
+    assert (group, leg) == (str(scoped.trade_group_id), str(row.trade_group_leg_id))
 
 
 @pytest.mark.parametrize(
