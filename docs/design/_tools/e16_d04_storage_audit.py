@@ -27,17 +27,25 @@ negator exempts a match only within four words before it in the same clause; an 
 write named earlier in its unit; every PROPOSED carrier carries its own caption "PROPOSED — D04-Gn, owner approval
 pending (#2701)" with its n, and no unit presents a PROPOSED item as shipped; every exit a frame lists is
 present and T1; every number any unit types is a `--json` value with its unit (R-17's register: the fixture,
-the facts, the layout, the counts and the typed context); (7) the counts the spec, the boards and the PR body quote.
+the facts, the layout, the counts and the typed context); (7) the counts the spec, the boards and the PR body quote;
+(8) R-23, the backstop behind the vocabularies (the orchestrator's gate re-check 2): every ruled unit (every frame row,
+every unit of sections 1.4, 6, 7 and 9, the deck, the sketch and its captions, and any unit naming the degradation
+subjects, the view-as leg or T2, a purge, PROPOSED or a D04-G id, or typing a number outside sections 12 and 15) is
+pinned default-deny by location and exact text in RULED_PIN_TXT at the end of this file; a changed, moved, duplicated
+or missing pinned unit and a ruled unit the table does not hold FAIL naming the location. `--repin-ruled` rewrites
+the table from the spec (deliberate; `--check` never re-pins). An R-23 FAIL is reported only when no other gate
+FAILs, else counted beside it on a NOTE line, so one wrong form yields one FAIL.
 `--json` feeds the check-nums script; `--check` re-derives the spec's `<!-- audit:key=N -->` markers and checks
 the number printed before each; `--self-test` applies the numbered mutations in memory, one at a time,
 and passes only when each makes `--check` fail with ONE FAIL, its own expected message (rc 1), no two
-share a message, the valid twins raise nothing, the unmutated spec passes and the spec file is byte-identical
+share a message, the valid twins raise nothing once re-pinned (R-23 alone refuses them until then), the fresh twins
+raise nothing against the committed pins, the unmutated spec passes and the spec file is byte-identical
 afterwards; `--mutate N` prints one mutation's gate output and exits rc 1 when the targeted FAIL is the only
 FAIL (the gate caught it), rc 2 when the mutation slips through or fails elsewhere (a defect in the gate), never 0.
 Every other mode exits 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d04_storage_audit.py [--json] [--check] [--self-test]
-  [--mutate N] [--extra F]
+  [--mutate N] [--extra F] [--repin-ruled]
 """
 
 from __future__ import annotations
@@ -47,6 +55,7 @@ import hashlib
 import json
 import re
 import sys
+import textwrap
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
@@ -3194,6 +3203,205 @@ def gates(
     return bad
 
 
+# --- R-23 the ruled units, pinned default-deny (the orchestrator's gate re-check 2) ---------------
+# The vocabulary gates above are the first line; this is the backstop. A unit of the spec is a frame row,
+# another table row, a prose line (one paragraph or list item) or a sketch line, its whitespace
+# normalised. A unit is RULED when it falls in a class below; every ruled unit must equal, at its
+# location and in document order, its entry of RULED_PIN_TXT (location + exact text), so a
+# paraphrase of a ruled unit fails whatever its words. A changed, moved, duplicated or missing pinned
+# unit, and a ruled unit the pins do not hold, FAIL R-23 naming the location. `--repin-ruled` writes
+# the table into this file from the current spec (a deliberate act, read in the diff); `--check` never
+# re-pins. Precedence: a pin FAIL is reported only when no other gate FAILs; beside another gate's
+# FAIL it is counted on a NOTE line, so one wrong form yields one FAIL.
+PIN_SEP = " ‖ "
+PIN_WIDTH = 96
+# the classes, in report order: every frame row (each carries an exit, a PROPOSED carrier, a purge,
+# the degradation order, the view-as anatomy or a frame of the inventory); every unit of the ruled
+# sections; the deck rows, the sketch and its footnote captions; a unit naming the recording and the
+# trading subjects (the degradation order); a view-as / T2 unit; a purge unit; a PROPOSED carrier
+# (PROPOSED or a D04-G id); and a unit typing a number outside §12 (its markers) and §15 (the matrix)
+PIN_CLASSES = ("frame", "ruled", "caption", "degradation", "view-as", "purge", "proposed", "number")
+RULED_SECTIONS = ("§1.4", "§6", "§7", "§9")
+PIN_SKIP_NUMBERS = ("§12", "§15")
+PinUnit = tuple[str, str, tuple[str, ...]]
+PIN_BESIDE: list[str] = []
+
+
+def unit_classes(where: str, kind: str, text: str) -> tuple[str, ...]:
+    """The pin classes one unit falls in (empty: the unit is not ruled)."""
+    got = {
+        "frame": kind == "frame",
+        "ruled": where in RULED_SECTIONS,
+        "caption": kind == "sketch"
+        or (kind == "row" and where.startswith("§14"))
+        or bool(re.match(r"^[¹²³⁴⁵⁶⁷⁸⁹] " + CAP_RE, text)),
+        "degradation": DEGRADATION in text
+        or bool(re.search(REC, text, re.IGNORECASE) and re.search(TRADE, text, re.IGNORECASE)),
+        "view-as": t2_context(text),
+        "purge": re.search(PURGE_SUBJ, text) is not None,
+        "proposed": re.search(r"\bPROPOSED\b|\bD04-G\d+\b", text) is not None,
+        "number": kind != "frame"
+        and not where.startswith(PIN_SKIP_NUMBERS)
+        and bool(num_tokens(scrub(text))),
+    }
+    return tuple(c for c in PIN_CLASSES if got[c])
+
+
+def ruled_units(spec: str) -> list[PinUnit]:
+    """Every ruled unit of the spec as (location, text, classes), in document order. The location is
+    the section and the unit's kind, with a table row's first cell (a frame row: its frame id)."""
+    out: list[PinUnit] = []
+    sec, sub, fence = "header", "", False
+    for ln in spec.split("\n"):
+        if ln.startswith("```"):
+            fence = not fence
+            continue
+        h = None if fence else re.match(r"^(#{2,3}) (?:(\d+(?:\.\d+)?)\.? )?(.*)", ln)
+        if h:
+            if h.group(1) == "##":
+                sec = (
+                    f"§{h.group(2)}" if h.group(2) else ("AC trace" if "Acceptance" in ln else "BQ")
+                )
+                sub = ""
+            else:
+                sub = f"§{h.group(2)}" if h.group(2) else sub
+            continue
+        where, text = sub or sec, " ".join(ln.split())
+        if not text or re.match(r"^\| ?-", text):
+            continue
+        if fence:
+            kind, loc = "sketch", f"{where} sketch"
+        elif text.startswith("|"):
+            frame = re.match(FRAME_RE, ln)
+            kind = "frame" if frame else "row"
+            key = frame.group(1) if frame else " ".join(cells(ln)[0].strip("`* ").split())[:40]
+            loc = f"{where} {kind} {key}"
+        else:
+            kind, loc = "prose", f"{where} prose"
+        classes = unit_classes(where, kind, text)
+        if classes:
+            out.append((loc, text, classes))
+    return out
+
+
+def render_pins(spec: str) -> str:
+    """RULED_PIN_TXT as `--repin-ruled` writes it: an `@ location ‖ classes` line per unit, then its
+    text wrapped at spaces only (so the joined lines are the unit again), indented two spaces."""
+    lines: list[str] = []
+    for loc, text, classes in ruled_units(spec):
+        lines.append(f"@ {loc}{PIN_SEP}{', '.join(classes)}")
+        wrapped = textwrap.wrap(text, PIN_WIDTH, break_long_words=False, break_on_hyphens=False)
+        if " ".join(wrapped) != text:
+            raise SystemExit(f"repin: a unit does not survive the wrap ({loc})")
+        lines += ["  " + part for part in wrapped]
+    return "\n".join(lines)
+
+
+def pin_rows(table: str) -> list[PinUnit]:
+    """RULED_PIN_TXT parsed: (location, text, classes) in document order."""
+    rows: list[PinUnit] = []
+    loc = ""
+    parts: list[str] = []
+    classes: tuple[str, ...] = ()
+    for line in [*table.split("\n"), "@ end"]:
+        if line.startswith("@ "):
+            if parts:
+                rows.append((loc, " ".join(parts), classes))
+                parts = []
+            head = line[2:].split(PIN_SEP)
+            loc, classes = head[0], tuple(head[1].split(", ")) if len(head) > 1 else ()
+        elif line.startswith("  "):
+            parts.append(line[2:])
+    return rows
+
+
+def clip(text: str, width: int = 60) -> str:
+    return text if len(text) <= width else text[: width - 1] + "…"
+
+
+def delta(was: str, now: str) -> str:
+    """The changed span of a pinned unit: its common head and tail cut, 16 characters of context."""
+    i = 0
+    while i < min(len(was), len(now)) and was[i] == now[i]:
+        i += 1
+    j = 0
+    while j < min(len(was), len(now)) - i and was[-1 - j] == now[-1 - j]:
+        j += 1
+    lead = max(0, i - 16)
+
+    def span(x: str) -> str:
+        core = x[lead : len(x) - j]
+        tail = "…" if j and len(core) <= 60 else ""
+        return ("…" if lead else "") + clip(core, 60) + tail
+
+    return f"{span(was)!r} is now {span(now)!r}"
+
+
+def pin_gate(spec: str, table: str) -> list[str]:
+    """R-23: every ruled unit equals its pin, at its location and in order (see the block comment)."""
+    pins, now = pin_rows(table), ruled_units(spec)
+    bad: list[str] = []
+    left = list(pins)
+    loose: list[PinUnit] = []
+    for unit in now:
+        hit = next((k for k, p in enumerate(left) if p[:2] == unit[:2]), None)
+        if hit is None:
+            loose.append(unit)
+        else:
+            left.pop(hit)
+    texts = {p[1] for p in pins}
+    for loc, text, classes in loose:
+        cls = ", ".join(classes)
+        away = next((k for k, p in enumerate(left) if p[1] == text), None)
+        here = next((k for k, p in enumerate(left) if p[0] == loc), None)
+        if away is not None:
+            was = left.pop(away)[0]
+            bad.append(f"R-23 {loc}: a pinned unit moved here from {was} ({cls}): {clip(text)!r}")
+        elif text in texts:
+            bad.append(f"R-23 {loc}: a pinned unit duplicated ({cls}): {clip(text)!r}")
+        elif here is not None:
+            was_text = left.pop(here)[1]
+            bad.append(f"R-23 {loc}: a pinned unit changed ({cls}): {delta(was_text, text)}")
+        else:
+            bad.append(f"R-23 {loc}: a ruled unit the pins do not hold ({cls}): {clip(text)!r}")
+    for loc, text, classes in left:
+        bad.append(f"R-23 {loc}: a pinned unit is missing ({', '.join(classes)}): {clip(text)!r}")
+    if not bad:
+        for (loc, text, classes), (was_loc, was, _c) in zip(now, pins, strict=True):
+            if (loc, text) != (was_loc, was):
+                bad.append(
+                    f"R-23 {loc}: a pinned unit moved out of its pinned order "
+                    f"({', '.join(classes)}): {clip(text)!r} stands where {was_loc} is pinned"
+                )
+                break
+    return bad
+
+
+def pin_counts(table: str) -> dict[str, int]:
+    """The pinned units per class (a unit counts in each of its classes) and in all."""
+    rows = pin_rows(table)
+    out = {c: sum(c in r[2] for r in rows) for c in PIN_CLASSES}
+    out["total"] = len(rows)
+    return out
+
+
+def repin(spec: str) -> int:
+    """`--repin-ruled`: write RULED_PIN_TXT into this file from the current spec."""
+    me = Path(__file__)
+    src = me.read_text(encoding="utf-8")
+    block = re.search(r'^RULED_PIN_TXT = r"""\n.*?^"""\n', src, re.DOTALL | MULTI)
+    if block is None:
+        raise SystemExit("repin: the RULED_PIN_TXT block is not found")
+    table = render_pins(spec)
+    if '"""' in table or table.endswith("\\"):
+        raise SystemExit("repin: a unit cannot sit in the raw string")
+    text = f'RULED_PIN_TXT = r"""\n{table}\n"""\n'
+    me.write_text(src[: block.start()] + text + src[block.end() :], encoding="utf-8")
+    counts = pin_counts(table)
+    print(f"RULED_PIN_TXT rewritten: {counts['total']} units; " + json.dumps(counts))
+    return 0
+
+
 def _row_edit(spec: str, frame: str, col: int, fn: Callable[[str], str]) -> str:
     out, done = [], False
     for ln in spec.split("\n"):
@@ -3308,6 +3516,61 @@ def _para_add(start: str, text: str) -> Callable[[str], str]:
         if i is None:
             raise SystemExit(f"mutation target not found: {start[:60]}")
         lines[i] = f"{lines[i]} {text}"
+        return "\n".join(lines)
+
+    return fn
+
+
+def _line_at(spec: str, start: str) -> tuple[list[str], int]:
+    """The spec's lines and the index of the first line that starts with `start`."""
+    lines = spec.split("\n")
+    i = next((i for i, ln in enumerate(lines) if ln.startswith(start)), None)
+    if i is None:
+        raise SystemExit(f"mutation target not found: {start[:60]}")
+    return lines, i
+
+
+def _move_line(start: str, before: str) -> Callable[[str], str]:
+    """Move the line that starts with `start` to stand before the line that starts with `before`."""
+
+    def fn(spec: str) -> str:
+        lines, i = _line_at(spec, start)
+        line = lines.pop(i)
+        j = _line_at("\n".join(lines), before)[1]
+        lines.insert(j, line)
+        return "\n".join(lines)
+
+    return fn
+
+
+def _dup_line(start: str) -> Callable[[str], str]:
+    """A second copy of the line that starts with `start`, right below it."""
+
+    def fn(spec: str) -> str:
+        lines, i = _line_at(spec, start)
+        lines.insert(i + 1, lines[i])
+        return "\n".join(lines)
+
+    return fn
+
+
+def _del_line(start: str) -> Callable[[str], str]:
+    """The line that starts with `start` deleted."""
+
+    def fn(spec: str) -> str:
+        lines, i = _line_at(spec, start)
+        lines.pop(i)
+        return "\n".join(lines)
+
+    return fn
+
+
+def _new_para(before: str, text: str) -> Callable[[str], str]:
+    """`text` as a paragraph of its own, before the line that starts with `before`."""
+
+    def fn(spec: str) -> str:
+        lines, i = _line_at(spec, before)
+        lines[i:i] = [text, ""]
         return "\n".join(lines)
 
     return fn
@@ -4966,6 +5229,257 @@ MUTATIONS: list[Mutation] = [
         _para_add(P05, "Positions are flattened; then the recorder stops."),
         "R-5 §5 prose: degradation order trading first ('Positions are flattened; then the recorder",
     ),
+    # X01-X16: the orchestrator's gate re-check 2's slipped forms, verbatim, each in the ruled unit the record
+    # names; the default-deny pin (R-23) refuses each as a changed pinned unit
+    (
+        "X01 JOB/strip-running: Back is dormant until the job ends",
+        _dot(SRN, CT, "Back is dormant until the job ends"),
+        "R-23 §6 frame JOB/strip-running: a pinned unit changed",
+    ),
+    (
+        "X02 TIER/parquet: Esc falls on deaf ears",
+        _dot("TIER/parquet", CT, "Esc falls on deaf ears"),
+        "R-23 §4 frame TIER/parquet: a pinned unit changed",
+    ),
+    (
+        "X03 §4 prose: the per-symbol table adds a per-symbol tally",
+        _para_add(P04, "The per-symbol table adds a per-symbol tally."),
+        "R-23 §4 prose: a pinned unit changed",
+    ),
+    (
+        "X04 §4 prose: each tier card shows its record count",
+        _para_add(P04, "Each tier card shows its record count."),
+        "R-23 §4 prose: a pinned unit changed",
+    ),
+    (
+        "X05 sketch: an End button per job",
+        lambda s: _first(
+            s,
+            "jobs strip: (empty at rest)    ",
+            "jobs strip: (empty at rest); an End button per job",
+        ),
+        "R-23 §2 sketch: a pinned unit changed",
+    ),
+    (
+        "X06 PURGE/entry-points: the symbol is already waiting in the box (replacing the empty field)",
+        _sub(PEP, SH, "the typed field empty", "the symbol is already waiting in the box"),
+        "R-23 §7 frame PURGE/entry-points: a pinned unit changed",
+    ),
+    (
+        "X07 §7 prose: ETHUSDT sits in the field when it opens",
+        _para_add(P07, "ETHUSDT sits in the field when it opens."),
+        "R-23 §7 prose: a pinned unit changed",
+    ),
+    (
+        "X08 §1.4 prose: first the orders, afterwards the recorder",
+        _para_add(P14, "Under pressure it is first the orders, afterwards the recorder."),
+        "R-23 §1.4 prose: a pinned unit changed",
+    ),
+    (
+        "X09 TIER/parquet: Esc is dormant",
+        _dot("TIER/parquet", CT, "Esc is dormant until the job ends"),
+        "R-23 §4 frame TIER/parquet: a pinned unit changed",
+    ),
+    (
+        "X10 confirm-compact: Esc goes unheeded",
+        _dot(CCF, CT, "Esc goes unheeded"),
+        "R-23 §6 frame JOB/confirm-compact: a pinned unit changed",
+    ),
+    (
+        "X11 confirm-compact: ; Cancel stays asleep",
+        _append(CCF, CT, "Cancel stays asleep until the job ends"),
+        "R-23 §6 frame JOB/confirm-compact: a pinned unit changed",
+    ),
+    (
+        "X12 PURGE/entry-points: the symbol is already waiting in the box (after the empty field)",
+        _sub(
+            PEP,
+            SH,
+            "the typed field empty",
+            "the typed field empty, the symbol is already waiting in the box",
+        ),
+        "R-23 §7 frame PURGE/entry-points: a pinned unit changed",
+    ),
+    (
+        "X13 PURGE/dialog: ETHUSDT sits in the typed field",
+        _dot(PDL, SH, "ETHUSDT sits in the typed field when it opens"),
+        "R-23 §7 frame PURGE/dialog: a pinned unit changed",
+    ),
+    (
+        "X14 PURGE/entry-points: BTCUSDT already waiting in the typed field",
+        _dot(PEP, SH, "BTCUSDT already waiting in the typed field"),
+        "R-23 §7 frame PURGE/entry-points: a pinned unit changed",
+    ),
+    (
+        "X15 §1.4 prose: It stops first the orders, afterwards the recorder",
+        _para_add(P14, "It stops first the orders, afterwards the recorder."),
+        "R-23 §1.4 prose: a pinned unit changed",
+    ),
+    (
+        "X16 §3 prose: level 1's bytes swapped for the registered 1,800.0 GB",
+        lambda s: _first(s, "level 1 at 80.5 % (1,610.0 GB;", "level 1 at 80.5 % (1,800.0 GB;"),
+        "R-23 §3 prose: a pinned unit changed",
+    ),
+    # Y01-Y10: own paraphrases across the pinned classes (Y03-Y05 a vocabulary gate reads first; R-23 beside)
+    (
+        "Y01 unavailable: Retry naps while the sample loads",
+        _dot("SCR-142/unavailable", CT, "Retry naps while the sample loads"),
+        "R-23 §5 frame SCR-142/unavailable: a pinned unit changed",
+    ),
+    (
+        "Y02 view-as: the links sit idle while viewing as",
+        _dot(VAS, SH, "the links sit idle while viewing as"),
+        "R-23 §5 frame SCR-142/view-as: a pinned unit changed",
+    ),
+    (
+        "Y03 §4 prose: each card keeps a running tally of rows",
+        _para_add(P04, "Each card keeps a running tally of rows."),
+        "R-12 §4 prose: row counts presented as shipped ('tally of rows')",
+    ),
+    (
+        "Y04 §6 table: the symbol arrives typed for you",
+        lambda s: _line_sub(
+            s,
+            "| Purge data ",
+            "reused whole (§7)",
+            "reused whole (§7), the symbol arrives typed for you",
+        ),
+        "R-7 §6 table (Purge data): typed field pre-filled ('typed for you')",
+    ),
+    (
+        "Y05 autostop: the order book closes ahead of the recorder",
+        _dot("SCR-142/autostop", SH, "the order book closes ahead of the recorder"),
+        "R-5 autostop: degradation order trading first ('the order book closes ahead",
+    ),
+    (
+        "Y06 §9 view-as row: Esc rests",
+        lambda s: _line_sub(
+            s,
+            "| Owner viewing as another user",
+            "exits and links enabled",
+            "exits and links enabled, Esc rests",
+        ),
+        "R-23 §9 row Owner viewing as another user: a pinned unit changed",
+    ),
+    (
+        "Y07 §6 prose: each job line offers a halt control",
+        _para_add(P06, "Each job line offers a halt control."),
+        "R-23 §6 prose: a pinned unit changed",
+    ),
+    (
+        "Y08 sketch: [ Halt ] beside the jobs strip",
+        lambda s: _first(
+            s, "jobs strip: (empty at rest)    ", "jobs strip: (empty at rest) [ Halt ]"
+        ),
+        "R-23 §2 sketch: a pinned unit changed",
+    ),
+    (
+        "Y09 §13 D04-CG3: 813.6 GB swapped for the registered 812.3 GB",
+        lambda s: _line_sub(s, "| D04-CG3", "813.6 GB", "812.3 GB"),
+        "R-23 §13 row D04-CG3: a pinned unit changed",
+    ),
+    (
+        "Y10 PURGE/step-up: the code box comes filled",
+        _dot("PURGE/step-up", SH, "the code box comes filled"),
+        "R-23 §7 frame PURGE/step-up: a pinned unit changed",
+    ),
+    # Z01-Z19: R-23 by its own kinds (changed, moved, duplicated, missing, a ruled unit the pins do not hold)
+    # over the unit classes, each R-23's only FAIL; a frame row's copy or deletion is the inventory's (R-18)
+    (
+        "Z01 frame changed: SCR-142/loading reworded",
+        _sub("SCR-142/loading", SH, "skeleton meters and cards", "skeleton meters and the cards"),
+        "R-23 §5 frame SCR-142/loading: a pinned unit changed",
+    ),
+    (
+        "Z02 frame moved: SCR-142/loading above SCR-142/stale-sample",
+        _move_line("| `SCR-142/loading`", "| `SCR-142/stale-sample`"),
+        "R-23 §5 frame SCR-142/loading: a pinned unit moved out of its pinned order",
+    ),
+    (
+        "Z03 ruled changed: §7 prose Owner-only reworded",
+        lambda s: _line_sub(s, P07, "Owner-only", "Owner only"),
+        "R-23 §7 prose: a pinned unit changed",
+    ),
+    (
+        "Z04 ruled moved: §6's Who may run them paragraph moved to §17",
+        _move_line(P06, "## 18."),
+        "R-23 §17 prose: a pinned unit moved here from §6 prose",
+    ),
+    (
+        "Z05 ruled duplicated: §9's Manager / Viewer row twice",
+        _dup_line("| Manager / Viewer"),
+        "R-23 §9 row Manager / Viewer: a pinned unit duplicated",
+    ),
+    (
+        "Z06 ruled missing: §9's Owner row deleted",
+        _del_line("| Owner  "),
+        "R-23 §9 row Owner: a pinned unit is missing",
+    ),
+    (
+        "Z07 caption changed: the deck's storage.title source reworded",
+        lambda s: _deck_edit(s, "storage.title", "(the heading,", "(the page heading,"),
+        "R-23 §14 row storage.title: a pinned unit changed",
+    ),
+    (
+        "Z08 caption moved: the sketch's footnote ⁴ above ³",
+        _move_line("⁴ PROPOSED", "³ PROPOSED"),
+        "R-23 §2 sketch: a pinned unit moved out of its pinned order",
+    ),
+    (
+        "Z09 caption duplicated: the sketch's tier header line twice",
+        _dup_line("| (c) [QuestDB"),
+        "R-23 §2 sketch: a pinned unit duplicated",
+    ),
+    (
+        "Z10 caption missing: the sketch's archive-derived line deleted",
+        _del_line("|     Archive-derived"),
+        "R-23 §2 sketch: a pinned unit is missing",
+    ),
+    (
+        "Z11 degradation changed: §16's low-disk row reworded",
+        lambda s: _line_sub(s, "| 14:2780 low-disk", "drawn with", "drawn, with"),
+        "R-23 §16 row 14:2780 low-disk warning and critical st: a pinned unit changed",
+    ),
+    (
+        "Z12 view-as moved: BQ-8 below BQ-9",
+        _move_line("| BQ-8 ", "| BQ-10 "),
+        "R-23 BQ row BQ-9: a pinned unit moved out of its pinned order",
+    ),
+    (
+        "Z13 purge duplicated: §2's per-symbol row (e) twice",
+        _dup_line("| (e) "),
+        "R-23 §2 row (e): a pinned unit duplicated",
+    ),
+    (
+        "Z14 PROPOSED missing: §1.1's purpose paragraph deleted",
+        _del_line(P11),
+        "R-23 §1.1 prose: a pinned unit is missing",
+    ),
+    (
+        "Z15 number missing: the header's Key paragraph deleted",
+        _del_line("**Key.**"),
+        "R-23 header prose: a pinned unit is missing",
+    ),
+    (
+        "Z16 view-as duplicated: the BQ conditions paragraph twice",
+        _dup_line("**Conditions (RULED"),
+        "R-23 BQ prose: a pinned unit duplicated",
+    ),
+    (
+        "Z17 view-as missing: §15's theme paragraph deleted",
+        _del_line("Dark / light / high-contrast = "),
+        "R-23 §15 prose: a pinned unit is missing",
+    ),
+    (
+        "Z18 unpinned: a new paragraph in the ruled §7",
+        _new_para(P07, "The dialog is the same on every entry point."),
+        "R-23 §7 prose: a ruled unit the pins do not hold",
+    ),
+    (
+        "Z19 unpinned: a new PROPOSED paragraph in §17",
+        _new_para("## 18.", f"The history line waits, {cap(2)}."),
+        "R-23 §17 prose: a ruled unit the pins do not hold",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -5075,6 +5589,24 @@ VALID: list[tuple[str, Callable[[str], str]]] = [
     (
         "V20 dialog-validity: Esc is never hidden",
         _dot(PDV, CT, "Esc is never hidden or ignored"),
+    ),
+]
+
+# Fresh twins (R-23): a note in no ruled unit raises nothing against the committed pins.
+FRESH: list[tuple[str, Callable[[str], str]]] = [
+    (
+        "F01 §1.3 prose: an unpinned sentence gains a neutral clause",
+        _para_add(
+            "**The classification (every state row", "Each class reads the same on every board."
+        ),
+    ),
+    (
+        "F02 §17 prose: a fresh note in its own paragraph",
+        _new_para("## 18.", "The walkthrough reads the frames in board order."),
+    ),
+    (
+        "F03 header prose: the Penpot page line gains a neutral sentence",
+        _para_add("**Penpot page:**", "The page name stays as written."),
     ),
 ]
 
@@ -5241,7 +5773,12 @@ def numbers_of(
     n["mutations_text1_own"] = sum(d.startswith("N") for d, _, _ in MUTATIONS)
     n["mutations_text2"] = sum(d.startswith("T") for d, _, _ in MUTATIONS)
     n["mutations_text2_own"] = sum(d.startswith("U") for d, _, _ in MUTATIONS)
+    n["mutations_text3"] = sum(d.startswith("X") for d, _, _ in MUTATIONS)
+    n["mutations_text3_own"] = sum(d.startswith("Y") for d, _, _ in MUTATIONS)
+    n["mutations_pin"] = sum(d.startswith("Z") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
+    n["fresh_twins"] = len(FRESH)
+    n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
     n["checklist_boxes_14"] = facts["scr142"]["checklist_boxes"]
     n["checklist_items"] = count(r"^\| 14:2780 ", spec)
@@ -5402,6 +5939,7 @@ def run(
     registered: set[tuple[str, str]],
     extra: list[Path],
     check: bool,
+    pins: str | None = None,
 ) -> tuple[list[str], dict[str, Any], list[dict[str, object]], list[str], int]:
     facts = contract_facts(t)
     fx = fixture(facts, t["22"])
@@ -5425,6 +5963,13 @@ def run(
                     )
                 else:
                     bad.append(f"marker audit:{key}={val} vs tool {have}")
+    # R-23, the backstop: reported when no other gate FAILs, else counted beside them (PIN_BESIDE)
+    pin_bad = pin_gate(spec, RULED_PIN_TXT if pins is None else pins)
+    PIN_BESIDE.clear()
+    if bad:
+        PIN_BESIDE.extend(pin_bad)
+    else:
+        bad = pin_bad
     return bad, numbers, matrix, missing, fails
 
 
@@ -5447,17 +5992,34 @@ def self_test(
         bad, _, _, _, _ = run(fn(spec), t, themes, registered, [], True)
         if len(bad) == 1 and bad[0].startswith(needle):
             signatures[i] = bad[0]
-            out.append(f"mutation {i:3d} FAIL as expected, its only FAIL: {bad[0]}")
+            beside = f" (R-23 beside it: {len(PIN_BESIDE)})" if PIN_BESIDE else ""
+            out.append(f"mutation {i:3d} FAIL as expected, its only FAIL: {bad[0]}{beside}")
         else:
             ok = False
             out.append(
                 f"mutation {i:3d} DEFECT ({len(bad)} FAIL): {desc} — " + " | ".join(bad)[:300]
             )
+    # a twin that edits a ruled unit is clean once re-pinned, and until then only R-23 refuses it
     for desc, fn in VALID:
+        twin = fn(spec)
+        bad, _, _, _, _ = run(twin, t, themes, registered, [], True, render_pins(twin))
+        held, _, _, _, _ = run(twin, t, themes, registered, [], True)
+        good = not bad and all(b.startswith("R-23 ") for b in held)
+        ok = ok and good
+        out.append(
+            f"valid twin {desc[:3]} "
+            + (
+                f"PASS, no FAIL once re-pinned ({len(held)} R-23 until then)"
+                if good
+                else "DEFECT: " + " | ".join(bad or held)[:300]
+            )
+        )
+    # a fresh twin touches no ruled unit: clean against the committed pins
+    for desc, fn in FRESH:
         bad, _, _, _, _ = run(fn(spec), t, themes, registered, [], True)
         ok = ok and not bad
         out.append(
-            f"valid twin {desc[:3]} "
+            f"fresh twin {desc[:3]} "
             + ("PASS, no FAIL" if not bad else "DEFECT: " + " | ".join(bad)[:300])
         )
     sigs = list(signatures.values())
@@ -5468,7 +6030,7 @@ def self_test(
     same = hashlib.sha256(SPEC.read_bytes()).hexdigest() == before
     ok = ok and same
     out.append(
-        f"self-test: {len(MUTATIONS)} mutations, {len(set(sigs))} distinct FAIL messages, each its mutation's only FAIL; {len(VALID)} valid twins clean; the unmutated spec "
+        f"self-test: {len(MUTATIONS)} mutations, {len(set(sigs))} distinct FAIL messages, each its mutation's only FAIL; {len(VALID)} valid twins clean once re-pinned; {len(FRESH)} fresh twins clean; the unmutated spec "
         + ("passes" if not base_bad else "FAILS")
         + "; the spec file "
         + ("byte-identical" if same else "CHANGED")
@@ -5486,6 +6048,8 @@ def main(argv: list[str]) -> int:
     pairs_text = (ROOT / "tools" / "contrast" / "pairs.mjs").read_text(encoding="utf-8")
     registered = set(re.findall(r'fg:\s*"([^"]+)",\s*bg:\s*"([^"]+)"', pairs_text))
     spec = SPEC.read_text(encoding="utf-8")
+    if "--repin-ruled" in argv:
+        return repin(spec)
     if "--self-test" in argv:
         return self_test(spec, t, themes, registered)
     mode = None
@@ -5504,6 +6068,7 @@ def main(argv: list[str]) -> int:
             "missing": missing,
             "problems": bad,
             "cite_warnings": CITE_WARN,
+            "pins_beside": PIN_BESIDE,
             "palette": palette,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=1))
@@ -5545,6 +6110,7 @@ def main(argv: list[str]) -> int:
         + (ok if not bad else "\n".join("FAIL " + b for b in bad))
     )
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
+    out += [f"NOTE R-23 beside the FAILs above (reported once they clear): {m}" for m in PIN_BESIDE]
     if "--check" in argv or mode is not None:
         clean = not any(b.startswith(("marker", "R-18: §0")) for b in bad)
         out.append("markers: " + ("clean" if clean else "MISMATCH"))
@@ -5569,6 +6135,1890 @@ def main(argv: list[str]) -> int:
         return 1 if hit else 2
     print("\n".join(out))
     return 1 if fails or bad else 0
+
+
+# --- R-23 the pinned ruled units: `--repin-ruled` writes this table; a reviewer reads it here --------
+RULED_PIN_TXT = r"""
+@ header prose ‖ proposed, number
+  **Ticket:** E16-D04 (#372) · **Epic:** E16 · **Status:** Draft, **text-first** — this file is
+  the hi-fi spec; the ten Penpot boards (nine dark, one light twin board) are **PENDING** and land
+  in a second PR with their exports and the page id (§0); nothing here is cited as drawn. **Owner
+  approval pending** (agent-delivery adaptations, owner decision 2026-09-25): the owner's
+  `approved` comment or the merge stands in for the ticket's design sign-off (§18). **Every
+  decision not already binding is PROPOSED**; RULED items name their source (the BQ table; the
+  orchestrator's ruling on #372, issue comment 6397016433, 2026-10-25); every finding is
+  `(heuristic)`; no participant, timing or quote is invented (§17). **Method:** a desk spec over
+  the merged E16-D02 (SCR-140, the host page) and E16-D03 (the destructive-change pattern and the
+  SCR-141 / SCR-142 boundary), and the merged E09-D09 / E30-D02 / E30-D04 patterns; every number
+  here carries an `audit:` marker that `docs/design/_tools/e16_d04_storage_audit.py --check`
+  re-derives from the `22` `getStorageUsage` example, and `--self-test` proves §12's gates with
+  305 <!-- audit:mutations=305 --> mutations.
+@ header prose ‖ purge, proposed
+  **Scope** (the ticket): SCR-142 as the one picture of the three storage tiers (QuestDB hot,
+  Parquet/DuckDB cold, Postgres): per-tier size, growth rate and projected full date with units
+  (the per-tier growth and projection PROPOSED, D04-G1); row counts by table, ingestion pressure,
+  slowest queries, last vacuum / compaction and the migration version as PROPOSED fields drawn
+  beside their shipped fallback (D04-G3, G4, G5, G6, G7); the hot-tier per-symbol table; the
+  maintenance actions (compact, purge and the PROPOSED vacuum, D04-G8) with progress; the bulk
+  archive import (US-REC-007) with a date range per symbol, progress, per-file skip / error
+  reporting, the overlap report and the archive-derived label; the five states (healthy ·
+  migration pending (PROPOSED, D04-G7) · lag warning · read-only mode (disk full) · a tier
+  unreachable); keyboard and announcements; redlines; the copy deck; the measured contrast. **Out
+  of scope:** SCR-143 (E42 / OBS) beyond the one recorder / DB tile link; backup and restore (`21`
+  §8 :4567; `22` `/admin/backups`) — named as absences, never drawn; SCR-140's disk card, purge
+  dialog and Compact now (E16-D02 — reused by cite, never redrawn); SCR-141's retention editor and
+  its `retention_sweep` footer (E16-D03 BQ-6 RULED :45); implementation.
+@ header prose ‖ proposed
+  **Start.** `blocked_by` E16-D02 (#323): Done — text merged in #4124 at
+  `736f995e02ce14c726599f5860f5733b8cfc836b`, boards merged in #4401 at
+  `505fdafe9a30530159efdc9252242c0bcffa24f1`; both cited at those commits. The sibling E16-D03
+  (#324) text is merged (#4438, `3ff63ea0e8326793824dd130468a591eadf43f14`) and E16-D05 (#373)
+  text is merged (`cba937ef0f94815de1c85622645579ccb724c2a0`); **the E16-D03 boards PR #4463 and
+  the E16-D05 boards PR #4501 are PENDING by name only** — nothing from either is pinned, quoted
+  or cited as a frame. E16-D06 and E16-D07 are PENDING by name; the implementation ticket that
+  consumes SCR-142 opens the contract-first PRs for D04-G1…G12 (§13; E16-T10 is the import's, `22`
+  :14085).
+@ header prose ‖ degradation, view-as, purge, number
+  **Inputs pinned.** Base `origin/main` `965cf14090e590781d3e19c51a719ff54fb4c30e`: `14` §0.3 :43,
+  §0.5 rules 4–6 :84–86, SCR-140 :2725–2757 (states :2748), SCR-141 :2758–2769 (the pointer form
+  :2768), SCR-142 :2770–2781 (type :2772, data :2773, states :2774, components :2775, a11y :2777,
+  performance :2778, audit :2779, checklist :2780), SCR-143 :2782–2795; `22` `getStorageUsage`
+  :4990–5045 (the description :4995–5004, the example :5015–5042), `StorageUsage` :18088–18123,
+  `RecorderPolicySettings` :18060–18087, `compactRecorder` :14040–14080, `importTradeArchive`
+  :14081–14134, `purgeRecordedData` :14135–14185, `getJob` :11564–11600, `Job` :20823–20875,
+  `getHealth` :10455–10494, `HealthReport` :20667–20692, `ComponentState` :16366–16369, the job
+  caps :378, the 422 titles :715, :721, `checksum_mismatch` :11276, the readiness probe :10570,
+  the step-up problem :11879–11883, migration 0008 :13501; `23` the recorder topic's `storage`
+  object :4062–4085 and the two pressure fields :4060–4061, the gate prose :4096–4105; `21` §4
+  :3956–4334 (the thirteen table headings :3968–4318, the operational notes :4319–4334), §5.1
+  :4339, §5.4 :4408–4420, §8 :4567; `20` :904–908; `24` §13.4.1 :3814–3860 (the projection :3830,
+  the precedence :3854), :494, :3718–3719; `27` ADR-0003 :1, :23, :34–36, :45; `04` SR-048 :873;
+  `05` §3.4 :90, §6.2 :144–150; `11` US-REC-004 :4153, US-REC-005 :4172, US-REC-007 :4210–4226;
+  `15` CMP-001 :48, CMP-009 :129, CMP-011 :149, CMP-016 :198, CMP-019 :225–231, CMP-023 :262–270,
+  CMP-024 :272–278, CMP-026 :290, CMP-027 :301, CMP-028 :311, CMP-035 :381, CMP-036 :390–396,
+  CMP-038 :409, CMP-040 :433, CMP-043 :463, CMP-044 :473–481, CMP-047 :503, CMP-049 :524–533,
+  CMP-050 :535, CMP-051 :544, CMP-079 :811–817, CMP-087 :884–890, CMP-093 :940, CMP-178
+  :2068–2074, CMP-239 :2784. Merged upstream specs at their merge commits: E16-D02 `736f995e…` (§2
+  :150–158, §3.1 :186–194, §3.2 :196–209, §6.4 :380–384, §6.5 :404–420, §6.6 :422–426, §7
+  :444–455, §8.3 :486–504, §8.5 :508–519, D-8 :760, D-16 :778); E16-D03 `3ff63ea0…` (BQ-6 :45,
+  §1.3 :102–120, §5 :198–224 incl. `SCR-141/confirm-lengthen` :210, §8 :255–268, §18 :546);
+  E16-D05 `cba937ef…` (the header, §0 :52–68, §12 :319–357, §13 :359, §18 :537: the spec shape and
+  the table-keyed audit tool); E09-D09 `baccf724a1fa3ad66f9333e440a7f5e8668b6eff` (§2.1 :32–44,
+  §2.2 :49, §3.1 :85–95, §3.2 :108, §9.1 :224–232, §9.3 :238, §10 :252); E30-D02
+  `f798a64e65d15d13f2f816c9b5564e0d148ba2ae` (D3 :128); E30-D04
+  `ca7d61fa1a767f6698d5243379546ad9f95090ab` (§30 :1048, the shared G-row sentence); E25-D01
+  `c0674eb95a59903b09388468f8bf2e382bab1161` (§9.5 :334, the pattern rule cited, never
+  re-proposed); the token JSON `packages/ui/tokens/*.tokens.json` + `themes.json`;
+  `tools/contrast/pairs.mjs`.
+@ header prose ‖ number
+  **Key.** `NN` = `docs/plan/NN-*.md` (`22` = `22-api-openapi.yaml`). **D04-Gn** = a contract gap
+  (the shared sentence of §13), **D04-CGn** = a shipped limit recorded, not designed around,
+  **D04-Cn** = a contradiction with its owner, **D04-An** = a copy-ready amendment, **D04-Qn** =
+  an open question, **D04-Dn** = a decision of this spec. **Fixture** (derived by the tool from
+  the `22` `getStorageUsage` example :5015–5042, never typed): report sampled 2026-09-14 <!--
+  audit:fixture.sample_date=2026-09-14 --> 10:31:03 <!-- audit:fixture.sample_time=10:31:03 -->
+  UTC; disk 4.0 <!-- audit:fixture.disk_total_tb=4.0 --> TB, 1.2 <!--
+  audit:fixture.disk_used_tb=1.2 --> TB used (30.1 <!-- audit:fixture.volume_pct=30.1 --> %), 2.8
+  <!-- audit:fixture.disk_free_tb=2.8 --> TB free; recording budget 2,000.0 <!--
+  audit:fixture.cap_gb=2000 --> GB with 1,188.0 <!-- audit:fixture.budget_used_gb=1188 --> GB
+  recorded (59.4 <!-- audit:fixture.budget_pct=59.4 --> %: QuestDB 640.0 <!--
+  audit:fixture.questdb_gb=640 --> GB over 7 <!-- audit:fixture.retention_questdb=7 --> days,
+  Parquet 548.0 <!-- audit:fixture.parquet_gb=548 --> GB over 30 <!--
+  audit:fixture.retention_parquet=30 --> days; Postgres 16.0 <!-- audit:fixture.postgres_gb=16 -->
+  GB outside the budget); growth 1.45 <!-- audit:fixture.growth_gb_day=1.45 --> GB/day;
+  `projected_full_at` 2028-03-27 <!-- audit:fixture.full_date=2028-03-27 --> = about 560 <!--
+  audit:fixture.runway_days=560 --> days, which the tool confirms is the budget wall ((cap − used)
+  ÷ growth; the volume's wall is about 1,928 <!-- audit:fixture.volume_wall_days=1928 --> days
+  away); BTCUSDT pinned, 812.3 <!-- audit:fixture.btc_gb=812.3 --> GB, 780 <!--
+  audit:fixture.btc_mb_day=780 --> MB/day; ETHUSDT 1.2 <!-- audit:fixture.eth_gb=1.2 --> GB, 520
+  <!-- audit:fixture.eth_mb_day=520 --> MB/day. **D04-CG3:** the example's `symbols[]` sum to
+  813.6 <!-- audit:fixture.symbols_sum_gb=813.6 --> GB while its QuestDB + Parquet tiers hold
+  1,188.0 GB (68.5 <!-- audit:fixture.attributed_pct=68.5 --> % attributed): the example is
+  internally inconsistent; the tool prints both figures, the per-symbol table says so (§4), and
+  nothing here "fixes" the example. The level fixtures scale the recorded bytes to the ladder
+  steps (`20` :905–907; the `14` :2748 figure for level 1): 80.5 <!--
+  audit:fixture.level1_pct=80.5 --> %, 90.0 <!-- audit:fixture.autostop=90 --> % and 95.0 <!--
+  audit:fixture.halt=95 --> %. Every frame-row number is re-derived by the tool's R-17 gate (§12);
+  every prose number carries a marker.
+@ AC trace row All three tiers are legible at a glance* ‖ proposed
+  | **All three tiers are legible at a glance** — QuestDB hot, Parquet/DuckDB cold and Postgres
+  each show size, growth rate and projected full date with units | §4 (board 02: `TIER/questdb`,
+  `TIER/parquet`, `TIER/postgres`); §3 (which of the three numbers is produced today: only the
+  disk-level growth and projection); §13 D04-G1 | every tier row's Size cell carries a number and
+  a unit, its Growth/day and Projected full cells carry either a figure with a unit or the shipped
+  "—" captioned PROPOSED with the disk-level fallback beside it; a tier row missing one is a FAIL
+  (§12 R-1; mutations M01–M03) |
+@ AC trace row Degradation order is stated** — in the l ‖ degradation, number
+  | **Degradation order is stated** — in the low-disk warning state the design states in text that
+  recording pauses before trading is affected | §5 (board 03: `SCR-142/low-disk-warning`,
+  `/autostop`, `/read-only-disk-full`, `/volume-refused`); §1.4 (the ladder, `20` :904–908; the
+  precedence, `24` :3854); §14 `storage.degradation` | the sentence "Recording pauses before
+  trading is affected." read on every frame whose producer is `level` ≥ 1, never inverted (§12
+  R-5; mutations M10–M11, T20–T22, U27–U30) |
+@ AC trace row A failing import does not look like a fa ‖ proposed
+  | **A failing import does not look like a failing page** — one archive file fails checksum: the
+  file is shown skipped with a reason while the import continues with progress | §8 (board 07:
+  `IMPORT/running-with-skips`, `/summary`, `/failed`); §14 the per-file reason sentences | the
+  shipped running state (the overall bar and its days still moving), the skipped file's row with
+  its reason in the captioned PROPOSED inset (D04-G11: `files[]` streamed before `succeeded`), no
+  page banner and no `role="alert"` in any wording on the skip frame; a failed import stays inside
+  its card (§12 R-9, R-10). AC 3's per-file skip while running is met as PROPOSED (§16) |
+@ AC trace prose ‖ proposed, number
+  The catalogue's six sign-off boxes (`14` :2780, 6 <!-- audit:checklist_boxes_14=6 --> items) are
+  traced item by item in §16. The ticket's Security note (Owner-only, step-up, the reason and the
+  typed `confirm_symbol` echo, never pre-filled; no QuestDB / DuckDB console link, SR-048 `04`
+  :873) → §7 and §12 R-7, R-15. The A11y note (per-tier tables with units, health as text,
+  sparklines with a table alternative (the sparkline PROPOSED, D04-G2), one announcement per
+  terminal state) → §4, §10. The Performance note (figures sampled every 60 s; heavy operations
+  explicit, with progress) → the sample stamp (§2, R-2) and §6. Observability → §13 D04-C1,
+  D04-D10.
+@ BQ row BQ-7 ‖ purge
+  | BQ-7 | the boundary with SCR-140 | the per-symbol **table** cut of `symbols[]` and the three
+  tier cards are this page's; the disk-card headline grammar, the purge dialog (§6.5) and Compact
+  now (§6.6) are E16-D02's, reused by cite; "Shorten retention / Reduce depth / Unpin" link to
+  SCR-141 / SCR-140 | RULED |
+@ BQ row BQ-8 ‖ view-as
+  | BQ-8 | which T2 frames | only `SCR-142/view-as` (`rbac.view_as`, one notice); **no**
+  `rbac.owner_only` frame: a non-owner never reaches `/admin/*` (`14` :43, :85) — the sentence
+  lives in §9's role table only | RULED |
+@ BQ row BQ-9 ‖ purge
+  | BQ-9 | purge on SCR-142 | the one E16-D02 §6.5 dialog from its entry points (Purge data… on
+  the QuestDB and Parquet cards, Purge… in the symbol row's detail popover; none on Postgres),
+  drawn as a cited re-use with the typed field empty; no second shape | RULED |
+@ BQ row BQ-10 ‖ purge, number
+  | BQ-10 | the confirm pattern for compact / vacuum | CMP-044 **standard** — compaction and
+  vacuum are non-destructive ("Nothing is deleted."): no typed field, no step-up unless the server
+  answers 403; purge keeps E16-D02 §6.5's typed dialog with the `recorder` step-up | RULED |
+@ BQ row BQ-11 ‖ degradation, proposed, number
+  | BQ-11 | vacuum's existence and class | wholly PROPOSED (D04-G8); **never a frame's default**:
+  it appears only as a captioned inset "PROPOSED — D04-G8, owner approval pending (#2701)" on
+  boards 01, 02 and 05; `recording:write` and no step-up proposed; the owner may require the
+  `recorder` class (D04-Q1) | RULED |
+@ BQ row BQ-13 ‖ proposed
+  | BQ-13 | cancel | drawn only as a captioned PROPOSED carrier on the jobs strip (D04-G10 `POST
+  /admin/jobs/{jobId}/cancel`), never as a shipped control; the shipped reality stated on every
+  carrier: a started job runs to its end; the `cancelled` outcomes kept (`Job.status` :20847) |
+  RULED |
+@ BQ row BQ-14 ‖ purge
+  | BQ-14 | actions at level 3 / write gate closed | Compact, Purge and Import **enabled**
+  (availability, never a pre-emptive disable — E30-D02 D3); a server refusal is shown in the
+  CMP-044 result as T4, never as a disabled control | RULED |
+@ BQ row BQ-16 ‖ proposed
+  | BQ-16 | migration pending | CMP-028 warning banner on PROPOSED fields (D04-G7), captioned;
+  **no Apply control** (an absence: migrations run with the release, `22` :10570) | RULED |
+@ BQ row BQ-17 ‖ proposed
+  | BQ-17 | "ingestion lag" with no lag field | the two produced numbers (WS
+  `ingest_rate_msgs_per_sec`, `write_backlog_rows`, `23` :4060–4061) with units; the lag cell "—"
+  + D04-G4; the lag-warning state keyed on the backlog | RULED |
+@ BQ row BQ-18 ‖ proposed
+  | BQ-18 | row counts, slow queries, last vacuum / compaction, per-tier growth | all PROPOSED
+  (D04-G1, G3, G5, G6); every frame's default shows the shipped surface, the PROPOSED column or
+  row appears only as a captioned second row or inset with the shipped fallback beside it; the
+  checklist boxes are satisfied "as PROPOSED" and say so in §16 | RULED |
+@ BQ row BQ-19 ‖ proposed
+  | BQ-19 | import per-file reporting with no result schema | D04-G11 `ArchiveImportResult`
+  PROPOSED; `checksum_mismatch` reuses `22` :11276's code word; the running frame shows the pct
+  bar and "{done} of {n} days"; the per-file rows and the skip counter while running are D04-G11's
+  `files[]` stream, a captioned inset | RULED |
+@ BQ row BQ-21 ‖ view-as, number
+  | BQ-21 | the light twin set | board 10 = three twins: `SCR-142/low-disk-warning`,
+  `IMPORT/running-with-skips`, `SCR-142/view-as` (3 <!-- audit:twin_frames=3 --> of 40 <!--
+  audit:frames_total=40 -->, under one third of the boards) | RULED |
+@ BQ row BQ-22 ‖ proposed
+  | BQ-22 | the sparkline source | the shipped frame draws the Growth column alone; the sparkline
+  is one PROPOSED inset on board 02 (D04-G2 `symbols[].history_bytes[]`) with its DOM-mirror
+  table, never a frame default | RULED |
+@ BQ prose ‖ view-as, proposed
+  **Conditions (RULED with the list; the same four as the sibling specs).** (A1) a lock only for a
+  key in E09-D09's register — here `rbac.view_as` on `SCR-142/view-as` only; absences, validity
+  and server refusals are never locks; every exit (Close, Esc, Cancel, Back) T1 on every frame.
+  (A2) the tool's gates read every frame table row by row and the prose, case-insensitive
+  vocabulary per ruled sentence, whole clauses, one `--self-test` mutation per form (§12). (A3)
+  exits never gated. (A4) merged texts cited at their merge shas; the E16-D03 / E16-D05 boards PRs
+  PENDING by name only; every departure a PROPOSED A / C / G-row; `15` untouched, `14` the one
+  pointer line; no lane as authority.
+@ §0 prose ‖ purge, proposed, number
+  Boards go on the self-hosted Penpot page `E16-D04 Storage and database` · id pending
+  (`docs/design/README.md` :46–48; never the host, team or file id, never a workspace URL). Boards
+  are `E16-D04 / NN slug`; frames inside them are `SCR-142/<state>`, `TIER/<state>`,
+  `JOB/<state>`, `PURGE/<state>` and `IMPORT/<state>`; exports go to
+  `docs/design/E16/img/E16-D04-NN-<slug>.png` at 1:1 via `docs/design/_tools/penpot_export.py`.
+  Every board with a PROPOSED decision carries the stamp, every RULED item its source; every
+  PROPOSED control, column or action is a captioned inset or a captioned second row ("PROPOSED —
+  D04-Gn, owner approval pending (#2701)"), never a frame's default (BQ-11 / BQ-13 / BQ-18 / BQ-22
+  RULED). Nothing from E16-D02's boards
+  (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
+  `E16-D02-19-scr-140-purge-confirm.png`) is redrawn: they are cited by name and path. 10 <!--
+  audit:boards=10 --> boards, 1 <!-- audit:light_twins=1 --> light board, 40 <!--
+  audit:frames_total=40 --> frames (14 <!-- audit:frames_scr=14 --> SCR-142 · 6 <!--
+  audit:frames_tier=6 --> TIER · 5 <!-- audit:frames_job=5 --> JOB · 6 <!-- audit:frames_purge=6
+  --> PURGE · 6 <!-- audit:frames_import=6 --> IMPORT, plus the 3 twins of board 10); the state
+  tables, this table and the board script's frame inventory reconcile (§12 R-18).
+@ §0 row 01 ‖ proposed, number
+  | 01 | `E16-D04 / 01 anatomy-healthy` | 2 <!-- audit:board_frames.01=2 --> frames of §2:
+  `SCR-142/healthy` (the full page, regions (a)…(h) lettered, the two meters, the three tier
+  cards, the sample stamp; the vacuum inset captioned PROPOSED, D04-G8) ·
+  `SCR-142/healthy-200-zoom` (the reflow: cards stack, tables one row element per record) | dark |
+  `docs/design/E16/img/E16-D04-01-anatomy-healthy.png` | pending |
+@ §0 row 02 ‖ proposed, number
+  | 02 | `E16-D04 / 02 tiers-and-tables` | 6 <!-- audit:board_frames.02=6 --> frames of §4:
+  `TIER/questdb`, `TIER/parquet`, `TIER/postgres` (the cards, every row, PROPOSED rows captioned
+  with the shipped fallback) · `TIER/tables-questdb` (the per-table CMP-049 as a captioned second
+  row) · `TIER/per-symbol` (the hot-tier symbol table; the sparkline as the one PROPOSED D04-G2
+  inset with its mirror table) · `TIER/query-performance` (a captioned second row) | dark |
+  `docs/design/E16/img/E16-D04-02-tiers-and-tables.png` | pending |
+@ §0 row 03 ‖ view-as, number
+  | 03 | `E16-D04 / 03 states-disk` | 5 <!-- audit:board_frames.03=5 --> frames of §5:
+  `SCR-142/low-disk-warning` (level 1 + the AC 2 sentence) · `SCR-142/autostop` ·
+  `SCR-142/read-only-disk-full` (level 3, gate closed; every action still enabled) ·
+  `SCR-142/volume-refused` · `SCR-142/view-as` (every write T2, one notice) | dark |
+  `docs/design/E16/img/E16-D04-03-states-disk.png` | pending |
+@ §0 row 04 ‖ number
+  | 04 | `E16-D04 / 04 states-health` | 6 <!-- audit:board_frames.04=6 --> frames of §5:
+  `SCR-142/tier-unreachable-questdb` (the card error, the page usable) · `SCR-142/lag-warning` ·
+  `SCR-142/migration-pending` (the captioned banner with the version delta; no Apply) ·
+  `SCR-142/stale-sample` · `SCR-142/loading` · `SCR-142/unavailable` | dark |
+  `docs/design/E16/img/E16-D04-04-states-health.png` | pending |
+@ §0 row 05 ‖ proposed, number
+  | 05 | `E16-D04 / 05 maintenance-jobs` | 5 <!-- audit:board_frames.05=5 --> frames of §6:
+  `JOB/confirm-compact` (CMP-044 standard) · `JOB/confirm-vacuum` (captioned PROPOSED) ·
+  `JOB/strip-running` (two jobs with their pct; Cancel captioned PROPOSED) ·
+  `JOB/strip-refused-409` (T4) · `JOB/outcomes` (succeeded / failed / cancelled / unknown insets
+  for compact and, captioned PROPOSED (D04-G8), vacuum) | dark |
+  `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | pending |
+@ §0 row 06 ‖ view-as, purge, number
+  | 06 | `E16-D04 / 06 purge` | 6 <!-- audit:board_frames.06=6 --> frames of §7:
+  `PURGE/entry-points` · `PURGE/dialog` (E16-D02 §6.5 reused; the typed field empty) ·
+  `PURGE/dialog-validity` (the typed mismatch: validity look, `validity-reason` layer, no lock) ·
+  `PURGE/pinned-refused` (T4) · `PURGE/step-up` (the sentence; SCR-006 cited, not drawn) ·
+  `PURGE/outcomes` | dark | `docs/design/E16/img/E16-D04-06-purge.png` | pending |
+@ §0 row 07 ‖ view-as, proposed, number
+  | 07 | `E16-D04 / 07 import` | 6 <!-- audit:board_frames.07=6 --> frames of §8: `IMPORT/form` ·
+  `IMPORT/form-validity` (over 366 days) · `IMPORT/running` (the bar and the days; the per-file
+  table a captioned PROPOSED D04-G11 inset) · `IMPORT/running-with-skips` (AC 3: the shipped bar
+  moving, the skipped row with its reason in the captioned D04-G11 inset, no banner) ·
+  `IMPORT/summary` (the overlap report, the archive-derived tag) · `IMPORT/failed` (inside the
+  card) | dark | `docs/design/E16/img/E16-D04-07-import.png` | pending |
+@ §0 row 08 ‖ number
+  | 08 | `E16-D04 / 08 keyboard-a11y-copy` | 0 <!-- audit:board_frames.08=0 --> state frames: the
+  focus-order map (header → meters → cards → tables → maintenance → import), the keys table, the
+  announcement policy, the copy-deck counts, the measured-matrix line, the RULED stamps (§10,
+  §13–§15) | dark | `docs/design/E16/img/E16-D04-08-keyboard-a11y-copy.png` | pending |
+@ §0 row 09 ‖ view-as, proposed, number
+  | 09 | `E16-D04 / 09 redlines` | 1 <!-- audit:board_frames.09=1 --> frame of §11:
+  `SCR-142/redlines` — tokens annotated on a tier card, a meter, the jobs strip, the per-file
+  table (the PROPOSED D04-G11 inset), the T2 control and the validity control; the token audit
+  counts | dark | `docs/design/E16/img/E16-D04-09-redlines.png` | pending |
+@ §0 row 10 ‖ view-as, number
+  | 10 | `E16-D04 / 10 light-twins` | 3 <!-- audit:board_frames.10=3 --> twins in `semantic-light`
+  through `themes.json` (BQ-21 RULED): `SCR-142/low-disk-warning` (the warning tone on the admin
+  canvas), `IMPORT/running-with-skips` (the warning subtle rows), `SCR-142/view-as` (the T2 pair);
+  the measured ratios in the title | light | `docs/design/E16/img/E16-D04-10-light-twins.png` |
+  pending |
+@ §1.1 prose ‖ purge, proposed
+  SCR-142 is where the Owner sees the three storage tiers as one picture (`14` :2772; ADR-0003
+  :23, :34–36: QuestDB hot, Parquet/DuckDB cold, Postgres relational) and where the bulk archive
+  import and the maintenance actions live (the ticket). It answers four questions with figures
+  that carry units and a sample time: how full is the recording budget and the volume, and when is
+  either full; how large is each tier, each table and each symbol, and how healthy is each tier;
+  what is running or has run (compaction, purge, import) and what it did; what the shipped
+  contract does not yet produce (row counts D04-G3, slow queries D04-G5, last vacuum / compaction
+  D04-G6, the schema version D04-G7, per-tier growth D04-G1, a cancel D04-G10) — each drawn as a
+  captioned PROPOSED carrier beside its shipped fallback, never as a shipped control (BQ-18
+  RULED). It re-decides nothing E16-D02 owns (the disk-card headline grammar, the purge dialog,
+  Compact now, the job terminal copy) and nothing E16-D03 owns (the retention editor and its
+  footer; BQ-6 :45 RULED: "tier health, row counts and maintenance actions stay SCR-142", the row
+  counts PROPOSED, D04-G3).
+@ §1.2 row the admin area ‖ number
+  | the admin area | `14` §0.3 :43, :2390; CMP-087 `15` :884–890 | `/admin/*` needs role `owner`
+  and a re-auth token ≤ 15 min old; any other session gets the router's 404; the AdminLayout shell
+  with its re-auth badge (CMP-035) and `aria-label="Admin area"`; `color.surface.admin-tint` is
+  named by CMP-087 and MISSING from the token package (D04-C4) — the page draws on
+  `color.surface.canvas` |
+@ §1.2 row the host page and its disk card ‖ number
+  | the host page and its disk card | E16-D02 §8.3 :486–504, §2 :150–158 | the headline keyed on
+  `level` ("Growing · auto-record pauses in about {d} days" … "Recording stopped · resumes below
+  {halt − 5} % with 10 % of the volume free"), the formula "({autostop} % × {cap} − {used}) ÷
+  {growth}/day ≈ {d} days", the threshold scale, the three suggested actions; growth = the 7-day
+  trend, projection to the nearer wall (:153) |
+@ §1.2 row the purge dialog and Compact now ‖ purge, number
+  | the purge dialog and Compact now | E16-D02 §6.5 :404–420, §6.6 :422–426, §6.4 :380–384 | one
+  CMP-043 form with CMP-044's typed pattern wrapped by CMP-093: Symbol, date, size estimate,
+  Reason 3–280, Include pinned (pinned only), the typed symbol never pre-filled, the step-up
+  sentence, "This action is audited (high severity)."; Compact now busy with `aria-busy`, no lock,
+  no confirmation on SCR-140 |
+@ §1.2 row the job terminal copy ‖ purge
+  | the job terminal copy | E16-D02 §3.2 :196–209 | the failed / cancelled / unknown / succeeded
+  lines for purge and compact (reused by cite in §6, §7); a lost job is `404 job_unknown` (`22`
+  :11584) |
+@ §1.2 row the job footer grammar ‖ view-as, number
+  | the job footer grammar | E16-D03 §8 :255–268 | one `role="status"` region, 2 <!--
+  audit:layout.poll_s=2 --> s polling while queued or running, progress as text first with a
+  CMP-023 whose `aria-valuetext` equals the text, one announcement per terminal state; the Class
+  words `T1` · `busy` · `outcome` · `T2` · `validity look` · `T4` |
+@ §1.2 row the three routes and the job poll ‖ degradation, purge, number
+  | the three routes and the job poll | `22` :14040–14185, :11564–11600, :20823–20875 |
+  `compactRecorder`, `importTradeArchive`, `purgeRecordedData` (all `recording:write`), `getJob`
+  (`admin:read`); one job of a kind at a time (`409 job_running`); jobs live in one process's
+  memory, at most 256 <!-- audit:facts.jobs_cap=256 -->, lost at a restart (:378, :11581–11584;
+  D04-CG4) |
+@ §1.2 row the ladder, the cadence, the precedence ‖ number
+  | the ladder, the cadence, the precedence | `20` :904–908; `24` §13.4.1 :3814–3860; `22`
+  :4995–5004; `23` :4096–4105 | warn 80 <!-- audit:facts.disk.CV_DISK_WARN_PCT=80 --> / autostop
+  90 / halt 95 % of `cap_bytes`, re-armed 5 points lower; a sample every 60 <!--
+  audit:facts.disk.CV_DISK_SAMPLE_INTERVAL_S=60 --> s; `level` read, never derived; the gate
+  closed = symbols without an open position dropped as gaps; INV-B11-a outranks ADR-0015's halt |
+@ §1.2 row T2, its keys, the validity look ‖ view-as
+  | T2, its keys, the validity look | E09-D09 §2.2 :49, §3.1 :85–95, §3.2 :108, §9.1 :224–232,
+  §9.3 :238; E30-D02 D3 :128 | §1.3 restates them once |
+@ §1.2 row the pattern-vocabulary rule ‖ proposed
+  | the pattern-vocabulary rule | E25-D01 §9.5 :334 (merged `c0674eb9…`) | "hollow, dashed or
+  hatched = estimated or absent, never a side or direction" is PROPOSED there; this spec follows
+  it (the PROPOSED carriers' dashed outline means absent from the contract) and does not
+  re-propose it (D04-C5) |
+@ §1.3 prose ‖ degradation, view-as, number
+  **T2 — disabled with a visible reason** (E09-D09 §2.2 :49, §3.1 :85–95, §9.1 :224–228, §9.3
+  :238; CMP-079 RbacGate `15` :811; CMP-019 Icon `lock` :225). A control gated by a role, grant,
+  environment, session or **registered state** keeps its native role and its full label;
+  `aria-disabled="true"`, never the `disabled` attribute, so it stays a Tab stop; a CMP-019 `lock`
+  glyph (`decorative=false`, name "Not available") leads the label in the same colour; the reason
+  sits under it (2a inline; 2b tooltip echo only for icon-only controls), in the DOM at mount and
+  linked by `aria-describedby`; on SCR-142 every gated control points at the one panel notice and
+  carries no reason line of its own; `Enter`, `Space` or a bound hotkey changes nothing and
+  re-shows the reason once, politely; a T2 control emits no audit and no analytics; role legs are
+  wrapped in CMP-079. Hi-fi: the label `color.text.tertiary`, the reason `color.text.secondary`,
+  the fill `color.surface.raised` with a `color.border.default` hairline; never
+  `color.text.disabled`, never `opacity.disabled`. Reasons are `rbac.*` keys with the §3.2 verb
+  (`recording:write` → "change recording", :108) or a registered state key; a screen never writes
+  its own string, and a reason never names data — no symbol, count, size or user name (except the
+  view-as target) — one sentence, at most 60 <!-- audit:layout.reason_max=60 --> characters, a
+  full stop. **On this page the only T2 is the view-as leg** (BQ-8 RULED, A1): the Owner viewing
+  as another user; `rbac.owner_only` is named in §9 for completeness and no frame draws it,
+  because a non-owner never reaches `/admin/*`. This page needs no new state key (E16-D02 §8.5's
+  form would govern one; D04-Q4 names the one candidate and keeps it a status).
+@ §1.3 prose ‖ view-as, purge, number
+  **The validity look is not T2** (E09-D09 §9.1 :230; E30-D02 D3 :128): a control disabled by form
+  validity keeps its own fill and label at `opacity.disabled` (0.45 <!--
+  audit:opacity_disabled=0.45 -->), the reason at full opacity under or beside it in
+  `color.text.secondary` (never inside), `aria-disabled`, focusable; a press shows the error
+  summary; no lock glyph, no CMP-079, no key; board layer `validity-reason`. On SCR-142 two
+  controls take it: Import archives while the range is empty, inverted or longer than 366 <!--
+  audit:facts.import_days_max=366 --> days (`22` :14088), and the purge dialog's Confirm while the
+  typed symbol differs or the reason is shorter than 3 <!-- audit:facts.reason_min=3 -->
+  characters (E16-D02 :419; CMP-044 :477 "form validity, not a gate"). Never over-converted.
+@ §1.3 prose ‖ view-as, purge, proposed, number
+  **Status · outcome · absence · refusal** (E09-D09 §9.1 :231; the orchestrator's conditions A1
+  and A3). **Busy** — a job this client started while it is queued or running: the button is
+  CMP-001 `loading` with `aria-busy`, focusable, a press opens nothing, no lock (E16-D02 §6.6
+  :422–426). **Status** — the five states of the ticket: disk full (`level` 3, the gate closed), a
+  tier unreachable, the ingestion backlog, a pending migration (PROPOSED, D04-G7) and a stale
+  sample are states of the system with notices and tones; no control is gated by them, and the
+  actions that would be refused are refused by the server at the point of action (BQ-14, BQ-15
+  RULED). **Outcome** — a job's terminal state and the import summary: one polite announcement
+  each, never a gate. **Absence** — a capability the contract defers (cancel, vacuum, row counts,
+  slow queries, per-tier growth and projection, the sparkline history, Apply migrations: D04-G10,
+  G8, G3, G5, G1, G2, G7) is drawn absent from every frame's default and appears only as a
+  captioned PROPOSED inset or second row, never as a lock (BQ-11 / 13 / 16 / 18 / 22 RULED).
+  **Refusal (T4)** — `409 job_running`, `422 import_range_invalid`, `422
+  purge_confirmation_mismatch`, `422 retention_pinned_refused`, the `503` when the purge's audit
+  record cannot be written (`22` :14150–14152), and `403 step_up_required` (not a refusal: it runs
+  the SCR-006 step-up, E16-D02 §6.4): CMP-027 inline under the control with the server's code in
+  parentheses, polite once; the page state never changes and nothing else dims. **Exits and links
+  are never gated** (A3): Cancel, Esc and the close ✕ in every dialog, Retry, the links to SCR-140
+  / SCR-141 / SCR-143, the per-tier table alternatives — enabled for every role on every frame.
+@ §1.3 row every write while viewing as — Compact P ‖ view-as, purge, proposed
+  | every write while viewing as — Compact Parquet…, Purge data… and the per-symbol Purge… (the
+  row's detail popover), Import archives, Stop job on the jobs strip (PROPOSED D04-G10) and the
+  Vacuum Postgres… inset (PROPOSED D04-G8) | **T2** (first leg) | `rbac.view_as` "Read-only while
+  viewing as {user}.", one panel notice under the header (the D-16 text, E16-D02 :778); every
+  gated control's `aria-describedby` → it (one notice, many pointers); reads, the meters, the
+  tables and a running job's progress keep updating — E09-D09 §2.1 step 3, §3.1 :95; CMP-079
+  `form="notice"` |
+@ §1.3 row Import archives while the range is empty ‖ view-as, purge, number
+  | Import archives while the range is empty, inverted or over 366 days; the purge Confirm while
+  the typed symbol differs or the reason is short | **validity look** | own fill + label at
+  `opacity.disabled`, the reason full-opacity under it: "Choose a range of at most 366 days." ·
+  "Type ETHUSDT exactly to confirm."; never T2 (E09-D09 §9.1 :230; E30-D02 D3 :128) |
+@ §1.3 row Compact Parquet… / Import archives / Pur ‖ view-as, purge
+  | Compact Parquet… / Import archives / Purge… while this client's job of that kind is queued or
+  running | **busy** | CMP-001 `loading`, `aria-busy`, focusable, a press opens nothing; the strip
+  shows the progress; no lock (E09-D09 §9.1; E16-D02 §6.6) |
+@ §1.3 row 409 job_running` (a second press, or aft ‖ purge
+  | `409 job_running` (a second press, or after a reload with no job id) · `422
+  import_range_invalid` · `422 purge_confirmation_mismatch` · `422 retention_pinned_refused` · the
+  purge's `503` when its audit record cannot be written | **T4** | the refusal sentence under the
+  control at the point of action with the code in parentheses (§6, §7, §8); `403 step_up_required`
+  runs the step-up flow instead (§7) |
+@ §1.3 row disk full (`level` 3, `write_gate` close ‖ proposed, number
+  | disk full (`level` 3, `write_gate` closed) · a tier `down` · the ingestion backlog · a pending
+  migration (PROPOSED, D04-G7) · a stale sample | **status** | notices and tones (§5); every write
+  stays enabled; a refusal, if any, is T4 at the point of action; Shorten retention / Reduce depth
+  / Unpin stay links (BQ-14, BQ-15 RULED) |
+@ §1.3 row Stop job (cancel a running job) · Vacuum ‖ proposed
+  | Stop job (cancel a running job) · Vacuum Postgres · row counts by table · slowest queries ·
+  per-tier growth and projection · the sparkline history · Apply migrations | **absence** |
+  shipped absent (`22` has no cancel route, no vacuum route or kind, no such fields: §12; D04-G10,
+  G8, G3, G5, G1, G2, G7); drawn only as a captioned PROPOSED inset or second row with the shipped
+  fallback beside it; never a lock (A1; BQ-11 / 13 / 16 / 18 / 22 RULED) |
+@ §1.3 row a job's succeeded · failed · cancelled · ‖ purge
+  | a job's succeeded · failed · cancelled · unknown line; the import summary | **outcome** |
+  polite live region, one announcement per terminal state (`05` §6.2 :146–150; CMP-023 `15` :267);
+  a failed purge (E16-D02 :200) and a failed import, inside its card, are `role="alert"` once |
+@ §1.4 prose ‖ ruled, degradation, number
+  The ladder is the server's (`20` :904–908; `24` §13.4.1 :3833–3840): at 80 % of the recording
+  budget (or a runway ≤ 7 days) a warning; at 90 % new auto-record starts are refused and
+  retention accelerates; at 95 % (or less than 5 % of the volume free) the write gate closes and
+  symbols without an open position are dropped as gaps — open positions keep writing (`24` :3854:
+  INV-B11-a outranks ADR-0015's "recording halts"; E16-D02 :496). Nothing on the ladder touches
+  order placement (`24` :3845 "Order placement never reads the budget"). The design states the
+  order in text on every level ≥ 1 frame (AC 2): **"Recording pauses before trading is
+  affected."** (`storage.degradation`, a `new` key, §14), followed by the detail line "At 90 % of
+  the recording budget auto-record pauses; at 95 % recording stops for symbols without an open
+  position; orders and positions are never gated by the disk." The tool reads the sentence on
+  every frame whose producer is `level` ≥ 1 and fails an inverted order (§12 R-5).
+@ §2 prose ‖ number
+  A section of `/admin/recorder` (BQ-6 RULED; `14` :2772 "Page section"), reached from SCR-140's
+  disk card ("Storage details →", a link E16-D02's card gains as D04-A4's companion line) and from
+  SCR-143's recorder / DB tile (`14` :2794–2795), inside the CMP-087 AdminLayout shell with its
+  re-auth badge (`14` :43). Reference viewport 1280 <!-- audit:layout.vp_w=1280 --> × 800 <!--
+  audit:layout.vp_h=800 --> at 100 %, comfortable density (`16` §3: 32 <!-- audit:layout.row_px=32
+  --> px rows and controls, the admin default), the admin nav 240 <!-- audit:layout.nav_px=240 -->
+  px as E16-D02 D-12 assumes it; dark is the default, the light twins are board 10. Eight <!--
+  audit:layout.regions=8 --> regions, top to bottom; cards are CMP-050 on `color.surface.raised`
+  with a `color.border.default` hairline, 384 <!-- audit:layout.card_w=384 --> px wide in a
+  three-up row, stacking below 1024 px and at 200 % zoom.
+@ §2 sketch ‖ caption
+  +-- Admin area · Recorder › Storage and database -------------------------- re-auth mm:ss --+
+@ §2 sketch ‖ caption, view-as, number
+  | (a) Storage and database Sampled 10:31:03 UTC (every 60 s) [view-as notice] |
+@ §2 sketch ‖ caption, number
+  | (b) Recording budget [########------------] 1,188.0 GB of 2,000.0 GB cap_bytes (59.4 %) |
+@ §2 sketch ‖ caption, number
+  | Growing · auto-record pauses in about 422 days 80 % · 90 % · 95 % scale |
+@ §2 sketch ‖ caption, number
+  | Disk volume [######--------------] 1.2 TB of 4.0 TB disk_total_bytes (30.1 %) |
+@ §2 sketch ‖ caption, number
+  | Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall |
+@ §2 sketch ‖ caption
+  | (c) [QuestDB · hot] [Parquet/DuckDB · cold] [Postgres · relational] |
+@ §2 sketch ‖ caption, number
+  | Size 640.0 GB Size 548.0 GB Size 16.0 GB |
+@ §2 sketch ‖ caption, number
+  | Retention 7 d Retention 30 d Retention — |
+@ §2 sketch ‖ caption
+  | Growth/day — ¹ Growth/day — ¹ Growth/day — ¹ |
+@ §2 sketch ‖ caption
+  | Projected full — ¹ Projected full — ¹ Projected full — ¹ |
+@ §2 sketch ‖ caption
+  | Health ✓ healthy Health ✓ healthy Health ✓ healthy · Migration — |
+@ §2 sketch ‖ caption, purge
+  | [ Purge data… ] [ Compact Parquet… ] (no purge entry) |
+@ §2 sketch ‖ caption, purge
+  | [ Purge data… ] |
+@ §2 sketch ‖ caption, purge
+  | (d) ▸ Tables ² (e) Per-symbol (hot); Purge… in the row popover (f) Queries ³ |
+@ §2 sketch ‖ caption
+  | (g) Maintenance [ Compact Parquet… ] ┆ Vacuum Postgres… ⁴ ┆ |
+@ §2 sketch ‖ caption
+  | jobs strip: (empty at rest) |
+@ §2 sketch ‖ caption, number
+  | (h) Import archives Symbol [BTCUSDT ▾] From [2026-01-01] To [2026-01-31] [Import archives]|
+@ §2 sketch ‖ caption
+  | Archive-derived · trades only · no book data |
+@ §2 sketch ‖ caption
+  +---------------------------------------------------------------------------------------------+
+@ §2 sketch ‖ caption, proposed, number
+  ¹ PROPOSED — D04-G1, owner approval pending (#2701); the shipped fallback beside it: all tiers
+  1.45 GB/day, all tiers 2028-03-27
+@ §2 sketch ‖ caption, proposed
+  ² PROPOSED — D04-G3, owner approval pending (#2701): a captioned second row per tier
+@ §2 sketch ‖ caption, proposed
+  ³ PROPOSED — D04-G5, owner approval pending (#2701): a captioned second row
+@ §2 sketch ‖ caption, proposed
+  ⁴ PROPOSED — D04-G8, owner approval pending (#2701): a captioned inset
+@ §2 row (a) ‖ view-as, number
+  | (a) | H2 "Storage and database" (`type.ui.heading-lg`); the sample stamp "Sampled {HH:MM:SS}
+  UTC (every 60 s)" from `generated_at` (`22` :18113) and `CV_DISK_SAMPLE_INTERVAL_S` (`20` :908),
+  `type.ui.caption` `color.text.secondary`, with CMP-239 `stale` and its clock glyph once the
+  report is older than 2 <!-- audit:layout.stale_factor=2 --> samples (`14` §0.5 rule 4 :84: the
+  last-good time always shown); the one view-as notice slot (0 px unless viewing as) |
+@ §2 row (b) ‖ number
+  | (b) | two CMP-023 `kind="meter"` (`15` :265), each labelled with what it divides (D04-D1,
+  D04-A2): **Recording budget** = (questdb + parquet `used_bytes`) ÷ `cap_bytes` (`22` :5003–5004;
+  `23` :4071) with E16-D02 §8.3's headline keyed on `level`; **Disk volume** = `disk_used_bytes` ÷
+  `disk_total_bytes` with `disk_free_bytes`; under them the projection line and E16-D02's formula
+  and threshold scale; the AC 2 sentence on every level ≥ 1 frame (§1.4); the fill tone by `level`
+  (0 primary, 1–2 warning, 3 danger) |
+@ §2 row (d) ‖ proposed
+  | (d) | per-tier tables (CMP-049 table variant inside a CMP-051 Accordion per card): Table /
+  Rows / Size / Oldest / Newest — PROPOSED `tiers[].tables[]` (D04-G3), drawn only as a captioned
+  second row |
+@ §2 row (e) ‖ purge, proposed
+  | (e) | the hot-tier per-symbol table (CMP-049 table variant): Symbol / Size / Growth/day /
+  Share of budget / Pinned from `symbols[]`; Oldest / Newest and the sparkline only as captioned
+  PROPOSED carriers (D04-G2; BQ-22 RULED); Purge… in each row's detail popover (D04-D3) |
+@ §2 row (f) ‖ proposed, number
+  | (f) | query performance (CMP-049): Tier / Statement kind / p95 / Count (1 h) — PROPOSED
+  `slow_queries[]` (D04-G5), a captioned second row; never SQL text, never a console (SR-048) |
+@ §2 row (g) ‖ proposed
+  | (g) | maintenance (CMP-050): CMP-001 secondary "Compact Parquet…"; "Vacuum Postgres…" only as
+  the captioned PROPOSED inset (D04-G8); the jobs strip (E16-D03 §8's grammar): one line per
+  running job this client started, "{Verb} running · {pct} %" + CMP-023, and Stop job as a
+  captioned PROPOSED carrier (D04-G10) |
+@ §2 row (h) ‖ proposed, number
+  | (h) | import (CMP-050): Symbol (CMP-009), From / To (CMP-047 range, ≤ 366 days), the
+  consequence line, "Import archives" (CMP-001 primary); while running the overall CMP-023 with
+  "{done} of {n} days" (`progress_pct` with the requested range); the per-file CMP-049 table (Day
+  / Status / Reason / Rows), the skip counter and the overlap report only as captioned PROPOSED
+  insets (D04-G11); the CMP-011 tag "Archive-derived · trades only · no book data" (`22`
+  :14090–14091) |
+@ §2 frame SCR-142/healthy ‖ frame, degradation, purge, proposed
+  | `SCR-142/healthy` | `level` 0 (budget 59.4 %), every `components[].state` healthy, no pending
+  migration (D04-G7 absent) | stamp Sampled 10:31:03 UTC (every 60 s) · meter Recording budget:
+  1,188.0 GB of 2,000.0 GB cap_bytes (59.4 %), headline "Growing · auto-record pauses in about 422
+  days" (E16-D02 :490) · meter Disk volume: 1.2 TB of 4.0 TB disk_total_bytes (30.1 %), free 2.8
+  TB · the projection line "Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the
+  nearer wall (the volume about 1,928 days)" · the formula line "(90 % × 2,000.0 GB − 1,188.0 GB)
+  ÷ 1.45 GB/day ≈ 422 days" · the scale "80 % warning · 90 % auto-record pauses · 95 % recording
+  stops (open positions keep writing)" · three tier cards (§4) · the per-symbol table, the
+  maintenance card and the import card at rest | Compact Parquet…, Purge data…, Import archives
+  enabled (T1) · Vacuum Postgres… only as the inset PROPOSED — D04-G8, owner approval pending
+  (#2701) · links to SCR-140, SCR-141 and SCR-143 enabled (T1) | T1 | 01 |
+@ §2 frame SCR-142/healthy-200-zoom ‖ frame
+  | `SCR-142/healthy-200-zoom` | the same report at 200 <!-- audit:layout.zoom_pct=200 --> % zoom
+  and the in-app text scale (1280 × 800) | the two meters stacked, full width · the three tier
+  cards stacked one per row · every table one row element per record (CMP-049 reflow, `15` :528) ·
+  the import card's form fields stacked one per row · nothing hidden, no horizontal scroll ·
+  forced-colors: the meter fills take the system accent with their value text beside them, the
+  tone glyphs keep their words (`14` :86) | as `SCR-142/healthy` (T1) | T1 | 01 |
+@ §3 prose ‖ degradation, proposed, number
+  Every element binds to a shipped field or is a PROPOSED gap (D04-Gn, §13) drawn with its shipped
+  fallback beside it. The page reads `GET /recording/storage` once on entry and every 60 s while
+  open, `GET /admin/health` with it (the tier health), and the WS `recorder` topic for the two
+  ingestion-pressure numbers and the live `storage` object (`23` :4062–4085) — the level, the gate
+  and the headline never lag the gate (E16-D02 :152).
+@ §3 row the sample stamp ‖ number
+  | the sample stamp | `StorageUsage.generated_at` (`22` :18113); the cadence
+  `CV_DISK_SAMPLE_INTERVAL_S` 60 s (`20` :908) | HH:MM:SS UTC, s | — |
+@ §3 row per-tier growth rate and projected full  ‖ proposed
+  | per-tier growth rate and projected full date (AC 1) | none: only the disk-level numbers exist;
+  the card shows them labelled "all tiers" and "—" per tier | GB/day, date | D04-G1 |
+@ §3 row per-symbol oldest / newest, the sparklin ‖ proposed
+  | per-symbol oldest / newest, the sparkline history | none | UTC date, GB | D04-G2 |
+@ §3 row rows by table, oldest / newest per table ‖ proposed, number
+  | rows by table, oldest / newest per table | none; the table names are `21` §4.1–4.13's (13 <!--
+  audit:facts.questdb_tables=13 --> headings) and §5.1's partition families | count, GB, UTC date
+  | D04-G3 |
+@ §3 row ingestion pressure; "ingestion lag" ‖ proposed
+  | ingestion pressure; "ingestion lag" | WS `ingest_rate_msgs_per_sec`, `write_backlog_rows`
+  (`23` :4060–4061); `24` :494's `ingest_lag_seconds{stream}` is a metric, not a field | msg/s,
+  rows; ms | D04-G4 (the lag cell, PROPOSED) |
+@ §3 row slowest queries ‖ proposed
+  | slowest queries | none | ms, count | D04-G5 |
+@ §3 row last compaction / last vacuum ‖ proposed, number
+  | last compaction / last vacuum | none; the schedule is a fact (`21` :4410 weekly, Sundays 03:00
+  UTC) | UTC time | D04-G6 |
+@ §3 row the schema version and pending migration ‖ proposed
+  | the schema version and pending migrations | none; `HealthReport.version` / `git_sha` (`22`
+  :20671–20672) are release facts; readiness = "migrations applied" (`22` :10570) | version, count
+  | D04-G7 |
+@ §3 row compaction, purge, import progress ‖ purge, proposed
+  | compaction, purge, import progress | `202 {job_id}` → `getJob`: `Job.status`, `progress_pct`,
+  `result` (`22` :20847–20851; E16-D02 :157: bytes and partitions only from `result`) | %, GB | —
+  (D04-G9 the kind word) |
+@ §3 row a vacuum ‖ proposed
+  | a vacuum | none: no route, no `Job.kind` (`22` :20833–20845); `21` :4332 "the API never issues
+  DDL against QuestDB at runtime except the retention job" | — | D04-G8 |
+@ §3 row cancel a running job ‖ proposed
+  | cancel a running job | none: `getJob` only (`22` :11564–11600) | — | D04-G10 |
+@ §3 row the import summary: per-file status, rea ‖ proposed
+  | the import summary: per-file status, reasons, overlap | `Job.result` "carries the import
+  summary" (`22` :14093) with no schema | days, rows | D04-G11 |
+@ §3 row the archive-derived label on coverage ‖ proposed
+  | the archive-derived label on coverage | prose only (`22` :14090–14091) | a tag | D04-G12 |
+@ §3 prose ‖ purge, number
+  **The fixture** is the header's: the `22` example (:5015–5042) and its derived states, every
+  number the tool's: budget 59.4 %, volume 30.1 %, runway about 560 days to 2028-03-27 (the budget
+  wall; the volume's wall about 1,928 days), autostop runway about 422 <!--
+  audit:fixture.autostop_days=422 --> days, "In 30 days: about 1,231.5 <!--
+  audit:fixture.used30_gb=1231.5 --> GB"; level 1 at 80.5 % (1,610.0 GB; about 131 <!--
+  audit:fixture.level1_runway=131 --> days to autostop), level 2 at 90.0 % (about 69 <!--
+  audit:fixture.level2_runway=69 --> days to the halt), level 3 at 95.0 %; a tier down since
+  10:24:03 <!-- audit:fixture.last_good=10:24:03 --> UTC (7 min before the sample); the backlog
+  25,000 <!-- audit:fixture.backlog_rows=25000 --> rows (5 ILP batches of 5,000 rows, `21` :4323;
+  the healthy frames' backlog 0 <!-- audit:fixture.healthy_backlog_rows=0 --> rows) at 18,400 <!--
+  audit:fixture.ingest_rate=18400 --> msg/s (the health example's "ingest 18.4k msg/s", `22`
+  :10486); migration 0008 <!-- audit:fixture.schema_version=0008 --> → 0009 <!--
+  audit:fixture.target_version=0009 -->, 1 <!-- audit:fixture.pending=1 --> pending (the latest
+  migration `22` :13501 names; 0 <!-- audit:fixture.healthy_pending=0 --> pending on the healthy
+  card); the import BTCUSDT 2026-01-01 → 2026-01-31, 31 <!-- audit:fixture.import_days=31 --> days
+  (≤ 366), 12 <!-- audit:fixture.running_done=12 --> done at 38 <!-- audit:fixture.running_pct=38
+  --> % on the running frame, 30 <!-- audit:fixture.skip_processed=30 --> processed (29 <!--
+  audit:fixture.skip_done=29 --> done, 1 skipped) at 96 <!-- audit:fixture.skip_pct=96 --> % on
+  the skip frame, 660,000 <!-- audit:fixture.overlap_rows=660000 --> overlapping rows (10 min of
+  `14` :2792's 1.1k trades/s) and 95,040,000 <!-- audit:fixture.rows_per_day=95040000 --> rows per
+  imported day; a compaction at 42 <!-- audit:fixture.compact_pct=42 --> % (E16-D02 :425's
+  figure); the compaction thresholds 512 <!-- audit:fixture.merge_mib=512 --> MiB, 4 <!--
+  audit:fixture.trigger_files=4 --> files, 16 <!-- audit:fixture.trigger_mib=16 --> MiB (`21`
+  :4414–4415); the purge example ETHUSDT, about 1.2 GB, before 2026-08-15 <!--
+  audit:fixture.purge_before=2026-08-15 --> (the Parquet cut-off), its window from 2026-08-13 <!--
+  audit:fixture.purge_from=2026-08-13 --> (the symbol's bytes over its growth, ending at the
+  cut-off; the live dialog reads the window from the coverage intervals, E16-D02 :420).
+@ §4 prose ‖ purge, proposed, number
+  The three cards are the AC 1 surface: Size · Share of budget · Retention · Growth/day ·
+  Projected full · Health, then the tier's own rows. Of the three AC 1 numbers only the disk-level
+  growth and projection are produced today (`22` :18094–18095): every card's Growth/day and
+  Projected full cells read "—" with the caption PROPOSED (D04-G1) and the shipped fallback beside
+  them ("all tiers 1.45 GB/day", "all tiers 2028-03-27"), so the board is honest about today and
+  the tool fails a tier row whose cell is neither a figure with a unit nor the captioned fallback
+  (§12 R-1). Health is the `ComponentState` word (`22` :16368) with its glyph (✓ healthy · ⚠
+  degraded / warning · ✗ down · "not deployed" plain), never colour alone (`14` :86, :2777). Every
+  figure carries a unit. The CMP-178 tile for SCR-143's link carries `label · value · unit · tone`
+  (D04-A1 adds the `unit` requirement and the tone ↔ `ComponentState` map). Row counts (D04-G3),
+  the slowest queries (D04-G5), last compaction / vacuum (D04-G6) and the schema version (D04-G7)
+  appear only as captioned PROPOSED second rows with their shipped fallback (BQ-18 RULED); no card
+  links a console (SR-048) and no card carries a backup control (`21` §8). Purge data… sits on the
+  QuestDB and Parquet cards only: `purgeRecordedData` deletes recorded data from QuestDB and
+  Parquet (`22` :14139–14153; E16-D02 :410), and the Postgres tier holds none of it, so its card
+  has no purge entry.
+@ §4 frame TIER/questdb ‖ frame, purge, proposed
+  | `TIER/questdb` | `tiers[].tier` questdb; `components[]` questdb healthy | Size 640.0 GB ·
+  Share of budget 32.0 % · Retention 7 d · Growth/day — (PROPOSED — D04-G1, owner approval pending
+  (#2701), shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED —
+  D04-G1, owner approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) ·
+  Health healthy, the text word with the ✓ glyph (ComponentState) · Ingestion "Ingest 18,400
+  msg/s, backlog 0 rows" from the WS topic, lag — (PROPOSED — D04-G4, owner approval pending
+  (#2701)) · Rows by table — (PROPOSED — D04-G3, owner approval pending (#2701)), the per-table
+  CMP-049 as a captioned second row · no Last compaction row on the hot tier (compaction is a
+  Parquet operation) | Purge data… (T1, opens E16-D02 §6.5) · no console link (SR-048) · no backup
+  control (`21` §8 is SCR-143 / E42's) | T1 | 02 |
+@ §4 frame TIER/parquet ‖ frame, purge, proposed
+  | `TIER/parquet` | `tiers[].tier` parquet; `components[]` parquet_store healthy | Size 548.0 GB
+  · Share of budget 27.4 % · Retention 30 d · Growth/day — (PROPOSED — D04-G1, owner approval
+  pending (#2701), shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED
+  — D04-G1, owner approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) ·
+  Health healthy, the text word with the ✓ glyph · Last compaction — (PROPOSED — D04-G6, owner
+  approval pending (#2701), shipped fallback beside it: the schedule "weekly, Sundays 03:00 UTC",
+  `21` :4410) · Rows by table — (PROPOSED — D04-G3, owner approval pending (#2701)) | Compact
+  Parquet… (T1) · Purge data… (T1, opens E16-D02 §6.5) · no console link · no backup control | T1
+  | 02 |
+@ §4 frame TIER/postgres ‖ frame, purge, proposed
+  | `TIER/postgres` | `tiers[].tier` postgres (`retention_days` null); `components[]` postgres
+  healthy | Size 16.0 GB · Share of budget not counted (the meter divides questdb + parquet only,
+  `22` :5004) · Retention — · Growth/day — (PROPOSED — D04-G1, owner approval pending (#2701),
+  shipped fallback beside it: all tiers 1.45 GB/day) · Projected full — (PROPOSED — D04-G1, owner
+  approval pending (#2701), shipped fallback beside it: all tiers 2028-03-27) · Health healthy,
+  the text word with the ✓ glyph · Last vacuum — (PROPOSED — D04-G6, owner approval pending
+  (#2701)) · Migration — (the shipped fallback: the release version from `HealthReport.version`,
+  not a schema version) · a captioned second row PROPOSED — D04-G7, owner approval pending
+  (#2701): Migration 0008, 0 pending · Rows by table — (PROPOSED — D04-G3, owner approval pending
+  (#2701)) | Vacuum Postgres… only as the inset PROPOSED — D04-G8, owner approval pending (#2701)
+  · no purge entry on this card: purge deletes QuestDB and Parquet data only (`22` :14139–14153) ·
+  no console link · no backup control | T1 | 02 |
+@ §4 frame TIER/tables-questdb ‖ frame, proposed
+  | `TIER/tables-questdb` | PROPOSED `tiers[].tables[]` (D04-G3); the shipped frame carries no
+  table | a captioned second row "PROPOSED — D04-G3, owner approval pending (#2701)": CMP-049
+  table variant, columns Table / Rows / Size / Oldest / Newest, one row per `21` §4.1–4.13 table
+  name (trades, orderbook_deltas, orderbook_snapshots, tickers, klines, liquidations,
+  open_interest, funding_rates, bars_<type>, footprint_cells, profiles, orderflow_metrics,
+  heatmap_cells, engine_metrics), every Size cell with a unit, Rows as a count, Oldest / Newest as
+  UTC timestamps as text · the shipped fallback beside it: "Row counts by table are not produced
+  yet" | none (a read) | T1 | 02 |
+@ §4 frame TIER/per-symbol ‖ frame, purge, proposed
+  | `TIER/per-symbol` | `symbols[]` (shipped) | CMP-049 table variant: Symbol / Size / Growth/day
+  / Share of budget / Pinned, rows BTCUSDT 812.3 GB 780 MB/day 40.6 % pinned and ETHUSDT 1.2 GB
+  520 MB/day 0.1 % — · the attribution line "813.6 GB of 1,188.0 GB attributed to symbols (68.5
+  %)" (D04-CG3) · Oldest / Newest — (PROPOSED — D04-G2, owner approval pending (#2701)), as a
+  captioned second row · the sparkline only as one inset PROPOSED — D04-G2, owner approval pending
+  (#2701) on this board (`history_bytes[]`, BQ-22 RULED), with its DOM-mirror table (CMP-024, `15`
+  :276) | Purge… in the row's detail popover (T1, opens E16-D02 §6.5 with the symbol preselected,
+  the typed field empty; D04-D3) · Manage pin → SCR-140 (T1) | T1 | 02 |
+@ §4 frame TIER/query-performance ‖ frame, proposed
+  | `TIER/query-performance` | PROPOSED `slow_queries[]` (D04-G5); nothing shipped | a captioned
+  second row "PROPOSED — D04-G5, owner approval pending (#2701)": CMP-049 table variant, columns
+  Tier / Statement kind / p95 / Count (1 h), p95 in ms, the statement kind a closed word (replay
+  scan, footprint build, coverage read), never SQL text · the shipped fallback beside it: "Slowest
+  queries are not produced yet" · no console link (SR-048 `04` :873) | none (a read) | T1 | 02 |
+@ §5 prose ‖ view-as
+  The ticket's five states and E16-D02 §3.1's page states (`SCR-142/loading`,
+  `SCR-142/unavailable` and `SCR-142/stale-sample` here, :186–194), each a status with a notice
+  and a tone — never a lock (A1; BQ-14 / BQ-15 / BQ-16 RULED). The sample stamp stays on every
+  page frame (R-2); every write stays enabled on every state frame and a refusal, if any, is T4 at
+  the point of action (§1.3). The AC 2 sentence sits in the level banner on every level ≥ 1 frame
+  (§1.4; R-5). The view-as frame is the one T2 frame of this spec and is listed first among the
+  gated legs wherever they appear (§1.3, §9; R-13).
+@ §5 frame SCR-142/low-disk-warning ‖ frame, degradation
+  | `SCR-142/low-disk-warning` | `level` 1 (budget 80.5 %: the `14` :2748 figure scaled to this
+  cap, 1,610.0 GB of 2,000.0 GB) | stamp Sampled 10:31:03 UTC (every 60 s) · the budget meter at
+  80.5 % · headline "Near limit · auto-record pauses in about 131 days · clears below 75 %"
+  (E16-D02 §8.3 :490) · CMP-028 warning banner with the AC 2 sentence "Recording pauses before
+  trading is affected." and the detail line of §1.4 · the budget meter fill
+  `color.status.warning.strong` with the ⚠ glyph before the value text · the suggested actions
+  Shorten retention (→ SCR-141), Reduce depth and Unpin (→ SCR-140) as links (T1) | every write
+  enabled (T1); nothing is gated by the level | status | 03, 10 |
+@ §5 frame SCR-142/autostop ‖ frame, degradation
+  | `SCR-142/autostop` | `level` 2 (budget 90.0 %, 1,800.0 GB) | stamp Sampled 10:31:03 UTC (every
+  60 s) · the budget meter at 90.0 % · headline "Auto-record paused · resumes below 85 % of the
+  budget with 20 % of the volume free" (E16-D02 :494) · the warning banner with the AC 2 sentence
+  "Recording pauses before trading is affected." and "Recording stops at 95 % in about 69 days" ·
+  `accelerate_retention` true reads "Retention accelerated" as a status word beside the headline ·
+  the suggested actions as links (T1) | every write enabled (T1) | status | 03 |
+@ §5 frame SCR-142/read-only-disk-full ‖ frame, degradation, view-as, purge
+  | `SCR-142/read-only-disk-full` | `level` 3, `write_gate` closed, `write_gate_reason` disk_halt
+  (budget 95.0 %, 1,900.0 GB) | stamp Sampled 10:31:03 UTC (every 60 s) · the budget meter at 95.0
+  % · headline "Recording stopped · resumes below 90 % with 10 % of the volume free" (E16-D02
+  :496) · the level-3 fact "Open positions keep recording; other symbols' data is dropped and
+  recorded as gaps." · the AC 2 sentence "Recording pauses before trading is affected." · the
+  budget meter fill `color.status.danger.default` with the ✗ glyph · the suggested actions Shorten
+  retention (→ SCR-141), Reduce depth and Unpin as links (T1) | Compact Parquet…, Purge data… and
+  Import archives stay enabled (they free space or add to the cold tier; BQ-14 RULED): no lock, no
+  validity look, no pre-emptive disable; a server refusal shows in the CMP-044 result as T4, never
+  as a disabled control | status | 03 |
+@ §5 frame SCR-142/volume-refused ‖ frame, degradation
+  | `SCR-142/volume-refused` | `level` 3, `write_gate` closed, `write_gate_reason` volume_refused
+  (the bytes unchanged: 1,188.0 GB) | stamp Sampled 10:31:03 UTC (every 60 s) · headline
+  "Recording stopped · resumes below 90 % with 10 % of the volume free" with the cause line "The
+  recording volume was refused at start-up; the gate opens once it is fixed" · the AC 2 sentence
+  "Recording pauses before trading is affected." · the meters at their last values, the budget
+  fill danger · `level` 3 shown as the gate's level, never derived from the bytes (`22`
+  :4996–4998) | every write enabled (T1); the same T4 rule on a refusal | status | 03 |
+@ §5 frame SCR-142/view-as ‖ frame, view-as, purge, proposed
+  | `SCR-142/view-as` | `GET /auth/session/view-as` reports an active context (the Owner viewing
+  as alex); `level` 0 | stamp Sampled 10:31:03 UTC (every 60 s) · one notice under the header: ⚿
+  "Read-only — read-only while viewing as alex." (`notice.panel_read_only`, E16-D02 D-16 :778
+  text, an A-row to E09-D09 §10 pending there) · the meters, the tier cards, the tables and the
+  jobs strip read as for the target (unchanged reads) · a running job still shows its progress
+  (status) | every write T2 (the view-as leg first, E09-D09 §2.1 step 3): Compact Parquet…, Purge
+  data…, Import archives, the per-symbol Purge… in the row's detail popover, Stop job on the jobs
+  strip (PROPOSED — D04-G10, owner approval pending (#2701)) and the Vacuum Postgres… inset
+  (PROPOSED — D04-G8, owner approval pending (#2701)) each keep the full label with the lock glyph
+  leading it, `aria-disabled`, `aria-describedby` → that node, the reason key `rbac.view_as`
+  "Read-only while viewing as {user}.", fill `color.surface.raised` + `color.border.default`
+  hairline, label `color.text.tertiary`, reason `color.text.secondary`, never
+  `color.text.disabled` nor `opacity.disabled` · Enter / Space re-show the reason once, politely ·
+  links to SCR-140, SCR-141 and SCR-143 enabled (T1) | T2 | 03, 10 |
+@ §5 frame SCR-142/tier-unreachable-questdb ‖ frame, purge
+  | `SCR-142/tier-unreachable-questdb` | `HealthReport.components[]` questdb `state` down,
+  `last_good_at` 10:24:03 UTC; the other two healthy; `level` 0 | stamp Sampled 10:31:03 UTC
+  (every 60 s) · the QuestDB card keeps its shell with CMP-027 inline "QuestDB unreachable since
+  10:24:03 UTC" + Retry (re-poll, T1) and its last sizes tagged stale · the other two cards, the
+  meters and the tables unchanged: page usable, no page-level error, no `role="alert"` · the
+  CMP-178 tile tone danger with the word "down" (text, not colour alone) | Compact Parquet…, Purge
+  data…, Import archives enabled (T1); an action that needs QuestDB is refused by the server at
+  the point of action (T4 with the code), never pre-emptively disabled | status | 04 |
+@ §5 frame SCR-142/lag-warning ‖ frame, proposed
+  | `SCR-142/lag-warning` | WS `recorder` `write_backlog_rows` 25,000 (5 ILP batches of 5,000
+  rows, `21` :4323) for two samples; `ingest_rate_msgs_per_sec` 18,400 (`22` :10486); `level` 0 |
+  stamp Sampled 10:31:03 UTC (every 60 s) · CMP-028 warning "Ingestion backlog 25,000 rows —
+  writes are behind the feed" · the QuestDB card's Ingestion row "Ingest 18,400 msg/s, backlog
+  25,000 rows, lag —" with the lag cell captioned PROPOSED — D04-G4, owner approval pending
+  (#2701), the card tone warning and the word "warning" · the threshold stated beside the banner,
+  5 batches (PROPOSED — D04-G4, owner approval pending (#2701), D04-Q4) | every write enabled (T1)
+  | status | 04 |
+@ §5 frame SCR-142/migration-pending ‖ frame, proposed
+  | `SCR-142/migration-pending` | PROPOSED `pending_migrations` 1, `schema_version` 0008,
+  `target_version` 0009 (D04-G7; the shipped frame has no banner); `level` 0 | stamp Sampled
+  10:31:03 UTC (every 60 s) · CMP-028 warning banner captioned PROPOSED — D04-G7, owner approval
+  pending (#2701): "Migration pending · 1 pending · 0008 → 0009 — applied with the next release" ·
+  the Postgres card's Migration row as a captioned second row PROPOSED — D04-G7, owner approval
+  pending (#2701): "0008, 1 pending" · the shipped fallback beside it: `HealthReport.version` and
+  `git_sha` as the release words | no Apply control: migrations run with the release (`22`
+  :10570), a deferred capability drawn absent (A1) · every write enabled (T1) | status | 04 |
+@ §5 frame SCR-142/stale-sample ‖ frame
+  | `SCR-142/stale-sample` | no new report for more than 2 × 60 s (the socket up or down); the
+  last report 10:31:03 UTC; `level` 0 | stamp Sampled 10:31:03 UTC, stale (3 min old) with the
+  clock glyph (CMP-239 `stale`, `color.data-confidence.stale.indicator`) · every figure keeps
+  full-opacity text with a "stale" tag on the meters and the cards (E16-D02 §3.1 :192) · the
+  SCR-152 overlay covers a full disconnect | every write enabled (T1); a press is decided by the
+  server | status | 04 |
+@ §5 frame SCR-142/loading ‖ frame
+  | `SCR-142/loading` | the first `GET /recording/storage` and `GET /admin/health` in flight |
+  skeleton meters and cards (CMP-015), `aria-busy` on the region · the header and the stamp slot
+  "Sampling…" · nothing is claimed before the first answer | nothing yet | status | 04 |
+@ §5 frame SCR-142/unavailable ‖ frame
+  | `SCR-142/unavailable` | `/recording/storage` answers 503 or fails; `/admin/health` answered;
+  `level` unknown | stamp Sampled 10:31:03 UTC, stale (3 min old): the last good report's stamp in
+  its stale form, never the fresh one (`14` :84; `storage.stamp.stale`) · CMP-028 danger banner
+  naming the part: "Disk figures could not be loaded." (E16-D02 §3.1 :191) + Retry (T1) · the tier
+  health cards from `/admin/health` stay visible | every write enabled (T1) | status | 04 |
+@ §6 prose ‖ ruled, view-as, purge, proposed, number
+  **Who may run them:** the Owner, on the admin surface, with a fresh re-auth badge (`14` :43);
+  the view-as leg first on every one (§1.3). Nothing else gates them. In progress is **busy**,
+  never a lock (E16-D02 §6.6 :422–426); a second start while one runs is refused by the server
+  with `409 job_running` and shown as T4 at the point of action ("A compaction is already
+  running."). Compaction and the PROPOSED vacuum (D04-G8) are **non-destructive** — "Nothing is
+  deleted." (`21` §5.4 :4416–4417: the originals are deleted only after the merged output's row
+  count and SHA-256 are recorded, a server check this page never shows (the row counts are
+  PROPOSED, D04-G3); a vacuum (PROPOSED, D04-G8) reclaims space and deletes no rows) — so both
+  take CMP-044 **standard** (E16-D03's `SCR-141/confirm-lengthen` form :210; BQ-10 RULED): a
+  title, the body, "This action is audited.", Cancel and the verb; no typed field, no step-up
+  unless the server answers 403 (D04-CG2). On SCR-140, E16-D02 §6.6 runs the same
+  `compactRecorder` as Compact now with no confirmation (:424); this page confirms it (BQ-10
+  RULED), and D04-C6 records the divergence for its owner. Purge keeps E16-D02 §6.5's typed dialog
+  with the `recorder` step-up (§7). The vacuum is wholly PROPOSED (D04-G8: no route, no
+  `Job.kind`, `22` :20833–20845; `21` :4332) and appears only as a captioned inset (BQ-11 RULED).
+  Stop job (cancel a running job) is PROPOSED (D04-G10: `getJob` is the only job route, `22`
+  :11564–11600) and appears only as a captioned carrier on the strip, named Stop job so it never
+  shares a label with the dialogs' Cancel exit; today a started compaction, purge or import runs
+  to its end, and the `cancelled` outcome copy stands because `Job.status` has the word (`22`
+  :20847). The jobs strip is one `role="status"` region (E16-D03 §8 :255–268): 2 s polling while
+  queued or running, the text swapped in place, progress text first with a CMP-023 whose
+  `aria-valuetext` equals the text, one polite announcement at start and one per terminal state —
+  never per tick (CMP-023 `15` :267).
+@ §6 row Action ‖ ruled, proposed
+  | Action | Route / job | Destructive? | Confirm (§1.3) | Step-up | Progress line | Stop job
+  (PROPOSED D04-G10) | Outcomes |
+@ §6 row Compact Parquet ‖ ruled, proposed, number
+  | Compact Parquet | `compactRecorder` (`22` :14043); `Job.kind` PROPOSED `parquet_compaction`
+  (D04-G9); optional `symbols[]`, `older_than_days` 1–3650 | no (`21` :4416–4417) | CMP-044
+  standard: "Compact Parquet partitions?" · "Merges small files into partitions of at most 512
+  MiB. Nothing is deleted. Replay is paused on partitions it touches." · the audited line · Cancel
+  / Compact | none in `22` (D04-CG2) | "Compaction running · 42 %" | PROPOSED (D04-G10) | E16-D02
+  §3.2 :203–204 reused: succeeded "Compacted at 10:42 UTC", failed, cancelled, unknown |
+@ §6 row Vacuum Postgres ‖ ruled, proposed
+  | Vacuum Postgres | PROPOSED `POST /admin/db/vacuum` + `Job.kind` `db_vacuum` (D04-G8): the
+  whole action is PROPOSED, captioned on every carrier | no | CMP-044 standard: "Vacuum Postgres?"
+  · "Reclaims space from deleted rows. Nothing is deleted. Queries may be slower while it runs." ·
+  the audited line · Cancel / Vacuum | none proposed; the owner may require `recorder` (D04-Q1) |
+  "Vacuum running · {pct} %" | PROPOSED (D04-G10) | `new` keys `storage.vacuum.{succeeded, failed,
+  cancelled, unknown}` mirroring the compact lines |
+@ §6 row Purge data ‖ ruled, purge, proposed
+  | Purge data | `purgeRecordedData` (`22` :14138); `Job.kind` `retention_purge` (:20844) | **yes,
+  irreversible** | E16-D02 §6.5's typed dialog, reused whole (§7) | `recorder` class on submit
+  after the typed confirm (`22` :14145; E16-D02 §6.4) | "Purge of ETHUSDT running · {pct} %" |
+  PROPOSED (D04-G10) | E16-D02 §3.2 :200–202, :204 reused |
+@ §6 row Import archives ‖ ruled, proposed, number
+  | Import archives | `importTradeArchive` (`22` :14084); `Job.kind` `archive_import` (:20843) |
+  no (adds; recorded wins) | no dialog: the card form + one consequence line (BQ-12 RULED; §8) |
+  none | "Import running · 38 %" | PROPOSED (D04-G10) | §8: the summary, failed, cancelled,
+  unknown (`new` keys) |
+@ §6 row Frame ‖ ruled
+  | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
+@ §6 frame JOB/confirm-compact ‖ frame, ruled
+  | `JOB/confirm-compact` | Compact Parquet… pressed | CMP-044 standard (BQ-10 RULED): title
+  "Compact Parquet partitions?" · body "Merges small files into partitions of at most 512 MiB.
+  Nothing is deleted. Replay is paused on partitions it touches." (`21` :4414, :4417, :4418) ·
+  "This action is audited." · no typed field, no step-up sentence (D04-CG2) | exits Cancel, Esc
+  and the close ✕ (T1) · Compact (CMP-001 primary, T1) | T1 | 05 |
+@ §6 frame JOB/confirm-vacuum ‖ frame, ruled, proposed
+  | `JOB/confirm-vacuum` | the Vacuum Postgres… inset pressed (the whole action is PROPOSED
+  D04-G8; nothing is shipped) | captioned PROPOSED — D04-G8, owner approval pending (#2701):
+  CMP-044 standard, title "Vacuum Postgres?" · body "Reclaims space from deleted rows. Nothing is
+  deleted. Queries may be slower while it runs." · "This action is audited." · no typed field, no
+  step-up sentence unless the owner assigns the `recorder` class (D04-Q1) | exits Cancel, Esc and
+  the close ✕ (T1) · Vacuum (CMP-001 primary, T1), PROPOSED — D04-G8, owner approval pending
+  (#2701) | T1 | 05 |
+@ §6 frame JOB/strip-running ‖ frame, ruled, proposed
+  | `JOB/strip-running` | this client's `202` → `Job.status` running for a compaction
+  (`progress_pct` 42) and an import (38) | one `role="status"` region (polite), 2 s polling, the
+  text swapped in place · "Compaction running · 42 %" + CMP-023 (`aria-valuetext` equal to the
+  text) · "Import running · 38 %" + CMP-023 · one announcement at start and one per terminal
+  state, never per tick (CMP-023 A11y `15` :267) | Compact Parquet… busy: CMP-001 `loading`,
+  `aria-busy`, focusable, a press opens nothing (E16-D02 §6.6 :422; no lock) · Stop job per job
+  line, PROPOSED — D04-G10, owner approval pending (#2701): today a started job runs to its end ·
+  the other writes enabled (T1) | busy | 05 |
+@ §6 frame JOB/strip-refused-409 ‖ frame, ruled
+  | `JOB/strip-refused-409` | a second Compact Parquet… press while one runs, or after a reload
+  with no job id: the server's `409 job_running` | CMP-027 inline under the control: "A compaction
+  is already running." with the code job_running in parentheses, polite once · the page state
+  unchanged, nothing dimmed | Compact Parquet… stays enabled (T1): the refusal is T4 at the point
+  of action, never a pre-emptive lock | T4 | 05 |
+@ §6 frame JOB/outcomes ‖ frame, ruled, proposed
+  | `JOB/outcomes` | `Job.status` succeeded / failed / cancelled, or `404 job_unknown` (`22`
+  :11584) | insets, one per terminal state, reused from E16-D02 §3.2 (:203–204): compact succeeded
+  "Compacted at 10:42 UTC" · compact failed "Compaction failed (`<code>`); nothing was deleted." ·
+  compact cancelled "Compaction cancelled; nothing was deleted." (E16-D02's elided "…cancelled."
+  completed here: D04-A8) · compact unknown "Compaction status is no longer available on the
+  server." · vacuum (PROPOSED — D04-G8, owner approval pending (#2701)) succeeded "Vacuumed at
+  {HH:MM} UTC", failed "Vacuum failed (`<code>`); nothing was deleted.", cancelled and unknown as
+  `new` keys mirroring the compact lines · each polite, once, with no banner: the words on
+  `color.status.success.subtle` / `color.status.danger.subtle` inside the card | none (outcomes) |
+  outcome | 05 |
+@ §7 prose ‖ ruled, view-as, purge, number
+  Purge is the one destructive action here: Owner-only, step-up authenticated, with a mandatory
+  reason and the typed `confirm_symbol` echo (`22` :14141–14147, :14164; the ticket's security
+  note). SCR-142 adds **entry points**, not a dialog: the QuestDB and Parquet tier cards' "Purge
+  data…" and the "Purge…" in the per-symbol row's detail popover (D04-D3) open E16-D02 §6.5's
+  dialog (:404–420) with the symbol preselected and **the typed field empty — never pre-filled**
+  (BQ-9 RULED: no second shape). The Postgres card has no purge entry: purge deletes QuestDB and
+  Parquet data only (`22` :14139–14153; E16-D02 :410). The dialog is reused whole, its window and
+  its roll-off sentence included (E16-D02 :410–412). The Confirm is enabled only when the reason
+  is valid and the typed symbol matches: a validity look, never T2 (CMP-044 :477; E30-D02 D3). The
+  `recorder` step-up runs on submit after the typed confirm (`22` :14145; E16-D02 §6.4 :380–384:
+  the request held and re-sent once with the same Idempotency-Key; SCR-006 cited, not drawn). A
+  pinned symbol is refused without Include pinned (`422 retention_pinned_refused`, `22` :14148):
+  T4 at the point of action. The audit record (`retention.purge`) is written before the job
+  exists; when it cannot be, the server answers 503 and nothing starts (`22` :14150–14152): "Not
+  started: the audit record could not be written." (T4). The dialog's confirm line stays "This
+  action is audited (high severity)." (E16-D02's words; the name mismatch with `14` :2779 is
+  D04-C1). No frame links a QuestDB or DuckDB console (SR-048, `04` :873).
+@ §7 row Frame ‖ ruled
+  | Frame | Producer | Shows | Controls (class per §1.3) | Class | Board |
+@ §7 frame PURGE/entry-points ‖ frame, ruled, purge
+  | `PURGE/entry-points` | the QuestDB and Parquet tier cards' Purge data… and the Purge… in the
+  per-symbol row's detail popover | the entry points drawn on their carriers (the QuestDB card,
+  the Parquet card, the row's detail popover), each opening the one E16-D02 §6.5 dialog (:404–420;
+  BQ-9 RULED: no second shape) with the symbol preselected from the row, the typed field empty ·
+  the Postgres card carries none: purge deletes QuestDB and Parquet data only · the level-3
+  banner's Purge data… is SCR-140's (cited) | Purge data… / Purge… (T1, opens E16-D02 §6.5) | T1 |
+  06 |
+@ §7 frame PURGE/dialog ‖ frame, ruled, view-as, purge
+  | `PURGE/dialog` | Purge… pressed on the ETHUSDT row | E16-D02 §6.5's dialog reused whole
+  (CMP-043 form, CMP-044 typed, wrapped by CMP-093): title "Purge ETHUSDT data?" · Symbol
+  (CMP-009) ETHUSDT · Delete data recorded before (CMP-047 single) 2026-08-15, the retention
+  cut-off · "This deletes about 1.2 GB recorded from 2026-08-13 to 2026-08-15 from QuestDB and
+  Parquet. It cannot be undone, and replay, footprint history and the journal lose this range.
+  Shared QuestDB day partitions are freed by the nightly roll-off." (E16-D02 :410–412, whole) ·
+  Reason (CMP-007, required, 3–280 characters) · Include pinned (CMP-005) shown only for a pinned
+  symbol · Type the symbol to confirm (CMP-007): empty, never pre-filled (the ticket's security
+  note) · the step-up sentence "You'll confirm with your password and a code." · "This action is
+  audited (high severity)." | exits Cancel, Esc and the close ✕ (T1) · Confirm "Purge ETHUSDT
+  data" (CMP-001 danger) enabled only when the reason is valid and the typed symbol matches: a
+  validity look while it is not, never T2 (`PURGE/dialog-validity`) | T1 | 06 |
+@ §7 frame PURGE/dialog-validity ‖ frame, ruled, view-as, purge
+  | `PURGE/dialog-validity` | the typed symbol differs from ETHUSDT, or the reason is shorter than
+  3 characters | the same dialog · Confirm "Purge ETHUSDT data" with its own danger fill and label
+  at `opacity.disabled` 0.45, the reason full-opacity under it in `color.text.secondary`: "Type
+  ETHUSDT exactly to confirm." · board layer `validity-reason` · `aria-disabled`, focusable, a
+  press shows the error summary · no lock, no CMP-079, no key (E09-D09 §9.1 :230; E30-D02 D3 :128)
+  | exits Cancel, Esc and the close ✕ (T1) | validity look | 06 |
+@ §7 frame PURGE/pinned-refused ‖ frame, ruled
+  | `PURGE/pinned-refused` | Confirm pressed for BTCUSDT (pinned) without Include pinned: the
+  server's `422 retention_pinned_refused` | CMP-027 inline under Confirm: "Pinned data is
+  excluded. Tick Include pinned to delete it too." with the code retention_pinned_refused in
+  parentheses, polite once · the dialog stays open with its inputs | exits Cancel, Esc and the
+  close ✕ (T1) · Confirm stays enabled (T1): a refusal is T4 at the point of action | T4 | 06 |
+@ §7 frame PURGE/step-up ‖ frame, ruled
+  | `PURGE/step-up` | Confirm pressed with a valid form: the server answers `403 step_up_required`
+  with `action_class` recorder (`22` :14145) | the step-up sentence "You'll confirm with your
+  password and a code." already in the dialog · the SCR-006 step-up modal opens over it (cited,
+  E16-D02 §6.4 :380–384; not drawn here), the request held and re-sent once with the same
+  Idempotency-Key · inside a live grace window the sentence reads "Still trusted for recorder
+  changes · {mm:ss}" | exits Cancel, Esc and the close ✕ on the modal (T1); the dialog keeps its
+  inputs | T1 | 06 |
+@ §7 frame PURGE/outcomes ‖ frame, ruled, purge, proposed
+  | `PURGE/outcomes` | `Job.status` terminal, or `404 job_unknown` | insets reused from E16-D02
+  §3.2 (:200–202, :204): failed, `role="alert"` once, "Purge of ETHUSDT failed (`<code>`). Some
+  data may already be deleted: check ETHUSDT's size and gaps." · cancelled (the cancel itself
+  PROPOSED — D04-G10, owner approval pending (#2701)) "Purge of ETHUSDT was cancelled. Data
+  deleted before the cancel is gone." · unknown "The purge's status is no longer available on the
+  server. Check ETHUSDT's size and gaps." · succeeded "Purged 1.2 GB of ETHUSDT data" from
+  `Job.result` | none (outcomes) | outcome | 06 |
+@ §8 prose ‖ proposed, number
+  `importTradeArchive` (`22` :14081–14134) imports the exchange's public daily trade archives for
+  one symbol over an inclusive UTC date range of at most 366 days, verifies each file, writes
+  trades to the Parquet cold tier, discards and reports rows inside a recorded window (recorded
+  data wins), labels the windows archive-derived and `trades` only, is resumable and idempotent
+  per day, runs one at a time and is audited as `recorder.import`. The card's form is the confirm
+  (BQ-12 RULED: an additive, resumable action; the CMP-044 alternative is D04-Q3): Symbol, From /
+  To, one consequence line, "Import archives". **A failing file never looks like a failing page**
+  (AC 3). While the import runs, the shipped surface is `Job.progress_pct` with the requested
+  range (`22` :20848; `Job.result` is null until `succeeded`, :20851–20852): the overall bar and
+  "{done} of {n} days · {pct} %" keep moving and the strip reads "Import running · {pct} %". The
+  per-file rows and the "{k} skipped" counter during the run need `files[]` streamed before
+  `succeeded` (D04-G11), so they are drawn as a captioned PROPOSED inset beside the bar: a skipped
+  or errored file is one row with its reason sentence, on `color.status.warning.subtle`. Either
+  way the page keeps its healthy chrome with no banner and no `role="alert"`. Only a `failed` job
+  uses `color.status.danger.subtle`, and even then inside the import card. The server paces the
+  downloads (rate-limited, US-REC-007 NFR); the UI shows no rate control. The import summary (the
+  counts, the overlap report, the per-file table) comes from `result`, whose shape is PROPOSED too
+  (D04-G11), and is drawn as a captioned inset; the shipped summary is the finished line and the
+  tag. The per-file reason codes are PROPOSED with `ArchiveImportResult` (D04-G11):
+  `checksum_mismatch` (the code word of `22` :11276) · `parse_error` · `download_failed` ·
+  `already_imported`, each with one sentence (§14).
+@ §8 frame IMPORT/form ‖ frame
+  | `IMPORT/form` | the import card at rest (`importTradeArchive`, `22` :14084) | Symbol (CMP-009)
+  BTCUSDT · From / To (CMP-047 range) 2026-01-01 → 2026-01-31, inclusive UTC dates, at most 366
+  days (`22` :14088) · the consequence line "Imports Bybit's public daily trade archives (trades
+  only, no book data). Recorded data wins where they overlap. Re-running skips finished days." ·
+  the CMP-011 tag "Archive-derived · trades only · no book data" | Import archives (CMP-001
+  primary, T1); no dialog: the form is the confirm (BQ-12 RULED) | T1 | 07 |
+@ §8 frame IMPORT/form-validity ‖ frame, view-as
+  | `IMPORT/form-validity` | the range empty, inverted or longer than 366 days | Import archives
+  with its own fill and label at `opacity.disabled` 0.45, the reason full-opacity under it:
+  "Choose a range of at most 366 days." · board layer `validity-reason` · `aria-disabled`,
+  focusable, a press shows the error summary · no lock, no CMP-079, no key | Import archives
+  (validity look) | validity look | 07 |
+@ §8 frame IMPORT/running ‖ frame, proposed
+  | `IMPORT/running` | `202` → `Job.status` running, `kind` archive_import, `progress_pct` 38 |
+  the overall CMP-023 "12 of 31 days · 38 %" (`aria-valuetext` equal to the text;
+  `Job.progress_pct` with the requested range, the shipped running state) · the per-file CMP-049
+  table (table variant, no row control, columns Day / Status / Reason / Rows) only as an inset
+  PROPOSED — D04-G11, owner approval pending (#2701): `files[]` streamed while the job runs ·
+  "Import started" announced once | Import archives busy (`aria-busy`, no lock) · Stop job,
+  PROPOSED — D04-G10, owner approval pending (#2701) | busy | 07 |
+@ §8 frame IMPORT/running-with-skips ‖ frame, proposed
+  | `IMPORT/running-with-skips` | day 14 (2026-01-14) fails its checksum: the file is skipped
+  (`checksum_mismatch`, the code word of `22` :11276) and the import continues | the overall bar
+  keeps moving: "30 of 31 days · 96 %" (`aria-valuetext` equal; `Job.progress_pct` with the
+  requested range, the shipped running state) · the strip reads "Import running · 96 %" · the page
+  keeps its healthy chrome: no page banner, no `role="alert"` (AC 3) · an inset PROPOSED —
+  D04-G11, owner approval pending (#2701) beside the bar: the per-file table streamed from
+  `files[]` while the job runs, columns Day / Status / Reason / Rows, 29 done, 1 skipped, 1
+  downloading, the 2026-01-14 row "skipped ⚠ / checksum_mismatch / Checksum did not match; the
+  file was skipped. / —" on `color.status.warning.subtle`, done rows "done ✓ / 95,040,000 rows",
+  and the counter "1 skipped" after the bar's text | Import archives busy (`aria-busy`) · Stop
+  job, PROPOSED — D04-G10, owner approval pending (#2701) | busy | 07, 10 |
+@ §8 frame IMPORT/summary ‖ frame, proposed
+  | `IMPORT/summary` | `Job.status` succeeded; `result` (PROPOSED `ArchiveImportResult`, D04-G11)
+  | the shipped outcome line "Import finished: BTCUSDT, 2026-01-01 → 2026-01-31" (polite, once) ·
+  the CMP-011 tag "Archive-derived · trades only · no book data" on the summary and, PROPOSED —
+  D04-G12, owner approval pending (#2701), on every imported range the coverage chart draws
+  (E16-D05's chip is the consumer) · an inset PROPOSED — D04-G11, owner approval pending (#2701)
+  from `result`: the counts "Imported 29 days of BTCUSDT trades · 1 file skipped · 1 file failed ·
+  660,000 overlapping rows discarded", the overlap report "660,000 rows inside recorded windows
+  were discarded — recorded data wins." (`22` :14089, never "duplicates removed"), the per-file
+  table complete with the 2026-01-31 row "error ✗ / download_failed / The file could not be
+  downloaded; run the import again to retry it. / —" | Import archives enabled again (T1); "Run it
+  again to resume: finished days are skipped." | outcome | 07 |
+@ §8 frame IMPORT/failed ‖ frame, proposed
+  | `IMPORT/failed` | `Job.status` failed, `error` a stable code (download_failed after the retry
+  budget), or `404 job_unknown` | inside the import card only: "Import failed (download_failed).
+  Finished days are kept; run it again to resume." on `color.status.danger.subtle`, `role="alert"`
+  once · never a page banner · the per-file table, an inset PROPOSED — D04-G11, owner approval
+  pending (#2701), keeps its rows · unknown: "The import's status is no longer available on the
+  server. Run it again: finished days are skipped." | Import archives enabled again (T1) | outcome
+  | 07 |
+@ §9 row Role ‖ ruled
+  | Role | SCR-142 |
+@ §9 row Owner viewing as another user ‖ ruled, view-as
+  | Owner viewing as another user | the **first leg** on every write (E09-D09 §2.1 step 3): every
+  write T2 with `rbac.view_as`, one panel notice (`SCR-142/view-as`); reads, meters, tables and a
+  running job's progress unchanged; exits and links enabled |
+@ §9 row Owner ‖ ruled, purge, proposed
+  | Owner | everything in §2–§8; the `recorder` step-up on purge; compaction, import and the
+  PROPOSED vacuum (D04-G8) without a typed field |
+@ §9 row Manager / Viewer ‖ ruled, view-as, number
+  | Manager / Viewer | not reachable: `/admin/*` is hidden from navigation and returns a hard 404
+  (`14` :43, :85; E16-D02 §7 :449); `rbac.owner_only` "Only the owner can change recording."
+  (E09-D09 :90, :108) would be the reason if a write of this page ever reached them — no frame
+  draws it (BQ-8 RULED); the server decides (C-12.4) |
+@ §10 prose ‖ view-as, purge, proposed
+  **Initial focus** on entry: the H2 (a route-section change, not a dialog). **Tab order** follows
+  the regions: the stamp's Retry (when shown) → the two meters (each a `role="meter"`, focusable
+  only when it carries a tooltip; the value text is always visible, so by default they are not Tab
+  stops) → the three tier cards' controls (Purge data… / Compact Parquet…; the Accordion header of
+  each per-tier table) → the per-symbol table → the maintenance buttons → the jobs strip's Stop
+  job carriers (PROPOSED D04-G10) → the import form (Symbol, From, To, Import archives) → the
+  per-file table (the PROPOSED D04-G11 inset). **Tables**: every CMP-049 here is the table variant
+  (no control in a body row; `15` :528): Tab lands on the table as one scroll region, arrows
+  scroll; a sortable header is a button with `aria-sort`; no APG grid is implied because no body
+  cell is interactive (the per-symbol row's Purge… sits in a trailing actions column, which would
+  make it a grid — D04-D3 keeps the action in the row's detail popover instead, so the table stays
+  a table). **Dialogs** (E16-D03 §5's model): CMP-044 standard — focus starts on Cancel; Tab:
+  Cancel → the verb → the close ✕; Esc = Cancel; on close focus returns to the button that opened
+  it. The purge dialog — first focus on the Symbol select, Tab through the fields to the typed
+  input, Cancel, Confirm, ✕; Enter in the typed field does nothing (no implicit submit on a
+  destructive path); Esc = Cancel. **The import form** — Enter in From / To moves to the next
+  field, Enter on Import archives submits; a validity-look press shows the error summary and moves
+  focus to it. **T2 keys** (§1.3; E09-D09 §9.3 :238): Enter, Space or a bound hotkey on a T2
+  control changes nothing and re-shows the reason once, politely. **No global hotkeys** are added
+  (the admin area has none; `05` §3.2's list is untouched).
+@ §10 prose ‖ purge, proposed, number
+  **Announcements** (`05` §6.2 :146–150; CMP-023 `15` :267): the jobs strip is one `role="status"`
+  region, polite; one announcement at a job's start ("Compaction started", "Import started") and
+  one per terminal state; never per tick, never per 2 s poll; a failed purge (E16-D02 :200) and a
+  failed import (inside its card, §8) are each `role="alert"` once, the only two assertive
+  announcements; a skipped import file is not announced (the PROPOSED inset's row and counter
+  carry it); the summary once. The sample stamp changes silently; staleness is announced once when
+  it begins ("Storage figures are stale"). **Zoom and reflow** (`05` §5 item 7): at 200 % and the
+  in-app text scale at 1280 × 800 the cards stack, every table renders one row element per record,
+  the dialogs fill the viewport with a sticky footer and a scrolling body; `forced-colors`: the
+  meter fills take the system accent beside their always-visible value text, the tone glyphs keep
+  their words, the dashed PROPOSED outline stays a dashed border.
+@ §10 row Tab` / `Shift+Tab ‖ view-as
+  | `Tab` / `Shift+Tab` | the page | the region order above; every control a stop; a T2 control
+  stays a stop |
+@ §10 row Enter` / `Space ‖ view-as, purge, proposed
+  | `Enter` / `Space` | a button | opens the confirm (compact; the vacuum inset, PROPOSED D04-G8),
+  the purge dialog, or submits the import; on T2 re-shows the reason |
+@ §11 row a meter (CMP-023 `kind="meter"`) ‖ number
+  | a meter (CMP-023 `kind="meter"`) | track `color.surface.sunken` (CMP-023's
+  `color.surface.hover` track fails 3:1 under the danger fill in dark, §15; D04-A7), height 8 <!--
+  audit:layout.meter_h=8 --> px, `radius.badge`; fill `color.action.primary.default` (level 0),
+  `color.status.warning.strong` (1–2), `color.status.danger.default` (3); label `type.ui.label`,
+  value `type.num.sm`, both `color.text.secondary`; the tone glyph before the value on 1–3 |
+@ §11 row a PROPOSED carrier ‖ proposed
+  | a PROPOSED carrier | the same card or row with a dashed `color.border.default` outline (absent
+  from the contract, never a side — E25-D01 §9.5) and the caption `type.ui.caption`
+  `color.text.secondary` "PROPOSED — D04-Gn, owner approval pending (#2701)" |
+@ §11 row the per-file table (CMP-049, the PROPOSE ‖ proposed
+  | the per-file table (CMP-049, the PROPOSED D04-G11 inset) | header `color.surface.hover`
+  `type.ui.label`; odd rows `color.surface.canvas`, even `color.surface.raised`; a skipped row
+  `color.status.warning.subtle` with the ⚠ glyph `color.status.warning.strong`; an error row the
+  same warning subtle (the job is not failed); the words `color.text.primary` |
+@ §11 row a T2 control (view-as) ‖ view-as
+  | a T2 control (view-as) | `color.surface.raised` + `color.border.default` hairline; the lock
+  and the full label `color.text.tertiary`; the notice `color.text.secondary`; never
+  `color.text.disabled`, never `opacity.disabled` |
+@ §11 row a validity control ‖ view-as, number
+  | a validity control | its own fill and label at `opacity.disabled` 0.45; the reason
+  `color.text.secondary` at full opacity; layer `validity-reason` |
+@ §11 row focus ‖ number
+  | focus | `color.focus.ring`, 2 px outside; `motion.duration.normal` for a meter's value change
+  (motion-reduce: none) |
+@ §11 frame SCR-142/redlines ‖ frame, view-as, proposed
+  | `SCR-142/redlines` | the healthy report | the tokens above annotated on a tier card, a meter,
+  the jobs strip, the per-file table (an inset, PROPOSED — D04-G11, owner approval pending
+  (#2701)), the T2 control (the lock + the full label + the notice on `color.surface.raised`) and
+  the validity control (`opacity.disabled` + `validity-reason`) · the token audit counts | as
+  annotated (the T2 and validity specimens are the §5 and §7 frames' controls, cited) | T1 | 09 |
+@ §12 row per-tier growth and projected full date  ‖ proposed
+  | per-tier growth and projected full date (AC 1) | none | D04-G1 |
+@ §12 row per-symbol oldest / newest, the sparklin ‖ proposed
+  | per-symbol oldest / newest, the sparkline history | none | D04-G2 |
+@ §12 row rows by table, oldest / newest per table ‖ proposed
+  | rows by table, oldest / newest per table | none | D04-G3 |
+@ §12 row ingestion lag ‖ proposed
+  | ingestion lag | WS pressure numbers only (`23` :4060–4061); `24` :494 is a metric | D04-G4 |
+@ §12 row slowest queries ‖ proposed
+  | slowest queries | none | D04-G5 |
+@ §12 row last compaction / last vacuum ‖ proposed
+  | last compaction / last vacuum | none (the schedule is `21` :4410) | D04-G6 |
+@ §12 row schema version, pending migrations ‖ proposed
+  | schema version, pending migrations | none (`version` / `git_sha` are release facts,
+  :20671–20672; readiness :10570) | D04-G7 |
+@ §12 row a vacuum action ‖ proposed
+  | a vacuum action | none (no route, no kind; `21` :4332) | D04-G8 |
+@ §12 row the compaction job's kind word ‖ proposed
+  | the compaction job's kind word | none in `Job.kind` | D04-G9 |
+@ §12 row cancel a running job ‖ proposed
+  | cancel a running job | none | D04-G10 |
+@ §12 row the import summary's shape and the per-f ‖ proposed
+  | the import summary's shape and the per-file reason codes | `result` "carries the import
+  summary", no schema (:14093) | D04-G11 |
+@ §12 row the archive-derived label on coverage in ‖ proposed
+  | the archive-derived label on coverage intervals | prose (:14090–14091) | D04-G12 |
+@ §12 row the step-up on compact / PROPOSED vacuum ‖ purge, proposed
+  | the step-up on compact / PROPOSED vacuum (D04-G8) / import | none in `22` (purge only, :14145)
+  | — (D04-CG2) |
+@ §12 prose ‖ degradation, view-as, purge, proposed
+  **The gates (A2 RULED; `docs/design/_tools/e16_d04_storage_audit.py`).** `--check` reads this
+  whole file as text and re-derives every `audit:` marker. Its gates read **every frame row whole,
+  cell by cell and item by item** (an item is a cell's part between " · " or "; ", a quoted string
+  never split), **every other table row across all its cells, every prose sentence, the deck and
+  the sketch** (its footnote markers read as the captions they carry). **Subjects carry** (the
+  merged E15-D05 design): a lock, dim or fill word speaks of the nearest control, action or field
+  named before it in its item, else of the one the item before named last, so a word after ";" or
+  in an item that opens on It / This / They / Then / Each lands on that subject; a prose sentence
+  that opens on a pronoun is read with the sentence before it. Controls are named by their full
+  and short names (Cancel, Esc and the close ✕; the links; Compact Parquet… / Compact; Purge data…
+  / Purge… / Purge; Import archives; Confirm; and the PROPOSED D04-G8 and D04-G10 carriers, Vacuum
+  Postgres… / Vacuum and Stop job). Each ruled sentence has a case-insensitive vocabulary with its
+  synonyms; a negator (no, never, not, without, nor) exempts a match only when it governs it,
+  within four words before it in the same clause, so a "not" elsewhere in the item does not.
+  **Numbers are anchored:** each typed number is read through its context words (a tier's Size,
+  Share and Retention, the ladder's steps and clears, the merge size, the batches, the meters, the
+  runways, the formula, the import progress, the symbol rows, the purge window, the times) and
+  must equal its own `--json` value, so a swap of one registered value for another fails; a number
+  in any other unit outside §12 and §15 is pinned with its unit's exact text (R-23). Each item
+  reports its first violation only, and a row with one skips its presence checks. A frame table
+  row has six cells (Frame · Producer · Shows · Controls · Class · Board). `--self-test` applies
+  305 <!-- audit:mutations=305 --> mutations in memory, one at a time — the first commit's 50 <!--
+  audit:mutations_first=50 --> forms, the pre-PR design-review lens round 1's 60 <!--
+  audit:mutations_lens=60 --> probes, 22 <!-- audit:mutations_own=22 --> variants of that fold, 12
+  <!-- audit:mutations_shipped=12 --> forms of a PROPOSED item presented as shipped outside a
+  frame's Shows / Controls, the orchestrator's text round 1's 31 <!-- audit:mutations_text1=31 -->
+  probes rebuilt verbatim and 33 <!-- audit:mutations_text1_own=33 --> variants of that fold, the
+  orchestrator's gate re-check's 22 <!-- audit:mutations_text2=22 --> probes rebuilt verbatim and
+  30 <!-- audit:mutations_text2_own=30 --> variants of that fold, the orchestrator's gate re-check
+  2's 16 <!-- audit:mutations_text3=16 --> slipped forms rebuilt verbatim, 10 <!--
+  audit:mutations_text3_own=10 --> paraphrases of this fold across the pinned classes and 19 <!--
+  audit:mutations_pin=19 --> mutations of R-23's own kinds — and each must make `--check` fail
+  with **one** FAIL, its own message; no two share a message, 20 <!-- audit:valid_twins=20 -->
+  valid twins (a captioned inset, the gap's own G-row, a negated mention, the exit Cancel, "Esc
+  closes the dialog", the ruled order reworded four ways, a sibling PENDING by name, the typed
+  field starting empty) raise no gate FAIL and nothing once re-pinned (until then R-23 alone
+  refuses each, as it edits a ruled unit), 3 <!-- audit:fresh_twins=3 --> fresh twins (a neutral
+  clause on an unpinned sentence, a fresh note in its own paragraph, a neutral sentence on the
+  header's page line) raise nothing against the committed pins, the unmutated file passes and the
+  file is byte-identical afterwards; `--mutate N` exits 1 when the gate caught the mutation, 2
+  when it slipped. **Two layers (the gate re-check 2).** The vocabulary gates above are the first
+  line: each reads its ruled sentence through its words, their synonyms and the negators that
+  govern them. R-23 is the backstop, default-deny: every ruled unit (a frame row, another table
+  row, a prose paragraph or list item, a sketch line) equals its pin, by location and exact text,
+  in the tool's committed `RULED_PIN_TXT` — every frame row, every unit of §1.4, §6, §7 and §9,
+  the deck rows, the sketch and its footnote captions, and any other unit that names the recording
+  and the trading subjects, the view-as leg or T2, a purge, PROPOSED or a D04-G id, or types a
+  number outside §12 (its markers) and §15 (the matrix): 351 <!-- audit:pins.total=351 --> units
+  (by class, a unit counted in each of its classes: frame 37 <!-- audit:pins.frame=37 -->, ruled
+  25 <!-- audit:pins.ruled=25 -->, caption 124 <!-- audit:pins.caption=124 -->, degradation 21
+  <!-- audit:pins.degradation=21 -->, view-as 55 <!-- audit:pins.view-as=55 -->, purge 78 <!--
+  audit:pins.purge=78 -->, PROPOSED 165 <!-- audit:pins.proposed=165 --> and number 105 <!--
+  audit:pins.number=105 -->). A changed, moved, duplicated or missing pinned unit, and a ruled
+  unit the table does not hold, FAILs naming its location, so a paraphrase of a ruled unit fails
+  whatever its words, and a number outside the anchors is held by its unit's text. `--repin-ruled`
+  rewrites the table from the text, a deliberate act read in the diff; `--check` never re-pins. An
+  R-23 FAIL is reported only when no other gate FAILs, else counted beside it on a NOTE line, so
+  one wrong form yields one FAIL.
+@ §12 row R-1 ‖ proposed
+  | R-1 | every tier card's Size cell carries a number with a unit; its Growth/day and Projected
+  full cells carry a figure with a unit or the shipped "—" with the D04-G1 caption (AC 1; `14`
+  :2777 "all figures have units") | §4 `TIER/questdb`, `/parquet`, `/postgres` | 3 <!--
+  audit:mutations_by_rule.r1=3 --> |
+@ §12 row R-5 ‖ degradation
+  | R-5 | "Recording pauses before trading is affected." on every frame whose producer is `level`
+  ≥ 1 in any wording that keeps the ruled order, in §1.4 and in the deck byte for byte, with the
+  deck's detail line; an inverted or weakened order in any wording anywhere in the file fails
+  ("trading stops before recording", "orders are refused before recording pauses", "recording
+  continues while trading halts", "trading may also be affected") (AC 2; `14` :2780) | every frame
+  table, every prose sentence, §14 | 19 <!-- audit:mutations_by_rule.r5=19 --> |
+@ §12 row R-6 ‖ view-as
+  | R-6 | no state, T1, T4, outcome or dialog frame and no unit outside the T2 and validity rules
+  draws a lock or a disabled control in any wording (lock, padlock, T2, CMP-079, RbacGate,
+  disabled, greyed / grayed, dimmed, faded, inert, unavailable, not available, no longer
+  available, blocked, gated, can't / cannot be pressed or used, `aria-disabled`,
+  `opacity.disabled`); §1.3's classes are fixed per row; the disk-full frame carries the BQ-14
+  sentence; the migration frame draws no Apply or run control (A1; BQ-14 / 15 / 16 RULED) | every
+  frame table, §1.3, every prose sentence, §14 | 23 <!-- audit:mutations_by_rule.r6=23 --> |
+@ §12 row R-7 ‖ purge
+  | R-7 | the purge dialog carries the Reason field (required, 3–280), the typed symbol empty and
+  the step-up sentence; the typed field is never pre-filled, auto-filled, pre-populated, filled
+  in, typed or copied into, nor — with the typed field as its subject — set to the symbol, already
+  holding it or already in it, arriving, opening or starting with it, defaulting to or suggesting
+  it, seeded or "empty at first"; nor is the symbol entered for the Owner — in any wording
+  anywhere in the file (the ticket's security note; `22` :14141, :14164) | §7 `PURGE/dialog`,
+  `PURGE/step-up`, every prose sentence | 29 <!-- audit:mutations_by_rule.r7=29 --> |
+@ §12 row R-8 ‖ view-as
+  | R-8 | a validity-look frame carries `validity-reason`, `opacity.disabled` and the reason under
+  the control, never inside it, and no lock, no CMP-079 or RbacGate (E09-D09 §9.1 :230; E30-D02 D3
+  :128) | every row whose Class is validity look | 4 <!-- audit:mutations_by_rule.r8=4 --> |
+@ §12 row R-11 ‖ view-as
+  | R-11 | a running job is busy with `aria-busy`, never `T2`, a lock or a disabled write; a `409`
+  refusal is T4, never a lock or a disabled control (E16-D02 §6.6 :422; E09-D09 §9.1) | §6
+  `JOB/strip-running`, `JOB/strip-refused-409` | 5 <!-- audit:mutations_by_rule.r11=5 --> |
+@ §12 row R-12 ‖ proposed
+  | R-12 | every PROPOSED carrier — vacuum (G8), Stop job (G10: the job cancel, never labelled
+  Cancel, the dialogs' exit; also stop, abort, End job), row counts and a Rows column (G3), slow
+  queries and p95 (G5), per-tier growth (G1), lag (G4), the sparkline, CMP-024, a trend line and
+  the ranges (G2), the migration values (G7), last vacuum or compaction (G6), the per-file rows
+  and the skip counter (G11), the archive ranges (G12), and any D04-Gn named — carries its own
+  caption "PROPOSED — D04-Gn, owner approval pending (#2701)" with its n in the same item; no unit
+  anywhere (a prose sentence, a non-frame table row read across its cells, the deck, the sketch, a
+  Producer cell) presents a PROPOSED item as shipped by any of its names (Vacuum Postgres…, Stop
+  job, End job, a Rows column, p95, the sparkline, CMP-024, Last vacuum, Migration 0008, the
+  per-file table) unless its row or clause carries that caption or names the gap absent, or a
+  negator governs it (the gap's own A / C / CG / D / G / Q rows and the BQ table exempt); the
+  deck's strings and the sketch carry the full caption, never a short "PROPOSED Dn" (BQ-11 / 13 /
+  18 / 22 RULED; A2) | every frame table, every unit | 53 <!-- audit:mutations_by_rule.r12=53 -->
+  |
+@ §12 row R-13 ‖ view-as
+  | R-13 | the view-as frame is T2 with `rbac.view_as`, one notice in any wording, the lock and
+  the full label, every write of §1.3's T2 row by name, the four anatomy tokens, the view-as leg
+  first, and nothing dimmed; the view-as row is first in §1.3 and §9 (E09-D09 §2.1 step 3, §2.2
+  :49, §3.1 :95) | §5 `SCR-142/view-as`, §1.3, §9 | 12 <!-- audit:mutations_by_rule.r13=12 --> |
+@ §12 row R-14 ‖ proposed
+  | R-14 | every exit a frame lists (Cancel, Esc and the close ✕ on every dialog, the SCR-140 /
+  141 / 143 links, Shorten retention, Retry, Manage pin) is present and T1, and never locked or
+  disabled in any wording, whether the word sits in the exit's own item, after a ";" or in an "It
+  / They / Each …" follow-on; the exit Cancel is never captioned PROPOSED and never the job action
+  (A3) | every frame table | 29 <!-- audit:mutations_by_rule.r14=29 --> |
+@ §12 row R-19 ‖ view-as
+  | R-19 | every `rbac.*` deck string is one sentence of at most 60 characters with a full stop,
+  naming no data, and `rbac.view_as` is E09-D09's byte for byte; the deck's key set is closed
+  (E09-D09 §3.1 :85) | §14 | 4 <!-- audit:mutations_by_rule.r19=4 --> |
+@ §12 row R-20 ‖ purge
+  | R-20 | the compact and purge outcome lines are E16-D02 §3.2's, byte for byte (:200, :203) | §6
+  `JOB/outcomes`, §7 `PURGE/outcomes` | 1 <!-- audit:mutations_by_rule.r20=1 --> |
+@ §12 row R-21 ‖ purge
+  | R-21 | compact and vacuum confirm with CMP-044 standard and "Nothing is deleted." in the
+  frames, §6's action table and the deck; the purge dialog is CMP-044 typed and E16-D02 §6.5's
+  body whole; every purge entry opens §6.5, never a second shape in any wording in any unit
+  (one-click, a lighter, simpler or standard confirm, without the typed field, its own purge
+  dialog); Purge data… sits on the QuestDB and Parquet cards and Purge… in the row popover, never
+  on the maintenance card (§2 (g), the sketch) (BQ-9 / BQ-10 RULED; `21` :4416–4417) | §6, §7,
+  §14, §4 | 20 <!-- audit:mutations_by_rule.r21=20 --> |
+@ §12 prose ‖ view-as
+  **Copy gates beside them** (no mutation of their own): the AC 2 sentence and the view-as notice
+  in the deck; the banned words off the deck's String column; no local path, user, notes folder or
+  Penpot host anywhere (generic patterns); every `C-x.y`, `CMP-nnn` and `SCR-nnn` id exists in its
+  owner; every cited `:N` still holds its text (a drift is a WARN naming the current line; a
+  vanished or ambiguous needle a FAIL); no closing keyword before an issue number; §15's ratios
+  equal the matrix; every bindings-table row with a numeric field names a unit.
+@ §13 prose ‖ view-as, purge, proposed, number
+  **Components used** (each has a `15` heading; the tool checks): CMP-001 (secondary / primary /
+  danger), 005 (Include pinned), 007 (Reason, the typed symbol), 009 (Symbol), 011 (the
+  archive-derived tag), 015 (skeletons), 016 (the stamp's echo), 019 (`lock` on the view-as leg
+  only; ✓ ⚠ ✗ as the health and status glyphs; the clock), 021 (links), 023 (`meter` × 2;
+  `progress` on the strip and the import), 024 (only inside the PROPOSED inset, with its mirror
+  table), 027 (inline errors: a tier down, a refusal), 028 (the level banner, the lag-warning
+  banner (keyed on the backlog, BQ-17) and the migration banner (PROPOSED, D04-G7), and the
+  `SCR-142/unavailable` one), 035 (the re-auth badge, via CMP-087), 036 (the card rows), 040 (the
+  import fields), 043 + 044 (standard for compact and the PROPOSED vacuum, D04-G8; typed for
+  purge, E16-D02's), 047 (From / To; the purge date), 049 (table variant everywhere), 050 (cards),
+  051 (the per-tier table's disclosure), 079 (`form="notice"` on the view-as leg), 087 (the
+  shell), 093 (wraps the purge, E16-D02's), CMP-178 (the SCR-143 link tile), CMP-239 (`stale` on
+  the stamp). **Not used:** CMP-038 (progress is always determinate here), CMP-177 (E16-D02's
+  row), CMP-026 (no empty state: a tier with nothing recorded reads "0.0 GB"). **Shared sentence
+  for every `22` / `23` / `24` gap (E30-D04 §30 :1048, in the design-PR form):** "Design PRs never
+  edit `22`. Contract-first, the schema change lands in its own small PR, opened by the first
+  implementation ticket that needs the field; the names here are PROPOSED (orchestrator ruling,
+  2026-10-21)." For this spec that first implementation ticket is the E16 implementation ticket
+  that consumes SCR-142 (the ticket's Context names E16-S05 / E16-S08; the backlog names E16-T10
+  for the import and E16-T07 for `DiskBudget`).
+@ §13 row D04-A2 ‖ degradation
+  | D04-A2 | `15` CMP-023 :264 Purpose — Old: "determinate progress (recorder disk usage, replay
+  load, TWAP slice progress)." → New: "determinate progress (recorder disk usage, replay load,
+  TWAP slice progress); a `meter` divides by one denominator, so two denominators are two meters,
+  each naming what it divides in its label (the recording budget over `cap_bytes`; the volume over
+  `disk_total_bytes`)." |
+@ §13 row D04-A6 ‖ proposed
+  | D04-A6 | `14` SCR-142 :2778 Performance (copy-ready): "… are explicit actions with progress;
+  cancel is PROPOSED until `22` has a cancel route" — not edited here (D04-C3) |
+@ §13 row D04-A7 ‖ number
+  | D04-A7 | `15` CMP-023 :268 Tokens — Old: "track `color.surface.hover`" → New: "track
+  `color.surface.sunken`" — the danger fill measures 2.92 <!--
+  audit:ratios.danger_on_hover.dark=2.92 --> on the hover track in dark (below 3:1) and 4.16 <!--
+  audit:ratios.danger_on_sunken.dark=4.16 --> on sunken (§15), as E16-D03 §15 already measured for
+  the primary fill |
+@ §13 row D04-C1 ‖ purge
+  | D04-C1 | `14` :2779 audits `storage.compaction_triggered`, `storage.vacuum_triggered`,
+  `storage.tier_migration_triggered`; `22` audits the import as `recorder.import` (:14094) and the
+  purge as `retention.purge` (:14150) and names no compaction audit; owner `14` / `22`; the
+  confirm line here stays "This action is audited." |
+@ §13 row D04-C3 ‖ proposed
+  | D04-C3 | `14` :2778 says heavy operations "can be cancelled" and names "reindex"; `22` has no
+  cancel route and no reindex; owner `14` (D04-A6) and `22` (D04-G10) |
+@ §13 row D04-G1 ‖ proposed
+  | D04-G1 | `StorageUsage.tiers[].daily_growth_bytes` and `tiers[].projected_full_at` (nullable)
+  — per-tier growth and projection (AC 1); until then the card shows the disk-level figure
+  labelled "all tiers" and "—" per tier. Shared sentence. |
+@ §13 row D04-G2 ‖ proposed, number
+  | D04-G2 | `symbols[].oldest_at`, `symbols[].newest_at`, `symbols[].history_bytes[]` (7 daily
+  samples) — the per-symbol range and the sparkline's series. Shared sentence. |
+@ §13 row D04-G3 ‖ proposed
+  | D04-G3 | `tiers[].tables[] {name, rows, bytes, oldest_at, newest_at}` — rows by table; the
+  QuestDB names are `21` §4.1–4.13's, the Parquet "tables" its §5.1 partition families. Shared
+  sentence. |
+@ §13 row D04-G4 ‖ degradation, proposed, number
+  | D04-G4 | `ingest_lag_ms` on the recorder topic (or `StorageUsage`); until then the two
+  produced numbers (`23` :4060–4061) and a "—" lag cell; the lag-warning threshold (5 ILP batches)
+  is PROPOSED with it (D04-Q4). Shared sentence. |
+@ §13 row D04-G5 ‖ proposed
+  | D04-G5 | `slow_queries[] {tier, kind, p95_ms, count_1h}` on a PROPOSED `GET
+  /admin/storage/queries` or on `StorageUsage` — the checklist's query-performance indicators.
+  Shared sentence. |
+@ §13 row D04-G6 ‖ proposed
+  | D04-G6 | `tiers[].last_compaction_at` (parquet), `tiers[].last_vacuum_at` (postgres). Shared
+  sentence. |
+@ §13 row D04-G7 ‖ proposed
+  | D04-G7 | `schema_version`, `target_version`, `pending_migrations: int` on `HealthReport` or
+  `StorageUsage`; the banner "{n} pending · {schema_version} → {target_version}". Shared sentence.
+  |
+@ §13 row D04-G8 ‖ proposed
+  | D04-G8 | `POST /admin/db/vacuum` (Postgres only; `recording:write` proposed, `admin:write` the
+  alternative; no step-up proposed — D04-Q1) + `Job.kind` `db_vacuum`. Shared sentence. |
+@ §13 row D04-G9 ‖ proposed
+  | D04-G9 | `Job.kind` `parquet_compaction` for `compactRecorder`'s job (today the kind is
+  unnamed). Shared sentence. |
+@ §13 row D04-G10 ‖ proposed
+  | D04-G10 | `POST /admin/jobs/{jobId}/cancel` → `202`; `409 job_not_cancellable`; until then
+  Stop job is a captioned PROPOSED carrier, never labelled Cancel (the dialogs' exit), and a
+  started job runs to its end. Shared sentence. |
+@ §13 row D04-G11 ‖ proposed
+  | D04-G11 | `ArchiveImportResult {days_total, days_done, files[] {date, status ∈ done \| skipped
+  \| error, reason, rows}, overlap_rows_discarded, archive_derived: true}` as `Job.result` for
+  `archive_import`; reason codes `checksum_mismatch` (`22` :11276's word) · `parse_error` ·
+  `download_failed` · `already_imported`; and `files[]` (with the skip count) streamed in `result`
+  while the job runs, before `succeeded` — today `result` is null until then (`22` :20851–20852),
+  so the running frames' per-file rows and skip counter are this gap's captioned inset. Shared
+  sentence. |
+@ §13 row D04-G12 ‖ proposed
+  | D04-G12 | a per-interval `source: recorded \| archive` on `GET /market/data-coverage`, so the
+  chart's coverage chip and band (E16-D05) can label archive-derived ranges. Shared sentence. |
+@ §13 row D04-CG2 ‖ purge, proposed
+  | D04-CG2 | `22` puts a step-up class on purge only (:14145); compact, import and the PROPOSED
+  vacuum carry none, so no step-up sentence is drawn on their confirms |
+@ §13 row D04-CG3 ‖ number
+  | D04-CG3 | the `22` example's `symbols[]` sum to 813.6 GB against 1,188.0 GB of QuestDB +
+  Parquet: the per-symbol table states "{sum} of {budget used} attributed to symbols"; the example
+  is not corrected |
+@ §13 row D04-CG4 ‖ number
+  | D04-CG4 | jobs live in the API process (at most 256, lost at a restart, `22` :378,
+  :11581–11584): the strip's "unknown" outcome and the reload case (`409 job_running` with no job
+  id) are designed for |
+@ §13 row D04-Q1 ‖ proposed
+  | D04-Q1 | does the owner want the `recorder` step-up class on the PROPOSED vacuum (a `22`
+  change)? Default proposed: none (non-destructive) |
+@ §13 row D04-Q4 ‖ proposed, number
+  | D04-Q4 | the lag-warning threshold: 5 ILP batches of `write_backlog_rows` for two samples is
+  PROPOSED; a registered state key is not needed while it stays a status |
+@ §13 row D04-D3 ‖ purge
+  | D04-D3 | the per-symbol table stays the table variant: Purge… lives in the row's detail
+  popover, not an actions column (alternative: a grid) |
+@ §13 row D04-D4 ‖ purge
+  | D04-D4 | compact and vacuum confirm with CMP-044 standard (BQ-10 RULED); purge reuses E16-D02
+  §6.5 (never a second purge shape: the alternative is rejected) |
+@ §13 row D04-D6 ‖ proposed
+  | D04-D6 | every PROPOSED capability is a captioned inset or second row with the shipped
+  fallback beside it, never a frame's default (BQ-11 / 13 / 18 / 22 RULED; alternative rejected:
+  drawing the target state) |
+@ §13 row D04-D9 ‖ view-as
+  | D04-D9 | the light twin set: the warning tone on the canvas, the warning subtle rows, the T2
+  pair (BQ-21 RULED) |
+@ §13 row D04-D10 ‖ view-as, purge
+  | D04-D10 | analytics `storage.panel_viewed` once per entry (`14` :2779); the audited names are
+  the server's (`recorder.import`, `retention.purge`; D04-C1); a T2 press emits nothing |
+@ §14 prose ‖ view-as, purge, proposed, number
+  Variables: `{HH:MM:SS}` 10:31:03; `{every}` 60 s; `{used}` / `{cap}` 1,188.0 GB / 2,000.0 GB;
+  `{pct}` 59.4 %; `{d}` 422 (the autostop runway) or 560 (the full date); `{date}` 2028-03-27;
+  `{growth}` 1.45 GB/day; `{symbol}` ETHUSDT; `{user}` alex; `{n}` / `{done}` 31 / 12; `{k}` 1;
+  `{rows}` 660,000; `{code}` the server's stable code; `{verb}` Compaction · Import · Purge of
+  {symbol} · Vacuum (PROPOSED, D04-G8). The fixture strings beside a template are the boards'
+  words. Every `rbac.*` string ≤ 60 characters, names no data; no jargon in a user-facing string
+  (the tool gates).
+@ §14 row Key ‖ caption
+  | Key | String | Source | Frames |
+@ §14 row storage.title ‖ caption
+  | `storage.title` | "Storage and database" | `14` :2770 (the heading, cased) | every page frame
+  |
+@ §14 row storage.stamp ‖ caption, number
+  | `storage.stamp` | "Sampled {HH:MM:SS} UTC (every {every})" · "Sampled 10:31:03 UTC (every 60
+  s)" | `new` | every page frame |
+@ §14 row storage.stamp.stale ‖ caption, number
+  | `storage.stamp.stale` | "Sampled {HH:MM:SS} UTC, stale ({age} old)" · "Sampled 10:31:03 UTC,
+  stale (3 min old)" | `new` | `SCR-142/stale-sample` |
+@ §14 row storage.stamp.sampling ‖ caption
+  | `storage.stamp.sampling` | "Sampling…" | `new` | `SCR-142/loading` |
+@ §14 row storage.meter.budget ‖ caption, number
+  | `storage.meter.budget` | "Recording budget: {used} of {cap} ({pct})" · "Recording budget:
+  1,188.0 GB of 2,000.0 GB (59.4 %)" | `new` (the numerator rule `22` :5004) | every page frame |
+@ §14 row storage.meter.volume ‖ caption, number
+  | `storage.meter.volume` | "Disk volume: {used} of {total} ({pct}), {free} free" · "Disk volume:
+  1.2 TB of 4.0 TB (30.1 %), 2.8 TB free" | `new` | every page frame |
+@ §14 row storage.projection ‖ caption, number
+  | `storage.projection` | "Full in about {d} days ({date}) at {growth}: the {wall} is the nearer
+  wall" · "Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall (the
+  volume about 1,928 days)" | `new` (E16-D02 :153's rule) | `SCR-142/healthy` |
+@ §14 row storage.headline.0 ‖ caption, number
+  | `storage.headline.0` | "Growing · auto-record pauses in about {d} days" · "Growing ·
+  auto-record pauses in about 422 days" | E16-D02 §8.3 :490 | `SCR-142/healthy` |
+@ §14 row storage.headline.1 ‖ caption, number
+  | `storage.headline.1` | "Near limit · auto-record pauses in about {d} days · clears below {warn
+  − 5} %" · "… about 131 days · clears below 75 %" | E16-D02 §8.3 :493 |
+  `SCR-142/low-disk-warning` |
+@ §14 row storage.headline.2 ‖ caption, number
+  | `storage.headline.2` | "Auto-record paused · resumes below {autostop − 5} % of the budget with
+  20 % of the volume free" | E16-D02 §8.3 :494 | `SCR-142/autostop` |
+@ §14 row storage.headline.3 ‖ caption, number
+  | `storage.headline.3` | "Recording stopped · resumes below {halt − 5} % with 10 % of the volume
+  free" · "… below 90 % …" | E16-D02 §8.3 :496 | `SCR-142/read-only-disk-full`, `/volume-refused`
+  |
+@ §14 row storage.level3.fact ‖ caption, degradation
+  | `storage.level3.fact` | "Open positions keep recording; other symbols' data is dropped and
+  recorded as gaps." | E16-D02 §8.3 :496 | `SCR-142/read-only-disk-full` |
+@ §14 row storage.formula ‖ caption, number
+  | `storage.formula` | "({autostop} % × {cap} − {used}) ÷ {growth} ≈ {d} days" · "(90 % × 2,000.0
+  GB − 1,188.0 GB) ÷ 1.45 GB/day ≈ 422 days" | E16-D02 §8.3 :490 | `SCR-142/healthy` |
+@ §14 row storage.scale ‖ caption, degradation, number
+  | `storage.scale` | "80 % warning · 90 % auto-record pauses · 95 % recording stops (open
+  positions keep writing)" | E16-D02 §8.3 :499 | every page frame |
+@ §14 row storage.degradation ‖ caption, degradation
+  | `storage.degradation` | "Recording pauses before trading is affected." | `new` (AC 2; `14`
+  :2780) | every level ≥ 1 frame |
+@ §14 row storage.degradation.detail ‖ caption, degradation, number
+  | `storage.degradation.detail` | "At 90 % of the recording budget auto-record pauses; at 95 %
+  recording stops for symbols without an open position; orders and positions are never gated by
+  the disk." | `new` (`20` :905–907; `24` :3845, :3854) | every level ≥ 1 frame |
+@ §14 row storage.autostop.next ‖ caption, number
+  | `storage.autostop.next` | "Recording stops at {halt} % in about {d} days" · "Recording stops
+  at 95 % in about 69 days" | E16-D02 §8.3 :494 | `SCR-142/autostop` |
+@ §14 row storage.accelerated ‖ caption
+  | `storage.accelerated` | "Retention accelerated" | `new` (`22` :18123) | `SCR-142/autostop` |
+@ §14 row storage.volume_refused ‖ caption
+  | `storage.volume_refused` | "The recording volume was refused at start-up; the gate opens once
+  it is fixed" | `new` (`23` :4103–4104; SR-096) | `SCR-142/volume-refused` |
+@ §14 row storage.actions.shorten ‖ caption
+  | `storage.actions.shorten` | "Shorten retention" | E16-D02 §8.3 :503 | level ≥ 1 frames |
+@ §14 row storage.actions.depth ‖ caption
+  | `storage.actions.depth` | "Reduce depth" | E16-D02 §8.3 :503 | level ≥ 1 frames |
+@ §14 row storage.actions.unpin ‖ caption
+  | `storage.actions.unpin` | "Unpin" | E16-D02 §8.3 :504 | level ≥ 1 frames |
+@ §14 row storage.tier.questdb ‖ caption
+  | `storage.tier.questdb` | "QuestDB · hot" | `new` (ADR-0003 :34) | `TIER/questdb` |
+@ §14 row storage.tier.parquet ‖ caption
+  | `storage.tier.parquet` | "Parquet/DuckDB · cold" | `new` (ADR-0003 :35) | `TIER/parquet` |
+@ §14 row storage.tier.postgres ‖ caption
+  | `storage.tier.postgres` | "Postgres · relational" | `new` (ADR-0003 :36) | `TIER/postgres` |
+@ §14 row storage.tier.rows ‖ caption, proposed
+  | `storage.tier.rows` | "Size" · "Share of budget" · "Retention" · "Growth/day" · "Projected
+  full" · "Health" · "Ingestion" · "Last compaction" · "Last vacuum" · "Migration" · "Rows by
+  table" | `new` (`14` :2772, :2777; "Last compaction", "Last vacuum", "Migration" and "Rows by
+  table" label PROPOSED rows: D04-G6, D04-G7, D04-G3) | `TIER/*` |
+@ §14 row storage.tier.not_counted ‖ caption
+  | `storage.tier.not_counted` | "not counted" | `new` (`22` :5004) | `TIER/postgres` |
+@ §14 row storage.tier.all_tiers ‖ caption, proposed, number
+  | `storage.tier.all_tiers` | "all tiers {growth}" · "all tiers 1.45 GB/day" · "all tiers
+  2028-03-27" | `new` (D04-G1's fallback) | `TIER/*` |
+@ §14 row storage.tier.health ‖ caption
+  | `storage.tier.health` | "healthy" · "degraded" · "warning" · "down" · "not deployed" · "not
+  reported" | `22` :16368 (`ComponentState`); `new` the last | `TIER/*`,
+  `SCR-142/tier-unreachable-questdb` |
+@ §14 row storage.tier.unreachable ‖ caption, number
+  | `storage.tier.unreachable` | "{Tier} unreachable since {HH:MM:SS} UTC" · "QuestDB unreachable
+  since 10:24:03 UTC" | `new` | `SCR-142/tier-unreachable-questdb` |
+@ §14 row storage.tier.retry ‖ caption
+  | `storage.tier.retry` | "Retry" | E16-D02 §3.1 :191 | `SCR-142/tier-unreachable-questdb`,
+  `SCR-142/unavailable` |
+@ §14 row storage.ingestion ‖ caption, proposed, number
+  | `storage.ingestion` | "Ingest {rate} msg/s, backlog {rows} rows, lag —" · "Ingest 18,400
+  msg/s, backlog 25,000 rows, lag — (PROPOSED — D04-G4, owner approval pending (#2701))" | `new`
+  (`23` :4060–4061; the lag PROPOSED, D04-G4) | `TIER/questdb`, `SCR-142/lag-warning` |
+@ §14 row storage.lag.banner ‖ caption, number
+  | `storage.lag.banner` | "Ingestion backlog {rows} rows — writes are behind the feed" ·
+  "Ingestion backlog 25,000 rows — writes are behind the feed" | `new` | `SCR-142/lag-warning` |
+@ §14 row storage.proposed.caption ‖ caption, proposed
+  | `storage.proposed.caption` | "PROPOSED — D04-G{n}, owner approval pending (#2701)" | `new`
+  (the orchestrator's ruling) | every PROPOSED carrier |
+@ §14 row storage.proposed.rows ‖ caption, proposed
+  | `storage.proposed.rows` | "Row counts by table are not produced yet" | `new` (D04-G3's
+  fallback) | `TIER/tables-questdb` |
+@ §14 row storage.proposed.queries ‖ caption, proposed
+  | `storage.proposed.queries` | "Slowest queries are not produced yet" | `new` (D04-G5's
+  fallback) | `TIER/query-performance` |
+@ §14 row storage.compaction.schedule ‖ caption, number
+  | `storage.compaction.schedule` | "weekly, Sundays 03:00 UTC" | `21` :4410 | `TIER/parquet` |
+@ §14 row storage.symbols.attributed ‖ caption, number
+  | `storage.symbols.attributed` | "{sum} of {used} attributed to symbols ({pct})" · "813.6 GB of
+  1,188.0 GB attributed to symbols (68.5 %)" | `new` (D04-CG3) | `TIER/per-symbol` |
+@ §14 row storage.migration.banner ‖ caption, proposed, number
+  | `storage.migration.banner` | "Migration pending · {n} pending · {from} → {to} — applied with
+  the next release" · "Migration pending · 1 pending · 0008 → 0009 — applied with the next
+  release" | `new` (PROPOSED D04-G7; `22` :10570) | `SCR-142/migration-pending` |
+@ §14 row storage.unavailable ‖ caption
+  | `storage.unavailable` | "Disk figures could not be loaded." | E16-D02 §3.1 :191 |
+  `SCR-142/unavailable` |
+@ §14 row storage.stale.announce ‖ caption
+  | `storage.stale.announce` | "Storage figures are stale" | `new` | `SCR-142/stale-sample` |
+@ §14 row notice.panel_read_only ‖ caption, view-as
+  | `notice.panel_read_only` | "Read-only — read-only while viewing as {user}." · "Read-only —
+  read-only while viewing as alex." | E16-D02 D-16 :778 (E09-D09 §10's template) |
+  `SCR-142/view-as` |
+@ §14 row rbac.view_as ‖ caption, view-as
+  | `rbac.view_as` | "Read-only while viewing as {user}." | E09-D09 §3.1 :95 | `SCR-142/view-as` |
+@ §14 row storage.compact.button ‖ caption
+  | `storage.compact.button` | "Compact Parquet…" | `new` (E16-D02 §6.6's "Compact now" on
+  SCR-140) | maintenance frames |
+@ §14 row storage.compact.title ‖ caption
+  | `storage.compact.title` | "Compact Parquet partitions?" | `new` | `JOB/confirm-compact` |
+@ §14 row storage.compact.body ‖ caption, number
+  | `storage.compact.body` | "Merges small files into partitions of at most 512 MiB. Nothing is
+  deleted. Replay is paused on partitions it touches." | `new` (`21` :4414, :4417, :4418) |
+  `JOB/confirm-compact` |
+@ §14 row storage.vacuum.button ‖ caption, proposed
+  | `storage.vacuum.button` | "Vacuum Postgres…" | `new` (PROPOSED D04-G8) | the vacuum inset |
+@ §14 row storage.vacuum.title ‖ caption, proposed
+  | `storage.vacuum.title` | "Vacuum Postgres?" | `new` (PROPOSED D04-G8) | `JOB/confirm-vacuum` |
+@ §14 row storage.vacuum.body ‖ caption, proposed
+  | `storage.vacuum.body` | "Reclaims space from deleted rows. Nothing is deleted. Queries may be
+  slower while it runs." | `new` (PROPOSED D04-G8) | `JOB/confirm-vacuum` |
+@ §14 row storage.audited ‖ caption
+  | `storage.audited` | "This action is audited." | E16-D03 §5 :210 | `JOB/confirm-*` |
+@ §14 row storage.confirm.cancel ‖ caption
+  | `storage.confirm.cancel` | "Cancel" | CMP-044 `15` :473 | every dialog |
+@ §14 row storage.job.running ‖ caption, number
+  | `storage.job.running` | "{verb} running · {pct} %" · "Compaction running · 42 %" · "Import
+  running · 38 %" | E16-D03 §8 :262 (the grammar) | `JOB/strip-running`, `IMPORT/running` |
+@ §14 row storage.job.started ‖ caption
+  | `storage.job.started` | "{verb} started" · "Compaction started" · "Import started" | `new` |
+  the strip (announced once) |
+@ §14 row storage.job.stop ‖ caption, proposed
+  | `storage.job.stop` | "Stop job" | `new` (PROPOSED D04-G10) | the strip's PROPOSED carrier |
+@ §14 row storage.job.refused.running ‖ caption
+  | `storage.job.refused.running` | "A {verb} is already running." · "A compaction is already
+  running." | `new` (`22` :14048 `409 job_running`) | `JOB/strip-refused-409` |
+@ §14 row storage.compact.succeeded ‖ caption, number
+  | `storage.compact.succeeded` | "Compacted at {HH:MM} UTC" · "Compacted at 10:42 UTC" | E16-D02
+  §3.2 :204 | `JOB/outcomes` |
+@ §14 row storage.compact.failed ‖ caption
+  | `storage.compact.failed` | "Compaction failed (`<code>`); nothing was deleted." | E16-D02 §3.2
+  :203 | `JOB/outcomes` |
+@ §14 row storage.compact.cancelled ‖ caption
+  | `storage.compact.cancelled` | "Compaction cancelled; nothing was deleted." | E16-D02 §3.2 :203
+  (elided there; completed by D04-A8) | `JOB/outcomes` |
+@ §14 row storage.compact.unknown ‖ caption
+  | `storage.compact.unknown` | "Compaction status is no longer available on the server." |
+  E16-D02 §3.2 :203 | `JOB/outcomes` |
+@ §14 row storage.vacuum.succeeded ‖ caption, proposed
+  | `storage.vacuum.succeeded` | "Vacuumed at {HH:MM} UTC" | `new` (PROPOSED D04-G8) |
+  `JOB/outcomes` |
+@ §14 row storage.vacuum.failed ‖ caption, proposed
+  | `storage.vacuum.failed` | "Vacuum failed (`<code>`); nothing was deleted." | `new` (PROPOSED
+  D04-G8) | `JOB/outcomes` |
+@ §14 row storage.vacuum.cancelled ‖ caption, proposed
+  | `storage.vacuum.cancelled` | "Vacuum cancelled; nothing was deleted." | `new` (PROPOSED
+  D04-G8) | `JOB/outcomes` |
+@ §14 row storage.vacuum.unknown ‖ caption, proposed
+  | `storage.vacuum.unknown` | "Vacuum status is no longer available on the server." | `new`
+  (PROPOSED D04-G8) | `JOB/outcomes` |
+@ §14 row storage.purge.button ‖ caption, purge
+  | `storage.purge.button` | "Purge data…" · "Purge…" | E16-D02 §6.5 :404 | `PURGE/entry-points` |
+@ §14 row storage.purge.title ‖ caption, purge
+  | `storage.purge.title` | "Purge {symbol} data?" · "Purge ETHUSDT data?" | E16-D02 §6.5 :408 |
+  `PURGE/dialog` |
+@ §14 row storage.purge.body ‖ caption, purge
+  | `storage.purge.body` | "This deletes about {size} recorded from {from} to {to} from QuestDB
+  and Parquet. It cannot be undone, and replay, footprint history and the journal lose this range.
+  Shared QuestDB day partitions are freed by the nightly roll-off." | E16-D02 §6.5 :410–412 |
+  `PURGE/dialog` |
+@ §14 row storage.purge.typed ‖ caption, purge
+  | `storage.purge.typed` | "Type the symbol to confirm" | E16-D02 §6.5 :415 | `PURGE/dialog` |
+@ §14 row storage.purge.typed.reason ‖ caption, view-as, purge
+  | `storage.purge.typed.reason` | "Type {symbol} exactly to confirm." · "Type ETHUSDT exactly to
+  confirm." | `new` (the validity reason) | `PURGE/dialog-validity` |
+@ §14 row storage.purge.stepup ‖ caption, purge
+  | `storage.purge.stepup` | "You'll confirm with your password and a code." | E16-D02 §6.4 :388 |
+  `PURGE/dialog`, `PURGE/step-up` |
+@ §14 row storage.purge.stepup.trusted ‖ caption, purge
+  | `storage.purge.stepup.trusted` | "Still trusted for recorder changes · {mm:ss}" | E16-D02 §6.4
+  :389 | `PURGE/step-up` |
+@ §14 row storage.purge.audited ‖ caption, purge
+  | `storage.purge.audited` | "This action is audited (high severity)." | E16-D02 §6.5 :417 |
+  `PURGE/dialog` |
+@ §14 row storage.purge.confirm ‖ caption, purge
+  | `storage.purge.confirm` | "Purge {symbol} data" · "Purge ETHUSDT data" | E16-D02 §6.5 :418 |
+  `PURGE/dialog` |
+@ §14 row storage.purge.refused.pinned ‖ caption, purge
+  | `storage.purge.refused.pinned` | "Pinned data is excluded. Tick Include pinned to delete it
+  too." | `new` (`22` :14148) | `PURGE/pinned-refused` |
+@ §14 row storage.purge.refused.audit ‖ caption, purge
+  | `storage.purge.refused.audit` | "Not started: the audit record could not be written." | `new`
+  (`22` :14150–14152) | §7 (T4) |
+@ §14 row storage.purge.failed ‖ caption, purge
+  | `storage.purge.failed` | "Purge of {symbol} failed (`<code>`). Some data may already be
+  deleted: check {symbol}'s size and gaps." | E16-D02 §3.2 :200 | `PURGE/outcomes` |
+@ §14 row storage.purge.cancelled ‖ caption, purge
+  | `storage.purge.cancelled` | "Purge of {symbol} was cancelled. Data deleted before the cancel
+  is gone." | E16-D02 §3.2 :201 | `PURGE/outcomes` |
+@ §14 row storage.purge.unknown ‖ caption, purge
+  | `storage.purge.unknown` | "The purge's status is no longer available on the server. Check
+  {symbol}'s size and gaps." | E16-D02 §3.2 :202 | `PURGE/outcomes` |
+@ §14 row storage.purge.succeeded ‖ caption, purge, number
+  | `storage.purge.succeeded` | "Purged {size} of {symbol} data" · "Purged 1.2 GB of ETHUSDT data"
+  | E16-D02 §3.2 :204 | `PURGE/outcomes` |
+@ §14 row storage.import.button ‖ caption
+  | `storage.import.button` | "Import archives" | `new` | `IMPORT/*` |
+@ §14 row storage.import.consequence ‖ caption
+  | `storage.import.consequence` | "Imports Bybit's public daily trade archives (trades only, no
+  book data). Recorded data wins where they overlap. Re-running skips finished days." | `new`
+  (`22` :14087–14092) | `IMPORT/form` |
+@ §14 row storage.import.tag ‖ caption
+  | `storage.import.tag` | "Archive-derived · trades only · no book data" | `new` (`22`
+  :14090–14091; US-REC-007 :4226) | `IMPORT/form`, `IMPORT/summary` |
+@ §14 row storage.import.range.reason ‖ caption, view-as, number
+  | `storage.import.range.reason` | "Choose a range of at most 366 days." | `new` (`22` :14088) |
+  `IMPORT/form-validity` |
+@ §14 row storage.import.progress ‖ caption, number
+  | `storage.import.progress` | "{done} of {n} days · {pct} %" · "12 of 31 days · 38 %" · "30 of
+  31 days · 96 %" | `new` | `IMPORT/running`, `/running-with-skips` |
+@ §14 row storage.import.skipped_count ‖ caption, proposed, number
+  | `storage.import.skipped_count` | "{k} skipped" · "1 skipped" | `new` (PROPOSED D04-G11) | the
+  running inset |
+@ §14 row storage.import.finished ‖ caption, number
+  | `storage.import.finished` | "Import finished: {symbol}, {from} → {to}" · "Import finished:
+  BTCUSDT, 2026-01-01 → 2026-01-31" | `new` | `IMPORT/summary` |
+@ §14 row storage.import.columns ‖ caption, proposed
+  | `storage.import.columns` | "Day" · "Status" · "Reason" · "Rows" | `new` (PROPOSED D04-G11) |
+  the per-file table |
+@ §14 row storage.import.status ‖ caption, proposed
+  | `storage.import.status` | "done" · "skipped" · "error" · "downloading" | `new` (PROPOSED
+  D04-G11) | the per-file table |
+@ §14 row storage.import.reason.checksum ‖ caption
+  | `storage.import.reason.checksum` | "Checksum did not match; the file was skipped." | `new`
+  (`checksum_mismatch`, `22` :11276) | `IMPORT/running-with-skips` |
+@ §14 row storage.import.reason.parse ‖ caption, proposed
+  | `storage.import.reason.parse` | "The file could not be read; it was skipped." | `new`
+  (`parse_error`; PROPOSED D04-G11) | the per-file table |
+@ §14 row storage.import.reason.download ‖ caption
+  | `storage.import.reason.download` | "The file could not be downloaded; run the import again to
+  retry it." | `new` (`download_failed`) | `IMPORT/summary` |
+@ §14 row storage.import.reason.already ‖ caption, proposed
+  | `storage.import.reason.already` | "Already imported on an earlier run." | `new`
+  (`already_imported`; PROPOSED D04-G11; `22` :14091–14092) | the per-file table |
+@ §14 row storage.import.overlap ‖ caption, proposed, number
+  | `storage.import.overlap` | "{rows} rows inside recorded windows were discarded — recorded data
+  wins." · "660,000 rows inside recorded windows were discarded — recorded data wins." | `new`
+  (PROPOSED D04-G11; `22` :14089–14090; US-REC-007 :4220) | `IMPORT/summary` |
+@ §14 row storage.import.summary ‖ caption, proposed, number
+  | `storage.import.summary` | "Imported {days} days of {symbol} trades · {k} file skipped · {e}
+  file failed · {rows} overlapping rows discarded" · "Imported 29 days of BTCUSDT trades · 1 file
+  skipped · 1 file failed · 660,000 overlapping rows discarded" | `new` (PROPOSED D04-G11) |
+  `IMPORT/summary` |
+@ §14 row storage.import.failed ‖ caption
+  | `storage.import.failed` | "Import failed ({code}). Finished days are kept; run it again to
+  resume." · "Import failed (download_failed). Finished days are kept; run it again to resume." |
+  `new` (`22` :14091–14092) | `IMPORT/failed` |
+@ §14 row storage.import.cancelled ‖ caption, proposed
+  | `storage.import.cancelled` | "Import cancelled. Finished days are kept." | `new` (PROPOSED
+  D04-G10) | §8 |
+@ §14 row storage.import.unknown ‖ caption
+  | `storage.import.unknown` | "The import's status is no longer available on the server. Run it
+  again: finished days are skipped." | `new` | `IMPORT/failed` |
+@ §14 row storage.import.resume ‖ caption
+  | `storage.import.resume` | "Run it again to resume: finished days are skipped." | `new` (`22`
+  :14091–14092) | `IMPORT/summary`, `IMPORT/failed` |
+@ §14 row storage.links.storage_details ‖ caption
+  | `storage.links.storage_details` | "Storage details →" | `new` (D04-A4; on SCR-140's card) |
+  SCR-140 (E16-D02's card) |
+@ §14 row storage.links.health ‖ caption
+  | `storage.links.health` | "System health →" | `new` (the CMP-178 tile to SCR-143) | every page
+  frame |
+@ §15 prose ‖ view-as, proposed
+  Dark / light / high-contrast = `semantic-dark`; `semantic-light` over it; `semantic-hc` over it.
+  Bars 4.5 text · 3.0 non-text; the `decorative` and `rejected-text` rows are reported, never
+  gated. 29 <!-- audit:pairs_rows=29 --> gated pairs, 0 <!-- audit:pairs_fail=0 --> FAIL, 16 <!--
+  audit:pairs_registered=16 --> registered / 13 <!-- audit:pairs_proposed=13 --> PROPOSED
+  `pairs.mjs` rows (the boards PR registers the PROPOSED ones). The meter track is
+  `color.surface.sunken` because the danger fill measures 2.92 on CMP-023's `color.surface.hover`
+  track in dark (D04-A7). `color.text.disabled` is never drawn (the one REJECTED row says why:
+  2.86 <!-- audit:ratios.disabled.dark=2.86 --> on the card). The validity composite (the primary
+  label at `opacity.disabled` over the card) is 2.64 <!-- audit:composite.dark=2.64 --> / 1.93
+  <!-- audit:composite.light=1.93 --> / 2.52 <!-- audit:composite.high-contrast=2.52 -->, reported
+  and not gated: the reason beside it carries the meaning at full opacity (E30-D02 D3).
+@ §15 row table header words ‖ proposed
+  | table header words | `color.text.primary` | `color.surface.hover` | text | 12.22 | 14.37 |
+  13.83 | PASS | PROPOSED |
+@ §15 row field value in the well (import form, pu ‖ purge
+  | field value in the well (import form, purge dialog) | `color.text.primary` |
+  `color.surface.app` | text | 16.06 | 17.99 | 18.18 | PASS | registered |
+@ §15 row meter fill level 0 on its track ‖ proposed
+  | meter fill level 0 on its track | `color.action.primary.default` | `color.surface.sunken` |
+  non-text | 4.41 | 3.39 | 8.08 | PASS | PROPOSED |
+@ §15 row meter fill level 3 on its track ‖ proposed
+  | meter fill level 3 on its track | `color.status.danger.default` | `color.surface.sunken` |
+  non-text | 4.16 | 7.35 | 4.92 | PASS | PROPOSED |
+@ §15 row health glyph ok on the card ‖ proposed
+  | health glyph ok on the card | `color.status.success.strong` | `color.surface.raised` |
+  non-text | 9.40 | 3.39 | 9.40 | PASS | PROPOSED |
+@ §15 row health glyph warning on the card ‖ proposed
+  | health glyph warning on the card | `color.status.warning.strong` | `color.surface.raised` |
+  non-text | 11.00 | 4.11 | 11.00 | PASS | PROPOSED |
+@ §15 row health glyph down on the card ‖ proposed
+  | health glyph down on the card | `color.status.danger.strong` | `color.surface.raised` |
+  non-text | 9.32 | 4.11 | 9.32 | PASS | PROPOSED |
+@ §15 row import failed glyph ‖ proposed
+  | import failed glyph | `color.status.danger.strong` | `color.status.danger.subtle` | non-text |
+  7.83 | 3.85 | 7.83 | PASS | PROPOSED |
+@ §15 row job succeeded words ‖ proposed
+  | job succeeded words | `color.text.primary` | `color.status.success.subtle` | text | 10.21 |
+  15.41 | 11.56 | PASS | PROPOSED |
+@ §15 row job succeeded glyph ‖ proposed
+  | job succeeded glyph | `color.status.success.strong` | `color.status.success.subtle` | non-text
+  | 6.69 | 3.34 | 6.69 | PASS | PROPOSED |
+@ §15 row info line glyph ‖ proposed
+  | info line glyph | `color.status.info.strong` | `color.status.info.subtle` | non-text | 7.30 |
+  4.34 | 7.30 | PASS | PROPOSED |
+@ §15 row destructive Confirm label on the danger  ‖ purge, proposed
+  | destructive Confirm label on the danger fill (Purge) | `color.text.on-action` |
+  `color.status.danger.default` | text | 5.05 | 10.31 | 4.54 | PASS | PROPOSED |
+@ §15 row sparkline stroke (the PROPOSED D04-G2 in ‖ proposed
+  | sparkline stroke (the PROPOSED D04-G2 inset) | `color.text.tertiary` | `color.surface.raised`
+  | non-text | 5.62 | 5.92 | 11.21 | PASS | registered |
+@ §15 row stale clock glyph on raised ‖ proposed
+  | stale clock glyph on raised | `color.data-confidence.stale.indicator` | `color.surface.raised`
+  | non-text | 11.00 | 4.11 | 11.00 | PASS | PROPOSED |
+@ §15 row invalid well boundary ‖ proposed
+  | invalid well boundary | `color.status.danger.default` | `color.surface.raised` | non-text |
+  3.43 | 8.95 | 4.05 | PASS | PROPOSED |
+@ §15 row REJECTED T2 label in text.disabled ‖ proposed
+  | REJECTED T2 label in text.disabled | `color.text.disabled` | `color.surface.raised` |
+  rejected-text | 2.86 | 3.74 | 2.86 | rejected, never drawn | PROPOSED |
+@ §15 row the card hairline ‖ proposed
+  | the card hairline | `color.border.default` | `color.surface.raised` | decorative | 1.41 | 1.22
+  | 2.86 | reported, not gated | PROPOSED |
+@ §16 row 14:2780 all three tiers drawn with size, ‖ proposed
+  | 14:2780 all three tiers drawn with size, growth rate and projected full date | `TIER/questdb`,
+  `TIER/parquet`, `TIER/postgres` (board 02): size and retention shipped; growth and projected
+  full "—" captioned PROPOSED (D04-G1) with the disk-level fallback beside them — satisfied as
+  PROPOSED (BQ-18 RULED) |
+@ §16 row 14:2780 maintenance actions with progres ‖ proposed
+  | 14:2780 maintenance actions with progress and cancel | `JOB/confirm-compact`,
+  `JOB/strip-running`, `JOB/outcomes` (board 05), `PURGE/*` (board 06), `IMPORT/running` (board
+  07): progress shipped (`Job.progress_pct`); Stop job (the cancel) a captioned PROPOSED carrier
+  (D04-G10) — satisfied as PROPOSED (BQ-13 RULED) |
+@ §16 row 14:2780 low-disk warning and critical st ‖ degradation
+  | 14:2780 low-disk warning and critical states drawn with what stops working first (recording
+  pauses before trading is affected - stated) | `SCR-142/low-disk-warning`, `/autostop`,
+  `/read-only-disk-full`, `/volume-refused` (board 03): the sentence "Recording pauses before
+  trading is affected." and the detail line on each (§1.4; R-5) |
+@ §16 row 14:2780 query-performance indicators ‖ proposed
+  | 14:2780 query-performance indicators | `TIER/query-performance` (board 02): a captioned
+  PROPOSED second row (D04-G5) with the shipped fallback — satisfied as PROPOSED |
+@ §16 prose ‖ proposed, number
+  AC 3 is traced the same way: `IMPORT/running-with-skips` draws the shipped running state (the
+  bar, its days, the strip), and its per-file skip row and the "1 skipped" counter while the
+  import runs are met **as PROPOSED** (D04-G11's `files[]` stream, a captioned inset), with no
+  page banner in either.
+@ §17 prose ‖ number
+  **Flows (every step a frame).** 5 <!-- audit:flows=5 --> flows.
+@ §17 row F1 ‖ number
+  | F1 | Read the picture: `SCR-142/healthy` → the tier cards → `TIER/per-symbol` → the SCR-143
+  tile link; at 200 % `SCR-142/healthy-200-zoom` |
+@ §17 row F4 ‖ view-as, purge
+  | F4 | Purge one symbol: `PURGE/entry-points` → `PURGE/dialog` (`PURGE/dialog-validity` while
+  typing) → `PURGE/step-up` → `PURGE/outcomes`; a pinned symbol → `PURGE/pinned-refused` |
+@ §17 row F5 ‖ view-as
+  | F5 | Import a month: `IMPORT/form` (`IMPORT/form-validity` on a bad range) → `IMPORT/running`
+  → `IMPORT/running-with-skips` → `IMPORT/summary`; a failed download after the retry budget →
+  `IMPORT/failed` → run it again |
+@ §17 prose ‖ view-as, purge, proposed, number
+  **Heuristic evaluation `(heuristic)`** (Nielsen; `05`'s trading heuristics). Visibility of
+  system status: the stamp and the staleness marker on every page frame; the strip's text-first
+  progress. Match with the real world: sizes in GB / TB with one decimal, days of runway, dates as
+  ISO; the headline words are E16-D02's. User control: every action is explicit and confirmed
+  (compact / the PROPOSED vacuum (D04-G8) standard, purge typed); nothing heavy runs on page load.
+  Consistency: one purge dialog (E16-D02's), one job grammar (E16-D03's), one T2 grammar
+  (E09-D09's). Error prevention: the typed symbol and the reason on purge; the 366-day range
+  reason before a press. Recognition: the PROPOSED carriers are captioned so a reader never takes
+  a gap for a shipped control. Flexibility: none added — no hotkeys in the admin area. Aesthetic
+  and minimalist: the shipped frame is the default; PROPOSED carriers are insets. Error recovery:
+  a skipped file is a row with its reason and the import continues; a failed import says how to
+  resume. Help: the consequence lines on compact, the PROPOSED vacuum (D04-G8) and import. Risks
+  found `(heuristic)`: the two meters could be read as one if their labels were dropped (D04-D1
+  keeps both labels); a dashed PROPOSED outline might be misread (the caption carries the meaning:
+  absent from the contract, never a disabled control; E25-D01 §9.5's rule holds); the attribution
+  line could be read as a bug report (it is: D04-CG3, stated in words).
+@ §17 prose ‖ purge, proposed, number
+  **Owner walkthrough** (posted on #372 at merge, not in `14`): W1 read the healthy page and say
+  which wall is nearer; W2 find the Postgres size and say what it is not counted in; W3 at level
+  1, say what stops first; W4 start a compaction and find its progress and its outcome; W5 purge
+  ETHUSDT and stop at the typed field (it is empty); W6 import January and find the skipped day
+  and its reason; W7 point at every PROPOSED carrier and name the gap it stands for; W8 view as
+  alex and find the one notice; W9 at 200 % find the per-symbol table's rows.
+@ §18 prose ‖ view-as, purge, proposed, number
+  **DoD:** the six checklist items → §16 (the `14` boxes are posted on #372 at merge, not edited
+  here); the three ACs → the AC trace (R-1, R-5, R-9 / R-10); design sign-off → the owner's
+  `approved` (pending); the import flow reviewed by the backend lead against the importer's real
+  capabilities (resumable, rate-limited, recorded data wins on overlap) → under the agent-delivery
+  adaptations the owner's approval stands in for that review, and the importer check itself is
+  handed to E16-T10 (the import's implementation ticket), with §8 citing `22` :14085–14094 for
+  each capability; Sprint 05 → the owner. **Deviations (recorded, not hidden):** (1) branch
+  `design/e16-d04-storage-panel-hifi`, not the ticket's `design/e16-scr142` (C-4.4); (2) the
+  ticket's `apps/web/src/features/<feature>/` paths, `pnpm` commands and closing-keyword body line
+  are the web template on a design ticket — the deliverable is this spec, the tool and one `14`
+  pointer line; the text-first PR carries `Refs #372` and a `Partial:` line, the boards PR carries
+  the issue's closing keyword; (3) `15` is not edited (A-rows only, D04-A1…A3, A7); (4) the
+  ticket's "vacuum", "cancel", "row counts", "slowest queries", "last vacuum / compaction" and
+  "migration version" are drawn as captioned PROPOSED carriers (D04-G8, G10, G3, G5, G6, G7),
+  never as shipped controls (BQ-11 / 13 / 18 RULED); (5) the ticket's audit names are `14`'s and
+  differ from `22`'s (D04-C1); (6) no hand-off file (BQ-3 RULED); (7) Figma → Penpot; the boards
+  are PENDING (text-first). **Hand-offs:** the E16 implementation ticket that consumes SCR-142
+  (E16-S05 / E16-S08 per the ticket; E16-T10 for the import, E16-T07 for `DiskBudget`) — the
+  build, every `storage.*` key, the frames, and the contract-first PRs for D04-G1…G12; E16-D06 —
+  the a11y review of §10 and the hand-off of the set; E16-D07 — design QA of F1–F5; the `14` owner
+  — D04-A4…A6, D04-C1…C3; the E16-D02 owner — D04-A8, D04-C6; the `15` owner — D04-A1…A3, D04-A7,
+  D04-C4; the `22` owner — D04-G1…G12, D04-CG1, D04-CG2; the owner — D04-Q1…Q4. **Summary:** one
+  admin section with eight regions: two labelled meters and the sample stamp, three tier cards
+  with health as text, the per-tier tables and the per-symbol table, the maintenance card with its
+  jobs strip, the import card with per-file reporting; 40 <!-- audit:frames_total=40 --> frames
+  across 9 dark boards and 1 light board (PENDING); the only T2 is the view-as leg; purge is
+  E16-D02's typed dialog, compact and the PROPOSED vacuum (D04-G8) are standard confirms that
+  delete nothing; the degradation order is stated in text on every warning state; every missing
+  field is a captioned PROPOSED carrier beside its shipped fallback; every number is the tool's
+  and every frame gate is mutation-tested (305 <!-- audit:mutations=305 --> mutations, each its
+  mutation's only FAIL with a distinct message); the boards land in the second PR with the page
+  id.
+"""
 
 
 if __name__ == "__main__":
