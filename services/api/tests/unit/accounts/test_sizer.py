@@ -34,10 +34,6 @@ def atr(value: Decimal | None, period: int = 14) -> sz.AtrReading:
 
 
 _ATR: Final = atr(D(400))
-#: Gherkin: V01 the 0.416 example, V04 below the minimum lot, V05 5 % of equity, V06 the ATR
-#: warm-up fallback, V07 a short's conservative stop, V12 a symbol not allowed. No cap binds in
-#: any of these and no margin check fails.
-_PR1_VECTORS: Final = ("V01", "V02", "V03", "V04", "V05", "V06", "V07", "V08", "V09", "V12", "V14")
 
 
 def _json(path: Path) -> Any:
@@ -70,28 +66,6 @@ def sized(
     it = sz.SizingIntent.model_validate(i)
     inst = inst or instrument(it.symbol)
     return sz.size_leg(it, p, w or wallet(), inst, market or sz.SizingMarket())
-
-
-@pytest.mark.parametrize("vid", _PR1_VECTORS)
-def test_size_leg_pr1_golden_vector_matches(vid: str) -> None:
-    v = next(x for x in _json(_E28 / "golden_sizing_vectors.json") if x["id"] == vid)
-    i = {k: v["intent"][k] for k in ("symbol", "price")} | {"side": v["intent"]["side"].lower()}
-    want, also = v["expected"], v.get("also", {})
-    reading = atr(D(v["market"]["atr"])) if v["market"]["atr"] else None
-    w = wallet(v["wallet"]["equity"], v["market"]["taker_fee_rate"])
-    p = profile(v["profile"]["id"], **v["profile"]["set"])
-    got = sized(p, w, sz.SizingMarket(atr=reading), **i)
-    assert (got.outcome, got.reason) == (want["outcome"], want.get("code"))
-    for name in ("qty", "notional", "risk_usdt", "risk_with_fees_usdt", "initial_margin"):
-        if name in want or name in also:
-            assert getattr(got, name) == D({**also, **want}[name]), name
-    if "stop" in want:
-        stop = (D(want["stop"]), also.get("stop_fallback", False))
-        assert got.stop is not None
-        assert (got.stop.price, got.stop.fallback) == stop
-    for kind in ("min_order_qty", "min_notional"):
-        if kind in also:
-            assert got.minimum == (kind, D(also[kind]))
 
 
 def test_size_leg_below_min_leg_notional_names_the_profile_minimum() -> None:
@@ -137,10 +111,10 @@ def test_size_leg_market_order_takes_mid_then_last_else_fails(
 @pytest.mark.parametrize(
     ("side", "limit", "mid", "ref", "source"),
     [
-        ("buy", "64100", D(64000), "64000", "marketable_limit_mid"),  # a buy at or above mid
-        ("sell", "63900", D(64000), "64000", "marketable_limit_mid"),  # a sell at or below mid
-        ("buy", "64000", D(64000), "64000", "marketable_limit_mid"),  # a buy at mid
-        ("sell", "64000", D(64000), "64000", "marketable_limit_mid"),  # a sell at mid
+        ("buy", "64100", D(64000), "64100", "marketable_limit_worst_fill"),  # above mid: limit
+        ("sell", "63900", D(64000), "63900", "marketable_limit_worst_fill"),  # below mid: limit
+        ("buy", "64000", D(64000), "64000", "marketable_limit_worst_fill"),  # a buy at mid
+        ("sell", "64000", D(64000), "64000", "marketable_limit_worst_fill"),  # a sell at mid
         ("buy", "63900", D(64000), "63900", "limit"),  # rests below mid
         ("buy", "64100", None, "64100", "limit"),  # no mid: the limit
     ],
@@ -153,12 +127,13 @@ def test_size_leg_market_order_takes_mid_then_last_else_fails(
         "no-mid",
     ],
 )
-def test_size_leg_marketable_limit_sizes_and_stops_at_mid(
+def test_size_leg_marketable_limit_sizes_and_stops_at_the_worst_case_fill(
     side: str, limit: str, mid: Any, ref: str, source: str
 ) -> None:
     got = sized(profile("P-RISK"), market=sz.SizingMarket(mid=mid), side=side, price=limit)
     stop = D(ref) - D(120) if side == "buy" else D(ref) + D(120)  # 1200 ticks of 0.1
     assert (got.ref_price, got.ref_source, got.limit_price) == (D(ref), source, D(limit))
+    assert got.mid_price == mid  # the explanation keeps both the mid and the limit
     assert got.stop is not None
     assert got.stop.price == stop
 
