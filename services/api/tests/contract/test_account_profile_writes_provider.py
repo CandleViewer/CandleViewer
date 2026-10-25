@@ -893,7 +893,8 @@ def test_a_move_is_200_at_the_next_binding_version_unbound_then_bound(w: Writes)
     """0d-3's move behind the edge: the binding one version on, its weak tag naming the version;
     `profile.unbound` for the demoted default, then `profile.bound`, written ahead in that order
     and naming the request (D2-2 R1C-02); both rows one version on; the account's effective
-    profiles invalidated (SR-E28-15); the served `GET` reads the new default."""
+    profiles invalidated (SR-E28-15); the served `GET` reads the new default. A second move, at
+    the `GET`'s tag, records the binding from version 2 to 3 (D2-6 R1C-04)."""
     resp, tag = send(w, MOVE), f'W/"{GRANTED}:default:2"'
     answer = (resp.status_code, answered(resp, MOVE), resp.headers["etag"])
     assert answer == (200, _bound(ALT, 2), tag)
@@ -909,6 +910,12 @@ def test_a_move_is_200_at_the_next_binding_version_unbound_then_bound(w: Writes)
     assert (flags, w.invalidated) == ([(DEFAULT, 4, False), (ALT, 3, True)], [GRANTED])
     read = _binding_read(w)
     assert (read.status_code, read.json(), read.headers["etag"]) == (200, _bound(ALT, 2), tag)
+    back = send(w, MOVE, body={"profile_id": str(DEFAULT)}, tags=[read.headers["etag"]])
+    moved = [
+        (r["action"], r["before_state"]["binding_version"], r["after_state"]["binding_version"])
+        for r in w.world.audit.records[2:]
+    ]
+    assert (back.status_code, moved) == (200, [("profile.unbound", 2, 3), ("profile.bound", 2, 3)])
 
 
 @pytest.mark.parametrize(
@@ -955,19 +962,22 @@ def test_a_move_needs_the_bindings_current_tag(w: Writes) -> None:
     binding tag, version 0, past 19 digits), refused before the store is asked, and for a stale
     version, which the store finds under the account's lock before it reads the profile (0d-3):
     a stale tag naming a missing profile is 412, and after A to B to A the first tag is still
-    stale. A refusal changes nothing and records nothing."""
+    stale. B1 comes before B2: a refused body is 428 with no tag and 412 with `*` (D2-6 R1C-03).
+    A refusal changes nothing and records nothing."""
     g = f"{GRANTED}:default"
     forms = [
         "*", f'W/"{g}:1", W/"{g}:2"', f'"{g}:1"', f'w/"{g}:1"', f'W/"{ALT}:1"',
         f'W/"{FOREIGN}:default:1"', f'W/"{g}:0"', f'W/"{g}:{"9" * 20}"',
     ]  # fmt: skip
     sent = [send(w, MOVE, tags=tags) for tags in [[], *([form] for form in forms), [_BOUND_1] * 2]]
+    unread = [send(w, MOVE, raw=b"[]", tags=tags) for tags in ([], ["*"])]  # never the body's 422
     stale = [send(w, MOVE, tags=[f'W/"{g}:{n}"']) for n in (2, 2**31)]
     stale.append(send(w, MOVE, body={"profile_id": str(uuid.uuid4())}, tags=[f'W/"{g}:2"']))
     (status, problem), *refused = [(r.status_code, answered(r, MOVE)) for r in sent + stale]
     assert (status, problem["code"]) == (428, "precondition_required")
     said = {(status, problem["code"], problem["detail"]) for status, problem in refused}
     assert said == {(412, "version_conflict", _STALE_BINDING)}
+    assert [r.status_code for r in unread] == [428, 412]
     assert (len(w.rows.hooks), w.world.audit.records, _new(w)) == (len(stale), [], [])
     there, read = send(w, MOVE), _binding_read(w)
     back = send(w, MOVE, body={"profile_id": str(DEFAULT)}, tags=[read.headers["etag"]])
@@ -1029,7 +1039,8 @@ def test_a_lost_moves_answer_replays_before_if_match(
 ) -> None:
     """The 17:25Z ruling (2): a retry with the key and the body is the stored 200, read before
     `If-Match`, stale since the move or missing; one move, two records. The key with another
-    body, or on another account's path, is 409 `idempotency_key_reuse` (D2-5's R2-02)."""
+    body, or on another account's path, is 409 `idempotency_key_reuse` (D2-5's R2-02). Another
+    Owner's same request is no replay: it runs, and its tag is stale (D2-6 R1C-02)."""
     key = str(uuid.uuid4())
     first = send(w, MOVE, key=key)
     for tags in (None, list[str]()):  # stale now, or none
@@ -1041,6 +1052,11 @@ def test_a_lost_moves_answer_replays_before_if_match(
     reused = [send(w, MOVE, key=key, body={"profile_id": str(DEFAULT)})]
     reused.append(send(w, MOVE, key=key, at=EMPTIED))
     assert {(r.status_code, answered(r, MOVE)["code"]) for r in reused} == {(409, _REUSE)}
+    other = PrincipalSnapshot(uuid.uuid4(), frozenset({"owner"}), frozenset(Permission))
+    with monkeypatch.context() as patched:
+        patched.setattr(w.world.resolver, "snapshot", lambda _actor: other)
+        theirs = send(w, MOVE, key=key)
+    assert (theirs.status_code, "idempotency-replayed" in theirs.headers) == (412, False)
     assert (len(w.world.audit.records), w.rows.bindings[GRANTED]) == (2, 2)
 
 
