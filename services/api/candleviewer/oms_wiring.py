@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import math
 import re
 import threading
@@ -184,6 +185,7 @@ from candleviewer.storage.repositories.recorded_stops_sqlalchemy import (
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
+from candleviewer.storage.repositories.session_lock_sqlalchemy import SqlAlchemySessionLock
 from candleviewer.storage.repositories.statechart_sqlalchemy import SqlAlchemyEventStore
 from candleviewer.storage.repositories.submissions import SubmissionStore
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
@@ -1222,6 +1224,21 @@ class OwnedSink(MachineEventSink, Protocol):
     async def stop(self) -> None: ...
 
 
+class EnvironmentLock(Protocol):
+    """SEC-S3N-01 (#913 L2): the environment's lock, which one OMS process per environment and
+    database holds for its facade's life: `acquire()` answers whether it is now held, never
+    waiting for another holder; `release()` gives it up."""
+
+    async def acquire(self) -> bool: ...
+
+    async def release(self) -> None: ...
+
+
+class EnvironmentLocked(RuntimeError):
+    """SEC-S3N-01: another process holds this environment's lock (a deploy overlapping on another
+    host): this runtime refuses to start, failing closed, and is never ready."""
+
+
 #: The fail-closed alarm the lane's audit writer fires (ruling 4): the cause, its error's class.
 type AuditAlarm = Callable[[str], Awaitable[None]]
 
@@ -1269,6 +1286,7 @@ class OmsStores:
     #: The bytes of frames `CV_MACHINE_EVENT_WAL_PATH` holds that Postgres has not taken, read
     #: under its lock; blocking, so run off the loop (SEC-S3L2-03).
     unclaimed: Callable[[], int]
+    lock: EnvironmentLock
     release: Callable[[], Coroutine[Any, Any, None]]
 
 
@@ -1280,6 +1298,18 @@ LANE_AUDIT_STOP_S: Final = 1.0
 #: The window of the lane writer's alarm page (ruling 4, CR-S3L2-08), in seconds: the first alarm of
 #: each cause in a window pages, so a full WAL pages once a window, never once a refused record.
 LANE_AUDIT_PAGE_S: Final = 5.0
+#: SEC-S3N-01: the namespace of the environment's lock key (`environment_lock_key`), and the
+#: bound on asking for the lock at the start, for the pool's connection and for the statement.
+ENVIRONMENT_LOCK_NAMESPACE: Final = b"cv.oms.environment:"
+ENVIRONMENT_LOCK_TIMEOUT_S: Final = 5.0
+
+
+def environment_lock_key(environment: str) -> int:
+    """SEC-S3N-01: the key of `environment`'s lock, a signed 64-bit `bigint`, the first 8 bytes of
+    BLAKE2b over `ENVIRONMENT_LOCK_NAMESPACE` and the environment, as the reaper's lock derives
+    its own (`storage.retention.locks.advisory_key`)."""
+    digest = hashlib.blake2b(ENVIRONMENT_LOCK_NAMESPACE + environment.encode(), digest_size=8)
+    return int.from_bytes(digest.digest(), "big", signed=True)
 
 
 def lane_audit_wal(settings: Settings) -> str:
@@ -1300,7 +1330,8 @@ def lane_sink_wal(settings: Settings) -> str:
 def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     """The stores over the runtime's own pool (`oms` in `pg_stat_activity`). Lazy: building them
     connects nothing. The lane's audit writer inserts through the audit repository over that pool,
-    into the one `audit_log` chain, which the chain lock serialises (ruling Q12)."""
+    into the one `audit_log` chain, which the chain lock serialises (ruling Q12); the environment's
+    lock is held on a connection of that pool's own (SEC-S3N-01)."""
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms")
     events = EventFramesAdapter(EventsAdapter(SqlAlchemyEventStore(pool)))
     ops = PersistOps(metrics, where="order_lane")  # its pending rows apart from a bundle's
@@ -1320,6 +1351,11 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         ),
         sink=lambda wal: build_machine_event_sink(settings, events, metrics=counts, wal_path=wal),
         unclaimed=lambda: unclaimed_machine_events(settings),
+        lock=SqlAlchemySessionLock(
+            pool.engine,
+            environment_lock_key(settings.environment.value),
+            timeout_s=ENVIRONMENT_LOCK_TIMEOUT_S,
+        ),
         release=pool.dispose,
     )
 
@@ -1842,7 +1878,8 @@ class OmsRuntime:
         close the stop gate (its complete reads and passes cancelled with the startup task, before
         the machines), the facade (it unwires B1's ports), the command port, the lane's own sink
         and audit writer, the trading port and its pool, each on its own loop, isolated, within its
-        share of what is left; then stop the lane and join its thread. All of it ends by
+        share of what is left, and last the environment's lock (SEC-S3N-01); then stop the lane
+        and join its thread. All of it ends by
         `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the OMS
         module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
         self._ready.clear()
@@ -1996,10 +2033,12 @@ class OmsRuntime:
         """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
         (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), the trading port
         and router, then over the pool, made here, the stores, without a bundle the probe of the
-        file its sink would hold (SEC-S3L2-03, else `UnclaimedMachineEvents`), the lane's own audit
-        writer and sink (#913 L2), the command port, the facade, the anchors and the pipeline; what
-        the serving loop holds, through its bridge (`Served*`). A failure once the port exists
-        closes what was built before it goes on, each closer on its own loop."""
+        file its sink would hold (SEC-S3L2-03, else `UnclaimedMachineEvents`), the environment's
+        lock, held before the facade or any machine exists (SEC-S3N-01, else `EnvironmentLocked`),
+        the lane's own audit writer and sink (#913 L2), the command port, the facade, the anchors
+        and the pipeline; what the serving loop holds, through its bridge (`Served*`). A failure
+        once the port exists closes what was built before it goes on, each closer on its own
+        loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -2045,6 +2084,10 @@ class OmsRuntime:
             if bundle is None and (left := await run_in_thread(stores.unclaimed)):
                 _log().critical("oms_machine_event_wal_unclaimed", pending_bytes=left)
                 raise UnclaimedMachineEvents(f"{left} bytes of machine_events no sink holds")
+            self._phase = "environment_lock"  # SEC-S3N-01: before the facade or any machine
+            if not await stores.lock.acquire():
+                raise EnvironmentLocked(f"another process holds the {env} OMS lock")
+            closers.append(("environment_lock", lambda: lane.call(stores.lock.release())))  # last
             self._phase = "audit"
             # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users
             writer = stores.audit(self._audit_alarm)
