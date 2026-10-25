@@ -675,8 +675,9 @@ async def test_a_target_read_that_fails_is_the_stores_unavailability() -> None:
 async def test_a_target_denial_whose_record_cannot_be_written_is_still_forbidden(
     raised: Exception, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """As `enforce`'s: the 403 stands, counted, when its `rbac.denied` cannot be written, and the
-    warning log is the one trace of it (C-12.6: the error's class, no detail)."""
+    """Counted as `enforce` counts, and the 403 stands, as at the key store's owner gate, when its
+    `rbac.denied` cannot be written; the warning log is the one trace of it (C-12.6: the error's
+    class, no detail)."""
     gate = _Gate()
     record = await gate.rig.viewing()
     gate.identity.held = frozenset()
