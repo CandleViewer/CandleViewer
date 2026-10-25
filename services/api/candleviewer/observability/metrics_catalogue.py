@@ -689,6 +689,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E28",
         max_series=2,
     ),
+    # --- Trade-group overrides (#2635, F-01; planned until E28-T05 #909 / E34-S01 #999) ------
+    _s(
+        "cv_override_refused_total",
+        "counter",
+        "refusals",
+        ("cap",),
+        "Trade-group requests refused because a leg would exceed its bound profile's caps or "
+        "risk budget, one per distinct refused field of the override table (ADR-0040).",
+        "dashboard only",
+        _P,
+        "E28",
+        max_series=42,
+    ),
     # --- Wallet snapshot cache (E27-T04, #837 Option B); the sizing decisions it takes -----
     _s(
         "cv_wallet_sizing_old_snapshot_total",

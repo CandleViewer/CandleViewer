@@ -133,6 +133,18 @@ reason. The netting is a money-semantics decision and is on the owner's sign-off
 Equality is admitted. Comparisons are `Decimal`, in the domain's units (fractions, not the REST percent; 24 §9.2
 "REST projection"), on quantized values only: quantity floored to the lot step, the stop rounded away from entry.
 
+**Amendments (2026-10-25, #2635).** Coordinator rulings on the open questions, binding on R as #2635 implements it:
+
+- Rule 3 (OPEN-2): a stop at the liquidation estimate is refused; the distance must be strictly inside it. "Equality
+  is admitted" no longer holds for rule 3, and only for rule 3.
+- Rule 3 (OPEN-3): the estimate keeps a fee buffer, both taker fees on the notional at the stop
+  (`2 * taker_fee_rate * stop` per unit); the maintenance margin rate is the risk-limit tier for the notional after
+  this leg, from the instrument and risk-limit cache; an unknown tier or fee rate fails closed.
+- Rule 2 (OPEN-4): the exit fee is priced at the further of `ref` and the stop (the entry fee at `ref`); the sizer
+  (24 §9.3 step 5, E34) must price it the same way.
+- Rule 7 (OPEN-5): neither the leg's quantity nor a requested quantity may exceed the instrument's `max_order_qty`,
+  whatever a route clamps upstream; `max_mkt_order_qty` needs the order type and is checked by the route (#909).
+
 **Refused, never clamped** (coordinator ruling, 2026-10-25). A request value that breaks R is refused at admission and
 never silently clamped to the limit, as the sizer's margin check fails a leg rather than shrinking it (24 §9.3 step
 8; C-12.5; E28 threat model D6). The refusal is the whole request's, before any leg is sent, whatever `atomicity` says:
@@ -140,7 +152,7 @@ never silently clamped to the limit, as the sizer's margin check fails a leg rat
 entry per offending leg naming the field, the requested value and the limit (yaml:6297-6301); a rule-2 entry also
 carries the net headroom and the committed risk. It is audited before
 the answer, as the refused-widening row the threat model lists beside `tradegroup.row_overridden{field, from, to}`
-(§8; E28-S05 registers its action name), with `cv_override_refused_total{field}`. Only the profile's own sizing, with
+(§8; E28-S05 registers its action name), with `cv_override_refused_total{cap}`. Only the profile's own sizing, with
 no request value, is clamped and explained (`sizing_explanation`, yaml:6308-6309). The "clamp" reading of a widening
 override in E28-S05 (#1144) and E28-X03 (#976) is wrong; the comment drafts correct it. The contract's sentence that
 "quantity, notional, leverage, margin and risk at the stop may not rise" (yaml:6296-6299) reads, under this ruling,
@@ -422,8 +434,8 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
 socket its `profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event)
 to that hand-off; labels `env` only, never an account id. The client's half (the re-fetch and the preview) is the
 existing HTTP latency series of the two routes; the end-to-end 2 s is asserted by E28-S01's (#971) end-to-end test. A
-refused stale submit counts in `cv_override_refused_total{field="profile_version"}` beside the threat model's
-`cv_override_refused_total{field}` (§8 of the model).
+refused stale submit counts in `cv_override_refused_total{cap="profile_version"}` beside the threat model's
+`cv_override_refused_total{cap}` (§8 of the model).
 
 ### Accessibility constraint for the designer (E28-D03, SCR-061)
 

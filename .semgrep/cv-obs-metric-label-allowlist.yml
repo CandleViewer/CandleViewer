@@ -94,6 +94,8 @@ rules:
       #   max_series=10 together.
       # cap (E13-T02, #426, indicator_cap_rejected_total): the refusing cap, {user, symbol,
       #   process} (SR-E13-03) or {window, recompute} (SR-E13-04); max_series=5.
+      # cap, also (#2635, cv_override_refused_total): closed set: the override table's fields
+      #   (OVERRIDE_CLASS, 42); max_series=42; no identifiers.
       # bucket, also (E13-T02, indicator_subscriptions): users by server instances held {1, 2-4,
       #   5-7, 8}; max_series=4. reason, also (indicator_recompute_total): {amended,
       #   param_change, backfill}; max_series=3.

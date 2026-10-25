@@ -181,6 +181,10 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         "sl.modified",
         "tp.modified",
         "trade_group.submit",
+        # #2635 (F-01; ADR-0040 Decision 1, proposed): a trade-group request refused whole because a
+        # leg would exceed its bound profile's caps or risk budget, written ahead of the `403
+        # risk_limit_breached` with every violated field (`accounts.override_comparator`).
+        "trade_group.override_refused",
         "positions.flatten",
         "risk.freeze_manager",
         "risk.unfreeze_manager",
