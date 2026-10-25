@@ -15,8 +15,10 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    of every switch (the label at 13 px and its consequence line at 11 px measured against the
    column or full-width box with the pill-label rule; a label never wraps, a consequence line
    may and the row grows), its height, the 1280x800 canvas it must fit (E15-D02 section 3:
-   1168x672) and the 200 % zoom viewport (640x400 CSS px) where it becomes a modal with one
-   column, a sticky footer and a scrolling body; the in-app text scale at 125 % and 150 %,
+   1168x672) and the 200 % zoom viewport (640x400 CSS px) where it becomes a modal inside the
+   272 px body between the 80 px TopBar and the 48 px StatusBar, capped at it less 16 px a side
+   (E15-D02 D-7 and :632; never over the bars or the banner band), with one column, a sticky
+   footer and a scrolling body; the in-app text scale at 125 % and 150 %,
    measured the same way (the rule is the measurement, not the zoom level).
 3. The measured matrix: every fg / bg pair the spec's section 12 lists x dark / light / high-contrast,
    resolved exactly as ``verify_tokens.py`` layers the themes (``themes.json``), measured with
@@ -50,7 +52,10 @@ formula is re-implemented here. Nine sections, each row labelled with its source
     full conflict sentence and the `warning` glyph on every conflict frame; the one T2's anatomy
     (lock, full label, reason, key, ``aria-disabled``) on its three frames and the T2 form on no
     other row (A1); PROPOSED after every drawn chord that ``keymap.json`` lacks; the disarm on
-    every symbol-switch frame, with no armed state surviving (BQ-16); each frame's exits in the
+    every symbol-switch frame, with no armed state surviving (BQ-16) -- neither a "stays armed"
+    phrase nor the `ARMED` arm-state tag, bare or backticked, the hold inset's "held: armed" the
+    one form allowed; a needle counts only un-negated ("no lock glyph" is not the lock glyph), and
+    PROPOSED qualifies a chord only with no other control or "or" between; each frame's exits in the
     inventory's Exits column, all T1 and never paired with a gate (A3).
 11. Numbers (8c): the ``audit:`` block at the end of the spec equals ``--json``'s markers; the
     registered prose contexts, the section 4.1 and section 12 tables and the CVD paragraph are
@@ -60,7 +65,8 @@ formula is re-implemented here. Nine sections, each row labelled with its source
 Usage: python3 -I docs/design/_tools/e15_d06_sync_audit.py [--json] [--check] [--table] [--self-test]
 A plain run prints every section and exits 0; ``--check`` exits 1 on any gated FAIL; ``--self-test``
 mutates the spec in memory and proves that every gate fails on its mutation, and runs the frame-level
-``MUTATIONS`` table: each mutation trips its own FAIL message exactly once, the files untouched;
+``MUTATIONS`` table: each mutation trips its own FAIL message exactly once and no other FAIL (every
+inline mutation too: its gate's FAIL is the only one), the files untouched;
 ``--table`` prints section 3 as a Markdown table. UTF-8 stdout. No network; no URL literal
 anywhere in this file.
 """
@@ -209,7 +215,12 @@ SWITCHES: tuple[tuple[str, str, str], ...] = (
 CANVAS_1280 = (1168, 672)  # E15-D02 section 3: the canvas at 1280x800
 CANVAS_1920 = (1808, 952)
 ZOOM200 = (640, 400)  # 1280x800 at 200 %: the CSS viewport
-MODAL_MARGIN = 16  # px kept around a popover before it becomes a modal
+# E15-D02 section 3 (:85, :171): the 80 px TopBar (ENV badge, Safety cluster) and the 48 px
+# StatusBar (ENV repeat). CSS px do not scale with zoom, so at 200 % they keep 80 + 48 of the
+# 400 px viewport; E15-D02 D-7 (:125) keeps both, and the banner band, out of any scrim or modal.
+TOPBAR_H = 80
+STATUSBAR_H = 48
+MODAL_MARGIN = 16  # kept around a popover before it becomes a modal (E15-D02 :632, a side)
 MODAL_HEADER = 32
 MODAL_FOOTER = 40
 TEXT_SCALES = (125, 150)  # the in-app text scale steps the spec measures
@@ -743,14 +754,23 @@ def popover_report(switches: Switches = SWITCHES) -> dict[str, Any]:
         "compact": hc + 2 * MODAL_MARGIN <= CANVAS_1920[1],
         "comfortable": hf + 2 * MODAL_MARGIN <= CANVAS_1920[1],
     }
-    # 200 %: the CSS viewport is 640x400; the popover (440 + 2 x 16 margin) fits the width but not
-    # the height -> a modal filling the viewport; one column (every switch full width, every line
+    # 200 %: the CSS viewport is 640x400 and the TopBar (80) and the StatusBar (48) stay, so the
+    # body between them is 272 px (E15-D02 D-7: no scrim or modal covers the bars or the banner
+    # band); the popover (437 + 2 x 16 margin) cannot fit it -> a modal inside that body, capped
+    # at it less 16 px a side (E15-D02 :632); one column (every switch full width, every line
     # single), a sticky footer, the body scrolls.
-    modal = {d: popover_layout(d, 100, ZOOM200[0], 1, switches=switches) for d in lay}
-    visible = ZOOM200[1] - MODAL_HEADER - MODAL_FOOTER
+    between = ZOOM200[1] - TOPBAR_H - STATUSBAR_H
+    modal_w, modal_h = ZOOM200[0] - 2 * MODAL_MARGIN, between - 2 * MODAL_MARGIN
+    modal = {d: popover_layout(d, 100, modal_w, 1, switches=switches) for d in lay}
+    visible = modal_h - MODAL_HEADER - MODAL_FOOTER
     out["zoom200"] = {
         "viewport": list(ZOOM200),
-        "modal": hc + 2 * MODAL_MARGIN > ZOOM200[1] or POPOVER_W + 2 * MODAL_MARGIN > ZOOM200[0],
+        "topbar": TOPBAR_H,
+        "statusbar": STATUSBAR_H,
+        "between_bars": between,
+        "modal_w": modal_w,
+        "modal_h": modal_h,
+        "modal": hc + 2 * MODAL_MARGIN > between or POPOVER_W + 2 * MODAL_MARGIN > ZOOM200[0],
         "body_h": {d: modal[d]["body"] for d in modal},
         "visible_body": visible,
         "scrolls": {d: modal[d]["body"] > visible for d in modal},
@@ -767,6 +787,8 @@ def popover_report(switches: Switches = SWITCHES) -> dict[str, Any]:
             "compact_h": h,
             "fits_1280": h + 2 * MODAL_MARGIN <= CANVAS_1280[1],
             "popover": h + 2 * MODAL_MARGIN <= CANVAS_1280[1],
+            # when it cannot, the modal takes the canvas between the bars less 16 px a side
+            "modal_h": CANVAS_1280[1] - 2 * MODAL_MARGIN,
             "max_cons_lines": max(int(f["cons_lines"]) for f in at["fits"]),
             "label_overflows": [f["label"] for f in at["label_overflows"]],
         }
@@ -1073,9 +1095,35 @@ DISARM: dict[str, tuple[tuple[str, str], ...]] = {
     ),
 }
 ARMED_SURVIVES = re.compile(
-    r"\b(?:still|stays|remains?|kept|left|keeps(?: it)?) armed\b|\barmed and follow|\bre-arm",
+    r"\b(?:still|stays|remains?|kept|left|keeps(?: it)?) `?armed\b|\barmed`? and follow|\bre-arm",
     re.IGNORECASE,
 )
+# M-1 (text round 1, BQ-16): the spec family's arm-state tag (`ARMED` / `LOCKED`, E15-D02 :186;
+# the board script's arm: "ARMED") on a symbol-switch frame is an armed state surviving the sync
+# change, bare or backticked; the hold inset's "held: armed" is the one form allowed.
+ARMED_TAG = re.compile(r"`(?:ARMED|armed)`|\bARMED\b")
+HELD_OK = re.compile(r"held: `?armed`?", re.IGNORECASE)
+# m-2: a gate needle counts only where it is not negated ("no lock glyph" is not the lock glyph)
+NEGATED = re.compile(r"(?:\bno|\bnot|\bwithout|\bnever)\W+(?:\w+\W+)?$", re.IGNORECASE)
+
+
+def present(text: str, needle: str) -> str:
+    """'yes' if the needle occurs un-negated, 'negated' if only negated, 'no' if absent."""
+    hits = [m.start() for m in re.finditer(re.escape(needle), text)]
+    if not hits:
+        return "no"
+    if any(not NEGATED.search(text[max(0, i - 16) : i]) for i in hits):
+        return "yes"
+    return "negated"
+
+
+def clause_at(text: str, i: int) -> str:
+    """The clause around offset i (between ';', '|' or '—'), for a FAIL message."""
+    a = max(text.rfind(c, 0, i) for c in ";|\u2014") + 1
+    ends = [j for j in (text.find(c, i) for c in ";|\u2014") if j >= 0]
+    return text[a : min(ends) if ends else len(text)].strip()
+
+
 DIALOG_CARRIERS: dict[str, tuple[tuple[str, str], ...]] = {
     "SCR-043/link-refused": (
         ("the focused primary", "`[[ Use percentage scale ]]` focused"),
@@ -1167,7 +1215,9 @@ EXIT_NEAR_GATE = re.compile(
     r"\b(?:locked|lock glyph|aria-disabled|disabled|blocked|(?<!never )gated)\b"
 )
 # A1: the T2 form only on the three T2 frames (and the account absence's aria-disabled)
-T2_FORM = re.compile(r"lock glyph|`lock`|CMP-079|disabledReason|rbac\.[a-z_]+|\bT2\b|aria-disabled")
+T2_FORM = re.compile(
+    r"lock glyph|`lock`|\bpadlock\b|CMP-079|disabledReason|rbac\.[a-z_]+|\bT2\b|aria-disabled"
+)
 T2_FORM_ALLOWED = ("not a T2", "no lock", "no CMP-079")
 CHORD = re.compile(
     r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓]+(?:\+[A-Za-z0-9←→↑↓]+)*(?:\.\.\d)?"
@@ -1208,7 +1258,11 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
         if need and "`link`" not in text:
             fails.append(f"badge: frame {name} draws a group colour without the `link` glyph")
         # A2-2: the conflict grammar, the glyph and the frame's own carrier, per conflict frame
-        if name in CONFLICT_FRAMES or re.search(r"different interval|aligns by timestamp", text):
+        if (
+            name in CONFLICT_FRAMES
+            or "conflict" in name
+            or re.search(r"different interval|aligns by timestamp", text)
+        ):
             if SENTENCE not in text:
                 fails.append(f"conflict: frame {name} lacks the full notice sentence")
             if "`warning` glyph" not in text:
@@ -1218,23 +1272,42 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
                     fails.append(f"conflict: frame {name} lacks {label}")
         # A2-3: the one T2's anatomy on each T2 frame; A1: the T2 form nowhere else
         for label, needle in T2_ANATOMY.get(name, ()):
-            if needle not in text:
+            seen_ = present(text, needle)
+            if seen_ == "no":
                 fails.append(f"t2-anatomy: frame {name} lacks {label}")
+            elif seen_ == "negated":
+                fails.append(f"t2-anatomy: frame {name} negates {label} ('{needle}')")
         if name not in T2_ANATOMY:
-            body = text
+            # the Gate-class cell is gated exactly by the t2-frames check, and a lock glyph or
+            # CMP-079 by the over-conversion check: neither is reported twice here
+            body = " | ".join(c for i, c in enumerate(r) if i != 3)
             for ok in T2_FORM_ALLOWED:
                 body = body.replace(ok, "")
             for m in T2_FORM.finditer(body):
                 tok_ = m.group(0)
                 if tok_ == "aria-disabled" and "account row" in body:
                     continue  # the account axis: an absence, aria-disabled without a lock (D-9)
+                if tok_ in ("lock glyph", "CMP-079"):
+                    continue  # the over-conversion check's (one FAIL per element)
                 fails.append(f"t2-form: frame {name} draws '{tok_}' outside the three T2 frames")
         # A2-5 (BQ-16): the disarm on every symbol-switch frame; no armed state survives
         for label, needle in DISARM.get(name, ()):
             if needle not in text:
                 fails.append(f"disarm: frame {name} lacks {label}")
-        surviving = name in DISARM or "ETHUSDT · symbol set by sync group" in text
-        if surviving and ARMED_SURVIVES.search(text):
+        surviving = (
+            name in DISARM
+            or "symbol-switch" in name
+            or "ETHUSDT · symbol set by sync group" in text
+        )
+        if "symbol-switch" in name and name not in DISARM:
+            fails.append(f"disarm: frame {name} is a symbol-switch frame the tool does not key")
+        tag = ARMED_TAG.search(HELD_OK.sub("", text)) if surviving else None
+        if tag:
+            snip = clause_at(HELD_OK.sub("", text), tag.start())
+            fails.append(
+                f"armed-tag: frame {name} draws an armed tag after the sync change ('{snip}')"
+            )
+        elif surviving and ARMED_SURVIVES.search(text):
             fails.append(f"armed: frame {name} draws an armed state surviving the sync change")
         for label, needle in DIALOG_CARRIERS.get(name, ()):
             if needle not in text:
@@ -1259,12 +1332,12 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
         fails.append(f"exits: the tool names frame {name}, the inventory does not")
     # A1: the switch table — only the account row is aria-disabled, and never with a lock
     for r in rows_of(section(spec, "### 5.2 ", "### 5.3 ")):
+        if r[0] == "Account":
+            continue  # the storage check gates the Account row (aria-disabled, no T2 form)
         body = " | ".join(r)
         for ok in T2_FORM_ALLOWED:
             body = body.replace(ok, "")
         for m in T2_FORM.finditer(body):
-            if m.group(0) == "aria-disabled" and r[0] == "Account":
-                continue
             fails.append(f"t2-form: the {r[0]} switch row draws '{m.group(0)}'")
     # A2-4: every drawn chord is in keymap.json, a component key, or marked PROPOSED after it
     component = {
@@ -1293,7 +1366,11 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
                 for c, end, exp in chords_in(clause):
                     if all(e in bindings or e in component for e in exp):
                         continue
-                    if not re.search(r"proposed", clause[end:], re.IGNORECASE):
+                    # PROPOSED qualifies the chord: after it, with no other control or screen
+                    # named (and no "or") between them
+                    pm = re.search(r"proposed", clause[end:], re.IGNORECASE)
+                    gap = clause[end : end + pm.start()] if pm else ""
+                    if not pm or re.search(r"\b(?:SCR|CMP)-\d|\bor\b", gap):
                         fails.append(f"keys: {where} draws {c} without PROPOSED after it")
     return fails
 
@@ -1304,20 +1381,21 @@ def gates(
     """Each returned string is a failed gate. The order and wording are stable (the self-test keys on them)."""
     fails: list[str] = []
     # the popover's label fit (F-3): no switch label needs a second line in its box at either
-    # density, at the in-app text scales or in the 200 % modal; section 5.1 and the popover-1920 row
-    # quote the computed heights
+    # density, at the in-app text scales or in the 200 % modal (one FAIL per label); section 5.1
+    # quotes the computed heights (the popover-1920 row's height is the number context's)
     pop = popover_report(switches)
+    over: dict[str, list[str]] = {}
     for where, labels in pop["label_overflows"].items():
         for label in labels:
-            fails.append(
-                f"fit: the switch label '{label}' needs a second line in its box ({where})"
-            )
+            over.setdefault(label, []).append(where)
+    for label, wheres in over.items():
+        fails.append(
+            f"fit: the switch label '{label}' needs a second line in its box ({', '.join(wheres)})"
+        )
     hc, hf = pop["height"]["compact"], pop["height"]["comfortable"]
     anatomy = section(spec, "### 5.1 ", "### 5.2 ")
     if not re.search(rf"\b{hc} px compact / {hf} comfortable\b", anatomy):
         fails.append(f"popover: section 5.1 does not quote the computed heights {hc} / {hf}")
-    if not re.search(rf"^\| `SCR-023/popover-1920` .*\b{hc} px", spec, MULTI):
-        fails.append("popover: the popover-1920 row does not quote the computed compact height")
     for name, text in (("spec", spec), ("handoff", handoff), ("tool", tool)):
         if any(p.search(text) for p in FORBIDDEN):
             fails.append(f"hygiene: {name} matches a forbidden pattern")
@@ -1388,7 +1466,6 @@ def gates(
             fails.append(
                 f"over-conversion: frame {name} draws a lock glyph or CMP-079 outside the T2 frames"
             )
-            break
     for r in inv:
         name = r[0].strip("`")
         if "account" in name and (
@@ -1397,16 +1474,10 @@ def gates(
             fails.append(
                 "over-conversion: the account-axis frame is not a plain unavailable row with aria-disabled"
             )
-        if "refus" in name and "account" not in name and "outcome" not in r[3]:
+        if "refus" in name and "outcome" not in r[3]:
             fails.append("over-conversion: a refusal frame is not classed as an outcome")
         if "conflict" in name and "status" not in r[3] and "T2" not in r[3]:
             fails.append("over-conversion: a conflict frame is not classed as a status")
-        if "conflict" in name and "aligns by timestamp" not in " ".join(r):
-            fails.append(
-                "conflict: a conflict frame row lacks the notice grammar (aligns by timestamp)"
-            )
-        if "symbol-switch" in name and "disarm" not in " ".join(r).lower():
-            fails.append("disarm: a symbol-switch frame row does not draw the disarm")
         text = " ".join(r)
         # F-2: a DOM or ticket in a symbol-sharing group shows where its symbol came from
         # (E15-D02 D-26)
@@ -1428,11 +1499,14 @@ def gates(
         ):
             fails.append(f"armed: frame {name} names an armed state without the disarm or the hold")
     # the badge density pair (section 4)
-    badge = section(spec, "## 4. ", "## 5. ")
-    if not (
-        re.search(r"^\| compact ", badge, MULTI) and re.search(r"^\| comfortable ", badge, MULTI)
-    ):
-        fails.append("badge: section 4 lacks the compact / comfortable row pair")
+    # (the section 4.1 compact / comfortable pair is number_gates' row-by-row check)
+    # m-2: the hand-off's Density table carries the same CMP-082 pair
+    dens = {
+        r[1] for r in rows_of(section(handoff, "### Density", "### Essential")) if r[0] == "CMP-082"
+    }
+    for mode in ("compact", "comfortable"):
+        if mode not in dens:
+            fails.append(f"badge: the hand-off's Density table lacks the CMP-082 {mode} row")
     if "no validity-disabled control" not in spec:
         fails.append("validity: the spec does not state that no validity-disabled control exists")
     if "unsync is not a reset" not in spec:
@@ -1447,7 +1521,7 @@ def gates(
     if (
         not acct
         or "aria-disabled" not in acct.group(0)
-        or re.search(r"lock|CMP-079|T2", acct.group(0))
+        or re.search(r"lock|CMP-079|\bT2\b|disabledReason|rbac\.", acct.group(0))
     ):
         fails.append(
             "storage: the Account row is not a plain unavailable row (aria-disabled, no lock, no key)"
@@ -1507,9 +1581,13 @@ def gates(
         if f"`{e}" not in ev:
             fails.append(f"events: {e} missing from the observability table")
     # tokens: PROPOSED ones carry the marker on their rows; T2 rows never carry the forbidden tokens
-    for t in PROPOSED_TOKENS:
-        if not re.search(re.escape(t) + r"[^\n]*PROPOSED|PROPOSED[^\n]*" + re.escape(t), spec):
-            fails.append(f"tokens: {t} is not marked PROPOSED on its row")
+    unmarked = [
+        t
+        for t in PROPOSED_TOKENS
+        if not re.search(re.escape(t) + r"[^\n]*PROPOSED|PROPOSED[^\n]*" + re.escape(t), spec)
+    ]
+    if unmarked:
+        fails.append(f"tokens: {', '.join(unmarked)} not marked PROPOSED on their rows")
     fails.extend(frame_gates(spec, bindings))
     fails.extend(number_gates(spec, handoff))
     return fails
@@ -1526,7 +1604,11 @@ def counts(spec: str, handoff: str) -> dict[str, int]:
         ),
         "decisions": count(r"^\| D-\d+ ", section(spec, "### 3.1 ", "### 3.2 ")),
         "frames_named": len(inv),
-        "t2_frames": sum(1 for r in inv if len(r) > 3 and re.search(r"\bT2\b", r[3])),
+        "t2_frames": sum(
+            1
+            for r in inv
+            if len(r) > 3 and re.search(r"\bT2\b", r[3]) and r[0].strip("`") in T2_FRAMES
+        ),
         "switches": count(
             r"^\| (?:Symbol|Crosshair|Interval|Time range|Drawings|Account) ",
             section(spec, "### 5.2 ", "### 5.3 "),
@@ -1584,6 +1666,11 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "zoom200_h": ZOOM200[1],
         "zoom200_body_h_compact": pop["zoom200"]["body_h"]["compact"],
         "zoom200_visible_body": pop["zoom200"]["visible_body"],
+        "zoom200_topbar": pop["zoom200"]["topbar"],
+        "zoom200_statusbar": pop["zoom200"]["statusbar"],
+        "zoom200_between_bars": pop["zoom200"]["between_bars"],
+        "zoom200_modal_w": pop["zoom200"]["modal_w"],
+        "zoom200_modal_h": pop["zoom200"]["modal_h"],
         "zoom200_switch_row": pop["zoom200"]["switch_row"],
         "switch_row_column_compact": pop["switch_rows"]["compact"]["column"],
         "switch_row_full_compact": pop["switch_rows"]["compact"]["full"],
@@ -1604,6 +1691,7 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "modal_footer": MODAL_FOOTER,
         "text_scale_125_h": pop["text_scale_125"]["compact_h"],
         "text_scale_150_h": pop["text_scale_150"]["compact_h"],
+        "text_scale_150_modal_h": pop["text_scale_150"]["modal_h"],
         "canvas_1280_w": CANVAS_1280[0],
         "canvas_1280_h": CANVAS_1280[1],
         "canvas_1920_w": CANVAS_1920[0],
@@ -1650,6 +1738,8 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "btc_sol_decades": refusal["btc_sol"]["decades"],
         "btc_eth_ratio": refusal["btc_eth"]["ratio"],
         "btc_eth_decades": refusal["btc_eth"]["decades"],
+        "btc_decade": math.floor(math.log10(PRICES["BTCUSDT"])),
+        "sol_decade": math.floor(math.log10(PRICES["SOLUSDT"])),
         "eth_sol_ratio": refusal["eth_sol"]["ratio"],
         "eth_sol_decades": refusal["eth_sol"]["decades"],
         "threshold_decades": THRESHOLD_DECADES,
@@ -1797,13 +1887,18 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "the modal frame",
         (
-            r"(\d+)\u00d7(\d+) CSS px: a CMP-043 modal filling the viewport, header (\d+), "
+            r"(\d+)\u00d7(\d+) CSS px: the TopBar \((\d+)\) with its ENV badge and Safety "
+            r"cluster and the StatusBar \((\d+)\) drawn, never scrimmed; the scrim covers the "
+            r"(\d+) px body between them and the CMP-043 modal takes it less (\d+) px a side "
+            r"\((\d+) \u00d7 (\d+)\), header (\d+), "
             r"sticky footer (\d+), one column of six single-line switch rows \((\d+) px each\), "
             r"the body \((\d+) px\) "
             r"scrolling inside (\d+) px"
         ),
         (
-            "zoom200_w", "zoom200_h", "modal_header", "modal_footer", "zoom200_switch_row",
+            "zoom200_w", "zoom200_h", "zoom200_topbar", "zoom200_statusbar",
+            "zoom200_between_bars", "modal_margin", "zoom200_modal_w", "zoom200_modal_h",
+            "modal_header", "modal_footer", "zoom200_switch_row",
             "zoom200_body_h_compact", "zoom200_visible_body",
         ),
     ),
@@ -1909,7 +2004,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             r"(\d+) / (\d+); .*?DOM\" (\d+) / (\d+); the conflict "
             r"notice (\d+) / (\d+) when present; .*?\(not a group setting\)\" (\d+) / (\d+) "
             r"and .*? per "
-            r"member, (\d+) / (\d+) each"
+            r"chart member \(the two charts; the DOM has no price scale\), (\d+) / (\d+) each"
         ),
         (
             "row_title_compact", "row_title_comfortable", "row_shares_compact",
@@ -1933,16 +2028,42 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "the 200 % modal (5.3)",
         (
-            r"the CSS viewport is (\d+)\u00d7(\d+): the popover \((\d+) px \+ (\d+) margin\) "
-            r"cannot fit, .*?header (\d+) px \(title and \u00d7\), .*?the modal's (\d+) px box, "
+            r"the CSS viewport is (\d+)\u00d7(\d+), .*?the TopBar keeps (\d+) px and the "
+            r"StatusBar (\d+) .*?the body between them is (\d+) px\. "
+            r"The popover \((\d+) px \+ (\d+) margin\) "
+            r"cannot fit it, .*?less (\d+) px a side .*?: (\d+) \u00d7 (\d+) px — "
+            r"header (\d+) px \(title and \u00d7\), .*?the modal's (\d+) px box, "
             r"(\d+) px each\), .*?a body of "
             r"(\d+) px that scrolls inside (\d+) px, and a sticky (\d+) px footer"
         ),
         (
-            "zoom200_w", "zoom200_h", "popover_h_compact", "modal_margin_x2", "modal_header",
+            "zoom200_w", "zoom200_h", "zoom200_topbar", "zoom200_statusbar",
+            "zoom200_between_bars", "popover_h_compact", "modal_margin_x2", "modal_margin",
+            "zoom200_modal_w", "zoom200_modal_h", "modal_header",
             "modal_box", "zoom200_switch_row", "zoom200_body_h_compact", "zoom200_visible_body",
             "modal_footer",
         ),
+    ),
+    (
+        "D-3's 200 % modal",
+        (
+            r"inside the body between the TopBar and the StatusBar \((\d+) px at 200 %\), "
+            r"capped at it less (\d+) px a side \((\d+) \u00d7 (\d+);"
+        ),
+        ("zoom200_between_bars", "modal_margin", "zoom200_modal_w", "zoom200_modal_h"),
+    ),
+    (
+        "the 150 % modal (5.3)",
+        (
+            r"opens as the modal, again between the bars: at most (\d+) px tall "
+            r"\(the (\d+) px canvas less (\d+) px a side\)"
+        ),
+        ("text_scale_150_modal_h", "canvas_1280_h", "modal_margin"),
+    ),
+    (
+        "the refusal payload (14)",
+        r"the integer part of log10 of each mid price: (\d+) and (\d+) for the fixture's",
+        ("btc_decade", "sol_decade"),
     ),
     (
         "the 125 % stack (5.3)",
@@ -2118,11 +2239,14 @@ HANDOFF_CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "hand-off: the modal",
         (
-            r"header (\d+), footer (\d+), single-line rows (\d+), body (\d+) scrolling in (\d+); "
+            r"between the TopBar and the StatusBar \((\d+)\), (\d+) \u00d7 (\d+), "
+            r"header (\d+), footer (\d+), single-line rows (\d+), body (\d+) scrolling in (\d+)"
+            r"[^;]*; "
             r"the text "
             r"scale 125 % (\d+) \(popover\), 150 % (\d+) \(modal\)"
         ),
         (
+            "zoom200_between_bars", "zoom200_modal_w", "zoom200_modal_h",
             "modal_header", "modal_footer", "zoom200_switch_row", "zoom200_body_h_compact",
             "zoom200_visible_body", "text_scale_125_h", "text_scale_150_h",
         ),
@@ -2210,7 +2334,9 @@ def number_values(spec: str, handoff: str) -> dict[str, Any]:
     )
     v["modal_margin"], v["modal_margin_x2"] = MODAL_MARGIN, 2 * MODAL_MARGIN
     v["switch_track_w"], v["inner_w"] = SWITCH_TRACK_W, POPOVER_W - 2 * POPOVER_PAD
-    v["modal_box"] = popover_layout("compact", 100, ZOOM200[0], 1)["boxes"]["full"]
+    v["modal_box"] = popover_layout("compact", 100, ZOOM200[0] - 2 * MODAL_MARGIN, 1)["boxes"][
+        "full"
+    ]
     v["label_line_125"] = SWITCH_TEXT["label"] * TEXT_SCALES[0] / 100
     v["switch_h_compact"], v["switch_h_comfortable"] = SWITCH_H["compact"], SWITCH_H["comfortable"]
     fixed = {
@@ -2305,6 +2431,9 @@ def number_gates(spec: str, handoff: str) -> list[str]:
         if seen.get(name, 0) != 1:
             fails.append(f"marker: audit:{name} appears {seen.get(name, 0)} times (once expected)")
     prose = "\n".join(ln for ln in spec.split("\n") if not ln.startswith("<!--"))
+    # spans a registered context or the section 12 table already gates: the derived-ratio scan
+    # below skips them, so one wrong number is one FAIL (the self-test's exactly-one rule, m-1)
+    covered: dict[str, list[tuple[int, int]]] = {"spec": [], "hand-off": []}
     for where, text, ctx in (("spec", prose, CONTEXTS), ("hand-off", handoff, HANDOFF_CONTEXTS)):
         for label, pattern, names in ctx:
             hits = list(re.finditer(pattern, text))
@@ -2313,8 +2442,19 @@ def number_gates(spec: str, handoff: str) -> list[str]:
             for hit in hits:
                 for i, name in enumerate(names, start=1):
                     got = hit.group(i)
-                    if got is not None and not same_number(got, v[name]):
+                    if got is None:
+                        continue
+                    covered[where].append(hit.span(i))
+                    if not same_number(got, v[name]):
                         fails.append(f"number: {label}: the {where} says {got}, the tool {v[name]}")
+    i12 = prose.find("## 12. ")
+    j12 = prose.find("**CVD and greyscale", i12)
+    for m12 in re.finditer(r"^\|.*$", prose[i12:j12], MULTI):
+        covered["spec"].append((i12 + m12.start(), i12 + m12.end()))
+
+    def free(where: str, a: int, b: int) -> bool:
+        return not any(x <= a and b <= y for x, y in covered[where])
+
     # the section 4.1 density pair, cell by cell
     cols = ("row", "badge_h", "tile", "glyph", "gap", "pad_x", "text")
     wcols = ("full", "one", "count", "none", "letter_glyph")
@@ -2353,12 +2493,12 @@ def number_gates(spec: str, handoff: str) -> list[str]:
     singles, triples = allowed_ratios()
     for where, text in (("spec", prose), ("hand-off", handoff)):
         for hit in re.finditer(r"(?<![\d.\-])(\d+\.\d\d)(?![\d.])", text):
-            if hit.group(1) not in singles:
+            if hit.group(1) not in singles and free(where, *hit.span(1)):
                 fails.append(
                     f"number: the {where}'s ratio {hit.group(1)} is not one the tool derives"
                 )
         for hit in re.finditer(rf"(?<![\d.]){_T}(?![\d.])", text):
-            if hit.groups() not in triples:
+            if hit.groups() not in triples and any(free(where, *hit.span(k)) for k in (1, 2, 3)):
                 fails.append(
                     f"number: the {where}'s triple {' / '.join(hit.groups())} is not the tool's"
                 )
@@ -2406,13 +2546,15 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M05", "frame CMP-082/badge-narrow-steps draws group A's colour without its letter",
      (("frame:CMP-082/badge-narrow-steps",
        "(44 px: tile A, letter A, `link`)",
-       "(44 px: the hue edge only)"),)),
+       "(44 px: the hue edge and `link`)"),)),
     ("M06", "frame SCR-023/light-badges draws group A's colour without its letter",
      (("frame:SCR-023/light-badges",
        "(letters A / B / C, each with `link`)",
-       "(three coloured edges)"),)),
+       "(letters B / C and a cyan edge, each with `link`)"),)),
     ("M07", "frame CMP-082/chart-toolbar-badge draws group A's colour without its letter",
-     (("frame:CMP-082/chart-toolbar-badge", "(tile A, letter A, `link`)", "(a cyan chip)"),)),
+     (("frame:CMP-082/chart-toolbar-badge",
+       "(tile A, letter A, `link`)",
+       "(a cyan chip, `link`)"),)),
     ("M08", "conflict: frame SCR-023/conflict-interval lacks the full notice sentence",
      (("frame:SCR-023/conflict-interval",
        "Chart 15m has a different interval: crosshair",
@@ -2427,10 +2569,10 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
        "a toast only"),)),
     ("M11", "conflict: frame SCR-023/light-conflict lacks the `warning` glyph",
      (("frame:SCR-023/light-conflict", "in light, `warning` glyph:", "in light:"),)),
-    ("M12", "conflict: a conflict frame row lacks the notice grammar",
-     (("frame:SCR-023/conflict-interval",
-       '"Chart 15m has a different interval: crosshair sync aligns by timestamp."',
-       "the notice"),)),
+    ("M12", "conflict: frame CMP-082/conflict-header lacks the full notice sentence",
+     (("frame:CMP-082/conflict-header",
+       '"Chart 15m has a different interval: crosshair sync aligns by timestamp." in',
+       '"Chart 15m differs." in'),)),
     ("M13", "t2-anatomy: frame SCR-043/link-no-group lacks the lock glyph",
      (("frame:SCR-043/link-no-group", "lock glyph leading in", "leading in"),
       ("frame:SCR-043/link-no-group", "; lock glyph;", ";"))),
@@ -2452,7 +2594,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M20", "t2-form: frame SCR-023/leave-after draws 'aria-disabled'",
      (("frame:SCR-023/leave-after",
        "nothing re-fetched",
-       "nothing re-fetched; No sync `aria-disabled` with `rbac.permission` second"),)),
+       "nothing re-fetched; its EMA row `aria-disabled`"),)),
     ("M21", "t2-form: frame SCR-023/popover-1280 draws '`lock`'",
      (("frame:SCR-023/popover-1280",
        "note at full opacity",
@@ -2460,7 +2602,7 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M22", "t2-form: the Interval switch row draws 'T2'",
      (("line:| Interval ",
        "the frame annotates it",
-       "the frame annotates it; T2 `aria-disabled` with `disabledReason`"),)),
+       "the frame annotates it; T2"),)),
     ("M23", "over-conversion: frame SCR-023/popover-1280 draws a lock glyph",
      (("frame:SCR-023/popover-1280", "note at full opacity", "note at full opacity, lock glyph"),)),
     ("M24", "keys: frame SCR-023/join-after draws Ctrl+Shift+1 without PROPOSED",
@@ -2468,9 +2610,11 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
        "the layout tab shows the dirty `*`",
        "joined with `Ctrl+Shift+1`; the layout tab shows the dirty `*`"),)),
     ("M25", "keys: the §9.4 board-09 hint draws Ctrl+Shift+1..3 without PROPOSED",
-     (("line:The chords are drawn with CMP-022", ' — proposed; not in the keymap")', '")'),)),
+     (("line:The chords are drawn with CMP-022",
+       "join A / B / C · Ctrl",
+       "join A / B / C; Ctrl"),)),
     ("M26", "keys: copy deck `sync.hotkeys.note` draws Ctrl+Shift+1..3 without PROPOSED",
-     (("line:| `sync.hotkeys.note`", " — proposed; not in the keymap", " — in the keymap"),)),
+     (("line:| `sync.hotkeys.note`", "join A / B / C · Ctrl", "join A / B / C; Ctrl"),)),
     ("M27", "keys: board 05 draws Ctrl+Shift+L without PROPOSED",
      (("line:| 05 ",
        "checkbox checked, unchecked",
@@ -2478,11 +2622,11 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M28", "disarm: frame SCR-023/symbol-switch-disarm lacks the DOM's disarm",
      (("frame:SCR-023/symbol-switch-disarm",
        'sync group A" and `LOCKED`',
-       'sync group A" and still armed'),)),
+       'sync group A"'),)),
     ("M29", "disarm: frame SCR-023/symbol-switch-disarm lacks the chart's disarm",
      (("frame:SCR-023/symbol-switch-disarm",
        "the armed chart's CMP-221 arm reads `LOCKED` too",
-       "the armed chart stays armed"),)),
+       "the chart's CMP-221 arm too"),)),
     ("M30", "disarm: frame SCR-023/symbol-switch-hold lacks the disarm on [Follow group]",
      (("frame:SCR-023/symbol-switch-hold", ", which disarms and follows", ""),)),
     ("M31", "disarm: frame SCR-023/symbol-switch-disarm lacks the assertive disarm",
@@ -2555,6 +2699,49 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-023/light-conflict",
        '"Chart 15m has a different interval: crosshair sync',
        '"… crosshair sync'),)),
+    # text round 1, M-1: the record's five `ARMED`-tag forms (four on the disarm frame, one on
+    # the hold frame); each trips the armed-tag gate once, its clause quoted
+    ("M57", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('a second DOM in A reads \"ETHUSDT · symbol set by sync group A\" "
+            "and `ARMED`')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       ('`LOCKED` too; a second DOM in A reads "ETHUSDT · symbol set by sync group A" '
+        "and `ARMED`")),)),
+    ("M58", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('a second DOM stays `ARMED`')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; a second DOM stays `ARMED`"),)),
+    ("M59", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the order ticket on ETHUSDT reads ARMED')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; the order ticket on ETHUSDT reads ARMED"),)),
+    ("M60", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('an order ticket on ETHUSDT stays `ARMED`')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; an order ticket on ETHUSDT stays `ARMED`"),)),
+    ("M61", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket follows to ETHUSDT `ARMED`')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the ticket follows to ETHUSDT `ARMED`"),)),
+    # text round 1, m-2: the four wording gaps
+    ("M62", "t2-form: frame SCR-023/popover-1280 draws 'padlock'",
+     (("frame:SCR-023/popover-1280",
+       "note at full opacity",
+       "note at full opacity, a padlock before its label"),)),
+    ("M63", "t2-anatomy: frame SCR-043/link-no-group negates the lock glyph",
+     (("frame:SCR-043/link-no-group", "lock glyph leading in", "no lock glyph, the label in"),
+      ("frame:SCR-043/link-no-group", "; lock glyph;", "; no lock glyph;"))),
+    ("M64", "keys: frame SCR-043/menu-link-checked draws Ctrl+Shift+1 without PROPOSED",
+     (("frame:SCR-043/menu-link-checked",
+       "SCR-043's SCALE group with",
+       "`Ctrl+Shift+1` or SCR-043's SCALE group with"),)),
+    ("M65", "badge: the hand-off's Density table lacks the CMP-082 comfortable row",
+     (("hand:| CMP-082   | comfortable", "| comfortable |", "| roomy       |"),)),
 )
 # fmt: on
 
@@ -2573,6 +2760,9 @@ def apply_mutation(spec: str, handoff: str, edits: tuple[Edit, ...]) -> tuple[st
     return "\n".join(docs["spec"]), "\n".join(docs["hand"])
 
 
+SELF_TEST_RUNS: dict[str, int] = {"inline": 0, "table": 0, "one_fail": 0}
+
+
 def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[str]:
     """Mutate the spec, the hand-off or the switch table in memory; every mutation trips a gate."""
     problems: list[str] = []
@@ -2584,17 +2774,25 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
         name: str, mutated: str, needle: str, hand: str = handoff, switches: Switches = SWITCHES
     ) -> None:
         got = gates(mutated, hand, tool, bindings, switches)
+        SELF_TEST_RUNS["inline"] += 1
+        SELF_TEST_RUNS["one_fail"] += len(got) == 1 and needle in got[0]
         if not any(needle in g for g in got):
             problems.append(f"self-test: mutation '{name}' did not trip its gate ({needle})")
+        elif len(got) != 1:
+            problems.append(
+                f"self-test: mutation '{name}' gave {len(got)} FAILs (only its own expected): "
+                + " / ".join(got)
+            )
 
     inv = ("### 3.2 ", "## 4. ")
     # the fit gate: put Drawings (same symbol only) back into a 160 px column box
+    longer = "Drawings (same symbol only) and every overlay annotation across the group"
     expect(
-        "place the Drawings switch in a column",
+        "lengthen the Drawings label past its full-width box",
         spec,
         "fit: the switch label",
         switches=tuple(
-            (lb, cs, "column" if lb.startswith("Drawings") else pl) for lb, cs, pl in SWITCHES
+            (longer if lb.startswith("Drawings") else lb, cs, pl) for lb, cs, pl in SWITCHES
         ),
     )
     hc = popover_report()["height"]["compact"]
@@ -2619,7 +2817,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
                 lambda ln: ln.replace(f"{hc} px", f"{hc + 1} px"),
             ),
         ),
-        "popover-1920 row",
+        "number: the 1920 frame",
     )
     expect(
         "drop the provenance from the environment frame",
@@ -2644,13 +2842,9 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
             lambda t: edit_row(
                 t,
                 r"^\| `SCR-023/symbol-switch-hold` .*$",
-                lambda ln: (
-                    ln.replace(
-                        "held: armed (group A is on ETHUSDT)",
-                        "armed and following group A onto ETHUSDT",
-                    )
-                    .replace("which disarms and follows", "which keeps it armed")
-                    .replace("disarm", "follow")
+                lambda ln: ln.replace(
+                    "held: armed (group A is on ETHUSDT)",
+                    "held: armed (group A is on ETHUSDT), the ticket armed and following group A",
                 ),
             ),
         ),
@@ -2737,7 +2931,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
             lambda t: edit_row(
                 t,
                 r"^\| `SCR-023/account-env-refused` .*$",
-                lambda ln: ln.replace("absence", "T2 (lock glyph)"),
+                lambda ln: set_cell(ln, 3, "T2 (unavailable row) + outcome notice"),
             ),
         ),
         "t2-frames:",
@@ -2748,7 +2942,9 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
             spec,
             *inv,
             lambda t: edit_row(
-                t, r"^\| `SCR-023/popover-1280` .*$", lambda ln: ln.rstrip("| ") + " lock glyph |"
+                t,
+                r"^\| `SCR-023/popover-1280` .*$",
+                lambda ln: set_cell(ln, 4, "none on open; lock glyph"),
             ),
         ),
         "over-conversion: frame",
@@ -2775,7 +2971,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
                 lambda ln: ln.replace("aligns by timestamp", "aligns by time"),
             ),
         ),
-        "lacks the notice grammar",
+        "conflict: frame SCR-023/conflict-interval lacks the full notice sentence",
     )
     expect(
         "keep the ticket armed after a sync symbol switch",
@@ -2785,10 +2981,12 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
             lambda t: edit_row(
                 t,
                 r"^\| `SCR-023/symbol-switch-disarm` .*$",
-                lambda ln: re.sub(r"(?i)disarm", "keeps arm", ln),
+                lambda ln: ln.replace(
+                    "`LOCKED` too", "`LOCKED` too; the order ticket on ETHUSDT keeps it armed"
+                ),
             ),
         ),
-        "does not draw the disarm",
+        "armed: frame SCR-023/symbol-switch-disarm draws an armed state surviving",
     )
     expect(
         "drop the comfortable badge row",
@@ -2800,7 +2998,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
                 t, r"^\| comfortable .*$", lambda ln: ln.replace("| comfortable ", "| roomy ", 1)
             ),
         ),
-        "compact / comfortable row pair",
+        "badge: the §4.1 table lacks its comfortable row",
     )
     expect(
         "drop the validity sentence",
@@ -2913,9 +3111,17 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
         except ValueError as exc:
             problems.append(f"self-test: {mid} cannot be applied ({exc})")
             continue
-        hits = sum(want in g for g in gates(s2, h2, tool, bindings))
+        got = gates(s2, h2, tool, bindings)
+        SELF_TEST_RUNS["table"] += 1
+        SELF_TEST_RUNS["one_fail"] += len(got) == 1 and want in got[0]
+        hits = sum(want in g for g in got)
         if hits != 1:
             problems.append(f"self-test: {mid} tripped '{want}' {hits} times (once expected)")
+        elif len(got) != 1:
+            problems.append(
+                f"self-test: {mid} gave {len(got)} FAILs (only its own expected): "
+                + " / ".join(got)
+            )
     # the in-memory mutations never touch the files: both are byte-identical after the run
     if (SPEC.exists() and read(SPEC) != spec) or (HANDOFF.exists() and read(HANDOFF) != handoff):
         problems.append("self-test: the spec or the hand-off on disk changed during the run")
@@ -3033,7 +3239,16 @@ def main(argv: list[str] | None = None) -> int:
         p("COUNTS: " + (", ".join(f"{k} {v}" for k, v in c.items()) or "spec missing"))
         p("GATES: " + ("all pass" if not gate_fails else "; ".join(gate_fails)))
         if a.self_test:
-            p("SELF-TEST: " + ("every mutation tripped its gate" if not st else "; ".join(st)))
+            r_ = SELF_TEST_RUNS
+            p(
+                "SELF-TEST: "
+                + (
+                    f"{r_['inline'] + r_['table']} mutations ({r_['inline']} inline + "
+                    f"{r_['table']} table), {r_['one_fail']} with their own FAIL as the only one"
+                    if not st
+                    else "; ".join(st)
+                )
+            )
         p("RESULT: " + ("PASS" if not fails else "FAIL — " + "; ".join(fails)))
     return 1 if (a.check or a.self_test) and fails else 0
 
