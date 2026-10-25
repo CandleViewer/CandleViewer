@@ -69,6 +69,13 @@ def _words(text: str) -> str:
     return " ".join(text.split())
 
 
+def _model_rows(ident: str) -> list[str]:
+    """The E29 model's table rows for `ident`, whatever padding Prettier gives the first column
+    (a longer id in the same table, such as OM-T05b, widens it for every row)."""
+    head = re.compile(rf"^\|\s*{re.escape(ident)}\s*\|")
+    return [row for row in _THREAT_MODEL.splitlines() if head.match(row)]
+
+
 def _between(text: str, start: str, end: str) -> str:
     return _words(text.split(start, 1)[1].split(end, 1)[0])
 
@@ -673,7 +680,7 @@ def test_the_threat_model_routes_every_placement_through_its_permanent_anchor() 
     """E29 model section 5.1 and SR-E29-07: R3's anchor for every `placeOrder`, reduce-only
     included, the one-leg group's ref its entry-only twin; `createTradeGroup` keeps its group's."""
     section = _words(_THREAT_MODEL.split("### 5.1 ", 1)[1].split("### 5.2 ", 1)[0])
-    [requirement] = [row for row in _THREAT_MODEL.splitlines() if row.startswith("| SR-E29-07 |")]
+    [requirement] = _model_rows("SR-E29-07")
     assert "(through its one-leg group)" not in section
     assert not _missing(
         section,
@@ -853,9 +860,8 @@ def test_the_threat_model_gives_a_recorded_stops_order_its_row() -> None:
     """Ruling C(d) on #3972 in the E29 model: a recorded stop's TP/SL order has no local row only
     until E29-T05 materialises its `recorded_stop` row, so each of its executions has an
     `order_id` (24 section 8.3 rule 7)."""
-    rows = _THREAT_MODEL.splitlines()
-    [threat] = [_words(row) for row in rows if row.startswith("| OM-T05 |")]
-    [requirement] = [_words(row) for row in rows if row.startswith("| SR-E29-06 |")]
+    [threat] = [_words(row) for row in _model_rows("OM-T05")]
+    [requirement] = [_words(row) for row in _model_rows("SR-E29-06")]
     assert (
         "is a conditional order with its own `orderId` and no local row until one is materialised "
         "for it (24 §8.3 rule 7) `[O-4]`, so, unmatched, 24 §8.5 step 3c adopts it `untracked`"
