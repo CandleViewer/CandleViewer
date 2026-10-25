@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Any
 
 BASE = "http://127.0.0.1:8000"
+#: A request's config is a few hundred bytes: one over this bound fails the run.
+_MAX_CONFIG = 1 << 20
 CSRF_COOKIE = "__Host-cv_csrf"
 _CONFIG_LINE = re.compile(r'([a-z][a-z0-9-]*)\s*=\s*"((?:[^"\\]|\\.)*)"')
 _ESCAPES = {"t": "\t", "n": "\n", "r": "\r", "v": "\v"}
@@ -58,7 +60,10 @@ def main() -> int:
         log.write(json.dumps(sys.argv[1:]) + "\n")
     if sys.argv[1:2] != ["-q"] or "--config" not in sys.argv:
         _fail("-q first, then --config -")
-    config = _config(sys.stdin.read())
+    text = sys.stdin.read(_MAX_CONFIG + 1)
+    if len(text) > _MAX_CONFIG:
+        _fail("a config over the stub's bound")
+    config = _config(text)
     url = [v for k, v in config if k == "url"]
     if len(url) != 1 or not url[0].startswith(BASE + "/"):
         _fail(f"one url, on {BASE}")
