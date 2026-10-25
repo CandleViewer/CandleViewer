@@ -33,6 +33,7 @@ from candleviewer.oms_wiring import (
     REFERENCE_DEMAND_NEW,
     REFERENCE_DEMAND_TTL_S,
     REFERENCE_DEMAND_WINDOW_S,
+    SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
     EnvironmentLocked,
@@ -51,6 +52,7 @@ from candleviewer.settings import (
     Settings,
 )
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
+from candleviewer.storage.repositories.session_lock_sqlalchemy import KEEPALIVE, STALE_HOLDER_S
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.topics import MACHINE_KINDS
 from tests.openapi_helpers import deref
@@ -486,10 +488,21 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
         "facade's life, releasing it in `stop()` after every other closer.",
         f"it fails closed (`{EnvironmentLocked.__name__}`, logged CRITICAL as "
         "`oms_runtime_failed_closed` with `phase` `environment_lock`, and paged), sweeps and "
-        "hydrates nothing and is never `ready`",
+        "hydrates nothing, is never `ready` and is not asked again",
+        "That connection is one of the pool's 15 (`pool_size` 10, `max_overflow` 5), taken for the "
+        "process's life; the pool's dispose at the stop leaves a checked-out connection open, so "
+        "the release after it still unlocks on that session, then ends it (CR-S3L2-06).",
         f"A lock that cannot be asked within {ENVIRONMENT_LOCK_TIMEOUT_S:g} s "
-        "(`ENVIRONMENT_LOCK_TIMEOUT_S`, for the pool's connection and again for the statement) "
-        "fails the start closed the same way.",
+        "(`ENVIRONMENT_LOCK_TIMEOUT_S`, for the pool's connection and again for the statement), "
+        "Postgres unreachable, is no other holder: the start returns `starting` and asks again, "
+        "the whole composition with it, after the sweep's backoff "
+        f"({SWEEP_RETRY_S[0]:g} s, doubling to {SWEEP_RETRY_S[1]:g} s), each failure logged "
+        "(`oms_environment_lock_unanswered`), so `placeOrder` answers `503 oms_not_ready` "
+        "meanwhile, as a sweep that meets a store failure does (CR-S3L2-01/02).",
+        f"(`tcp_keepalives_idle` {KEEPALIVE['idle']} s, `tcp_keepalives_interval` "
+        f"{KEEPALIVE['interval']} s, `tcp_keepalives_count` {KEEPALIVE['count']}, "
+        f"`tcp_user_timeout` {STALE_HOLDER_S} s)",
+        f"and with it the lock, within about {STALE_HOLDER_S} s: that is the stale-holder window",
         "The lock is its session's: a holder whose connection drops (a cut network, a Postgres "
         "restart) loses it without noticing until its stop",
         "On the real backend, while the runtime runs, `/readyz` carries an `oms` check",

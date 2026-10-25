@@ -151,7 +151,8 @@ class World:
         self.port.set_fee_rate(self.account, fee)
 
     async def backoff(self, seconds: float) -> None:
-        """The runtime's sleep: a retry of its startup sweep waits here until the test ends."""
+        """The runtime's sleep: a retry of its start, an environment lock not answered (CR-S3L2-01)
+        or a sweep the store failed, waits here until the test ends."""
         self.retrying.set()
         await asyncio.Event().wait()
 
@@ -411,9 +412,9 @@ async def test_order_entry_blocked_when_we_cannot_record_it_postgres_unreachable
     world: World,
 ) -> None:
     """Gherkin "Order entry blocked when we cannot record it", Postgres unreachable from the start:
-    the runtime's startup sweep meets it and waits to retry, never ready (20 Sec.6.2), so the
-    request is 503 `oms_not_ready` with `Retry-After` before any exchange call: counted, never
-    audited, nothing recorded (24 Sec.8.4 step 3)."""
+    the runtime's start cannot ask the environment's lock and waits to ask again, never ready
+    (20 Sec.6.2, CR-S3L2-01), so the request is 503 `oms_not_ready` with `Retry-After` before any
+    exchange call: counted, never audited, nothing recorded (24 Sec.8.4 step 3)."""
     relay = _Relay(world.dsn)
     dsn = await relay.through(c6._login(world.dsn, "cv_app"))
     relay.cut()

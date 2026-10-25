@@ -58,6 +58,7 @@ from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
     SWEEP_MAX_FAILURES,
+    SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     CommandAccounts,
     GroupStores,
@@ -200,18 +201,18 @@ class Writer:
 @dataclass
 class Lock:
     """The environment's lock (SEC-S3N-01): held unless another process holds it (`elsewhere`),
-    or refused with `fails`; each take and give-up lands in `log`, the world's, and each ask notes
-    whether B1's process-wide ports were wired then (a facade existed)."""
+    or refused with the next of `fails`; each take and give-up lands in `log`, the world's, and
+    each ask notes whether B1's process-wide ports were wired then (a facade existed)."""
 
     log: list[str] = field(default_factory=list)
     elsewhere: bool = False
-    fails: Exception | None = None
+    fails: list[Exception] = field(default_factory=list)
     wired: list[bool] = field(default_factory=list)
 
     async def acquire(self) -> bool:
         self.wired.append(b01.ports_wired())
-        if self.fails is not None:
-            raise self.fails
+        if self.fails:
+            raise self.fails.pop(0)
         if not self.elsewhere:
             self.log.append("lock.acquire")
         return not self.elsewhere
@@ -743,39 +744,81 @@ def test_the_lanes_sink_counts_its_pending_rows_apart_from_the_bundles(tmp_path:
     assert 'cv_machine_event_wal_pending{env="demo",where="serving_loop"} 2.0' in text
 
 
-@pytest.mark.parametrize(
-    ("refusal", "error"),
-    [
-        ("held", "EnvironmentLocked"),
-        ("unanswered", "StorageTierUnavailable"),
-    ],
-)
-async def test_a_second_process_of_the_environment_refuses_to_start_closed_and_paged(
-    refusal: str, error: str
-) -> None:
-    """SEC-S3N-01 (#913 L2): another process holds the environment's lock, a deploy overlapping
-    on another host, or the lock cannot be asked: the runtime fails closed before any facade or
-    machine exists, logged CRITICAL and paged, never ready; it sweeps nothing (the first's unsent
-    entry stays as it was) and gives up no lock it never held."""
+async def test_a_second_process_of_the_environment_fails_closed_critical_and_paged() -> None:
+    """SEC-S3N-01 (#913 L2; CR-S3L2-09, one behaviour): another process holds the environment's
+    lock, a deploy overlapping on another host: the runtime fails closed before any facade or
+    machine exists, logged CRITICAL by its phase and paged once, `degraded`, and is not asked
+    again."""
     world = World()
-    if refusal == "held":
-        world.lock.elsewhere = True
-    else:
-        world.lock.fails = StorageTierUnavailable("the session lock could not be asked")
+    world.lock.elsewhere = True
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == (
+                ["EnvironmentLocked"], ["environment_lock"]
+            )  # fmt: skip
+            closed = [e["log_level"] for e in logs if e["event"] == "oms_runtime_failed_closed"]
+            assert closed == ["critical"] and world.lock.wired == [False]
+            assert world.pager.calls == ["oms_runtime_failed_closed: environment_lock"]
+            assert runtime.state == "degraded" and not b01.ports_wired()
+            await settle()
+    assert world.lock.wired == [False] and world.lanes[0].stopped  # never asked again
+
+
+async def test_a_second_process_sweeps_nothing_and_releases_no_lock_it_never_held() -> None:
+    """SEC-S3N-01 (CR-S3L2-09, one behaviour): the refused process serves no order and leaves the
+    first's unsent entry as it was; it closes its port and its pool and gives up no lock."""
+    world = World()
+    world.lock.elsewhere = True
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        with pytest.raises(OmsNotReady):
+            _ = runtime.submission
+    assert world.log == ["pool.release"] and world.venue.ports[0].closed
+    assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
+
+
+async def test_a_lock_postgres_cannot_answer_is_asked_again_with_the_sweeps_backoff() -> None:
+    """CR-S3L2-01/02 (20 Sec.6.2): Postgres unreachable when the start asks the environment's lock
+    is no other holder: the start returns `starting`, never ready and nothing paged, and asks
+    again, the whole composition with it, after the sweep's backoff on the runtime's sleep, each
+    attempt closing what it built; once the lock is held the OMS composes, sweeps and is ready,
+    the facade built after the lock each time, as before #913 L2 a sweep outlasted the outage."""
+    world = World()
+    world.lock.fails = [StorageTierUnavailable("unreachable"), StorageTierUnavailable("again")]
     await crashed(world)
     for flag in world.flags:
         flag.read()
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
-            assert (failed_closed(logs), failed_phases(logs)) == ([error], ["environment_lock"])
-            closed = [e["log_level"] for e in logs if e["event"] == "oms_runtime_failed_closed"]
-            assert closed == ["critical"] and world.lock.wired == [False]
-            assert world.pager.calls == ["oms_runtime_failed_closed: environment_lock"]
-            assert runtime.state == "degraded" and not b01.ports_wired()
+            assert runtime.state == "starting"
             with pytest.raises(OmsNotReady):
                 _ = runtime.submission
-    assert world.log == ["pool.release"] and world.venue.ports[0].closed
-    assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
+            await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+            assert runtime.state == "ok"
+            assert [port.closed for port in world.venue.ports] == [True, True, False]
+    first, ceiling = SWEEP_RETRY_S
+    asked = [e["retry_s"] for e in logs if e["event"] == "oms_environment_lock_unanswered"]
+    assert asked == [first, min(2 * first, ceiling)] and world.clock.slept[:2] == asked
+    assert world.lock.wired == [False] * 3 and world.pager.calls == [] and failed_closed(logs) == []
+    assert world.log[:2] == ["pool.release", "pool.release"] and world.log[2:5] == STARTED
+
+
+async def test_another_holder_met_on_a_later_ask_fails_the_runtime_closed_and_pages_once() -> None:
+    """CR-S3L2-01/02: asked again, the lock is answered held elsewhere: the runtime fails closed as
+    a start refused at once does, paged once, its lane stopped, and asks no more."""
+    world = World()
+    world.lock.fails, world.lock.elsewhere = [StorageTierUnavailable("unreachable")], True
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await until(lambda: runtime.state == "degraded")
+            assert (failed_closed(logs), failed_phases(logs)) == (
+                ["EnvironmentLocked"], ["environment_lock"]
+            )  # fmt: skip
+            assert world.pager.calls == ["oms_runtime_failed_closed: environment_lock"]
+            assert world.lanes[0].stopped and not b01.ports_wired()
+    assert world.log == ["pool.release", "pool.release"] and len(world.lock.wired) == 2
 
 
 def test_the_environments_lock_key_is_its_namespace_and_name_outside_any_hashtext_key() -> None:
