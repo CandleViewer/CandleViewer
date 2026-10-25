@@ -457,7 +457,8 @@ def make_order_exits_router(
             return await audit_refusal(_AMEND, exits, row, caller, step, _refusal(exc))
         if cached is not None:
             return cached
-        named = ", ".join(request.headers.getlist("if-match")) or None  # every field, one list
+        fields = request.headers.getlist("if-match")  # every field sent, one list (RFC 9110)
+        named = ", ".join(fields) if fields else None  # one empty field names no tag: a 412
         expected = expected_seq(named, row.id)
         guard = functools.partial(audit_refusal, _AMEND, exits, row, caller, "guard")
         amend = functools.partial(
