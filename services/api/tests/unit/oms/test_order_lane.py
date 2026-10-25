@@ -1,7 +1,7 @@
 """#913 slice 3 L1 (E29-T04, 29 CV-C13): the order lane, `oms_lane.OrderLane`, one daemon thread
-running its own event loop; and the hops back to the serving loop, `oms_lane.Serving`, this
-test's loop. No timing is asserted: each wait on the lane's thread is a bound on the test, and a
-stalled serving loop is one blocked on an event."""
+running its own event loop; the hops back to the serving loop, `oms_lane.Serving`, this test's
+loop; and the OMS runtime composed on the lane (20 Sec.6.2). No timing is asserted: each wait on
+the lane's thread is a bound on the test, and a stalled serving loop is one blocked on an event."""
 
 from __future__ import annotations
 
@@ -11,16 +11,29 @@ import inspect
 import threading
 from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer import oms_lane
+from candleviewer import oms_lane, oms_wiring
+from candleviewer.accounts.profiles import AccountProfile
+from candleviewer.domain.events import Instrument
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms_lane import LaneStopped, OrderLane, Serving
+from candleviewer.oms.exits import AmendTerms, ExitCaller
+from candleviewer.oms.ports import SubmitActor
+from candleviewer.oms_lane import LANE_JOIN_S, LaneStopped, OrderLane, Serving
+from candleviewer.settings import OMS_STOP_RESERVE_S, TEARDOWN_BUDGET_S, Settings
+from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import Gateway, LoopAffinityError
+from candleviewer.storage.repositories.accounts import OwnerScope
+from candleviewer.storage.repositories.orders import ScopedOrder
+from tests.unit.oms import command_rig as cr
+from tests.unit.oms import submit_rig as sr
+from tests.unit.oms.test_oms_runtime import SENDING, Port, World, crashed, started
 
 #: A bound on each test's waits for the lane's thread, never a time the test expects.
 BOUND_S = 10.0
@@ -53,6 +66,10 @@ async def _where() -> tuple[asyncio.AbstractEventLoop, threading.Thread]:
 
 async def _raises(error: Exception) -> None:
     raise error
+
+
+async def _awaited(future: Awaitable[Any]) -> Any:
+    return await future
 
 
 async def _held(began: threading.Event, outcome: list[str], release: asyncio.Event) -> str:
@@ -353,3 +370,114 @@ async def test_a_machine_on_the_lane_takes_a_send_there_and_refuses_one_from_thi
             await gateway.send("order:1", "EXEC")
         await lane.call(gateway.send("order:1", "EXEC"))
     assert interpreter.sent == ["EXEC"]
+
+
+def _noting(real: Any, threads: list[threading.Thread]) -> Any:
+    async def noted(self: Port, req: Any) -> Any:
+        threads.append(threading.current_thread())
+        return await real(self, req)
+
+    return noted
+
+
+async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_joins_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """20 Sec.6.2 on `OrderLane`: the sweep resumes a create left at the venue's door, whose venue
+    call runs on the serving loop (ruling Q11's interim); the facade's machine refuses a send from
+    this loop; the route's reads answer from the lane. The stop drains (its bound spent at once
+    here), cancels a submit still on the lane and waits for it there, closes each part, then stops
+    the lane: its closers' deadline leaves `LANE_JOIN_S` of the reserve for the join."""
+    drains, reserves, threads = list[float](), list[float](), list[threading.Thread]()
+    drained, closed = oms_wiring._drained, oms_wiring._closed
+
+    async def spent(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
+        drains.append(timeout_s)
+        return await drained(tasks, 0)
+
+    async def timed(closers: Any, deadline: float) -> None:
+        reserves.append(deadline - asyncio.get_running_loop().time())
+        await closed(closers, deadline)
+
+    monkeypatch.setattr(oms_wiring, "_drained", spent)
+    monkeypatch.setattr(oms_wiring, "_closed", timed)
+    monkeypatch.setattr(Port, "place_order", _noting(Port.place_order, threads))
+    world = World()
+    await crashed(world)
+    for flag in world.flags:
+        flag.read()
+    async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+        await runtime.wait_ready()
+        parts = runtime._composed()
+        loop, thread = await parts.lane.call(_where())
+        resumed = parts.machines.settled(
+            cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=BOUND_S
+        )
+        assert await parts.lane.call(resumed) == "submitted"
+        assert threads == [threading.current_thread()]  # the create went out on this loop
+        with pytest.raises(LoopAffinityError):
+            await parts.machines._gateway.send(str(SENDING.id), "KILL")
+        assert await runtime.route.accounts.environment_of(cr.ACCOUNT) == "demo"
+        began, outcome = threading.Event(), list[str]()
+        answered = runtime.run(_awaited(parts.lane.call(asyncio.sleep(0, result="202"))))
+        hung = runtime.run(_awaited(parts.lane.call(_held(began, outcome, asyncio.Event()))))
+        assert await answered == "202"
+        await _began(began)
+    assert drains == [Settings().oms_drain_s] and hung.cancelled() and outcome == ["cancelled"]
+    reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S
+    assert reserve - 1 < reserves[-1] <= reserve  # the join's share is the reserve's last
+    assert Settings().oms_drain_s + OMS_STOP_RESERVE_S <= TEARDOWN_BUDGET_S  # the 15 s grace
+    assert not thread.is_alive() and loop.is_closed() and not b01.ports_wired()
+    assert world.log == ["sink.start", "sink.stop", "pool.release"] and world.venue.ports[0].closed
+
+
+async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_its_profile_here(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#913 slice 4 on the lane (the orchestrator's ruling of 2026-10-25 02:50Z): the route's call
+    hands the amend to the lane, which reads the order's instrument there while this loop is
+    blocked. A price move is risk-increasing, so the amend reads its profile through the
+    pipeline's `ServedProfiles`, on this loop, as its venue call runs; it answers once this loop
+    turns again: accepted, the order `submitted`."""
+    reads, sent = list[tuple[str, threading.Thread]](), list[threading.Thread]()
+    listed, read_profile = threading.Event(), sr.Profiles.get_effective_profile
+
+    async def profile(
+        self: sr.Profiles, account_id: UUID, profile_id: UUID | None = None
+    ) -> AccountProfile:
+        reads.append(("profile", threading.current_thread()))
+        return await read_profile(self, account_id, profile_id)
+
+    def snapshot() -> dict[str, Instrument]:
+        reads.append(("instrument", threading.current_thread()))
+        listed.set()
+        return {cr.SYMBOL: sr.instrument()}
+
+    monkeypatch.setattr(sr.Profiles, "get_effective_profile", profile)
+    monkeypatch.setattr(Port, "amend_order", _noting(Port.amend_order, sent))
+    world, owner = World(), UUID(int=0x0E)
+    world.ingestion.instruments = SimpleNamespace(snapshot=snapshot)
+    await crashed(world)
+    world.store.seed_owner(owner)
+    for flag in world.flags:
+        flag.read()
+    caller = ExitCaller(OwnerScope(owner), SubmitActor(user_id=owner, role="owner"))
+    async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+        await runtime.wait_ready()
+        parts = runtime._composed()
+        _, on_lane = await parts.lane.call(_where())
+        resumed = parts.machines.settled(
+            cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=BOUND_S
+        )
+        assert await parts.lane.call(resumed) == "submitted"
+        scoped = await runtime.exits.scope(caller, SENDING.id)
+        assert isinstance(scoped, ScopedOrder)
+        moved = AmendTerms(price=Decimal("61000"))
+        amend = runtime.exits.amend(scoped, moved, caller=caller, expected_seq=None)
+        amended = asyncio.ensure_future(amend)
+        await asyncio.sleep(0)  # the route's task hands the amend to the lane
+        assert listed.wait(BOUND_S)  # this loop blocks meanwhile: the lane reads the instrument
+        got = await amended
+    here = threading.current_thread()
+    assert (got.kind, got.status, got.lifecycle_state) == ("accepted", 202, "submitted")
+    assert reads == [("instrument", on_lane), ("profile", here)] and sent == [here]

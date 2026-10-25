@@ -90,8 +90,8 @@ OMS_AFTER_ANCHOR_S: Final = 12.0
 #: The in-flight window's ceiling (SEC-S3D-02): the longest a crashed request's key stays
 #: `409 idempotency_in_flight`.
 OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
-#: What the OMS runtime's stop keeps after its drain for the machines, its sink and its pool, of the
-#: supervised OMS module's grace (`TEARDOWN_BUDGET_S`).
+#: What the OMS runtime's stop keeps after its drain for its closers (the machines, its sink and its
+#: pool) and then the order lane's join, of the supervised OMS module's grace (`TEARDOWN_BUDGET_S`).
 OMS_STOP_RESERVE_S: Final = 5.0
 
 

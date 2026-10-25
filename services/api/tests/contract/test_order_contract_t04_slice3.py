@@ -551,11 +551,13 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
 def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
     stop inside the grace, from the code's own bounds; the hops named until L2 and L3; the notices'
-    bound and their count (CR-S3L1A-01); 23 and 24 saying from when (CR-S3L1A-07)."""
+    bound and their count (CR-S3L1A-01); the private stream the lane's port refuses (CR-S3L1B-05);
+    and, the runtime on the lane since L1b, no status note left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
     assert not _missing(
-        _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading"),
+        lane,
         "one daemon thread with its own event loop, which never runs a platform-lane task",
         f"failing closed when its loop does not run within {LANE_START_S:g} s",
         "the OMS's own Postgres pool, whose connections belong to the loop that made them",
@@ -564,6 +566,10 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         f"awaited and cut at `CV_COMMAND_TIMEOUT` ({HOP_TIMEOUT_S:g} s): the profile cache and the "
         "clock guard's resync; until L2 gives the lane its own, the audit writer",
         "until L3 lets the lane sign and send from its own loop, every venue call",
+        "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
+        "the exit routes reach the exit service the same way (`OnLaneExits`)",
+        "and its refusal records, per-order cancels and amends within the service's own bounds",
+        "and the exit routes' in-flight guard, claimed and released on the serving loop only",
         f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
@@ -571,10 +577,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
     )
     assert "awaits the pipeline on the order lane" in _ROUTE
-    assert "from #913's L1b on; until then on the serving loop" in _ROUTE
     ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))
     assert "until #913's L2 gives it its own writer and sink" in ws
-    assert "Status: from #913's L1b on; until then the facade runs on the serving loop." in ws
+    assert not [text for text in (lane, _ROUTE, ws) if "L1b" in text]
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
     assert "STANDS" in row and "F lane table, `OrderLane`, nightly bench" in row

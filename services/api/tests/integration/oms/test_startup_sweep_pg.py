@@ -248,9 +248,11 @@ async def test_a_submitting_order_left_by_a_crash_is_resumed_under_its_own_id(
     await runtime.start()
     try:
         await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
-        machines = runtime._composed().machines
-        left = await machines.settled(
-            rig.account, order_id, leaving="submitting", timeout_s=_RESUME_BOUND_S
+        parts = runtime._composed()  # the facade runs on the order lane (CV-C13)
+        left = await parts.lane.call(
+            parts.machines.settled(
+                rig.account, order_id, leaving="submitting", timeout_s=_RESUME_BOUND_S
+            )
         )
         assert left == "submitted"
         methods = rig.calls()
