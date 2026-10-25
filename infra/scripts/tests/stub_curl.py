@@ -7,8 +7,10 @@ on stdin: it checks the request against the scenario the test wrote (the route, 
 the body members, the session headers, 22's schema for the body) and records the outcome as names,
 booleans and validator names in `requests.jsonl`, so no record holds a value the script was given.
 It answers as `curl --dump-header - --write-out '\\n%{http_code}'` prints: the head, the body, the
-status. A scenario call with `exit` ends the stub with that status and no output (curl's 7: the
-connection was refused). `CV_STUB_DIR` names the directory of the scenario, the state and the logs.
+status. Each call's route (never its raw path, which may hold the token) also goes to the
+`sequence.log` the docker stub shares, so a test sees the order of both. A scenario call with
+`exit` ends the stub with that status and no output (curl's 7: the connection was refused).
+`CV_STUB_DIR` names the directory of the scenario, the state and the logs.
 """
 
 from __future__ import annotations
@@ -121,6 +123,8 @@ def main() -> int:
             state["session"] = call["session"]
     with (stub / "requests.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(record) + "\n")
+    with (stub / "sequence.log").open("a", encoding="utf-8") as log:
+        log.write(f"curl {record['route']}\n")
     state_file.write_text(json.dumps(state), encoding="utf-8")
     if "exit" in call:
         return int(call["exit"])

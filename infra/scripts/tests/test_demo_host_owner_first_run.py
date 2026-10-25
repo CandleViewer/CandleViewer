@@ -1,10 +1,12 @@
 """Tests for infra/scripts/demo_host_owner_first_run.sh (#3180): the Owner's first run.
 
-The script runs under bash with a stub `curl` first on PATH (`stub_curl.py`) and a `python3` that
-records its arguments, from an empty working directory, HOME and TMPDIR, with no terminal; stdin
-holds the answers to its prompts. No network: the stub answers in the shapes the served code gives
-(`api/invites.py`, `api/auth.py`, `api/step_up.py`, `api/exchange_keys.py`; `createExchangeAccount`
-as 22 declares it, #895). Every request is held to docs/plan/22-api-openapi.yaml: the operation's
+The script runs under bash with stubs first on PATH: `docker` (`stub_docker.py`), `curl`
+(`stub_curl.py`) and a `python3` that records its arguments; from an empty working directory, HOME
+and TMPDIR, with no terminal; stdin holds the answers to its prompts. No network and no Docker.
+The bootstrap is #4479's CLI in the overlay's `bootstrap-owner` service (DC-4479-02), as its design
+note describes it: #4479 is not merged. The curl stub answers in the shapes the served code gives
+(`api/invites.py`, `api/auth.py`, `api/step_up.py`, `api/exchange_accounts.py`,
+`api/exchange_keys.py`). Every request is held to docs/plan/22-api-openapi.yaml: the operation's
 method and path, and its body against the operation's request schema.
 """
 
@@ -28,10 +30,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "infra" / "scripts" / "demo_host_owner_first_run.sh"
 SPEC = REPO_ROOT / "docs" / "plan" / "22-api-openapi.yaml"
 STUB = Path(__file__).with_name("stub_curl.py")
+DOCKER = Path(__file__).with_name("stub_docker.py")
 BASH = shutil.which("bash") or "/bin/bash"
 
-# What the Owner types. All are secrets but the identifier, the UID and the labels; the password
-# holds a quote and a backslash, which the request config and the JSON body must both escape.
+# What the Owner types. All are secrets but the email, the identifier, the UID and the labels;
+# the password holds a quote and a backslash, which the request config and the JSON body escape.
+EMAIL = "owner@example.invalid"
 TOKEN = "sentinel-invite-sentinel-invite"
 PASSWORD = 'pwSentinel "quoted" back\\slash 42'
 CODES = ("271828", "314159", "161803")
@@ -40,7 +44,7 @@ EXCHANGE_UID = "40321987"
 API_KEY = "sentinel-apikey-sentinel"
 API_SECRET = "sentinel-secret-sentinel-secret"
 SECRETS = (TOKEN, PASSWORD, *CODES, API_KEY, API_SECRET)
-# What the served code issues.
+# What the served code issues, and what the bootstrap CLI prints on its TTY.
 ACCESS, CSRF = "accessServerIssued_AbCdEf", "csrfNonceServer.csrfMacServer"
 ROTATED = {"access": "accessRotated_GhIjKl", "csrf": "csrfNonceRotated.csrfMacRotated"}
 MFA_TOKEN = "mfaServerIssued_MnOpQr"
@@ -50,23 +54,38 @@ CHALLENGE_ID = "c1000000-0000-4000-8000-000000000002"
 OTPAUTH = "otpauth://totp/CandleViewer:owner?secret=STUBSTUBSTUBSTUB&issuer=CandleViewer"
 RECOVERY = tuple(f"rc{i:02d}-wxyz-{i:02d}ab" for i in range(10))
 EGRESS = "egress-sentinel"  # where the served code puts the egress IP: never printed
+CLI_PRINT = "bootstrap-cli-print-marker"  # stands for the CLI's TTY output, the token's line
 
-#: (method, 22 path, operationId, needs the session): the calls of a full run, in order.
+#: (method, 22 path, operationId, needs the session): the calls of a full run, in order. The
+#: served createExchangeAccount sits behind the `keys` step-up (api/step_up.py), so the step-up
+#: comes first and its 5-minute window covers the account and the key.
 ROUTES = (
     ("GET", "/invites/{inviteToken}", "getInvite", False),
     ("POST", "/invites/{inviteToken}", "redeemInvite", False),
     ("POST", "/invites/{inviteToken}/confirm", "confirmInvite", False),
     ("POST", "/auth/login", "authLogin", False),
     ("POST", "/auth/mfa/verify", "authMfaVerify", False),
-    ("POST", "/exchange-accounts", "createExchangeAccount", True),
     ("POST", "/auth/step-up", "authStepUp", True),
+    ("POST", "/exchange-accounts", "createExchangeAccount", True),
     ("POST", "/exchange-accounts/{accountId}/keys", "createApiKey", True),
 )
 ORDER = [f"{method} {path}" for method, path, _, _ in ROUTES]
+GET_INVITE, REDEEM, CONFIRM, LOGIN, VERIFY, STEP_UP, CREATE, IMPORT = ORDER
 CURL_ARGV = ["-q", "--silent", "--noproxy", "*", "--proto", "=http", "--max-time", "60",
              "--dump-header", "-", "--write-out", "\\n%{http_code}", "--config", "-"]  # fmt: skip
+#: The runbook's compose files and project, as the script names them.
+COMPOSE = ["compose", "-p", "cv-demo"] + [
+    arg for name in ("docker-compose.yml", "docker-compose.vps.yml", "docker-compose.demo-host.yml")
+    for arg in ("-f", str(REPO_ROOT / "infra" / "compose" / name))
+]  # fmt: skip
+BOOTSTRAP = [
+    [*COMPOSE, "stop", "api"],
+    [*COMPOSE, "--profile", "bootstrap-owner", "run", "--rm", "--no-deps", "bootstrap-owner",
+     "--owner", EMAIL],
+    [*COMPOSE, "--profile", "core", "up", "-d", "--wait", "api"],
+]  # fmt: skip
 #: The prompts of a full run, in order (blank: the default label, label and read-only answer).
-ANSWERS = [TOKEN, PASSWORD, PASSWORD, CODES[0], IDENTIFIER, CODES[1], EXCHANGE_UID, "", "", "",
+ANSWERS = [EMAIL, TOKEN, PASSWORD, PASSWORD, CODES[0], CODES[1], EXCHANGE_UID, "", "", "",
            API_KEY, API_SECRET, CODES[2]]  # fmt: skip
 VERDICT = {
     "passed": True, "uid": EXCHANGE_UID, "uta": True, "read_only": False,
@@ -141,36 +160,38 @@ def full_run() -> dict[str, list[dict[str, Any]]]:
         "user": {"id": "u1000000-0000-4000-8000-000000000003", "roles": ["owner"]},
     }
     account = {"id": ACCOUNT_ID, "exchange": "bybit", "environment": "demo", "kind": "main",
-               "label": "Bybit demo main", "exchange_uid": EXCHANGE_UID}  # fmt: skip
+               "label": "Bybit demo main", "exchange_uid": EXCHANGE_UID,
+               "parent_account_id": None, "connection_state": "pending",
+               "key_status": "missing"}  # fmt: skip
     elevated = {"elevated_until": "2026-10-26T04:05:00+00:00", "action_class": "keys",
                 "single_use": False, "step_up_expires_at": "2026-10-26T04:05:00+00:00"}  # fmt: skip
     key = {"id": "k1000000-0000-4000-8000-000000000004", "status": "active",
            "key_id_masked": "****ab42"}  # fmt: skip
     return {
-        ORDER[0]: [answer(200, {"display_name": "Owner", "role": "viewer",
-                                "expires_at": "2026-10-28T04:00:00+00:00"}, path=invite)],
-        ORDER[1]: [answer(200, {"method_id": METHOD_ID, "otpauth_uri": OTPAUTH,
-                                "secret_base32": "STUBSTUBSTUBSTUB"},
-                          path=invite, expect={"password": PASSWORD})],
-        ORDER[2]: [answer(200, {"status": "active", "role": "owner",
-                                "recovery_codes": list(RECOVERY)},
-                          path=invite, expect={"method_id": METHOD_ID, "code": CODES[0]})],
-        ORDER[3]: [answer(200, {"status": "mfa_required", "mfa_token": MFA_TOKEN,
-                                "methods": ["totp"], "expires_in": 300},
-                          expect={"identifier": IDENTIFIER, "password": PASSWORD})],
-        ORDER[4]: [answer(200, signed_in, cookies={"cv_refresh": "refreshServerIssued",
-                                                   "__Host-cv_csrf": CSRF},
-                          session={"access": ACCESS, "csrf": CSRF},
-                          expect={"mfa_token": MFA_TOKEN, "method": "totp", "code": CODES[1]})],
-        ORDER[5]: [answer(201, account, expect={k: account[k] for k in (
+        GET_INVITE: [answer(200, {"display_name": "Owner", "role": "viewer",
+                                  "expires_at": "2026-10-28T04:00:00+00:00"}, path=invite)],
+        REDEEM: [answer(200, {"method_id": METHOD_ID, "otpauth_uri": OTPAUTH,
+                              "secret_base32": "STUBSTUBSTUBSTUB"},
+                        path=invite, expect={"password": PASSWORD})],
+        CONFIRM: [answer(200, {"status": "active", "role": "owner",
+                               "recovery_codes": list(RECOVERY)},
+                         path=invite, expect={"method_id": METHOD_ID, "code": CODES[0]})],
+        LOGIN: [answer(200, {"status": "mfa_required", "mfa_token": MFA_TOKEN,
+                             "methods": ["totp"], "expires_in": 300},
+                       expect={"identifier": EMAIL, "password": PASSWORD})],
+        VERIFY: [answer(200, signed_in, cookies={"cv_refresh": "refreshServerIssued",
+                                                 "__Host-cv_csrf": CSRF},
+                        session={"access": ACCESS, "csrf": CSRF},
+                        expect={"mfa_token": MFA_TOKEN, "method": "totp", "code": CODES[1]})],
+        STEP_UP: [answer(200, elevated, expect={"password": PASSWORD, "code": CODES[2],
+                                                "action_class": "keys"})],
+        CREATE: [answer(201, account, expect={k: account[k] for k in (
             "exchange", "environment", "kind", "label", "exchange_uid")})],
-        ORDER[6]: [answer(200, elevated, expect={"password": PASSWORD, "code": CODES[2],
-                                                 "action_class": "keys"})],
-        ORDER[7]: [answer(201, {"key": key, "verification": VERDICT},
-                          path={"accountId": ACCOUNT_ID},
-                          expect={"api_key": API_KEY, "api_secret": API_SECRET,
-                                  "label": "demo host", "read_only": False,
-                                  "expected_uid": EXCHANGE_UID})],
+        IMPORT: [answer(201, {"key": key, "verification": VERDICT},
+                        path={"accountId": ACCOUNT_ID},
+                        expect={"api_key": API_KEY, "api_secret": API_SECRET,
+                                "label": "demo host", "read_only": False,
+                                "expected_uid": EXCHANGE_UID})],
     }  # fmt: skip
 
 
@@ -179,7 +200,9 @@ class Run:
     proc: subprocess.CompletedProcess[str]
     records: list[dict[str, Any]]
     argv: list[list[str]]
-    logs: dict[str, str]  # every file the stub and the python3 shim wrote, by name
+    docker: list[list[str]]
+    sequence: list[str]  # the docker and curl calls, in order
+    logs: dict[str, str]  # every file the stubs and the python3 shim wrote, by name
     left: list[Path]  # what the run left in its working directory, HOME and TMPDIR
 
     @property
@@ -189,9 +212,10 @@ class Run:
 
 def run(
     tmp_path: Path, calls: dict[str, list[dict[str, Any]]], answers: list[str], *args: str,
-    xtrace: bool = False, schemas: bool = False,
+    xtrace: bool = False, schemas: bool = False, docker: dict[str, int] | None = None,
 ) -> Run:  # fmt: skip
-    """One run of the script on `calls`; `schemas` also holds each body to 22 (a slower run)."""
+    """One run of the script on `calls` (and `docker`'s exit statuses by subcommand); `schemas`
+    also holds each body to 22, a slower run."""
     stub, bin_dir, cwd, home, tmp = (tmp_path / d for d in ("stub", "bin", "cwd", "home", "tmp"))
     for directory in (stub, bin_dir, cwd, home, tmp):
         directory.mkdir()
@@ -201,13 +225,17 @@ def run(
          "calls": calls.get(f"{method} {path}", [])}
         for method, path, op, session in ROUTES
     ]  # fmt: skip
-    (stub / "scenario.json").write_text(json.dumps({"routes": routes}), encoding="utf-8")
-    curl = bin_dir / "curl"
-    curl.write_text(f"#!{sys.executable}\n" + STUB.read_text(encoding="utf-8"), encoding="utf-8")
+    scenario = {"routes": routes, "docker": docker or {}, "docker_print": CLI_PRINT}
+    (stub / "scenario.json").write_text(json.dumps(scenario), encoding="utf-8")
+    tools = []
+    for name, source in (("curl", STUB), ("docker", DOCKER)):
+        tool = bin_dir / name
+        tool.write_text(f"#!{sys.executable}\n" + source.read_text("utf-8"), encoding="utf-8")
+        tools.append(tool)
     shim = bin_dir / "python3"  # the script's python3, recording its arguments
     shim.write_text(f'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$CV_STUB_DIR/python3.argv"\n'
                     f'exec "{sys.executable}" "$@"\n', encoding="utf-8")  # fmt: skip
-    for tool in (curl, shim):
+    for tool in (*tools, shim):
         tool.chmod(stat.S_IRWXU)
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(home), "TMPDIR": str(tmp),
            "CV_STUB_DIR": str(stub)}  # fmt: skip
@@ -224,13 +252,63 @@ def run(
         return [json.loads(line) for line in text.splitlines()]
 
     logs = {p.name: p.read_text(encoding="utf-8") for p in stub.iterdir() if p.is_file()}
+    sequence = logs.get("sequence.log", "").splitlines()
     left = [p for d in (cwd, home, tmp) for p in d.rglob("*")]
-    return Run(proc, lines("requests.jsonl"), lines("argv.jsonl"), logs, left)
+    return Run(proc, lines("requests.jsonl"), lines("argv.jsonl"), lines("docker.jsonl"),
+               sequence, logs, left)  # fmt: skip
 
 
 @pytest.fixture(scope="module")
 def full(tmp_path_factory: pytest.TempPathFactory) -> Run:
     return run(tmp_path_factory.mktemp("full"), full_run(), ANSWERS, schemas=True)
+
+
+# --- the bootstrap: #4479's CLI in bootstrap-owner, while api is stopped ------------------------
+
+
+def test_the_bootstrap_runs_in_its_service_while_api_is_stopped_then_the_invite(full: Run) -> None:
+    """DC-4479-02: `bootstrap-owner` (no logging driver), never `run ... api`; demo, so no
+    `--live`; then api again, healthy, before the token is asked for."""
+    assert full.docker == BOOTSTRAP
+    assert full.sequence == [
+        "docker stop",
+        "docker run",
+        "docker up",
+        *(f"curl {r}" for r in ORDER),
+    ]
+
+
+def test_the_bootstrap_output_reaches_the_terminal_and_nothing_else(full: Run) -> None:
+    """The CLI prints the token once on its TTY: the script neither captures nor copies it."""
+    assert full.proc.stderr.count(CLI_PRINT) == 1 and CLI_PRINT not in full.proc.stdout
+    assert [name for name, text in full.logs.items() if CLI_PRINT in text] == ["scenario.json"]
+
+
+@pytest.mark.parametrize(
+    ("docker", "message", "made"),
+    [
+        ({"stop": 1}, "could not stop api", 1),
+        ({"run": 12}, "confirmation_mismatch", 2),
+        ({"run": 17}, "owner_exists", 2),
+        ({"run": 9}, "kek_unproven", 2),
+        ({"run": 6}, "audit_unavailable", 2),
+        ({"up": 1}, "did not get healthy", 3),
+    ],
+    ids=["stop", "phrase", "owner-exists", "kek", "audit", "up"],
+)
+def test_a_failed_bootstrap_step_stops_the_run(
+    tmp_path: Path, docker: dict[str, int], message: str, made: int
+) -> None:
+    stopped = run(tmp_path, full_run(), ANSWERS, docker=docker)
+    assert stopped.proc.returncode == 1 and message in stopped.proc.stderr
+    assert stopped.docker == BOOTSTRAP[:made] and stopped.records == []
+    assert [secret for secret in SECRETS if secret in stopped.proc.stderr] == []
+
+
+def test_a_malformed_email_stops_before_any_call(tmp_path: Path) -> None:
+    stopped = run(tmp_path, full_run(), ["owner"])
+    assert stopped.proc.returncode == 1 and "an email whose part before @" in stopped.proc.stderr
+    assert stopped.docker == [] and stopped.records == []
 
 
 # --- the run: 22's operations, in order, with valid bodies ---------------------------------------
@@ -257,7 +335,7 @@ def test_every_body_is_valid_against_22_and_carries_what_was_typed(full: Run) ->
             assert record.get("schema_errors") == [], record["route"]
         assert all(record["body_ok"].values()), record
     assert sum("schema_errors" in record for record in full.records) == len(ORDER) - 1
-    assert [r["route"] for r in full.records if not r["body_ok"]] == [ORDER[0]]
+    assert [r["route"] for r in full.records if not r["body_ok"]] == [GET_INVITE]
     assert full.records[0]["body_keys"] is None  # getInvite sends no body
     assert all("content-type" in r["header_names"] for r in full.records[1:])
 
@@ -272,7 +350,7 @@ def test_only_the_session_operations_carry_the_bearer_and_the_double_submit_toke
 
 def test_the_writes_carry_a_fresh_idempotency_key(full: Run) -> None:
     keys = {r["route"]: r.get("idempotency_key_is_uuid4") for r in full.records}
-    assert keys[ORDER[5]] is True and keys[ORDER[7]] is True
+    assert keys[CREATE] is True and keys[IMPORT] is True
     assert len({r["idempotency_key"] for r in full.records if "idempotency_key" in r}) == 2
 
 
@@ -289,7 +367,8 @@ def test_no_typed_secret_reaches_stdout_stderr_an_argument_or_a_record(full: Run
     seen = {"stdout": full.proc.stdout, "stderr": full.proc.stderr, **written}
     leaks = [(s, where) for s in SECRETS for where, text in seen.items() if s in text]
     assert leaks == []
-    assert {"argv.jsonl", "python3.argv", "requests.jsonl"} <= set(full.logs)
+    logs = {"argv.jsonl", "docker.jsonl", "python3.argv", "requests.jsonl", "sequence.log"}
+    assert logs <= set(full.logs)
 
 
 def test_curl_gets_only_fixed_options_on_its_command_line(full: Run) -> None:
@@ -326,57 +405,59 @@ def test_the_guards_come_before_the_first_prompt() -> None:
 # --- refusals: the run stops with a plain message and a non-zero status --------------------------
 
 
-def _replaced(index: int, calls: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    scenario = full_run()
-    scenario[ORDER[index]] = calls
-    return scenario
-
-
 REFUSED_INVITE = problem(404, "not_found", "This invitation link is not valid.")
 BAD_CODE = problem(422, "invalid_code", "invalid code")
 BAD_FACTOR = problem(401, "mfa_invalid", "invalid or expired code")
 BAD_STEP_UP = problem(401, "mfa_invalid", "Invalid password or code.", failures_remaining=2)
+UID_TAKEN = problem(409, "conflict", "This UID is already registered as Bybit demo main.")
 KEY_REFUSED = problem(
     422, "validation_failed", "The key was not imported.",
     errors=[{"field": "api_key", "rule": "key_ip_whitelist_mismatch", "message": "m"}],
     verification={**VERDICT, "passed": False, "ip_whitelist_matches_egress": False},
 )  # fmt: skip
+VIEWER = answer(200, {"status": "active", "role": "viewer", "recovery_codes": ["rc"]})
 
 
 @pytest.mark.parametrize(
-    ("index", "calls", "answers", "message", "made"),
+    ("route", "calls", "answers", "message", "made"),
     [
-        (0, [REFUSED_INVITE], ANSWERS[:1], "the invite token is not valid", 1),
-        (0, [{"exit": 7}], ANSWERS[:1], "did not answer", 1),
-        (1, [problem(422, "password_policy", "too_short")], ANSWERS[:3], "too_short", 2),
-        (2, [BAD_CODE] * 3, ANSWERS[:3] + [CODES[0]] * 3, "refused three times", 5),
-        (2, [answer(200, {"status": "active", "role": "viewer", "recovery_codes": ["rc"]})],
-         ANSWERS[:4], "not owner", 3),
-        (3, [problem(401, "invalid_credentials", "invalid credentials")], ANSWERS[:5],
+        (GET_INVITE, [REFUSED_INVITE], ANSWERS[:2], "the invite token is not valid", 1),
+        (GET_INVITE, [{"exit": 7}], ANSWERS[:2], "did not answer", 1),
+        (REDEEM, [problem(422, "password_policy", "too_short")], ANSWERS[:4], "too_short", 2),
+        (CONFIRM, [BAD_CODE] * 3, ANSWERS[:4] + [CODES[0]] * 3, "refused three times", 5),
+        (CONFIRM, [VIEWER], ANSWERS[:5], "not owner", 3),
+        (LOGIN, [problem(401, "invalid_credentials", "invalid credentials")], ANSWERS[:5],
          "sign-in was refused", 4),
-        (4, [BAD_FACTOR] * 3, ANSWERS[:5] + [CODES[1]] * 3, "refused three times", 7),
-        (5, [problem(404, "not_found", "Not Found")], ANSWERS[:12], "#895", 6),
-        (6, [BAD_STEP_UP] * 2, ANSWERS + [CODES[2]], "refused twice", 8),
-        (7, [KEY_REFUSED], ANSWERS, "key_ip_whitelist_mismatch", 8),
-        (7, [problem(503, "exchange_unavailable", "no verdict")], ANSWERS, "no verdict", 8),
+        (VERIFY, [BAD_FACTOR] * 3, ANSWERS[:5] + [CODES[1]] * 3, "refused three times", 7),
+        (STEP_UP, [BAD_STEP_UP] * 2, ANSWERS + [CODES[2]], "refused twice", 7),
+        (CREATE, [problem(404, "not_found", "Not Found")], ANSWERS,
+         "does not serve POST /exchange-accounts", 7),
+        (CREATE, [UID_TAKEN], ANSWERS, "already registered as Bybit demo main", 7),
+        (IMPORT, [KEY_REFUSED], ANSWERS, "key_ip_whitelist_mismatch", 8),
+        (IMPORT, [problem(503, "exchange_unavailable", "no verdict")], ANSWERS, "no verdict", 8),
     ],
     ids=["invite-unknown", "api-down", "password-policy", "enrolment-code", "not-owner",
-         "sign-in", "second-factor", "accounts-not-served", "step-up", "key-refused",
+         "sign-in", "second-factor", "step-up", "older-backend", "uid-taken", "key-refused",
          "exchange-unavailable"],
 )  # fmt: skip
 def test_a_refused_step_stops_the_run(
-    tmp_path: Path, index: int, calls: list[dict[str, Any]], answers: list[str], message: str,
+    tmp_path: Path, route: str, calls: list[dict[str, Any]], answers: list[str], message: str,
     made: int,
 ) -> None:  # fmt: skip
-    refused = run(tmp_path, _replaced(index, calls), answers)
+    scenario = full_run()
+    scenario[route] = calls
+    refused = run(tmp_path, scenario, answers)
     assert refused.proc.returncode == 1
     assert message in refused.proc.stderr
-    assert len(refused.records) == made and set(refused.routes) <= set(ORDER[: index + 1])
+    assert len(refused.records) == made
+    assert set(refused.routes) <= set(ORDER[: ORDER.index(route) + 1])
     assert [secret for secret in SECRETS if secret in refused.proc.stderr] == []
 
 
 def test_a_refused_key_prints_its_verdict_and_never_the_egress_address(tmp_path: Path) -> None:
-    refused = run(tmp_path, _replaced(7, [KEY_REFUSED]), ANSWERS)
+    scenario = full_run()
+    scenario[IMPORT] = [KEY_REFUSED]
+    refused = run(tmp_path, scenario, ANSWERS)
     assert "passed: false" in refused.proc.stdout.splitlines()
     assert "ip_whitelist_matches_egress: false" in refused.proc.stdout.splitlines()
     assert EGRESS not in refused.proc.stdout + refused.proc.stderr
@@ -385,10 +466,10 @@ def test_a_refused_key_prints_its_verdict_and_never_the_egress_address(tmp_path:
 @pytest.mark.parametrize(
     ("answers", "message"),
     [
-        (["not a token!"], "not an invite token"),
-        ([TOKEN, PASSWORD, PASSWORD + "x"], "the two passwords differ"),
-        ([TOKEN, "short", "short"], "12 to 512 characters"),
-        (ANSWERS[:3] + ["12345"], "6 digits"),
+        ([EMAIL, "not a token!"], "not an invite token"),
+        ([EMAIL, TOKEN, PASSWORD, PASSWORD + "x"], "the two passwords differ"),
+        ([EMAIL, TOKEN, "short", "short"], "12 to 512 characters"),
+        (ANSWERS[:4] + ["12345"], "6 digits"),
         (ANSWERS[:6] + ["12ab"], "4 to 20 digits"),
     ],
     ids=["token", "passwords-differ", "password-short", "code", "uid"],
@@ -405,29 +486,31 @@ def test_a_malformed_answer_stops_before_it_is_sent(
 # --- the step-up: 22's challenge and session rotation --------------------------------------------
 
 
-def test_a_step_up_challenge_on_the_import_is_answered_and_the_import_sent_again(
-    tmp_path: Path,
+@pytest.mark.parametrize("route", [CREATE, IMPORT])
+def test_a_step_up_challenge_is_answered_and_the_held_request_sent_again(
+    tmp_path: Path, route: str
 ) -> None:
     scenario = full_run()
     challenge = problem(403, "step_up_required", "Re-enter your password and code.",
                         action_class="keys", challenge_id=CHALLENGE_ID)  # fmt: skip
-    scenario[ORDER[7]] = [challenge, scenario[ORDER[7]][0]]
-    again = dict(scenario[ORDER[6]][0])
+    scenario[route] = [challenge, scenario[route][0]]
+    again = dict(scenario[STEP_UP][0])
     again["expect"] = {"password": PASSWORD, "code": "112358", "challenge_id": CHALLENGE_ID}
-    scenario[ORDER[6]] = [scenario[ORDER[6]][0], again]
+    scenario[STEP_UP] = [scenario[STEP_UP][0], again]
     resent = run(tmp_path, scenario, [*ANSWERS, "112358"], schemas=True)
     assert resent.proc.returncode == 0, resent.proc.stderr
-    assert resent.routes == [*ORDER, ORDER[6], ORDER[7]]
+    at = ORDER.index(route) + 1
+    assert resent.routes == [*ORDER[:at], STEP_UP, route, *ORDER[at:]]
     assert all(all(r["body_ok"].values()) for r in resent.records)
-    imports = [r["idempotency_key"] for r in resent.records if r["route"] == ORDER[7]]
-    assert len(imports) == 2 and imports[0] == imports[1]  # the held request, sent again as is
+    held = [r["idempotency_key"] for r in resent.records if r["route"] == route]
+    assert len(held) == 2 and held[0] == held[1]  # the held request, sent again as is
 
 
 def test_a_step_up_that_rotates_the_session_is_followed(tmp_path: Path) -> None:
     """22 (SR-013): the step-up's 200 carries the new access token and sets the new CSRF cookie;
     the served code does not rotate yet, and the script takes whichever it is given."""
     scenario = full_run()
-    rotated = scenario[ORDER[6]][0]
+    rotated = scenario[STEP_UP][0]
     rotated["body"] = {
         **rotated["body"],
         "tokens": {"access_token": ROTATED["access"], "token_type": "Bearer", "expires_in": 600},
@@ -435,7 +518,8 @@ def test_a_step_up_that_rotates_the_session_is_followed(tmp_path: Path) -> None:
     rotated |= {"cookies": {"__Host-cv_csrf": ROTATED["csrf"]}, "session": ROTATED}
     followed = run(tmp_path, scenario, ANSWERS)
     assert followed.proc.returncode == 0, followed.proc.stderr
-    assert followed.records[-1]["session_ok"] is True  # the import used the rotated session
+    after = [r["session_ok"] for r in followed.records if r["route"] in (CREATE, IMPORT)]
+    assert after == [True, True]  # the account and the key used the rotated session
 
 
 # --- a second run: the invite redeemed, the account registered -----------------------------------
@@ -444,15 +528,17 @@ def test_a_step_up_that_rotates_the_session_is_followed(tmp_path: Path) -> None:
 def test_skip_invite_and_account_id_start_at_the_sign_in_and_reuse_the_account(
     tmp_path: Path,
 ) -> None:
+    scenario = full_run()
+    scenario[LOGIN][0]["expect"] = {"identifier": IDENTIFIER, "password": PASSWORD}
     answers = [IDENTIFIER, PASSWORD, CODES[1], EXCHANGE_UID, "", "", API_KEY, API_SECRET, CODES[2]]
-    again = run(tmp_path, full_run(), answers, "--skip-invite", "--account-id", ACCOUNT_ID)
+    again = run(tmp_path, scenario, answers, "--skip-invite", "--account-id", ACCOUNT_ID)
     assert again.proc.returncode == 0, again.proc.stderr
-    assert again.routes == [ORDER[3], ORDER[4], ORDER[6], ORDER[7]]
-    assert all(r["path_ok"] for r in again.records)
+    assert again.routes == [LOGIN, VERIFY, STEP_UP, IMPORT] and again.docker == []
+    assert all(r["path_ok"] and all(r["body_ok"].values()) for r in again.records)
     assert again.proc.stdout.splitlines() == VERDICT_LINES
 
 
 @pytest.mark.parametrize("args", [["--account-id", "not-a-uuid"], ["--bogus"], ["--account-id"]])
 def test_bad_arguments_stop_before_any_prompt(tmp_path: Path, args: list[str]) -> None:
     stopped = run(tmp_path, full_run(), ANSWERS, *args)
-    assert stopped.proc.returncode == 2 and stopped.records == []
+    assert stopped.proc.returncode == 2 and stopped.records == [] and stopped.docker == []
