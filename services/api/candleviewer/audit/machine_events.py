@@ -62,8 +62,9 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
 A sink serves one event loop (D6, #913 L2): the one it was built on, or, built outside one, that
 of its first checked call. `append`, `head`, `seed`, `start` and `stop` each refuse a call from
 any other loop, or from a thread that runs none, with `MachineEventWrongLoop` before anything is
-read or written, logged CRITICAL as a page. The order lane (29 CV-C13) has a sink of its own, on
-its own loop and WAL file, besides any the serving loop holds (E29-T04's ruling Q13).
+read or written; the first refusal of each `APPEND_FAILURE_COOLDOWN_S` window, on the sink's
+clock, is logged CRITICAL as a page (CR-S3L2-08). The order lane (29 CV-C13) has a sink of its
+own, on its own loop and WAL file, besides any the serving loop holds (E29-T04's ruling Q13).
 
 Rows are dataclass instances and frames the dicts `dataclasses.asdict` gives. `MachineEventRow`
 lives in `statechart/plugins/audit.py` and is named here for annotations only: a run-time import
@@ -77,6 +78,7 @@ import dataclasses
 import json
 import os
 import re
+import threading
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -309,8 +311,11 @@ class MachineEventWalSink:
         self._clock, self._sleep = clock, sleep
         self._metrics = metrics or SinkMetrics()
         #: D6: the event loop the sink serves, the one it was built on, else its first checked
-        #: call's (`_on_its_loop`).
+        #: call's (`_on_its_loop`); when a refusal from another loop last paged, and the lock the
+        #: refusing threads take to read and set it (CR-S3L2-08).
         self._loop = _running_loop()
+        self._wrong_loop_paged_at: datetime | None = None
+        self._wrong_loop_guard = threading.Lock()
         self._wal: AuditWal | None = None
         self._lock: FileIO | None = None
         self._task: asyncio.Task[None] | None = None
@@ -352,13 +357,20 @@ class MachineEventWalSink:
 
     def _on_its_loop(self) -> None:
         """D6: a call from any loop but the sink's own, or from none, is `MachineEventWrongLoop`,
-        before anything is read or written. A sink built outside a loop serves its first checked
-        call's."""
+        before anything is read or written, the first of each `APPEND_FAILURE_COOLDOWN_S` window
+        on the sink's clock paged, as `_not_running` pages (CR-S3L2-08). A sink built outside a
+        loop serves its first checked call's."""
         running = _running_loop()
         if self._loop is None:
             self._loop = running
         if running is None or running is not self._loop:
-            logger().critical("machine_events.wrong_loop", cv_page=True)
+            now, cooldown = self._clock(), timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
+            with self._wrong_loop_guard:
+                paged, first = self._wrong_loop_paged_at, False
+                if paged is None or not timedelta(0) <= now - paged < cooldown:
+                    self._wrong_loop_paged_at, first = now, True
+            if first:
+                logger().critical("machine_events.wrong_loop", cv_page=True)
             raise MachineEventWrongLoop("the machine-event sink serves another event loop")
 
     def head(self, key: ChainKey) -> str | None:

@@ -76,8 +76,10 @@ One loop, one file (D6, #913 L2): a writer serves one event loop, the one it was
 built outside one, that of its first checked call; its lock, events and tasks are that loop's.
 `start()`, `flush()`, `stop()`, `emit()`, `emit_keyed()`, `ingest()` and `ingest_counted()` each
 refuse a call from any other loop with `AuditWriterWrongLoop`, an `AuditUnavailable`, before
-anything is read, counted or written, logged CRITICAL as a page; `build()` and the counters touch
-nothing of the loop's and are not checked. An `exclusive` writer (the order lane's, 29 CV-C13)
+anything is read, counted or written; the first refusal of each `APPEND_FAILURE_COOLDOWN` window,
+on the writer's clock, is logged CRITICAL as a page (CR-S3L2-08), so a wiring defect pages once a
+window, never once a call. `build()` and the counters touch nothing of the loop's and are not
+checked. An `exclusive` writer (the order lane's, 29 CV-C13)
 takes `lock_wal_file`'s lock before it opens its WAL and holds it until its `stop()` has ended, so
 no second writer ever opens the file; once stopped, it is not started again.
 """
@@ -86,6 +88,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
@@ -229,6 +232,10 @@ class AuditWriter:
         self._repository = repository
         #: D6: the event loop the writer serves (module docstring, `_on_its_loop`).
         self._loop = _running_loop()
+        #: When a refusal from another loop last paged, and the lock the refusing threads take
+        #: to read and set it, so one window pages once (CR-S3L2-08).
+        self._wrong_loop_paged_at: datetime | None = None
+        self._wrong_loop_guard = threading.Lock()
         self._exclusive = exclusive
         #: An exclusive writer's lock on `<wal>.lock`, taken before the WAL is opened (D6).
         self._wal_file: FileIO | None = lock_wal_file(_path(wal_path)) if exclusive else None
@@ -413,13 +420,20 @@ class AuditWriter:
 
     def _on_its_loop(self) -> None:
         """D6: a call from any loop but the writer's own, or from none, is `AuditWriterWrongLoop`
-        before anything is read, counted or written. A writer built outside a loop serves its
-        first checked call's."""
+        before anything is read, counted or written, the first of each `APPEND_FAILURE_COOLDOWN`
+        window on the writer's clock paged (CR-S3L2-08; a clock stepped back reads as expired).
+        A writer built outside a loop serves its first checked call's."""
         running = _running_loop()
         if self._loop is None:
             self._loop = running
         if running is None or running is not self._loop:
-            logger().critical("audit_writer_wrong_loop", cv_page=True)
+            now = self._clock()
+            with self._wrong_loop_guard:
+                paged, first = self._wrong_loop_paged_at, False
+                if paged is None or not timedelta(0) <= now - paged < APPEND_FAILURE_COOLDOWN:
+                    self._wrong_loop_paged_at, first = now, True
+            if first:
+                logger().critical("audit_writer_wrong_loop", cv_page=True)
             raise AuditWriterWrongLoop("the audit writer serves another event loop")
 
     def build(
