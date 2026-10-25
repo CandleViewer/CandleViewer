@@ -12,15 +12,16 @@ anything is answered:
    Enforcement).
 3. Key id (FX-S01): a signed request, one carrying any of the four auth headers, must carry a
    pack key id (`pack.fixture_key_ids`) exactly as its key header; the `fixture-<scenario>-NNNN`
-   shape alone is not enough. Otherwise it is never answered and the transport latches.
+   shape alone is not enough. Otherwise it is never answered and the transport latches. An
+   unsigned request is answered only under `/v5/market/` (`is_public_path`, normalised as fund
+   paths are); any other is refused as `refused_key`, without a latch or a P0.
 4. Signature (FX-S02): HMAC-SHA256 with the derived secret of the scenario the key is stored under
    (`pack.derived_secret`), over the string the adapter's signer has M2 sign: timestamp, key id,
    receive window, then the query string for GET and DELETE or the body otherwise (the REST
    client's `_payload_string`). Compared in constant time; a mismatch answers 10004.
 
-The venue's hosts and header names are this stub's vocabulary by design (ADR-0036, Enforcement): the
-three lines that spell them carry justified suppressions until S9 gives `cvdev/**` its reviewed
-exclusions in the two adapter-vocabulary rules.
+The venue's hosts and header names are this stub's vocabulary by design (ADR-0036, Enforcement), so
+`cvdev/**` is excluded from the two adapter-vocabulary Semgrep rules (S9).
 
 This module decides and holds no state; `transport.FixtureTransport` refuses, latches, logs and
 answers. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
@@ -33,28 +34,29 @@ import hmac
 import posixpath
 from dataclasses import dataclass
 from typing import Final
+from urllib.parse import unquote
 
 import httpx
 
-# nosemgrep: cv-adapter-isolation reason=adr-0036 owner=@CandleViewer/security review=2027-01-31
 from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS
 from cvdev.account_fixture.pack import derived_secret
 from cvdev.account_fixture.requestlog import HostEnv, KeyClass, Refusal
 
 #: The adapter's host table names no host per environment, so the demo and testnet hosts the guard
 #: tells apart are spelled here; the tests pin both to `ALLOWED_REST_HOSTS`. The rest are live.
-# nosemgrep: cv-adapter-isolation reason=adr-0036 owner=@CandleViewer/security review=2027-01-31
 _HOSTS: Final = ("api-demo.bybit.com", "api-testnet.bybit.com")
 DEMO_REST_HOST, TESTNET_REST_HOST = _HOSTS
 #: What the signer sends (the REST client's signed path): key id, timestamp, window, signature.
-# nosemgrep: cv-adapter-isolation,cv-bybit-vocabulary-leak reason=adr-0036 owner=@CandleViewer/security review=2027-01-31  # noqa: E501 - fixed marker grammar (#2893)
 _AUTH_HEADERS: Final = ("X-BAPI-API-KEY", "X-BAPI-TIMESTAMP", "X-BAPI-RECV-WINDOW", "X-BAPI-SIGN")
 KEY_HEADER, TIMESTAMP_HEADER, RECV_WINDOW_HEADER, SIGN_HEADER = _AUTH_HEADERS
 FUND_PATH_PREFIX: Final = "/v5/asset/"
 #: The read-only gate's reason code on a key-id trip (ADR-0036 decision 4).
 GUARD_REASON_CODE: Final = "account_fixture_guard"
 _FUND_SEGMENTS: Final = FUND_PATH_PREFIX.strip("/").split("/")
-_QUERY_SIGNED: Final = frozenset({"GET", "DELETE"})
+#: The public market allow-list: the only prefix an unsigned request is answered under (guard 3).
+PUBLIC_PATH_PREFIX: Final = "/v5/market/"
+_PUBLIC_SEGMENTS: Final = PUBLIC_PATH_PREFIX.strip("/").split("/")
+QUERY_SIGNED: Final = frozenset({"GET", "DELETE"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,10 +81,22 @@ def host_env(host: str) -> HostEnv | None:
     return "testnet" if host == TESTNET_REST_HOST else "live"
 
 
+def _segments(path: str) -> list[str]:
+    """`path`'s segments, percent-decoded until nothing decodes, lower-cased, with repeated
+    slashes and dot segments resolved. Each decode that changes the text shortens it."""
+    while (decoded := unquote(path)) != path:
+        path = decoded
+    return [part for part in posixpath.normpath(path.lower()).split("/") if part]
+
+
 def is_fund_path(path: str) -> bool:
-    """Under `/v5/asset/`, whatever the case, repeated slashes or (decoded) dot segments."""
-    segments = [part for part in posixpath.normpath(path.lower()).split("/") if part]
-    return segments[:2] == _FUND_SEGMENTS
+    """Under `/v5/asset/`, whatever the case, repeated slashes, percent-encoding or dot segments."""
+    return _segments(path)[:2] == _FUND_SEGMENTS
+
+
+def is_public_path(path: str) -> bool:
+    """Under `/v5/market/`, normalised as in `is_fund_path`: where an unsigned call may go."""
+    return _segments(path)[:2] == _PUBLIC_SEGMENTS
 
 
 def stored_under(key_id: str) -> str:
@@ -116,7 +130,7 @@ def signature_verifies(request: httpx.Request, key_id: str, body: bytes) -> bool
     given = headers.get(SIGN_HEADER)
     if timestamp is None or window is None or given is None:
         return False
-    payload = request.url.query if request.method in _QUERY_SIGNED else body
+    payload = request.url.query if request.method in QUERY_SIGNED else body
     message = f"{timestamp}{key_id}{window}".encode() + payload
     secret = derived_secret(stored_under(key_id)).encode()
     expected = hmac.new(secret, message, hashlib.sha256).hexdigest()
