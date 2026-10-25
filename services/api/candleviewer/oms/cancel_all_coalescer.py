@@ -15,12 +15,17 @@ through as it is but a fold member's `cancel_order`, which meets its fold's `Can
   behind the per-UID spacer (`order.cancel_all`, 1/s per UID), and answers each member by its own
   ack; a member the acks do not name sends its own cancel, and so does every member of a fold that
   is abandoned (a member that never arrives, the gather's bound, a spacer slot past its wait).
-- **The residual** (named for the security look, as ruled): an order placed on the symbol between
-  the coverage read and the venue call is cancelled by the venue's call too, with no B1 `CANCEL`
-  of its own; B1 learns of it from the private stream and reconciliation, as of any cancel it did
-  not send (24 Sec.8.6), and the coalescer logs each order the call took that was no member
-  (`oms_cancel_all_took_non_member`). The window is the gather's bound plus the spacer's wait, at
-  most `GATHER_S + SPACER_WAIT_S`.
+- **The residual** (named for the security look, as ruled): an order placed on the symbol after
+  the venue answered the coverage read and before it runs the call is cancelled by that call too,
+  with no command record naming an actor: no B1 `CANCEL` and no `orders.cancel` of its own. A
+  bound row still takes the venue's push as `REMOTE_CANCELLED` (24 Sec.8.12), with its step row
+  and audit record, and reconciliation settles the rest, as for any cancel B1 did not send (24
+  Sec.8.6); the coalescer logs each order the call took that was no member
+  (`oms_cancel_all_took_non_member`). The window is at most the coverage read's bound
+  (`cancel_all.READ_TIMEOUT_S`, 2 s) before the fold opens, then the gather's (`GATHER_S`, 1 s),
+  the spacer's wait (`SPACER_WAIT_S`, 2 s) and the trading port's `critical`-lane token wait (the
+  adapter's `CRITICAL_WAIT_S`, 5 s, which also bounds its retries' pauses), plus one round trip:
+  10 s and a round trip, at its widest under rate pressure, when cancel-alls happen.
 
 One event loop's, as the order lanes are. Nothing here imports the exchange adapter (C-2.2).
 """
