@@ -301,6 +301,138 @@ def test_rule_5_reads_labels_build_args_and_extensions_too(
     assert not any(HEX_64 in error for error in errors)
 
 
+# --- rule 5 (D-2): configs, env_file and the owner DSN, in every compose file --------------------
+
+#: A config from the environment whose name and variable hold no KEK.
+ENV_CONFIG = {"master": {"environment": "CV_MASTER"}}
+AT_THE_HANDLE = {"source": "master", "target": "/run/secrets/cv_kek"}  # Settings' default handle
+AT_MASTER = AT_THE_HANDLE | {"target": "/run/secrets/master"}  # KEK_ENV's CV_KEK_HANDLE
+
+
+def _with_configs(declared: dict[str, Any], service: dict[str, Any]) -> dict[str, Any]:
+    return {"configs": declared, "services": {"api": service}}
+
+
+@pytest.mark.parametrize(
+    ("compose", "why"),
+    [
+        (_with_configs(ENV_CONFIG, {"configs": [AT_THE_HANDLE]}),
+         "mounts its KEK from config 'master'"),
+        (_with_configs(ENV_CONFIG, {"configs": [AT_THE_HANDLE | {"target": "run/secrets/cv_kek"}]}),
+         "mounts its KEK from config 'master'"),
+        (_with_configs(ENV_CONFIG, {"environment": KEK_ENV, "configs": [AT_MASTER]}),
+         "mounts its KEK from config 'master'"),
+        (_with_configs({"cv_kek_hex": {"environment": "CV_X"}}, {}), "config 'cv_kek_hex'"),
+        (_with_configs({"cv_kek": {"content": "x"}}, {}), "config 'cv_kek'"),
+        (_with_configs({"master": {"environment": "CV_KEK_HEX"}}, {}), "config 'master'"),
+        (_with_configs({"master": {"content": "kek: ${CV_KEK_HEX:?x}"}}, {}), "config 'master'"),
+        (_with_configs({"seed": {"content": f"seed: {HEX_64}\n"}}, {}),
+         "config 'seed': content holds inline key material"),
+    ],
+    ids=["default-handle", "relative-target", "handle-from-environment", "kek-name",
+         "kek-name-from-content", "kek-variable", "kek-variable-in-content", "content-material"],
+)  # fmt: skip
+def test_rule_5_takes_a_kek_from_a_file_config_only(compose: dict[str, Any], why: str) -> None:
+    """D-2: a compose config reaches a container as a file, as a secret does, from a host file,
+    the environment or inline content. One at a KEK handle, or named for a KEK or read from a
+    variable that is, comes from a host file (`file:` alone), and no content holds key material."""
+    errors = lint_compose.check_no_kek_in_environment(compose)
+    assert any(why in error for error in errors), errors
+    assert not any(HEX_64 in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "compose",
+    [
+        _with_configs({"cv_kek": {"file": "${CV_KEK_FILE:?x}"}},
+                      {"environment": {**KEK_ENV, "CV_KEK_HANDLE": "/run/secrets/cv_kek"},
+                       "configs": [{"source": "cv_kek", "target": "/run/secrets/cv_kek"}]}),
+        _with_configs(ENV_CONFIG, {"configs": ["master"]}),
+    ],
+    ids=["file-kek-at-its-handle", "neutral-config-elsewhere"],
+)  # fmt: skip
+def test_rule_5_keeps_a_config_from_a_file_or_one_that_holds_no_kek(
+    compose: dict[str, Any],
+) -> None:
+    """A config at the handle counts as mounted there, as a secret does; a neutral one from the
+    environment, mounted at its own path (/master), holds no KEK."""
+    assert lint_compose.check_no_kek_in_environment(compose) == []
+
+
+@pytest.mark.parametrize("service", ["api", "migrate", "bootstrap-owner"])
+@pytest.mark.parametrize(
+    "env_file",
+    ["demo.env", ["demo.env"], [{"path": "demo.env", "required": False}]],
+    ids=["string", "list", "long-form"],
+)
+def test_rule_5_refuses_an_env_file_on_api_migrate_and_bootstrap_owner(
+    service: str, env_file: object
+) -> None:
+    """D-2: an env_file hands a service names and values this rule never reads (a KEK, a handle,
+    the owner DSN); these three take each setting by name, in `environment:`."""
+    compose = {"services": {service: {"env_file": env_file}}}
+    errors = lint_compose.check_no_kek_in_environment(compose)
+    assert any(f"service '{service}': takes an env_file" in error for error in errors), errors
+    assert not any("demo.env" in error for error in errors)
+
+
+@pytest.mark.parametrize(
+    "env_file",
+    [".env", "./.env", ["../compose/.env"], [{"path": ".env", "required": True}]],
+    ids=["bare", "relative", "list", "long-form"],
+)
+def test_rule_5_refuses_the_operators_env_file_on_any_service(env_file: object) -> None:
+    """D-2: the operator's `.env` holds CV_PG_OWNER_DSN beside every secret: no service takes it
+    whole. Another service may take its own env file."""
+    errors = lint_compose.check_no_kek_in_environment({"services": {"x": {"env_file": env_file}}})
+    assert any("service 'x': takes the operator's .env" in error for error in errors), errors
+    own = {"services": {"x": {"env_file": "x.env"}}}
+    assert lint_compose.check_no_kek_in_environment(own) == []
+
+
+OWNER_DSN = "${CV_PG_OWNER_DSN:?x}"
+
+
+@pytest.mark.parametrize(
+    ("compose", "why"),
+    [
+        ({"services": {"api": {"environment": {"CV_PG_DSN": OWNER_DSN}}}},
+         "service 'api': environment CV_PG_DSN takes CV_PG_OWNER_DSN"),
+        ({"services": {"bootstrap-owner": {"environment": [f"CV_PG_DSN={OWNER_DSN}"]}}},
+         "service 'bootstrap-owner': environment CV_PG_DSN takes CV_PG_OWNER_DSN"),
+        ({"services": {"migrate": {"environment": {"CV_PG_OWNER_DSN": OWNER_DSN}}}},
+         "service 'migrate': environment CV_PG_OWNER_DSN takes CV_PG_OWNER_DSN"),
+        ({"services": {"x": {"environment": {"DSN": "${CV_PG_OWNER_DSN:-}"}}}},
+         "service 'x': environment DSN takes CV_PG_OWNER_DSN"),
+        ({"services": {"api": {"entrypoint": ["sh", "-c", "CV_PG_DSN=$CV_PG_OWNER_DSN exec x"]}}},
+         "service 'api': entrypoint takes CV_PG_OWNER_DSN"),
+        ({"configs": {"db": {"environment": "CV_PG_OWNER_DSN"}}},
+         "config 'db': carries the owner role's DSN"),
+        ({"configs": {"db": {"content": f"dsn: {OWNER_DSN}"}}},
+         "config 'db': carries the owner role's DSN"),
+    ],
+    ids=["api", "bootstrap-owner-list-form", "migrate-another-name", "another-service",
+         "api-entrypoint", "config-from-environment", "config-content"],
+)  # fmt: skip
+def test_rule_5_keeps_the_owner_dsn_to_migrates_cv_pg_dsn(
+    compose: dict[str, Any], why: str
+) -> None:
+    """D-2: the owner role's DSN reaches migrate alone, as its CV_PG_DSN, in every compose file:
+    through no other field of a service, and no secret or config from the environment."""
+    errors = lint_compose.check_no_kek_in_environment(compose)
+    assert any(why in error for error in errors), errors
+
+
+@pytest.mark.parametrize(
+    "dsn",
+    ["${CV_PG_OWNER_DSN:-postgresql+asyncpg://cv@postgres:5432/candleviewer}", OWNER_DSN],
+    ids=["base-default", "overlay-required"],
+)
+def test_rule_5_keeps_migrates_cv_pg_dsn_from_the_owner_dsn(dsn: str) -> None:
+    compose = {"services": {"migrate": {"environment": {"CV_PG_DSN": dsn}}}}
+    assert lint_compose.check_no_kek_in_environment(compose) == []
+
+
 # --- rule 6: the demo-host overlay ---------------------------------------------------------------
 
 #: The names the demo host's infra/compose/.env was provisioned with (#3180, 2026-10-25).
