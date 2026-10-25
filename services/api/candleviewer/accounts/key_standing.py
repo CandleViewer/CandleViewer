@@ -40,11 +40,14 @@ Read from the order lane; written on the serving loop (#913 slice 3 L4, 20-archi
 reconciler, the lane's notices), and each publishes anew the one snapshot a read answers from
 (`_State`: the accounts the last good read listed, their rejections and that read's age),
 by a single assignment, never changing one in place. `standing()` writes nothing and takes that
-reference once, so a read on another thread meets a write whole or not at all, and every read that
-begins after a write returns sees it (an attribute read is GIL-atomic). It reads the self-check's
-results once a call too, a key at a time with one `dict.get` each, never iterating them: the job
-replaces the mapping at each pass's key-list read and stores each key's result in it, on the
-serving loop.
+reference once, by one attribute read, which runs no Python code another thread could interleave:
+a read on another thread meets a write whole or not at all, and every read that begins after a
+write returns sees it. It reads the self-check's results once a call too, a key at a time with one
+`get` each, never iterating them: the job replaces the mapping at each pass's key-list read and
+stores each key's result in it, on the serving loop, never clearing or popping it. A UUID key's
+hash and comparison are Python code, so a store can land inside a `get`, but CPython restarts a
+lookup whose mapping changed under it: each `get` answers from the mapping before the store or
+after it.
 """
 
 from __future__ import annotations
@@ -85,7 +88,8 @@ def logger() -> Any:
 class SelfCheckResults(Protocol):
     """What the standing reads of the stored-key self-check (`selfcheck.KeySelfCheck`): each key's
     standing result, by key id. Read once a call, a key at a time and never iterated: the job
-    replaces the mapping at each pass and stores each key's result in it (module docstring)."""
+    replaces the mapping at each pass and stores each key's result in it, never clearing or popping
+    it (module docstring)."""
 
     @property
     def results(self) -> Mapping[UUID, KeyCheck]: ...

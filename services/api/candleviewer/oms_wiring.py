@@ -119,6 +119,7 @@ from candleviewer.oms.ports import (
     SubmissionPorts,
     SubmitActor,
     TierRequests,
+    TradingSwitches,
     announce_interim_port,
     announce_interim_ports,
 )
@@ -906,8 +907,9 @@ class OrderStateFeed:
 # item at a time), its own refusals of rejected credentials, which the route's gate reads on the
 # serving loop too (`ServedStandings.refused`, one dict read), the order-entry gate since L4
 # (`ServedGate`: the maintenance boolean, the key standing's one snapshot and the self-check's
-# results a key at a time, the account health's dict read and evidence, 20 Sec.6.2), the metrics and
-# the pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
+# results a key at a time, the account health's dict read and evidence, 20 Sec.6.2) and the
+# serving loop's tick a new submit meets first (`ServingTick`, one float), the metrics and the
+# pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
 # `OmsStores`): neither crosses.
 
 
@@ -975,11 +977,19 @@ class ServedProfiles:
 class ServedGate:
     """The order-entry gate as the lane asks it (C-2.21), read in place with no hop to the serving
     loop (#913 L4): each of its reads takes one source at one instant, safe from another thread (20
-    Sec.6.2), so a write is in force for every read that begins after it returns. A read that
-    overlaps writes to two sources may combine two instants, so the gate is read twice and admits
-    only when both reads do: a refusing write that lands inside the first is in force for the
-    second. An account whose rejected credential the lane notified (`ServedStandings`) is refused
-    first and at once, as the key standing holds it only once the notice lands (CR-S3L1B-04)."""
+    Sec.6.2), so a write is in force for every read that begins after it returns.
+
+    The second read is what makes that hold for the gate as a whole, never an optimisation to undo
+    (the orchestrator's ruling of 2026-10-25 18:27Z (1)): one read that overlaps writes to two of
+    the gate's sources, the key standing and the account health say, may take the one before its
+    refusing write and the other after its own admitting write, an admitting pair that no single
+    instant held. A refusing write that lands inside the first read is in force for the second,
+    which begins after it, so the lane admits only when two reads in a row admit.
+
+    An account whose rejected credential the lane notified (`ServedStandings`) is refused first and
+    at once, as the key standing holds it only once the notice lands (CR-S3L1B-04). A new submit
+    meets the serving loop's tick before the gate (`FencedSwitches`); the exit service reads the
+    gate unfenced."""
 
     def __init__(self, gate: OrderEntryCheck, standings: ServedStandings) -> None:
         self._gate, self._standings = gate, standings
@@ -989,6 +999,66 @@ class ServedGate:
             return NO_ACTIVE_KEY
         first = self._gate.refusal(account_id)
         return first if first is not None else self._gate.refusal(account_id)
+
+
+#: The serving loop's tick, in seconds (#913 L4; the orchestrator's ruling of 2026-10-25 19:19Z on
+#: CR-S3L4-04): how often the OMS stamps the serving loop's time there, and how old the last stamp
+#: may be before the lane admits no new submit, twice that: the 1 s within which a stalled serving
+#: loop refused a gate read before L4 read the gate in place.
+SERVING_TICK_S: Final = 0.5
+SERVING_STALE_S: Final = 2 * SERVING_TICK_S
+
+
+class ServingTick:
+    """The serving loop's tick, which the order lane reads in place (#913 L4; the ruling of
+    2026-10-25 19:19Z). Every write that could refuse at the gate runs on the serving loop (20
+    Sec.6.2), so while it stalls the gate's sources are frozen. On the serving loop, `run()` beats
+    every `SERVING_TICK_S`; from any thread, `stale()` answers whether the last beat is older than
+    `SERVING_STALE_S`. Sticky: however long the lane waits, only a beat of the serving loop ends
+    it. The beat's time is a single assignment, read in place."""
+
+    def __init__(
+        self,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        wait: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._clock, self._wait = clock, wait
+        self._beat_at = clock()  # built as the runtime starts: fresh until its first beat
+
+    def beat(self) -> None:
+        """The serving loop's time, on the serving loop only."""
+        self._beat_at = self._clock()
+
+    async def run(self) -> None:
+        """Beat every `SERVING_TICK_S` until cancelled (the runtime's stop), on the serving loop."""
+        while True:
+            self.beat()
+            await self._wait(SERVING_TICK_S)
+
+    def stale(self) -> bool:
+        return self._clock() - self._beat_at > SERVING_STALE_S
+
+
+class FencedSwitches:
+    """`TradingSwitches` for a new submit (#913 L4; the ruling of 2026-10-25 19:19Z): the route's
+    step 10, the pipeline's switches and a re-send read these. While the serving loop's tick is
+    stale, `OmsNotReady`, logged, and no switch is read; else the switches' own answer, whose first
+    refusal is the environment lock's fence (#913 L2): the two compose, either refusing on its own.
+    The exit service reads the switches themselves, never fenced by the tick, and a cancel,
+    cancel-all, a stop attach or a KILL reads none (C-2.6); the gate's own age bounds stay the
+    outer ones (20 Sec.6.2)."""
+
+    def __init__(self, switches: TradingSwitches, tick: ServingTick) -> None:
+        self._switches, self._tick = switches, tick
+
+    def refusal(
+        self, account_id: AccountId, environment: Environment
+    ) -> TradingDisabled | OmsNotReady | None:
+        if self._tick.stale():
+            _log().error("oms_submit_fenced", account_id=str(account_id), stale_s=SERVING_STALE_S)
+            raise OmsNotReady
+        return self._switches.refusal(account_id, environment)
 
 
 class ServedStandings:
@@ -1528,7 +1598,7 @@ class OrderRoute:
 
     accounts: AccountExistence
     arm_records: ArmRecords
-    switches: TradingSwitchesBinding
+    switches: TradingSwitches
     orders: OrderRead
     groups: GroupRead
     environment: Environment
@@ -1709,6 +1779,13 @@ def _heartbeat_ended(pager: Pager, task: asyncio.Task[None]) -> None:
         _page(pager, "oms_lane_heartbeat_ended")
 
 
+def _tick_ended(task: asyncio.Task[None]) -> None:
+    """A serving-loop tick that ended other than by its stop's cancel leaves every new submit
+    fenced (`FencedSwitches`), never admitted: logged by its error's class."""
+    if not task.cancelled() and (error := task.exception()) is not None:
+        _log().critical("oms_serving_tick_ended", error=type(error).__name__)
+
+
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
     """The tasks still running once `timeout_s` has passed, or none."""
     if not tasks:
@@ -1826,11 +1903,13 @@ class OmsRuntime:
         heartbeat: Callable[[EnvironmentLock, Pager], LaneHeartbeat] = LaneHeartbeat,
         fencing: Callable[[float], Awaitable[None]] = asyncio.sleep,
         watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        serving_tick: Callable[[], ServingTick] = ServingTick,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
         #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
         #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
         self._heartbeat, self._fencing, self._watch = heartbeat, fencing, watch
+        self._serving_tick = serving_tick
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._gate, self._standings = gate, standings
@@ -1850,6 +1929,8 @@ class OmsRuntime:
         #: The order lane while it runs for this start, composed or still asking the environment's
         #: lock (CR-S3L2-01/02); `stop()` stops it.
         self._lane: Lane | None = None
+        #: The serving loop's tick (`ServingTick`), from `start()` until the lane has stopped.
+        self._ticking: asyncio.Task[None] | None = None
         self._running: set[asyncio.Task[Any]] = set()
         self._failed = self._stopping = False
         #: The step `_compose` has reached, which a failed start logs and pages.
@@ -2001,24 +2082,27 @@ class OmsRuntime:
             _log().critical("oms_startup_failed", error=type(error).__name__)
 
     async def start(self) -> None:
-        """Start the order lane and compose the OMS on it, then spawn the startup task (20
-        Sec.6.2). A second call does nothing until `stop()`. What cannot be composed, the lane
-        included, fails the runtime closed, the lane stopped again; but an environment lock that
-        was not answered (Postgres unreachable) is asked again by the startup task, the runtime
-        `starting` meanwhile (CR-S3L2-01/02). The composition hands its parts to the runtime
-        itself, so a start cancelled once it has ended closes them before it stops the lane
-        (SEC-S3L2-05); the serving loop's watch of the lane runs from here to the stop
-        (SEC-S3L2-04)."""
+        """Start the serving loop's tick (`ServingTick`, L4) and the order lane, compose the OMS on
+        the lane, then spawn the startup task (20 Sec.6.2). A second call does nothing until
+        `stop()`. What cannot be composed, the lane included, fails the runtime closed, the tick
+        and the lane stopped again; but an environment lock that was not answered (Postgres
+        unreachable) is asked again by the startup task, the runtime `starting` meanwhile
+        (CR-S3L2-01/02). The composition hands its parts to the runtime itself, so a start
+        cancelled once it has ended closes them before it stops the lane (SEC-S3L2-05); the
+        serving loop's watch of the lane runs from here to the stop (SEC-S3L2-04)."""
         if self._loop is not None and not self._stopping:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
         self._lane_paged = threading.Lock()  # a new lane: its death pages anew
         lane = self._lane = self._lanes()
-        serving = Serving(self._loop, self._metrics)
+        tick, serving = self._serving_tick(), Serving(self._loop, self._metrics)
+        # the serving loop's tick, which a new submit meets on the lane (L4, ruling of 19:19Z)
+        self._ticking = spawn(tick.run(), name="oms-serving-tick")
+        self._ticking.add_done_callback(_tick_ended)
         try:
             self._phase = "lane"
             await lane.start()
-            await lane.call(self._compose(lane, serving))  # it hands its parts over itself
+            await lane.call(self._compose(lane, serving, tick))  # it hands its parts over itself
         except EnvironmentLockUnanswered:  # no other holder: the startup task asks again
             _log().warning("oms_environment_lock_unanswered", retry_s=SWEEP_RETRY_S[0])
         except Exception as exc:  # fail closed (C-2.21): never ready, no order admitted
@@ -2035,26 +2119,29 @@ class OmsRuntime:
                 if parts is not None:
                     await _closed(parts.closers, deadline)
             finally:  # cancelled again meanwhile or not (SEC-S3L1C-01)
+                self._untick()
                 self._lane = None
                 await lane.stop()
             raise
         if self._stopping:  # a stop began meanwhile and took what was composed (SEC-S3L2-05)
             return
-        self._startup = spawn(self._started(lane, serving), name="oms-startup")
+        self._startup = spawn(self._started(lane, serving, tick), name="oms-startup")
         self._startup.add_done_callback(self._startup_ended)
         self._watching = spawn(self._watched(), name="oms-lane-watch")
         self._watching.add_done_callback(self._watch_ended)
 
     async def _fail_closed(self, lane: Lane, error: Exception) -> None:
-        """A start that cannot compose fails the runtime closed (C-2.21): its lane stopped, logged
-        CRITICAL by its step and paged, `degraded` and never ready, no order admitted."""
+        """A start that cannot compose fails the runtime closed (C-2.21): the serving loop's tick
+        ended and its lane stopped, logged CRITICAL by its step and paged, `degraded` and never
+        ready, no order admitted."""
+        self._untick()
         self._lane = None
         await lane.stop()
         self._failed, phase = True, self._phase
         _log().critical("oms_runtime_failed_closed", phase=phase, error=type(error).__name__)
         _page(self._pager, f"oms_runtime_failed_closed: {phase}")
 
-    async def _composed_again(self, lane: Lane, serving: Serving) -> bool:
+    async def _composed_again(self, lane: Lane, serving: Serving, tick: ServingTick) -> bool:
         """CR-S3L2-01/02 (20 Sec.6.2): the start could not ask the environment's lock, which is no
         other holder, so this asks again, the whole composition with it, after the sweep's backoff
         on the runtime's sleep (`SWEEP_RETRY_S`), each failure logged, never ready meanwhile.
@@ -2069,7 +2156,7 @@ class OmsRuntime:
             await self._sleep(delay)
             delay = min(2 * delay, ceiling)
             try:
-                await lane.call(self._compose(lane, serving))
+                await lane.call(self._compose(lane, serving, tick))
             except EnvironmentLockUnanswered:
                 unanswered += 1
                 paged = unanswered == SWEEP_MAX_FAILURES
@@ -2091,13 +2178,13 @@ class OmsRuntime:
         close the stop gate (its complete reads and passes cancelled with the startup task, before
         the machines), the facade (it unwires B1's ports), the command port, the lane's own sink
         and audit writer, the trading port and its pool, each on its own loop, isolated, within its
-        share of what is left, and last the environment's lock (SEC-S3N-01); then stop the lane,
-        one still asking the lock included, and join its thread. All of it ends by
-        `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the OMS
-        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close. What a
-        composition handed over before the stop began is closed here; one that ends after it
-        closes what it built itself (SEC-S3L2-05). The serving loop's watch ends with the startup
-        task."""
+        share of what is left, and last the environment's lock (SEC-S3N-01); then end the serving
+        loop's tick, stop the lane, one still asking the lock included, and join its thread. All of
+        it ends by `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the
+        OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close.
+        What a composition handed over before the stop began is closed here; one that ends after
+        it closes what it built itself (SEC-S3L2-05). The serving loop's watch ends with the
+        startup task."""
         self._ready.clear()
         with self._handoff:
             self._stopping = True
@@ -2119,11 +2206,18 @@ class OmsRuntime:
         try:
             await _closed(closers, deadline)
         finally:
+            self._untick()  # the drain's submits met it; once the closers ran, none is left
             if lane is not None:  # cancelled or not: its own join bounds it (`LANE_JOIN_S`)
                 await lane.stop()
         self._failed = False
 
-    async def _started(self, lane: Lane, serving: Serving) -> None:
+    def _untick(self) -> None:
+        """End the serving loop's tick, if it runs: cancelled, which its callback never logs."""
+        ticking, self._ticking = self._ticking, None
+        if ticking is not None:
+            ticking.cancel()
+
+    async def _started(self, lane: Lane, serving: Serving, tick: ServingTick) -> None:
         """The startup sweep (20 Sec.6.2): a composition the environment's lock held back first
         (`_composed_again`), then step 1's waits, then what is left of the fencing grace since the
         lock was taken (`ENVIRONMENT_FENCE_GRACE_S`, SEC-S3L2-01), so a previous holder whose
@@ -2131,7 +2225,7 @@ class OmsRuntime:
         again after a backoff while the store or the audit fails them (any other error ends it
         `degraded` after `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A
         failure met while a stop runs ends it, cancelled, never retried."""
-        if self._parts is None and not await self._composed_again(lane, serving):
+        if self._parts is None and not await self._composed_again(lane, serving, tick):
             return
         await self._waited()
         parts, (delay, ceiling) = self._composed(), SWEEP_RETRY_S
@@ -2257,7 +2351,7 @@ class OmsRuntime:
         clock = self._ingestion.clock
         return clock is None or math.isfinite(clock.offset_age_s())
 
-    async def _compose(self, lane: Lane, serving: Serving) -> _Parts:
+    async def _compose(self, lane: Lane, serving: Serving, tick: ServingTick) -> _Parts:
         """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
         (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), the trading port
         and router, then over the pool, made here, the stores, without a bundle the probe of the
@@ -2289,6 +2383,8 @@ class OmsRuntime:
             fenced=fenced,
         )
         switches.announce(metrics=metrics)
+        # a new submit's, fenced while the serving loop stalls (L4); the exit service's never are
+        submits = FencedSwitches(switches, tick)
         self._phase = "sink"
         bundle = self._persistence
         sunk = StandaloneSink() if bundle is None else bundle.sink
@@ -2361,7 +2457,7 @@ class OmsRuntime:
             commands = OmsCommandPort(
                 router=router, accounts=command_accounts, orders=orders, stops=stops,
                 handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
-                switches=switches, audit=audit, submit_audit=audit, gate=gate, notices=notices,
+                switches=submits, audit=audit, submit_audit=audit, gate=gate, notices=notices,
                 now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s, figures=figures,
             )  # fmt: skip
             steps = OrderStepWriter(
@@ -2422,7 +2518,7 @@ class OmsRuntime:
                 instruments=instruments,
                 prices=ReferencePricesBinding(tickers, demand=asked),
                 profiles=profiles,
-                switches=switches,
+                switches=submits,
                 gate=gate,
                 audit=audit,
                 groups=TradeGroupRepository(stores.groups),
@@ -2440,7 +2536,7 @@ class OmsRuntime:
             )  # fmt: skip
             # `pg_stores`' one group adapter serves the system port and the scoped read alike.
             reader = TradeGroupReader(stores.groups)
-            route = OrderRoute(accounts, ports.arm_records, switches, orders, reader, env, machines)
+            route = OrderRoute(accounts, ports.arm_records, submits, orders, reader, env, machines)
             exits = OrderExits(ExitDeps(
                 machines=machines, commands=commands, orders=orders, stops=stops, audit=audit,
                 instruments=instruments, profiles=profiles,

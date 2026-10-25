@@ -228,9 +228,10 @@ def _log_dropped(owed: HealthTransition) -> None:
 class AccountHealthMonitor:
     """Health for every tracked account. Feed it evidence as it arrives and call `tick()` at
     least once a second to commit transitions and retry owed dead-man's-switch calls; `current()`
-    and `view()` derive on every read. Meant for one event loop, the one that runs the hook calls:
-    no locks and no I/O of its own, so not thread-safe. `drain()` waits for the calls at shutdown
-    and logs the calls still owed.
+    and `view()` derive on every read. Written on one event loop, the one that runs the hook calls,
+    with no locks and no I/O of its own, so it is fed and ticked there alone; from another thread
+    only `current()` is read, by the order lane (#913 slice 3 L4), for the reason its docstring
+    gives. `drain()` waits for the calls at shutdown and logs the calls still owed.
 
     An evidence call first commits any lapse the old evidence reached, so a down window that
     passed between two ticks is still a transition and a dead-man's-switch call, and returns the
