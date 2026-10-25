@@ -997,21 +997,22 @@ def test_a_step_into_a_state_that_takes_no_amend_is_422_as_at_admission() -> Non
 def test_a_gone_row_an_already_final_cancel_and_a_refusals_detail_are_written_down() -> None:
     """CR-S4D2A-07: step 11 says that a row its re-read no longer finds is `409 conflict`, as
     `OrderExits.amend` answers it; 15.5's reasons name `already_final` and a refusal's detail
-    keys, `step` (`ExitStep`'s four) and the class re-check's `reason` (`RECLASSIFIED`), beside
-    the record's own `reason`, its code."""
+    keys, `step` (`ExitStep`'s six, the amend route's `body` and `arm` among them, S4-D2b) and the
+    class re-check's `reason` (`RECLASSIFIED`), beside the record's own `reason`, its code."""
     assert "a row that read no longer finds is `409 conflict`, nothing sent." in _EXITS
     assert not _missing(
         _RECORDS,
         "A cancel that finds its order already final, nothing to send, is `orders.cancel` with "
         "outcome `success` and reason `already_final`, written before its `202` (§8.4).",
         "A refusal's detail names, beside `code`, the step that refused it where one did "
-        "(`step`: the route's `key`, `replay` or `guard`, or `class`, step 11's class "
-        "re-check), and the class re-check's refusal its cause too (`reason`: `reclassified`, "
-        "the class changed since step 4): the record's own `reason` is the code, "
-        "`detail.reason` the cause.",
+        "(`step`: the route's `key`, `replay` or `guard`, and an amend's `body` or `arm` too, or "
+        "`class`, step 11's class re-check), and the class re-check's refusal its cause too "
+        "(`reason`: `reclassified`, the class changed since step 4): the record's own `reason` "
+        "is the code, `detail.reason` the cause.",
     )
     assert (ALREADY_FINAL, RECLASSIFIED) == ("already_final", "reclassified")
-    assert set(get_args(ExitStep.__value__)) == {"key", "replay", "guard", "class"}
+    steps = {"key", "replay", "guard", "class", "body", "arm"}
+    assert set(get_args(ExitStep.__value__)) == steps
 
 
 def test_the_change_log_records_the_amend_judged_as_it_stands_and_the_exit_answers() -> None:
