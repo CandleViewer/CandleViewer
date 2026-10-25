@@ -213,7 +213,7 @@ class StreamPushes:
             case ToRow(row) | WaitOnRow(row):
                 await self._deliver(ctx, row, held=isinstance(d, WaitOnRow))
             case ToRecordedStop() if retry:
-                await self._stop(ctx, d, deadline)
+                await self._take_recorded_stop(ctx, d, deadline)
             case ToRecordedStop():  # a second one is not retried: the write was refused once
                 _log().error("stream_recorded_stop_unbindable", **self._ids(ctx))
                 self._counts.count("stop_unbindable")
@@ -229,7 +229,7 @@ class StreamPushes:
                     self._counts.count("undecided")  # fail closed until T06 keeps it (plan R2)
                     await self._open(ctx, "undecided", push.exec_id, placed=False)
 
-    async def _stop(self, ctx: _Ctx, d: ToRecordedStop, deadline: float) -> None:
+    async def _take_recorded_stop(self, ctx: _Ctx, d: ToRecordedStop, deadline: float) -> None:
         r = ctx.route
         try:
             await self._bounded(self._stops.take(ctx.account_id, d, r.push, r.event, ctx.ts_event))
