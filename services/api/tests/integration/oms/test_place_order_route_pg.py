@@ -201,7 +201,7 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
         stores=lambda: replace(  # the lane's own writer is the world's (#913 L2)
             pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
-            audit=lambda: world.writer,
+            audit=lambda _alarm: world.writer,
         ),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
     )  # fmt: skip

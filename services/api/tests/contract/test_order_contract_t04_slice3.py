@@ -16,7 +16,7 @@ from jsonschema.exceptions import ValidationError
 from candleviewer.accounts.verification import Refusal
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
-from candleviewer.audit.machine_events import MachineEventWrongLoop
+from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S, MachineEventWrongLoop
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterWrongLoop
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
@@ -24,6 +24,7 @@ from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
+    LANE_AUDIT_PAGE_S,
     LANE_AUDIT_STOP_S,
     LANE_WAL_PREFIX,
     REFERENCE_DEMAND_MAX,
@@ -667,9 +668,31 @@ def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> N
         "the sink's is `CV_MACHINE_EVENT_WAL_PATH` while no persistence bundle holds that file for "
         f"the serving loop, else `{LANE_WAL_PREFIX}<name>` beside it",
         f"(`{AuditWriterWrongLoop.__name__}`, an `{AuditUnavailable.__name__}`, so the audited "
-        f"action is refused; `{MachineEventWrongLoop.__name__}`), logged CRITICAL as a page",
+        f"action is refused; `{MachineEventWrongLoop.__name__}`), the first refusal of each "
+        f"{APPEND_FAILURE_COOLDOWN_S:g} s window, on its clock, logged CRITICAL as a page "
+        "(CR-S3L2-08)",
+        "The writer's fail-closed alarm, a refused append (its WAL full or unwritable) or its "
+        "flusher's death, pages through the runtime's pager (`cv_page`), the first of each "
+        f"{LANE_AUDIT_PAGE_S:g} s window per cause (`LANE_AUDIT_PAGE_S`), so an "
+        "`audit_unavailable` refusal is never a silent outage (ruling 4)",
         "each insert takes the chain lock (`pg_advisory_xact_lock`) as the serving writer's does",
         f"within its {LANE_AUDIT_STOP_S:g} s (`LANE_AUDIT_STOP_S`) stays in its WAL",
     )
     assert issubclass(AuditWriterWrongLoop, AuditUnavailable)
     assert "always to the order lane's own WAL sink" in _RUNTIME
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert (
+        "The composition's own unwind, a failed or a cancelled one, shares "
+        f"{OMS_STOP_RESERVE_S - LANE_JOIN_S:g} s (`OMS_STOP_RESERVE_S` less `LANE_JOIN_S`) among "
+        "its closers, so they fit that wait (SEC-S3L1CG-01)." in lane
+    )
+    volume = (OPENAPI_SPEC_PATH.parents[1] / "ops" / "runbooks" / "auth-rbac.md").read_text(
+        encoding="utf-8"
+    )
+    held = _between(volume, "**The audit volume (#2615).**", "- **Backup.**")
+    assert not _missing(  # CR-S3L2-07: every WAL the volume holds, the lane's own named
+        held,
+        "the OMS order lane's own audit WAL (`oms_lane.audit.wal`, its cursor and its `.lock`)",
+        "the machine-event WAL (`machine_events.wal`, its cursor and its `.lock`)",
+        "(`oms_lane.machine_events.wal`, the same three;",
+    )

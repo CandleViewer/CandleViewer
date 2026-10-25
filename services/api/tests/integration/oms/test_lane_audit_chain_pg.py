@@ -66,12 +66,18 @@ def _queued(watch: psycopg.Connection, waiters: int) -> bool:
     return False
 
 
+async def _quiet(cause: str) -> None:
+    """The runtime's alarm (ruling 4): none fires here, as no append is refused."""
+    raise AssertionError(cause)
+
+
 async def _lane_writer(dsn: str, tmp: Path) -> tuple[AuditWriter, SqlAlchemyRelationalRepository]:
     """The lane's writer as the runtime builds it, on the loop this runs on (the lane's)."""
     relational = SqlAlchemyRelationalRepository(dsn, "oms")
     wal = lane_audit_wal(Settings(audit_wal_path=str(tmp / "audit.wal")))
     try:
-        writer = build_lane_audit_writer(SqlAlchemyAuditRepository(relational), wal)
+        repository = SqlAlchemyAuditRepository(relational)
+        writer = build_lane_audit_writer(repository, wal, on_alarm=_quiet)
         await writer.start()
     except BaseException:
         await relational.dispose()

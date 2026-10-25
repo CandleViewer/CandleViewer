@@ -11,7 +11,7 @@ import asyncio
 import inspect
 import re
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -29,7 +29,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
-from candleviewer.audit.writer import keyed_record_id
+from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
@@ -50,7 +50,7 @@ from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemory
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
-from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
     SWEEP_MAX_FAILURES,
@@ -63,11 +63,12 @@ from candleviewer.oms_wiring import (
     build_oms_runtime,
     pg_stores,
 )
+from candleviewer.settings import OMS_STOP_RESERVE_S, Settings
 from candleviewer.settings import Environment as Env
-from candleviewer.settings import Settings
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
+from candleviewer.statechart_wiring import PersistOps
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder
@@ -167,17 +168,19 @@ class Writer:
     """The order lane's own audit writer the stores build (#913 L2): each append, by its action
     and reason; a keyed one stored as the writer stores it, under `keyed_record_id(action, name)`,
     so one whose id is already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587);
-    its start and stop land in `log`, the world's."""
+    its start and stop land in `log`, the world's, and each stop's grace in `graces`."""
 
     actions: list[tuple[str, str | None]] = field(default_factory=list)
     stored: set[UUID] = field(default_factory=set)
     log: list[str] = field(default_factory=list)
+    graces: list[float] = field(default_factory=list)
 
     async def start(self) -> None:
         self.log.append("audit.start")
 
     async def stop(self, grace_s: float = 5.0) -> None:
         self.log.append("audit.stop")
+        self.graces.append(grace_s)
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.actions.append((action, fields.get("reason")))
@@ -266,6 +269,8 @@ class World:
     audit_fails: Exception | None = None
     lanes: list[InlineLane] = field(default_factory=list)
     sinks: list[Sink] = field(default_factory=list)
+    #: The alarm each build of the lane's writer was given (ruling 4).
+    alarms: list[Callable[[str], Awaitable[None]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.writer.log = self.log
@@ -281,7 +286,9 @@ class World:
         async def release() -> None:
             self.log.append("pool.release")
 
-        def audit() -> Writer:
+        def audit(alarm: Callable[[str], Awaitable[None]] | None = None) -> Writer:
+            if alarm is not None:
+                self.alarms.append(alarm)
             if self.audit_fails is not None:
                 raise self.audit_fails
             return self.writer
@@ -512,6 +519,109 @@ def test_the_lanes_wal_files_are_its_own_beside_the_serving_loops() -> None:
     assert oms_wiring.lane_sink_wal(settings, bundled=False) == "/v/me.wal"
     named = Settings(audit_wal_path="/v/oms_lane.audit.wal")
     assert oms_wiring.lane_audit_wal(named) != named.audit_wal_path
+
+
+async def test_the_stop_gives_the_lanes_writer_its_own_grace() -> None:
+    """CR-S3L2-05: the stop gives the lane's writer `LANE_AUDIT_STOP_S` to empty its WAL into
+    Postgres, inside its share of the reserve, never the writer's own default."""
+    world = World()
+    async with started(world.runtime()):
+        pass
+    assert world.writer.graces == [oms_wiring.LANE_AUDIT_STOP_S]
+
+
+async def test_the_lane_writers_alarm_pages_the_first_of_each_window_per_cause() -> None:
+    """Ruling 4 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-08): the lane writer's fail-closed
+    alarm, a refused append or its flusher's death, pages through the runtime's pager, so an
+    `audit_unavailable` refusal is never a silent outage; the first of each `LANE_AUDIT_PAGE_S`
+    window per cause on the runtime's clock, never once a refused record."""
+    world, window = World(), oms_wiring.LANE_AUDIT_PAGE_S
+    full, died = "audit WAL unavailable: AuditWalFull", "audit flusher died: OSError"
+    async with started(world.runtime()):
+        [alarm] = world.alarms
+        for _ in range(3):  # a burst of refused records: one page
+            await alarm(full)
+        world.clock.s += window - 0.001
+        await alarm(full)  # still its window
+        await alarm(died)  # another cause pages at once
+        world.clock.s += 0.001
+        await alarm(full)  # its next window
+    paged = [f"oms_lane_audit_alarm: {cause}" for cause in (full, died, full)]
+    assert (world.pager.calls, world.pager.severities) == (paged, ["page"] * 3)
+
+
+async def test_pg_stores_build_the_lanes_writer_with_the_alarm_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling 4: the writer `pg_stores` builds for the lane, on its own WAL, fires the alarm the
+    runtime gives it when an append is refused, its WAL unwritable: the record is refused and the
+    alarm names the error's class alone."""
+    stores = pg_stores(Settings(audit_wal_path=str(tmp_path / "audit.wal")), Metrics("demo"))
+    alarms = list[str]()
+
+    async def alarm(cause: str) -> None:
+        alarms.append(cause)
+
+    def unwritable(_record: Any) -> int:
+        raise OSError("the disk is gone")
+
+    writer: Any = stores.audit(alarm)
+    await writer.start()
+    monkeypatch.setattr(writer._wal, "append", unwritable)
+    try:
+        with pytest.raises(AuditUnavailable):
+            await writer.emit("auth.logout", actor_label="system:test")
+    finally:
+        await writer.stop(1)
+        await stores.release()
+    assert alarms == ["audit WAL unavailable: OSError"]
+    assert (tmp_path / "oms_lane.audit.wal").exists()
+
+
+@pytest.mark.parametrize("ends", ["failed", "cancelled"])
+async def test_the_composes_own_unwind_keeps_within_the_reserve_less_the_join(
+    ends: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling 6 (SEC-S3L1CG-01, carried from L1c): a composition that fails, or that a cancelled
+    start cuts short, closes what it built within `OMS_STOP_RESERVE_S` less the lane's join, the
+    bound the cancelled start's wait gives it, so every closer's share fits that wait."""
+    reserves, closed, began = list[float](), oms_wiring._closed, asyncio.Event()
+
+    async def timed(closers: Any, deadline: float) -> None:
+        reserves.append(deadline - asyncio.get_running_loop().time())
+        await closed(closers, deadline)
+
+    async def hangs(self: Sink) -> None:
+        began.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(oms_wiring, "_closed", timed)
+    world = World(sink_fails=RuntimeError("the WAL is locked") if ends == "failed" else None)
+    if ends == "failed":
+        async with started(world.runtime()):
+            pass
+    else:
+        monkeypatch.setattr(Sink, "start", hangs)
+        start = asyncio.ensure_future(world.runtime().start())
+        await asyncio.wait_for(began.wait(), 10)  # a bound on the test, never a time it expects
+        start.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start
+    reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S
+    assert reserves and all(reserve - 1 < share <= reserve for share in reserves)
+
+
+def test_the_lanes_sink_counts_its_pending_rows_apart_from_the_bundles(tmp_path: Path) -> None:
+    """CR-S3L2-04: `cv_machine_event_wal_pending` is labelled by where its sink runs, so the order
+    lane's own sink (`pg_stores`) and a persistence bundle's, on the serving loop, each set a
+    series of their own, never one they overwrite in turn."""
+    metrics = Metrics("demo")
+    lane: Any = pg_stores(Settings(), metrics).sink(str(tmp_path / "machine_events.wal"))
+    lane._metrics.pending(4)
+    PersistOps(metrics).pending(2)  # the bundle's
+    text = generate_latest(metrics.registry).decode()
+    assert 'cv_machine_event_wal_pending{env="demo",where="order_lane"} 4.0' in text
+    assert 'cv_machine_event_wal_pending{env="demo",where="serving_loop"} 2.0' in text
 
 
 async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_closed() -> None:

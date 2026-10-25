@@ -185,7 +185,7 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         stores=lambda: replace(  # the lane's own writer is the test's (#913 L2)
             pg_stores(settings, metrics),
             accounts=InMemoryTradingAccountReads(row),
-            audit=lambda: writer,
+            audit=lambda _alarm: writer,
         ),
         now=rig.clock,
         registry=REGISTRY,
