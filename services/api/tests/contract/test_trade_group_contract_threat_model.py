@@ -274,8 +274,7 @@ def test_a_leg_only_narrows_its_bound_profile_and_a_widening_request_is_refused_
         "never clamped and never a partial group (C-12.5, D6)",
         "It is audited, before any leg is sent, whatever `atomicity` says",
         "whatever `atomicity` says; it is never a per-leg failure",
-        "A leg whose values the profile alone produced and that an account-state cap then "
-        "rejects",
+        "A leg whose values the profile alone produced and that an account-state cap then rejects",
         "fails alone when it is sent",
         "a request value that breaks the comparator is refused whole",
         "an alternate profile never relaxes one",
