@@ -156,12 +156,14 @@ def exec_payload(execution: Execution, *, order_id: UUID, order_link_id: str) ->
 
 def reading(position: Position) -> ProtectionReading:
     """`SL_LOST` exactly for an open position with no stop, so a flat row never is (C-2.6). The stop
-    is the position's own: one held only by a Partial-mode order reads as none (24 Sec.8.12)."""
-    lost = position.qty > 0 and position.stop_loss is None
+    is the position's own: one held only by a Partial-mode order reads as none (24 Sec.8.12). A
+    stop that is not above zero is none too (`Px` is a bare Decimal: a venue "0" must not read as
+    protection)."""
+    stop = position.stop_loss if position.stop_loss and position.stop_loss > 0 else None
     return ProtectionReading(
-        event="SL_LOST" if lost else "SL_OBSERVED",
+        event="SL_LOST" if position.qty > 0 and stop is None else "SL_OBSERVED",
         updated_time=position.updated_at // 1_000,
-        stop_loss=position.stop_loss,
+        stop_loss=stop,
         size=position.qty,
     )
 

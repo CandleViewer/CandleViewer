@@ -15,7 +15,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from pydantic import BaseModel
 
-from candleviewer.exchange.base.models import Execution, Order, PrivateEvent
+from candleviewer.exchange.base.models import Execution, Order, Position, PrivateEvent
 from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.exchange.bybit import trading_parse as tp
 from candleviewer.oms import push_mapping as pm
@@ -231,6 +231,17 @@ def test_route_open_position_reads_lost_exactly_when_it_has_no_stop(
     assert isinstance(routed, pm.ForProtection)
     reading = routed.reading
     assert (reading.event, reading.stop_loss, reading.size) == (event, kept, Decimal("0.5"))
+
+
+@pytest.mark.parametrize("stop", ["0", "-1"])
+def test_reading_of_an_open_position_whose_stop_is_not_above_zero_is_lost(stop: str) -> None:
+    """C-2.6: `Px` is a bare Decimal, so a "0" (or negative) stop that reached the model must not
+    read as protection. Derived: the open short, its stop replaced after the parse."""
+    frame = push("position", row("position") | OPEN | {"stopLoss": "29000"})
+    position = _as(_one(frame), Position)
+    bare = position.model_copy(update={"stop_loss": Decimal(stop)})
+    reading = pm.reading(bare)
+    assert (reading.event, reading.stop_loss, reading.size) == ("SL_LOST", None, Decimal("0.5"))
 
 
 @pytest.mark.parametrize(

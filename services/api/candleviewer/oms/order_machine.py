@@ -101,6 +101,8 @@ from .errors import (
 )
 from .execution import apply_fields
 from .order_steps import OrderStepWriter, event_kind
+from .ports import PositionKey
+from .push_mapping import money_text
 from .recovery import RebuiltOrder, Replayed, rebuild, recorded_outcomes, replay_plan
 from .repository import OrderEventRepository, OrderRepository
 
@@ -414,12 +416,6 @@ def _shown(event: object) -> str:
     return "".join(c if c.isprintable() else "?" for c in event[: b01.MAX_TEXT])
 
 
-def _decimal_text(value: Decimal) -> str:
-    """Canonical decimal text, as `b01_order` keeps money: fixed point, no trailing zeros."""
-    out = format(value, "f")
-    return out.rstrip("0").rstrip(".") if "." in out else out
-
-
 def _order_fields(order: NewOrder) -> dict[str, Any]:
     """The order as B1's `VALIDATE` and `DISCOVERED` name it (24 Sec.8.1), from the order the step
     writer stores, so the two agree field for field (`order_steps`, SR-E29-03)."""
@@ -431,7 +427,7 @@ def _order_fields(order: NewOrder) -> dict[str, Any]:
         "symbol": order.symbol,
         "side": order.side.lower(),
         "reduce_only": order.reduce_only,
-        **{key: None if value is None else _decimal_text(value) for key, value in terms.items()},
+        **{key: None if value is None else money_text(value) for key, value in terms.items()},
     }
 
 
@@ -499,6 +495,8 @@ class _Order:
     order_id: UUID
     account_id: UUID
     environment: str
+    #: The position index the order was placed on (the facade's own view; B1 keeps none).
+    position_idx: int = 0
     interp: Any = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     #: The facade holds `lock`, and settles before it lets go.
@@ -818,6 +816,48 @@ class OrderMachines:
             o = o.successor  # a resync rebuilt the order while this push waited
         await self._unloaded(account_id, order_id, event, payload)
 
+    def protecting(self, key: PositionKey) -> tuple[UUID, ...]:
+        """The orders whose protection region has left `not_required` on the position `key`
+        names (E29-T05 S5; 24 Sec.8.12 "Protection readings"), in insertion order, a resyncing
+        order too (its reading follows `successor`). Plain view only, never the interpreter."""
+        found: dict[UUID, None] = {}
+        for o in (*self._orders.values(), *self._resyncing.values()):
+            if (
+                o.account_id == key.account_id
+                and o.view.get("symbol") == key.symbol
+                and o.position_idx == key.position_idx
+                and o.protection != "not_required"
+            ):
+                found[o.order_id] = None
+        return tuple(found)
+
+    async def push_protection(
+        self, account_id: UUID, order_id: UUID, event: str, payload: Mapping[str, Any]
+    ) -> bool:
+        """A position read's `SL_OBSERVED` or `SL_LOST` for the order (24 Sec.8.12), answered
+        True when a live machine took it. False when no machine holds the order, or its
+        protection is `not_required`: the caller hands the reading on (C-2.6), and nothing is
+        recorded for an evicted order (`_unloaded` is never reached). `IllegalTransition` for
+        any other event; raises what the step raises (`OrderStepRefused`, `OrderStepUnknown`)."""
+        if event not in ("SL_OBSERVED", "SL_LOST"):
+            raise self._refuse(MACHINE, _shown(event))
+        self._vet(PUSH_EVENTS, event, payload)
+        o = self._live(account_id, order_id)
+        for _ in range(FOLLOWS):
+            if o is None:
+                return False
+            async with self._holding(o):
+                if o.interp is not None:
+                    if o.protection == "not_required":
+                        return False
+                    try:
+                        await self._take(o, event, dict(payload))
+                    finally:
+                        await self._settle(o)
+                    return True
+            o = o.successor  # a resync rebuilt the order while this reading waited
+        return False
+
     async def settled(
         self, account_id: UUID, order_id: UUID, *, leaving: str, timeout_s: float
     ) -> str:
@@ -1006,7 +1046,13 @@ class OrderMachines:
         refused is dropped again, so a refused order leaves nothing behind (S7); one whose first
         row may have committed all the same is rebuilt from it, if it did (`_resync`), under the
         order's lock, as every resync is, so a caller that waited on it follows the order."""
-        o = await self._open(order.id, order.exchange_account_id, environment, event)
+        o = await self._open(
+            order.id,
+            order.exchange_account_id,
+            environment,
+            event,
+            position_idx=order.position_idx,
+        )
         self._ports.steps.expect(order, first=first)
         try:
             async with self._holding(o):
@@ -1030,6 +1076,7 @@ class OrderMachines:
         environment: str,
         event: str,
         *,
+        position_idx: int,
         replaying: deque[Replayed] | None = None,
     ) -> _Order:
         """The order's machine, with the plugin triple, which writes ahead on the order lane (24
@@ -1038,7 +1085,9 @@ class OrderMachines:
             raise self._refuse(known.lifecycle, event)
         if len(self._orders) >= self._max:
             raise OrderMachinesFull(f"{self._max} order machines are live")
-        o = _Order(order_id, account_id, environment, replaying=replaying)
+        o = _Order(
+            order_id, account_id, environment, position_idx=position_idx, replaying=replaying
+        )
         self._orders[order_id] = o
         triple = cv_plugins(
             machine_kind=MACHINE,
@@ -1103,7 +1152,12 @@ class OrderMachines:
         alone."""
         link = row.order_link_id
         o = await self._open(
-            row.id, row.exchange_account_id, environment, "hydrate", replaying=deque(plan)
+            row.id,
+            row.exchange_account_id,
+            environment,
+            "hydrate",
+            position_idx=row.position_idx,
+            replaying=deque(plan),
         )
         b01.begin_replay(link, recorded_outcomes(plan))
         try:
