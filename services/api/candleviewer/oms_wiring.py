@@ -2020,8 +2020,11 @@ class OmsRuntime:
                 self._phase = "sink_start"
                 await owned.start()
                 closers.insert(3, ("sink", lambda: lane.call(owned.stop())))  # after the commands
-            # its exits end before the facade stops
-            closers.insert(0, ("exits", lambda: lane.call(exits.aclose())))
+            # its exits, then the folds' own calls (S4-F), end before the facade stops
+            closers[:0] = [
+                ("exits", lambda: lane.call(exits.aclose())),
+                ("cancel_all_folds", lambda: lane.call(folds.aclose())),
+            ]
         except BaseException:
             await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
             raise

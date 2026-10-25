@@ -14,28 +14,32 @@ often one may leave, and how its members meet it.
   it waits, so callers that arrive together leave in turn, a second apart; one whose slot falls
   past its deadline takes none, and its symbol stays on per-order cancels.
 - **The join.** The members of one account-and-symbol fold each arrive once their B1 `CANCEL` is
-  written ahead (C-2.9), so the venue's call only ever takes orders the OMS already cancels. Once
-  every member has arrived, one venue call leaves and each member is answered by its own ack; one
-  the acks do not name (the venue's 500-order cap, a race) or a refused call sends its own cancel.
-  A member that leaves, or a gather that runs past its bound, abandons the fold before anything is
-  sent, and every member sends its own cancel: the fail-safe. A call that raises reaches every
-  member as its own call's would: its outcome is not known, and nothing is sent again.
+  written ahead (C-2.9), so every member the venue's call takes is an order the OMS has already
+  commanded cancelled; the call may take one more, an order placed on the symbol after the
+  coverage read (the residual `cancel_all_coalescer` names). Once every member has arrived, a task
+  of the join's own waits for the UID's spacer slot and makes the one venue call, and each member
+  is answered by its own ack; one the acks do not name (the venue's 500-order cap, a race) sends
+  its own cancel, as every member does when the call names none or no slot comes in time. Until
+  the call leaves, a member that leaves or is cut short, or a gather past its bound, abandons the
+  fold: nothing is sent, and every member sends its own cancel, the fail-safe. Once it has left,
+  no member's cancellation cuts it short: its acks answer every member, and a call that raises
+  reaches each as its own call's would, its outcome not known and nothing sent again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Awaitable, Callable, Collection, Iterable, Sequence
-from typing import Final
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterable, Sequence
+from typing import Any, Final, Protocol
 
 from candleviewer.exchange.base.errors import UnknownStateError
 from candleviewer.exchange.base.models import Order, OrderAck
-from candleviewer.observability.context import spawn
+from candleviewer.observability import spawn
 
 __all__ = [
     "CANCEL_ALL_INTERVAL_S", "FOLDED_KIND", "GATHER_S", "MAX_UIDS", "CancelAllJoin",
-    "CancelAllSpacer", "covers",
+    "CancelAllSpacer", "Spawn", "covers",
 ]  # fmt: skip
 
 #: The order kind the venue's `cancel-all` cancels: the venue's plain-order filter (24 Sec.14.2
@@ -99,103 +103,128 @@ class CancelAllSpacer:
             del self._free_at[uid]
 
 
+class Spawn(Protocol):
+    """How a join starts its own tasks, its call and its gather's watchdog: its owner's spawn,
+    which tracks each one until it ends (`CancelAllCoalescer`), or `spawn` itself."""
+
+    def __call__(self, coro: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]: ...
+
+
 class CancelAllJoin:
     """One account-and-symbol fold's meeting point (module docstring). `members` are the order
-    link ids it folds. `send` makes the one venue call, behind the spacer, and answers its acks, or
-    None when the spacer refused it a slot in time. `arrive(link)` answers that member's ack, or
-    None when it must send its own cancel; `leave` abandons the fold for a member that will not
-    arrive. The gather's bound runs on `monotonic` and `sleep` from the join's opening. One event
-    loop's, as the order lanes are."""
+    link ids it folds. Once every member has arrived, a task of the join's own (`spawn`) awaits
+    `slot`, the UID's spacer slot (False: none in time), then `call`, the one venue call.
+    `arrive(link)` answers that member's ack, or None when it must send its own cancel; `leave`
+    abandons the fold for a member that will not arrive or no longer waits. Until the call leaves,
+    any member's departure, a leave or its cancellation, abandons the fold and ends the slot's
+    wait: nothing was sent. Once it has left, no member's cancellation cuts it short; only its
+    owner's teardown cancels it, leaving the members still waiting an unknown outcome. The
+    gather's bound runs on `monotonic` and `sleep` from the join's opening. One event loop's, as
+    the order lanes are."""
 
     def __init__(
         self,
         members: Collection[str],
-        send: Callable[[], Awaitable[Sequence[OrderAck] | None]],
+        slot: Callable[[], Awaitable[bool]],
+        call: Callable[[], Awaitable[Sequence[OrderAck]]],
         *,
         monotonic: Callable[[], float],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        spawn: Spawn = spawn,
         gather_s: float = GATHER_S,
     ) -> None:
         if not members:
             raise ValueError("a fold has at least one member")
         if isinstance(gather_s, bool) or not (math.isfinite(gather_s) and gather_s > 0):
             raise ValueError("gather_s must be a finite number of seconds above zero")
-        self._members, self._send = frozenset(members), send
-        self._monotonic, self._sleep = monotonic, sleep
+        self._members, self._slot, self._call = frozenset(members), slot, call
+        self._monotonic, self._sleep, self._spawn = monotonic, sleep, spawn
         self._deadline = monotonic() + float(gather_s)
         self._arrived: set[str] = set()
         self._answer: asyncio.Future[dict[str, OrderAck] | None] = (
             asyncio.get_running_loop().create_future()
         )
-        self._sent = False
+        self._left = False
+        self._why: str | None = None
         self._expiry: asyncio.Task[None] | None = None
+        self._sending: asyncio.Task[None] | None = None
 
     @property
-    def members(self) -> frozenset[str]:
-        return self._members
+    def left(self) -> bool:
+        """Whether its venue call has left: it is never abandoned after."""
+        return self._left
+
+    @property
+    def abandoned(self) -> str | None:
+        """Why it was abandoned before anything was sent (`left`, a member left or was cut
+        short; `gather`, the gather's bound; `slot`, no spacer slot in time), or None."""
+        return self._why
 
     async def arrive(self, link: str) -> OrderAck | None:
         if link not in self._members:
             raise ValueError("only a member arrives at its fold")
         if self._answer.done() or link in self._arrived:
-            return self._own(link)
+            return self._own(link)  # answered, or arriving twice while it gathers: its own
         self._arrived.add(link)
         if self._arrived == self._members:
             if self._monotonic() > self._deadline:  # gathered too late: nothing is sent
-                self._abandon()
-            else:
-                await self._call()
-            return self._own(link)
-        if self._expiry is None:
-            self._expiry = spawn(self._expire(), name="oms-cancel-all-gather")
+                self._abandon("gather")
+                return self._own(link)
+            self._stop_expiry()
+            self._sending = self._spawn(self._send(), name="oms-cancel-all-call")
+        elif self._expiry is None:
+            self._expiry = self._spawn(self._expire(), name="oms-cancel-all-gather")
         try:
             await asyncio.shield(self._answer)
         except asyncio.CancelledError:
-            if not self._sent:
-                self._abandon()
+            self._abandon("left")  # before the call leaves; once it has left, nothing changes
             raise
         return self._own(link)
 
     def leave(self, link: str) -> None:
-        """A member that will not arrive (refused before its send): the fold is abandoned unless
-        its call has left already."""
-        if link in self._members and not self._sent:
-            self._abandon()
+        """A member that will not arrive, or no longer waits: the fold is abandoned unless its
+        call has left."""
+        if link in self._members:
+            self._abandon("left")
 
     async def _expire(self) -> None:
-        """The gather's bound: past it, a fold whose call has not left is abandoned."""
+        """The gather's bound: past it, a fold still gathering is abandoned."""
         await self._sleep(max(self._deadline - self._monotonic(), 0.0))
-        if not self._sent:
-            self._abandon()
+        self._abandon("gather")
 
-    async def _call(self) -> None:
-        """The last member's: the one venue call. A refused call, or none, answers no member."""
-        self._sent = True
-        self._stop_expiry()
+    async def _send(self) -> None:
+        """The join's own task, once every member has arrived (class docstring)."""
+        if not await self._slot():
+            self._abandon("slot")
+            return
+        self._left = True
         try:
-            acks = await self._send()
+            acks = await self._call()
         except Exception as exc:  # the call's error, as each member's own call would raise it
             self._fail(exc)
-            raise
-        except BaseException:  # cut short (cancelled): the call may have left
+            return
+        except BaseException:  # cut short at teardown: the call may have left
             self._fail(UnknownStateError("a fold's cancel-all was cut short", retryable=False))
             raise
-        if acks is None or not any(ack.ok for ack in acks):
-            self._abandon()
-        elif not self._answer.done():
-            self._answer.set_result(
-                {ack.order_link_id: ack for ack in acks if ack.ok and ack.order_link_id}
-            )
+        if not self._answer.done():  # a call that names no member leaves each to its own
+            self._answer.set_result({a.order_link_id: a for a in acks if a.ok and a.order_link_id})
 
     def _fail(self, error: Exception) -> None:
         if not self._answer.done():
             self._answer.set_exception(error)
             self._answer.exception()  # retrieved here; each member re-raises it
 
-    def _abandon(self) -> None:
+    def _abandon(self, why: str) -> None:
+        """Nothing is sent: each member sends its own cancel. A no-op once the call has left."""
+        if self._left:
+            return
         if not self._answer.done():
+            self._why = why
             self._answer.set_result(None)
         self._stop_expiry()
+        sending = self._sending
+        if sending is not None and sending is not asyncio.current_task():
+            sending.cancel()  # in the slot's wait: nothing has left
 
     def _stop_expiry(self) -> None:
         expiry = self._expiry

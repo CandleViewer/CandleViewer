@@ -28,7 +28,7 @@ One event loop's, as the order lanes are. Nothing here imports the exchange adap
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Collection, Iterator, Sequence
+from collections.abc import Awaitable, Callable, Collection, Coroutine, Iterator, Sequence
 from contextlib import contextmanager
 from decimal import Decimal
 from typing import Any, Final
@@ -54,6 +54,7 @@ from candleviewer.exchange.base.models import (
     Wallet,
 )
 from candleviewer.exchange.base.ports import PrivateStream
+from candleviewer.observability import spawn
 
 from .cancel_all_fold import GATHER_S, CancelAllJoin, CancelAllSpacer, covers
 from .routing import RoutedPort
@@ -88,6 +89,8 @@ class CancelAllCoalescer:
         self._monotonic, self._sleep = monotonic, sleep
         self._gather_s, self._spacer_wait_s = gather_s, spacer_wait_s
         self._joins: dict[tuple[AccountId, str], CancelAllJoin] = {}
+        #: Each fold's own tasks still running, its call and its gather's watchdog (C-2.18).
+        self._running: set[asyncio.Task[None]] = set()
 
     async def coverage(self, account: AccountRef, symbol: Symbol, members: Collection[str]) -> bool:
         """Whether the venue's cancel-all may fold `symbol`'s cancels (Q3); False when the read
@@ -109,11 +112,14 @@ class CancelAllCoalescer:
         if any(key in self._joins for key in keys):
             raise ValueError("an order is already a member of an open fold")
 
-        async def send() -> Sequence[OrderAck] | None:
+        async def slot() -> bool:
             deadline = self._monotonic() + self._spacer_wait_s
-            if not await self._spacer.turn(account.uid, deadline=deadline):
-                _log().warning("oms_cancel_all_slot_refused", symbol=symbol)
-                return None
+            if await self._spacer.turn(account.uid, deadline=deadline):
+                return True
+            _log().warning("oms_cancel_all_slot_refused", symbol=symbol)
+            return False
+
+        async def call() -> Sequence[OrderAck]:
             acks = await self._inner.cancel_all(account, symbol)
             taken = sorted(
                 ack.order_link_id for ack in acks
@@ -127,8 +133,9 @@ class CancelAllCoalescer:
             return acks
 
         join = CancelAllJoin(
-            members, send, monotonic=self._monotonic, sleep=self._sleep, gather_s=self._gather_s
-        )
+            members, slot, call, monotonic=self._monotonic, sleep=self._sleep, spawn=self._spawn,
+            gather_s=self._gather_s,
+        )  # fmt: skip
         for key in keys:
             self._joins[key] = join
         try:
@@ -148,6 +155,30 @@ class CancelAllCoalescer:
             if ack is not None:
                 return ack
         return await self._inner.cancel_order(req)
+
+    async def aclose(self) -> None:
+        """At teardown (the runtime's stop): every fold task still running, a call whose members
+        all left included, is cancelled and awaited. A call cut short leaves the members still
+        waiting an unknown outcome, never sent again."""
+        running = set(self._running)
+        for task in running:
+            task.cancel()
+        if running:
+            await asyncio.wait(running)
+
+    def _spawn(self, coro: Coroutine[Any, Any, None], *, name: str) -> asyncio.Task[None]:
+        """A fold's own task, owned here until it ends: its failure, a defect, is logged."""
+        task = spawn(coro, name=name)
+        self._running.add(task)
+        task.add_done_callback(self._ended)
+        return task
+
+    def _ended(self, task: asyncio.Task[None]) -> None:
+        self._running.discard(task)
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _log().error(
+                "oms_cancel_all_task_failed", task=task.get_name(), failure=type(error).__name__
+            )
 
     # --- every other call passes through as it is ----------------------------------------------
 
