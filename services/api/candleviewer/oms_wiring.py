@@ -1198,6 +1198,10 @@ class OwnedSink(MachineEventSink, Protocol):
     async def stop(self) -> None: ...
 
 
+#: The fail-closed alarm the lane's audit writer fires (ruling 4): the cause, its error's class.
+type AuditAlarm = Callable[[str], Awaitable[None]]
+
+
 class OwnedAudit(AuditWriterPort, Protocol):
     """The order lane's own audit writer, which the runtime builds on the lane and owns (#913 L2,
     ruling Q12): started there, and stopped there within `grace_s`."""
@@ -1220,12 +1224,12 @@ class GroupStores(TradeGroupStore, TradeGroupReads, Protocol):
 @dataclass(frozen=True, slots=True)
 class OmsStores:
     """The runtime's stores, on one pool of its own that `release` disposes of, and the builders
-    of the order lane's own audit writer and `machine_events` sink over it (#913 L2), the sink's at
-    the WAL path it is given. They take no principal, so a route reaches them only through the
-    OMS's own surfaces, after its RBAC check (C-12.4): the pipeline, its anchors and `OrderRoute`'s
-    reads, the existence read and a replay's two, the order by its account and the group through
-    the principal-scoped `TradeGroupReader`. `sweep` is the startup sweep's reads, under their own
-    statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
+    of the order lane's own audit writer and `machine_events` sink over it (#913 L2), the writer's
+    with the alarm it is given, the sink's at the WAL path it is given. They take no principal, so
+    a route reaches them only through the OMS's own surfaces, after its RBAC check (C-12.4): the
+    pipeline, its anchors and `OrderRoute`'s reads, the existence read and a replay's two, the
+    order by its account and the group through the principal-scoped `TradeGroupReader`. `sweep` is
+    the startup sweep's reads, under their own statement cap (`SWEEP_STATEMENT_TIMEOUT_MS`)."""
 
     orders: OrderStores
     executions: ExecutionStore
@@ -1235,7 +1239,7 @@ class OmsStores:
     groups: GroupStores
     accounts: TradingAccountReads
     sweep: UnfinishedOrders
-    audit: Callable[[], OwnedAudit]
+    audit: Callable[[AuditAlarm], OwnedAudit]
     sink: Callable[[str], OwnedSink]
     release: Callable[[], Coroutine[Any, Any, None]]
 
@@ -1245,6 +1249,9 @@ LANE_WAL_PREFIX: Final = "oms_lane."
 #: How long the stop gives the lane's audit writer to empty its WAL into Postgres, inside its
 #: share of `OMS_STOP_RESERVE_S`; what it has not inserted stays in the WAL for the next start.
 LANE_AUDIT_STOP_S: Final = 1.0
+#: The window of the lane writer's alarm page (ruling 4, CR-S3L2-08), in seconds: the first alarm of
+#: each cause in a window pages, so a full WAL pages once a window, never once a refused record.
+LANE_AUDIT_PAGE_S: Final = 5.0
 
 
 def lane_audit_wal(settings: Settings) -> str:
@@ -1267,7 +1274,8 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     connects nothing. The lane's audit writer inserts through the audit repository over that pool,
     into the one `audit_log` chain, which the chain lock serialises (ruling Q12)."""
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "oms")
-    events, ops = EventFramesAdapter(EventsAdapter(SqlAlchemyEventStore(pool))), PersistOps(metrics)
+    events = EventFramesAdapter(EventsAdapter(SqlAlchemyEventStore(pool)))
+    ops = PersistOps(metrics, where="order_lane")  # its pending rows apart from a bundle's
     counts = MachineEventSinkMetrics(flushed=ops.flushed, pending=ops.pending)
     audit_wal = lane_audit_wal(settings)
     return OmsStores(
@@ -1279,7 +1287,9 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
         groups=SqlAlchemyTradeGroupStore(pool),
         accounts=SqlAlchemyTradingAccountReads(pool),
         sweep=SqlAlchemyOrderStore(pool, statement_timeout_ms=SWEEP_STATEMENT_TIMEOUT_MS),
-        audit=lambda: build_lane_audit_writer(SqlAlchemyAuditRepository(pool), audit_wal),
+        audit=lambda alarm: build_lane_audit_writer(
+            SqlAlchemyAuditRepository(pool), audit_wal, on_alarm=alarm
+        ),
         sink=lambda wal: build_machine_event_sink(settings, events, metrics=counts, wal_path=wal),
         release=pool.dispose,
     )
@@ -1647,6 +1657,9 @@ class OmsRuntime:
         self._failed = self._stopping = False
         #: The step `_compose` has reached, which a failed start logs and pages.
         self._phase = "settings"
+        #: When each cause of the lane writer's alarm last paged, on `monotonic`; the lane's alone,
+        #: where the writer runs (`_audit_alarm`).
+        self._audit_paged: dict[str, float] = {}
         #: Taken, never released, by the first read that finds this start's lane dead: it pages.
         self._lane_paged = threading.Lock()
 
@@ -1738,6 +1751,18 @@ class OmsRuntime:
         self._running.discard(task)
         if not task.cancelled() and (error := task.exception()) is not None:
             _log().error("oms_submit_task_failed", error=type(error).__name__)
+
+    async def _audit_alarm(self, cause: str) -> None:
+        """Ruling 4 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-08): the lane writer's
+        fail-closed alarm, a refused append (its WAL full or unwritable) or its flusher's death,
+        paged through the runtime's pager (`cv_page`), so an `audit_unavailable` refusal is never a
+        silent outage: the first of each `LANE_AUDIT_PAGE_S` window per cause (its error's class
+        alone), on `monotonic`, a clock stepped back read as expired. On the lane, where the writer
+        runs."""
+        now, paged = self._monotonic(), self._audit_paged.get(cause)
+        if paged is None or not 0 <= now - paged < LANE_AUDIT_PAGE_S:
+            self._audit_paged[cause] = now
+            _page(self._pager, f"oms_lane_audit_alarm: {cause}")
 
     def _startup_ended(self, task: asyncio.Task[None]) -> None:
         """An error out of the startup task (a flag view or the guard raising) leaves the state
@@ -1979,7 +2004,8 @@ class OmsRuntime:
             stores = self._stores()
             closers.append(("pool", lambda: lane.call(stores.release())))
             self._phase = "audit"
-            writer = stores.audit()  # on the lane, its own WAL locked (D6); stops after its users
+            # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users
+            writer = stores.audit(self._audit_alarm)
             closers.insert(0, ("audit", lambda: lane.call(writer.stop(LANE_AUDIT_STOP_S))))
             self._phase = "commands"
             timer = WriteTimer(_histogram(metrics, "oms_db_write_seconds"))
@@ -2104,8 +2130,9 @@ class OmsRuntime:
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
             closers.insert(after, ("cancel_all_folds", lambda: lane.call(folds.aclose())))
-        except BaseException:
-            await _closed(closers, asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S)
+        except BaseException:  # within the reserve less the join, as a cancelled start waits
+            reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S  # (ruling 6, SEC-S3L1CG-01)
+            await _closed(closers, asyncio.get_running_loop().time() + reserve)
             raise
         return _Parts(
             submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,

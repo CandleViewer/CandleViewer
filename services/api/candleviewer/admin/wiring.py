@@ -418,15 +418,21 @@ def build_machine_event_sink(
     )
 
 
-def build_lane_audit_writer(repository: AuditRepository, wal_path: str) -> AuditWriter:
+def build_lane_audit_writer(
+    repository: AuditRepository,
+    wal_path: str,
+    *,
+    on_alarm: Callable[[str], Awaitable[None]],
+) -> AuditWriter:
     """The order lane's own `AuditWriter` (#913 slice 3 L2, 29 CV-C13), which the OMS runtime
     builds on the lane's loop over the OMS pool's audit repository, for the composition root,
     which may not import M19 (C-3.3). Its WAL at `wal_path` is its own, never the serving loop's:
     exclusive, it is locked before it is opened and until the end of the writer's stop (D6). Its
     records join the one `audit_log` chain, whose inserts the chain lock serialises (ruling
-    Q12). Opens and scans its WAL, so the lane calls it, as `AuditService.start` builds the
-    serving loop's on that loop."""
-    return AuditWriter(repository, wal_path, exclusive=True)
+    Q12). Its fail-closed alarm (a refused append, its flusher's death) is `on_alarm`, the
+    runtime's page (ruling 4), always given. Opens and scans its WAL, so the lane calls it, as
+    `AuditService.start` builds the serving loop's on that loop."""
+    return AuditWriter(repository, wal_path, on_alarm=on_alarm, exclusive=True)
 
 
 def system_event_redactor() -> Callable[[dict[str, Any] | None], dict[str, Any] | None]:

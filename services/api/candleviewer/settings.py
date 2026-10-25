@@ -91,8 +91,9 @@ OMS_AFTER_ANCHOR_S: Final = 12.0
 #: The in-flight window's ceiling (SEC-S3D-02): the longest a crashed request's key stays
 #: `409 idempotency_in_flight`.
 OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
-#: What the OMS runtime's stop keeps after its drain for its closers (the machines, its sink and its
-#: pool) and then the order lane's join, of the supervised OMS module's grace (`TEARDOWN_BUDGET_S`).
+#: What the OMS runtime's stop keeps after its drain for its closers (the machines, the order lane's
+#: own sink and audit writer, and its pool) and then the order lane's join, of the supervised OMS
+#: module's grace (`TEARDOWN_BUDGET_S`).
 OMS_STOP_RESERVE_S: Final = 5.0
 #: The price band's default and bounds (22 `placeOrder`, #913 S4-S ruling Q3), the pipeline's own.
 OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
@@ -465,13 +466,17 @@ class Settings(BaseSettings):
     # E09-T02: `audit.emit` durably buffers to an on-disk WAL before writing
     # to `audit_log` (F8 — survives a Postgres outage), and the daily
     # checkpoint job appends the head hash to a file outside the database
-    # volume so tail truncation is detectable even if Postgres data is lost.
+    # volume so tail truncation is detectable even if Postgres data is lost. The OMS's order lane
+    # keeps its own audit WAL in the same directory, `oms_lane.<name>` with its cursor and `.lock`
+    # (#913 L2, `oms_wiring.lane_audit_wal`).
     audit_wal_path: str = "var/audit/audit.wal"
     audit_checkpoint_path: str = "var/audit/checkpoints.ndjson"
     # E50-T63: the WAL of the `machine_events` sink (`audit.machine_events`). Empty (default) =
     # beside `audit_wal_path` (`<its directory>/machine_events.wal`): compose's root filesystem is
     # read-only and the audit volume is the writable one. An explicit path's directory is a data
-    # directory `CV_BACKUP_ROOT` stays apart from. Capped like the audit WAL, at least 1 MiB.
+    # directory `CV_BACKUP_ROOT` stays apart from. Capped like the audit WAL, at least 1 MiB. The
+    # order lane's own sink writes it while no persistence bundle's sink holds it, else
+    # `oms_lane.<name>` beside it (#913 L2, `oms_wiring.lane_sink_wal`).
     machine_event_wal_path: str = ""
     machine_event_wal_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024)
     # ADR-0037 decision 6 (#3009): the audit lane's key files, read once at boot by the composition
