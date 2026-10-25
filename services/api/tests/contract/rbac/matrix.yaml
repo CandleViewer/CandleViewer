@@ -1012,8 +1012,12 @@ operations:
     permissions: ['orders:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
+    request:
+      json: {exchange_account_ids: ['00000000-0000-4000-8000-00000000000a']}
+    # 04 §7.2.2 row 14: a Manager without the grant is refused 403 `account_scope_denied` at 24
+    # §8.4 step 4 (pinned in test_order_cancel_all_route.py); this app composes no OMS, so step 3's
+    # 501 answers first, after RBAC passed, and the cell reads `allow`.
     outcomes: {owner: allow, manager_with_grant: allow, manager_without_grant: allow, viewer: '403', unauthenticated: '401'}
   GET /orders/{orderId}:
     permissions: ['orders:read']

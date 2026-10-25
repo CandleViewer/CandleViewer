@@ -33,6 +33,7 @@ from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Position, RateLane
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.cancel_all import CancelAllRequest
 from candleviewer.oms.commands import OmsCommandPort
 from candleviewer.oms.errors import (
     AccountScopeDenied,
@@ -343,6 +344,9 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             assert exits.profiles is parts.submission._deps.profiles
             assert isinstance(exits.profiles, oms_wiring.ServedProfiles)
             assert exits.environment == parts.route.environment == "demo"
+            cancel_all = parts.cancel_all  # S4-E: over that exit service and the order store
+            assert cancel_all._exits is parts.exits
+            assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
@@ -400,6 +404,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
                 _ = runtime.anchors
             with pytest.raises(OmsNotReady):
                 _ = runtime.exits
+            with pytest.raises(OmsNotReady):
+                _ = runtime.cancel_all
 
 
 async def test_one_facade_per_process_stop_unwires_it_and_a_second_start_works() -> None:
@@ -658,6 +664,40 @@ async def test_the_exit_routes_in_flight_guard_is_read_in_place_and_theirs_alone
         assert runtime.exits.guard is runtime._composed().exits.guard
     source = inspect.getsource(OrderExits)
     assert source.count("self.guard") == 1 and "self.guard = InFlightGuard()" in source
+
+
+async def test_cancel_all_reaches_its_service_on_the_lane() -> None:
+    """#913 S4-E over the order lane (the orchestrator's ruling of 2026-10-25 06:41Z):
+    `runtime.cancel_all` hops the cancel-all service's calls to the lane, where the service, the
+    exit service and the order store run. Its scope, a read, hops within `HOP_TIMEOUT_S`; its run,
+    which the service's own deadline bounds, hops without one. The route's task stays on the serving
+    loop."""
+    lane = Recording()
+    async with started(World().runtime(lane=lambda: lane)) as runtime:
+        cancel_all = runtime.cancel_all
+        assert isinstance(cancel_all, oms_wiring.OnLaneCancelAll)
+        lane.hops.clear()
+        every = CancelAllRequest(exchange_account_ids=(), symbol=None, intents=frozenset())
+        scoped = await cancel_all.scope(OwnerScope(UUID(int=1)), every)
+        owner = SubmitActor(user_id=UUID(int=1), role="owner")
+        await cancel_all.run(scoped, every, actor=owner, request_id=None)
+        assert lane.hops == [("CancelAll.scope", HOP_TIMEOUT_S), ("CancelAll.run", None)]
+
+
+async def test_on_a_stopped_or_unanswering_lane_cancel_all_is_not_ready() -> None:
+    """As the exit service's (CR-S3L1B-07): a lane that stopped is `OmsNotReady` for each of the
+    cancel-all service's calls, unrun. Its scope's read is bounded by `HOP_TIMEOUT_S`, `OmsNotReady`
+    past it, while its run waits out the service's own deadline, so the lane's timeout is not one it
+    gets."""
+    async with started(World().runtime()) as runtime:
+        parts, nothing = runtime._composed(), cast(Any, None)
+        for error in (LaneStopped("stopped"), TimeoutError()):
+            cancel_all = oms_wiring.OnLaneCancelAll(replace(parts, lane=(lane := Refusing(error))))
+            with pytest.raises(OmsNotReady):
+                await cancel_all.scope(nothing, nothing)
+            with pytest.raises(OmsNotReady if isinstance(error, LaneStopped) else TimeoutError):
+                await cancel_all.run(nothing, nothing, actor=nothing, request_id=None)
+            assert lane.bounds == [HOP_TIMEOUT_S, None]
 
 
 async def test_an_error_out_of_the_startup_task_is_logged_with_its_type() -> None:

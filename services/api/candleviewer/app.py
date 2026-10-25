@@ -151,6 +151,7 @@ from candleviewer.api.notifications import make_notifications_router
 from candleviewer.api.onboarding import make_onboarding_router
 from candleviewer.api.onboarding_checklist import StepResult, bybit_key_restriction
 from candleviewer.api.openapi_publish import install_contract_openapi
+from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
@@ -2342,6 +2343,21 @@ def create_app(
             oms_enabled=feature_flags.oms_enabled,
             metrics=metrics_facade,
             auth=ctx.auth,
+        )
+    )
+    # #913 slice 4 S4-E (24 Sec.8.4, the exit routes): `cancelAllOrders`' own router over the same
+    # runtime, principals and records, included ahead of the exit routes' router (the 19:43Z
+    # ruling; pinned with the exit routes' below). `trading.oms_enabled` never gates it: a cancel is
+    # a risk-reducing exit (C-2.6).
+    app.include_router(
+        make_cancel_all_router(
+            order_principals,
+            lambda: app.state.oms_runtime,
+            audit=_LazyAuditEmitter(ctx.audit),
+            records=order_records,
+            metrics=metrics_facade,
+            auth=ctx.auth,
+            protective=protective_writes,
         )
     )
     # #913 slice 4 (S4-D1; 24 Sec.8.4 "The exit routes"): `DELETE /orders/{orderId}` over the same

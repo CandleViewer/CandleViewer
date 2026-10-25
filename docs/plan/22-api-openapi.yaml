@@ -6048,8 +6048,10 @@ paths:
         is never sent again, and `affected` counts only the orders that ended cancelled by then.
         `retryable` is true for `store_unavailable`, `timeout` and `exchange_rate_limited`, and
         false for `exchange_unavailable`, `conflict`, `account_unavailable` and `exchange_error`
-        (the orchestrator's ruling of 2026-10-24 12:30Z), and false for another refusal of the
-        per-order cancel (the 17:42Z ruling). An order outside the selection, one whose cancel is
+        (the orchestrator's ruling of 2026-10-24 12:30Z); true for `oms_not_ready`, which passes
+        (the gateway's backpressure, or the exit service closing at shutdown; the orchestrator's
+        ruling of 2026-10-25 06:56Z); and false for another refusal of the per-order cancel (the
+        17:42Z ruling). An order outside the selection, one whose cancel is
         already in flight (`cancel_pending`), one not acknowledged yet or with an amend in flight
         (`validated`, `submitting`, `amend_pending`), or one in `unknown`, `quarantined`, `held` or
         `untracked` (until E29-T06 an `unknown` order is cancelled only by a KILL), is not sent

@@ -46,6 +46,12 @@ from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.oms.cancel_all import (
+    CancelAll,
+    CancelAllOutcome,
+    CancelAllRequest,
+    ScopedAccounts,
+)
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
 from candleviewer.oms.errors import (
@@ -1240,6 +1246,7 @@ class _Parts:
     gate: ResolvingStopGate
     exits: OrderExits
     lane: Lane
+    cancel_all: CancelAll
 
 
 @dataclass(frozen=True, slots=True)
@@ -1332,6 +1339,30 @@ class OnLaneExits:
     ) -> ExitOutcome:
         amend = self.parts.exits.amend(scoped, terms, caller=caller, expected_seq=expected_seq)
         return await _on_lane(self.parts, amend, None)
+
+
+@dataclass(frozen=True, slots=True)
+class OnLaneCancelAll:
+    """`OmsRuntime.cancel_all` from the serving loop (E29-T04 slice 4, S4-E): the cancel-all
+    service's scope, a read, awaited on the order lane within `HOP_TIMEOUT_S`, and its run, which
+    the service's own deadline bounds, as the exit service's cancels are. The service, the exit
+    service under it and the order store run on the lane."""
+
+    parts: _Parts
+
+    async def scope(self, scope: AccountScope, request: CancelAllRequest) -> ScopedAccounts:
+        return await _on_lane(self.parts, self.parts.cancel_all.scope(scope, request))
+
+    async def run(
+        self,
+        accounts: ScopedAccounts,
+        request: CancelAllRequest,
+        *,
+        actor: SubmitActor,
+        request_id: UUID | None,
+    ) -> CancelAllOutcome:
+        run = self.parts.cancel_all.run(accounts, request, actor=actor, request_id=request_id)
+        return await _on_lane(self.parts, run, None)
 
 
 async def _on_lane[T](
@@ -1529,6 +1560,13 @@ class OmsRuntime:
         pipeline's facade, command port and checks, each call awaited on the order lane
         (`OnLaneExits`); `OmsNotReady` before it is composed."""
         return OnLaneExits(self._composed())
+
+    @property
+    def cancel_all(self) -> OnLaneCancelAll:
+        """`cancelAllOrders`' service (E29-T04 slice 4, S4-E) over the exit service above and the
+        order store's open-order read, each call hopped to the order lane (`OnLaneCancelAll`);
+        `OmsNotReady` before it is composed."""
+        return OnLaneCancelAll(self._composed())
 
     def _composed(self) -> _Parts:
         if self._parts is None:
@@ -1898,7 +1936,7 @@ class OmsRuntime:
             raise
         return _Parts(
             submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
-            exits, lane,
+            exits, lane, CancelAll(orders, exits),
         )  # fmt: skip
 
     def _now_us(self) -> int:

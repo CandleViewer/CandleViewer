@@ -8,10 +8,11 @@ resort's `500`). Nothing sleeps: an exit is held open on an event."""
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
-import re
 import uuid
+import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -277,20 +278,93 @@ def test_exit_refusals_keeps_the_catalogues_66_series_then_breaches() -> None:
     assert (counter.series_count, counter.breached) == (66, True)
 
 
+def _guard_reaches(tree: ast.AST) -> list[str]:
+    """Each place a module reaches an in-flight guard, as written: every `.claim` attribute, by
+    its receiver; every `getattr`, `setattr` or `delattr` naming `"guard"` or `"claim"`; and every
+    `.guard` rebound or deleted, which would void the guard's bounds without a claim. So an alias
+    (a private attribute, a renamed local, `getattr`) is found as plainly as `.claim(`. Its limits:
+    a name built at run time (`getattr(g, name)`, `"cl" + "aim"`), `builtins.getattr` and
+    `builtins.setattr`, `object.__setattr__` and `object.__delattr__`, a write to `__dict__`, the
+    `operator` getters, `vars()` and `__getattribute__`, a `match` class pattern and `eval` are not
+    seen; nor is a change to a guard's private state (`guard._max = …`, `guard._held.clear()`),
+    which voids its bounds without a claim or a rebind (ruff selects no `SLF` to catch it); and a
+    reach routed through a module already allowed below counts as that module's."""
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr == "claim":
+            found.append(f"claim:{ast.unparse(node.value)}")
+        elif (
+            isinstance(node, ast.Attribute) and node.attr == "guard"
+            and isinstance(node.ctx, (ast.Store, ast.Del))
+        ):  # fmt: skip
+            found.append(f"rebind:{ast.unparse(node.value)}")
+        elif (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in ("getattr", "setattr", "delattr") and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant) and node.args[1].value in ("guard", "claim")
+        ):  # fmt: skip
+            found.append(f"{node.func.id}:{node.args[1].value}")
+    return found
+
+
+def _parsed(path: Path) -> ast.AST:
+    """The module's tree. Migration 0001's `SyntaxWarning` is an applied migration's, never edited
+    (C-5.4), and not this fence's to report."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", SyntaxWarning)
+        return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+@pytest.mark.parametrize(
+    ("source", "reaches"),
+    [
+        ("oms.exits.guard.claim(user, 'cancel', key)", True),
+        ("self._exits.guard.claim(user, 'cancel', key)", True),
+        ("in_flight = service.guard\nin_flight.claim(user, 'cancel', key)", True),
+        ("held = getattr(runtime.exits, 'guard')", True),
+        ("getattr(in_flight, 'claim')(user, 'cancel', key)", True),
+        ("oms.exits.guard = InFlightGuard(max_keys=10**9)", True),
+        ("setattr(oms.exits, 'guard', None)", True),
+        ("del service.guard", True),
+        ("await run_claimed(oms, user, 'cancel', key, make, refused=refused)", False),
+        ("scoped = await exits.scope(caller, order_id)", False),
+        ("held = exits.guard", False),
+    ],
+    ids=[
+        "direct", "private", "renamed_local", "getattr", "getattr_claim", "rebind", "setattr",
+        "delete", "run_claimed", "scope", "read_only",
+    ],
+)  # fmt: skip
+def test_the_fence_finds_the_guard_however_it_is_named(source: str, reaches: bool) -> None:
+    """D1b's delta, Minor 1, and S4-E r10's: the aliases a text match missed, a claim through
+    `getattr`, and a rebinding of the guard are all found; a plain read is not a reach."""
+    assert bool(_guard_reaches(ast.parse(source))) is reaches
+
+
 def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
     """SEC-S4C2A-01: a claim has no deadline, so the guard's 1,024 / 64 bounds hold only while
     every claim is released at its exit's end, which `run_claimed` does on every path (the tests
-    above). No other module reaches the guard; a new caller is reviewed here first. The order
-    lane's `OnLaneExits.guard` (`oms_wiring.py`) forwards the guard to `run_claimed` in place, on
-    the serving loop, and never claims or releases it."""
+    above). No other module claims the guard or rebinds it (`_guard_reaches`, read from each
+    module's tree), each place pinned by its receiver: the alert job store's own `claim` (an
+    outbox lease; `alerts` may not import `oms`), the exit service building its guard, and the
+    rate limiter's unrelated `guard`. Each reach is counted, so a second one through a pinned
+    receiver fails as a new receiver does. The order lane's `OnLaneExits.guard` (`oms_wiring.py`)
+    forwards the guard to `run_claimed` in place, on the serving loop, and never claims or
+    releases it, so it is no reach. A new caller is reviewed here first."""
     pkg = Path(candleviewer.__file__).resolve().parent
-    reach = re.compile(r"\.guard\.claim\(|\bexits\.guard\b")
-    users = {
-        p.relative_to(pkg).as_posix()
-        for p in pkg.rglob("*.py")
-        if reach.search(p.read_text(encoding="utf-8"))
-    }
-    assert users == {"api/order_exits_common.py", "oms_wiring.py"}
+    modules = sorted(pkg.rglob("*.py"))
+    assert len(modules) > 500  # the whole package was read, not an emptied scan
+    reaches = sorted(
+        (p.relative_to(pkg).as_posix(), reach)
+        for p in modules
+        for reach in _guard_reaches(_parsed(p))
+    )
+    assert reaches == sorted([
+        ("api/order_exits_common.py", "claim:oms.exits.guard"),
+        ("alerts/dispatcher.py", "claim:self._store"),
+        ("oms/exits.py", "rebind:self"),
+        ("exchange/bybit/rate_limit.py", "rebind:self"),
+    ])  # fmt: skip
 
 
 class _Pager:
