@@ -26,7 +26,7 @@ from structlog.testing import capture_logs
 from candleviewer.audit.actions import UnknownAuditAction, validate_action
 from candleviewer.audit.redact import redact
 from candleviewer.auth.hashing import Hasher
-from candleviewer.auth.invite_service import _placeholder_hash
+from candleviewer.auth.invite_service import placeholder_password_hash
 from candleviewer.storage.repositories import user_purge as purge
 from candleviewer.storage.repositories import user_purge_sqlalchemy as m
 from candleviewer.storage.repositories.owner_floor_sqlalchemy import CONSTRAINTS_NOW
@@ -198,7 +198,7 @@ def test_no_password_verifies_against_the_unusable_hash(password: str) -> None:
     it is the invite placeholder's shape and keeps nothing of the old hash."""
     unusable = purge.unusable_password_hash()
     assert _UNUSABLE.fullmatch(unusable) and unusable.startswith("$argon2id$")
-    assert _UNUSABLE.fullmatch(_placeholder_hash())  # the same value `InviteService` parks
+    assert _UNUSABLE.fullmatch(placeholder_password_hash())  # the same value `InviteService` parks
     assert unusable != purge.unusable_password_hash()
 
     async def verified() -> list[bool]:

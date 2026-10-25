@@ -128,3 +128,24 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 | F-2 | Access tokens are not bound to IP or user-agent; theft is detected only on refresh-token reuse.                                                                                    | **Accepted design decision** (Owner, #1778 record 2026-10-09; #2145 closed), see `docs/security/reviews/e09-auth-review.md`                                                                                                     |
 
 Both decision and code remain as stated until the owner decides; this section does not choose.
+
+## Amendment 1 (2026-10-25, #4479): the bootstrap invite keeps `owner` (PROPOSED)
+
+- Status: **proposed**, pending the owner's sign-off on #2701 (orchestrator ruling 10 on #4479).
+- **The exception.** #2109 made every invite grant `viewer`. One invite is excepted: the offline
+  bootstrap invite, an `owner` invite whose inviter is its own user, which only the host-gated mint
+  CLI writes (#4479 C1/C2). At redemption it keeps `owner`, exactly once and only while no Owner
+  is active, in one transaction under an advisory lock, with a CRITICAL `users.owner_bootstrapped`
+  record written ahead and a critical `auth`/`owner_bootstrapped` system event that resolves at
+  that Owner's first successful sign-in (`21-database-schema.md` §2.1, §3.10.2).
+- **First successful sign-in** is the first session inserted for that user with MFA satisfied.
+  The password step alone proves only possession of a secret that could have been taken with the
+  invite, and resolving the event before MFA would hide exactly the takeover it exists to surface.
+- **The alert source** is the durable pair, the CRITICAL `users.owner_bootstrapped` record and
+  its incident: C2's alert is keyed on it, rises-only, and read at boot exactly as
+  `auth_break_glass_attempts` is. The one-off `system_events` row is the live notice, never the
+  evidence (e09 U46).
+- **Unchanged.** No API path writes the marker. Every other invite keeps the #2109 downgrade. A
+  bootstrap invite is rejected `revoked` once another Owner exists, from `GET /invites/{token}`
+  to `/confirm`, and nothing is activated.
+- **Threats.** `docs/security/threat-models/e09-auth-rbac.md` U46 to U48 and §3.6.1.

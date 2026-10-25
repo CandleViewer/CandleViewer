@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+import io
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import redirect_stdout
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
+import structlog
 from fastapi import Request
 from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
-from candleviewer.api.invites import make_invites_router
+from candleviewer.api.invites import _AUDIT_DOWN, make_invites_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.invite_service import INVITE_TTL, InviteService, hash_token
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.observability import logging as logging_mod
 from candleviewer.observability.correlation import CorrelationMiddleware
+from candleviewer.storage.errors import WriteAheadTimeout
 from tests.unit.api.test_step_up_router import _H, _build, _code, _Emitter
 from tests.unit.auth.test_invite_service import (
     GOOD_PW,
@@ -348,3 +354,121 @@ async def test_the_owner_check_denial_names_the_callers_session() -> None:
     assert r.status_code == 403
     (denied,) = [x for x in em.calls if x["action"] == "rbac.denied"]
     assert denied["session_id"] == _SESSION
+
+
+# -- #4479: the bootstrap invite over HTTP -----------------------------------------------------
+
+
+async def _bootstrap_token(
+    c: TestClient, seed: bytes, clock: Any, repo: FakeRepo, name: str = "annie"
+) -> str:
+    """An invite turned into the marked `owner` invite the offline mint (C1) writes."""
+    _elevate(c, seed, clock)
+    body = {**_BODY, "email": f"{name}@example.com", "username": name}
+    tok = str(c.post("/users", headers=_H, json=body).json()["invite_url"]).rsplit("/", 1)[1]
+    h = hash_token(tok)
+    repo.rows[h] = repo.rows[h].model_copy(update={"role": "owner"})
+    repo.marked.add(repo.rows[h].id)
+    return tok
+
+
+def _redeem(c: TestClient, tok: str) -> Any:
+    start = c.post(f"/invites/{tok}", json={"password": GOOD_PW})
+    body = {"method_id": start.json()["method_id"], "code": "123456"}
+    return c.post(f"/invites/{tok}/confirm", json=body)
+
+
+async def test_bootstrap_invite_is_offered_and_redeemed_as_owner_with_a_critical_record() -> None:
+    c, em, seed, clock, repo, _ = await _setup()
+    tok = await _bootstrap_token(c, seed, clock, repo)
+    assert c.get(f"/invites/{tok}").json()["role"] == "owner"  # DC-15: the role being offered
+    done = _redeem(c, tok)
+    assert done.status_code == 200 and done.json()["role"] == "owner"
+    (rec,) = [x for x in em.calls if x["action"] == "users.owner_bootstrapped"]
+    invite_id = str(repo.rows[hash_token(tok)].id)
+    assert (rec["severity"].value, rec["after_state"]) == ("critical", {"invite_id": invite_id})
+    assert {"actor_ip", "request_id"} <= rec.keys()
+    assert "users.invite_role_downgraded" not in em.actions()
+    assert em.actions().index("users.owner_bootstrapped") < em.actions().index(
+        "users.invite_redeemed"
+    )
+
+
+async def test_bootstrap_confirm_answers_503_and_grants_nothing_when_its_record_is_refused() -> (
+    None
+):
+    c, em, seed, clock, repo, _ = await _setup()
+    tok = await _bootstrap_token(c, seed, clock, repo)
+    em.fail_on = frozenset({"users.owner_bootstrapped"})
+    assert _redeem(c, tok).status_code == 503
+    assert repo.owners == 0 and "users.invite_redeemed" not in em.actions()
+
+
+async def test_bootstrap_confirm_answers_503_when_its_record_misses_the_write_ahead_bound() -> None:
+    c, em, seed, clock, repo, _ = await _setup()
+    tok = await _bootstrap_token(c, seed, clock, repo)
+
+    async def late(*_a: Any, **_kw: Any) -> str:
+        raise WriteAheadTimeout("write-ahead audit exceeded 5.0 s")  # the store rolled back
+
+    repo.activate_bootstrap_owner = late  # type: ignore[method-assign]  # the store's answer
+    done = _redeem(c, tok)
+    assert (done.status_code, done.json()["detail"]) == (503, _AUDIT_DOWN)
+    assert repo.owners == 0 and "users.invite_redeemed" not in em.actions()
+
+
+async def test_a_stale_bootstrap_invite_is_the_uniform_404_at_inspect_and_confirm() -> None:
+    """DC-09: another Owner is active. `GET` refuses before a password is parked; a `/confirm`
+    that started before that Owner existed is refused too, nothing activated (ruling 4)."""
+    c, em, seed, clock, repo, _ = await _setup()
+    tok = await _bootstrap_token(c, seed, clock, repo)
+    unknown = c.get("/invites/" + "z" * 40)
+    repo.owners = 1
+    seen = c.get(f"/invites/{tok}")
+    repo.owners = 0
+    start = c.post(f"/invites/{tok}", json={"password": GOOD_PW})
+    repo.owners = 1
+    body = {"method_id": start.json()["method_id"], "code": "123456"}
+    done = c.post(f"/invites/{tok}/confirm", json=body)
+    assert seen.status_code == done.status_code == unknown.status_code == 404
+    assert seen.json() == done.json() == unknown.json()
+    rej = [x["reason"] for x in em.calls if x["action"] == "users.invite_rejected"]
+    assert rej[-2:] == ["revoked", "revoked"]
+    assert repo.owners == 1 and "users.owner_bootstrapped" not in em.actions()
+
+
+@pytest.fixture
+def json_logs() -> Iterator[Callable[[], str]]:
+    """The shipped JSON logging into a buffer; calling the yield flushes and reads it. Teardown
+    resets logging whatever the test did, a failed assertion included."""
+    buf = io.StringIO()
+
+    def read() -> str:
+        logging_mod.reset_logging()  # stops the listener: every queued line is written
+        return buf.getvalue()
+
+    with redirect_stdout(buf):
+        logging_mod.configure_logging(env="test", level="debug", fmt="json")
+        try:
+            yield read
+        finally:
+            logging_mod.reset_logging()
+
+
+async def test_bootstrap_redemption_logs_no_token_or_password_through_the_real_redactor(
+    json_logs: Callable[[], str],
+) -> None:
+    """DC-16: every log line of the flow, a refused record included, goes through the shipped
+    processors; the probe line shows the redactor is live (its `token` value is masked)."""
+    c, em, seed, clock, repo, _ = await _setup()
+    tok = await _bootstrap_token(c, seed, clock, repo)
+    spare = await _bootstrap_token(c, seed, clock, repo, name="spare")
+    structlog.get_logger("cv.test").info("probe", token=tok)
+    em.fail_on = frozenset({"users.owner_bootstrapped"})
+    assert _redeem(c, spare).status_code == 503
+    em.fail_on = frozenset()
+    assert c.get(f"/invites/{tok}").status_code == 200
+    assert _redeem(c, tok).status_code == 200
+    out = json_logs()
+    assert '"event":"probe"' in out.replace(" ", "")
+    assert tok not in out and spare not in out and GOOD_PW not in out

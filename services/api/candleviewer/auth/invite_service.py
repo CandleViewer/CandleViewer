@@ -15,7 +15,10 @@ unusable rather than half-open:
    and moves the password hash across.
 
 The role is always `viewer` (#2109); a legacy stored non-viewer role is downgraded at
-redemption. Callers cannot pass one. The raw
+redemption. Callers cannot pass one. The one exception is the offline bootstrap invite
+(#4479, ADR-0010 amendment): it keeps `owner` exactly once, while no Owner is active, in
+one transaction with its write-ahead `users.owner_bootstrapped` record; a stale one is
+rejected `revoked`. The raw
 token is never logged, stored, or put in an exception message. Unknown /
 expired / redeemed / revoked tokens raise `InviteRejected` (distinct `reason`
 for audit only) so the edge can render one uniform error.
@@ -41,8 +44,14 @@ from candleviewer.auth.errors import (
     UserDisabled,
 )
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
-from candleviewer.auth.invite_repository import InviteAudit, InviteRepository
+from candleviewer.auth.invite_repository import (
+    BOOTSTRAP_ROLE,
+    BootstrapAudit,
+    InviteAudit,
+    InviteRepository,
+)
 from candleviewer.auth.metrics import (
+    auth_owner_bootstrap_events,
     users_invites_created_total,
     users_invites_pending,
     users_invites_redeemed_total,
@@ -92,6 +101,11 @@ InviteTamperReason = Literal["role_tamper", "identity_tamper"]
 def _is_viewer_role(role: str) -> bool:
     """True only for the one role an invite may grant (#2109)."""
     return role == InviteRole.VIEWER.value
+
+
+def _is_bootstrap_role(role: str) -> bool:
+    """True for the one stored invite role the bootstrap activation may keep (#4479)."""
+    return role == BOOTSTRAP_ROLE
 
 
 def _utc_now() -> datetime:
@@ -162,7 +176,7 @@ class InviteService:
             username=request.username,
             display_name=request.display_name,
             role=role,
-            placeholder_password_hash=_placeholder_hash(),
+            placeholder_password_hash=placeholder_password_hash(),
             invited_by=invited_by,
             token_hash=hash_token(token),
             expires_at=expires_at,
@@ -241,7 +255,7 @@ class InviteService:
         record = await self._find_open_or_reject(token, source_ip)
         return InviteView(
             display_name=record.display_name or record.username,
-            role=record.role,
+            role=await self._offered_role(record, source_ip),
             expires_at=record.expires_at,
         )
 
@@ -250,6 +264,7 @@ class InviteService:
     ) -> EnrollmentStart:
         """Consume the token, park the password, start TOTP enrolment."""
         record = await self._find_open_or_reject(token, source_ip)
+        await self._offered_role(record, source_ip)  # a stale bootstrap invite parks nothing
         check_password_policy(password, username=record.username, email=record.email)
         pending_hash = await self._hasher.hash(password, DEFAULT_ARGON2_PARAMS)
         consumed = await self._repo.consume(
@@ -277,9 +292,11 @@ class InviteService:
         code: str,
         source_ip: str,
         audit_downgrade: DowngradeAudit,
+        audit_bootstrap: BootstrapAudit,
     ) -> tuple[InviteRecord, tuple[str, ...]]:
         """Verify the first TOTP code and activate the account. Returns the
-        invite (role) and the one-time recovery codes."""
+        invite (role) and the one-time recovery codes. An `owner` invite first tries the
+        bootstrap activation, written ahead by `audit_bootstrap` (#4479)."""
         record = await self._repo.find_by_token_hash(hash_token(token))
         now = self._clock()
         if record is None:
@@ -304,6 +321,27 @@ class InviteService:
             raise self._reject("redeemed", source_ip) from exc
         pending_hash = record.pending_password_hash
         stored_role = record.role
+        if _is_bootstrap_role(stored_role):  # only the offline bootstrap invite keeps it (#4479)
+            # The hook is a required argument; a falsy value still fails closed (C-2.9).
+            if audit_bootstrap is None:
+                raise InviteRejected("enrollment_invalid")
+            kept = await self._repo.activate_bootstrap_owner(
+                record.id,
+                record.user_id,
+                password_hash=pending_hash,
+                algo_params=DEFAULT_ARGON2_PARAMS,
+                now=now,
+                audit=audit_bootstrap,
+            )
+            if kept == "not_invited":
+                raise self._reject("redeemed", source_ip)
+            if kept == "owner_exists":  # a stale bootstrap invite: nothing activated (ruling 4)
+                raise self._reject("revoked", source_ip)
+            if kept == "activated":
+                users_invites_redeemed_total.inc()  # no pending dec: cv-api never counted it
+                auth_owner_bootstrap_events.inc()
+                return record, recovery_codes
+            # "not_bootstrap": a legacy owner invite takes the #2109 block below, unchanged
         if not _is_viewer_role(stored_role):
             # Legacy invite minted before #2109: never grant more than viewer.
             # Audit first (C-2.9, write-ahead): if the audit write fails, nothing changes.
@@ -329,6 +367,16 @@ class InviteService:
 
     # -- helpers -----------------------------------------------------------
 
+    async def _offered_role(self, record: InviteRecord, source_ip: str) -> str:
+        """The role redemption would grant: `viewer` (#2109), or `owner` for an open bootstrap
+        invite. A stale one (another Owner active) is rejected `revoked`, as `/confirm` would."""
+        if not _is_bootstrap_role(record.role):
+            return InviteRole.VIEWER.value
+        offer = await self._repo.bootstrap_offer(record.id)
+        if offer == "stale":
+            raise self._reject("revoked", source_ip)
+        return BOOTSTRAP_ROLE if offer == "open" else InviteRole.VIEWER.value
+
     async def _classify(self, token: str) -> str:
         record = await self._repo.find_by_token_hash(hash_token(token))
         return "unknown" if record is None else _reason_for(record, self._clock())
@@ -348,7 +396,7 @@ class InviteService:
         return record
 
 
-def _placeholder_hash() -> str:
+def placeholder_password_hash() -> str:
     # Satisfies `users_pwd_argon`; never verifies (the random tail is not a
     # valid Argon2id digest), so an invited user cannot sign in.
     return "$argon2id$v=19$m=65536,t=3,p=4$" + secrets.token_hex(16)

@@ -333,7 +333,7 @@ def make_invites_router(
             status_code=200,
             content={
                 "display_name": view.display_name,
-                "role": "viewer",
+                "role": view.role,  # `viewer`, or `owner` for an open bootstrap offer (#4479)
                 "expires_at": view.expires_at.isoformat(),
             },
         )
@@ -429,6 +429,23 @@ def make_invites_router(
                 request_id=current_request_uuid(),
             )
 
+        async def _audit_bootstrap(invite_id: uuid.UUID, user_id: uuid.UUID) -> None:
+            """#4479: the Owner grant's CRITICAL record, inside its transaction (refused: none)."""
+            try:
+                await emitter.emit(
+                    "users.owner_bootstrapped",
+                    actor_label=str(user_id),
+                    actor_user_id=user_id,
+                    actor_ip=_actor_ip(request),
+                    object_kind="user",
+                    object_id=str(user_id),
+                    severity=Severity.CRITICAL,
+                    after_state={"invite_id": str(invite_id)},
+                    request_id=current_request_uuid(),
+                )
+            except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started
+                raise _AuditRefused from exc
+
         try:
             record, recovery = await auth.invites.complete_redemption(
                 invite_token,
@@ -436,7 +453,10 @@ def make_invites_router(
                 code=code,
                 source_ip=_client_ip(request),
                 audit_downgrade=_audit_downgrade,
+                audit_bootstrap=_audit_bootstrap,
             )
+        except (_AuditRefused, WriteAheadTimeout):  # the grant rolled back; the user stays invited
+            return _problem(503, "Service unavailable", _AUDIT_DOWN)
         except InviteRejected as exc:
             await _reject_audit(exc.reason, request)
             if exc.reason == "enrollment_invalid":
