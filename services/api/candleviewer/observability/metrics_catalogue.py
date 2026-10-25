@@ -694,7 +694,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "cv_override_refused_total",
         "counter",
         "refusals",
-        ("field",),
+        ("cap",),
         "Trade-group requests refused because a leg would exceed its bound profile's caps or "
         "risk budget, one per distinct refused field of the override table (ADR-0040).",
         "dashboard only",

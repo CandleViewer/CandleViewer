@@ -25,8 +25,6 @@ from candleviewer.accounts.override_comparator import (
 )
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
-from candleviewer.exchange.bybit.instruments import parse_instruments
-from tests._corpus import rest
 
 _FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 D = Decimal
@@ -54,9 +52,34 @@ def alternate(**changes: Any) -> AccountProfile:
 
 
 def _btcusdt() -> Instrument:
-    rows = rest("rest/instruments_before.json")["result"]["list"]
-    parsed = parse_instruments(rows, fetched_at_us=0)
-    return next(i for i in parsed.instruments if i.symbol == "BTCUSDT")
+    return Instrument(
+        category="linear",
+        symbol="BTCUSDT",
+        base_coin="BTC",
+        quote_coin="USDT",
+        settle_coin="USDT",
+        status="trading",
+        contract_type="linear_perpetual",
+        launch_time=1585699200000000,
+        tick_size=D("0.10"),
+        price_scale=2,
+        min_price=D("0.10"),
+        max_price=D("999999.00"),
+        qty_step=D("0.001"),
+        min_order_qty=D("0.001"),
+        max_order_qty=D("100.000"),
+        max_mkt_order_qty=D("50.000"),
+        min_notional=D("5"),
+        max_leverage=D("100.00"),
+        min_leverage=D("1"),
+        leverage_step=D("0.01"),
+        funding_interval_min=480,
+        upper_funding_rate=D("0.00375"),
+        lower_funding_rate=D("-0.00375"),
+        copy_trading=True,
+        metadata_version=1,
+        fetched_at=0,
+    )
 
 
 BOUND: Final = profile()

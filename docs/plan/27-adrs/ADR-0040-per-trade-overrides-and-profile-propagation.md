@@ -152,7 +152,7 @@ never silently clamped to the limit, as the sizer's margin check fails a leg rat
 entry per offending leg naming the field, the requested value and the limit (yaml:6297-6301); a rule-2 entry also
 carries the net headroom and the committed risk. It is audited before
 the answer, as the refused-widening row the threat model lists beside `tradegroup.row_overridden{field, from, to}`
-(§8; E28-S05 registers its action name), with `cv_override_refused_total{field}`. Only the profile's own sizing, with
+(§8; E28-S05 registers its action name), with `cv_override_refused_total{cap}`. Only the profile's own sizing, with
 no request value, is clamped and explained (`sizing_explanation`, yaml:6308-6309). The "clamp" reading of a widening
 override in E28-S05 (#1144) and E28-X03 (#976) is wrong; the comment drafts correct it. The contract's sentence that
 "quantity, notional, leverage, margin and risk at the stop may not rise" (yaml:6296-6299) reads, under this ruling,
@@ -434,8 +434,8 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
 socket its `profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event)
 to that hand-off; labels `env` only, never an account id. The client's half (the re-fetch and the preview) is the
 existing HTTP latency series of the two routes; the end-to-end 2 s is asserted by E28-S01's (#971) end-to-end test. A
-refused stale submit counts in `cv_override_refused_total{field="profile_version"}` beside the threat model's
-`cv_override_refused_total{field}` (§8 of the model).
+refused stale submit counts in `cv_override_refused_total{cap="profile_version"}` beside the threat model's
+`cv_override_refused_total{cap}` (§8 of the model).
 
 ### Accessibility constraint for the designer (E28-D03, SCR-061)
 

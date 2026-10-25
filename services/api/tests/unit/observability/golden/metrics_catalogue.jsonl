@@ -171,7 +171,7 @@
 ["cv_order_entry_refusals_total", "counter", ["reason"], "live", "E42"]
 ["cv_outbox_dead_total", "counter", ["topic"], "planned", "E40"]
 ["cv_outbox_depth", "gauge", ["topic"], "planned", "E40"]
-["cv_override_refused_total", "counter", ["field"], "planned", "E28"]
+["cv_override_refused_total", "counter", ["cap"], "planned", "E28"]
 ["cv_process_hardening_failures_total", "counter", [], "live", "E27"]
 ["cv_profile_cache_lookups_total", "counter", ["result"], "live", "E28"]
 ["cv_profile_rows", "gauge", ["state"], "live", "E28"]

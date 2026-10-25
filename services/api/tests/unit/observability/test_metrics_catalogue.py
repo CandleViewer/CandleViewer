@@ -724,7 +724,7 @@ def test_override_refused_counter_is_planned_and_bounded_by_the_decision_table()
     (spec,) = [s for s in CATALOGUE if s.name == "cv_override_refused_total"]
     assert (spec.kind, spec.labels, spec.status, spec.owner_epic) == (
         "counter",
-        ("field",),
+        ("cap",),
         "planned",
         "E28",
     )

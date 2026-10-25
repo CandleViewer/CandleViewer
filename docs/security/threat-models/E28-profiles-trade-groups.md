@@ -594,17 +594,17 @@ Every record is hash-chained (SR-063), redacted before hashing (SR-069) and carr
 
 ### 8.2 Metrics and alerts
 
-| Signal                                                                                                                                      | Detects                                        | Status                            |
-| ------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------- |
-| `cv_risk_guard_fail_closed_total` (pages on any increase)                                                                                   | PF-D03                                         | planned E28-T04                   |
-| `cv_risk_guard_refusals_total{gate}`, `cv_sizer_clamped_total{cap}`, `cv_override_clamped_total{field}`, `cv_override_refused_total{field}` | Probing for a widening path (PF-T03 to PF-T06) | planned E28-T03, E28-T04, E28-S05 |
-| `cv_sizer_stop_fallback_total`; E13's `indicator_atr_unavailable_total`                                                                     | PF-T13                                         | planned E28-T03; E13              |
-| `cv_profile_propagation_seconds`                                                                                                            | PF-T15                                         | planned (E28-K01 follow-up)       |
-| `cv_tradegroup_preview_total{outcome}`, `cv_tradegroup_preview_seconds`, a per-user 429 counter                                             | PF-D01                                         | planned E28-T05                   |
-| `oms_rate_tokens_available{account,bucket}` (page when `critical` stays below 1 for 10 s)                                                   | PF-D02                                         | `20-architecture.md` §4.3         |
-| `ix_tgl_no_sl`: an open leg without a confirmed native SL raises a critical system event within 1 s                                         | PF-D05                                         | DDL                               |
-| `unwind_incomplete_total` (alerts at 1)                                                                                                     | PF-D05                                         | `24-internal-schemas.md` §9.5.1   |
-| Per-account counter state (`risk_state_unavailable`)                                                                                        | PF-E06                                         | planned E39-T01                   |
+| Signal                                                                                                                                    | Detects                                        | Status                            |
+| ----------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------- |
+| `cv_risk_guard_fail_closed_total` (pages on any increase)                                                                                 | PF-D03                                         | planned E28-T04                   |
+| `cv_risk_guard_refusals_total{gate}`, `cv_sizer_clamped_total{cap}`, `cv_override_clamped_total{field}`, `cv_override_refused_total{cap}` | Probing for a widening path (PF-T03 to PF-T06) | planned E28-T03, E28-T04, E28-S05 |
+| `cv_sizer_stop_fallback_total`; E13's `indicator_atr_unavailable_total`                                                                   | PF-T13                                         | planned E28-T03; E13              |
+| `cv_profile_propagation_seconds`                                                                                                          | PF-T15                                         | planned (E28-K01 follow-up)       |
+| `cv_tradegroup_preview_total{outcome}`, `cv_tradegroup_preview_seconds`, a per-user 429 counter                                           | PF-D01                                         | planned E28-T05                   |
+| `oms_rate_tokens_available{account,bucket}` (page when `critical` stays below 1 for 10 s)                                                 | PF-D02                                         | `20-architecture.md` §4.3         |
+| `ix_tgl_no_sl`: an open leg without a confirmed native SL raises a critical system event within 1 s                                       | PF-D05                                         | DDL                               |
+| `unwind_incomplete_total` (alerts at 1)                                                                                                   | PF-D05                                         | `24-internal-schemas.md` §9.5.1   |
+| Per-account counter state (`risk_state_unavailable`)                                                                                      | PF-E06                                         | planned E39-T01                   |
 
 Labels use internal account and group ids only (SR-E27-16).
 

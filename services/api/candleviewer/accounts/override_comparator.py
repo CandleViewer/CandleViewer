@@ -8,7 +8,7 @@ admits it unchanged or refuses it whole, naming every violated field with its ru
 requested value; it never clamps (C-12.5; E28 threat model D6). A refusal is `403
 risk_limit_breached` with one `errors[]` entry per offending leg (22-api-openapi.yaml), written
 ahead as `trade_group.override_refused` (`refusal_record`) and counted in
-`cv_override_refused_total{field}` (`refused_fields`); the route (E28-T05 #909, E34-S01 #999) does
+`cv_override_refused_total{cap}` (`refused_fields`); the route (E28-T05 #909, E34-S01 #999) does
 both, as it writes and counts nothing here.
 
 Pure: no I/O, no clock, no logging. What it cannot know is an explicit input (`AccountFigures`,
@@ -791,7 +791,7 @@ def judge_leg(
 
 
 def refused_fields(violations: Iterable[Violation]) -> tuple[str, ...]:
-    """The `field` label values of `cv_override_refused_total{field}`, one per distinct field in
+    """The `cap` label values of `cv_override_refused_total{cap}`, one per distinct field in
     the order first named: a closed set, the table's fields (never an account or a value)."""
     return tuple(dict.fromkeys(violation.field for violation in violations))
 
