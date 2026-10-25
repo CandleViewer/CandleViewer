@@ -118,13 +118,22 @@ class Clamp:
     limit: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class TakeProfit:
+    """A take-profit rung (Sec.9.3.3): its price on the tick toward entry and its quantity."""
+
+    price: Decimal
+    qty: Decimal
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SizingExplanation:
     """What the sizer computed, in step order, for the ticket and the preview (a contract, not a
     debug aid). `basis / per_unit` is the mode's raw quantity (`per_unit` `None` for `fixed_qty`);
     `clamps` every cap judged, `binding` the last one that lowered the quantity; `risk_usdt` is 1R
     (`distance * qty`) and `risk_with_fees_usdt` adds both taker fees; `initial_margin` is at
-    the larger of the limit's and `ref`'s notionals; `atr` the reading the stop used; `minimum`
+    the larger of the limit's and `ref`'s notionals; `atr` the reading the stop or the take-profit
+    used; `minimum`
     the one a leg missed; `rules` the rules that fired, in order. A gate skip carries none."""
 
     ref_price: Decimal | None = None
@@ -156,10 +165,12 @@ class SizingExplanation:
 
 @dataclass(frozen=True, slots=True)
 class LegSizing(SizingExplanation):
-    """The outcome, its reason, and the explanation computed before the outcome (BQ-8)."""
+    """The outcome, its reason, the take-profits of an `ok` leg, and the explanation computed
+    before the outcome (BQ-8)."""
 
     outcome: Outcome
     reason: SkipReason | FailReason | None = None
+    tps: tuple[TakeProfit, ...] = ()
 
     def __post_init__(self) -> None:
         kinds: dict[str, type] = {"ok": type(None), "skip": SkipReason, "fail": FailReason}
@@ -351,6 +362,60 @@ def _missed(qty: Qty, notional: Decimal, p: AccountProfile, inst: Instrument) ->
     return floor if notional < floor[1] else None
 
 
+def _tp_offset(
+    p: AccountProfile, ref: Decimal, stop: ResolvedStop, inst: Instrument, atr: AtrReading | None
+) -> Decimal | None:
+    """The single take-profit's offset from `ref` in `tp_offset_unit`; `None` for an `atr` one with
+    no warm reading of `sl_atr_period`, or with no `tp_offset_*` set."""
+    value, unit = p.tp_offset_value, p.tp_offset_unit
+    if value is None or unit is None:
+        return None
+    if unit == "r_multiple":
+        return value * stop.distance
+    if unit == "ticks":
+        return value * inst.tick_size
+    if unit == "percent":
+        return ref * value
+    if unit == "atr":
+        reading = _atr_value(p, atr)
+        return None if reading is None else reading * value
+    raise ValueError(f"no take-profit resolves in unit {unit!r}")  # a programming error
+
+
+def resolve_tps(
+    side: Side,
+    p: AccountProfile,
+    ref: Decimal,
+    stop: ResolvedStop,
+    qty: Decimal,
+    inst: Instrument,
+    atr: AtrReading | None,
+) -> tuple[TakeProfit, ...]:
+    """Sec.9.3.3 from `ref` (BQ-17): a ladder rung at `ref +/- r * distance` takes
+    `floor(qty * qty_pct)` and the last rung the rest of `floor(qty * sum)`, so a rung that floors
+    under `min_order_qty` (one no reduce-only order can carry) is folded into the last; with no
+    ladder, one take-profit of the whole quantity at `tp_offset_*`. Prices round toward entry,
+    and a price not beyond entry, or not above 0, is dropped."""
+    buy, step = side == "buy", inst.qty_step
+    rungs: list[tuple[Decimal, Decimal]] = []  # (offset from ref, qty)
+    with localcontext(_FLOOR):
+        if p.tp_ladder:
+            sizes = [_to_grid(qty * rung.qty_pct, step, ROUND_FLOOR) for rung in p.tp_ladder[:-1]]
+            sizes = [size if size >= inst.min_order_qty else Decimal(0) for size in sizes]
+            whole = _to_grid(qty * sum(rung.qty_pct for rung in p.tp_ladder), step, ROUND_FLOOR)
+            sizes.append(whole - sum(sizes))
+            rungs = [(r.r * stop.distance, n) for r, n in zip(p.tp_ladder, sizes, strict=True)]
+        elif (offset := _tp_offset(p, ref, stop, inst, atr)) is not None:
+            rungs = [(offset, qty)]
+        tps = []
+        for offset, size in rungs:
+            target = ref + offset if buy else ref - offset
+            price = _to_grid(target, inst.tick_size, ROUND_FLOOR if buy else ROUND_CEILING)
+            if size > 0 and ((price > ref) if buy else (0 < price < ref)):
+                tps.append(TakeProfit(price, size))
+    return tuple(tps)
+
+
 def size_leg(
     intent: SizingIntent,
     profile: AccountProfile,
@@ -443,4 +508,9 @@ def size_leg(
     # product, `available_margin * MARGIN_SHARE`, in the default context.
     if margin > _FLOOR.multiply(wallet.available_margin, MARGIN_SHARE):
         return replace(leg, outcome="fail", reason=FailReason.INSUFFICIENT_MARGIN)
-    return leg
+    tps = resolve_tps(intent.side, profile, ref, stop, qty, inst, metrics.atr)  # 9
+    tp_rule = "tp_ladder" if profile.tp_ladder else f"tp_{profile.tp_offset_unit}"
+    tp_atr = not profile.tp_ladder and profile.tp_offset_unit == "atr"  # the explanation's reading
+    if tp_atr and _atr_value(profile, metrics.atr) is not None:
+        leg = replace(leg, atr=metrics.atr)
+    return replace(leg, tps=tps, rules=leg.rules + ((tp_rule,) if tps else ()))

@@ -75,3 +75,7 @@ docs/plan/28-statechart-catalogue.md
 # #913 (CR-G6-R3-01 on #3972): the statechart contracts are json.dumps(indent=2) + LF, as every chart on
 # main is and as 28's B<n>.1 blocks hold them; prettier would fold their one-item arrays on a commit.
 services/api/candleviewer/statechart/machines/*.machine.json
+
+# E28-T03 (#907): the sizer's golden vectors, one vector per line (the e28 fixture's schema);
+# prettier would reflow each into a dozen lines
+services/api/tests/unit/accounts/golden/e28_sizer_vectors.json

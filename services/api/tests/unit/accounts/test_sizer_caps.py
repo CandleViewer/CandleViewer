@@ -1,6 +1,7 @@
 """E28-T03 (#907): the sizer's caps (24 Sec.9.3.2), the margin step, the explanation and its
-`sizing_explanation` text, and the ruled properties: an `ok` leg passes the comparator's R1, R2,
-R5, R6 and R7, never exceeds a cap or the margin, and grows with the risk."""
+`sizing_explanation` text, the take-profits (Sec.9.3.3), and the ruled properties: an `ok` leg
+passes the comparator's R1, R2, R5, R6, R7 and take-profit rows, never exceeds a cap or the
+margin, and grows with the risk."""
 
 from __future__ import annotations
 
@@ -151,8 +152,8 @@ def test_size_leg_insufficient_margin_reports_the_margin_it_needed() -> None:
 @pytest.mark.parametrize(
     ("vid", "rules"),
     [
-        ("V01", ("stop_ticks", "risk_based", "fee_correction", "lot_floor")),
-        ("V10", ("stop_ticks", "fixed_notional", "max_daily_loss")),
+        ("V01", ("stop_ticks", "risk_based", "fee_correction", "lot_floor", "tp_ladder")),
+        ("V10", ("stop_ticks", "fixed_notional", "max_daily_loss", "tp_ticks")),
         ("V13", ("stop_ticks", "risk_based", "fee_correction", "max_leverage_cap")),
         ("market-at-mid", ("stop_atr", "pct_equity", "max_order_qty", "max_mkt_order_qty")),
         ("atr-fallback", ("stop_fallback", "pct_equity", "lot_floor")),
@@ -167,6 +168,12 @@ def test_explanation_records_the_atr_reading_only_when_it_set_the_stop() -> None
     assert (vector("V05").atr, vector("V05").stop_fallback) == (_ATR, False)
     assert (leg("atr-fallback").atr, leg("atr-fallback").stop_fallback) == (None, True)
     assert vector("V01").atr is None  # a ticks stop reads no ATR
+
+
+def test_explanation_records_the_atr_reading_a_take_profit_used() -> None:
+    p = profile("P-QTY", sl_offset_unit="ticks", sl_offset_value="600", tp_offset_unit="atr")
+    got = sized(p, market=sz.SizingMarket(atr=_ATR))
+    assert (got.atr, got.tps) == (_ATR, (sz.TakeProfit(D(64800), D("0.01")),))  # 2 x 400
 
 
 _RENDERED: Final = {
@@ -196,6 +203,36 @@ def test_render_is_the_contracts_sizing_explanation(vid: str) -> None:
 
 _NUMBER: Final = re.compile(r"(?<![\w.-])-?\d+(?:\.\d+)?(?![\w.-])")
 _UNIT: Final = re.compile(r" (?:USDT|BTC|ETH|SOL)\b")
+
+
+def test_resolve_tps_drops_a_price_at_or_past_entry_or_at_or_below_zero() -> None:
+    btc, stop = instrument("BTCUSDT"), sz.ResolvedStop(D(160), D(60), False)
+    p = profile("P-QTY")  # one 2R take-profit
+    assert sz.resolve_tps("sell", p, D(100), stop, D(1), btc, None) == ()  # 100 - 120 < 0
+    near = profile("P-QTY", tp_offset_unit="ticks", tp_offset_value="0.5")  # 0.05 floors to entry
+    assert sz.resolve_tps("buy", near, D(100), stop, D(1), btc, None) == ()
+    assert sz.resolve_tps("buy", profile("P-PCT"), D(100), stop, D(1), btc, None) == ()  # none set
+
+
+def test_resolve_tps_atr_reading_of_another_period_sets_none() -> None:
+    p = profile("P-PCT", tp_offset_unit="atr", tp_offset_value="2")
+    stop = sz.ResolvedStop(D(63400), D(600), False)
+    btc = instrument("BTCUSDT")
+    assert sz.resolve_tps("buy", p, D(64000), stop, D(1), btc, atr(D(400), period=20)) == ()
+
+
+def test_resolve_tps_folds_a_rung_under_the_minimum_lot_into_the_last() -> None:
+    fine = instrument("BTCUSDT").model_copy(update={"qty_step": D("0.0001")})  # min lot 0.001
+    stop, p = sz.ResolvedStop(D(63880), D(120), False), profile("P-RISK")  # 1R and 2R, half each
+    got = sz.resolve_tps("buy", p, D(64000), stop, D("0.0018"), fine, None)
+    assert got == (sz.TakeProfit(D(64240), D("0.0018")),)  # 0.0009 cannot be placed reduce-only
+
+
+def test_resolve_tps_unknown_offset_unit_is_a_programming_error() -> None:
+    p = profile("P-QTY").model_copy(update={"tp_offset_unit": "pips"})  # forged past validation
+    stop = sz.ResolvedStop(D(63880), D(120), False)
+    with pytest.raises(ValueError, match="unit 'pips'"):
+        sz.resolve_tps("buy", p, D(64000), stop, D(1), instrument("BTCUSDT"), None)
 
 
 def assert_every_figure_has_a_unit(text: str) -> None:
@@ -330,6 +367,12 @@ def test_size_leg_ok_passes_the_comparator_and_never_exceeds_a_cap(
     verdict = judge_leg(p, leg, baseline=leg, instrument=inst, figures=w)
     broken = [] if not isinstance(verdict, Refused) else verdict.violations
     assert [v for v in broken if v.rule in {"R1", "R2", "R5", "R6", "R7"}] == []
+    assert sum(tp.qty for tp in got.tps) <= got.qty
+    for tp in got.tps:  # each rung on the comparator's take-profit row
+        rung = leg.model_copy(update={"take_profit_price": tp.price})
+        verdict = judge_leg(p, rung, baseline=rung, instrument=inst, figures=w)
+        broken = [] if not isinstance(verdict, Refused) else verdict.violations
+        assert [v for v in broken if v.field == "tp_offset_value"] == []
 
 
 @settings(max_examples=200)
