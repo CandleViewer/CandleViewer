@@ -28,9 +28,14 @@ _E28: Final = Path(__file__).resolve().parents[5] / "tests" / "fixtures" / "e28"
 _FROZEN: Final = Path(__file__).resolve().parents[2] / "fixtures" / "profiles"
 
 
-def atr(value: Decimal | None, period: int = 14) -> sz.AtrReading:
+def atr(value: Decimal | None, period: int = 14, **provenance: Any) -> sz.AtrReading:
+    """A kernel reading (descriptor version 1, build 1) unless `provenance` says otherwise."""
     as_of = datetime(2026, 10, 5, tzinfo=UTC)
-    return sz.AtrReading(timeframe="1h", period=period, value=value, as_of=as_of)
+    known = {"source": "kernel", "version": 1, "build_version": 1}
+    if value is None:
+        known["unavailable"] = "warmup"
+    fields = {"timeframe": "1h", "period": period, "value": value, "as_of": as_of}
+    return sz.AtrReading.model_validate(fields | known | provenance)
 
 
 _ATR: Final = atr(D(400))
