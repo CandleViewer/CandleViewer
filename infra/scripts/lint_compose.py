@@ -28,14 +28,20 @@ Rule 5 applies to every compose file (``docker-compose*.yml``):
    A name holding ``KEK`` must be one of §4's settings, each with a value that
    cannot be key material: ``CV_KEK_SOURCE`` ``file`` or ``handle``,
    ``CV_KEK_HANDLE`` a ``/run/secrets/`` path, ``CV_KEK_VERSION`` an integer or
-   its own variable. No value holds a run of 32 hex digits or 43 base64
-   characters. A KEK reaches a service only as a file secret: no secret from
-   the environment has a name or a variable holding ``KEK``, and the secret a
-   service mounts where it reads its KEK (``CV_KEK_HANDLE`` or
-   ``CV_KEK_PREV_HANDLE``, which the file must mount, or else Settings'
-   ``/run/secrets/cv_kek``, or a source or target holding ``KEK``) is one the
-   same file declares with ``file:`` alone. No secret from the environment
-   carries the owner role's DSN. No message repeats a value.
+   its own variable. No value, and no config's ``content:``, holds a run of 32
+   hex digits or 43 base64 characters. A KEK reaches a service only from a host
+   file, as a secret or a config: no secret or config that is not ``file:``
+   alone has a name or a variable (its ``environment:``, or one its
+   ``content:`` interpolates) holding ``KEK``, and what a service mounts where
+   it reads its KEK (``CV_KEK_HANDLE`` or ``CV_KEK_PREV_HANDLE``, which the
+   file must mount, or else Settings' ``/run/secrets/cv_kek``, or a source or
+   target holding ``KEK``) is a secret or config the same file declares with
+   ``file:`` alone. ``api``, ``migrate`` and ``bootstrap-owner`` take no
+   ``env_file:``, where a KEK, a handle or the owner DSN would pass unread, and
+   no service takes the operator's ``.env`` as one. The owner role's DSN
+   (``CV_PG_OWNER_DSN``) reaches ``migrate`` alone, as its ``CV_PG_DSN``: no
+   other environment entry or field of a service names it, and no secret or
+   config that is not a host file carries it. No message repeats a value.
 
 Rule 6 applies to the demo-host overlay, ``docker-compose.demo-host.yml``,
 which ``docs/ops/runbooks/demo-host.md`` applies after the base and VPS files:
@@ -76,7 +82,7 @@ from __future__ import annotations
 import re
 import sys
 from collections.abc import Iterable
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import yaml
@@ -115,10 +121,18 @@ _KEY_MATERIAL = re.compile(r"[0-9A-Fa-f]{32,}|[A-Za-z0-9+/_-]{43,}")
 _KEK_HANDLES = ("CV_KEK_HANDLE", "CV_KEK_PREV_HANDLE")
 _SECRETS_DIR = "/run/secrets/"
 _DEFAULT_KEK_TARGET = "cv_kek"
+#: Rule 5 (D-2): where compose mounts a secret or a config whose target is missing or relative.
+_MOUNT_DIRS = {"secret": _SECRETS_DIR, "config": "/"}
+#: A variable a config's `content:` interpolates, `${NAME...}` or `$NAME`.
+_VARIABLE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
+_OWNER_DSN_NAME = "CV_PG_OWNER_DSN"
 _NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*")
 #: Rule 6: what the demo-host overlay may set.
 _DEMO_TOP_LEVEL = ("services", "secrets", "volumes")
 BOOTSTRAP_OWNER = "bootstrap-owner"
+#: Rule 5 (D-2): the services that take each setting by name, in `environment:`, never from an
+#: env_file, which rule 5 cannot read.
+_NO_ENV_FILE = ("api", "migrate", BOOTSTRAP_OWNER)
 _DEMO_SERVICE_KEYS = {
     "api": frozenset({"environment", "secrets", "volumes", "ulimits", "ports"}),
     "migrate": frozenset({"environment"}),
@@ -280,8 +294,8 @@ def check_deploy_overlay(compose: dict[str, Any]) -> list[str]:
 
 
 def check_no_kek_in_environment(compose: dict[str, Any]) -> list[str]:
-    """Rule 5: no value carries a KEK, and a KEK comes only from a file secret. Messages name
-    settings and secrets, never a value."""
+    """Rule 5: no value carries a KEK, a KEK comes only from a host file, and the owner DSN
+    reaches migrate alone. Messages name settings, secrets, configs and services, never a value."""
     compose = compose or {}
     errors: list[str] = []
     for name, service in _services(compose).items():
@@ -296,7 +310,8 @@ def check_no_kek_in_environment(compose: dict[str, Any]) -> list[str]:
             errors += _kek_value_problems(f"{where} {key}", _extension_pairs(service[key], key))
     for key in [key for key in compose if str(key).startswith("x-")]:
         errors += _kek_value_problems(f"top-level {key}:", _extension_pairs(compose[key], key))
-    return errors + _kek_secret_sources(compose)
+    errors += _kek_secret_sources(compose)
+    return errors + _env_file_problems(compose) + _owner_dsn_reach(compose)
 
 
 def _kek_value_problems(where: str, pairs: Iterable[tuple[str, str]]) -> list[str]:
@@ -318,46 +333,136 @@ def _kek_value_problems(where: str, pairs: Iterable[tuple[str, str]]) -> list[st
 
 
 def _kek_secret_sources(compose: dict[str, Any]) -> list[str]:
-    """Rule 5's secrets: a KEK from a file secret this file declares, never from the environment
-    (M1: that puts the key back in `.env`); the owner DSN never from the environment either."""
-    declared = compose.get("secrets") or {}
-    errors: list[str] = []
-    for name, secret in declared.items():
-        variable = str(secret.get("environment") or "") if isinstance(secret, dict) else ""
-        if variable and "KEK" in f"{name} {variable}".upper():
-            errors.append(
-                f"secret '{name}': comes from the environment and names a KEK; a KEK is only "
-                "ever a file secret (docs/plan/spikes/e27-kek.md §3)"
-            )
-        if variable and "OWNER_DSN" in f"{name} {variable}".upper():
-            errors.append(
-                f"secret '{name}': comes from the environment with the owner role's DSN, which "
-                "reaches migrate alone, as its CV_PG_DSN"
-            )
+    """Rule 5's secrets and configs: a KEK from a host file this file declares, never from the
+    environment or a config's content (M1, D-2: that puts the key back in `.env` or the
+    repository); the owner DSN never from either."""
+    declared = {kind: compose.get(f"{kind}s") or {} for kind in _MOUNT_DIRS}
+    errors = [
+        error
+        for kind, entries in declared.items()
+        for name, entry in entries.items()
+        for error in _declared_problems(kind, str(name), entry)
+    ]
     for name, service in _services(compose).items():
-        env = _environment(service or {})
+        service = service or {}
+        env = _environment(service)
         handles = {
-            key: env[key].removeprefix(_SECRETS_DIR)
-            for key in _KEK_HANDLES
-            if env.get(key, "").startswith(_SECRETS_DIR)
+            key: env[key] for key in _KEK_HANDLES if env.get(key, "").startswith(_SECRETS_DIR)
         }
-        mounts = [_secret_ends(entry) for entry in (service or {}).get("secrets") or []]
+        mounts = [
+            (kind, *_mount_path(entry, base))
+            for kind, base in _MOUNT_DIRS.items()
+            for entry in service.get(f"{kind}s") or []
+        ]
         errors += [
             f"service '{name}': {key} names a /run/secrets/ file this file does not mount on it "
-            "from a file secret it declares"
-            for key, target in handles.items()
-            if target not in {mounted for _, mounted in mounts}
+            "from a file secret or config it declares"
+            for key, path in handles.items()
+            if path not in {mounted for _, _, mounted in mounts}
         ]
-        reads = {*handles.values(), _DEFAULT_KEK_TARGET}
-        for source, target in mounts:
-            secret = declared.get(source)
-            file_secret = isinstance(secret, dict) and set(secret) == {"file"}
-            if (target in reads or "KEK" in f"{source} {target}".upper()) and not file_secret:
+        reads = {*handles.values(), _SECRETS_DIR + _DEFAULT_KEK_TARGET}
+        for kind, source, path in mounts:
+            kek = path in reads or "KEK" in f"{source} {path}".upper()
+            if kek and not _from_a_file(declared[kind].get(source)):
                 errors.append(
-                    f"service '{name}': mounts its KEK from secret '{source}', which this file "
-                    "does not declare as a file secret (file: alone)"
+                    f"service '{name}': mounts its KEK from {kind} '{source}', which this file "
+                    f"does not declare as a file {kind} (file: alone)"
                 )
     return errors
+
+
+def _declared_problems(kind: str, name: str, entry: Any) -> list[str]:
+    """A top-level secret or config: one named for a KEK or the owner DSN, or read from a variable
+    that is (its `environment:`, or one its `content:` interpolates), is a host file; no content
+    holds key material."""
+    entry = entry if isinstance(entry, dict) else {}
+    content = str(entry.get("content") or "")
+    said = " ".join([name, str(entry.get("environment") or ""), *_VARIABLE.findall(content)])
+    errors: list[str] = []
+    if not _from_a_file(entry) and "KEK" in said.upper():
+        errors.append(
+            f"{kind} '{name}': is named for a KEK, or reads a KEK variable, and is not a file "
+            f"{kind} (file: alone); a KEK only ever comes from a host file "
+            "(docs/plan/spikes/e27-kek.md §3)"
+        )
+    if not _from_a_file(entry) and "OWNER_DSN" in said.upper():
+        errors.append(
+            f"{kind} '{name}': carries the owner role's DSN, which reaches migrate alone, as its "
+            "CV_PG_DSN"
+        )
+    if _KEY_MATERIAL.search(content):
+        errors.append(f"{kind} '{name}': content holds inline key material")
+    return errors
+
+
+def _from_a_file(entry: Any) -> bool:
+    """A top-level secret or config whose one source is a host file: `file:` alone."""
+    return isinstance(entry, dict) and set(entry) == {"file"}
+
+
+def _mount_path(entry: Any, base: str) -> tuple[str, str]:
+    """A service's `secrets:` or `configs:` entry, short or long form, as (source, the path it is
+    mounted at): with no target, or a relative one, under `base`, as compose mounts it."""
+    if not isinstance(entry, dict):
+        return str(entry), base + str(entry)
+    source = str(entry.get("source", ""))
+    target = str(entry.get("target") or source)
+    return source, target if target.startswith("/") else base + target
+
+
+def _env_file_problems(compose: dict[str, Any]) -> list[str]:
+    """Rule 5's env files (D-2): api, migrate and bootstrap-owner take none, and no service takes
+    the operator's `.env`, which holds the owner DSN and every secret. Messages name no path."""
+    errors: list[str] = []
+    for name, service in _services(compose).items():
+        raw = (service or {}).get("env_file")
+        if not raw:
+            continue
+        items = raw if isinstance(raw, list) else [raw]
+        paths = [str(i.get("path", "")) if isinstance(i, dict) else str(i) for i in items]
+        if name in _NO_ENV_FILE:
+            errors.append(
+                f"service '{name}': takes an env_file; api, migrate and {BOOTSTRAP_OWNER} take "
+                "each setting by name, in environment:, where rule 5 reads it"
+            )
+        elif any(PurePosixPath(path).name == ".env" for path in paths):
+            errors.append(
+                f"service '{name}': takes the operator's .env as its env_file, and with it "
+                f"{_OWNER_DSN_NAME} and every secret it holds"
+            )
+    return errors
+
+
+def _owner_dsn_reach(compose: dict[str, Any]) -> list[str]:
+    """Rule 5 (D-2): the owner role's DSN reaches migrate alone, as its CV_PG_DSN: no other
+    environment entry, and no other field of any service, names it."""
+    errors: list[str] = []
+    for name, service in _services(compose).items():
+        service = service or {}
+        places = [
+            f"environment {key}"
+            for key, value in _environment(service).items()
+            if _OWNER_DSN_NAME in f"{key}={value}" and (name, key) != ("migrate", "CV_PG_DSN")
+        ]
+        places += [
+            str(key)
+            for key, node in service.items()
+            if key != "environment" and _OWNER_DSN_NAME in _scalars(node)
+        ]
+        errors += [
+            f"service '{name}': {place} takes {_OWNER_DSN_NAME}; only migrate's CV_PG_DSN may"
+            for place in places
+        ]
+    return errors
+
+
+def _scalars(node: Any) -> str:
+    """Every key and scalar under a node, joined: what a name check reads."""
+    if isinstance(node, dict):
+        return " ".join(f"{key} {_scalars(value)}" for key, value in node.items())
+    if isinstance(node, list):
+        return " ".join(_scalars(item) for item in node)
+    return "" if node is None else str(node)
 
 
 def check_demo_host_overlay(compose: dict[str, Any]) -> list[str]:
