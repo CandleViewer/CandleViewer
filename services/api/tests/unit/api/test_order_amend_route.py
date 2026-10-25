@@ -604,22 +604,25 @@ async def test_a_refusal_is_not_kept_and_its_key_is_free_once_its_amend_ended(
     assert "idempotency-replayed" not in named.headers and len(amends(rig)) == 1
 
 
-@pytest.mark.parametrize("tag", ["stale", "another_order", "star", "weak", "list"])
+@pytest.mark.parametrize("tag", ["stale", "another_order", "star", "weak", "list", "empty"])
 async def test_an_if_match_not_naming_the_version_read_is_412_nothing_sent(
     rig: SubmitRig, tag: str
 ) -> None:
-    """Ruling Q5: `*`, a list, a weak or malformed tag, another order's and a stale one alike."""
+    """Ruling Q5: `*`, a list, a weak or malformed tag, another order's and a stale one alike, and
+    one empty field, a list naming no tag (22 `amendOrder`, RFC 9110 Sec.5.3), never read as no
+    `If-Match`: each refused by the service, recorded once, naming no route step, and counted."""
     world, row = await amendable(rig)
     seq = rig.machines.version(row.id)
     assert seq is not None
     named = {
         "stale": order_etag(row.id, seq + 1), "another_order": order_etag(uuid4(), seq),
         "star": "*", "weak": f"W/{order_etag(row.id, seq)}",
-        "list": f"{order_etag(row.id, seq)}, {order_etag(row.id, seq)}",
+        "list": f"{order_etag(row.id, seq)}, {order_etag(row.id, seq)}", "empty": "",
     }[tag]  # fmt: skip
     answer = await patch(world, row.id, {"price": "60100"}, if_match=named)
-    assert (answer.status_code, answer.json()["code"]) == (412, "version_conflict")
+    assert (answer.status_code, answer.json().get("code")) == (412, "version_conflict")
     assert (amends(rig), refused(world, "version_conflict")) == ([], 1)
+    assert (world.actions(), world.steps()) == ([(_DENIED, "version_conflict")], [None])
 
 
 async def test_an_if_match_sent_as_two_fields_is_one_list_and_412(rig: SubmitRig) -> None:
