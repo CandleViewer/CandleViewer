@@ -7,6 +7,7 @@ the gather's bound and the spacer's wait are injected and released by the test."
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -18,7 +19,7 @@ from candleviewer.domain.order_link import account_tag
 from candleviewer.domain.primitives import AccountId, Symbol
 from candleviewer.exchange.base.errors import OmsErrorCode, TransportError
 from candleviewer.exchange.base.fakes import FakeReject, FakeTradingPort
-from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order
+from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Order, OrderAck
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 
@@ -266,3 +267,117 @@ async def test_an_order_placed_after_the_coverage_read_is_taken_and_logged() -> 
         assert (await port.cancel_order(_cancel("b"))).ok and (await first).ok
     [taken] = [e for e in logs if e["event"] == "oms_cancel_all_took_non_member"]
     assert (taken["count"], taken["order_link_ids"]) == (1, _ids("other"))
+
+
+# --- L1 (CR-S4F-03): the call is the fold's own task -------------------------------------------
+
+
+class _HeldVenue(FakeTradingPort):
+    """The venue runs a cancel-all at once and holds its answer until `answered` is set: the call
+    has left, its answer still out. `cut` counts the calls cut short while held."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answered = asyncio.Event()
+        self.cut = 0
+
+    async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
+        acks = await super().cancel_all(account, symbol)
+        try:
+            await self.answered.wait()
+        except asyncio.CancelledError:
+            self.cut += 1
+            raise
+        return acks
+
+
+async def _waiting(venue: FakeTradingPort) -> tuple[CancelAllCoalescer, _Sleeps]:
+    """The coalescer over `venue`, the UID's slot at 100 spent by an earlier fold, so the next
+    call waits in the spacer for its slot at 101 until the test lets the wait pass."""
+    clock, sleeps = _Clock(), _Sleeps()
+    spacer = CancelAllSpacer(monotonic=clock, sleep=sleeps.sleep)
+    assert await spacer.turn(_REF.uid, deadline=clock.now + 5)
+    return CancelAllCoalescer(venue, spacer=spacer, monotonic=clock, sleep=sleeps.sleep), sleeps
+
+
+def _fold_tasks() -> list[str]:
+    """The fold's own tasks still running: its call and its gather's watchdog."""
+    return sorted(
+        task.get_name()
+        for task in asyncio.all_tasks()
+        if task.get_name().startswith("oms-cancel-all-") and not task.done()
+    )
+
+
+async def test_a_leader_cut_short_before_the_call_leaves_abandons_the_fold() -> None:
+    """L1 (the security look's probe E): the last member is cut short while the call waits for
+    its spacer slot. Nothing has left, so the fold is abandoned and the other member sends its
+    own cancel: no outcome is unknown, and no cancel-all leaves."""
+    venue = _venue("a", "b")
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")):
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))  # the last: it leads
+            await _settle()
+            assert sleeps.asked == [1.0, 1.0] and _methods(venue) == []  # the spacer's wait
+            last.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await last
+            assert (await first).order_link_id == _id("a")  # its own cancel, answered
+    assert _methods(venue) == ["cancel_order"]
+    assert [o.order_link_id for o in await venue.open_orders(_REF, _BTC)] == _ids("b")
+
+
+async def test_a_leader_cut_short_once_its_call_has_left_leaves_the_call_to_answer_each() -> None:
+    """L1: once the call has left, no member's cancellation cuts it short. Its acks answer every
+    member, the one cut short too should it ask again, and nothing is sent again."""
+    venue = _HeldVenue()
+    for name in ("a", "b"):
+        venue.seed_order(_resting(name), uid=_REF.uid)
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")):
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            sleeps.passed.set()  # the slot comes: the call leaves, its answer held
+            await _settle()
+            assert _methods(venue) == ["cancel_all"]
+            last.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await last
+            venue.answered.set()
+            assert (await first).order_link_id == _id("a")
+            again = await port.cancel_order(_cancel("b"))  # answered by its ack, never re-sent
+            assert again.ok and again.order_link_id == _id("b")
+    assert _methods(venue) == ["cancel_all"] and venue.cut == 0
+
+
+async def test_a_call_every_member_left_runs_on_owned_until_aclose_ends_it() -> None:
+    """L1: the call is the coalescer's own task, never fire-and-forget. Members all cut short
+    once it left leave it running, answered to no one; `aclose` (the runtime's stop) ends it,
+    and no fold task runs after."""
+    venue = _HeldVenue()
+    for name in ("a", "b"):
+        venue.seed_order(_resting(name), uid=_REF.uid)
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")):
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            sleeps.passed.set()
+            await _settle()
+            for member in (first, last):
+                member.cancel()
+            for member in (first, last):
+                with pytest.raises(asyncio.CancelledError):
+                    await member
+        assert _fold_tasks() == ["oms-cancel-all-call"]  # still out, owned
+        await port.aclose()
+    assert _fold_tasks() == [] and venue.cut == 1
+    assert _methods(venue) == ["cancel_all"]  # cut short at teardown, never re-sent

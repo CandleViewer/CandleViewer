@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections import Counter
-from collections.abc import Collection, Sequence
+from collections import Counter, OrderedDict
+from collections.abc import AsyncIterator, Collection, Mapping, Sequence
 from dataclasses import fields
 from decimal import Decimal
 from typing import Any
@@ -38,8 +38,10 @@ from candleviewer.oms.errors import AccountScopeDenied, StoreUnavailable
 from candleviewer.oms.exits import ExitOutcome
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms.recovery import FINALS
+from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.orders import OrderRow, OrderStoreError
+from candleviewer.storage.repositories.orders import NewOrder, OrderRow, OrderStoreError
+from tests.unit.oms import order_rig as orr
 
 _A, _B = UUID(int=0xA), UUID(int=0xB)
 _ACTOR, _REQUEST = SubmitActor(user_id=UUID(int=0x100), role="manager"), UUID(int=0x200)
@@ -686,3 +688,152 @@ async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:
     assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
     venue = [entry[1] for entry in fold.log if entry[0] == "venue"]
     assert venue == ["cancel_all", f"cancel_order {_link(2)}"]  # BTC folded, ETH per-order
+
+
+# --- L1 (CR-S4F-03): the real B1 machine meets the fold -----------------------------------------
+
+_B1_REF = AccountRef(
+    account_id=AccountId(orr.ACCOUNT), uid="100001", environment="demo", key_ref=str(UUID(int=1))
+)
+_BTC = Symbol("BTCUSDT")
+
+
+@pytest.fixture
+async def b1(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[orr.Rig]:
+    """The real B1 facade over the in-memory stores (`order_rig`)."""
+    monkeypatch.setattr(b01, "_ATTEMPTS", OrderedDict())
+    rig = orr.build_rig()
+    yield rig
+    await rig.facade.stop()
+
+
+class _Answered(FakeTradingPort):
+    """A venue that runs a cancel-all at once and holds its answer until `answer` is set: the
+    window in which the venue's own pushes can reach B1 first."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.answer = asyncio.Event()
+
+    async def cancel_all(self, account: AccountRef, symbol: Symbol | None) -> Sequence[OrderAck]:
+        acks = await super().cancel_all(account, symbol)
+        await self.answer.wait()
+        return acks
+
+
+class _Gate:
+    """An injected sleep that ends once the test opens the gate."""
+
+    def __init__(self) -> None:
+        self.open, self.asked = asyncio.Event(), list[float]()
+
+    async def sleep(self, seconds: float) -> None:
+        self.asked.append(seconds)
+        await self.open.wait()
+
+
+def _b1_resting(order: NewOrder) -> Order:
+    return Order(
+        order_link_id=order.order_link_id, exchange_order_id=f"x{order.id.int}",
+        account_id=AccountId(orr.ACCOUNT), symbol="BTCUSDT", side="buy", order_type="limit",
+        qty=Decimal("1"), price=Decimal("63000"), state="new", filled_qty=Decimal("0"),
+        leaves_qty=Decimal("1"), avg_fill_price=None, created_at=1_790_000_000_000_000,
+        terminal_at=None, order_kind="order",
+    )  # fmt: skip
+
+
+async def _b1_fold(
+    rig: orr.Rig, venue: FakeTradingPort
+) -> tuple[CancelAllCoalescer, _Gate, NewOrder, NewOrder]:
+    """o1 and o2 `submitted` on B1 and resting at the venue; the fold port over the venue, the
+    UID's slot at 100 spent by an earlier fold, so the fold's call waits for its slot at 101. B1's
+    cancel is a stand-in for `OmsCommandPort._cancel`'s venue step: it awaits the fold port's
+    `cancel_order` in the task B1's `cancel_pending` invoke runs, and lets what it raises go."""
+    o1, o2 = orr.order_of(1), orr.order_of(2)
+    for order in (o1, o2):
+        await rig.submitted(order)
+        venue.seed_order(_b1_resting(order), uid=_B1_REF.uid)
+    clock, spacer_wait = _Clock(), _Gate()
+    spacer = CancelAllSpacer(monotonic=clock, sleep=spacer_wait.sleep)
+    assert await spacer.turn(_B1_REF.uid, deadline=clock.now + 5)
+    port = CancelAllCoalescer(venue, spacer=spacer, monotonic=clock, sleep=_never)
+
+    async def cancel(command: b01.Command) -> Mapping[str, Any]:
+        link = str(command.order["order_link_id"])
+        request = CancelOrderRequest(account=_B1_REF, symbol=_BTC, order_link_id=link)
+        ack = await port.cancel_order(request)
+        assert ack.ok
+        return {"ok": True, "exchange_order_id": ack.exchange_order_id}
+
+    rig.commands.on_cancel = cancel
+    return port, spacer_wait, o1, o2
+
+
+async def _b1_cancel_both(rig: orr.Rig, o1: NewOrder, o2: NewOrder) -> None:
+    """Each order's B1 `CANCEL`, written ahead; o2 arrives last at the fold, so it leads."""
+    for order in (o1, o2):
+        await rig.facade.command(orr.ACCOUNT, order.id, "CANCEL", actor="user")
+        await rig.quiet()
+
+
+async def _b1_states(rig: orr.Rig, *orders: NewOrder) -> list[str | None]:
+    rows = [await rig.orders.get(orr.ACCOUNT, order.id) for order in orders]
+    return [None if row is None else row.lifecycle_state for row in rows]
+
+
+async def test_on_b1_a_fold_answers_both_members_by_the_one_call(b1: orr.Rig) -> None:
+    venue = FakeTradingPort()
+    port, spacer_wait, o1, o2 = await _b1_fold(b1, venue)
+    async with asyncio.timeout(5):
+        with port.fold(_B1_REF, _BTC, [o1.order_link_id, o2.order_link_id]):
+            await _b1_cancel_both(b1, o1, o2)
+            assert spacer_wait.asked == [1.0] and venue.calls == []  # the call waits for its slot
+            spacer_wait.open.set()
+            await b1.quiet()
+    assert await _b1_states(b1, o1, o2) == ["cancelled", "cancelled"]
+    assert [c.method for c in venue.calls] == ["cancel_all"]
+
+
+@pytest.mark.parametrize("ending", ["EXEC", "REMOTE_CANCELLED"])
+async def test_on_b1_a_leader_whose_order_ends_before_the_call_leaves_abandons_the_fold(
+    b1: orr.Rig, ending: str
+) -> None:
+    """L1 (vw2's B1 repro A): the leader's order ends while the fold's call waits for its slot, so
+    B1 leaves `cancel_pending` and cancels the leader's invoke. Nothing has left: the fold is
+    abandoned, and o1 sends its own cancel and ends `cancelled`, never `unknown`."""
+    venue = FakeTradingPort()
+    port, spacer_wait, o1, o2 = await _b1_fold(b1, venue)
+    async with asyncio.timeout(5):
+        with port.fold(_B1_REF, _BTC, [o1.order_link_id, o2.order_link_id]):
+            await _b1_cancel_both(b1, o1, o2)
+            assert spacer_wait.asked == [1.0] and venue.calls == []
+            if ending == "EXEC":
+                await b1.facade.push(orr.ACCOUNT, o2.id, "EXEC", orr.fill_of(o2, "e1", "1"))
+            else:
+                await b1.facade.push(orr.ACCOUNT, o2.id, "REMOTE_CANCELLED", {"updated_time": 9})
+            await b1.quiet()
+    ended = "filled" if ending == "EXEC" else "cancelled"
+    assert await _b1_states(b1, o1, o2) == ["cancelled", ended]
+    assert [c.method for c in venue.calls] == ["cancel_order"]  # o1's own: nothing folded left
+
+
+async def test_on_b1_a_leader_whose_push_beats_the_calls_answer_leaves_it_to_answer_o1(
+    b1: orr.Rig,
+) -> None:
+    """L1 (vw2's B1 repro B): the call has left and the venue ran it; the leader's own push
+    reaches B1 before the call's answer and cancels the leader's invoke. The call runs on, and
+    its ack answers o1, `cancelled`, never `unknown`."""
+    venue = _Answered()
+    port, spacer_wait, o1, o2 = await _b1_fold(b1, venue)
+    async with asyncio.timeout(5):
+        with port.fold(_B1_REF, _BTC, [o1.order_link_id, o2.order_link_id]):
+            await _b1_cancel_both(b1, o1, o2)
+            spacer_wait.open.set()  # the slot comes: the call leaves, and the venue runs it
+            await b1.quiet()
+            assert [c.method for c in venue.calls] == ["cancel_all"]
+            await b1.facade.push(orr.ACCOUNT, o2.id, "REMOTE_CANCELLED", {"updated_time": 9})
+            await b1.quiet()
+            venue.answer.set()
+            await b1.quiet()
+    assert await _b1_states(b1, o1, o2) == ["cancelled", "cancelled"]
+    assert [c.method for c in venue.calls] == ["cancel_all"]
