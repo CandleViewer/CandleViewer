@@ -58,6 +58,9 @@ a deliberate decision, not an omission — and no public disclosure timeline; ad
 private GitHub Security Advisories and, once a fix ships, summarised (without exploit detail) in
 `CHANGELOG.md` under _Security_.
 
+A review record under `docs/security/reviews/` carries, for an open finding, only its id, severity,
+area, status and tracker; the detail lives in the private repository advisory until the finding is fixed.
+
 ### In-scope / out-of-scope
 
 **In scope:** the web app, Electron shell, the FastAPI backend, the Bybit v5 adapter, Postgres/QuestDB/
