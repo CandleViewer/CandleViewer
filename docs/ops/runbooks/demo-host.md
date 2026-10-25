@@ -31,8 +31,8 @@ compose refuses every command while a required one is empty:
   `live`; in `demo` each boot logs the `secrets.kek_file_source` warning, which is expected here.
   `docs/plan/spikes/e27-kek.md` §4 prefers `handle` for demo; this host takes `file` (#3180).
 - **`/data`** is the named volume `cv-demo_cv-api-data`: the cold tier's root `/data/parquet`, which
-  the real backend requires and never creates, and the recorder WAL (each its own filesystem, step
-  3a), admin jobs and audit exports.
+  the real backend requires and never creates, the recorder WAL (the root and the WAL each their own
+  filesystem, step 3a), and admin jobs and audit exports.
   The image creates `/data/parquet` owned by uid 10001 (mode 0700), and Docker copies that into the
   empty volume on its first mount, as it does for the audit volume.
 - **Core dumps** are off (`ulimits: core: 0`); cv-api also sets `RLIMIT_CORE=0` and
@@ -175,8 +175,9 @@ VOL=$(docker volume inspect -f '{{ .Mountpoint }}' cv-demo_cv-api-data)
     name=${spec%%:*} img=/var/lib/cv-demo-${spec%%:*}.img
     if [ ! -e "$img" ]; then
       truncate -s "${spec##*:}" "$img.part"; mkfs.ext4 -q "$img.part"; mv "$img.part" "$img"
-      mkdir -p "$VOL/$name"; echo "$img $VOL/$name ext4 loop,nofail 0 0" >> /etc/fstab
     fi
+    mkdir -p "$VOL/$name"
+    grep -qsF " $VOL/$name " /etc/fstab || echo "$img $VOL/$name ext4 loop,nofail 0 0" >> /etc/fstab
     mountpoint -q "$VOL/$name" || mount "$VOL/$name"
     rmdir "$VOL/$name/lost+found" 2>/dev/null || true
     chown 10001:10001 "$VOL/$name"; chmod 0700 "$VOL/$name"
@@ -189,11 +190,12 @@ stat -c '%n %u:%g %a dev=%d' "$VOL" "$VOL/parquet" "$VOL/recorder-wal"
 Expected: each `findmnt` prints a loop device at its path; `stat` prints `10001:10001 700` three
 times with three different `dev` numbers, which is what the code compares (SR-096). The block stops
 at its first failure. A second run formats nothing and appends nothing: an image exists only once it
-is formatted, and the run mounts what is not mounted and resets the owners. The images are `0600`.
-`nofail` lets the host boot without them; the api then refuses to record until `mount -a` brings
-them back. A host with disks or partitions to spare mounts one per path instead, with the same owner
-and mode. Before `docker volume rm cv-demo_cv-api-data` or `down -v`, `umount` both paths and drop
-their `/etc/fstab` lines and images: removing the volume deletes what is mounted inside it.
+is formatted, a missing fstab line is added once, and the run mounts what is not mounted and resets
+the owners. The images are `0600`. `nofail` lets the host boot without them; the api then refuses
+to record until `mount -a` and a restart bring them back. A host with disks or partitions to spare
+mounts one per path instead, with the same owner and mode. Before
+`docker volume rm cv-demo_cv-api-data` or `down -v`, `umount` both paths and drop their `/etc/fstab`
+lines and images: removing the volume deletes what is mounted inside it.
 
 ## 4. Start: `up --wait`
 
@@ -208,11 +210,10 @@ demo) and no `secrets.kek_unavailable`. If it does not get healthy, read
 `kek_unavailable`, a KEK that is missing or not 32 bytes; `StorageTierUnavailable` naming
 `storage_cold`, a `/data/parquet` that is not there (a volume first mounted by an image without it,
 before step 3a: `$COMPOSE down`, `docker volume rm cv-demo_cv-api-data` while it is still empty,
-then start again);
-a healthcheck refused with `403`, a `CV_MESH_CIDRS_CSV` without `172.28.0.0/24`. A healthy api
-with `recording_volume_shared` in its log is step 3a undone (`recorder_startup_failed` most likely
-is too; its `error` field may read `[redacted:key-shape]`): run step 3a's block again, which mounts
-what is missing, then `$COMPOSE restart api`.
+then start again); a healthcheck refused with `403`, a `CV_MESH_CIDRS_CSV` without
+`172.28.0.0/24`. A healthy api with `recording_volume_shared` in its log is step 3a undone
+(`recorder_startup_failed` most likely is too; its `error` field may read `[redacted:key-shape]`):
+run step 3a's block again, which mounts what is missing, then `$COMPOSE restart api`.
 
 ## 5. The KCV check: `security.kek_enrolled`
 
