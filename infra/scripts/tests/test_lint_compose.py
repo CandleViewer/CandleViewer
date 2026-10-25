@@ -224,8 +224,9 @@ def test_committed_demo_host_overlay_passes_lint() -> None:
 
 
 def test_the_demo_host_overlay_reads_the_names_the_host_was_provisioned_with() -> None:
+    """And the two `bootstrap-owner` shares with the base file's api, which `.env.example` held."""
     read = re.findall(r"\$\{([A-Z][A-Z0-9_]*)", DEMO_HOST_PATH.read_text(encoding="utf-8"))
-    assert set(read) == HOST_NAMES
+    assert set(read) == HOST_NAMES | {"CV_ENVIRONMENT", "CV_PG_DSN"}
 
 
 def test_env_example_lists_every_one_and_leaves_the_sensitive_ones_blank() -> None:
@@ -241,7 +242,7 @@ KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "100
 @pytest.mark.parametrize(
     ("path", "value", "why"),
     [
-        ("services.postgres", {"image": "postgres"}, "touches only api and migrate"),
+        ("services.postgres", {"image": "postgres"}, "touches only api, migrate and bootstrap"),
         ("networks", {"cv-internal": {}}, "top-level 'networks'"),
         ("services.api.build", {"context": "../.."}, "build is not set by the demo-host overlay"),
         ("services.api.read_only", False, "read_only is not set by the demo-host overlay"),
@@ -279,6 +280,58 @@ KEK_MOUNT = {"source": "cv_kek", "target": "cv_kek", "uid": "10001", "gid": "100
          "data-undeclared", "extra-bind", "no-data", "migrate-app-dsn", "api-owner-dsn"],
 )  # fmt: skip
 def test_demo_host_overlay_lint_refuses(path: str, value: object, why: str) -> None:
+    errors = lint_compose.check_demo_host_overlay(_demo_host(path, value))
+    assert any(why in error for error in errors), errors
+
+
+# DC-4479-02: #4479's CLI prints the Owner's invite token once; it runs in its own service, whose
+# output no logging driver keeps, never as `run ... api`.
+BOOT = "services.bootstrap-owner"
+LANE_MOUNT = KEK_MOUNT | {"source": "cv_audit_lane_key", "target": "cv_audit_lane_key"}
+
+
+def test_the_bootstrap_owner_service_is_cvapis_twin_for_the_cli_and_logs_nothing() -> None:
+    boot = _demo_host()["services"]["bootstrap-owner"]
+    assert boot["logging"] == {"driver": "none"} and boot["profiles"] == ["bootstrap-owner"]
+    assert boot["entrypoint"] == ["python", "-m", "candleviewer.bootstrap_owner"]
+    assert "ports" not in boot and boot["secrets"] == [KEK_MOUNT, LANE_MOUNT]
+    # cv-api's database role (the CLI's probe looks for its other sessions), never the owner's
+    assert boot["environment"]["CV_PG_DSN"].startswith("${CV_PG_DSN:?")
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "why"),
+    [
+        (BOOT, None, "service 'bootstrap-owner' is missing"),
+        (f"{BOOT}.logging", {"driver": "json-file"}, "logging is not {driver: none}"),
+        (f"{BOOT}.logging", None, "logging is not {driver: none}"),
+        (f"{BOOT}.profiles", None, "profiles is not [bootstrap-owner]"),
+        (f"{BOOT}.profiles", ["core"], "profiles is not [bootstrap-owner]"),
+        (f"{BOOT}.ports", ["127.0.0.1:8001:8000"], "ports is not set by the demo-host overlay"),
+        (f"{BOOT}.entrypoint", ["python", "-m", "candleviewer.server"], "entrypoint is not"),
+        (f"{BOOT}.entrypoint", None, "entrypoint is not"),
+        (f"{BOOT}.command", ["--owner", "owner@example.invalid"], "command is not set"),
+        (f"{BOOT}.secrets", [KEK_MOUNT, LANE_MOUNT, {"source": "alert_deadman_url"}],
+         "a secret that is not one of the api's"),
+        (f"{BOOT}.secrets", [KEK_MOUNT | {"mode": 0o444}], "a secret that is not one of the api's"),
+        (f"{BOOT}.secrets", [LANE_MOUNT], "a secret that is not one of the api's"),
+        (f"{BOOT}.build", {"context": "../..", "dockerfile": "x"}, "the api's image from this"),
+        (f"{BOOT}.pull_policy", "missing", "the api's image from this checkout"),
+        (f"{BOOT}.read_only", False, "read_only is not true"),
+        (f"{BOOT}.ulimits", None, "ulimits.core"),
+        (f"{BOOT}.volumes", ["/srv/audit:/var/lib/candleviewer/audit"], "the audit volume alone"),
+        (f"{BOOT}.volumes", None, "the audit volume alone"),
+        (f"{BOOT}.environment.CV_PG_DSN", "${CV_PG_OWNER_DSN:?x}", "only migrate may"),
+        (f"{BOOT}.environment.CV_PG_DSN", "postgresql+asyncpg://postgres/cv", "committed here"),
+    ],
+    ids=["missing", "json-file-log", "no-logging", "no-profile", "core-profile", "port",
+         "server-entrypoint", "no-entrypoint", "command", "foreign-secret", "kek-mode-0444",
+         "no-kek", "other-dockerfile", "pulled-image", "writable-root", "no-ulimits",
+         "audit-bind", "no-audit-volume", "owner-dsn", "committed-dsn"],
+)  # fmt: skip
+def test_demo_host_overlay_lint_refuses_a_bootstrap_owner_that(
+    path: str, value: object, why: str
+) -> None:
     errors = lint_compose.check_demo_host_overlay(_demo_host(path, value))
     assert any(why in error for error in errors), errors
 
