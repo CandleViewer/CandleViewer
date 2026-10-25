@@ -15,6 +15,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.models import Execution, Order, PrivateEvent
+from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.oms import stream_push
 from candleviewer.oms.errors import (
     HandoverUnavailable,
@@ -28,12 +29,14 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.push_mapping import push_time_ms, route
 from candleviewer.oms.stream_push import NoRecordedStopStream
 from candleviewer.storage.errors import StorageQueryFailed
+from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import (
     RecordedStopNotBindable,
     RecordedStopRow,
 )
-from tests.unit.exchange.bybit._trading import ACCOUNT_A, ACCOUNT_B, link
-from tests.unit.oms.stream_rig import GUARD_S, XID, Rig, event, order_row
+from tests.unit.exchange.bybit._private import linear_order, push, row
+from tests.unit.exchange.bybit._trading import ACCOUNT_A, ACCOUNT_B, NOW_US, account, link
+from tests.unit.oms.stream_rig import GUARD_S, XID, Rig
 
 STOP = {
     "stopOrderType": "PartialStopLoss", "tpslMode": "Partial", "triggerPrice": "94000",
@@ -42,6 +45,22 @@ STOP = {
 }  # fmt: skip
 OURS = {"orderLinkId": link()}
 CANCELLED = {"orderId": XID, "orderStatus": "Cancelled", "timeInForce": "GTC"} | OURS
+
+
+def event(topic: str, **values: Any) -> PrivateEvent:
+    """One private-stream row, read through the adapter's own parser from #4135's transcribed
+    frame shapes (C-13.5)."""
+    body = linear_order(**values) if topic == "order" else row("execution") | values
+    pushed = pp.classify(push(topic, body))
+    assert isinstance(pushed, pp.Push)
+    [out] = pp.read_push(pushed, account(), now_us=NOW_US)
+    return out
+
+
+def order_row(**over: Any) -> OrderRow:
+    values: dict[str, Any] = {f.name: None for f in fields(OrderRow)}
+    values |= {"id": UUID(int=1), "exchange_account_id": ACCOUNT_A, "order_link_id": link()}
+    return OrderRow(**(values | {"state": "accepted", "exchange_order_id": XID} | over))
 
 
 def _exec_id(fill: PrivateEvent) -> str:

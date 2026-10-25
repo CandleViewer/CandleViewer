@@ -1,40 +1,22 @@
 """The private-stream push core's test rig (E29-T05 #848, S4b): one scripted double for every
-port of `StreamPushes`, over a fake monotonic clock that its reads advance. Rows and fills are
-derived in-test from #4135's transcribed frames, through the adapter's own parser (C-13.5). No
-network."""
+port of `StreamPushes`, over a fake monotonic clock that its reads advance. It is venue-neutral:
+the events and rows come from the test modules, which derive them from #4135's transcribed frames
+through the adapter's own parser (C-13.5, C-2.2). No network."""
 
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
 from candleviewer.exchange.base.models import Execution, PrivateEvent
-from candleviewer.exchange.bybit import private_parse as pp
 from candleviewer.oms.pairing import ToRecordedStop
 from candleviewer.oms.push_mapping import ForPairing, route
 from candleviewer.oms.stream_push import StreamPushes
-from candleviewer.storage.repositories.orders import OrderRow
-from tests.unit.exchange.bybit._private import linear_order, push, row
-from tests.unit.exchange.bybit._trading import ACCOUNT_A, NOW_US, account, link
 
 GUARD_S = 2.0  # real seconds: the only wall clock, and only ever a failing test's
 XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"
-
-
-def event(topic: str, **values: Any) -> PrivateEvent:
-    body = linear_order(**values) if topic == "order" else row("execution") | values
-    pushed = pp.classify(push(topic, body))
-    assert isinstance(pushed, pp.Push)
-    [out] = pp.read_push(pushed, account(), now_us=NOW_US)
-    return out
-
-
-def order_row(**over: Any) -> OrderRow:
-    values: dict[str, Any] = {f.name: None for f in fields(OrderRow)}
-    values |= {"id": UUID(int=1), "exchange_account_id": ACCOUNT_A, "order_link_id": link()}
-    return OrderRow(**(values | {"state": "accepted", "exchange_order_id": XID} | over))
 
 
 @dataclass
@@ -67,7 +49,7 @@ class Rig:
         if kw or self._shared is None:
             self._shared = self.streams(**kw)  # one per rig: its paged-order set lives on it
         async with asyncio.timeout(GUARD_S):  # a bound the code lacks fails the test, never hangs
-            await self._shared.handle(ACCOUNT_A, ev, r)
+            await self._shared.handle(ev.account_id, ev, r)
 
     async def _hit(self, name: str) -> Any:
         self.calls.append(name)
