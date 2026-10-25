@@ -431,6 +431,52 @@ async def test_a_waiting_member_cancelled_before_the_call_abandons_the_fold() ->
     assert await join.arrive("c") is None and venue.calls == 0
 
 
+async def test_a_member_arriving_twice_while_it_gathers_sends_its_own_at_once() -> None:
+    """J2 (CR-S4F-13): a second arrival of a member still gathering is answered None at once, its
+    own cancel, never a second wait; the first still waits for the fold."""
+    venue = _Venue([_ack("a"), _ack("b")])
+    join, _ = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    assert await join.arrive("a") is None and not first.done()
+    assert await join.arrive("b") == _ack("b") and await first == _ack("a")
+
+
+async def test_a_waiter_cut_short_once_the_call_left_re_raises_and_the_rest_are_answered() -> None:
+    """J8b (CR-S4F-13): once the call has left, a waiting member cut short raises its own
+    cancellation and changes nothing: the call answers every other member."""
+    venue = _Venue([_ack("a"), _ack("b"), _ack("c")])
+    venue.hold = asyncio.Event()
+    join, _ = _join(venue, "a", "b", "c")
+    first = asyncio.create_task(join.arrive("a"))
+    second = asyncio.create_task(join.arrive("b"))
+    await _settle()
+    last = asyncio.create_task(join.arrive("c"))
+    await _settle()
+    assert venue.calls == 1
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    venue.hold.set()
+    assert (await second, await last) == (_ack("b"), _ack("c")) and join.abandoned is None
+
+
+async def test_the_gathers_watchdog_stops_once_every_member_has_arrived() -> None:
+    """J14 (CR-S4F-13): the gather's bound matters only while members are still to come; the
+    watchdog is stopped as the last one arrives, before the call answers."""
+    venue = _Venue([_ack("a"), _ack("b")])
+    venue.hold = asyncio.Event()
+    join, gather = _join(venue)
+    first = asyncio.create_task(join.arrive("a"))
+    await _settle()
+    assert gather.asked == [pytest.approx(GATHER_S)] and gather.stopped == 0
+    last = asyncio.create_task(join.arrive("b"))
+    await _settle()
+    assert gather.stopped == 1 and not last.done()
+    venue.hold.set()
+    assert (await first, await last) == (_ack("a"), _ack("b"))
+
+
 async def test_a_member_arriving_again_gets_its_answer_again() -> None:
     join, _ = _join(_Venue([_ack("a"), _ack("b")]))
     first = asyncio.create_task(join.arrive("a"))

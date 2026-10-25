@@ -632,13 +632,13 @@ class _Fold:
         self, rows: Sequence[OrderRow], resting: Sequence[Order], *, refuse: Collection[UUID] = (),
         accounts: _Accounts | None = None, refs: Mapping[UUID, AccountRef] | None = None,
         read_timeout_s: float = READ_TIMEOUT_S,
-        spacer_sleep: Callable[[float], Awaitable[None]] | None = None,
+        spacer_sleep: Callable[[float], Awaitable[None]] | None = None, clock: _Clock | None = None,
     ) -> None:  # fmt: skip
         self.log, self.accounts = _Log(), accounts or _Accounts(refs=refs)
         self.venue = _Venue(self.log)
         for order in resting:
             self.venue.seed_order(order, uid=_FOLD_REF.uid)
-        self.clock = _Clock()
+        self.clock = clock or _Clock()
         self.spacer = CancelAllSpacer(monotonic=self.clock, sleep=spacer_sleep or _never)
         self.port = CancelAllCoalescer(
             self.venue, spacer=self.spacer, monotonic=self.clock, sleep=_never
@@ -795,6 +795,74 @@ async def test_a_coverage_read_past_its_bound_proves_nothing_and_never_folds() -
     got = await fold.run()
     assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
     assert [c.method for c in fold.venue.calls] == ["open_orders", "cancel_order", "cancel_order"]
+
+
+async def test_a_recorded_stop_and_a_conditional_member_never_reach_the_venues_cancel_all() -> None:
+    """CR-S4F-10 (C-2.6, AGENTS 6.9): a recorded stop's TP/SL order is never selected and the
+    venue's plain-order filter never takes it, so it rests on after the fold; a conditional entry
+    is a member, but the call leaves it, so it sends its own cancel."""
+    rows = [
+        _fold_row(1), _fold_row(2),
+        _fold_row(3, provenance="recorded_stop", intent="stop_loss", reduce_only=True),
+        _fold_row(4, trigger_price=Decimal("61000")),
+    ]  # fmt: skip
+    resting = [
+        _venue_order(1), _venue_order(2), _venue_order(3, kind="stop_loss"),
+        _venue_order(4, kind="conditional"),
+    ]  # fmt: skip
+    fold = _Fold(rows, resting)
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
+    assert sorted(entry[1] for entry in fold.log if entry[0] == "ahead") == [
+        _link(n) for n in (1, 2, 4)
+    ]
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [
+        ("venue", "cancel_all"), ("venue", f"cancel_order {_link(4)}"),
+    ]  # fmt: skip
+    assert [o.order_link_id for o in await fold.venue.open_orders(_FOLD_REF)] == [_link(3)]
+
+
+async def test_an_adopted_order_resting_on_the_symbol_keeps_the_venues_cancel_all_off_it() -> None:
+    """CR-S4F-10: an order the OMS did not place (adopted by reconciliation) is never selected,
+    and its plain order resting there keeps the symbol on per-order cancels, so the venue's call
+    never takes it."""
+    rows = [_fold_row(1), _fold_row(2), _fold_row(5, provenance="reconciliation")]
+    fold = _Fold(rows, [_venue_order(1), _venue_order(2), _venue_order(5)])
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [
+        ("venue", f"cancel_order {_link(n)}") for n in (1, 2)
+    ]
+    assert [o.order_link_id for o in await fold.venue.open_orders(_FOLD_REF)] == [_link(5)]
+
+
+async def test_two_covered_symbols_fold_a_second_apart_on_their_uid() -> None:
+    """CR-S4F-15: two covered symbols of one account fold one after the other, the second's call
+    waiting out its UID's second (24 Sec.8.7), each answering its own members."""
+    clock, waits = _Clock(), list[float]()
+
+    async def step(seconds: float) -> None:
+        waits.append(seconds)
+        clock.now += seconds
+
+    rows = [
+        _fold_row(1),
+        _fold_row(2),
+        _fold_row(3, symbol="ETHUSDT"),
+        _fold_row(4, symbol="ETHUSDT"),
+    ]
+    resting = [
+        _venue_order(1),
+        _venue_order(2),
+        _venue_order(3, "ETHUSDT"),
+        _venue_order(4, "ETHUSDT"),
+    ]
+    fold = _Fold(rows, resting, clock=clock, spacer_sleep=step)
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=4, error=None),)
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [("venue", "cancel_all")] * 2
+    assert [scope[1] for scope in fold.venue.cancel_all_scopes] == ["BTCUSDT", "ETHUSDT"]
+    assert waits == [pytest.approx(1.0)] and clock.now == pytest.approx(101.0)
 
 
 async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:

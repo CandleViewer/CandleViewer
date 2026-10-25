@@ -210,6 +210,33 @@ async def test_a_coverage_read_that_fails_is_no_coverage() -> None:
     assert not await port.coverage(_REF, _BTC, _ids("a"))
 
 
+async def test_a_coverage_read_that_raises_any_error_is_no_coverage_and_is_logged() -> None:
+    """C11 (CR-S4F-14): any failure of the read, a defect too, is no proof of coverage, logged by
+    its type, never raised into the request."""
+    venue = _venue("a")
+    venue.script("open_orders", RuntimeError("a defect"))
+    port, _, _ = _port(venue)
+    with capture_logs() as logs:
+        assert not await port.coverage(_REF, _BTC, _ids("a"))
+    [unread] = [e for e in logs if e["event"] == "oms_cancel_all_coverage_unread"]
+    assert unread["failure"] == "RuntimeError"
+
+
+async def test_a_fold_left_by_an_error_no_longer_meets_its_members() -> None:
+    """C5 (CR-S4F-14): the fold's members are let go however its block ends, an error too: a
+    member's cancel then goes to the venue at once, and the members may fold again."""
+    venue = _venue("a", "b")
+    port, _, _ = _port(venue)
+    with pytest.raises(RuntimeError, match="the block failed"):
+        with port.fold(_REF, _BTC, _ids("a", "b")):
+            raise RuntimeError("the block failed")
+    async with asyncio.timeout(5):
+        assert (await port.cancel_order(_cancel("a"))).ok
+    with port.fold(_REF, _BTC, _ids("a", "b")):
+        pass
+    assert _methods(venue) == ["cancel_order"]
+
+
 async def test_a_fold_meets_every_member_with_one_venue_call() -> None:
     venue = _venue("a", "b")
     port, _, _ = _port(venue)
