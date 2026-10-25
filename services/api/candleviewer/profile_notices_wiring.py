@@ -49,6 +49,13 @@ def _now_us() -> int:
     return time.time_ns() // 1_000
 
 
+def _stopped(task: asyncio.Task[None]) -> None:
+    """A bridge that ends other than by `stop` says so, never silently: from then on no socket
+    hears a change (C-2.18). A cancellation is `stop`'s, and logs nothing."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        _log().error("profile.notices_stopped", error=type(exc).__name__)  # never a value
+
+
 class SystemBroadcast(Protocol):
     """`GatewayHub.broadcast_system`: each authenticated socket queues its Sec.15.9 view of `body`,
     or nothing; the answer is how many sockets were offered it."""
@@ -94,7 +101,9 @@ class ProfileNotices:
             sub = self._bus.subscribe(
                 "profile-notices", self.pattern, QueuePolicy.NEVER_DROP, maxsize=NOTICE_QUEUE_SIZE
             )
-            self._running = (sub, spawn(self._run(sub), name="profile-notices"))
+            task = spawn(self._run(sub), name="profile-notices")
+            task.add_done_callback(_stopped)
+            self._running = (sub, task)
 
     async def stop(self) -> None:
         running, self._running = self._running, None
@@ -106,7 +115,11 @@ class ProfileNotices:
 
     async def _run(self, sub: Subscription) -> None:
         while True:
-            event: ProfilesChanged = await sub.get()
+            event = await sub.get()
+            if not isinstance(event, ProfilesChanged):  # the topics' one producer sends no other
+                self._failed.inc()
+                _log().warning("profile.notice_failed", error=type(event).__name__)
+                continue
             try:
                 offered = self._hub.broadcast_system(profiles_notice(event.exchange_account_id))
                 if offered:

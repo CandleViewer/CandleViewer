@@ -20,6 +20,7 @@ from candleviewer.observability.metrics_catalogue import (
     CATALOGUE,
     FANOUT_BUCKETS,
     LOOP_LAG_BUCKETS,
+    PROFILE_PROPAGATION_BUCKETS,
     live_specs,
     register_r0,
     registered_specs,
@@ -194,6 +195,7 @@ def test_catalogue_rows_are_documented_in_architecture_12_1() -> None:
 def test_histogram_buckets_bracket_documented_budgets() -> None:
     assert 0.05 in LOOP_LAG_BUCKETS and 0.1 in LOOP_LAG_BUCKETS
     assert 0.02 in FANOUT_BUCKETS
+    assert 2.0 in PROFILE_PROPAGATION_BUCKETS and 5.0 in PROFILE_PROPAGATION_BUCKETS  # SCR-130
 
 
 def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> None:

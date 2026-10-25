@@ -142,15 +142,15 @@ async def test_the_propagation_is_one_sample_per_change_offered_timed_from_its_c
     no sample. Labelled `env` only, never an account."""
     hub = _Hub(0, 3, 2)
     bus, notices, metrics = _bridge(hub)
-    late = _changed(ACC_A, 5, ts=_TS + 1_250_001)
+    late, exact = _changed(ACC_A, 5, ts=_TS + 1_250_001), _changed(ACC_B, 7, ts=_TS + 1_250_000)
     async with asyncio.timeout(_DEADLINE_S):
-        await _publish(bus, _changed(ACC_A, 4), late, _changed(ACC_B, 6))
-        for _ in range(3):
+        await _publish(bus, _changed(ACC_A, 4), late, _changed(ACC_B, 6), exact)
+        for _ in range(4):
             await hub.offered.get()
         await notices.stop()
     sample, env = metrics.registry.get_sample_value, {"env": "demo"}
-    assert (sample(f"{_SECONDS}_count", env), sample(f"{_SECONDS}_sum", env)) == (1, 1.25)
-    assert [sample(f"{_SECONDS}_bucket", env | {"le": le}) for le in ("1.0", "2.0")] == [0, 1]
+    assert (sample(f"{_SECONDS}_count", env), sample(f"{_SECONDS}_sum", env)) == (2, 1.25)
+    assert [sample(f"{_SECONDS}_bucket", env | {"le": le}) for le in ("1.0", "2.0")] == [1, 2]
     (family,) = [f for f in metrics.registry.collect() if f.name == _SECONDS]
     assert {label for s in family.samples for label in s.labels} == {"env", "le"}
 
@@ -171,6 +171,55 @@ async def test_an_offer_that_raises_is_logged_and_counted_and_the_next_change_st
          "log_level": "warning"}
     ]  # fmt: skip
     assert metrics.registry.get_sample_value(_FAILED, {"env": "demo"}) == 1
+
+
+async def test_an_item_that_is_no_change_is_counted_and_the_next_change_still_goes() -> None:
+    """The topics' one producer sends `ProfilesChanged` alone; anything else on the pattern is
+    counted and logged by its class, and the bridge keeps going (the security lens's R1S-01)."""
+    hub = _Hub()
+    bus, notices, metrics = _bridge(hub)
+    async with asyncio.timeout(_DEADLINE_S):
+        with structlog.testing.capture_logs() as logs:
+            await bus.publish(BusProfileChanges(bus, "demo").topic(ACC_A), "not a change")
+            await _publish(bus, _changed(ACC_B, 5))
+            offered = await hub.offered.get()
+        await notices.stop()
+    assert offered == _notice(ACC_B)
+    assert logs == [{"event": "profile.notice_failed", "error": "str", "log_level": "warning"}]
+    assert metrics.registry.get_sample_value(_FAILED, {"env": "demo"}) == 1
+
+
+async def test_a_bridge_that_stops_on_its_own_says_so_and_stop_says_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A `get` that raises ends the task: it is logged by class at error, never silent; a
+    cancellation by `stop` logs nothing (R1S-01). The done-callback is registered at `start`, so
+    it has run when `asyncio.wait` returns."""
+    hub = _Hub()
+    bus, notices, _ = _bridge(hub)
+    assert notices._running is not None
+    sub, task = notices._running
+
+    async def broken() -> Any:
+        raise RuntimeError("queue 7f3a gone")
+
+    async with asyncio.timeout(_DEADLINE_S):
+        with structlog.testing.capture_logs() as logs:
+            await _publish(bus, _changed(ACC_A, 4))
+            await hub.offered.get()  # the task waits in `get` again, already called
+            monkeypatch.setattr(sub, "get", broken)  # so the wait after the next change raises
+            await _publish(bus, _changed(ACC_B, 5))
+            await asyncio.wait({task})
+        await notices.stop()
+    assert [(log["event"], log["error"]) for log in logs] == [
+        ("profile.notices_stopped", "RuntimeError")
+    ]
+    _, calm, _ = _bridge(_Hub())
+    assert calm._running is not None
+    _, stopping = calm._running
+    with structlog.testing.capture_logs() as stop_logs:
+        await calm.stop()
+    assert stopping.cancelled() and stop_logs == []
 
 
 async def test_a_cancellation_in_the_offer_ends_the_bridge_and_is_no_failure() -> None:
@@ -202,6 +251,7 @@ async def test_start_holds_the_pattern_never_drop_once_and_stop_lets_go_of_it() 
         QueuePolicy.NEVER_DROP,
         NOTICE_QUEUE_SIZE,
     )
+    assert 0 < sub.maxsize  # a bound: asyncio reads 0 as unbounded (C-2.18)
     async with asyncio.timeout(_DEADLINE_S):
         await _publish(bus, *(_changed(a, 4) for a in (ACC_A, ACC_B, ACC_A)))  # none taken yet
         offered = [await hub.offered.get() for _ in range(3)]
@@ -210,6 +260,18 @@ async def test_start_holds_the_pattern_never_drop_once_and_stop_lets_go_of_it() 
         await _publish(bus, _changed(ACC_B, 5))
     assert offered == [_notice(a) for a in (ACC_A, ACC_B, ACC_A)]
     assert task.done() and hub.offered.empty() and await bus.drain(0) == {}
+
+
+async def test_a_cancelled_stop_still_lets_go_of_the_pattern() -> None:
+    """`stop` unsubscribes before its first await, so a `stop` cancelled while it waits for the
+    task leaves no queue for the bus's drain at shutdown to wait on."""
+    bus, notices, _ = _bridge(_Hub())
+    stopping = asyncio.ensure_future(notices.stop())
+    await asyncio.sleep(0)  # `stop` runs up to its wait for the task
+    stopping.cancel()
+    await asyncio.wait({stopping})
+    await _publish(bus, _changed(ACC_A, 4))
+    assert stopping.cancelled() and await bus.drain(0) == {}
 
 
 async def test_a_refused_or_idle_write_tells_no_socket_and_a_committed_one_its_account(
@@ -278,6 +340,7 @@ def test_create_app_wires_the_bridge_beside_the_profile_store_on_the_process_bus
     microseconds, as `ts_event` is; the fake backend has no store."""
     assert create_app(Settings()).state.profile_notices is None
     real = Settings(
+        environment=Environment.TESTNET,
         storage_backend="real",
         auth_pepper=SecretStr("test-pepper"),
         auth_totp_key_hex=SecretStr("11" * 32),
@@ -288,6 +351,6 @@ def test_create_app_wires_the_bridge_beside_the_profile_store_on_the_process_bus
     notices = app.state.profile_notices
     assert isinstance(notices, ProfileNotices)
     assert notices._bus is app.state.app_context.bus.bus and notices._hub is app.state.ws_hub
-    assert notices.pattern.env == real.environment.value
+    assert notices.pattern.env == real.environment.value == "testnet"
     monkeypatch.setattr(time, "time_ns", lambda: 1_792_486_805_123_456_789)
     assert notices._now_us() == 1_792_486_805_123_456
