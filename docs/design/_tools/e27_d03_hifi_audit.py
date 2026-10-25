@@ -53,7 +53,8 @@ it (BQ-16 is the scope):
    states both, and no other frame draws a destructive confirm; K6-K8 each gated frame names the
    ``lock`` and a known reason key, ``rbac.view_as`` first, and a frame E27-D02's inventory or
    its class names as a view-as frame leads its Hi-fi and Copy keys cells with it (G7); K9 no exit drawn gated (a frame or
-   section 10.2); K10 is gate 2 (``ac2.*``); K11 the compromise card's steps, keys and deck
+   section 10.2), and K4 no confirm drawn while the summary loads, each gated word (GATED_ADJ) read
+   before its noun or after it (r4o: ", visible but inactive", "it" carrying the subject); K10 is gate 2 (``ac2.*``); K11 the compromise card's steps, keys and deck
    strings in C-12.12's order; K12 each row naming an environment, an account title or an
    "Attention:" strip string keeps its environment badge; K13 the
    number before a marker is its value and every two-decimal value has a marker; K14 / K15 are
@@ -67,11 +68,13 @@ it (BQ-16 is the scope):
 7d. The security text, pinned default-deny (the orchestrator's text round 3): a clause of the spec
    or the hand-off (a heading, a table cell, a prose sentence, a fenced line) that names a key, a
    secret, a credential, a passphrase, private, a withdrawal / transfer word, any fund / funds /
-   money word, a reveal or mask word, plain / clear text or "in clear", CMP-034 / CMP-175 / CMP-201, a full / whole / raw id, or the
+   money word, a reveal or mask word, plain / clear text or "in clear", a token, a password, a
+   balance, "shown in full", CMP-034 / CMP-175 / CMP-201, a full / whole / raw id, or the
    view-as leg is security-bearing (BEARING), and every one must equal, whitespace normalised and in
    document order, its entry of SEC_PIN_TXT (section, row and column or "prose", exact text). New,
    changed, moved or duplicated security text, and a pinned clause gone, FAIL ``sec-pin`` with its
-   line: no word list decides what may be said. ``--repin-security`` prints the table from the
+   line: the word list decides which clauses are pinned, the table what they may say; a clause
+   with none of its words is read by 7b / 7c only. ``--repin-security`` prints the table from the
    current text for a reviewer; the table is committed at the end of this file. 7b and 7c stay as
    additional gates.
 8. Cites and scans: ``KEY:line`` cites resolve to an existing line (FAIL past the end of the
@@ -1357,15 +1360,25 @@ MASK_TAIL = re.compile(r"([A-Za-z0-9]?)\.\.\.([A-Za-z0-9{}_]+)")
 LONG_RUN = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z0-9_]{16,}(?![A-Za-z0-9_])")
 CAMEL = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
 ID_VALUE = re.compile(r"\b(?:API key|[Kk]ey(?: id)?)[ :]+`?([A-Za-z0-9][A-Za-z0-9_\-]{5,})")
-# K9: an exit drawn gated
-GATE_WORD = (
-    r"(?:in the validity look|T2\b|`?aria-disabled|disabled\b|gated\b|locked\b|led by the `lock`"
-    r"|greyed|dimmed)"
+# K4 / K9 (r4o): the gated-control vocabulary, read on either side of its noun
+GATED_ADJ = (
+    r"(?:`?aria-disabled`?|disabled|dimmed|gr[ea]yed(?:[- ]out)?|inactive|inert|locked|held"
+    r"|hidden|unavailable|unusable|suppressed|no[- ]effect|gated)"
 )
+# K9: an exit drawn gated - after the exit (in its parentheses, after a verb, after a comma or an
+# appositive of up to two words such as ", visible but inactive", or carried by "it" / "which"
+# later in the sentence) or before it ("a disabled [Cancel]", "the greyed-out Close")
+GATE_WORD = r"(?:in the validity look|T2\b|led by the `lock`|" + GATED_ADJ + r"\b)"
+EXIT_NOUN = r"(?:\[(?:Cancel|Close(?: card)?|Back)\]|\b(?:Cancel|Close|Back)\b|`Esc`)"
 EXIT_GATED = re.compile(
-    r"(?:\[(?:Cancel|Close(?: card)?|Back)\]|\b(?:Cancel|Close|Back)\b|`Esc`)"
-    rf"(?: *\([^)]*?{GATE_WORD}[^)]*\)|(?: *\([^)]*\))? *(?:is +|stays +|becomes +|drawn +)?"
-    rf"{GATE_WORD}|(?: *\([^)]*\))?(?: +[a-z]+)?, +(?:[a-z]+ +)?{GATE_WORD})",
+    EXIT_NOUN + rf"(?: *\([^)]*?{GATE_WORD}[^)]*\)|(?: *\([^)]*\))? *"
+    r"(?:(?:is|stays|becomes|remains|has|drawn|shown|rendered|visible|present)(?: +but)? +){0,2}"
+    rf"{GATE_WORD}|(?: *\([^)]*\))?(?: +[a-z]+)?, +(?:[a-z]+ +){{0,2}}{GATE_WORD}"
+    rf"|(?:(?!confirm)[^.|])*?[;(—] *(?:it|which)\b +(?:(?:is|stays|becomes|remains|has|drawn)(?: +but)? +){{0,2}}"
+    rf"{GATE_WORD})"
+    rf"|\b{GATED_ADJ}(?:,? +(?:and +|or +)?[\w-]+){{0,2}}?,? +"
+    r"(?-i:\[(?:Cancel|Close(?: card)?|Back)\]|\b(?:Cancel|Close|Back)\b)|"
+    rf"\b{GATED_ADJ}(?:,? +[\w-]+){{0,2}}?,? +`Esc`",
     re.IGNORECASE,
 )
 EXIT_CONTROL = re.compile(r"^(?:\[?(?:Cancel|Close|Back)\b|`?Esc`?)", re.IGNORECASE)
@@ -1422,11 +1435,24 @@ VERIFIED_AT = re.compile(r"\bverified\b[^\"|;]{0,24}?(?:\{hh:mm(?::ss)?\}|\d{1,2
 LOCK_DRAWN = re.compile(
     r"`lock`|\bCMP-079\b|\bRbacGate\b|\b(?:a|the|its) lock\b|\block (?:glyph|icon)s?\b"
 )
-# K4: while the consequence summary loads the confirm is not in the DOM - never drawn disabled
-CONFIRM_SHOWN = re.compile(
-    r"\bconfirm\b[^.;|]*?\b(?:disabled|aria-disabled|greyed|dimmed|inert|rendered|drawn|shown)\b",
+# K4: while the consequence summary loads the confirm is not in the DOM - never drawn disabled.
+# r4o: a gated or drawn word after the confirm anywhere in the sentence (across ";", " — ", cells
+# and parentheses, so "it" carries the subject), or a gated word before it ("a disabled confirm",
+# "a greyed-out confirm", "a dimmed, inert confirm")
+CONFIRM_NOUN = re.compile(r"(?<!\bto )\[?\bconfirm\b", re.IGNORECASE)
+CONFIRM_STATE = re.compile(
+    rf"(?<![\w-]){GATED_ADJ}(?![\w-])|\b(?:rendered|drawn|shown|visible|present)\b", re.IGNORECASE
+)
+CONFIRM_BEFORE = re.compile(
+    rf"(?<![\w-]){GATED_ADJ}(?:,? +(?:and +|or +|but +)?[\w-]+){{0,2}}?,? +\[?confirm\b",
     re.IGNORECASE,
 )
+UNIT_END = re.compile(r"(?<=[.!?])\s+")
+# "the native `disabled`" named as what a form replaces, and "a disabled confirm is not ..." denied
+INSTEAD_BEFORE = re.compile(
+    r"\b(?:in place of|instead of|rather than)(?:\s+[^\s,;]+){0,2}\s*`?$", re.IGNORECASE
+)
+NOT_AFTER = re.compile(r" +(?:is|are) +(?:not|never)\b", re.IGNORECASE)
 LOADING_WORD = re.compile(r"\b(?:loading|loads|summary|Reading what)\b", re.IGNORECASE)
 # K12: a frame whose title or heading names an account names its environment (C-2.11)
 ACCOUNT_TITLE = re.compile(
@@ -1518,13 +1544,27 @@ def off_spans(raw: str, negate: bool = True, row_wide: bool = False) -> list[tup
     return spans
 
 
+def confirm_subject(before: str) -> bool:
+    """K4: the confirm is the subject a later word describes - its last mention before the word is
+    not denied ("no confirm") and no exit (K9's noun) stands between them."""
+    last = [m for m in CONFIRM_NOUN.finditer(before) if not NEG_BEFORE.search(before[: m.start()])]
+    return bool(last) and not re.search(EXIT_NOUN, before[last[-1].end() :])
+
+
 def loading_confirm(text: str) -> list[str]:
     """K4: the confirm drawn present or disabled while the consequence summary loads."""
     bad: list[str] = []
-    for clause in SENTENCE.split(text):
-        if not LOADING_WORD.search(clause):
+    for unit in UNIT_END.split(text):
+        if not LOADING_WORD.search(unit):
             continue
-        bad += [m[0][:60] for m in CONFIRM_SHOWN.finditer(clause) if not negated(clause, m)]
+        for m in CONFIRM_STATE.finditer(unit):
+            if NEG_BEFORE.search(unit[: m.start()]) or INSTEAD_BEFORE.search(unit[: m.start()]):
+                continue
+            pre = CONFIRM_BEFORE.match(unit, m.start())
+            if pre and NOT_AFTER.match(unit, pre.end()):
+                continue
+            if pre or confirm_subject(unit[: m.start()]):
+                bad.append(unit[max(0, m.start() - 30) : m.end() + 20])
     return bad
 
 
@@ -2045,6 +2085,7 @@ SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
     ("spec", "able to withdraw", 1),
     ("spec", "the OFF to", 1),
     ("spec", "the reveal words,", 1),
+    ("spec", "a reveal or mask word", 2),
     ("hand-off", "`docs/design/_tools/e27_d03_hifi_audit.py`'s (spec §9).", 1),
     ("hand-off", "colours; no reveal, timer or", 1),
     ("hand-off", "timer or copy state exists", 1),
@@ -2180,7 +2221,8 @@ BEARING = re.compile(
     r"|\bin\s+(?:the\s+)?clear\b"
     r"|\bCMP-(?:034|175|201)\b|MaskedValue|PasswordField|KeyPermissionBadge"
     r"|\b(?:full|whole|complete|entire|raw|real|unmasked)\s+(?:\w+\s+)?ids?\b"
-    r"|\bview[- ]as leg\b",
+    r"|\bview[- ]as leg\b"
+    r"|\btokens?\b|\bpasswords?\b|\bbalances?\b|\bshown\s+in\s+full\b",
     re.IGNORECASE,
 )
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
@@ -3932,6 +3974,127 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
         ),
     ),
 )
+# r4o (the re-check of the default-deny pin): the gated words on either side of their noun - each
+# form on the confirm while the summary loads (frame 53 and section 2.4's ``consequenceState``) and
+# on an exit (frame 53 and frame 11), one mutation each
+GATED_FORMS = (
+    "disabled",
+    "aria-disabled",
+    "dimmed",
+    "greyed-out",
+    "grayed out",
+    "inactive",
+    "inert",
+    "locked",
+    "held",
+    "hidden",
+    "unavailable",
+    "unusable",
+    "suppressed",
+)
+PRE_FORMS = (*GATED_FORMS, "no-effect")
+POST_FORMS = (*GATED_FORMS, "with no effect", "visible but inactive")
+F53_CONFIRM = "[Cancel] alone: the confirm is not in the DOM"
+S24_CONFIRM = "Cancel only — the confirm is not in the DOM"
+F11_EXIT = "[Cancel] (initial focus)"
+
+
+def gated_mutations() -> tuple[tuple[str, str, str, Mutation], ...]:
+    out: list[tuple[str, str, str, Mutation]] = []
+    for i, w in enumerate(PRE_FORMS, 1):
+        out += [
+            (
+                f"G4a{i}",
+                f'"a {w} confirm" on frame 53',
+                "k4.loading",
+                frame_sub(53, F53_CONFIRM, f"[Cancel] and a {w} confirm until the summary loads"),
+            ),
+            (
+                f"G4b{i}",
+                f'"a {w} confirm" in section 2.4',
+                "k4.loading",
+                first_sub(re.escape(S24_CONFIRM), f"Cancel and a {w} confirm", "2.4"),
+            ),
+            (
+                f"G9a{i}",
+                f'"a {w} [Cancel]" on frame 53',
+                "k9.exit",
+                frame_sub(53, "[Cancel] alone", f"a {w} [Cancel] alone"),
+            ),
+            (
+                f"G9b{i}",
+                f'"a {w} [Cancel]" on frame 11',
+                "k9.exit",
+                frame_sub(11, F11_EXIT, f"a {w} {F11_EXIT}"),
+            ),
+        ]
+    for i, w in enumerate(POST_FORMS, 1):
+        out += [
+            (
+                f"G4c{i}",
+                f'"the confirm, {w}," on frame 53',
+                "k4.loading",
+                frame_sub(
+                    53, F53_CONFIRM, f"[Cancel] and the confirm, {w}, until the summary loads"
+                ),
+            ),
+            (
+                f"G4d{i}",
+                f'"the confirm, {w}," in section 2.4',
+                "k4.loading",
+                first_sub(re.escape(S24_CONFIRM), f"Cancel and the confirm, {w},", "2.4"),
+            ),
+            (
+                f"G9c{i}",
+                f'"[Cancel], {w}," on frame 53',
+                "k9.exit",
+                frame_sub(53, "[Cancel] alone", f"[Cancel], {w}, alone"),
+            ),
+            (
+                f"G9d{i}",
+                f'"[Cancel] ..., {w}" on frame 11',
+                "k9.exit",
+                frame_sub(11, F11_EXIT, f"{F11_EXIT}, {w}"),
+            ),
+        ]
+    return (
+        *out,
+        (
+            "G4e",
+            '"[Cancel] beside a dimmed confirm" on frame 53',
+            "k4.loading",
+            frame_sub(53, F53_CONFIRM, "[Cancel] beside a dimmed confirm"),
+        ),
+        (
+            "G4f",
+            'the subject carried by "it" on frame 53',
+            "k4.loading",
+            frame_sub(53, F53_CONFIRM, "[Cancel] alone: the confirm renders; it stays dimmed"),
+        ),
+        (
+            "G4g",
+            "the subject carried in a parenthesis in section 2.4",
+            "k4.loading",
+            first_sub(re.escape(S24_CONFIRM), "Cancel and the confirm (it is drawn inert)", "2.4"),
+        ),
+        (
+            "G9e",
+            '"Cancel has no effect" on frame 53',
+            "k9.exit",
+            frame_sub(
+                53, "Focus: Cancel throughout.", "Focus: Cancel throughout; Cancel has no effect."
+            ),
+        ),
+        (
+            "G9f",
+            'the exit carried by "it" on frame 53',
+            "k9.exit",
+            frame_sub(53, "Focus: Cancel throughout.", "Focus: Cancel throughout; it stays inert."),
+        ),
+    )
+
+
+K_MUTATIONS = (*K_MUTATIONS, *gated_mutations())
 
 
 HAND_ROW = "the egress IP as the key screens' only copy"
@@ -4466,38 +4629,43 @@ SEC_PIN_TXT = r"""
   name; the riders of BQ-5 and BQ-6 and the supersession of E05-D02's time-limited reveal stay the
   owner's, PROPOSED.
 @ prose
-  **Revision:** r9 — the orchestrator's text round 3 folded as a default-deny pin (§16 item 13):
-  every clause of this spec and the hand-off that names a key, a secret, a credential, a fund or
-  money word, a mask word, plain or clear text or CMP-034, CMP-175 or CMP-201, and every statement
-  of the view-as leg, equals one entry of the audit tool's pinned table, so security text that is
-  new, changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; no word list
-  decides what may be said; r8 — the orchestrator's text round 3 folded into the audit tool (§16
-  items 10–12): every line is read for a bare id, a show, view, copy or toggle of a key or a
-  secret, a visibility toggle, a bracketed control that is not the egress IP's copy and a fund
-  right in the modal form ("can withdraw"), with no key named on the line; a table row's
-  withdrawal word ties an OFF in any of its cells to its time; a view-as frame's class says
-  "view-as leg first"; r7 — the orchestrator's text round 2 folded into the audit tool (§16 item
-  12): K1, K2, K3, the dated OFF and the reveal words read every clause of every line of this spec
-  and the hand-off, case-insensitive, with no section list, and a hit passes only inside a pinned,
-  counted allow-list of exact phrases; a gated frame that E27-D02's inventory or its class names
-  as a view-as frame leads with `rbac.view_as`; r5 — the orchestrator's text round 1 folded into
-  the audit tool (§16): K1–K3 read every clause of every frame row and the secret-field rows
-  outside the frames (§2.3, §4.1, §5) for a bare id and a show, copy or toggle control, a
-  withdrawal control, and a withdrawal "OFF" without its time; no `lock` on a frame that is not
-  gated; a view-as row of §10.2 leads with its view-as leg; the confirm never drawn while the
-  summary loads; an exit gated after a comma; E42-D03's boards PR never pinned or quoted; the
-  environment gate reads every frame that names one; and the check list's fresh-pass "OFF ✓" dated
-  (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every moved `file:line` re-mapped and
-  re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on #4414's rewrite of those entries
-  (D03-C16; CMP-015's skeleton token, D03-C12, resolved upstream); r3 — the audit tool's gates
-  read each frame row (the standing rule A2's K1–K15, §16), each with its own `--self-test`
-  mutation, and the rows that named an element only by reference now carry it (§16); r2 — the
-  security and design lens round 1 folded: every withdrawal "OFF" dated (D03-C15), the drawer's
-  critical state a badge, the check list's warnings on the triangle (HD17), the Enable… dialog,
-  the held step-up request's unanswered re-send, the link on the drawer measured, and the audit
-  tool's mirror mutation and OFF gate; r1 — the full text on r0's skeleton and audit tool: §1–§17,
-  Appendix A's copy-ready A-rows and the handoff file `docs/design/E27/E27-D03-handoff.md`; the
-  boards and their exports follow in the boards PR.
+  **Revision:** r10 — the default-deny pin's re-check folded (§16 items 10, 11 and 13):
+  `k4.loading` and `k9.exit` read the gated words (disabled, dimmed, greyed or grayed out,
+  inactive, inert, locked, held, hidden, unavailable, unusable, suppressed, no effect) on either
+  side of the confirm or the exit, the appositive ", visible but inactive" included, and a token,
+  a password, a balance and "shown in full" make a clause security-bearing; r9 — the
+  orchestrator's text round 3 folded as a default-deny pin (§16 item 13): every clause of this
+  spec and the hand-off that names a key, a secret, a credential, a fund or money word, a reveal
+  or mask word, plain or clear text or CMP-034, CMP-175 or CMP-201, and every statement of the
+  view-as leg, equals one entry of the audit tool's pinned table, so security text that is new,
+  changed, moved or duplicated fails `sec-pin` until a reviewer reads it there; the word list
+  decides which clauses are pinned, and the table what a pinned clause may say; r8 — the
+  orchestrator's text round 3 folded into the audit tool (§16 items 10–12): every line is read for
+  a bare id, a show, view, copy or toggle of a key or a secret, a visibility toggle, a bracketed
+  control that is not the egress IP's copy and a fund right in the modal form ("can withdraw"),
+  with no key named on the line; a table row's withdrawal word ties an OFF in any of its cells to
+  its time; a view-as frame's class says "view-as leg first"; r7 — the orchestrator's text round 2
+  folded into the audit tool (§16 item 12): K1, K2, K3, the dated OFF and the reveal words read
+  every clause of every line of this spec and the hand-off, case-insensitive, with no section
+  list, and a hit passes only inside a pinned, counted allow-list of exact phrases; a gated frame
+  that E27-D02's inventory or its class names as a view-as frame leads with `rbac.view_as`; r5 —
+  the orchestrator's text round 1 folded into the audit tool (§16): K1–K3 read every clause of
+  every frame row and the secret-field rows outside the frames (§2.3, §4.1, §5) for a bare id and
+  a show, copy or toggle control, a withdrawal control, and a withdrawal "OFF" without its time;
+  no `lock` on a frame that is not gated; a view-as row of §10.2 leads with its view-as leg; the
+  confirm never drawn while the summary loads; an exit gated after a comma; E42-D03's boards PR
+  never pinned or quoted; the environment gate reads every frame that names one; and the check
+  list's fresh-pass "OFF ✓" dated (D03-C15); r4 — re-pinned at its PR base `e8bca4bb7` (every
+  moved `file:line` re-mapped and re-read), and Appendix A's CMP-028 and CMP-044 rows re-based on
+  #4414's rewrite of those entries (D03-C16; CMP-015's skeleton token, D03-C12, resolved
+  upstream); r3 — the audit tool's gates read each frame row (the standing rule A2's K1–K15, §16),
+  each with its own `--self-test` mutation, and the rows that named an element only by reference
+  now carry it (§16); r2 — the security and design lens round 1 folded: every withdrawal "OFF"
+  dated (D03-C15), the drawer's critical state a badge, the check list's warnings on the triangle
+  (HD17), the Enable… dialog, the held step-up request's unanswered re-send, the link on the
+  drawer measured, and the audit tool's mirror mutation and OFF gate; r1 — the full text on r0's
+  skeleton and audit tool: §1–§17, Appendix A's copy-ready A-rows and the handoff file
+  `docs/design/E27/E27-D03-handoff.md`; the boards and their exports follow in the boards PR.
 @ prose
   **Scope (the ticket):** hi-fi for every state of E27-D02's inventory (§0, §2–§8), in dark and
   light, with the densities specified (BQ-3, BQ-4); the contributions CMP-175 KeyPermissionBadge,
@@ -4545,12 +4713,23 @@ SEC_PIN_TXT = r"""
   two density modes (`16:109-114`, `16:138`), three theme presets (`16:137`), bold reserved for
   critical states (`16:85`), the §11.4 handoff checklist (`16:483-489`); text resize (`05:131`);
   no reveal (`11:344` "no reveal control anywhere in the app or API")
+@ row `packages/ui/tokens` ‖ Input
+  `packages/ui/tokens`
 @ row E42-D02, E09-D09, E30-D02, E05-D02 ‖ State at the base
   merged: E42-D02 (#3926, `e0bf7db3e`; DS-1…DS-6 at `E42-D02:1002-1007`), E09-D09 (`baccf724a`;
   the seven `rbac.*` keys), E30-D02 (`f798a64e6`; the validity look, and the refusal string at
   `E30-D02:437`), E05-D02's form controls (`3a2fc5c29`; CMP-034's reveal rules S1–S7 at
   `E05F:748-795`)
+@ row E42-D05 ‖ State at the base
+  merged text (`docs/design/E42/E42-D05.md`); its Appendix A, applied in a later commit, proposes
+  CMP-066's `status` set (`todo`, `current`, `done`, `blocked`, `error`) and stepper tokens
+  (`E42-D05:921-922`), not landed: §2.4 consumes them by name, PROPOSED, contract pending, and
+  re-reads them before every commit (GATE R6)
 § spec ‖ Acceptance-criteria trace (#816)
+@ row AC1 hi-fi covers both themes and all den ‖ Where
+  §0 (ten boards, two light twins); a hi-fi row for each of E27-D02's 78 frames with its light
+  binding by token (§2.6, §3–§8); high contrast by the computed matrix (§9); the density sheet
+  (BQ-4, HD12; "cosy" D03-C1)
 @ row AC2 key states survive greyscale and col ‖ Item
   AC2 key states survive greyscale and colour-vision deficiency
 @ row AC3 withdrawal-detected reads as blockin ‖ Item
@@ -4560,6 +4739,9 @@ SEC_PIN_TXT = r"""
 @ row AC4 MaskedValue has no reveal ‖ Where
   §2.3, Appendix A (CMP-034), BQ-8 (RULED: binds now, C-2.7, C-12.2); E05-D02's supersession
   D03-C4 and D03-A3
+@ row Technical notes — tokens only; the statu ‖ Item
+  Technical notes — tokens only; the status scale extended through the DS, never locally;
+  SCR-128's compact table legible at 125 %; every string keyed
 @ row Test plan — every pair measured; greysca ‖ Item
   Test plan — every pair measured; greyscale and CVD per CMP-175 variant; each `14` checklist
   ticked; copy re-tested
@@ -4569,6 +4751,8 @@ SEC_PIN_TXT = r"""
 @ row Accessibility notes — text plus shape; f ‖ Item
   Accessibility notes — text plus shape; focus at 3:1 against both adjacent colours; targets; the
   masked value's description; live regions; 125 % and 200 %
+@ row DoD — DS contributions merged with token ‖ Item
+  DoD — DS contributions merged with token bindings; zero one-off components
 @ row [x] ‖ Item
   SCR-125 (`14:2510`) withdrawal-permission failure is impossible to miss
 @ row [x] ‖ Frame (board)
@@ -4653,6 +4837,9 @@ SEC_PIN_TXT = r"""
   Bybit kills the key, the revoke ends it here — frames 46–48 (04 · 05)
 @ row [x] ‖ Item
   SCR-128 (`14:2567`) no secret material is rendered anywhere - verified in copy review
+@ row [ ] ‖ Item
+  SCR-079 (`14:1753`) equity, available balance, used margin, unrealised PnL, leverage, position
+  mode and margin mode drawn with units
 @ row [x] ‖ Item
   SCR-079 (`14:1753`) no secret is displayed, ever - verified in copy review
 @ row [x] ‖ Frame (board)
@@ -4757,6 +4944,29 @@ SEC_PIN_TXT = r"""
   the row shows only the absolute line (`D02:578`), nothing ticking in a list; `Esc` at stage 4
   closes the view while the overlap continues (`D02:586-590`); A-rows replace `font.mono` with
   `type.num.*`, drop `color.text.warning` and drop "secret auto-hide"
+@ row BQ-11 ‖ Default built
+  consume E42-D03's unlanded rung props (`E42-D03:902-904`) by name, PROPOSED with a "contract
+  pending" stamp until they land (the ruling), and add only: the consequence-summary loading
+  state, with no confirm rendered, Cancel only, "Reading what sub_002 holds…" and "Still reading…"
+  after 1 s (`D02:723-729`); the title's environment suffix (`D02:262-270`); the typed token, the
+  account label or the server's `target` (`D02:266-267`); `Enter` in the typed field never
+  confirms (D22); the ask line before the press, stamped "not yet served — G-8, #895 / #898" for
+  disable and delete; the audit marker last (CMP-093, `E42-D03:691`); two radios, none checked,
+  the stop-loss radio gated on `accounts.stop_missing` (D10); validity is E42-D03's model, the
+  confirm `aria-disabled` and focusable with its hint in the validity look (D02 only allows native
+  `disabled`, `D02:1027-1039`); every A-row reads "if E42-D03's boards PR lands its Appendix A
+  first, re-read and re-base" (GATE R6); OQ-9 and OQ-10 stay the owner's (#2701), drawn at their
+  PROPOSED defaults
+@ row BQ-12 ‖ Default built
+  one stepper with a `list` or `nav` form: SCR-127's dialog makes each stage a labelled region
+  with `aria-current="step"` and focus to the stage heading (`D02:542`, `D02:586-588`), SCR-126
+  and SCR-016 use the `nav` form (`D02:444`, `D02:850`); statuses in glyph and word — done
+  (check), current, upcoming, refused at stage 3 (octagon, "Nothing changed") — with no "rolled
+  back" or "failed" status and no progress bar (G-4; AD-6); an optional per-step `meta` ("Verify ·
+  2.4 s", `D02:570`) from real request or server timestamps, never simulated (D18; AD-16); a
+  collapsed form "Stage 2 of 5 — Paste and confirm" at 200 % and on narrow widths (`D02:1089`);
+  concrete strong-glyph and `color.text.*` label tokens replace the bare status tokens (`15:686`);
+  a rider to E27-D04: checks appear progressively only when real backend progress drives them
 @ row BQ-13 ‖ Question
   CMP-178 for per-key health
 @ row BQ-13 ‖ Default built
@@ -4794,10 +5004,30 @@ SEC_PIN_TXT = r"""
   are a target state stamped "not yet served" (`22:2745-2749`), a G-row to E27-S02 (#896), never
   an IP echo; the delete warning says "This can't be undone, though the same Bybit account can be
   added again as a new one."
+@ row BQ-16 ‖ Default built
+  `docs/design/_tools/e27_d03_hifi_audit.py` (this PR): stdlib only, offline, `python3 -I -B` with
+  `--check`, `--json` and `--selftest`, importing `verify_tokens.py`, `contrast_check.py`,
+  `cvd_simulate.py` and `e27_d02_wires_audit.py`; it gates the matrix with its reproductions and
+  CR: rows, the AC2 carriers, token bindings, the inventory and the cap, T2, the copy deck,
+  Appendix A (WARN on drift, FAIL if gone or ambiguous, WARN on CMP-044 and CMP-178 while
+  E42-D03's boards PR is open), cites, scans, counts and markers, and refuses a mutation set (§16
+  lists every check); protanopia: an additive third output of `cvd_sim.py` (Machado 2009) for
+  boards 01 and 02, landed with the boards PR, existing callers unchanged
 § spec ‖ 0. The boards (PENDING; ten under the lever-4 ca
 @ prose
   Page **`E27-D03 Accounts and key vault hi-fi`** (36 characters), created by name by the board
   script at the boards step and its id recorded then (`docs/design/README.md:46-49`).
+@ prose
+  **PROPOSED deviation (the lever-4 board cap: main-orchestrator, 2026-10-24 03:11Z,
+  [LANE-hcl39]).** The ruling, quoted: "the lever-4 board cap applies to every not-yet-drawn set,
+  old specs included: **≤ 10 boards per ticket, light twins ≤ one third**, chosen for the evidence
+  that matters (the T2 / safety / contrast / state-matrix boards; one anatomy; one keyboard-a11y;
+  the redline of the one contract-bearing screen); every other sheet is listed in §0 as "not drawn
+  — the text is binding; drawn on request", which the owner's text-first lever already allows."
+  AC1's "every state … in dark and light" is therefore met in text: every one of E27-D02's 78
+  frames has a hi-fi row with its light binding by token (§2–§8), ten composite boards draw the
+  evidence, two of them light twins of the contrast-critical boards (BQ-2), and high contrast is
+  proven by the computed matrix (§9; the E42-D03 Q6 precedent, `E42-D03:152`).
 @ prose
   The board choice follows the ruling's order and its tie-breaker (contrast-critical screens, the
   DEMO / LIVE badge, the two disabled looks), and E27-D02's own guidance (main-orchestrator,
@@ -4914,6 +5144,16 @@ SEC_PIN_TXT = r"""
   The KEK notice is CMP-028's `blocking` danger form: one per screen, silent (CMP-092's row is the
   one announcement), a 2 px border, the stable id every blocked key control points at; Revoke
   stays enabled (§2.4)
+@ row HD8 ‖ Decision
+  CMP-044 takes E42-D03's rung props by name; its deltas are the summary before any confirm
+  renders, the environment in the title, the typed token and `Enter` never confirming; an unmet
+  confirm takes E42-D03's validity form (`color.surface.raised`, a hairline, a
+  `color.text.tertiary` label and the hint); the destructive confirm is `color.text.primary` on
+  `color.status.danger.subtle` with a 1 px `color.status.danger.strong` border; the DOM runs in
+  E42-D03's rung order with focus on Cancel (§2.4, §7, §11)
+@ row HD13 ‖ Decision
+  Themes: dark boards and two light twins, every state's light binding by token, high contrast by
+  the computed matrix, forced colours as a mapping per carrier (§0, §9)
 @ row HD14 ‖ Decision
   Before any check this client ran the egress IP and its Copy are a target state stamped "not yet
   served", never an address another service echoes — SCR-125's details row (frame 14) included,
@@ -4988,6 +5228,13 @@ SEC_PIN_TXT = r"""
   "OFF" appears in the verified word only and always with its time (AD-3); a key whose rights were
   never read reads "Withdrawal: not checked" (`22:16950`, `22:16988-16990`).
 @ prose
+  The fills cannot carry it, as §9 measures: under deuteranopia the critical and pass fills sit
+  ΔE76 4.46 <!-- audit:cvd.fill-critical-pass.dark.deuteranopia=4.46 --> apart in dark and 1.05
+  <!-- audit:cvd.fill-critical-pass.light.deuteranopia=1.05 --> in light, under the 5.0 JND; the
+  octagon's and the triangle's strong tokens are one colour in light, ΔE76 0.00 <!--
+  audit:cvd.glyph-critical-warning.light.normal=0.0 --> in every simulation (DS-6,
+  `E42-D02:1007`); and in greyscale the danger and warning fills are Rec.
+@ prose
   **AC3 — withdrawal-detected reads as blocking.** Beside the ordinary warnings — rotation due,
   Bybit expiry and degraded on the triangle, check overdue and rotation overdue on the clock
   (`D02:389-392`, `D02:415`, `D02:634-635`) — the critical state is the octagon; beside the failed
@@ -5058,6 +5305,10 @@ SEC_PIN_TXT = r"""
 § spec ‖ CMP-175: states × tokens (dark; light and high c
 @ heading
   #### CMP-175: states × tokens (dark; light and high contrast bind the same names)
+@ row `inline` form ‖ Glyph
+  the class's token
+@ row `aggregate` line ‖ Glyph
+  the class's token
 § spec ‖ CMP-175: sizes per density
 @ heading
   #### CMP-175: sizes per density
@@ -5077,10 +5328,16 @@ SEC_PIN_TXT = r"""
   two booleans, `permissions` and `ipWhitelisted`; the "Withdrawal: OFF ✓" text; colour names
   `color.status.success/danger`; stories Default(SafeConfig), WithdrawEnabled,
   NoIpWhitelist(warning)
+@ row CMP-175 KeyPermissionBadge (Atom, securi ‖ Gap
+  no state for "not checked" or "overdue" (a defaulted `false` reads OFF); none of the ticket's
+  eight variants; a missing allowlist drawn as a warning, which the contract refuses in every
+  environment (`22:2722-2726`); no home for the verdict line; colour names that are no tokens
 @ row CMP-175 KeyPermissionBadge (Atom, securi ‖ Proposal
   served enums per facet; the `key` and `aggregate` scopes; the thirteen states above with their
   class tokens and the critical mark; the stories of §13; the edits of Appendix A
 § spec ‖ 2.2 CMP-176 AccountKeyRow — the row, blocked and
+@ head 4
+  Component · tokens
 @ row state ‖ Component · tokens
   CMP-175 for a key-verification state, CMP-011 for any other
 @ row key and rights ‖ Part
@@ -5164,6 +5421,14 @@ SEC_PIN_TXT = r"""
   Until G-1 attributes the failure to a key, the row form is a target state stamped "not yet
   served — G-1, #895 / #896" on the board's annotation layer, and the banner's frame adds "Find
   the key in the audit log: action `account.tested`." (`D02:408-410`).
+§ spec ‖ CMP-176: disabled — two forms, both at full text
+@ head 5
+  Tokens
+§ spec ‖ CMP-176: tokens (dark; light by the same names)
+@ heading
+  #### CMP-176: tokens (dark; light by the same names)
+@ head 2
+  Tokens
 § spec ‖ CMP-176: current → gap → proposal
 @ row CMP-176 AccountKeyRow (Molecule) ‖ Current (`15:2051-2057`)
   `account` · `onRotateKey` · `onRevoke` · `onEditProfile`; tokens "inherits CMP-106 ProfileBadge
@@ -5207,6 +5472,8 @@ SEC_PIN_TXT = r"""
   which every CMP-034 on the page names by `aria-describedby` (one node, many pointers, as BQ-9's
   KEK notice), says the value is write-only and can't be shown (below); not focusable, no control,
   no timer, no live region
+@ row Tokens ‖ Field
+  Tokens
 @ row Tokens ‖ Current (`15:371-379`)
   a box on `color.surface.raised` with a hairline; the value `type.num.base`; the mask
   `color.text.secondary`; the countdown `color.text.tertiary` (`15:377`)
@@ -5267,6 +5534,18 @@ SEC_PIN_TXT = r"""
 @ row Purpose ‖ Proposed (the `writeOnly
   + a `writeOnly` variant for an API key or secret: SCR-126's key step, SCR-127 stage 2 and
   SCR-016 step 3 (`D02:453-456`, `D02:545-547`, `D02:855`)
+@ row Props ‖ Current (`15:2411-2418`)
+  `value` · `onChange` · `autoComplete: "current-password" | "new-password"` · `showReveal?:
+  boolean = true` · `error?` (`15:2414`)
+@ row Behaviour ‖ Proposed (the `writeOnly
+  `type=password` always, never re-filled; paste allowed, never suppressed (`15:2415`); read-only,
+  never `disabled`, while "Verify and save" is busy (`D02:484`); cleared on Cancel, on leaving the
+  page, on a cancelled, expired or third-failed step-up, on the idle lock (SCR-005), at absolute
+  session expiry and on sign-out (`22:11915-11916`), on CP-5's refusal and on the environment, UID
+  and expiry refusals (`D02:511-518`), and after a successful save
+@ row A11y ‖ Current (`15:2411-2418`)
+  a "Show password" / "Hide password" toggle with `aria-pressed`; a polite caps-lock warning;
+  paste never suppressed (`15:2415`)
 @ row A11y ‖ Proposed (the `writeOnly
   no toggle in the DOM; the description — "value is write-only" for the key, CP-1's sentence for
   the secret (`D02:1100`) — in the DOM at mount through `aria-describedby` (`14:2537`); the
@@ -5282,6 +5561,8 @@ SEC_PIN_TXT = r"""
   is sent, and after a save the screen shows only the masked id (S6); it leaves state on unmount
   and after a successful submit, and never enters browser storage, a URL, an autofill store or the
   undo history (S7)
+@ row Tokens ‖ Field
+  Tokens
 @ row Storybook ‖ Current (`15:2411-2418`)
   Default, Revealed, CapsLockOn, WithError (`15:2417`)
 @ prose
@@ -5299,15 +5580,37 @@ SEC_PIN_TXT = r"""
 @ row CMP-033 CopyButton (Atom) ‖ Proposal
   the egress IP as the key screens' only copy; + the EgressIp story; the edits of Appendix A
 § spec ‖ 2.4 The extensions — CMP-028, CMP-035, CMP-044,
+@ head 4
+  Proposed: props · a11y · tokens · Storybook
+@ row CMP-028 Callout / Banner (Atom, composed ‖ Current (`15`)
+  inline, non-global (`15:311-321`); `tone` with `danger` · `placement?` · `live?` · `icon?` ·
+  `dismissible?` · `retry?` · `actions?` · `edge?` (`15:314`); danger is `role="alert"` unless
+  `live` overrides it (`15:317`); the tone's subtle fill, a 2 px `border.thick` start edge and the
+  glyph in its strong token (`15:318`)
 @ row CMP-028 Callout / Banner (Atom, composed ‖ Gap
   the KEK notice must block and never dismiss, announce nothing (CMP-092's blocking row is the one
   announcement for the condition, `15:935`) and carry the stable id every blocked key control
   points at (one notice, many pointers: G-T2.5, `GATE:57-58`); `live="off"` silences a notice, but
   nothing keeps a danger notice undismissable or gives it that id
+@ row CMP-028 Callout / Banner (Atom, composed ‖ Proposed: props · a11y ·
+  + `blocking?: boolean` (danger only: `live="off"`, never dismissible, `id` required; D03-C16) ·
+  `id?` · a11y: static text in page order, its first sentence the reason node · tokens: CMP-028's,
+  plus a 2 px `border.thick` `color.status.danger.strong` border on all four sides on the blocking
+  form · + DangerBlocking, DangerBlockingWithPointers, DangerBlockingForcedColors
 @ row CMP-035 Countdown / Timer text (Atom): t ‖ Current (`15`)
   bar-close, re-auth expiry and "secret auto-hide" (`15:383`); `expiresAt` · `format` ·
   `onExpire?`; polite at thresholds (`15:385`); tokens `font.mono`, `color.text.warning`
   (`15:386`)
+@ row CMP-035 Countdown / Timer text (Atom): t ‖ Gap
+  the 900 s overlap needs the served end first and no client-clock claim, server-corrected time,
+  no fault colour (its end is the expected path) and a stage that moves on the server's state,
+  never at 0; neither token exists; the auto-hide went with the display (BQ-8)
+@ row CMP-035 Countdown / Timer text (Atom): t ‖ Proposed: props · a11y ·
+  + `showUntil?` · `serverOffsetMs?` · `announceAt?` (default 60, 10, 0) · `warnBelowS?` (`null`:
+  no change) · `onExpire` never advances a server's state · a11y: `aria-live="off"`, polite at 60
+  s and 10 s with the absolute time · tokens `type.num.base`, the time left
+  `color.text.secondary`, the absolute time `color.text.primary` · + RotationOverlap,
+  OverlapAt60s, OverlapAt10s, OverlapAtZero, ServerCorrected
 @ row CMP-044 ConfirmDialog (Molecule): typed ‖ Current (`15`)
   `variant` (standard, typed, hold) · `typedConfirmValue?` · `role?` · `restatement?` ·
   `confirmDelayMs?` · `autoCancelMs?` · `busy?` (`15:476`); the typed Confirm natively disabled
@@ -5320,6 +5623,31 @@ SEC_PIN_TXT = r"""
   is revoked here and never deleted at Bybit (`22:2847-2851`); the solid `danger` confirm's label
   is under the 7.0 hc-text bar (§9 `c175-solid-danger`), and a natively disabled confirm is not
   E42-D03's validity form (D03-C11, D03-C16)
+@ row CMP-044 ConfirmDialog (Molecule): typed ‖ Proposed: props · a11y ·
+  E42-D03's `rung`, `blastRadius`, `choices`, `stepUpState` and `auditCodes` consumed by name,
+  PROPOSED, contract pending (`E42-D03:902`); its `acknowledge`, the `positions_unknown` tick, is
+  never rendered on an E27 dialog: revoke, disable and delete take no acknowledge parameter
+  (`22:14561-14564`), and the dead and fixable remedies are frame 56's resend and Close · +
+  `consequenceState?` (loading or ready) · `environment?` · a11y: the confirm absent while
+  loading, E42-D03's validity form (`E42-D03:542`) in place of the native `disabled` · tokens: the
+  destructive confirm on `color.status.danger.subtle` with a 1 px `border.hairline`
+  `color.status.danger.strong` border in place of the solid fill, the title `type.ui.heading-md`
+  (D03-C16) · + ConsequencesLoading, ConsequencesLoadingSlow, EnvironmentSuffix,
+  TypedLabelEnterNeverConfirms, ConfirmValidityHint, TwoChoicesNoneSelected, GatedChoice,
+  ExchangeError
+@ row CMP-066 Stepper (Molecule): the rotation ‖ Current (`15`)
+  `steps: {label,status}[]` · `currentStep` (`15:684`); `aria-current`, list semantics, icon and
+  text (`15:685`); tokens `color.status.*` (`15:686`)
+@ row CMP-066 Stepper (Molecule): the rotation ‖ Gap
+  no status set, no elapsed time, no page (`nav`) form, no collapsed form at 200 %; a bare status
+  family instead of tokens
+@ row CMP-066 Stepper (Molecule): the rotation ‖ Proposed: props · a11y ·
+  E42-D05's unlanded `status` set (`todo`, `current`, `done`, `blocked`, `error`), `statusText?`
+  and `navigable?` consumed by name, PROPOSED, contract pending (`E42-D05:921`) · + `meta?` (real
+  elapsed time) · `as` (`list` or `nav`) · `collapsed?` · a11y: labelled stage regions, focus to
+  the stage heading, `meta` never live, no progress bar · tokens: done
+  `color.status.success.strong`, `error` `color.status.danger.strong`, current on
+  `color.action.primary.default` · + Nav, NavSixSteps, RotationStages, RotationRefused, Collapsed
 @ row CMP-178 SystemHealthTile (Molecule): per ‖ CMP
   CMP-178 SystemHealthTile (Molecule): per-key health (BQ-13)
 @ row CMP-178 SystemHealthTile (Molecule): per ‖ Gap
@@ -5353,6 +5681,19 @@ SEC_PIN_TXT = r"""
 @ prose
   - **States.** One: present while `secrets.kek_unavailable` holds (`23:4262`), gone when it
   clears.
+@ prose
+  - **Tokens.** The fill `color.status.danger.subtle`; the text `color.text.primary`, 12.06 <!--
+  audit:pairs.c175-danger-word.dark=12.06 --> / 14.64 <!--
+  audit:pairs.c175-danger-word.light=14.64 --> / 13.66 <!--
+  audit:pairs.c175-danger-word.high-contrast=13.66 --> (`c175-danger-word`); the octagon
+  `color.status.danger.strong`, 7.83 <!-- audit:pairs.c175-danger-glyph.dark=7.83 --> / 3.85 <!--
+  audit:pairs.c175-danger-glyph.light=3.85 --> / 7.83 <!--
+  audit:pairs.c175-danger-glyph.high-contrast=7.83 --> (`c175-danger-glyph`); the 2 px
+  `border.thick` border in `color.status.danger.strong` against the page, 10.42 <!--
+  audit:pairs.page-danger-glyph.dark=10.42 --> / 4.73 <!--
+  audit:pairs.page-danger-glyph.light=4.73 --> / 10.42 <!--
+  audit:pairs.page-danger-glyph.high-contrast=10.42 --> (`page-danger-glyph`); sentence 1
+  `type.ui.body-strong`, sentence 2 `type.ui.body`.
 § spec ‖ CMP-035 — the 900 s rotation overlap (BQ-10; fra
 @ prose
   The old key ...e5f6 keeps working here until 10:55:01 UTC — 14:12 left — while requests in
@@ -5364,23 +5705,97 @@ SEC_PIN_TXT = r"""
   end is CP-4's `e27.scr127.stage5.revoked`, polite once, with focus on stage 5's heading if the
   wizard is open (`D02:586-588`; D21, `D02:207`).
 @ prose
+  - **Colour.** None under a threshold (`warnBelowS: null`): the end of the overlap is the
+  expected path, not a fault, and the warning text name is no token (`15:386`).
+@ prose
   - **The row.** Only the absolute line, "Rotation in progress · old key usable until 10:55:01
   UTC" (`D02:578`), nothing ticking in a list (D21).
+@ prose
+  - **Tokens.** Both times `type.num.base`; the absolute `color.text.primary`, 13.27 <!--
+  audit:pairs.dialog-text.dark=13.27 --> / 14.37 <!-- audit:pairs.dialog-text.light=14.37 --> /
+  15.02 <!-- audit:pairs.dialog-text.high-contrast=15.02 --> (`dialog-text`); the time left
+  `color.text.secondary`, 8.14 <!-- audit:pairs.dialog-secondary.dark=8.14 --> / 8.26 <!--
+  audit:pairs.dialog-secondary.light=8.26 --> / 13.27 <!--
+  audit:pairs.dialog-secondary.high-contrast=13.27 --> (`dialog-secondary`).
 § spec ‖ CMP-044 — the rungs as E27 uses them (BQ-11; fra
 @ prose
   E42-D03's rung props are consumed by name, PROPOSED, contract pending (`E42-D03:902-904`):
   `rung` — rotate 1 (OQ-10), revoke 1 or, for the account's last active key, 3 (OQ-9), disable 3,
   delete 3 (`D02:272-285`) — `blastRadius` (the counts), `choices` (the two exposure radios),
   `stepUpState` (the ask line) and `auditCodes` (the marker).
+@ row the typed token ‖ Delta
+  the typed token
+@ row the step-up ‖ Rule
+  on the press a missing step-up opens SCR-006 (E09-D06's, consumed, an `alertdialog` with focus
+  on the password) over this dialog; the request is held unchanged and sent once on success, and a
+  cancel, the expiry, a third failure, the idle lock or the absolute session expiry sends nothing;
+  a re-send that gets no answer (a network error or a timeout) may have executed, so the dialog
+  never shows "Not saved — nothing was sent." and never re-sends: it reads the state back —
+  `listApiKeys` after an import, rotate or revoke, `getExchangeAccount` after a disable or delete
+  — and shows the outcome line or the busy line, with `e27.shared.resend_unconfirmed` meanwhile;
+  the typed label lives in this dialog only, never a second typed field inside SCR-006
+@ prose
+  - **Tokens.** `color.surface.overlay`, `elevation.dialog` (never the primitive `elevation.4`),
+  `radius.dialog`, `space.dialog.padding`; the title `type.ui.heading-md` and the consequences
+  `type.ui.body`, both `color.text.primary`, 13.27 <!-- audit:pairs.dialog-text.dark=13.27 --> /
+  14.37 <!-- audit:pairs.dialog-text.light=14.37 --> / 15.02 <!--
+  audit:pairs.dialog-text.high-contrast=15.02 --> (`dialog-text`); the lead-in and the ask line
+  `color.text.secondary`, 8.14 <!-- audit:pairs.dialog-secondary.dark=8.14 --> / 8.26 <!--
+  audit:pairs.dialog-secondary.light=8.26 --> / 13.27 <!--
+  audit:pairs.dialog-secondary.high-contrast=13.27 --> (`dialog-secondary`; `E42-D02:805`); the
+  marker `color.text.tertiary`, 5.20 <!-- audit:pairs.dialog-tertiary.dark=5.20 --> / 5.44 <!--
+  audit:pairs.dialog-tertiary.light=5.44 --> / 10.36 <!--
+  audit:pairs.dialog-tertiary.high-contrast=10.36 --> (`dialog-tertiary`); the destructive confirm
+  `color.text.primary` on `color.status.danger.subtle` (12.06 <!--
+  audit:pairs.c175-danger-word.dark=12.06 --> / 14.64 <!--
+  audit:pairs.c175-danger-word.light=14.64 --> / 13.66 <!--
+  audit:pairs.c175-danger-word.high-contrast=13.66 -->, `c175-danger-word`) with a 1 px
+  `border.hairline` `color.status.danger.strong` border against the dialog (`E42-D05:227`), 8.61
+  <!-- audit:pairs.step-refused.dark=8.61 --> / 3.78 <!-- audit:pairs.step-refused.light=3.78 -->
+  / 8.61 <!-- audit:pairs.step-refused.high-contrast=8.61 --> (`step-refused`; E42-D02 D3,
+  `E42-D02:129`); Cancel, a CMP-001 secondary, 10.17 <!-- audit:pairs.secondary-button.dark=10.17
+  --> / 12.82 <!-- audit:pairs.secondary-button.light=12.82 --> / 11.51 <!--
+  audit:pairs.secondary-button.high-contrast=11.51 --> (`secondary-button`); the typed field
+  CMP-007's (§2.3); focus 6.15 <!-- audit:pairs.ring-dialog.dark=6.15 --> / 5.39 <!--
+  audit:pairs.ring-dialog.light=5.39 --> / 15.99 <!-- audit:pairs.ring-dialog.high-contrast=15.99
+  --> (`ring-dialog`).
 § spec ‖ CMP-066 — one stepper, list or nav (BQ-12; frame
 @ row SCR-126's page ‖ Steps
   1 Register the account · 2 Add its API key
+@ prose
+  - **Tokens.** Done `color.status.success.strong`, 8.69 <!-- audit:pairs.step-done.dark=8.69 -->
+  / 3.11 <!-- audit:pairs.step-done.light=3.11 --> / 8.69 <!--
+  audit:pairs.step-done.high-contrast=8.69 --> in a dialog (`step-done`); `error`
+  `color.status.danger.strong`, 8.61 <!-- audit:pairs.step-refused.dark=8.61 --> / 3.78 <!--
+  audit:pairs.step-refused.light=3.78 --> / 8.61 <!-- audit:pairs.step-refused.high-contrast=8.61
+  --> (`step-refused`); current: a `color.action.primary.default` marker, its numeral
+  `color.text.on-action`, 4.76 <!-- audit:pairs.primary-button.dark=4.76 --> / 4.76 <!--
+  audit:pairs.primary-button.light=4.76 --> / 7.45 <!--
+  audit:pairs.primary-button.high-contrast=7.45 --> (`primary-button`), its label
+  `type.ui.body-strong` in `color.text.primary`; `todo`: a 1 px `color.text.tertiary` outline,
+  5.20 <!-- audit:pairs.dialog-tertiary.dark=5.20 --> / 5.44 <!--
+  audit:pairs.dialog-tertiary.light=5.44 --> / 10.36 <!--
+  audit:pairs.dialog-tertiary.high-contrast=10.36 --> (`dialog-tertiary`), its numeral and label
+  `color.text.secondary`; connectors `border.hairline` in `color.border.default`, decorative;
+  `meta` `type.num.base` in `color.text.secondary`.
 § spec ‖ CMP-178 — per-key health, inline (BQ-13; frames
 @ heading
   #### CMP-178 — per-key health, inline (BQ-13; frames 6, 16 and 62–71)
 @ prose
   - **A11y.** Plain text in its cell: no region, heading or link, so not CMP-210, whose chips link
   to admin screens (`15:2493-2499`).
+@ prose
+  - **Tokens.** The word `type.ui.body`, `color.text.primary`; the age `type.num.base`,
+  `color.text.secondary`; the glyph `size.icon` in `color.status.success.strong` (9.40 <!--
+  audit:pairs.row-pass-glyph.dark=9.40 --> / 3.39 <!-- audit:pairs.row-pass-glyph.light=3.39 --> /
+  9.40 <!-- audit:pairs.row-pass-glyph.high-contrast=9.40 --> on a row, `row-pass-glyph`),
+  `color.status.warning.strong` (11.00 <!-- audit:pairs.row-warning-glyph.dark=11.00 --> / 4.11
+  <!-- audit:pairs.row-warning-glyph.light=4.11 --> / 11.00 <!--
+  audit:pairs.row-warning-glyph.high-contrast=11.00 -->, `row-warning-glyph`) or
+  `color.status.danger.strong` (9.32 <!-- audit:pairs.c175-critical-border.dark=9.32 --> / 4.11
+  <!-- audit:pairs.c175-critical-border.light=4.11 --> / 9.32 <!--
+  audit:pairs.c175-critical-border.high-contrast=9.32 -->, the `c175-critical-border` pair); in
+  the drawer `step-done`, `step-warning` and `step-refused`.
 @ prose
   - **Used in** CMP-176's line 2 and SCR-079's "Key and health" block (`D02:786`); a non-owner's
   drawer shows the same words and nothing else of the key (`D02:806-808`).
@@ -5417,6 +5832,11 @@ SEC_PIN_TXT = r"""
   step 3 (`D02:233-258`): one row per check of the key gate in the pipeline's order, "{check}:
   {outcome}" (`e27.checks.row`), the outcome a word with its glyph repeating it; a pass that
   carries a served warning keeps the word and takes the triangle (HD17).
+@ head 4
+  Tokens (§9)
+@ row CMP-203 RequirementChecklist (Atom) ‖ Current (`15:2429-2435`)
+  `items: {label, met}[]` for SCR-004's password rules; met or not met in words; the whole list
+  `aria-live="polite"`; tokens `color.status.success` and `color.text.muted`, neither a token
 @ row CMP-203 RequirementChecklist (Atom) ‖ Gap
   two outcomes cannot say "not checked", which must never read as a pass, nor a pass that carries
   a served warning (`22:16996-17003`); no detail line for a rule's words or a passed value; a
@@ -5436,6 +5856,12 @@ SEC_PIN_TXT = r"""
 @ prose
   Frame 2 is drawn in its `aggregate` forms on board 01 beside CMP-175's key forms; frames 3–5 sit
   on board 03 with the component specimens.
+@ prose
+  Light binds the same token names through `semantic-light`.
+@ head 4
+  Hi-fi (dark; light by token)
+@ head 5
+  Tokens
 @ head 6
   Copy keys
 @ row 2 ‖ Frame (E27-D02 §7)
@@ -5493,16 +5919,24 @@ SEC_PIN_TXT = r"""
 @ prose
   - **Strings.** Each row names its §12 keys.
 @ prose
+  - **Tokens.** Each element's token is named once.
+@ prose
   Fixture values only (the Key); every time in UTC.
 § spec ‖ 3.1 Anatomy at 1280 × 800 and the redline (frame
 @ prose
   Frame 6's dated withdrawal words take two text lines in their cell, so the list runs past the
   StatusBar's top: blocks K and L are reached by scrolling, and the board draws them as the page's
   continuation under the 1280 × 800 viewport line.
+@ head 3
+  Size · tokens
 @ row C Band, rule and strip (consumed) ‖ Content and copy
   the band "Admin area · Accounts", with the `keys` grace line "Still trusted for key changes ·
   02:14" at its right end while one is live (variant (b)); the 4 px rule; the strip region "Needs
   your action", one line when empty: "Nothing needs your action"
+@ row C Band, rule and strip (consumed) ‖ Size · tokens
+  band y 48–80 and strip y 84–116, one 32 px row each; the rule y 80–84; E42-D03 §4's tokens: the
+  band `color.surface.raised` and the rule `color.text.tertiary` (DS-1 and DS-2's interim
+  bindings)
 @ row D PageHeader (CMP-088) ‖ Content and copy
   `h1` "Bybit accounts and keys", the skip link's target (CMP-085); the meta "As of 14:02:11 UTC"
   (`e27.shell.meta`: E42-D03's `meta.asof` with the zone at the time); "+ Add account" (CMP-001
@@ -5532,6 +5966,8 @@ SEC_PIN_TXT = r"""
   Actions, then Details → the "Key health and secrets policy" button → RightRail → StatusBar
   (`D02:434-435`; `E42-D03:199-200`, `E42-D03:589`).
 § spec ‖ 3.2 The record (CMP-176) as this list draws it
+@ head 4
+  Tokens (§9)
 @ row 2 ‖ Line 1
   the state: one badge, the worst that applies — CMP-175's badge for a key-verification state, a
   CMP-011 chip for any other (§2.2, HD3; the table below)
@@ -5595,6 +6031,10 @@ SEC_PIN_TXT = r"""
 @ row the egress IP and every right as reporte ‖ `x-rbac`
   `keys:read`
 § spec ‖ 3.4 The hi-fi rows (frames 1 and 6–17)
+@ head 4
+  Hi-fi: layout and redline (dark; light by token)
+@ head 6
+  Tokens (§9)
 @ head 7
   Copy keys (§12)
 @ row 1 ‖ Hi-fi: layout and redlin
@@ -5632,6 +6072,10 @@ SEC_PIN_TXT = r"""
 @ row 8 ‖ Components (variant · pr
   CMP-049 (`loading`, then `error` with its retry) · CMP-015 (`shape` row, `count` 3) · CMP-027
   (`retry`) · CMP-175 `aggregate`
+@ row 8 ‖ Tokens (§9)
+  the skeleton bars `color.surface.hover` on `color.surface.raised`, decorative (CMP-015's own
+  `color.surface.skeleton` is not a token; this binding is PROPOSED to its owner, D03-C12); the
+  error line `row-text`
 @ row 9 ‖ Frame (E27-D02 §7)
   `SCR-125 / key expiring (<14 d): rotation due and Bybit expiry`
 @ row 9 ‖ Hi-fi: layout and redlin
@@ -5752,7 +6196,17 @@ SEC_PIN_TXT = r"""
 @ row 17 ‖ Copy keys (§12)
   `e27.shell.banner.kek` (consumed, `SYS:66`); the notice's first line is the reason
   `keys.kek_unavailable`; its second `e27.shared.kek_notice`
+§ spec ‖ 4. SCR-126 — Add or edit a Bybit account, and SC
+@ prose
+  Board 06 nests frames 18–32 at 1280 × 800 in dark, with §4.1's redline first, and SCR-016's four
+  frames as insets (BQ-1); light is bound by token and not drawn (§0: board 06 has no twin; the
+  text is binding).
+@ prose
+  Both screens are comfortable (BQ-4; `16:114`); §3's rules for strings, tokens, gated controls,
+  stamps and fixtures hold here.
 § spec ‖ 4.1 Anatomy at 1280 × 800 and the redline (frame
+@ head 3
+  Size · tokens
 @ row B PageHeader (CMP-088) ‖ Content and copy
   `h1` "Add a Bybit account" at the left; at the right the CMP-066 `nav` stepper (BQ-12), "1
   Register the account ✓ · 2 Add its API key (current)": the done step with its check and its
@@ -5807,6 +6261,10 @@ SEC_PIN_TXT = r"""
 @ prose
   A refusal keeps the pasted values in their wells, masked, so "verify again" sends them as they
   are, except where a row says both fields clear (`D02:511-518`).
+@ head 4
+  Hi-fi: layout and redline (dark; light by token)
+@ head 6
+  Tokens (§9)
 @ head 7
   Copy keys (§12)
 @ row 18 ‖ Hi-fi: layout and redlin
@@ -5925,6 +6383,9 @@ SEC_PIN_TXT = r"""
 @ row 30 ‖ Copy keys (§12)
   `e27.scr126.stepup.dropped`, `e27.shared.resend_unconfirmed`, `e27.shell.grace.keys`; SCR-006's
   strings are E09-D06's and the server's
+@ row 30 ‖ Focus and announcements
+  password → code → Cancel → Confirm; `Esc` is a safe no-op (`D02:1052`); on success the result
+  heading takes focus; failures assertive (`D06:67`)
 @ row 31 ‖ Frame (E27-D02 §7)
   `SCR-126 / edit mode: no key field, the key row with Rotate`
 @ row 31 ‖ Hi-fi: layout and redlin
@@ -5953,6 +6414,8 @@ SEC_PIN_TXT = r"""
   and verifies and stores the key (D5); the verdict is a row the server fills after a pass, never
   a box the owner ticks (C-7; the memo's F-19, `MEMO:260`); the environment is the deployment's,
   stated in words (OQ-4).
+@ head 3
+  Size · tokens
 @ row C Step card (CMP-050) ‖ Content and copy
   §4.1's form card at 640 px, in E27-D02 §5.7's order: Label [demo-1], Bybit UID [9000001] and
   "Main account" as text; the instruction list (§4.1 E); API key and API secret with CP-1 (§4.1
@@ -5965,6 +6428,10 @@ SEC_PIN_TXT = r"""
   **Focus (R3).** The stepper's done steps → Label → Bybit UID → API key → API secret → Copy →
   Verify and save → Back → Skip for now → Continue (`D02:854-860`); the step heading takes focus
   on each step change (`14:434`).
+@ head 4
+  Hi-fi: layout and redline (dark; light by token)
+@ head 6
+  Tokens (§9)
 @ head 7
   Copy keys (§12)
 @ row 72 ‖ Hi-fi: layout and redlin
@@ -5998,9 +6465,14 @@ SEC_PIN_TXT = r"""
   The five stages are binding (D8, `D02:194`); their form, rung 1 with the `keys` step-up
   (`D02:279`; OQ-10, `MEMO:541`; `SU:522`) and every string here are PROPOSED.
 @ prose
+  Board 07 draws frames 33–41 in dark; light is the same layout by token (no twin, BQ-2), and the
+  light differences that matter are named per row.
+@ prose
   No frame draws a rollback, an early revoke, a drain read, a `failed` state or a schedule control
   (G-4; AD-6, `MEMO:402`; `D02:582-584`), and no frame shows more of a key than its masked id
   `...{last4}` or anything of a secret (BQ-8; C-2.7, C-12.2).
+@ head 3
+  Size · tokens
 @ row Title ‖ Content and copy
   "Rotate the key of sub_002 (...e5f6) · LIVE": the title, then CMP-075 EnvBadgeLocal for the
   environment
@@ -6043,6 +6515,10 @@ SEC_PIN_TXT = r"""
   is text, `type.num.*` replacing `font.mono` (not a token, `15:386`); no warning colour
   (`color.text.warning` is not a token either) and no "secret auto-hide" use (BQ-8); the list rows
   never tick — they show only the absolute line (`D02:578`).
+@ head 4
+  Hi-fi (dark; light by token)
+@ head 5
+  Tokens
 @ head 6
   Copy keys
 @ row 33 ‖ Frame (E27-D02 §7)
@@ -6149,6 +6625,8 @@ SEC_PIN_TXT = r"""
   key is revoked, no early revoke of the old key, `state: failed` undefined (`22:17134`); no
   schedule control (`D02:582-584`)". No control, link or disabled button stands in for any of
   them, and nothing on the frame is T2 (D20, `D02:206`).
+@ row 40 ‖ Tokens
+  the anatomy's; the strip is a board annotation, not a token binding
 @ row 41 ‖ Hi-fi (dark; light by to
   SCR-125 under the system banner — CMP-092's blocking row with the server's "Trading disabled:
   the credential key is unavailable." (`SYS:66`) — and the one CMP-028 notice under the `h1`
@@ -6181,6 +6659,8 @@ SEC_PIN_TXT = r"""
 @ prose
   The table's rights and allowlist cells are CMP-175's E27 state set (§2.1), which E43-D02 extends
   additively and never forks (BQ-5).
+@ head 3
+  Size · tokens
 @ row Disclosure ‖ Content and copy
   the `h2`'s button "Key health and secrets policy" with a chevron, `aria-expanded` and
   `aria-controls`; collapsed by default; opening it fires `admin.key_health_viewed` (analytics)
@@ -6243,6 +6723,10 @@ SEC_PIN_TXT = r"""
   Opening the card moves focus to its `h2` (the press moved it); inside it Tab runs Freeze → the
   note → Revoke here → Add a new key → Close card, and each step's control opens its own dialog
   and returns focus to that control (`D02:686-690`); the steps never time out (A-O).
+@ head 4
+  Hi-fi (dark; light by token)
+@ head 5
+  Tokens
 @ head 6
   Copy keys
 @ row 42 ‖ Frame (E27-D02 §7)
@@ -6341,6 +6825,10 @@ SEC_PIN_TXT = r"""
   "Revoke here and leave positions open". The note stays as the owner left it: it gates nothing.
   Event, once revoked: `api_key.revoke` carrying `exposure_unknown` (`22:14539-14544`).
 § spec ‖ 7. SCR-129 — Disable, delete and the revoke dial
+@ prose
+  Comfortable density; board 08 draws frames 49–61 in dark, light by token.
+@ head 3
+  Size · tokens
 @ row Title ‖ Content and copy
   "Revoke key ...e5f6 on sub_002 · LIVE" · "Disable sub_002 · LIVE" · "Delete sub_002 (keeps
   history) · LIVE", the environment as CMP-075's badge
@@ -6351,6 +6839,11 @@ SEC_PIN_TXT = r"""
 @ row Marker ‖ Content and copy
   revoke: "Recorded in the audit log · API key revoked (api_key.revoke)"; disable and delete:
   "Recorded in the audit log", with no code (none registered)
+@ prose
+  **The confirms: the consequence before the press, the step-up, the token** (Enable… alone is not
+  destructive).
+@ head 2
+  Rung · typed token
 @ row Revoke a key that is not the last (49) ‖ Action (frames)
   Revoke a key that is not the last (49)
 @ row Revoke a key that is not the last (49) ‖ Step-up
@@ -6374,6 +6867,10 @@ SEC_PIN_TXT = r"""
   `deleteExchangeAccount`, `flatten_first` its only choice (`22:2632-2669`); revoke is
   `revokeApiKey` (`keys:manage`; `22:2838-2875`; not mounted, `MX:589-595`), local only — the key
   stays valid at Bybit until the Owner deletes it there (`22:2847-2852`).
+@ head 4
+  Hi-fi (dark; light by token)
+@ head 5
+  Tokens
 @ head 6
   Copy keys
 @ row 49 ‖ Frame (E27-D02 §7)
@@ -6503,8 +7000,17 @@ SEC_PIN_TXT = r"""
   Every write in the drawer is gated in the server's leg order, the view-as leg first (T2 per
   §10.1; the gated set and who sees what are §10.2).
 @ prose
+  A stale balance keeps full contrast (C-10, `D02:1205`; CD-4, `MEMO:379`).
+@ prose
   No secret is displayed, ever (`14:1753`; D13, `D02:199`): the one key value is CMP-034's
   `...{last4}` (§2.3, BQ-8).
+@ head 3
+  Size · tokens
+@ row Drawer ‖ Size · tokens
+  `color.surface.overlay` under `elevation.dialog`; the edge `color.border.default` (decorative,
+  §9 `hairline`); no `size.drawer` token exists, so 480 is the consumed geometry, not a token
+@ row Balances ‖ Block
+  Balances
 @ row Balances ‖ Content and copy
   the caption "Balances · as of {hh:mm:ss} UTC" (CMP-036 `freshness`); a two-column `dl` of
   CMP-036 rows — Equity, Wallet balance, Available balance, Unrealised PnL (CMP-116),
@@ -6547,16 +7053,32 @@ SEC_PIN_TXT = r"""
   No E27-D02 frame draws a blocked key in the drawer; CMP-175's WithdrawalDetected story carries
   the form (§13).
 @ prose
+  At 720 CSS px wide or less — 200 % zoom on the 1280 × 800 frame is 640 — the drawer takes the
+  full width and its balance columns stack (`D02:1089-1090`; §11).
+@ prose
+  **Light and high contrast.** Every binding above is a token, so the light frame is the same
+  names in `semantic-light`, and §9 measures every pair in dark, light and high contrast.
+@ prose
   Two light readings need the shape: the octagon of a rejected key and the triangle of a rotation
   due share one hue in light (DS-6; §9 `glyph-critical-warning` is 0.00 <!--
   audit:cvd.glyph-critical-warning.light.normal=0.00 --> there), so the glyph shape and the words
   carry them; and the stale chip's clock is 3.37 <!-- audit:pairs.stale-glyph.light=3.37 --> in
   light (`stale-glyph`), over the 3.0 bar, with its words beside it.
 @ prose
+  Every role: `GET /exchange-accounts/{accountId}` (`balance`, `balance_stale`,
+  `balance_stale_since`, `health`, `key_status`, the modes, `enabled`), `wallet` and `positions`.
+@ prose
   The Owner adds `GET /exchange-accounts/{accountId}/keys`, `GET /admin/security/summary` for the
   rights and allowlist words — `not_mounted` at the base (`MX:202-208`), so until it is mounted
   those statements are the target state, stamped "not yet served — G-1, #895 / #896" on the board
   annotation layer (D20, `D02:206`) — and `system` `exchange.rate_budget_free_pct`.
+@ prose
+  **The hi-fi rows.** Each row draws the anatomy above with the one block it changes; the Board
+  cell is the frame's board, and the light reading is the same tokens in `semantic-light` (above).
+@ head 4
+  Hi-fi (dark; light by token)
+@ head 5
+  Tokens
 @ head 6
   Copy keys
 @ row 62 ‖ Copy keys
@@ -6581,6 +7103,8 @@ SEC_PIN_TXT = r"""
 @ row 65 ‖ Copy keys
   `e27.scr079.key.statements.other`, `e27.scr079.ip_mismatch`, `e27.shared.copy`,
   `accounts.mode_locked`
+@ row 66 ‖ Frame (E27-D02 §7)
+  `SCR-079 / stale balance`
 @ row 67 ‖ Hi-fi (dark; light by to
   a Manager with the trade grant: balances with their freshness, positions and Change leverage…
   enabled, both mode controls T2 `rbac.owner_only`, each led by the CMP-019 `lock` (CMP-079
@@ -6637,6 +7161,25 @@ SEC_PIN_TXT = r"""
   `rbac.owner_only` ({verb} "change account settings" or "manage API keys"),
   `pending_key.untimed`, `keys.kek_unavailable`
 § spec ‖ 9. Contrast, greyscale and colour vision — the m
+@ prose
+  The tool layers the token JSON as `packages/ui/tokens/themes.json` does — dark is the primitives
+  plus `semantic-dark`, light adds `semantic-light`, high contrast adds `semantic-hc` — through
+  `packages/ui/tokens/tests/verify_tokens.py`; it takes every ratio from
+  `contrast_check.contrast_ratio()` (`docs/design/_tools/contrast_check.py`) and every
+  colour-vision value from `docs/research/_tools/cvd_simulate.py` (`simulate`, `delta_e76`),
+  imported and never re-implemented (BQ-16).
+@ prose
+  **Counts.** 62 rows: 57 gated <!-- audit:numbers.pairs_rows=57 -->, of which 29 are registered
+  in `tools/contrast/pairs.mjs` <!-- audit:numbers.pairs_registered=29 --> and 28 are PROPOSED for
+  the token owner <!-- audit:numbers.pairs_proposed=28 --> (a design PR never edits `tools/`); 5
+  are reported <!-- audit:numbers.pairs_reported=5 -->; 0 FAIL <!-- audit:numbers.pairs_fail=0
+  -->; 19 rows reproduce a merged spec's numbers to the hundredth <!-- audit:numbers.repro_rows=19
+  -->, and 0 of them are off <!-- audit:numbers.repro_fail=0 -->.
+@ prose
+  A `CR:` row is measured on the token its change request would alias, never on an invented hex.
+@ prose
+  **The matrix, in the tool's order** (light and high contrast are the same token names resolved
+  in their sets):
 @ row 1 ‖ Where
   CMP-175 pass words (verified, trade-only) on their fill
 @ row 2 ‖ Where
@@ -6669,6 +7212,19 @@ SEC_PIN_TXT = r"""
   dialog and drawer title and body; the masked id in a dialog; the absolute overlap time —
   reproduces E42-D02 §11 to the hundredth ✓
 @ prose
+  **Reported, not gated — two readings for the token owner.** (1) `color.text.link` has no
+  high-contrast override (`semantic-hc.tokens.json` overrides 14 tokens <!--
+  audit:numbers.token_files.hc=14 -->, the link not among them): a link on the row measures 6.66
+  <!-- audit:pairs.row-link.high-contrast=6.66 --> in high contrast, over the 4.5 text bar this
+  matrix gates and under the 7:1 body-text aim of the high-contrast theme (`05:130`); its dialog
+  and drawer twin, `link-overlay` (row 62), measures 6.15 <!--
+  audit:pairs.link-overlay.high-contrast=6.15 --> there, the "6.15:1 in HC" <!--
+  audit:pairs.link-overlay.high-contrast=6.15 --> the registry holds out
+  (`tools/contrast/pairs.mjs:193`).
+@ prose
+  CMP-021 underlines every link (`15:247`), so no link depends on its colour; the retune is the
+  token owner's, routed as D03-H7 (§14).
+@ prose
   **Colour vision (AC2) — reported, never gated.** Colour reinforces and never carries a CMP-175
   state: the tool gates the carriers in §2.1 instead — a word of its own, the glyph of its
   severity class, and the critical state's bold word and 2 px border (BQ-6) — and reports Delta
@@ -6682,10 +7238,25 @@ SEC_PIN_TXT = r"""
   audit:cvd.fill-unknown-pass.light.tritanopia=4.81 -->, against the critical fill under
   protanopia 3.15 <!-- audit:cvd.fill-unknown-critical.light.protanopia=3.15 -->; the dash and
   "Withdrawal: not checked" carry it, and it never reads as a pass (AD-2).
+@ prose
+  601 luma per token** (`int(0.299 r + 0.587 g + 0.114 b)`; reported):
+@ head 1
+  Token
+@ prose
+  In greyscale the subtle fills do not separate the states — in dark they span 38 <!--
+  audit:luma.color.status.danger.subtle.dark=38 --> to 52 <!--
+  audit:luma.color.status.warning.subtle.dark=52 --> — and in light the danger and warning glyph
+  tokens are both 108 <!-- audit:luma.color.status.danger.strong.light=108 -->.
 @ row CMP-175 and CMP-011 fills ‖ Carrier
   CMP-175 and CMP-011 fills
+@ row State glyphs (check, octagon, triangle, ‖ Normally
+  `.strong` tokens or `color.text.secondary`, as `currentColor` strokes
+@ prose
+  **Token bindings per element** (every name a token at the base; geometry is §2's):
 @ row CMP-175 pass (verified, trade-only) ‖ Element
   CMP-175 pass (verified, trade-only)
+@ row CMP-011 "OK" chip ‖ Ink and glyph
+  `color.text.secondary`, check in the same token (CMP-011's neutral form, BQ-7)
 @ row CMP-175 critical (withdrawal-detected) ‖ Element
   CMP-175 critical (withdrawal-detected)
 @ row CMP-175 failed (IP-missing, IP-mismatch, ‖ Element
@@ -6696,12 +7267,24 @@ SEC_PIN_TXT = r"""
   CMP-175 unknown (not checked)
 @ row CMP-175 info (a stored read-only key, co ‖ Element
   CMP-175 info (a stored read-only key, component level only)
+@ row The verdict line on the page ‖ Ink and glyph
+  `color.text.primary`; its time and basis `color.text.secondary`; check, octagon or clock in the
+  `.strong` tokens
+@ row CMP-178 inline health ‖ Ink and glyph
+  the word in `color.text.primary`; check, triangle or octagon in the `.strong` tokens
 @ row Fields (CMP-201 write-only; the typed la ‖ Element
   Fields (CMP-201 write-only; the typed label)
+@ row CMP-028 notices (the KEK notice; the dra ‖ Ink and glyph
+  `color.text.primary`; octagon or info in the `.strong` token
+@ prose
+  **Design-system change requests** (no hex invented; no token edited by this PR):
 @ prose
   The frames bind `color.text.tertiary` directly until the alias merges, so AC5 rests on no
   unmerged token: SCR-126's key and secret fields, SCR-127 stage 2, SCR-016 step 3 and SCR-129's
   typed field.
+@ prose
+  - **The link in high contrast** (reading 1 above) — not a DS id: a hand-off to the token owner,
+  D03-H7 (§14).
 § spec ‖ 10.1 The T2 rule (stated once)
 @ prose
   **Legs, in the server's order** (E09-D09 §2.1; `22:281-290`): the view-as leg first on every
@@ -6764,6 +7347,8 @@ SEC_PIN_TXT = r"""
   SCR-079 key facts (rights, allowlist, egress IP, rate budget)
 @ head 4
   SCR-079 key status and health
+@ head 5
+  SCR-079 balances
 @ row Manager, trade grant ‖ SCR-079 key status and h
   "API key: {status}"; health in words
 @ row Viewer ‖ SCR-079 balances
@@ -6817,14 +7402,28 @@ SEC_PIN_TXT = r"""
   `Esc` = Cancel at stages 1, 2 and 5; at stages 3 and 4 it closes the view only, the server's
   rotation continues and the row's busy line shows it; focus returns to the opener (the row's
   Actions button, or SCR-126's Rotate key…)
+@ row SCR-006 step-up (E09-D06, consumed) ‖ Role · initial focus
+  `role="alertdialog"`; the password field
+@ row SCR-006 step-up (E09-D06, consumed) ‖ Tab order
+  password → code → Cancel → Confirm
 @ row Compromise card (a region of SCR-128) ‖ Tab order
   Freeze {label}… → the Bybit note checkbox → Revoke here… → Add a new key… → Close card
+@ row SCR-125 list ‖ 150 % text scale
+  rows grow (`min-height`: the row tokens are fixed px, `16:138`); chips wrap to a second line and
+  never truncate
 @ row SCR-128 key table ‖ Surface
   SCR-128 key table
 @ row SCR-128 key table ‖ 200 % zoom (640 × 400 CS
   one card per key under its LIVE or DEMO heading
+@ row SCR-079 drawer ‖ 200 % zoom (640 × 400 CS
+  full width at 720 CSS px or less (E08-D06 D-14); the balance columns stack; the header stays one
+  sticky row
 @ row a row chip turns BLOCKED, Key refused, I ‖ Event
   a row chip turns BLOCKED, Key refused, IP allowlist: no match or Down
+@ row SCR-079's balances refresh ‖ Event
+  SCR-079's balances refresh
+@ row an SCR-079 balance turns stale ‖ Event
+  an SCR-079 balance turns stale
 @ row SCR-079's key is rejected while the draw ‖ Event
   SCR-079's key is rejected while the drawer is open
 § spec ‖ 12.1 The deck
@@ -6972,9 +7571,13 @@ SEC_PIN_TXT = r"""
   `e27.scr125.menu.ask.keys`
 @ row `e27.scr125.menu.ask.keys` ‖ Where
   second line of Add a key…, Rotate key…, Revoke key… · frame 11
+@ row `e27.scr125.menu.ask.keys` ‖ String
+  "Asks for your password and a code"
 @ row `e27.scr125.menu.ask.label` ‖ Where
   second line of Disable…, Delete…, and Revoke key… on the last key; the ask stamped “not yet
   served — G-8, #895 / #898” · frame 11
+@ row `e27.scr125.menu.ask.label` ‖ String
+  "Asks for your password, a code and the account's name"
 @ row `e27.scr125.busy.overlap` ‖ String
   "Rotation in progress · old key usable until {hh:mm:ss} UTC"
 @ row `e27.scr125.details.bybit_expiry` ‖ String
@@ -7245,6 +7848,8 @@ SEC_PIN_TXT = r"""
   again; until then nothing can be revoked, disabled or deleted."
 @ row `e27.scr129.disable.history` ‖ String
   "History stays." · "You can enable it again." · "Its keys still work at Bybit."
+@ row `e27.scr129.hint.typed` ‖ Status · source
+  refined · E42-D03:620 `dlg.token` (“the username” → {label})
 @ row `e27.scr129.delete.keys` ‖ Id
   `e27.scr129.delete.keys`
 @ row `e27.scr129.delete.keys` ‖ String
@@ -7268,6 +7873,21 @@ SEC_PIN_TXT = r"""
   dashboard."
 @ row `e27.scr129.revoked.subscribers` ‖ String
   "The account's API key was revoked."
+@ row `e27.scr079.balances.caption` ‖ Id
+  `e27.scr079.balances.caption`
+@ row `e27.scr079.balances.caption` ‖ Where
+  the balance block's freshness line (CMP-036 `freshness`) · frames 62–70
+@ row `e27.scr079.balances.caption` ‖ String
+  "Balances · as of {hh:mm:ss} UTC"
+@ row `e27.scr079.balances.labels` ‖ Id
+  `e27.scr079.balances.labels`
+@ row `e27.scr079.balances.labels` ‖ Where
+  the balance `dl` terms, in this order · frames 62–70
+@ row `e27.scr079.balances.labels` ‖ String
+  "Equity" · "Wallet balance" · "Available balance" · "Unrealised PnL" · "Initial-margin rate" ·
+  "Realised PnL today" · "Maint.-margin rate"
+@ row `e27.scr079.balances.units` ‖ Id
+  `e27.scr079.balances.units`
 @ row `e27.scr079.key.h3` ‖ Id
   `e27.scr079.key.h3`
 @ row `e27.scr079.key.h3` ‖ String
@@ -7307,6 +7927,14 @@ SEC_PIN_TXT = r"""
 @ row `e27.scr079.ip_mismatch` ‖ String
   "CandleViewer accepts this key only if its IP allowlist holds exactly {egress_ip}. Set it in
   Bybit's dashboard [Copy], then test it again in Admin → Accounts. It can't be set from here."
+@ row `e27.scr079.stale` ‖ Where
+  CMP-239 chip replacing the “as of” line; the values stay at full contrast · frame 66
+  (**required: the stale-balance badge**)
+@ row `e27.scr079.stale.sizing` ‖ Where
+  the chip's suffix, drawn only once G-11 serves a field · frame 66 (**required: the stale-balance
+  badge**)
+@ row `e27.scr079.announce.stale` ‖ String
+  "Balances: stale since {hh:mm:ss} UTC"
 @ row `e27.scr019.task.key` ‖ Id
   `e27.scr019.task.key`
 @ row `e27.scr019.task.key` ‖ Where
@@ -7375,6 +8003,8 @@ SEC_PIN_TXT = r"""
 @ row `e27.shared.ask` ‖ Where
   the ask line before every `keys` press; on disable, delete and Enable… stamped “not yet served —
   G-8, #895 / #898” · frames 5, 19, 34, 49–59, 61
+@ row `e27.shared.ask` ‖ String
+  "You'll confirm with your password and a code."
 @ row `e27.shared.kek_notice` ‖ Where
   the CMP-028 silent blocking notice's second sentence (BQ-9); its first is the reason
   `keys.kek_unavailable` (§12.2), the node every blocked key control's `aria-describedby` names ·
@@ -7611,6 +8241,12 @@ SEC_PIN_TXT = r"""
   and CMP-092's blocking row is the one announcement (`15:935`; D03-C9). Copy-ready for its owner:
   `withdrawal` "Attention: a key on {account} can move funds → Start the compromise response";
   `announce.withdrawal` dropped.
+@ row D03-C12 ‖ Row
+  **CMP-015's skeleton token (resolved upstream).** At E27-D02's base CMP-015 named
+  `color.surface.skeleton`, which is not a token; #4414 now binds its blocks to
+  `color.surface.hover` on a raised host (`15:194`). **Decision:** frame 8's skeleton bars consume
+  that binding as it stands, `color.surface.hover` on `color.surface.raised` and static under
+  reduced motion; nothing is left to rule.
 @ row D03-C13 ‖ Row
   **`14:2514`'s missing-allowlist warning.** SCR-125's checklist asks for "the warning state for a
   missing IP allowlist" (`14:2514`), while the contract refuses an empty whitelist in every
@@ -7629,6 +8265,18 @@ SEC_PIN_TXT = r"""
   `last_verified_at` after a save and, on a refusal, whose `422` serves no time and stores
   nothing, by the response's `Date` header — the server's clock, never the client's (PROPOSED); a
   dated word wraps in its cell rather than lose its time (§3.1 block J, §6).
+@ row D03-C16 ‖ Row
+  **#4414's CMP-028, CMP-043 and CMP-044 lines** (E05-D02 slice 4, merged after E27-D02's base).
+  (1) CMP-044's Tokens bind the destructive Confirm as a solid CMP-001 `danger`, whose label is
+  under the 7.0 hc-text bar (§9 `c175-solid-danger`; the BQ-6 rider in §2.1); (2) its typed state
+  keeps the Confirm natively `disabled`, where D03-C11 takes E42-D03's focusable validity form;
+  (3) CMP-043's title is `type.ui.heading-sm`, where §2.4 binds `type.ui.heading-md`; (4) CMP-028
+  gained `placement`, `live` and `edge`, and `live="off"` is half of `blocking`. **Decision:**
+  Appendix A is re-based on #4414's text and changes only these four points: E27's destructive
+  confirm on `color.status.danger.subtle` with its `color.status.danger.strong` hairline, the
+  validity form, `type.ui.heading-md`, and `blocking` defined as `live="off"`, never dismissible
+  and an `id`; every other #4414 addition is kept as written. The boards PR re-reads this row
+  before it draws the confirm or the notice.
 @ row D03-G1 ‖ Row
   **The egress IP before any check.** `EgressIp` is served only inside a verification result — a
   test this client ran, a `422` refusal or a rotation's (`22:2745-2749`, `22:16965`, `22:16995`) —
@@ -7659,6 +8307,15 @@ SEC_PIN_TXT = r"""
 @ row D03-H5 ‖ Row
   **E09-D09's vocabulary owner.** D03-A4 registers the ten E27 state keys (C-9); the `rbac.*`
   strings stay E09-D09's, consumed verbatim (§12.2).
+@ row D03-H7 ‖ Row
+  **The token and contrast owner.** Register §9's 28 PROPOSED gated pairs in
+  `tools/contrast/pairs.mjs`, `link-overlay` once E47-D03's retune lands (a design PR never edits
+  `tools/`); the DS-3 alias `color.border.input` → `{color.text.tertiary}`; `color.text.link`'s
+  missing high-contrast override (§9's reading 1: 6.66 <!--
+  audit:pairs.row-link.high-contrast=6.66 --> in high contrast, under the 7:1 body-text aim of
+  `05:130`); DS-6 with D03-C8; the skeleton binding of D03-C12.
+@ row D03-H7 ‖ Owner
+  the token owner · the E47-S06 palette owner
 @ row D03-D1 ‖ Row
   Penpot, not Figma (the agent-delivery adaptation, owner decision 2026-09-25): page `E27-D03
   Accounts and key vault hi-fi` (§0).
@@ -7756,6 +8413,10 @@ SEC_PIN_TXT = r"""
   components (CMP-087, CMP-088, CMP-092, CMP-041, CMP-049, CMP-050, CMP-079, CMP-019, CMP-046,
   CMP-239, CMP-006, CMP-005 and CMP-097) where §2.5 and the screen sections place them.
 @ prose
+  **Token bindings** (`tokens.unknown`, `tokens.dimmed`): every backticked token exists or its
+  line marks it; `color.text.disabled` and `opacity.disabled` appear in a T2 or disabled row only
+  negated.
+@ prose
   **T2** (`t2.*`, `key.*`): the rule once, view-as first; every T2 frame citing "T2 per §10.1";
   every gated row naming CMP-079 and the `lock`; the not-T2 list whole; each reason one sentence
   of at most 60 characters with its full stop; `rbac.*` verbatim.
@@ -7794,23 +8455,29 @@ SEC_PIN_TXT = r"""
   consequence's §12 string with its placeholders filled, the ask line and, where its keys list
   `e27.scr129.typed`, the typed label (a row opening "As frame N" or "Frame N's dialog" inherits
   them from frame N); §7's confirms table states both, and no other frame draws a destructive
-  confirm, and while the summary loads no frame or §2.4 cell draws the confirm rendered or
-  disabled (`k4.loading`); K6 to K8: each of the 20 <!-- audit:numbers.frames_t2=20 --> gated
-  frames names the `lock` and CMP-079 RbacGate (§10.1's components) and a reason key a §10 or §12
-  table gives, `rbac.view_as` first wherever it appears and never put after another leg in the
-  row's prose, no frame that is not gated draws a `lock` or CMP-079, a frame E27-D02's inventory
-  or its name calls a view-as frame says "view-as leg first" in its class, and every §10.2 control
-  the view-as session reaches as T2 `rbac.view_as` (its "Who sees what" row) lists the view-as leg
-  first (`t2.viewas`); K9: no exit (Cancel, Close, Back, `Esc`) drawn gated (a parenthetical such
-  as "(disabled)" or a clause after a comma included), in a frame or in §10.2; K10: gate 2's word
-  and glyph per state (`ac2.*`); K11: frame 46's steps, their keys and their deck strings in
-  C-12.12's order (freeze, delete at Bybit, revoke, rotate the KEK, replace); K12: each of the 19
-  <!-- audit:numbers.frames_env=19 --> frames that names an environment, whose title or heading
-  names an account, or that draws an "Attention:" strip string, keeps its badge — derived from the
-  rows, not a fixed list; K13: the number before every marker is the marker's value, and every
-  two-decimal contrast or ΔE76 value carries a marker; K14 and K15: gate 4's `inv.missing` and
-  `inv.board`; and E42-D03's boards PR, in flight, is named by its branch only — a sha or a quote
-  beside it fails (`pin.inflight`).
+  confirm, and while the summary loads no frame or §2.4 cell draws the confirm rendered, drawn,
+  shown, visible or present, or with a gated word — disabled, `aria-disabled`, dimmed, greyed or
+  grayed (out), inactive, inert, locked, held, hidden, unavailable, unusable, suppressed, no
+  effect — before it ("a disabled confirm", "a greyed-out confirm") or after it anywhere in its
+  sentence, across a semicolon, a dash, a cell and a parenthesis, so "it" carries the subject
+  ("the confirm, visible but inactive") (`k4.loading`); K6 to K8: each of the 20 <!--
+  audit:numbers.frames_t2=20 --> gated frames names the `lock` and CMP-079 RbacGate (§10.1's
+  components) and a reason key a §10 or §12 table gives, `rbac.view_as` first wherever it appears
+  and never put after another leg in the row's prose, no frame that is not gated draws a `lock` or
+  CMP-079, a frame E27-D02's inventory or its name calls a view-as frame says "view-as leg first"
+  in its class, and every §10.2 control the view-as session reaches as T2 `rbac.view_as` (its "Who
+  sees what" row) lists the view-as leg first (`t2.viewas`); K9: no exit (Cancel, Close, Back,
+  `Esc`) drawn gated, in a frame or in §10.2, by the same gated words — after the exit in a
+  parenthetical such as "(disabled)", after a verb, after a comma or a two-word appositive (",
+  visible but inactive"), or carried by "it" or "which" later in the sentence, and before it ("a
+  disabled [Cancel]"); K10: gate 2's word and glyph per state (`ac2.*`); K11: frame 46's steps,
+  their keys and their deck strings in C-12.12's order (freeze, delete at Bybit, revoke, rotate
+  the KEK, replace); K12: each of the 19 <!-- audit:numbers.frames_env=19 --> frames that names an
+  environment, whose title or heading names an account, or that draws an "Attention:" strip
+  string, keeps its badge — derived from the rows, not a fixed list; K13: the number before every
+  marker is the marker's value, and every two-decimal contrast or ΔE76 value carries a marker; K14
+  and K15: gate 4's `inv.missing` and `inv.board`; and E42-D03's boards PR, in flight, is named by
+  its branch only — a sha or a quote beside it fails (`pin.inflight`).
 @ prose
   **The self-test** (`--self-test`; `--selftest` too): a passing spec built in memory from the
   base files refuses 37 <!-- audit:numbers.mutations=37 --> mutations, each by its own code, and a
@@ -7825,12 +8492,15 @@ SEC_PIN_TXT = r"""
   §4.4's block D and frame 36, a bare id, `[Show]` and `[Copy]` on §4.4's block D result row and
   in §4's and §8's prose, a deck string cut to "off ✓" and "Off ✓" and §2.1's verified row cut to
   "off ✓", frame 69's class naming the role leg, and three on the hand-off's CMP-033 row (a bare
-  32-hex id, "Can Withdraw", "view the full key") — 109 <!-- audit:numbers.k_mutations=109 --> in
-  all, each run in memory on this spec (or the hand-off) as a plain run: rc 1 with exactly one
-  distinct FAIL, its own code, among the gates of items 1–12 (item 13's pin refuses it too
-  wherever it edits pinned text); then item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin
-  mutations; restored, `--check` exits 0 and the spec on disk is byte-identical (its sha256
-  compared).
+  32-hex id, "Can Withdraw", "view the full key"); and the re-check's gated words — "a disabled
+  confirm", "a dimmed confirm", "the confirm, visible but inactive", "a greyed-out confirm" and
+  each gated word before and after the confirm, on frame 53 and in §2.4's `consequenceState`, and
+  "a disabled [Cancel]", "[Cancel], visible but inactive" and each gated word before and after the
+  exit, on frame 53 and frame 11 — 230 <!-- audit:numbers.k_mutations=230 --> in all, each run in
+  memory on this spec (or the hand-off) as a plain run: rc 1 with exactly one distinct FAIL, its
+  own code, among the gates of items 1–12 (item 13's pin refuses it too wherever it edits pinned
+  text); then item 13's 94 <!-- audit:numbers.pin_mutations=94 --> pin mutations; restored,
+  `--check` exits 0 and the spec on disk is byte-identical (its sha256 compared).
 @ prose
   **The whole document** (the orchestrator's text round 2; `reveal`, `k1.masked`, `k2.field`,
   `k3.withdraw`, `k3.off`): every clause of every line of this spec and of the hand-off — every
@@ -7857,10 +8527,11 @@ SEC_PIN_TXT = r"""
   clause of this spec or of the hand-off (a heading, each table cell, each prose sentence, each
   fenced line) is security-bearing when it names a key, an API key or a key id, a secret, a
   credential, a passphrase, private, a withdrawal or transfer word, any fund, funds or money word
-  (so a fund right in any phrasing), a mask word in any form, plain or clear text or "in clear",
-  CMP-034, CMP-175 or CMP-201 by number or name, or a full, whole or raw id, case-insensitive, at
-  a word boundary, plurals and hyphenations included; a clause that names the view-as leg is
-  pinned too (§8's and §10.1's statements of the leg order).
+  (so a fund right phrased with one of them), a reveal or mask word in any form, plain or clear
+  text or "in clear", a token, a password, a balance, "shown in full", CMP-034, CMP-175 or CMP-201
+  by number or name, or a full, whole or raw id, case-insensitive, at a word boundary, plurals and
+  hyphenations included; a clause that names the view-as leg is pinned too (§8's and §10.1's
+  statements of the leg order).
 @ prose
   Its self-test: each round-3 lens form twice (in a clause with no security word, and inside a
   pinned clause), the fund right and the clear text with no key word ("can move funds", "Can move
@@ -7884,6 +8555,11 @@ SEC_PIN_TXT = r"""
 @ prose
   T2 is stated once, view-as first, with ten PROPOSED E27 reason keys; what is not T2 is listed.
 § spec ‖ Appendix A. The `15` and `14` edits, old → new
+@ prose
+  E42-D03's boards PR (`design/e42-d03-boards`) proposes edits to CMP-044's Props, A11y and
+  Storybook lines and to CMP-178's Purpose, Props, A11y, Tokens and Storybook lines
+  (`E42-D03:892-904`): whichever lands second re-reads its Old cells and re-bases (GATE R6), and
+  the audit tool warns on both entries until then.
 @ prose
   The rows cover twelve entries: the three contributions (CMP-175, CMP-176, CMP-034), the five
   extensions (CMP-028, CMP-035, CMP-044, CMP-066, CMP-178), CMP-201's write-only variant and the
@@ -7936,6 +8612,21 @@ SEC_PIN_TXT = r"""
   drop and the word, the glyph and the critical border stay.``
 @ row CMP-175 · Tokens (`15:2047`) ‖ Entry · field
   CMP-175 · Tokens (`15:2047`)
+@ row CMP-175 · Tokens (`15:2047`) ‖ Old (verbatim)
+  ``- **Tokens**: `color.status.success/danger`.``
+@ row CMP-175 · Tokens (`15:2047`) ‖ New
+  ``- **Tokens**: badge fill by class — pass `color.status.success.subtle`, failed and critical
+  `color.status.danger.subtle`, warning and time warning `color.status.warning.subtle`, not
+  checked `color.neutral.subtle`, stored read-only `color.status.info.subtle`; word
+  `color.text.primary`, `type.ui.caption` in a badge and `type.ui.body` inline (CMP-011's and the
+  row's); glyph `size.icon` in `color.status.success.strong`, `color.status.danger.strong`,
+  `color.status.warning.strong` or `color.status.info.strong` (the dash `color.text.secondary`);
+  the critical mark `font.weight.bold` and a `border.thick` border in
+  `color.status.danger.strong`; `radius.badge`; min-height `size.control.compact` or
+  `size.control.comfortable`; padding `space.inset.sm` or `space.inset.md`; gap `space.inset.xs`;
+  the `inline` form drops the fill; the `aggregate` line `color.text.primary` with its time in
+  `color.text.secondary`. No solid danger fill. (Replaces the success and danger names, which are
+  not shipped tokens.)``
 @ row CMP-175 · Storybook (`15:2048`) ‖ Entry · field
   CMP-175 · Storybook (`15:2048`)
 @ row CMP-175 · Storybook (`15:2048`) ‖ Old (verbatim)
@@ -7989,6 +8680,8 @@ SEC_PIN_TXT = r"""
   `primaryAction?` (the blocked row's "Start the compromise response", first in the row) ·
   `detailsOpen` · `onToggleDetails` · `details`. (Drops `onRotateKey`, `onRevoke` and
   `onEditProfile`: rotate and revoke are menu items, never inline destructive buttons.)``
+@ row CMP-176 · Tokens (`15:2055`) ‖ Entry · field
+  CMP-176 · Tokens (`15:2055`)
 @ row CMP-176 · Tokens (`15:2055`) ‖ Old (verbatim)
   `- **Tokens**: inherits CMP-106 ProfileBadge + CMP-175.`
 @ row CMP-176 · Tokens (`15:2055`) ‖ New
@@ -8071,6 +8764,11 @@ SEC_PIN_TXT = r"""
   `radius.control`, `size.control.height`, `space.inset.sm`; value `type.num.base` +
   `color.text.primary`; mask `color.text.secondary`; countdown (CMP-035) `type.ui.caption` +
   `color.text.tertiary`; buttons `space.inset.xs` apart. (Replaces `font.mono`.)``
+@ row CMP-034 · Tokens (`15:377`) ‖ New
+  ``- **Tokens**: text only, no box: `type.num.base` in `color.text.primary` on its host's surface
+  (`color.surface.raised` in a row, `color.surface.overlay` in a dialog or the drawer); the
+  description visually hidden. (Replaces the box, the toggle and the countdown; the mono face
+  comes from `type.num.base`.)``
 @ row CMP-034 · Storybook (`15:378`) ‖ Entry · field
   CMP-034 · Storybook (`15:378`)
 @ row CMP-034 · Storybook (`15:378`) ‖ Old (verbatim)
@@ -8101,6 +8799,14 @@ SEC_PIN_TXT = r"""
   stage 2, SCR-016 step 3) with no toggle at all.``
 @ row CMP-201 · Props (`15:2414`) ‖ Entry · field
   CMP-201 · Props (`15:2414`)
+@ row CMP-201 · Props (`15:2414`) ‖ Old (verbatim)
+  ``- **Props**: `value` · `onChange` · `autoComplete: "current-password"|"new-password"` ·
+  `showReveal?: boolean = true` · `error?: string`.``
+@ row CMP-201 · Props (`15:2414`) ‖ New
+  ``- **Props**: `value` · `onChange` · `autoComplete: "current-password"|"new-password"|"off"` ·
+  `showReveal?: boolean = true` · `error?: string` · `writeOnly?: boolean` (with `true`:
+  `showReveal` is `false` and cannot be passed, `autoComplete` is `"off"`, `description` is
+  required) · `description?` (the write-only sentence).``
 @ row CMP-201 · Variants (new; insert before ` ‖ Entry · field
   CMP-201 · Variants (new; insert before `15:2415`)
 @ row CMP-201 · Variants (new; insert before ` ‖ New
@@ -8146,6 +8852,8 @@ SEC_PIN_TXT = r"""
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.3 (text-first, owner approval
   pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the `writeOnly`
   variant for API keys and secrets.``
+@ row CMP-028 · Tokens (`15:318`) ‖ Entry · field
+  CMP-028 · Tokens (`15:318`)
 @ row CMP-028 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the blocking danger
@@ -8156,6 +8864,15 @@ SEC_PIN_TXT = r"""
 @ row CMP-035 · Tier and Purpose (`15:383`) ‖ New
   `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, the
   key-rotation overlap (SCR-127 stage 4: the served end time first, the time left second).`
+@ row CMP-035 · Tokens (`15:386`) ‖ Entry · field
+  CMP-035 · Tokens (`15:386`)
+@ row CMP-035 · Tokens (`15:386`) ‖ Old (verbatim)
+  ``- **Tokens**: `font.mono`, `color.text.warning` (under threshold).``
+@ row CMP-035 · Tokens (`15:386`) ‖ New
+  ``- **Tokens**: `type.num.base`; the time left `color.text.secondary`, the absolute time
+  `color.text.primary`; under a threshold the colour does not change (a host that marks one adds
+  the CMP-019 clock glyph in `color.status.warning.strong`). (Replaces the mono and warning-text
+  names, which are not shipped tokens.)``
 @ row CMP-035 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; boards 03 and 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — the 900 s
@@ -8167,6 +8884,8 @@ SEC_PIN_TXT = r"""
   `- **Tier**: Molecule (composed on CMP-043) · **Purpose**: destructive/irreversible action gate
   (flatten all, cancel all, Demo→Live switch, revoke an API key here, disable or delete an
   exchange account); a key is revoked in CandleViewer, never deleted at Bybit.`
+@ row CMP-044 · Tokens (`15:479`) ‖ Entry · field
+  CMP-044 · Tokens (`15:479`)
 @ row CMP-044 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; boards 03 and 08 pending on page `E27-D03 Accounts and key vault hi-fi`) — the rungs as
@@ -8175,6 +8894,18 @@ SEC_PIN_TXT = r"""
 @ row CMP-066 · Tier and Purpose (`15:683`) ‖ New
   `- **Tier**: Molecule · **Purpose**: onboarding/setup wizards (first-run account connect,
   rule-creation wizard, the add-account steps of SCR-126, the key-rotation stages of SCR-127).`
+@ row CMP-066 · Tokens (`15:686`) ‖ Entry · field
+  CMP-066 · Tokens (`15:686`)
+@ row CMP-066 · Tokens (`15:686`) ‖ Old (verbatim)
+  ``- **Tokens**: `color.status.*`.``
+@ row CMP-066 · Tokens (`15:686`) ‖ New
+  ``- **Tokens**: `done` `color.status.success.strong`; `error` `color.status.danger.strong`;
+  `current` a `color.action.primary.default` marker, its numeral `color.text.on-action`, its label
+  `type.ui.body-strong` in `color.text.primary`; `todo` a 1 px outline in `color.text.tertiary`,
+  its numeral and label `color.text.secondary`; connectors `border.hairline` in
+  `color.border.default` (decorative); `meta` `type.num.base` in `color.text.secondary`; markers
+  `size.control.compact`; gaps `space.inset.sm` or `space.inset.md`. (Replaces the bare status
+  family.)``
 @ row CMP-066 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; boards 03 and 07 pending on page `E27-D03 Accounts and key vault hi-fi`) — one stepper
@@ -8190,6 +8921,15 @@ SEC_PIN_TXT = r"""
   link; its word always carries its glyph (check healthy, triangle degraded, octagon down); no
   live region of its own: the shell announces a transition once (down assertive, degraded and
   recovery polite), never a refresh, and the age never ticks.``
+@ row CMP-178 · Tokens (`15:2072`) ‖ Entry · field
+  CMP-178 · Tokens (`15:2072`)
+@ row CMP-178 · Tokens (`15:2072`) ‖ Old (verbatim)
+  `- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline.`
+@ row CMP-178 · Tokens (`15:2072`) ‖ New
+  ``- **Tokens**: inherits CMP-050 Card + CMP-024 Sparkline; the `inline` variant: the word
+  `type.ui.body` in `color.text.primary`, the age `type.num.base` in `color.text.secondary`, the
+  glyph `size.icon` in `color.status.success.strong`, `color.status.warning.strong` or
+  `color.status.danger.strong`, `space.inset.xs` between them.``
 @ row CMP-178 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.4 (text-first, owner approval
   pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the `inline` variant
@@ -8209,6 +8949,16 @@ SEC_PIN_TXT = r"""
   string}[]` (the key gate; `detail` the rule's fixed words or the passed value, never exchange
   text; `warning` the served warning a passed check carries) · `live?: boolean` (default `true`;
   `false` for the key gate, whose host announces the verdict once).``
+@ row CMP-203 · Tokens (`15:2434`) ‖ Entry · field
+  CMP-203 · Tokens (`15:2434`)
+@ row CMP-203 · Tokens (`15:2434`) ‖ Old (verbatim)
+  ``- **Tokens**: `color.status.success`, `color.text.muted`.``
+@ row CMP-203 · Tokens (`15:2434`) ‖ New
+  ``- **Tokens**: met or passed `color.status.success.strong` (the check), passed with a warning
+  `color.status.warning.strong` (the triangle), failed `color.status.danger.strong` (the octagon),
+  not met or not checked `color.text.secondary` (the dash); words `color.text.primary`, `detail`
+  `color.text.secondary`; `type.ui.body`, `size.icon`. (Replaces the bare success and muted names,
+  which are not shipped tokens.)``
 @ row CMP-203 · Hi-fi pointer (new; insert bef ‖ New
   ``- **Hi-fi (E27-D03)**: [E27-D03.md](../design/E27/E27-D03.md) §2.5 (text-first, owner approval
   pending; board 03 pending on page `E27-D03 Accounts and key vault hi-fi`) — the key gate's check
@@ -8295,6 +9045,17 @@ SEC_PIN_TXT = r"""
   failure once, assertive, and a recovery polite; the aggregate line's negated forms stay silent
   while CMP-092's blocking row speaks (`15:935`; spec D03-C9); Table 5
 @ prose
+  - [x] **Motion pair** — none animated: a state changes by an instant token swap; any motion is
+  E27-D04's (spec D03-H1); Table 4
+@ prose
+  - [x] **Tokens used** — fills `color.status.success.subtle`, `color.status.danger.subtle`,
+  `color.status.warning.subtle`, `color.status.info.subtle`, `color.neutral.subtle`; words
+  `color.text.primary`, the critical one `font.weight.bold`; glyphs `color.status.success.strong`,
+  `color.status.danger.strong`, `color.status.warning.strong`, `color.status.info.strong`,
+  `color.text.secondary`; the critical border `border.thick` in `color.status.danger.strong`;
+  `size.icon`, `space.inset.xs`, `type.ui.caption`, `type.ui.body`, `radius.badge`; Penpot token
+  sets = `packages/ui/tokens` at `e8bca4bb7` (spec §2.1, §9)
+@ prose
   - [x] **Data contract confirmed** — `KeyVerification` (`withdraw_enabled`, sent only once the
   rights were read), `KeyVerificationNotRead`, `ApiKey` (`read_only`, `expires_at`,
   `last_verified_at`), the security summary's `keys[]` (`withdrawal_permission_present`,
@@ -8308,6 +9069,14 @@ SEC_PIN_TXT = r"""
   (SCR-125's records); exports `docs/design/E27/img/E27-D03-03-components-and-looks.png`,
   `docs/design/E27/img/E27-D03-04-scr-125-128-accounts.png` and
   `docs/design/E27/img/E27-D03-05-scr-125-128-accounts-light.png`, in the boards PR
+@ prose
+  - [x] **Tokens used** — the row `color.surface.raised`, hover `color.surface.hover`; line 1
+  `color.text.primary`, line 2 and the notice `color.text.secondary`; the label
+  `type.ui.body-strong`, numbers `type.num.base`; blocked `color.status.danger.subtle` with a 4 px
+  `color.status.danger.strong` inline-start rule; rows apart `border.hairline` in
+  `color.border.default`; focus `color.focus.ring` with `border.focus`; the environment badge
+  `color.env.live` or `color.env.demo`; details links `color.text.link`; Penpot token sets =
+  `packages/ui/tokens` at `e8bca4bb7` (spec §2.2, §9)
 @ prose
   - [x] **Data contract confirmed** — `listExchangeAccounts` (`AdminAccountRow`: label, UID,
   environment, kind, `key_status`, `health`, `enabled`), `listApiKeys` (the key's metadata),
@@ -8331,6 +9100,10 @@ SEC_PIN_TXT = r"""
   one node per page in the DOM at mount, named by every instance's `aria-describedby` (spec §2.3);
   Table 3
 @ prose
+  - [x] **Tokens used** — `type.num.base` in `color.text.primary` on its host's surface
+  (`row-text` on a row, `dialog-text` in a dialog or the drawer); no box, so no fill, border or
+  radius; Penpot token sets = `packages/ui/tokens` at `e8bca4bb7` (spec §2.3, §9)
+@ prose
   - [x] **Data contract confirmed** — `ApiKey.key_id_masked`, `...` plus 4 characters, the rest
   never stored in clear; any other value renders nothing (spec §2.3; `22:16879-16882`); the masked
   id is the only key value any response carries (C-2.7, C-12.2)
@@ -8338,8 +9111,13 @@ SEC_PIN_TXT = r"""
   - [ ] **Sign-off** — owner approval pending; the supersession of E05-D02's time-limited display
   stays the owner's (spec D03-C4, D03-A3), and no board draws a reveal meanwhile
 § hand-off ‖ The extended entries — one delta row each
+@ head 8
+  Tokens
 @ row CMP-178 SystemHealthTile ‖ Name / role
   plain text in its cell: no region, heading or link
+@ row CMP-178 SystemHealthTile ‖ Tokens
+  the word `color.text.primary`, the age `color.text.secondary`, the glyph in its tone's strong
+  token
 @ row CMP-201 PasswordField ‖ Entry
   CMP-201 PasswordField
 @ row CMP-203 RequirementChecklist ‖ Live data
@@ -8414,8 +9192,12 @@ SEC_PIN_TXT = r"""
 @ row CMP-034 ‖ Accessible name (source)
   "API key, ending in a1b2"
 § hand-off ‖ Table 4 — Motion pair
+@ head 5
+  Duration / easing tokens
 @ row CMP-175 ‖ Component
   CMP-175
+@ row CMP-175 ‖ motion-safe
+  instant token swap
 @ row CMP-034 ‖ Component
   CMP-034
 § hand-off ‖ Table 5 — Live data
@@ -8432,6 +9214,8 @@ SEC_PIN_TXT = r"""
 @ row CMP-034 ‖ Component
   CMP-034
 § hand-off ‖ Density
+@ head 4
+  Padding tokens
 @ row CMP-175 ‖ Component
   CMP-175
 @ row CMP-175 ‖ Component
@@ -8456,6 +9240,11 @@ SEC_PIN_TXT = r"""
   CMP-201 (`writeOnly`)
 § hand-off ‖ A. Design QA checklist (`16` §12) — SCR-125..129
 @ prose
+  - [x] Only published Tier-2 and Tier-3 tokens: the spec binds names, never a hex; every
+  unpublished name is marked — DS-3's alias bound to `color.text.tertiary` until it lands,
+  CMP-015's skeleton name (spec D03-C12) and `15`'s non-token names, each replaced by an A-row
+  (spec §9, Appendix A).
+@ prose
   601 luma, for every CMP-175 class (spec §9); the greyscale, deuteranopia and protanopia renders
   of boards 01 and 02 come with the boards PR (BQ-16).
 @ prose
@@ -8467,6 +9256,9 @@ SEC_PIN_TXT = r"""
   typed label for an account's last active key; disable and delete rung 3 with the typed label,
   their step-up class stamped "not yet served — G-8, #895 / #898"; rotate rung 1 with the `keys`
   step-up; each keyboard path in spec §7, §11.
+@ prose
+  - [x] Every heuristic or estimated value is chip-tagged — E27 shows none; a stale balance is
+  CMP-239's chip with its time (frame 66).
 § hand-off ‖ B. Accessibility acceptance criteria (`05` §10)
 @ code
   Feature: E27-D03 accounts and key vault — accessibility acceptance criteria
@@ -8482,6 +9274,8 @@ SEC_PIN_TXT = r"""
   05-accessibility-standard.md §6.2, without flooding (a failed key assertive once through
 @ code
   When a CMP-175, CMP-011 or CMP-178 state is rendered
+@ code
+  non-text UI/chart elements meet >=3:1, per the token contrast matrix (spec §9: 57 gated
 @ code
   Given a T2 control (Rotate key… while the KEK is unavailable, the leave-positions radio
 """
