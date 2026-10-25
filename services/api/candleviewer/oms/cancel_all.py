@@ -22,12 +22,13 @@ Each step before the next:
    none of its orders is sent a cancel.
 3. **The cancels.** One `cancel_admitted` per selected order with reason `cancel_all`, each written
    ahead and audited `orders.cancel` by the exit service (Q12): at most `accounts_at_once` accounts
-   at a time, one order at a time on each. An unrestricted request (no intents,
-   `exclude_reduce_only: false`) may fold one symbol's cancels (S4-F, `folds`): when the fold port's
-   `poll`-lane read shows every plain order resting there selected, that symbol's orders are
-   commanded together, each still written ahead, and meet one venue `cancel-all` at the port
-   (`cancel_all_coalescer`); any other symbol, or a fold the port refuses, stays one order at a
-   time. Under 04 Sec.7.2.2 row 14 a Manager's cancel-all covers
+   at a time, one order at a time on each, in the order read. An unrestricted request (no
+   intents, `exclude_reduce_only: false`) may fold one symbol's cancels (S4-F, `folds`): when the
+   symbol has at least `FOLD_MIN` selected orders and the fold port's `poll`-lane read, at its
+   first order's turn, shows every plain order resting there selected, that symbol's orders are
+   commanded together there, each still written ahead, and meet one venue `cancel-all` at the
+   port (`cancel_all_coalescer`); any other order, or a fold the port refuses, goes one at a time.
+   Under 04 Sec.7.2.2 row 14 a Manager's cancel-all covers
    every order of a granted trade account, so no order is checked for its creator (Q6 binds the
    single-order routes). Every selected order of an account is sent its cancel, whatever an earlier
    one's outcome, and one account's failure never undoes another's cancels.
@@ -73,9 +74,9 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "ACCOUNTS_AT_ONCE", "DEADLINE_S", "EXCHANGE_UNAVAILABLE", "READ_TIMEOUT_S", "REASON",
-    "SELECTABLE", "STORE_UNAVAILABLE", "TIMEOUT", "AccountCancels", "AccountError", "CancelAll",
-    "CancelAllOutcome", "CancelAllRequest", "Exits", "Fold", "Folds", "OrderReads",
+    "ACCOUNTS_AT_ONCE", "DEADLINE_S", "EXCHANGE_UNAVAILABLE", "FOLD_MIN", "READ_TIMEOUT_S",
+    "REASON", "SELECTABLE", "STORE_UNAVAILABLE", "TIMEOUT", "AccountCancels", "AccountError",
+    "CancelAll", "CancelAllOutcome", "CancelAllRequest", "Exits", "Fold", "Folds", "OrderReads",
     "ScopedAccounts", "selected", "unrestricted",
 ]  # fmt: skip
 
@@ -89,6 +90,9 @@ ACCOUNTS_AT_ONCE: Final = 5
 DEADLINE_S: Final = 20.0
 #: Each account's `list_open` bound (the scope's is the exit service's own).
 READ_TIMEOUT_S: Final = 2.0
+#: The fewest selected orders of one symbol a fold takes: one alone gains nothing from the venue's
+#: call and would spend its UID's second of cancel-all, so it is cancelled by its own command.
+FOLD_MIN: Final = 2
 #: An account whose orders could not be read: none of its orders is sent a cancel.
 STORE_UNAVAILABLE: Final = "store_unavailable"
 #: An order whose cancel met a transport fault: its outcome is not known, left to B1, never re-sent.
@@ -213,6 +217,14 @@ def selected(rows: Iterable[OrderRow], request: CancelAllRequest) -> tuple[Order
     )
 
 
+def _foldable(rows: Iterable[OrderRow]) -> dict[str, list[OrderRow]]:
+    """Each symbol with at least `FOLD_MIN` of `rows`, its rows in the order read."""
+    groups: dict[str, list[OrderRow]] = {}
+    for row in rows:
+        groups.setdefault(row.symbol, []).append(row)
+    return {symbol: group for symbol, group in groups.items() if len(group) >= FOLD_MIN}
+
+
 def _failure(outcome: ExitOutcome) -> AccountError | None:
     """`None` when the order ended or lost a race; otherwise what its account reports, if it is
     the first."""
@@ -329,28 +341,28 @@ class CancelAll:
         )
 
     async def _work(self, run: _Run, account: UUID) -> None:
-        """One account: its read, then each selected order's cancel in turn; where a fold may
-        apply, symbol by symbol in the order read, a covered symbol's orders together."""
+        """One account: its read, then each selected order's cancel in turn, in the order read.
+        Where a fold may apply, a symbol with at least `FOLD_MIN` selected orders is read for
+        coverage at its first order's turn, and, covered, its orders go together there."""
         tally = run.tallies[account]
         async with run.gate:
             rows = await self._selected(account, run.request)
             if rows is None:
                 tally.error = AccountError(STORE_UNAVAILABLE, retryable=True)
-            port = await self._fold_port(account, run.request) if rows else None
-            if port is None:
-                for row in rows or ():
-                    tally.count(await self._cancel(run, row))
-            else:
-                groups: dict[str, list[OrderRow]] = {}
-                for row in rows or ():
-                    groups.setdefault(row.symbol, []).append(row)
-                for symbol, group in groups.items():
-                    if await self._covered(port, symbol, group):
-                        for outcome in await self._folded(run, port, symbol, group):
+            groups = _foldable(rows or ())
+            port = await self._fold_port(account, run.request) if groups else None
+            folded: set[str] = set()
+            for row in rows or ():
+                if row.symbol in folded:
+                    continue  # cancelled with its fold, at its first order's turn
+                group = groups.pop(row.symbol, None)
+                if port is not None and group is not None:
+                    if await self._covered(port, row.symbol, group):
+                        folded.add(row.symbol)
+                        for outcome in await self._folded(run, port, row.symbol, group):
                             tally.count(outcome)
                         continue
-                    for row in group:
-                        tally.count(await self._cancel(run, row))
+                tally.count(await self._cancel(run, row))
             tally.finished = True
 
     async def _cancel(self, run: _Run, row: OrderRow) -> ExitOutcome:

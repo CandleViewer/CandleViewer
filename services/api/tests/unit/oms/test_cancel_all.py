@@ -25,6 +25,7 @@ from candleviewer.exchange.base.models import AccountRef, CancelOrderRequest, Or
 from candleviewer.oms.cancel_all import (
     ACCOUNTS_AT_ONCE,
     DEADLINE_S,
+    FOLD_MIN,
     REASON,
     AccountCancels,
     AccountError,
@@ -672,10 +673,10 @@ async def test_a_restricted_request_never_folds(request_over: dict[str, Any]) ->
 
 async def test_a_symbol_with_another_plain_order_resting_stays_on_per_order_cancels() -> None:
     """Coverage fails: the venue's call would take an order the request did not select."""
-    fold = _Fold([_fold_row(1)], [_venue_order(1), _venue_order(9)])
+    fold = _Fold([_fold_row(1), _fold_row(2)], [_venue_order(1), _venue_order(2), _venue_order(9)])
     got = await fold.run()
-    assert got.accounts == (AccountCancels(_A, affected=1, error=None),)
-    assert [c.method for c in fold.venue.calls] == ["open_orders", "cancel_order"]
+    assert got.accounts == (AccountCancels(_A, affected=2, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["open_orders", "cancel_order", "cancel_order"]
     assert [o.order_link_id for o in await fold.venue.open_orders(_FOLD_REF)] == [_link(9)]
 
 
@@ -754,6 +755,31 @@ async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:
     assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
     venue = [entry[1] for entry in fold.log if entry[0] == "venue"]
     assert venue == ["cancel_all", f"cancel_order {_link(2)}"]  # BTC folded, ETH per-order
+
+
+async def test_uncovered_orders_keep_the_read_order_across_symbols() -> None:
+    """CR-S4F-05: three orders over two symbols, none folded, are cancelled in the order read,
+    as S4-E sends them, never grouped by symbol."""
+    rows = [_fold_row(1), _fold_row(2, symbol="ETHUSDT"), _fold_row(3)]
+    resting = [_venue_order(1), _venue_order(2, "ETHUSDT"), _venue_order(3), _venue_order(9)]
+    fold = _Fold(rows, resting)  # BTC holds 9, which no request selected: no fold there
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
+    assert [entry for entry in fold.log if entry[0] == "venue"] == [
+        ("venue", f"cancel_order {_link(n)}") for n in (1, 2, 3)
+    ]
+
+
+async def test_a_single_covered_order_sends_its_own_cancel_and_reads_nothing() -> None:
+    """CR-S4F-06 (a): a fold of one gains nothing and would spend its UID's second, so a symbol
+    with one selected order is never folded: no account read, no coverage read, no cancel-all."""
+    rows = [_fold_row(1), _fold_row(2, symbol="ETHUSDT"), _fold_row(3, symbol="SOLUSDT")]
+    resting = [_venue_order(1), _venue_order(2, "ETHUSDT"), _venue_order(3, "SOLUSDT")]
+    fold = _Fold(rows, resting)
+    got = await fold.run()
+    assert got.accounts == (AccountCancels(_A, affected=3, error=None),)
+    assert [c.method for c in fold.venue.calls] == ["cancel_order"] * 3
+    assert fold.accounts.asked == 0 and FOLD_MIN == 2
 
 
 # --- L1 (CR-S4F-03): the real B1 machine meets the fold -----------------------------------------
