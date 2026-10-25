@@ -1087,6 +1087,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `chart.empty_state_shown` with `{reason: 'not_recorded'|'no_data_in_range'|'symbol_delisted'}` (analytics).
 - **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; proposes scoping the live-data sentence and naming the cause; copy owned by E16-D05).
 - **Design sign-off acceptance checklist:** [ ] three distinct reasons drawn (never recorded / no data in this range / instrument not trading) [ ] owner CTA to SCR-140 and non-owner explanatory copy both drawn [ ] live-data-still-works note present where true [ ] no infinite spinner path
+- **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) — the final recorder-dependent copy deck, the `retention_purge` treatment, the partial-history chip and the gap band's legend/tooltip; anatomy per E11-D04 §11.
 
 ### SCR-048 — Chart error state
 
@@ -2922,6 +2923,7 @@ All `/admin/*` routes require role `owner` **and** an admin re-auth token ≤15 
 - **UX research:** [e16-recorder-mental-model.md](../design/research/e16-recorder-mental-model.md) §4 (E16-D01; recorder-dependent variant: cause sentence per cause, live-data sentence only where true).
 - **Motion spec:** [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the backfill variant's determinate CMP-023 bar, no indeterminate loop).
 - **Design sign-off acceptance checklist:** [ ] the three empty-state classes drawn (nothing created yet / nothing matches the filter / data not recorded yet) [ ] role-aware action vs explanation variants [ ] the recorder-dependent variant carries the recording-start timestamp [ ] copy for each class written and reviewed [ ] the pattern is applied consistently in every panel that can be empty
+- **Hi-fi (E16-D05, #373):** [E16-D05.md](../design/E16/E16-D05.md) (the recorder-dependent variant, the three classes, the role legs).
 
 ### SCR-152 — Disconnected / reconnecting state
 
