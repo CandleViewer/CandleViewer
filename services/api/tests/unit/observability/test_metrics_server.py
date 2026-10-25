@@ -13,6 +13,7 @@ import httpx
 import pytest
 import uvicorn
 from prometheus_client.parser import text_string_to_metric_families
+from starlette.routing import Route
 from structlog.testing import capture_logs
 
 from candleviewer.observability import metrics_server
@@ -193,9 +194,6 @@ async def test_stop_does_not_swallow_a_cancellation_of_its_caller(
 
 
 @pytest.mark.perf
-# #4514's authz_denied_by_route_total (max_series=1000) put the scrape on the 50 ms budget (C-9.3).
-# ticket: GH-4530 quarantined: 2026-10-25
-@pytest.mark.flaky
 def test_scrape_latency_under_50ms_at_max_cardinality() -> None:
     metrics = Metrics("dev", process_collectors=True)
     r0 = register_r0(metrics)
@@ -212,7 +210,7 @@ def test_scrape_latency_under_50ms_at_max_cardinality() -> None:
             else:
                 child.set(1)
     app = make_metrics_app(metrics.registry)
-    handler = next(r.endpoint for r in app.routes if getattr(r, "path", "") == "/metrics")
+    handler = next(r.endpoint for r in app.routes if isinstance(r, Route) and r.path == "/metrics")
     samples = []
     for _ in range(10):
         t0 = time.perf_counter()

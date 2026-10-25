@@ -7,6 +7,10 @@ process; `status="planned"` entries record the owning epic that implements
 them and register no samples until then. SR-125 security metrics are declared
 here too, so E09/E27/E35/E43 have names to implement against.
 
+The sum of `max_series` over the live labelled entries is a budget: the max-cardinality scrape
+(`test_scrape_latency_under_50ms_at_max_cardinality`) must stay under 50 ms, so a new labelled
+metric sizes its `max_series` from the real label count and states its share (#4530).
+
 A golden snapshot test (`tests/unit/observability/test_metrics_catalogue.py`)
 fails on any unreviewed name/label change.
 """
@@ -3765,8 +3769,11 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuthzDeniedSpike (on authz_denied_total) triage: which route and role",
         _L,
         "E27",
-        max_series=1000,  # ~1 permission per route template x 4 roles + unmatched/ws; past it a
-        # series is dropped (`metric_cardinality_breach_total` counts it)
+        # 206 (permission, route template) pairs in 22-api-openapi.yaml `x-rbac` (163 templates;
+        # 43 carry a second permission on another method), plus `unmatched` and `ws`, x 4 roles
+        # = 832; x 1.25 headroom = 1040 (#4530). A test recounts it. Past it a series is dropped
+        # (`metric_cardinality_breach_total` counts it).
+        max_series=1040,
     ),
     _s(
         "credential_verification_failures_total",

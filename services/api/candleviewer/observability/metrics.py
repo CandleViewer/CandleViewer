@@ -36,16 +36,19 @@ from prometheus_client import (
     Histogram,
     PlatformCollector,
     ProcessCollector,
-    generate_latest,
 )
 from prometheus_client import REGISTRY as _DEFAULT_REGISTRY
 from prometheus_client import values as _values
 from prometheus_client.metrics import MetricWrapperBase
 from prometheus_client.metrics_core import CounterMetricFamily, GaugeMetricFamily, Metric
+from prometheus_client.openmetrics.exposition import escape_label_name, escape_metric_name
 from prometheus_client.registry import Collector
+from prometheus_client.samples import Sample
+from prometheus_client.utils import floatToGoString
 
 # Re-exported so modules outside `candleviewer.observability` never import
-# `prometheus_client` directly (import-linter contract, E04-T03).
+# `prometheus_client` directly (import-linter contract, E04-T03). `generate_latest` is this
+# module's own renderer (byte-identical to the library's, #4530).
 __all__ = [
     "CONTENT_TYPE_LATEST",
     "CollectorRegistry",
@@ -573,3 +576,96 @@ class ScrapeCollector(Collector):
         if self._target is not None:
             self._target.unregister(self)
             self._target = None
+
+
+#: The library's float formatter; untyped upstream, so typed here once.
+_go_float: Final = cast(Callable[[float], str], floatToGoString)
+
+#: Samples the text format moves into a gauge family of their own after the metric's samples.
+_OM_SUFFIXES: Final = ("_created", "_gsum", "_gcount")
+
+
+def _label_value(value: str) -> str:
+    """A label value as the text format writes it (the library's escaping)."""
+    if "\\" in value or "\n" in value or '"' in value:
+        return value.replace("\\", r"\\").replace("\n", r"\n").replace('"', r"\"")
+    return value
+
+
+def generate_latest(registry: Collector = _DEFAULT_REGISTRY) -> bytes:
+    """The Prometheus text exposition of `registry`, byte for byte what
+    `prometheus_client.generate_latest(registry)` (default escaping) returns, at about half its
+    cost (#4530); the registry defaults to the process's, as the library's does. The library
+    sorts, validates and escapes every label name of every sample; here each distinct label-name
+    set becomes one format template per scrape, and each metric name and each nonzero sample
+    value is rendered once per scrape (zero every time, as `-0.0 == 0.0` renders differently).
+    Label values are escaped as the library does."""
+    names: dict[str, str] = {}
+    templates: dict[tuple[str, ...], tuple[tuple[str, ...], str]] = {}
+    values: dict[float, str] = {}
+
+    def name_of(raw: str) -> str:
+        escaped = names.get(raw)
+        if escaped is None:
+            escaped = names[raw] = escape_metric_name(raw)
+        return escaped
+
+    def template_of(key: tuple[str, ...]) -> tuple[tuple[str, ...], str]:
+        ordered = tuple(sorted(key))
+        pairs = [escape_label_name(k).replace("{", "{{").replace("}", "}}") for k in ordered]
+        return ordered, "{{" + ",".join([f'{k}="{{}}"' for k in pairs]) + "}}"
+
+    def sample_line(sample: Sample) -> str:
+        labels = sample.labels
+        labelstr = ""
+        if labels:
+            key = tuple(labels)
+            found = templates.get(key)
+            if found is None:
+                found = templates[key] = template_of(key)
+            ordered, template = found
+            labelstr = template.format(*[_label_value(labels[k]) for k in ordered])
+        value = sample.value
+        rendered = values.get(value) if value else None
+        if rendered is None:
+            rendered = _go_float(value)
+            if value:
+                values[value] = rendered
+        timestamp = ""
+        if sample.timestamp is not None:  # in milliseconds
+            timestamp = f" {int(float(sample.timestamp) * 1000):d}"
+        return f"{name_of(sample.name)}{labelstr} {rendered}{timestamp}\n"
+
+    output: list[str] = []
+    for metric in registry.collect():
+        om_samples: dict[str, list[str]] = {}
+        try:
+            mname, mtype = metric.name, metric.type
+            if mtype == "counter":  # OpenMetrics names and types, in the Prometheus format
+                mname += "_total"
+            elif mtype == "info":
+                mname, mtype = mname + "_info", "gauge"
+            elif mtype == "stateset":
+                mtype = "gauge"
+            elif mtype == "gaugehistogram":
+                mtype = "histogram"
+            elif mtype == "unknown":
+                mtype = "untyped"
+            doc = metric.documentation.replace("\\", r"\\").replace("\n", r"\n")
+            output.append(f"# HELP {name_of(mname)} {doc}\n")
+            output.append(f"# TYPE {name_of(mname)} {mtype}\n")
+            moved = {metric.name + suffix: suffix for suffix in _OM_SUFFIXES}
+            for sample in metric.samples:
+                suffix = moved.get(sample.name)
+                if suffix is None:
+                    output.append(sample_line(sample))
+                else:
+                    om_samples.setdefault(suffix, []).append(sample_line(sample))
+        except Exception as exception:  # annotated as the library does, then re-raised
+            exception.args = (*(exception.args or ("",)), metric)
+            raise
+        for suffix, lines in sorted(om_samples.items()):
+            output.append(f"# HELP {name_of(metric.name + suffix)} {doc}\n")
+            output.append(f"# TYPE {name_of(metric.name + suffix)} gauge\n")
+            output.extend(lines)
+    return "".join(output).encode("utf-8")
