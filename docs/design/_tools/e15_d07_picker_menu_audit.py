@@ -24,13 +24,22 @@ ticket's spec, hand-off and the working-tree `14` (its two pointer lines). It:
    frames; every T2 item a lock plus a key from merged E15-D02 §8.1 (or the ruled
    `rbac.owner_only`), paired only with an item §5.5 / §4.4 lets carry that key (G-T2-PAIR);
    no lock on a sentence item; the opening focus on the first item neither T2 nor sentence-form
-   (G-FOCUS); the viewer / view-as menus with no T2 item outside the Save inset; exits present, T1 and never gated; the destructive group last after a
-   rule; the browser footnote with its PROPOSED sentence; `F11` and every unshipped chord
-   PROPOSED; no sync colour; clipped 0 on every overflow frame; the picker's term, headings,
-   category names and the reason in the name; every row on its §0 board. Plus the spec-wide gates
-   of the ruling (confirm rule, owner marks, key model, C-4, the new keys' A-rows, the inventory,
-   the growth rule and its text in `14` SCR-024 (G-TAX14), no `aria-disabled` on a sentence-form
-   row (G-SENTENCE-ARIA), pins, the ruling cite, the mutation list).
+   (G-FOCUS); the viewer / view-as menus with no T2 item outside the Save inset; exits present,
+   T1 and never gated; the destructive group last after a rule; the browser footnote with its
+   PROPOSED sentence; `F11` and every unshipped chord PROPOSED; no sync colour; clipped 0 on
+   every overflow frame; the picker's term, headings, category names and the reason in the name;
+   every row on its §0 board. Round 1 (issuecomment-6395880131) adds, each read row by row:
+   view-as first in the register's view frames and the leg orders of §8.1, §3.1 and §4.4
+   (G-VIEWAS); the row's REGISTERED reason (§8.1 / §8.2) inside the accessible name of the
+   register's picker frames and §4.4 (G-REASON-NAME); Pop out in no cell of a browser frame and
+   absent in §5.5 (G-ABSENCE); no lock, T2, "Not available" or `aria-disabled` on a new key or a
+   sentence-form item in §4.4, §5.5, §8.2, §5.9, §1.6 and the hand-off's Table N (G-NOLOCK); the
+   owner mark on the departure rows themselves (G-OWNER, OWNER_ROWS). Plus the spec-wide gates
+   of the ruling (confirm rule, key model and announcements, C-4, the new keys' A-rows, the
+   inventory, the growth rule and its text in `14` SCR-024 (G-TAX14), no `aria-disabled` on a
+   sentence-form row (G-SENTENCE-ARIA), §5.5's exits, §5.8's and §5.1's PROPOSED marks, §5.6's
+   viewports, §8.1's forms, the pins (E15-D02, D03, D04, D06 at their merges), the ruling cite in
+   the heading and the Key, the mutation list).
 4. **Strings and tokens.** Every backticked token exists (or is quoted in a CR / C / A row, or is
    the PENDING `color.sync.*`); no hex; no raw px outside a quote or a code span.
 5. **--selftest** applies every §6.3 mutation M-n and one mutation per further ruled sentence R-n
@@ -51,7 +60,8 @@ inside the viewport less `space.2` without covering an open ancestor menu; then 
 The corner frames open at a pointer `space.8` from each corner in the dense layout (Chart, DOM and
 Tape over Positions); Move to ▸ lists the three other panels. The picker's thumbnail is the two
 text lines tall at 16:9 (heuristic); the mini-map is `space.16` tall at the 1280×800 aspect; the
-list virtualises above three list heights of compact entries in the 1920 dialog (heuristic).
+list virtualises above the fit, three list heights of compact entries in the dialog in use:
+1920 and 1280 (heuristic; RULED Q-6, issuecomment-6395880131).
 
 Usage:
   uv run --frozen --project services/api python docs/design/_tools/e15_d07_picker_menu_audit.py \
@@ -138,11 +148,46 @@ CVD_PAIRS: dict[str, tuple[str, str]] = {
     "danger": ("color.status.danger.strong", "color.text.primary"),
 }
 
-# ---- the ruling (issuecomment-6394505202's thread) and the spec's fixed facts
-RULING_ID = "6394505202"
+# ---- the ruling (issuecomment-6394543912, on the BQ list 6394505202) and the fixed facts
+RULING_ID = "6394543912"
+BQ_LIST_ID = "6394505202"
+ANSWERS_ID = "6395880131"  # the orchestrator's round-1 record: the Q-6 and G-1 answers
 OWNER_MARK = "owner approval pending (#2701)"
 OWNER_BQS = re.compile(r"\bBQ-(?:4|8|9|17)\b")
+# G-OWNER reads these departure rows themselves (RULED BQ-4 / 8 / 9 / 17), not a keyword:
+# (file, section heading or "" for the whole text, the line's prefix)
+OWNER_ROWS: tuple[tuple[str, str, str], ...] = (
+    ("spec", "Acceptance-criteria trace", "| AC2 —"),
+    ("spec", "Acceptance-criteria trace", "| AC5 —"),
+    ("spec", "0. Artefacts", "**Specified (drawn on request)**"),
+    ("spec", "2. Decisions", "| D-1 "),
+    ("spec", "2. Decisions", "| D-9 "),
+    ("spec", "2. Decisions", "| D-10 "),
+    ("spec", "2. Decisions", "| D-18 "),
+    ("spec", "7.2 The browser build", "Pop out is absent;"),
+    ("spec", "17.2 Owner walkthrough", "10. Decisions needing you"),
+    ("spec", "18.1 DoD", "| SCR-024 and SCR-028 drawn in both themes"),
+    ("spec", "18.1 DoD", "| browser Float variant"),
+    ("spec", "19.3 Contradictions", "| C-1 "),
+    ("spec", "19.3 Contradictions", "| C-2 "),
+    ("spec", "19.3 Contradictions", "| C-8 "),
+    ("spec", "19.3 Contradictions", "| C-9 "),
+    ("spec", "21. Deviations", "| DV-5 "),
+    ("spec", "21. Deviations", "| DV-6 "),
+    ("spec", "21. Deviations", "| DV-7 "),
+    ("spec", "21. Deviations", "| DV-8 "),
+    ("spec", "23. Summary", "8. Ten boards"),
+    ("hand", "Hand-off checklist", "| Essential exceptions"),
+)
+D02_TEXT, D02_BOARDS = "1044c4f6", "7be6eac6"
+D03_MERGE = "c4989493"  # E15-D03 (#4478), merged during round 1
 D04_MERGE, D06_MERGE = "c73aec08", "6e2c1211"
+D03_KEYS = {"panel.menu.equal.single"}  # merged E15-D03 §8.3 V-6's copy key (not a state key)
+NEW_KEYS = {"flag.panel_off", "layout.panel.no_settings", "layout.panel.at_defaults"}
+SENTENCE_KEYS = NEW_KEYS | D03_KEYS  # every key §1.6's sentence form carries
+# G-VIEWAS: the picker frames whose leg is fixed (view-as is checked first, §1.4)
+PICKER_VIEW_STATES = {"disabled-viewer": "rbac.permission", "disabled-viewas": "rbac.view_as"}
+VIEWAS_USER = "alex"  # E15-D02's view-as fixture (§1.7)
 BOARDS_RULED, TWINS_RULED = 10, 3  # RULED BQ-17: ten boards, seven dark plus three light twins
 NOT_OFFERED_RULED = 5  # RULED BQ-3: the five screens with no pane kind, one inventory row
 TICKET_ENTRIES = 2  # D02 D-28: the order ticket and the trade-group ticket
@@ -885,12 +930,14 @@ def picker(t: dict[str, object], spec: str, d02: str) -> tuple[dict[str, str], l
     vals["BUDGET:picker.fullscreen-below"] = str(w1280 + 2 * px(t, "space.4"))
     title = px(t, "size.control.comfortable")
     field_h = px(t, "size.control.compact")
-    list_h = h1920 - 2 * pad - title - 2 * field_h - mini_h - 4 * px(t, "space.stack.md")
-    threshold = VIRTUALISE_SCREENS * (list_h // entry["compact"])
-    vals["BUDGET:picker.virtualise-above"] = str(threshold)
+    chrome = 2 * pad + title + 2 * field_h + mini_h + 4 * px(t, "space.stack.md")
     offered = sum(r[0].isdigit() for r in inventory_rows(spec))
-    if not offered <= threshold <= LIST_CEILING:
-        bad.append(f"[G-FIT] D-2: virtualise above {threshold}; R1 has {offered} (≤ 1 000)")
+    # RULED Q-6 (issuecomment-6395880131): virtualise above the fit of the dialog in use
+    for sfx, dialog_h in (("", h1920), (".1280", h1280)):
+        threshold = VIRTUALISE_SCREENS * ((dialog_h - chrome) // entry["compact"])
+        vals[f"BUDGET:picker.virtualise-above{sfx}"] = str(threshold)
+        if not offered <= threshold <= LIST_CEILING:
+            bad.append(f"[G-FIT] D-2: virtualise above {threshold}; R1 has {offered} (≤ 1 000)")
     return vals, bad
 
 
@@ -1011,6 +1058,7 @@ def counts(spec: str, d02: str, frames: list[Frame]) -> dict[str, str]:
         "flag.panel_off": "flag-off",
         "layout.panel.no_settings": "no-settings",
         "layout.panel.at_defaults": "at-defaults",
+        "panel.menu.equal.single": "one-panel",
     }
     for r in table_rows(section(spec, "8.2 Sentence-form rows")):
         if len(r) < 5:
@@ -1271,9 +1319,7 @@ def menu_order_gates(frames: list[Frame], groups: list[list[Item]]) -> list[str]
         browser = f.state in BROWSER_STATES
         if rest == (brow if browser else desk):
             continue
-        if browser and "Pop out" in rest:
-            bad.append(f"[G-ABSENCE] {f.tag}: Pop out drawn in the browser (condition 2: absent)")
-        else:
+        if not (browser and "Pop out" in rest):  # G-ABSENCE reads every cell of the row
             bad.append(f"[G-ORDER] {f.tag}: the Order differs from §5.1's fixed set (D-9)")
     return bad
 
@@ -1431,8 +1477,8 @@ def kbd_gates(frames: list[Frame]) -> list[str]:
                 if "PROPOSED" not in part[m.end() :]:
                     miss.append(f"PROPOSED after `{m[1]}`")
         pop = "Pop out `Ctrl+Shift+O`" in cell
-        if pop == (f.state in BROWSER_STATES):
-            miss.append("Pop out's chord exactly on the desktop frames")
+        if not pop and f.state not in BROWSER_STATES:  # a browser Pop out is G-ABSENCE's
+            miss.append("Pop out's chord on every desktop frame")
         if f.state == "sync-submenu" and not all(c in cell for c in SYNC_CHORDS):
             miss.append("the sync chords")
         if miss:
@@ -1496,6 +1542,199 @@ def picker_gates(frames: list[Frame], cats: list[str]) -> list[str]:
             miss.append("the reason in the accessible name (AC1; D-5)")
         if miss:
             bad.append(f"[G-PICKER] {f.tag}: {'; '.join(miss)}")
+    return bad
+
+
+def frame_key(f: Frame) -> str | None:
+    """The key of a picker frame's disabled entry (its T2 or Sentence cell); the leg is fixed
+    on the two view frames (G-VIEWAS reports a wrong one, so G-REASON-NAME reads the fixed one)."""
+    if f.state in PICKER_VIEW_STATES:
+        return PICKER_VIEW_STATES[f.state]
+    t2, _inset = t2_items(f.cell("T2"))
+    sent = [] if f.cell("Sentence") in ("", "—") else f.cell("Sentence").split("; ")
+    for it in t2 + sent:
+        if it.startswith(PLACE_OUTCOMES):
+            continue
+        m = re.search(r"`([a-z_]+\.[a-z_.]+)`", it)
+        if m:
+            return m[1]
+    return None
+
+
+def viewas_gates(spec: str, frames: list[Frame]) -> list[str]:
+    """G-VIEWAS: view-as is the first leg in every gated row and leg-order table (§1.4)."""
+    bad: list[str] = []
+    for f in frames:
+        want = PICKER_VIEW_STATES.get(f.state)
+        if want is None or f.surface != "SCR-024":
+            continue
+        t2, _inset = t2_items(f.cell("T2"))
+        keys = {m["key"] for it in t2 if (m := T2_ITEM.fullmatch(it))}
+        banner = "reason in name: the banner node " in f.cell("Picker")
+        if keys != {want} or banner != (want == "rbac.view_as"):
+            bad.append(
+                f"[G-VIEWAS] {f.tag}: keyed {sorted(keys)}, not `{want}` with "
+                f"{'the banner node' if want == 'rbac.view_as' else 'its own reason'} (§1.4)"
+            )
+    for r in table_rows(section(spec, "8.1 T2 rows")):
+        if len(r) < 5:
+            continue
+        legs = [x.strip() for x in r[3].split(";")]
+        if "`rbac.view_as`" in r[4] and (legs[0] != "view-as" or legs.count("view-as") != 1):
+            bad.append(f"[G-VIEWAS] §8.1 {r[0]}: legs {r[3]!r}; view-as is checked first (§1.4)")
+    for r in table_rows(section(spec, "3.1 The inventory")):
+        if len(r) > 7 and re.search(r"`[a-z_]+:[a-z_]+`", r[7]):
+            legs = [x.strip() for x in r[7].split(";")]
+            if legs[0] != "view-as" or legs.count("view-as") != 1:
+                bad.append(f"[G-VIEWAS] §3.1 #{r[0]}: gating {r[7]!r}; view-as first (§1.4)")
+    for r in table_rows(section(spec, "4.4 Disabled entries")):
+        m = re.search(r"`SCR-024/([a-z-]+)`", r[0]) if r else None
+        want = PICKER_VIEW_STATES.get(m[1]) if m else None
+        if want is None or len(r) < 2:
+            continue
+        keys = set(re.findall(r"`([a-z_]+\.[a-z_.]+)`", r[1]))
+        first = want != "rbac.view_as" or "(checked first)" in r[1]
+        if keys != {want} or not first:
+            bad.append(f"[G-VIEWAS] §4.4 `{m[1] if m else '?'}`: Form {r[1]!r}, not `{want}`")
+    return bad
+
+
+def reason_registry(spec: str) -> dict[tuple[str, str], str]:
+    """(frame state, key) → the registered reason: §8.1's Key and string, §8.2's Sentence."""
+    reg: dict[tuple[str, str], str] = {}
+    for r in table_rows(section(spec, "8.1 T2 rows")):
+        if len(r) < 7:
+            continue
+        found: dict[str, str] = {}
+        last = ""
+        for seg in r[4].split("; "):
+            km = re.match(r"`([a-z_]+\.[a-z_.]+)`", seg)
+            said = quotes(seg)
+            if km:
+                last = km[1]
+                if said:
+                    found[last] = said[0]
+            elif seg.startswith("drawn ") and said and last:
+                found[last] = said[0]  # the drawn form (R-2: the short sentence, C-4)
+        for state in re.findall(r"`([a-z0-9-]+)`", r[6]):
+            for key, said_one in found.items():
+                reg[(state, key)] = said_one.replace("{user}", VIEWAS_USER)
+    for r in table_rows(section(spec, "8.2 Sentence-form rows")):
+        if len(r) < 6:
+            continue
+        km = re.search(r"`([a-z_]+\.[a-z_.]+)`", r[4])
+        said = quotes(r[3])
+        if km and said:
+            for state in re.findall(r"`([a-z0-9-]+)`", r[5]):
+                reg[(state, km[1])] = said[0]
+    return reg
+
+
+def reason_name_gates(spec: str, frames: list[Frame]) -> list[str]:
+    """G-REASON-NAME: the row's REGISTERED reason inside the accessible name (AC1; D-5)."""
+    bad: list[str] = []
+    reg = reason_registry(spec)
+    keys: dict[str, str] = {}
+    for f in frames:
+        if f.surface != "SCR-024":
+            continue
+        key = frame_key(f)
+        if key is None:
+            continue
+        keys.setdefault(f.state, key)
+        m = re.search(r'reason in name: (?:the banner node )?"([^"]+)"', f.cell("Picker"))
+        if m is None:
+            continue  # presence is G-PICKER's
+        want = reg.get((f.state, key))
+        if m[1] != want:
+            bad.append(
+                f"[G-REASON-NAME] {f.tag}: the name carries {m[1]!r}, not `{key}`'s registered "
+                f"{want!r} (§8.1 / §8.2; AC1)"
+            )
+    for r in table_rows(section(spec, "4.4 Disabled entries")):
+        m = re.search(r"`SCR-024/([a-z-]+)`", r[0]) if r else None
+        if m is None or len(r) < 4 or m[1] not in keys:
+            continue
+        want = reg.get((m[1], keys[m[1]]))
+        name = quotes(r[3])
+        if want is None or not name or not name[0].endswith(", " + want):
+            bad.append(
+                f"[G-REASON-NAME] §4.4 `{m[1]}`: the accessible name does not end with the "
+                f"registered reason {want!r} (D-5; AC1)"
+            )
+    return bad
+
+
+NEG = re.compile(
+    r"(?:\b(?:no|never|not|nor|without)\b|\*\*not\*\*|distinct from)\s+"
+    r"(?:(?:a|an|the|any|carries|only|by)\s+)*"
+    r"(?:`?aria-disabled`?|lock(?: glyph)?|T2|CMP-079)"
+    r"(?:\s*(?:,|or|and|nor)\s+(?:the\s+)?(?:`?aria-disabled`?|lock(?: glyph)?|T2|CMP-079))*"
+    r"(?: lock| at all)?"
+)
+LOCKISH = re.compile(r"\bT2\b|\block\b|aria-disabled|Not available")
+CLAUSE = re.compile(r";\s|,\s|\s·\s|\s—\s|\.\s")
+
+
+def lockish(text: str) -> bool:
+    """A lock, T2 or `aria-disabled` claim left once every negated mention is removed."""
+    return LOCKISH.search(NEG.sub("", text)) is not None
+
+
+def nolock_gates(spec: str, hand: str) -> list[str]:
+    """G-NOLOCK (condition 1): no lock, T2, "Not available" or `aria-disabled` on a new key or a
+    sentence-form item, read in every row of every table that names one (§4.4, §5.5, §8.2,
+    hand-off Table N) and in §1.6's and §5.9's own statements."""
+    bad: list[str] = []
+    tables = (
+        ("spec", "4.4 Disabled entries", spec, ()),
+        ("spec", "5.5 Static predicates", spec, ()),
+        ("spec", "8.2 Sentence-form rows", spec, (6,)),  # Attributes: G-SENTENCE-ARIA's
+        ("hand-off", "Table N", hand, ()),
+    )
+    for name, head, text, skip in tables:
+        for r in table_rows(section(text, head)):
+            keyed = any(f"`{k}`" in c for c in r for k in SENTENCE_KEYS)
+            for i, cell in enumerate(r):
+                if i in skip:
+                    continue
+                for clause in CLAUSE.split(cell):
+                    if (keyed or "sentence" in clause.lower()) and lockish(clause):
+                        bad.append(
+                            f"[G-NOLOCK] {name} {head.split(' ')[0]} {r[0][:30]!r}: "
+                            f"{clause[:50]!r} on a sentence-form row (condition 1)"
+                        )
+                        break
+                else:
+                    continue
+                break
+    s16 = section(spec, "1.6 The state-sentence form")
+    needs = ("with **no lock glyph**", "It is **not** `aria-disabled`")
+    prose = [ln for ln in s16.split("\n")[1:] if ln.strip()]
+    claims = [x for ln in prose for x in re.split(r"(?<=[.:])\s+(?=[A-Z*(])", ln) if lockish(x)]
+    if any(n not in s16 for n in needs) or claims:
+        bad.append("[G-NOLOCK] §1.6: the sentence form must state no lock and no `aria-disabled`")
+    a11y = next(
+        (ln for ln in section(spec, "5.9 CMP-216").split("\n") if ln.startswith("- **A11y:**")), ""
+    )
+    said = [c for c in CLAUSE.split(a11y) if "sentence" in c]
+    if not said or any(lockish(c) for c in said):
+        bad.append("[G-NOLOCK] §5.9 A11y: sentence items are plain, no `aria-disabled` (§1.6)")
+    return bad
+
+
+def absence_gates(spec: str, frames: list[Frame]) -> list[str]:
+    """G-ABSENCE (condition 2): Pop out in no cell of a browser frame and absent in §5.5."""
+    bad: list[str] = []
+    for f in frames:
+        if f.surface != "SCR-028" or f.state not in BROWSER_STATES:
+            continue
+        cols = [c for c, v in zip(REG_COLS[1:], f.cells[1:], strict=False) if "Pop out" in v]
+        if cols:
+            bad.append(f"[G-ABSENCE] {f.tag}: Pop out drawn in the browser ({', '.join(cols)})")
+    row = row_starting(section(spec, "5.5 Static predicates"), "Pop out")
+    if row is None or row[2:4] != ["absent, with the footnote (§1.6 absence)", "the footnote"]:
+        bad.append("[G-ABSENCE] §5.5 Pop out: absent with the footnote; no lock, no key")
     return bad
 
 
@@ -1566,6 +1805,9 @@ def frame_gates(spec: str, d02: str, extra: dict[str, object]) -> list[str]:
     bad += sync_gates(frames)
     bad += geometry_row_gates(frames, extra)
     bad += picker_gates(frames, d02_categories(d02))
+    bad += viewas_gates(spec, frames)
+    bad += reason_name_gates(spec, frames)
+    bad += absence_gates(spec, frames)
     bad += board_gates(spec, frames)
     bad += matrix_gates(spec, frames)
     return bad
@@ -1579,6 +1821,101 @@ def row_starting(block: str, first: str) -> list[str] | None:
         if r and r[0] == first:
             return r
     return None
+
+
+def owner_gates(spec: str, hand: str) -> list[str]:
+    """G-OWNER: the departure rows themselves (OWNER_ROWS) plus every line naming BQ-4 / 8 / 9 /
+    17 carry the mark; one FAIL per line. A missing row is the presence gates' (G-TAXONOMY, …)."""
+    bad: list[str] = []
+    texts = {"spec": spec, "hand": hand}
+    rows: dict[str, set[int]] = {"spec": set(), "hand": set()}
+    for which, head, prefix in OWNER_ROWS:
+        text = texts[which]
+        block = section(text, head)
+        at = text.find(block) if block else -1
+        for ln in block.split("\n"):
+            if ln.startswith(prefix):
+                rows[which].add(text.count("\n", 0, at + block.find(ln)) + 1)
+                break
+    for which, name in (("spec", "spec"), ("hand", "hand-off")):
+        for n, line in enumerate(texts[which].split("\n"), 1):
+            if line.startswith(("| M-", "| R-")):
+                continue
+            if (n in rows[which] or OWNER_BQS.search(line)) and OWNER_MARK not in line:
+                bad.append(f"[G-OWNER] {name}:{n}: an owner-level departure without '{OWNER_MARK}'")
+    return bad
+
+
+# G-KEYMODEL: §12.1 (surface, key) and §12.3 (event) rows → the words each must carry
+KEY_RULES: tuple[tuple[str, str, str], ...] = (
+    ("menu", "(on open)", "focus on the first item that is neither T2 nor sentence-form"),
+    ("menu", "`↓` / `↑`", "lands on T2 and sentence items"),
+    ("menu", "`Home` / `End`", "`End` lands on Close"),
+    ("menu", "a printable character", "matches T2 items"),
+    ("menu", "`→` on a submenu item", "opens it, focus on its first item"),
+    ("submenu", "`←`, `Esc`", "closes it, focus back on its parent item"),
+    ("menu", "`Enter`", "on T2 or a sentence item re-announces the reason"),
+    ("menu", "`Esc`", "closes the menu; focus returns to the opener"),
+    ("menu", "`Tab`", "closes every open menu"),
+)
+ANNOUNCE_RULES: tuple[tuple[str, str], ...] = (
+    ("menu opens", '"Panel options, {region name}"'),
+    ("arrow onto a T2 or sentence item", '"{label}, {reason}"'),
+    ("`Enter` on a T2 or sentence item", "the reason, once"),
+    ("search typing", "(throttled to once per "),
+)
+
+
+def keymodel_gates(spec: str, keys: list[list[str]]) -> list[str]:
+    """G-KEYMODEL (RULED BQ-16): every §12.1 key row and §12.3 announcement row, by row."""
+    miss: list[str] = []
+    by_key = {(r[0], r[1]): r[2] for r in keys if len(r) >= 4}
+    for surface, key, words in KEY_RULES:
+        if words not in by_key.get((surface, key), ""):
+            miss.append(f"§12.1 {surface} {key}: {words!r}")
+    ann = {r[0]: r[1] for r in table_rows(section(spec, "12.3 Announcements")) if len(r) >= 3}
+    for event, words in ANNOUNCE_RULES:
+        if words not in ann.get(event, ""):
+            miss.append(f"§12.3 {event}: {words!r}")
+    return [f"[G-KEYMODEL] {m} (RULED BQ-16; AC6)" for m in miss]
+
+
+def static_gates(spec: str) -> list[str]:
+    """§5.5's exits, §5.8's and §5.1's PROPOSED marks, §5.6's viewports, §8.1's forms."""
+    bad: list[str] = []
+    for r in table_rows(section(spec, "5.5 Static predicates")):
+        if len(r) < 4 or r[0] not in EXIT_LABELS | {"Move to ▸"}:
+            continue
+        if r[0] == "Move to ▸":
+            ok = r[2] == "an outcome T2 (§1.4)"
+        else:
+            ok = r[3] == "—" and (r[2] == "never gated" or r[2].startswith("absent (a conditional"))
+        if not ok:
+            bad.append(
+                f"[G-EXIT-GATED] §5.5 {r[0]}: {r[2]!r} / {r[3]!r}; never gated (condition 4)"
+            )
+    drawn = {"Maximise / Restore": "shipped", "Pop out": "PROPOSED stamp"}
+    drawn["Sync A / B / C / No sync"] = "PROPOSED stamp"
+    for r in table_rows(section(spec, "5.8 Kbd hints")):
+        if len(r) >= 4 and r[3] != drawn.get(r[0], "—"):
+            bad.append(f"[G-KBD] §5.8 {r[0]}: drawn as {r[3]!r} (RULED BQ-15)")
+    block = re.search(r"```text\n(.*?)\n```", section(spec, "5.1 The fixed order"), re.DOTALL)
+    for ln in block[1].split("\n") if block else []:
+        if re.search(r"(?:Ctrl|Shift|Alt)\+", ln) and "PROPOSED" not in ln:
+            bad.append(f"[G-KBD] §5.1: {ln.split('  ')[0]!r}'s chord without PROPOSED")
+    viewports = {state: f"{w}×{h}" for state, (w, h) in CORNERS.values()}
+    viewports["clamped-200"] = f"1280×800 at {ZOOM * 100} %"
+    for r in table_rows(section(spec, "5.6 Placement")):
+        m = re.fullmatch(r"`SCR-028/([a-z0-9-]+)`", r[0]) if r else None
+        want = viewports.get(m[1]) if m else None
+        if want is not None and not r[1].startswith(want):
+            bad.append(
+                f"[G-VIEWPORT] §5.6 `{m[1] if m else '?'}`: viewport {r[1][:30]!r}, not {want}"
+            )
+    for r in table_rows(section(spec, "8.1 T2 rows")):
+        if len(r) >= 6 and ("no reason" in r[5] or not r[5].startswith(("2a", "E15-D02 §8.1"))):
+            bad.append(f"[G-T2FORM] §8.1 {r[0]}: form {r[5]!r}; a T2 row shows its reason (§1.4)")
+    return bad
 
 
 def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[str]:
@@ -1595,19 +1932,11 @@ def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[st
             continue
         if not r[3].startswith(want):
             bad.append(f"[G-CONFIRM] §5.2 {r[0]}: Confirm reads {r[3]!r}; RULED BQ-10 says {want}")
-    # BQ-4 / BQ-8 / BQ-9 / BQ-17: every line naming them carries the owner mark
-    for name, text in (("spec", spec), ("hand-off", hand)):
-        for n, line in enumerate(text.split("\n"), 1):
-            if line.startswith(("| M-", "| R-")):
-                continue
-            if OWNER_BQS.search(line) and OWNER_MARK not in line:
-                bad.append(f"[G-OWNER] {name}:{n}: an owner-level BQ without '{OWNER_MARK}'")
-    # BQ-16: the CMP-041 / APG key model, `End` on Close
+    # BQ-4 / BQ-8 / BQ-9 / BQ-17: every departure row carries the owner mark
+    bad += owner_gates(spec, hand)
+    # BQ-16: the CMP-041 / APG key model (`End` on Close) and §12.3's announcements, row by row
     keys = table_rows(section(spec, "12.1 Keys"))
-    menu_keys = {r[1]: r for r in keys if len(r) >= 4 and r[0] == "menu"}
-    home = menu_keys.get("`Home` / `End`")
-    if home is None or "`End` lands on Close" not in home[2]:
-        bad.append("[G-KEYMODEL] §12.1: `End` must land on Close (RULED BQ-16)")
+    bad += keymodel_gates(spec, keys)
     # BQ-15: the opener is D04's PROPOSED chord; `F11` the one shipped hint
     km = json.loads(base["km"])
     ids = {c["id"]: c.get("defaultBinding") for c in km["commands"]}
@@ -1631,6 +1960,7 @@ def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[st
     for r in table_rows(section(spec, "8.2 Sentence-form rows")):
         new |= set(re.findall(r"`([a-z_]+\.[a-z_.]+)`", r[4] if len(r) > 4 else ""))
     new |= set(re.findall(r"PROPOSED `([a-z_]+\.[a-z_.]+)`", section(spec, "5.5 Static")))
+    new -= D03_KEYS  # merged E15-D03's own copy key: cited, not proposed here
     rows194 = [ln for ln in section(spec, "19.4 Amendments").split("\n") if ln.startswith("| A-")]
     for key in sorted(new - lawful):
         if not any(f"`{key}`" in ln and "sentence form" in ln for ln in rows194):
@@ -1677,13 +2007,25 @@ def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[st
         bad.append(f"[G-PINS] E15-D04 is merged text pinned to `{D04_MERGE}` (the correction)")
     if not re.search(rf"E15-D06 as \*\*merged text\*\* \([^)]*merge `{D06_MERGE}`\)", pinned):
         bad.append(f"[G-PINS] E15-D06 is merged text pinned to `{D06_MERGE}` (the correction)")
+    if not re.search(rf"E15-D03 as \*\*merged text\*\* \(#4478, merge `{D03_MERGE}`\)", pinned):
+        bad.append(f"[G-PINS] E15-D03 is merged text pinned to `{D03_MERGE}` (round 1's carry)")
+    start = next((p for p in spec.split("\n") if p.startswith("**Start.**")), "")
+    if f"merged (text `{D02_TEXT}`, boards `{D02_BOARDS}`)" not in start:
+        bad.append(f"[G-PINS] E15-D02 is merged: text `{D02_TEXT}`, boards `{D02_BOARDS}`")
     for name, text in (("spec", spec), ("hand-off", hand)):
-        if re.search(r"`(?:E15-)?D03(?:\.md)?`:\d|E15-D03[^.|\n]{0,60}\b[0-9a-f]{7,40}\b", text):
-            bad.append(f"[G-PINS] {name}: E15-D03 pinned (PENDING: by name only; condition 4)")
+        if re.search(r"`(?:E15-)?D03(?:\.md)?`:\d", text):
+            bad.append(f"[G-PINS] {name}: a D03 line cite (cited by section; not at the base)")
+        shas = set(re.findall(r"\bD03\b[^|\n]{0,60}?`([0-9a-f]{7,40})`", text))
+        for sha in sorted(
+            x for x in shas if not (x.startswith(D03_MERGE) or D03_MERGE.startswith(x))
+        ):
+            bad.append(f"[G-PINS] {name}: E15-D03 pinned to `{sha}`, not `{D03_MERGE}`")
     # condition 4: RULED cites this comment; no lane as authority; `Esc` never gated
     ruled = re.search(r"^## .*RULED.*$", spec, MULTI)
-    if ruled is None or RULING_ID not in ruled[0]:
-        bad.append(f"[G-RULED] the RULED heading does not cite issuecomment-{RULING_ID}")
+    key_line = next((p for p in spec.split("\n") if p.startswith("**Key.**")), "")
+    for where, text in (("the RULED heading", ruled[0] if ruled else ""), ("the Key", key_line)):
+        if f"issuecomment-{RULING_ID}" not in text:
+            bad.append(f"[G-RULED] {where} does not cite the ruling issuecomment-{RULING_ID}")
     for name, text in (("spec", spec), ("hand-off", hand)):
         for n, line in enumerate(text.split("\n"), 1):
             if LANE_NAMES.search(line):
@@ -1733,6 +2075,8 @@ def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[st
     for q in texts:
         if len(q) > 60 or not q.endswith("."):
             bad.append(f"[G-REASON] {q[:40]!r}: {len(q)} characters, one sentence ≤ 60")
+    bad += nolock_gates(spec, hand)
+    bad += static_gates(spec)
     # honesty: every heuristic finding says so
     for r in table_rows(section(spec, "16. Heuristic evaluation")):
         if len(r) >= 2 and not r[1].endswith("(heuristic)"):
@@ -2177,6 +2521,179 @@ MUTATIONS: tuple[Mutation, ...] = (
             replace("focus on open: Duplicate", "focus on open: Settings…"),
         ),
     ),
+    Mutation(
+        "M-28",
+        "view-as first: the view-as picker frame keyed `rbac.view_as` (§1.4; condition 1)",
+        "G-VIEWAS",
+        reg(
+            "SCR-024/disabled-viewas" + R1280,
+            "T2",
+            replace("`rbac.view_as`", "`rbac.permission`"),
+        ),
+    ),
+    Mutation(
+        "M-29",
+        "view-as first: the viewer picker frame keyed `rbac.permission` (§1.4)",
+        "G-VIEWAS",
+        reg(
+            "SCR-024/disabled-viewer · 1280 · light",
+            "T2",
+            replace("`rbac.permission`", "`rbac.view_as`"),
+        ),
+    ),
+    Mutation(
+        "M-30",
+        "view-as first in §8.1's leg order (R-1)",
+        "G-VIEWAS",
+        cell_where(
+            "8.1 T2 rows", "R-1", 3, replace("view-as; `orders:write`", "`orders:write`; view-as")
+        ),
+    ),
+    Mutation(
+        "M-31",
+        "view-as first in §8.1's leg order (R-7, the Save inset)",
+        "G-VIEWAS",
+        cell_where("8.1 T2 rows", "R-7", 3, lambda c: "`workspaces:write`"),
+    ),
+    Mutation(
+        "M-32",
+        "view-as first in §3.1's gating order (#13)",
+        "G-VIEWAS",
+        cell_where(
+            "3.1 The inventory",
+            "13",
+            7,
+            replace("view-as; `orders:write`", "`orders:write`; view-as"),
+        ),
+    ),
+    Mutation(
+        "M-33",
+        "view-as first in §4.4 (the view-as row keyed `rbac.view_as`)",
+        "G-VIEWAS",
+        line_sub(
+            "| the same — view-as", "T2, `rbac.view_as` (checked first)", "T2, `rbac.permission`"
+        ),
+    ),
+    Mutation(
+        "M-34",
+        "no T2 on a new key: §4.4's flag-off Form (condition 1)",
+        "G-NOLOCK",
+        line_sub(
+            "| Liquidity map, illustrative",
+            "sentence form (§1.6), PROPOSED `flag.panel_off` (A-6)",
+            "T2, `flag.panel_off`",
+        ),
+    ),
+    Mutation(
+        "M-35",
+        "no lock on a new key: §4.4's flag-off Visible cell (condition 1)",
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", "| name · chip", "| lock · name · chip"),
+    ),
+    Mutation(
+        "M-36",
+        'no "Not available" on a new key: §4.4\'s flag-off accessible name (condition 1)',
+        "G-NOLOCK",
+        line_sub(
+            "| Liquidity map, illustrative",
+            '"Liquidity map, Not',
+            '"Not available, Liquidity map, Not',
+        ),
+    ),
+    Mutation(
+        "M-37",
+        "no T2 on a new key: §5.5's Settings… on `layout.panel.no_settings` (condition 1)",
+        "G-NOLOCK",
+        cell_where("5.5 Static predicates", "Settings…", 2, lambda c: "T2 (§1.4)"),
+    ),
+    Mutation(
+        "M-38",
+        "no `aria-disabled` on a sentence item: §5.9's A11y (condition 1)",
+        "G-NOLOCK",
+        line_sub(
+            "- **A11y:** CMP-041 Menu Button",
+            "sentence items plain `menuitem`s with no `aria-disabled` (§1.6)",
+            'sentence items `aria-disabled="true"` (§1.6)',
+        ),
+    ),
+    Mutation(
+        "M-39",
+        "no `aria-disabled` on the sentence form: §1.6 (condition 1)",
+        "G-NOLOCK",
+        line_sub(
+            "An item or entry whose reason",
+            "It is **not** `aria-disabled`",
+            "It is `aria-disabled`",
+        ),
+    ),
+    Mutation(
+        "M-40",
+        "no `aria-disabled` on a sentence item: the hand-off's Table N (condition 1)",
+        "G-NOLOCK",
+        line_sub(
+            "| item ",
+            '`aria-disabled="true"` only when T2, a sentence item is plain (spec §1.6)',
+            '`aria-disabled="true"` on T2 and sentence items (spec §1.6)',
+        ),
+        target="hand",
+    ),
+    Mutation(
+        "M-41",
+        "the registered reason inside the accessible name: the register (AC1; D-5)",
+        "G-REASON-NAME",
+        reg(
+            "SCR-024/disabled-recording · 1280 · light",
+            "Picker",
+            replace('"Needs a recorded symbol."', '"Not available."'),
+        ),
+    ),
+    Mutation(
+        "M-42",
+        "the registered reason inside the accessible name: §4.4 (AC1; D-5)",
+        "G-REASON-NAME",
+        line_sub(
+            "| Deep Stats, illustrative",
+            '"Not available, Deep Stats, Needs a recorded symbol."',
+            '"Not available, Deep Stats."',
+        ),
+    ),
+    Mutation(
+        "M-43",
+        "absence stays absence: no Pop out in any cell of a browser frame (condition 2)",
+        "G-ABSENCE",
+        reg(
+            "SCR-028/clamped-200" + R1280,
+            "Sentence",
+            lambda c: 'Pop out: "Multi-window workspaces need the desktop app."',
+        ),
+    ),
+    Mutation(
+        "M-44",
+        "absence stays absence: §5.5's Pop out row, no lock and no key (condition 2)",
+        "G-ABSENCE",
+        cell_where(
+            "5.5 Static predicates", "Pop out", 2, lambda c: "T2 (§1.4), lock in the browser"
+        ),
+    ),
+    Mutation(
+        "M-45",
+        "every owner-level departure marked: the C-8 row (BQ-8)",
+        "G-OWNER",
+        line_sub("| C-8 ", "; owner approval pending (#2701)", ""),
+    ),
+    Mutation(
+        "M-46",
+        "every owner-level departure marked: §0's drawn-on-request paragraph (BQ-17)",
+        "G-OWNER",
+        line_sub("**Specified (drawn on request)**", ", owner approval pending (#2701)", ""),
+    ),
+    Mutation(
+        "M-47",
+        "every owner-level departure marked: the hand-off's Essential exceptions (BQ-9)",
+        "G-OWNER",
+        line_sub("| Essential exceptions", "; owner approval pending (#2701)", ""),
+        target="hand",
+    ),
     # ---- the ruling's other sentences (rulings.md), one mutation each
     Mutation(
         "R-1",
@@ -2192,13 +2709,9 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "R-3",
-        "PENDING siblings by name only (E15-D03, #4478)",
+        "E15-D03 (#4478) merged at c4989493: cite it as merged text, pinned",
         "G-PINS",
-        line_sub(
-            "**Inputs pinned.**",
-            "E15-D03 (#4478) is open",
-            "E15-D03 (#4478, head `a1b2c3d4e5`) is open",
-        ),
+        line_sub("**Inputs pinned.**", "(#4478, merge `c4989493`)", "(#4478)"),
     ),
     Mutation(
         "R-4",
@@ -2308,7 +2821,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "R-19",
         '"RULED" cites this comment',
         "G-RULED",
-        re_sub(r"(^## .*RULED.*issuecomment-)6394505202", r"\g<1>6394505201"),
+        re_sub(r"(^## .*RULED.*issuecomment-)6394543912", r"\g<1>6394543913"),
     ),
     Mutation(
         "R-20",
@@ -2341,6 +2854,71 @@ MUTATIONS: tuple[Mutation, ...] = (
         "condition 1: the sentence form carries no `aria-disabled` lock",
         "G-SENTENCE-ARIA",
         cell_where("8.2 Sentence-form rows", "S-2", 6, lambda c: '`aria-disabled="true"`'),
+    ),
+    Mutation(
+        "R-25",
+        '"RULED" cites this comment: the Key',
+        "G-RULED",
+        line_sub("**Key.**", "issuecomment-6394543912", "issuecomment-6394543913"),
+    ),
+    Mutation(
+        "R-26",
+        "E15-D03 pinned to its merge c4989493 only (the Key's short form)",
+        "G-PINS",
+        line_sub("**Key.**", "at its merge `c4989493`", "at its merge `70e5949dd0`"),
+    ),
+    Mutation(
+        "R-27",
+        "E15-D02 merged: text 1044c4f6, boards 7be6eac6",
+        "G-PINS",
+        line_sub("**Start.**", "boards `7be6eac6`", "boards `7be6eac7`"),
+    ),
+    Mutation(
+        "R-28",
+        "condition 4: §5.5's exits never gated",
+        "G-EXIT-GATED",
+        both(
+            cell_where("5.5 Static predicates", "Close", 2, lambda c: "T2 at 16 (§1.4)"),
+            cell_where("5.5 Static predicates", "Close", 3, lambda c: "`layout.limit.panels`"),
+        ),
+    ),
+    Mutation(
+        "R-29",
+        "BQ-15: every chord but `F11` drawn PROPOSED (§5.8)",
+        "G-KBD",
+        cell_where("5.8 Kbd hints", "Pop out", 3, lambda c: "shipped"),
+    ),
+    Mutation(
+        "R-30",
+        "BQ-15: every chord but `F11` drawn PROPOSED (§5.1's block)",
+        "G-KBD",
+        re_sub(r"(^Pop out +Ctrl\+Shift\+O) +PROPOSED; desktop app only", r"\1"),
+    ),
+    Mutation(
+        "R-31",
+        "BQ-14: §5.6's corner viewports are the tool's",
+        "G-VIEWPORT",
+        cell_where("5.6 Placement", "`SCR-028/corner-top-left`", 1, lambda c: "1280×400"),
+    ),
+    Mutation(
+        "R-32",
+        "BQ-16: `Tab` closes every open menu (§12.1)",
+        "G-KEYMODEL",
+        re_sub(r"(^\| menu +\| `Tab` +\| )closes every open menu", r"\1moves to the next item"),
+    ),
+    Mutation(
+        "R-33",
+        "BQ-16: `Enter` on a T2 or sentence item announces the reason once (§12.3)",
+        "G-KEYMODEL",
+        cell_where(
+            "12.3 Announcements", "`Enter` on a T2 or sentence item", 1, lambda c: "nothing"
+        ),
+    ),
+    Mutation(
+        "R-34",
+        "§1.4: a T2 row shows its reason (§8.1's Form)",
+        "G-T2FORM",
+        cell_where("8.1 T2 rows", "R-6", 5, lambda c: "lock only, no reason"),
     ),
     # ---- gate classes (standing rules: cites, values, tokens, honesty, reasons)
     Mutation(
@@ -2388,11 +2966,11 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-REASON",
         cell_where(
             "8.1 T2 rows",
-            "R-3",
+            "R-7",
             4,
             replace(
-                "Only the owner can add this panel.",
-                "Only the owner of this desk can add this panel to a layout today.",
+                "Your role can't save workspaces.",
+                "Your role in this desk can't save workspaces to a layout today.",
             ),
         ),
     ),
