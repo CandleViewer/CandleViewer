@@ -140,6 +140,7 @@ DOC_PATHS = {
     "16": PLAN / "16-design-system-brief.md",
     "21": PLAN / "21-database-schema.md",
     "22": PLAN / "22-api-openapi.yaml",
+    "32": PLAN / "32-risk-register.md",
     "BL": PLAN / "backlog" / "E15.json",
     "C": ROOT / "CONSTITUTION.md",
     "D01": DESIGN / "research" / "e15-layouts" / "findings.md",
@@ -152,7 +153,7 @@ DOC_PATHS = {
     "E36D03": DESIGN / "E36" / "E36-D03.md",
     "README": DESIGN / "README.md",
 }
-CITE_KEYS = "04|05|11|14|15|16|21|22|BL|D01|D02|D03|D06|FL|S4|E09D09|E36D03|README"
+CITE_KEYS = "04|05|11|14|15|16|21|22|32|BL|D01|D02|D03|D06|FL|S4|E09D09|E36D03|README"
 CITE_RE = rf"`({CITE_KEYS}):(\d+)(?:{EN_DASH}(\d+))?`"
 CITE_WARN: list[str] = []
 # role -> (bar in dark, bar in light, bar in high contrast); None = reported, never gated.
@@ -190,6 +191,7 @@ focus ring on an even row | color.focus.ring | color.surface.raised | non-text
 drag-over edge on its fill | color.border.selected | color.surface.hover | non-text
 REJECTED T2 label in text.disabled | color.text.disabled | color.surface.overlay | rejected-text
 drop-zone edge (not the control) | color.border.default | color.surface.overlay | decorative
+the dialog's T2 verb on its raised fill | color.text.tertiary | color.surface.raised | hc-text
 """
 BINDINGS = (
     "color.surface.overlay",
@@ -263,8 +265,10 @@ CITED_TABLE = """
 04 | 1139 | | `workspaces:write`                                 |                 ✔
 04 | 1180 | Save/load own layouts, templates, drawings, hotkeys
 05 | 35 | No functionality may depend on hover-only or drag-only interaction
+05 | 85 | **Reserved, non-remappable keys**
 05 | 96 | **Focus is never silently stolen**
 05 | 101 | **Dragging alternatives**
+05 | 130 | **User-adjustable contrast**
 05 | 131 | 7. **Text resize (WCAG 1.4.4, AA)**
 05 | 144 | ### 6.2 Layer 2 — ARIA live regions for streaming updates
 05 | 150 | **Region hygiene**
@@ -276,6 +280,7 @@ CITED_TABLE = """
 14 | 85 | **RBAC denies server-side; the UI presents.**
 14 | 613 | ### SCR-025 — Workspace settings modal
 14 | 615 | export as template, delete
+14 | 618 | `workspace.updated`, `workspace.deleted`, `workspace.exported`
 14 | 624 | [ ] delete-workspace confirmation path
 14 | 626 | ### SCR-026 — Workspace import
 14 | 628 | (panels added, symbols referenced, accounts remapped)
@@ -287,6 +292,7 @@ CITED_TABLE = """
 14 | 635 | §5.11 (Penpot page `E15-D02`, board 18
 14 | 636 | [ ] import never carries credentials or account bindings (verified in copy)
 14 | 1984 | ### SCR-089 — Rule import / export
+14 | 1993 | [ ] export selection (single / selected / all) with a scope-stripping note
 15 | 48 | ### CMP-001 Button
 15 | 225 | ### CMP-019 Icon
 15 | 262 | ### CMP-023 Progress Bar
@@ -294,27 +300,41 @@ CITED_TABLE = """
 15 | 306 | `live` overrides it: `polite` for an in-panel load failure
 15 | 307 | registers the PROPOSED `icon/x-circle`
 15 | 311 | ### CMP-028 Callout / Banner
+15 | 317 | `live` overrides the default (`off` renders no live role
 15 | 361 | ### CMP-033 CopyButton
+15 | 364 | - **Props**: `value: string` · `label` (a11y name) · `onCopied?`.
+15 | 366 | announces "Copied" via a transient polite live region
+15 | 368 | - **Storybook**: Default, CopiedState.
+15 | 395 | - **Tokens**: `space.row.*`, `font.size.body/label`.
 15 | 409 | ### CMP-038 InlineSpinnerText
 15 | 463 | ### CMP-043 Dialog (Modal)
 15 | 466 | at most 420 / 560 / 960 px wide
 15 | 468 | `Esc` always cancels before the confirmed send
 15 | 473 | ### CMP-044 ConfirmDialog
+15 | 476 | `confirmDelayMs?` (default 400; Confirm ignores any activation before it)
+15 | 479 | Confirm a CMP-001 `danger` (`color.status.danger.default`, `color.text.on-action`)
 15 | 483 | ### CMP-045 Toast / Notification
 15 | 524 | ### CMP-049 Table
 15 | 529 | one row element per record
+15 | 530 | table mode's Tab stops are the scroll region
+15 | 531 | odd `color.surface.canvas`, even `color.surface.raised`
 15 | 690 | ### CMP-067 FileDrop / Import control
+15 | 692 | **Purpose**: CSV/JSON import (journal import, rule import/export).
+15 | 693 | - **Props**: `accept` · `onFiles` · `multiple?`.
 15 | 694 | (drag-and-drop is additive, never the only path)
 15 | 695 | **Tokens**: `color.border.dashed`.
 15 | 696 | **Storybook**: Default, DragOver, Error.
+15 | 697 | - **Tests**: unit, visual, axe, keyboard-only file selection test.
 15 | 699 | ### CMP-068 CopyableCodeBlock
 15 | 811 | ### CMP-079 RbacGate
 15 | 2738 | ### CMP-234 ValidationPanel
 15 | 2742 | a `role="log"` list ordered errors-first
+16 | 456 | a new directional or status **encoding** needs every surface
 21 | 3300 | -- sanitised, 1..120 code points
 21 | 5069 | Pane settings must never carry credentials or account identifiers
 22 | 8521 | operationId: createWorkspace
 22 | 8525 | `limit_reached` (32 live workspaces)
+22 | 8530 | Bodies over 4 KiB are refused with `413` (`payload_too_large`)
 22 | 8725 | `limit_reached` (32 live layouts)
 22 | 12676 | operationId: exportWorkspace
 22 | 12679 | The bundle is self-contained and contains no credentials, account identifiers or
@@ -325,13 +345,20 @@ CITED_TABLE = """
 22 | 19838 | and never holds credentials, account ids or user ids
 22 | 19848 | Every key must match `^[a-z][a-z0-9_]{0,31}$`
 22 | 19864 | a Bybit USDT linear perpetual symbol of at most 20 characters
+22 | 19873 | Every non-null value is refused (`422` rule `chart_template_not_found`)
+22 | 19879 | A non-empty list is refused (`422` rule `indicator_preset_not_found`)
+22 | 20197 | else 422 rule `layout_not_found`
 22 | 21209 |     WorkspaceBundle:
 22 | 21213 | Portable, credential-free export of presentation state only.
 22 | 21215 | schema_version: { type: string }
 22 | 21226 | Import (E15-S07; no operation takes a bundle yet) never trusts
 22 | 21229 | the array is imported whole or not
 22 | 21230 | The server refuses it whole beyond 200 items or 1 MiB of preset JSON
+32 | 47 | **R13** | Team & knowledge
 BL | 242 | "key": "E15-D09",
+BL | 266 | Export again from the older version
+BL | 700 | "key": "E15-X01",
+BL | 721 | Classify a workspace export as *user-confidential*
 BL | 1111 | "key": "E15-S07",
 BL | 1136 | a document with 10000 nested nodes
 D01 | 39 | (8) Exports carry no credentials or account bindings
@@ -352,6 +379,9 @@ D02 | 520 | - **Done:** the new workspace opens in a tab
 D02 | 522 | Import never writes over an existing workspace (D-30)
 D02 | 635 | ### 8.1 Gated controls: T2
 D02 | 639 | **Legs, in the server's order**
+D02 | 641 | - **Anatomy** (E09-D09 §2.2, §9.1, §9.2)
+D02 | 642 | - **One notice, many pointers** (E09-D09 §2.2)
+D02 | 643 | - **Keys** (E09-D09 §9.3)
 D02 | 645 | - **Not T2**, each owned elsewhere
 D02 | 655 | | "+" › Import… (§5.11)
 D02 | 674 | | `workspace.limit.count`
@@ -384,6 +414,8 @@ FL | 164 | M6 -->|409 limit_reached, another window got there first|
 FL | 169 | **Keyboard:** the file input is a labelled button reached by `Tab`
 FL | 170 | `layout.import_rejected {reason: size | parse | schema | version | semantic}`
 FL | 171 | the import is not atomic
+E09D09 | 32 | ### 2.1 The decision rule (D1, D2)
+E09D09 | 49 | **T2 Disabled with a visible reason (D4).**
 E09D09 | 85 | Every T2 reason is one of these seven keys
 E09D09 | 89 | | `rbac.permission`        | "Your role can't {verb}."
 E09D09 | 95 | | `rbac.view_as`           | "Read-only while viewing as {user}."
@@ -392,8 +424,14 @@ E36D03 | 153 | ## 8. SCR-089 import (board 08)
 E36D03 | 155 | **Drop zone** — CMP-067
 E36D03 | 272 | **Token names the composed entries use that do not exist**
 E36D03 | 339 | | the drop zone (CMP-067)
+S4 | 119 | 32. **Focus contract for overlays**
+S4 | 140 | 33. **Where feedback speaks**
+S4 | 194 | 37. **What is not T2 here**
+S4 | 202 | 38. **Forced colours**
+S4 | 209 | 39. **Resize, zoom and reflow**
 S4 | 734 | **H22 — `Esc`, the NoEscClose story and the scrim.**
 S4 | 904 | **H36 — A dialog with unsaved changes.**
+S4 | 919 | **H37 — Where a warning and a load failure speak.**
 README | 46 | **Penpot reference** to the ticket's page
 """
 # The fixture (synthetic; the spec's Fixture paragraph prints it through markers). The export
@@ -423,6 +461,7 @@ FIXTURE: dict[str, Any] = {
     "presets_in_file": 240,
     "wrong_file": "report.csv",
     "server_key": "layouts[0].panes[3].pane_config",
+    "invalid_key": "layouts[0].crosshair_sync",
     "step": (3, 5),
     "budget": {"file": "wall.json", "layout": "Wall", "panels": 12, "layouts": 1},
     "measured_ms": 11.8,
@@ -516,6 +555,9 @@ TEMPLATES = {
     "e15.import.rejected.presets": (
         "This file has {n} indicator presets; a file may carry at most {max}. Nothing was imported."
     ),
+    "e15.import.rejected.invalid": (
+        "This isn't a workspace file: `{key}` isn't allowed. Nothing was imported."
+    ),
     "e15.import.rejected.oversized": (
         "This file is {size} MB; the limit is {max} MB. Nothing was imported."
     ),
@@ -532,6 +574,9 @@ TEMPLATES = {
         "You have {max} workspaces, the most you can have. Delete one, then import again."
     ),
     "e15.import.refused.server": "The server didn't accept this file: `{key}` isn't allowed.",
+    "e15.import.refused.store": (
+        "The workspace store didn't answer. Choose the file again in a moment."
+    ),
     "e15.import.nothing": NOTHING,
     "e15.import.migrated": MIGRATED,
     "e15.import.clash": "Imported as {clash}: a workspace named {workspace} exists.",
@@ -743,8 +788,10 @@ VARIANTS = {
         "e15.import.rejected.panes",
         "e15.import.rejected.layouts",
         "e15.import.rejected.presets",
+        "e15.import.rejected.invalid",
     ),
     "nodes": ("e15.import.rejected.nodes",),
+    "server": ("e15.import.refused.store",),
 }
 EVENT_REASON = {
     "version-newer": "version-newer",
@@ -1081,6 +1128,36 @@ contract.dialog_lg_px 1
 contract.dialog_md_px 1
 design.key_cap 1
 design.file_cap 1
+fixture.rows 1
+contract.reason_max 1
+contract.refresh_fps 1
+frames_export 1
+frames_import 1
+checklist_items 1
+missing_tokens 1
+pairs_rows 1
+pairs_fail 1
+pairs_registered 1
+pairs_proposed 1
+rows.A 1
+rows.C 1
+rows.D 1
+rows.G 1
+rows.Q 1
+redline.opacity.scrim 1
+redline.border.hairline 1
+redline.border.thick 1
+redline.border.focus 1
+redline.radius.dialog 1
+redline.radius.card 1
+redline.space.dialog.padding 1
+redline.space.stack.md 1
+redline.space.inset.sm 1
+redline.space.inset.xl 1
+redline.size.row.height 1
+redline.size.icon 1
+redline.size.control.compact 1
+redline.size.control.comfortable 1
 """
 MARKERS = {k: int(n) for k, n in (ln.split() for ln in MARKER_TABLE.strip().splitlines())}
 
@@ -1423,6 +1500,7 @@ def variables(facts: dict[str, Any]) -> dict[str, dict[str, Any]]:
         "e15.import.rejected.nodes": {"max": f"{facts['nodes']:,}"},
         "e15.import.refused.limit": {"max": facts["workspaces_max"]},
         "e15.import.refused.server": {"key": fx["server_key"]},
+        "e15.import.rejected.invalid": {"key": fx["invalid_key"]},
         "e15.import.migrated": {"from": fm["from"], "to": fm["to"]},
         "e15.import.clash": {"clash": fx["clash"], "workspace": fx["workspace"]},
         "e15.import.report.done": tally,
@@ -1444,7 +1522,7 @@ def caps_clause(facts: dict[str, Any]) -> str:
         f"caps: names {facts['name_max']} · symbols {facts['symbol_max']} · panel kinds "
         f"{facts['kind_max']} · keys {DESIGN_CAPS['key_cap']} · file names "
         f"{DESIGN_CAPS['file_cap']} · drawing labels {facts['label_max']} (characters, an "
-        "ellipsis past the cap, the whole value in the accessible name)"
+        "ellipsis past the cap, the whole capped value in the accessible name)"
     )
 
 
@@ -3199,6 +3277,26 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
         (
             "message",
             frame_sub(rw, "Choose a .json workspace file.", "Pick a .json workspace file."),
+            "[message]",
+            None,
+        ),
+        (
+            "variants-invalid",
+            frame_sub(
+                "SCR-026/rejected-malformed",
+                "`layouts[0].crosshair_sync` isn't allowed",
+                "`layouts[0].crosshair_sync` is odd",
+            ),
+            "[message]",
+            None,
+        ),
+        (
+            "variants-store",
+            frame_sub(
+                "SCR-026/refused-server",
+                "Choose the file again in a moment.",
+                "Try again in a moment.",
+            ),
             "[message]",
             None,
         ),
