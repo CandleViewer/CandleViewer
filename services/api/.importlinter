@@ -1211,6 +1211,7 @@ source_modules =
     candleviewer.exchange.bybit.private_parse
     candleviewer.oms.pairing
     candleviewer.oms.push_mapping
+    candleviewer.oms.stream_consumer
     candleviewer.oms.stream_push
     candleviewer.orderflow
     candleviewer.orderbook_wiring
