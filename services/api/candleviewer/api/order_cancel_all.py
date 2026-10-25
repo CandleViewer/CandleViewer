@@ -75,6 +75,7 @@ from candleviewer.api.order_admission import (
 from candleviewer.api.order_exits_common import (
     ExitRuntime,
     exit_caller,
+    exit_fault,
     exit_problem,
     exit_refusals,
     run_claimed,
@@ -257,13 +258,6 @@ def make_cancel_all_router(
         count("forbidden" if missing else "account_scope_denied")
         return rbac_refusal(decision)
 
-    def page(summary: str, **fields: str) -> None:
-        _log().critical(summary, **fields)
-        try:
-            paging.raise_alert("page", summary, machine_kind="order")
-        except Exception as exc:  # the page is lost, never the answer
-            _log().critical("oms_pager_failed", summary=summary, error=type(exc).__name__)
-
     async def scope_denied(caller: ExitCaller, request: CancelAllRequest) -> Response:
         """Step 4's refusal of the whole request: counted, then one `rbac.denied` naming the ids
         it listed, as `enforce` writes one; a 403 even when that record cannot be written."""
@@ -375,10 +369,12 @@ def make_cancel_all_router(
             return await recorded(accounts, caller, "guard", outcome.code or "rate_limited", answer)
 
         def faulted(exc: Exception) -> Response:
-            """A defect in step 11's task, `run_claimed`'s answer in that task: the paged `500`,
-            nothing kept; each cancel already sent stays with B1."""
-            page("orders_cancel_all_failed", error=type(exc).__name__)
-            return refused(OmsError("cancel-all's run failed"))
+            """A defect in step 11's task, `run_claimed`'s answer in that task (`exit_fault`): the
+            redacted `500`, paged once by the fault's class (22 `InternalError`), counted, nothing
+            kept; each cancel already sent stays with B1."""
+            code, answer = exit_fault(exc, pager=paging)
+            count(code)
+            return answer
 
         async def cancels() -> Response:
             """Step 11's task: the cancels' `200`, kept for 24 h by the task itself; a defect it
