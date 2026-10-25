@@ -10,24 +10,39 @@ layering), both imported, never re-implemented; the CVD rows use
 two dialogs draw (text 4.5, body text 7.0 in high contrast, non-text 3.0; the rejected and the
 decorative rows reported, never gated); (2) every bound token, resolved or MISSING; (3) the
 greyscale luma and CVD rows of the Add / Drop / Remap glyph colours (reported); (4) the contract
-facts the frames quote — the limits (size, depth, nodes, layouts, panes, workspaces), the caps,
-the frame budget — parsed from `22` / `21` / `14` / `15` / the backlog / CONSTITUTION text, never
-typed; (5) the gates, each FAIL led by its code in brackets. Every line of the spec is read by
-exactly one ladder, which reports the first FAIL of that line: the FRAME ladder reads every
-`SCR-025/export-*` and `SCR-026/*` row of §2-§5 (the obligations come from the tool's KIND table
-and are compared clause by clause, whole clauses, never first words; the row's Class cell must
-agree), the TABLE ladder reads §4.2 and §4.3 row by row against the fixture, the BOARD gates read
-§0, and the LINE ladder reads every other line, prose and tables alike, with case-insensitive
-vocabulary lists (the gated-exit words, the environment words, the sharing claim, the markup and
-link words for untrusted strings). Then the header, the deviations, the AC trace, the ruled
-questions and conditions, the numbered sections in order, the cites (a moved line is a WARN; a
-fragment gone or ambiguous is a FAIL; a cite missing from CITED_TABLE is a FAIL), the `14`
-pointer lines, private paths and hosts, closing keywords, dangling rule and catalogue ids,
-placeholders, and the written sections (each skipped while it is still a placeholder: §6's one T2
-paragraph, §7's exits sentence, §8's measured tables, §9's deck, §10-§16); (6) the counts.
+facts the frames quote, parsed from `22` / `21` / `14` / `15` / the backlog / CONSTITUTION text,
+never typed; (5) the gates, each FAIL led by its code in brackets; (6) the counts.
+
+Every line of the spec is read by exactly one ladder, which reports the first FAIL of that line.
+The FRAME ladder reads every cell of every `SCR-025/export-*` and `SCR-026/*` row of §2-§5: the
+expected clauses (the obligations of the tool's KIND table) whole, never first words; the Producer
+and every free clause through the vocabulary ladder; the free clauses' labels, the Producer and the
+copy keys against the tool's own text; the Class and Board cells against the inventory and §0. The
+TABLE ladder reads §4.2 and §4.3 row by row against the fixture. The BOARD gates read every cell of
+§0. The LINE ladder reads every other line, each sentence (a paragraph is one line, so no sentence
+is ever split) and each table cell through the same vocabulary ladder. The vocabulary ladder holds
+stem lists read case-insensitively against whole clauses, a match counting unless a negator
+governs it in its clause (one before it with no "but", "only", "while" or new subject between):
+the gated-exit words with a role placed before an exit; the environment words; the sharing claim
+and its paraphrases; markup and link words beside a string from the file; a remap beside an
+account; an Import verb, a lock, a create or a keep word where a refusal or the time before the send
+is in scope; the drop zone made a stop; an app version compared; the server's re-check denied; a
+string shown past its cap; file content echoed or sent; the exporter granted anything; a claim no
+text-first spec can make; T2 restated; a refusal's focus moved; the check steps and the legs in any
+chain or list, in order; every number with its unit the tool's; every quoted UI string the deck's.
+The tables that restate frame facts or record a ruling (the BQ table, the AC trace, §3.4's steps,
+§5.2's anatomy and cases, §5.3, §5.4, §7's keyboard model, announcements and desk pass, §2.3's
+Included items), the deck's strings, §0's boards and the `14` pointer lines are compared whole with
+the tool's text. Then the header, the deviations, the cites (a moved line is a WARN; a fragment gone
+or ambiguous is a FAIL; a cite missing from CITED_TABLE or to an unpinned document is a FAIL), every
+commit id a pinned merge's and printed as often as pinned, "RULED" only where a ruling stands,
+private paths and hosts, closing keywords, invisible or impersonating characters, comments and
+raw HTML, dangling rule and catalogue ids, placeholders, and the written sections.
+
 `--json` is the only source of every number in the spec: every `<!-- audit:KEY=VALUE -->` marker
 is re-derived on every run, the number printed beside it must equal it, a malformed marker is a
-FAIL and no marker the spec carries may disappear; `--check` adds the markers summary line.
+FAIL, each key appears exactly as often as MARKER_TABLE pins it, and a number printed without a
+marker must be one the tool derives for its unit. `--check` adds the markers summary line.
 `--self-test` applies each named mutation of `mutations()` to an in-memory copy of the spec (and
 each of `context_mutations()` to an in-memory copy of the plan texts) and passes only when each
 adds exactly one new FAIL carrying its expected code, every gate code of this file is behind at
@@ -48,6 +63,7 @@ import importlib.util
 import json
 import re
 import sys
+import unicodedata
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -79,6 +95,8 @@ THEMES = ("dark", "light", "high-contrast")
 BASE = "c4989493461ec6b6d22b9254633452a6362b750e"
 # The orchestrator's ruling on the BQ list (issue comment on #363): "RULED" cites this id.
 RULING = "6396085915"
+# The BQ comment the ruling answers (the questions table's heading names both).
+BQ_COMMENT = "6396029607"
 # The merged inputs the header pins: E15-D01, E15-D02 text and boards, E15-D04, E15-D06 and
 # E09-D09 (E15-D03's merge is the base itself, BASE). E15-D08 is PENDING and named only.
 MERGE_SHAS = (
@@ -89,6 +107,9 @@ MERGE_SHAS = (
     "6e2c1211fc5f4675457d57011a346642f92710c5",
     "baccf724a1fa3ad66f9333e440a7f5e8668b6eff",
 )
+# E05-D02 slice 4's commit, which the header names beside the merges.
+SLICE4 = "04a8caa9513e90debcf7cbc41a9ca585496eba01"
+KNOWN_SHAS = (*MERGE_SHAS, BASE, SLICE4)
 PENPOT_PAGE = "E15-D09 Workspace import and export"
 STATUS_WORDS = (
     "text-first",
@@ -115,7 +136,7 @@ FORBIDDEN = (
 # A closing keyword in any form GitHub links (text-first PRs say `Refs` and `Partial:` only).
 CLOSING = (
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+"
-    r"(?:(?:[\w.-]+/[\w.-]+)?#\d+|https?://\S+/issues/\d+)"
+    r"(?:(?:[\w.-]+/[\w.-]+)?#\d+|https?://\S+/issues/\d+|issue\s+\d+)"
 )
 POINTER = "[E15-D09.md](../design/E15/E15-D09.md)"
 # Each pointer line sits in the run of pointer lines right after its screen's checklist in `14`.
@@ -192,6 +213,10 @@ drag-over edge on its fill | color.border.selected | color.surface.hover | non-t
 REJECTED T2 label in text.disabled | color.text.disabled | color.surface.overlay | rejected-text
 drop-zone edge (not the control) | color.border.default | color.surface.overlay | decorative
 the dialog's T2 verb on its raised fill | color.text.tertiary | color.surface.raised | hc-text
+the Reason column on even rows | color.text.secondary | color.surface.raised | hc-text
+the progress fill on its track | color.action.primary.default | color.surface.hover | non-text
+the progress fill on the card | color.action.primary.default | color.surface.overlay | non-text
+the progress track on the card | color.surface.hover | color.surface.overlay | decorative
 """
 BINDINGS = (
     "color.surface.overlay",
@@ -231,6 +256,7 @@ BINDINGS = (
     "size.icon",
     "size.control.compact",
     "size.control.comfortable",
+    "size.target.min",
     "type.ui.heading-sm",
     "type.ui.body",
     "type.ui.body-strong",
@@ -267,6 +293,7 @@ CITED_TABLE = """
 05 | 35 | No functionality may depend on hover-only or drag-only interaction
 05 | 85 | **Reserved, non-remappable keys**
 05 | 96 | **Focus is never silently stolen**
+05 | 100 | 7. **Target size**
 05 | 101 | **Dragging alternatives**
 05 | 130 | **User-adjustable contrast**
 05 | 131 | 7. **Text resize (WCAG 1.4.4, AA)**
@@ -335,6 +362,7 @@ CITED_TABLE = """
 22 | 8521 | operationId: createWorkspace
 22 | 8525 | `limit_reached` (32 live workspaces)
 22 | 8530 | Bodies over 4 KiB are refused with `413` (`payload_too_large`)
+22 | 8531 | `Idempotency-Key` is accepted, never required
 22 | 8725 | `limit_reached` (32 live layouts)
 22 | 12676 | operationId: exportWorkspace
 22 | 12679 | The bundle is self-contained and contains no credentials, account identifiers or
@@ -351,6 +379,7 @@ CITED_TABLE = """
 22 | 21209 |     WorkspaceBundle:
 22 | 21213 | Portable, credential-free export of presentation state only.
 22 | 21215 | schema_version: { type: string }
+22 | 21224 | Export holds only the caller's live presets
 22 | 21226 | Import (E15-S07; no operation takes a bundle yet) never trusts
 22 | 21229 | the array is imported whole or not
 22 | 21230 | The server refuses it whole beyond 200 items or 1 MiB of preset JSON
@@ -522,6 +551,17 @@ NOTHING = "Nothing was imported."
 # key -> the template the deck (§9) carries and the frames render from FIXTURE and the facts.
 TEMPLATES = {
     "e15.export.preparing": "Preparing the file…",
+    "e15.export.title": "Export {workspace}",
+    "e15.export.close": "Close Export {workspace}",
+    "e15.export.unsaved": (
+        "Unsaved changes aren't in the file: it holds {workspace} as last saved."
+    ),
+    "e15.export.included": (
+        "The file includes: {layouts} ({layout_names}) · {panels} · symbols {symbols} · sync "
+        "groups {groups} · each panel's settings · {drawings}, with their text labels · "
+        "{templates} · {presets}."
+    ),
+    "rbac.view_as": "Read-only while viewing as {user}.",
     "e15.export.failed": (
         "Couldn't prepare the file: the workspace store is unavailable. Nothing was exported."
     ),
@@ -556,7 +596,7 @@ TEMPLATES = {
         "This file has {n} indicator presets; a file may carry at most {max}. Nothing was imported."
     ),
     "e15.import.rejected.invalid": (
-        "This isn't a workspace file: `{key}` isn't allowed. Nothing was imported."
+        "This isn't a workspace file: `{key}` isn't valid. Nothing was imported."
     ),
     "e15.import.rejected.oversized": (
         "This file is {size} MB; the limit is {max} MB. Nothing was imported."
@@ -573,9 +613,15 @@ TEMPLATES = {
     "e15.import.refused.limit": (
         "You have {max} workspaces, the most you can have. Delete one, then import again."
     ),
-    "e15.import.refused.server": "The server didn't accept this file: `{key}` isn't allowed.",
+    "e15.import.refused.server": "The server didn't accept this file: `{key}` isn't valid.",
     "e15.import.refused.store": (
         "The workspace store didn't answer. Choose the file again in a moment."
+    ),
+    "e15.import.refused.size": (
+        "The server didn't accept this file: it is larger than the server takes."
+    ),
+    "e15.import.refused.unconfirmed": (
+        "We couldn't confirm the import. Check your workspaces before importing again."
     ),
     "e15.import.nothing": NOTHING,
     "e15.import.migrated": MIGRATED,
@@ -584,7 +630,7 @@ TEMPLATES = {
     "e15.import.trust": TRUST_NOTE,
     "e15.export.caveat": CAVEAT,
     "e15.import.report.done": (
-        "Imported {clash}: {panels}, {layouts}, {dropped} items dropped, {remapped} remapped."
+        "Imported {clash}: {panels}, {layouts}, {dropped_items} dropped, {remapped} remapped."
     ),
     "e15.import.caption": (
         "Preview — {panels} and {layouts} to add · {dropped} dropped · {remapped} remapped"
@@ -643,6 +689,7 @@ SCR-026/rejected-wrong-type | rejection | reason=wrong-type
 SCR-026/rejected-nodes | rejection | reason=nodes
 SCR-026/refused-limit | refusal | reason=limit
 SCR-026/refused-server | refusal | reason=server
+SCR-026/refused-unconfirmed | unconfirmed |
 SCR-026/report | report |
 SCR-026/cancelled | cancelled |
 SCR-026/reflow-200 | reflow | dialog=import
@@ -669,6 +716,7 @@ CLASS = {
     "t2-leg": "T2",
     "rejection": "outcome (rejection)",
     "refusal": "T4 (refusal)",
+    "unconfirmed": "outcome",
     "report": "outcome",
     "cancelled": "outcome",
     "compact": "T1 (density)",
@@ -691,11 +739,23 @@ IMPORT_DIALOG_KINDS = {
     "t2-leg",
     "rejection",
     "refusal",
+    "unconfirmed",
     "report",
 }
-PRE_SEND_KINDS = {"pick", "drag-over", "validating", "preview"}
+PRE_SEND_KINDS = {"pick", "drag-over", "validating", "preview", "budget-confirm", "t2-leg"}
 NOTHING_KINDS = {"rejection", "refusal"}
-TRUST_KINDS = {"pick", "drag-over", "validating", "preview", "busy", "t2-leg"} | NOTHING_KINDS
+TRUST_KINDS = {
+    "pick",
+    "drag-over",
+    "validating",
+    "preview",
+    "busy",
+    "t2-leg",
+    "unconfirmed",
+} | NOTHING_KINDS
+# The export's frames, where every free clause is read for a lock (S15), the unsaved
+# default's availability aside.
+EXPORT_KINDS = EXPORT_DIALOG_KINDS | {"export-entry"}
 # The frames that render a string taken from the file (Condition 1: caps and text only).
 FILE_STRING_FRAMES = {
     "SCR-026/validating",
@@ -703,6 +763,8 @@ FILE_STRING_FRAMES = {
     "SCR-026/preview-migrated",
     "SCR-026/preview-over-budget",
     "SCR-026/budget-confirm",
+    "SCR-026/creating",
+    "SCR-026/import-leg-lost",
     "SCR-026/report",
     "SCR-026/rejected-malformed",
     "SCR-026/rejected-wrong-type",
@@ -731,6 +793,7 @@ FOOTERS = {
     "rejection": "Cancel (`secondary`) · Choose another file (`primary`)",
     "SCR-026/refused-limit": "Cancel (`secondary`)",
     "SCR-026/refused-server": "Cancel (`secondary`) · Choose another file (`primary`)",
+    "unconfirmed": "Close (`primary`)",
     "report": "Copy report (`secondary`) · Close (`primary`)",
 }
 FOCUS = {
@@ -749,6 +812,7 @@ FOCUS = {
     "rejection": "Choose another file",
     "SCR-026/refused-limit": "Cancel",
     "SCR-026/refused-server": "Choose another file",
+    "unconfirmed": "Close",
     "report": 'the heading "Import report" (`tabindex="-1"`)',
 }
 ESC = {
@@ -758,6 +822,7 @@ ESC = {
     "report": "Close",
     "busy": "Close (the view only: the import is sent and finishes)",
     "budget-confirm": "Cancel (back to the preview)",
+    "unconfirmed": "Close",
 }
 EXITS = {
     "menu": "Esc",
@@ -768,6 +833,7 @@ EXITS = {
     "budget-confirm": "Cancel · Esc",
     "rejection": f"Cancel · Esc · {TIMES} · Choose another file",
     "SCR-026/refused-server": f"Cancel · Esc · {TIMES} · Choose another file",
+    "unconfirmed": f"Close · Esc · {TIMES}",
 }
 # The rejection and refusal reasons -> the deck keys their message clause renders, in order, and
 # the `layout.import_rejected{reason}` value each fires (the ticket's six; depth and nodes are
@@ -781,6 +847,7 @@ MESSAGES = {
     "nodes": ("e15.import.rejected.depth",),
     "limit": ("e15.import.nothing", "e15.import.refused.limit"),
     "server": ("e15.import.nothing", "e15.import.refused.server"),
+    "unconfirmed": ("e15.import.refused.unconfirmed",),
 }
 VARIANTS = {
     "malformed": (
@@ -791,7 +858,7 @@ VARIANTS = {
         "e15.import.rejected.invalid",
     ),
     "nodes": ("e15.import.rejected.nodes",),
-    "server": ("e15.import.refused.store",),
+    "server": ("e15.import.refused.store", "e15.import.refused.size"),
 }
 EVENT_REASON = {
     "version-newer": "version-newer",
@@ -801,85 +868,447 @@ EVENT_REASON = {
     "wrong-type": "wrong-type",
     "nodes": "malformed",
 }
-# Vocabulary lists, all read case-insensitively (A2 / Condition 3), each against whole clauses.
-# An exit: Cancel, Esc, the close × (not the × of a size), Close, Choose another file.
+# Vocabulary lists, all read case-insensitively (A2 / Condition 3) as stems, never closed word
+# lists: each list is read against whole clauses (a frame row's clauses, a table's cells, a prose
+# sentence), quoted copy blanked (`unquote`), code spans read as text, and a match counts unless a
+# negator governs it (`negated`): one earlier in its clause with no contrast boundary between.
+# An exit: Cancel, Esc, the close × (not the × of a size), Close, Choose another file, Dismiss.
 EXIT_RE = (
-    r"(?i)\bcancel\b|\besc(?:ape)?\b|(?<!\d)(?<!\d )×(?! ?\d)|\bclose\b|\bchoose another file\b"
+    r"(?i)\bcancel(?:s|led|ling)?\b|\besc(?:ape)?\b|(?<!\d)(?<!\d )×(?! ?\d)|\bclose[sd]?\b"
+    r"|\bchoose another file\b|\bdismiss\w*|\bthe back button\b"
 )
-# The gated-exit words (the brief's list, then E09-D09's T2 vocabulary).
+# "fail closed" names a server's posture, never the exit Close.
+EXIT_BLANK = (r"(?i)\bfail(?:s|ed)? closed\b",)
+# The gated-exit stems (the brief's words and their inflections, E09-D09's T2 vocabulary, the
+# synonyms a lens found, and a role or a permission placed before an exit).
 GATE_WORDS = (
-    r"\baria-disabled\b|\bdisabled\b|\block(?:ed|s)?\b|\bpadlock\b|\bgr[ae]yed\b|\bdimmed\b"
-    r"|\binert\b|\bheld\b|\bhidden\b|\binactive\b|\bsuppressed\b|\bdoes nothing\b"
-    r"|\bdo nothing\b|\bcan[’']t be pressed\b|\bcannot be pressed\b|\bcan not be pressed\b"
-    r"|\bwaits? for\b|\bunusable\b|\bunavailable\b|\bnot available\b|\bgated\b|\bblocked\b"
-    r"|\bt2\b|\bignored\b|\bignores\b|\bcan[’']t be used\b|\bcannot be used\b|\bunreachable\b"
+    r"\baria-disabled\b|\bdisabl\w*|\block(?:s|ed|ing)?\b|\bpadlock\w*|\bgr[ae]y(?:s|ed|ing)?\b"
+    r"|\bdim(?:s|med|ming)?\b|\binert\b|\bheld\b|\bhid(?:den|es|e|ing)\b|\binactiv\w*|\bsuppress\w*"
+    r"|\bdo(?:es)? nothing\b|\bno effect\b|\bnot (?:be )?(?:enabled|clickable|pressable|shown"
+    r"|focusable|operable|reachable|active|usable|responsive|offered|allowed|available)\b"
+    r"|\bcan(?:not|['’]t| not) be (?:pressed|used|clicked|activated|reached|focused|operated"
+    r"|chosen|selected|closed|dismissed)\b|\bwait(?:s|ing)? for\b|\bunusab\w*|\bunavailab\w*"
+    r"|\bno longer (?:available|works?|shown|offered|active)\b|\bgated\b|\bblock(?:s|ed|ing)\b"
+    r"|\bt2\b|\bignor(?:es|ed|ing)\b|\bunreachab\w*|\bturn(?:s|ed)? off\b|\bswitch(?:es|ed)? off\b"
+    r"|\bfrozen\b|\bfreez\w*|\bfad(?:es|ed|ing)\b|\bread-only\b|\bnon-interactive\b"
+    r"|\bunresponsive\b|\bdeactivat\w*|\bonly (?:for|to) (?:an? |the )?(?:owner|manager|viewer"
+    r"|admin)s?\b|\b(?:owner|manager|viewer)s? only\b|\b(?:needs?|requires?) (?:the |a |an )?"
+    r"(?:\w+ )?(?:role|permission)\b|\bcan(?:not|['’]t| not) (?:cancel|close|escape|dismiss)\b"
+    r"|\brbac\.\w+|\bunder a lock\b|\bcmp-079\b|\brbacgate\b"
+    r"|\b(?:doesn['’]t|does not|won['’]t|will not|cannot|can['’]t) (?:respond|react|work|act)\b"
+    r"|\bstops? (?:responding|working)\b"
 )
 GATE_RE = "(?i)" + GATE_WORDS
-NEGATORS = {"never", "not", "no", "nor", "without", "isn't", "aren't", "isn’t", "aren’t"}
-NEGATION_WINDOW = 4
-# The environment words (no environment travels into an import: SCR-026 frames and §3-§5).
-ENV_RE = r"(?i:\benvironments?\b|\btestnet\b|\bmainnet\b|\bdemo\b)|\bLIVE\b|\bLive\b(?! region)"
-ENV_ALLOWED = ("environment binding is never imported",)
-# Untrusted strings rendered as anything but text (S12).
+# The negators, and what ends a negator's reach inside its clause.
+NEGATOR_RE = (
+    r"(?i)\b(?:never|not|no|nor|none|nothing|nowhere|neither|without|isn['’]t|aren['’]t|doesn['’]t"
+    r"|don['’]t|won['’]t|wasn['’]t|weren['’]t|hasn['’]t|haven['’]t|rather than|instead of)\b"
+)
+# A negator reaches this many words; a gated or claimed word further on stands on its own.
+NEGATION_REACH = 40
+CLAUSE_SPLIT_RE = r"[;|]|:(?=\s)| — | – |(?<=[.!?)])\s+(?=[A-Z0-9`*\"(\[])|(?<=[.!?])\s+(?=[a-z])"
+# Words a capital never starts a new clause after: an article, a preposition, a conjunction, a verb.
+NO_BREAK_BEFORE = (
+    "a",
+    "an",
+    "the",
+    "no",
+    "its",
+    "their",
+    "on",
+    "to",
+    "of",
+    "in",
+    "at",
+    "by",
+    "for",
+    "with",
+    "and",
+    "or",
+    "nor",
+    "than",
+    "as",
+    "is",
+    "are",
+    "was",
+    "were",
+    "be",
+    "never",
+    "not",
+    "from",
+    "into",
+    "onto",
+)
+# A negator's reach ends too where a new subject and verb start mid-clause without punctuation
+# ("... beyond the item's name Cancel is disabled"); a gated word still pairs with its exit
+# across it.
+NEG_SPLIT_RE = (
+    CLAUSE_SPLIT_RE
+    + r"|(?<=[a-z0-9’')`/] )"
+    + "".join(rf"(?<!\b{w} )" for w in NO_BREAK_BEFORE)
+    + r"(?=[A-Z][a-z]*(?: \S+){0,5}? (?:is|are|stays?|has|have|can|cannot|was|were"
+    r"|keeps?|takes?|gets?)\b)"
+)
+CONTRAST_RE = (
+    r"(?i)\b(?:but|yet|although|though|except|unless|whereas|while|however|only|when|whenever|if"
+    r"|once|because|since)\b"
+    r"|\b(?:and|or)\s+(?:\w+\s+){0,3}?(?:is|are|was|were|stays?|becomes?|turns?|gets?|has|have"
+    r"|can|cannot|can['’]t|will|keeps?|shows?|takes?|goes|lands?|opens?|moves?)\b"
+    r"|,\s+(?:then\s+)?(?:the|a|an|its|their|this|that|each|every|it|they)\s+(?:\w+\s+){0,2}?"
+    r"(?:is|are|was|were|stays?|becomes?|turns?|takes?|has|gets?|keeps?|shows?|opens?|lands?)\b"
+)
+# The environment words (no environment travels into an import), and the spec's own uses of them
+# that name no environment: an accessibility live region, a live (undeleted) record, a statement
+# that the binding is never imported. Each allowance is a whole phrase, blanked before the read.
+ENV_RE = (
+    r"(?i)\b(?:demo|live|testnet|mainnet|environments?|sandbox|paper[- ](?:trading|account|mode)"
+    r"|production (?:mode|account|environment)|real[- ](?:money|account))\b"
+)
+ENV_OK_RE = (r"`live(?:=\"[^\"`]*\")?`", r"`?aria-live`?", r"`politeness=\"polite\"`")
+ENV_OK = (
+    "environment binding is never imported",
+    "staying live",
+    "with its environment badge",
+    "the account and environment legs never apply",
+    "the environment binding and the alert and rule bindings",
+    "live regions",
+    "live region",
+    "still-live",
+    "still live",
+    "stays live",
+    "every live preset",
+    "whole live preset library",
+)
+# Untrusted strings rendered as anything but text (S12): a markup or link stem in a clause that
+# names a string from the file.
 MARKUP_RE = (
-    r"(?i)\bmarkup\b|\bmarkdown\b|\bhtml\b|innerhtml|dangerouslysetinnerhtml|\bhref\b"
-    r"|\bhyperlinks?\b|\brich text\b|\bclickable\b|\bas a link\b|\ba link to\b|\binterpreted\b"
+    r"(?i)\b(?:mark-?up|markdown|html|innerhtml|dangerouslysetinnerhtml|href|hyper-?links?|links?"
+    r"|linked|linking|linkif\w*|autolink\w*|anchors?|clickable|tappable|rich[- ]text"
+    r"|formatt(?:ed|ing)|bold|italics?|emphas\w*|interpret(?:s|ed|ing)?|navigat\w*|made live)\b"
+    r"|\bopens? on (?:click|tap)\b|\bfollows? the (?:link|url|address)\b"
 )
-# The sharing claim no design may make (BQ-2 RULED); split so this file never states it.
-SHARE_RE = r"(?i)\bsafe[\s-]+to[\s-]+sh" + r"are\b"
-# A claim that something exists before the send (S10).
+MARKUP_OK = ("bidirectional-formatting", "anchor to rule rows", "anchors its entries")
+FILE_SUBJECT_RE = (
+    r"(?i)\b(?:names?|keys?|labels?|strings?|values?|kinds?|symbols?|items?|cells?|captions?)\b"
+    r"|\bfrom the file\b|\bfile's name\b"
+)
+# The sharing claim no design may make (BQ-2 RULED) and its paraphrases; split so this file never
+# states it.
+SHARE_RE = (
+    r"(?i)\bsafe\w*\W{1,3}(?:to|for)\W{1,3}(?:be\W{1,3})?sh" + r"ar\w*"
+    r"|\bsh" + r"ar\w*\W{1,3}(?:it\W{1,3})?(?:safe(?:ly)?|freely|with anyone|without (?:a |any )?"
+    r"(?:risk|worry|thought|care))\b|\bsh" + r"areable\b|\bsh" + r"are-?safe\b"
+    r"|\b(?:ok|okay|fine|free)\W{1,3}to\W{1,3}(?:sh" + r"are|pass (?:it )?on|send (?:it )?"
+    r"(?:on|anywhere))\b|\bsafe(?:ly)?\W{1,3}(?:to|for)\W{1,3}(?:send|pass on|hand on"
+    r"|distribute|post)\b"
+)
+# A claim that something exists before the send (S10), and that something of a refused file is
+# kept (S11). The control names are blanked first, so "Import as new workspace opens" is no claim.
+CONTROL_NAMES = (
+    "Import as new workspace",
+    "Import anyway",
+    "Import…",
+    "Export…",
+    "Choose file…",
+    "Choose another file",
+    "Download file",
+    "Copy report",
+    "Try again",
+    "New workspace…",
+    "Open workspace…",
+)
+NOT_NEG = r"(?:(?!(?:never|not|no|nor|nowhere|no longer)\b)\w+\s+)?"
+POST_NEG = r"(?!\s+(?:nowhere|never|not|no longer)\b)"
 CREATE_RE = (
-    r"(?i)\b(?:was|were|has been|have been|is now|are now|already)\s+(?:created|imported|saved"
-    r"|added)\b|\b(?:workspace|layout|pane)s?\s+(?:now\s+)?exists?\b"
+    r"(?i)\b(?:is|are|was|were|has been|have been|gets?|got|being|already|now|first|still)\s+"
+    + NOT_NEG
+    + r"(?:created|saved|stored|persisted|written|added|imported|cached|uploaded|made)\b"
+    + POST_NEG
+    + r"|\b(?:workspaces?|layouts?|panes?|tabs?|drafts?|cop(?:y|ies))\s+(?:now\s+|already\s+)?"
+    r"(?:exists?|appears?|opens?)\b|\bdraft workspace\b|\btemporary workspace\b"
+    r"|\bin the background\b"
 )
-# A lock, a T2 or a leg (export frames, S15; rejection and refusal frames, S6).
+KEEP_RE = (
+    r"(?i)\b(?:is|are|was|were|has been|have been|stays?|remains?|gets?|got|being)\s+"
+    + NOT_NEG
+    + r"(?:kept|saved|stored|retained|imported|added|cached|created|persisted|applied)\b"
+    + POST_NEG
+    + r"|\bkeeps?\s+(?:the\s+|its\s+|a\s+)?(?:valid\s+|parsed\s+|checked\s+|passed\s+)?(?:layouts?"
+    r"|panels?|panes?|parts?|document|rest|draft)\b|\bretain\w*|\bpartial(?:ly)?\b"
+    r"|\bthe valid (?:parts?|layouts?"
+    r"|panels?|panes?)\b|\bbrought in\b|\bstays? in your workspaces\b|\bcontinues?\s+with\b"
+    r"|\bbefore the check failed\b|\bthe layouts that passed\b|\bwhat passed\b"
+    r"|\bkept in (?:the browser's storage|local storage|a cache|the cache)\b"
+)
+# A temporal clause around a create or keep word states when, never that it happened early.
+TEMPORAL_RE = r"(?i)\b(?:when|whenever|once|after|until|as soon as)\b"
+# An import or apply verb offered on a rejection or a refusal (S5).
+IMPORT_VERB_RE = (
+    r"(?i)\bimport(?:s|ing)?\s+(?:it\s+|them\s+|this file\s+|the file\s+)?(?:as new workspace"
+    r"|anyway|partially|selected|valid|what|the valid|the rest|the readable|all|its|the (?:layouts?"
+    r"|panels?|parts?)|this|that|regardless|now)\b|\[\s*import\b|\bimport button\b"
+    r"|\bbutton:\s*import\b|\bapply\w*|\bcontinue[sd]?\s+(?:anyway|with|regardless)\b|\bproceed\w*"
+    r"|\bgo(?:es)? on\s+(?:regardless|anyway|with)\b|\bbring(?:s|ing)?\s+in\b|\bbrought in\b"
+    r"|\bskip(?:s|ping)?\s+(?:the rest|what)\b|\btry (?:it )?anyway\b"
+    r"|\b(?:be|is|are)\s+(?:still\s+)?imported\s+(?:anyway|regardless|partially|still)\b"
+    r"|\bcan (?:still )?be imported\b"
+)
+# The import's verbs where they live: on the preview and its budget confirm.
+VERB_HOME_RE = r"(?i)\bpreview\b|\bbudget\b|\bconfirm\b"
+# A lock, a T2 or a leg, or a gated look (S6 on a rejection, S15 on the export, A1's validity).
 LOCK_WORDS = (
-    r"\bt2\b|\block(?:ed|s)?\b|\bpadlock\b|\bcmp-079\b|\brbacgate\b|`rbac\.[a-z_]+`"
-    r"|\bgated\b|\blegs?:"
+    r"\bt2\b|\block(?:s|ed|ing)?\b|\bpadlock\w*|\bcmp-079\b|\brbacgate\b|\brbac\.\w+|\bgated\b"
+    r"|\blegs?:"
 )
 LOCK_RE = "(?i)" + LOCK_WORDS + "|" + GATE_WORDS
-# An import or apply verb outside the footer of a rejection or refusal frame (S5).
-IMPORT_VERB_RE = (
-    r"(?i)\bimport (?:as new workspace|anyway|partially|selected|valid|what)\b|\[\s*import\b"
-    r"|\bapply(?: anyway| partially| the valid parts?)?\b"
+# A remap of an account binding (S4; BQ-3 RULED: dropped and listed, never remapped); the one true
+# remap, the Positions pane, is the only clause where a remap word may meet an account word.
+REMAP_RE = (
+    r"(?i)\bre-?map(?:s|ped|ping)?\b|\bre-?bind(?:s|ing)?\b|\bre-?bound\b"
+    r"|\b(?:map|maps|mapped|mapping)\s+(?:on)?to\b|\bswap(?:s|ped|ping)?\s+(?:for|to|with)\b"
+    r"|\btranslat(?:e|es|ed|ing)\s+(?:in)?to\b"
 )
-# A remap of an account binding in prose (S4; BQ-3 RULED: dropped and listed, never remapped).
-REMAP_RE = r"(?i)\bremap(?:s|ped|ping)?\b"
 ACCOUNT_RE = (
-    r"(?i)\baccount (?:filters?|bindings?|references?|ids?)\b|\baccount-scoped\b"
-    r"|\bdefault account\b"
+    r"(?i)\baccounts?\b|\baccount-scoped\b|\bbindings?\b|\bfilters?\b|\byours\b|\byour own\b"
 )
+TRUE_REMAP_RE = r"\bthe Positions pane\b"
 STEPS = ("size", "parse", "schema", "version", "registry")
-# An account named in an import surface (S3, beyond the fixture's two labels): "account" and a
-# capitalised name or an id right after it.
-FOREIGN_RE = r"\b[Aa]ccounts?\s+(?!IDs?\b)[`\"'(]?[A-Z0-9][\w-]*"
-# The drop zone made a Tab stop anywhere in prose or a free clause (S19).
-DROP_RE = r"(?i)\bdrop (?:zone|target)\b"
+# A step named in a chain or a list (S9): its word, read outside code spans.
+STEP_WORDS = (
+    ("size", r"(?i)\bsize\b(?![.=\-])"),
+    ("parse", r"(?i)\bparse\b(?! error)|\bparse depth\b|\bnesting\b|\bnode count\b|\bdepth\b"),
+    ("schema", r"(?i)\bschema\b(?![_.])"),
+    ("version", r"(?i)\bversion\b(?! \d|s\b| refusal)"),
+    ("registry", r"(?i)\bregistry\b"),
+)
+ORDER_CUE_RE = (
+    r"→|->|(?<![<>=-])>(?![=>])|(?i:\bthen\b|\bfirst\b|\bbefore\b|\bafter\b|\border\b"
+    r"|\blegs?\b|\botherwise\b)"
+)
+# The legs (S17), read in a chain or a sentence that orders them.
+LEG_WORDS = (
+    ("view_as", r"(?i)\brbac\.view_as\b|(?<!entry-)\bview-as\b|\bviewing as\b"),
+    ("permission", r"(?i)\brbac\.permission\b|\bthe permission\b|\bpermission\b(?! reason)"),
+    ("limit", r"(?i)\bworkspace\.limit\.count\b|\bthe limit\b(?! leg)|\bthe state\b"),
+)
+# A leg named first or view-as named late, in a sentence about the legs; the permission's reason
+# shown while viewing as.
+LEG_FIRST_RE = (
+    r"(?i)\b(?:permission|limit|state)(?: leg)?(?: is read| runs| comes)? first\b"
+    r"|\bview-as(?: leg)? (?:is |comes |runs )?(?:the )?(?:second|last|third)\b"
+)
+LEG_CTX_RE = r"(?i)\blegs?\b|\bread\b|\bT2\b|\border\b"
+LEG_WRONG_RE = (
+    r"(?i)\bpermission reason\b[^.;]{0,40}\bwhile viewing as\b"
+    r"|\bwhile viewing as\b[^.;]{0,40}\bpermission reason\b"
+)
+# The drop zone made a Tab stop (S19).
+DROP_RE = (
+    r"(?i)\bdrop[- ]?(?:zone|area|target|box|region)\b|\bdropzone\b|\bthe zone\b|\bdashed (?:box"
+    r"|area|edge)\b"
+)
 TAB_STOP_RE = (
-    r"(?i)\btab stop\b|\bfocusable\b|\btabindex\b|\breceives focus\b|\btakes focus\b"
-    r"|\bin the tab order\b|\btab reaches\b"
+    r"(?i)\btab[- ]?stops?\b|\bfocusable\b|\btabindex\b|\b(?:receives?|takes?|gets?|holds?)\s+"
+    r"(?:keyboard\s+)?focus\b|\bin the tab order\b|\btab (?:reaches|lands on|stops on|moves to"
+    r"|goes to)\b|\btabbed to\b|\btabbable\b|\bfocus order\b|\bkeyboard focus\b"
+    r"|\brole (?:of )?\"?button\b|\benter on the zone\b|\boperable\b"
 )
-# An app version in a comparison (S8, prose): the clause compares and names an app version.
-APP_VERSION_RE = r"(?i)\bapp ?version\b|\bappversion\b|\bapp_version\b"
-# A limit stated in prose (S18): the phrase, the number and its unit -> the fact it must equal.
-LIMIT_PHRASE_RE = (
-    r"(?i)\b(?:at most|up to|limit is|limit of|cap of|capped at|no more than|maximum of)\s+"
-    r"(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(MB|levels?|values|nodes|layouts|panes|panels"
-    r"|workspaces|indicator presets|presets)\b"
+# An app version in a comparison (S8).
+APP_VERSION_RE = (
+    r"(?i)\bapp(?:lication)?[ _-]?version\b|\bappversion\b|\bbuild (?:number|version)\b"
+    r"|\brelease (?:number|version)\b|\bexporting build\b|\bthe app's version\b|\brelease\b"
+    r"|\bthe file['’]s version\b|\b(?:with|against) the app['’]s\b"
 )
-LIMIT_UNITS = {
-    "mb": "size_mb",
+COMPARE_RE = r"(?i)\bcompar\w*|\bagainst\b|\bversus\b|\bvs\.?\b|\bnewer\b|\bolder\b"
+# The server's re-check denied or replaced (S14).
+RECHECK_RE = (
+    r"(?i)\b(?:the server|it)\s+(?:does not|doesn['’]t|never|won['’]t|will not|no longer|need not"
+    r"|needn['’]t)\s+(?:re-?check|check|validate|verify)\w*|\b(?:never|not|no longer)\s+"
+    r"re-?checked\b|\bchecks?\s+(?:in the browser\s+)?(?:are|is)\s+(?:final|enough|sufficient"
+    r"|authoritative)\b|\btrusts?\s+(?:the|this)\s+(?:browser|client|check)\w*"
+    r"|\bthe server\s+skips\b|\binstead of the server\b|\b(?:guard|check)s?\b[^.;:]{0,40}?"
+    r"\breplaces?\s+the server|\bthe server\s+(?:accepts?|takes?)\s+(?:what|whatever)\s+the"
+    r"\s+(?:browser|client)\b|\brel(?:y|ies)\s+on\s+the\s+(?:browser|client)"
+)
+# A string from the file shown past its cap (S13).
+UNCAPPED_RE = (
+    r"(?i)\b(?:shown|printed|rendered|displayed|spoken|copied|named)\s+(?:in full|whole(?! or not)"
+    r"|uncapped|untruncated|unshortened|at any length|without (?:a |any )?(?:cap|limit|ellipsis))\b"
+)
+UNCAPPED_BARE_RE = (
+    r"(?i)\b(?:is|are) never (?:shortened|truncated|capped)\b|\bno cap\b|\buncapped\b"
+)
+# Raw file content echoed, logged, cached or sent before the import (Condition 1).
+RAW_RE = (
+    r"(?i)\b(?:quotes?|echo(?:es|ed)?|repeats?|reproduces?)\s+(?:the\s+)?(?:offending\s+|raw\s+"
+    r"|original\s+)?(?:line|lines|text|content|contents|source|json)\b"
+    r"|\b(?:server|parser)['’]s (?:own )?(?:error|message|words|sentence|text)\s+(?:is|are)\s+"
+    r"(?:shown|displayed|printed|quoted)\b|\b(?:is|are|gets?)\s+(?:uploaded|logged|cached|echoed)\b"
+    r"|\buploaded to the server\b|\b(?:is|are)\s+sent to (?:the server|analytics|support)\b"
+)
+# A file that grants the exporter anything (Condition 1's privilege hazard).
+PRIVILEGE_RE = (
+    r"(?i)\b(?:owned by|shared with|belongs? to|access to|grants?|keeps?)\s+(?:the\s+)?"
+    r"exporter(?:['’]s)?\b|\bthe exporter['’]s (?:pin|accounts?|access|role|permissions?)\b"
+    r"|\bcarr(?:y|ies)\s+(?:an?\s+|the\s+|your\s+|their\s+)?(?:accounts?\b(?![\s-](?:filter|scoped))"
+    r"|credentials|api keys?"
+    r"|tokens?|(?:account\s+)?bindings?|account ids?)\b"
+)
+# A claim this text-first spec cannot make (A4): a sign-off, a session, a lane as authority.
+HONESTY_RE = (
+    r"(?i)\bapproved\b|\bsigned off\b|\bsign-off (?:is |was )?(?:given|recorded|done)\b"
+    r"|\bparticipants?\b|\bsession with\b|\bwe (?:measured|tested|observed|found)\b"
+    r"|\busers? (?:said|found|reported|preferred)\b|\blanes?\b|\b(?:hcl|hpe)-worker\b"
+)
+HONESTY_OK = (
+    "the copy signed off on the trust claims",
+    "the CDO sign-off recorded",
+    "owner's approved comment",
+)
+# T2 restated outside §6 (A1: stated once).
+T2_RESTATE_RE = (
+    r"(?i)\block(?: glyph)? leads?\b|\bleading the label\b|\bsecond line\b|\bnative role\b"
+    r"|\bin the tab order\b|\baria-disabled\b|\bdisabled with a visible reason\b"
+)
+# A focus claim (S20): the control a focus statement names.
+FOCUS_CONTROLS = (
+    r"Cancel|Choose another file|Choose file…|Close|Import as new workspace|Import anyway|Try again"
+    r"|Download file|Copy report|the title|the heading|the message|×"
+)
+FOCUS_CLAIM_RE = (
+    rf"(?i)\bfocus(?:es|ed)?\s+(?:\w+\s+){{0,3}}?(?:on|to|onto)\s+(?P<a>{FOCUS_CONTROLS})"
+    rf"|(?P<b>{FOCUS_CONTROLS})\s*,?\s+(?:the\s+\w+,\s+)?(?:is\s+)?"
+    rf"(?:focused|takes focus|gets focus"
+    rf"|has focus|holds focus)\b|\btab\s+(?:starts|begins)\s+(?:on|at)\s+(?P<c>{FOCUS_CONTROLS})"
+)
+REJECTION_CTX_RE = (
+    r"(?i)\breject(?:ion|ions|ed)\b|\brefusals?\b|\brefused-\w+|\brejected-\w+"
+    r"|\bnothing was imported\b"
+)
+# Where another control may take focus on a refusal: the clause names its frame.
+FOCUS_EXCEPT = {
+    "cancel": r"(?i)\blimit\b|\bbudget\b|\bconfirm\b|\bexport",
+    "close": r"(?i)\bunanswered\b|\bunconfirmed\b|\bnever came\b|\bcreating\b|\breport\b|\bexport",
+    "choose file…": r"(?i)\bpass\b|\bpreview\b|\bvalidating\b|\bpick",
+    "import as new workspace": r"(?i)\bcreating\b|\bleg\b|\bbudget\b|\bconfirm\b|\bpreview\b",
+}
+# Renderings the text quotes beside the fixture's: a file the owner renamed (§2.4) and the
+# alternative way on offered to the owner for the newer refusal (D09-Q7).
+QUOTE_EXAMPLES = (
+    "Exported Scalping as desk-copy.json.",
+    "Export it again from an app that writes format version 1, or update this app.",
+)
+# A dialog control named beside a lock or a gated look (A1 in prose: a sentence about the
+# control, read near it) and the T2 statements that name their leg, role or section.
+CONTROL_WORDS = (
+    "|".join(re.escape(c) for c in CONTROL_NAMES if c != "Export…")
+    + r"|\bthe (?:dialog's )?(?:primary|verb|import verb)\b"
+    + r"|\bimport(?= (?:is|stays|remains|can|cannot|can['’]t|becomes|turns|waits)\b)"
+)
+T2_CONTEXT_RE = (
+    r"(?i)(?=.*(?:\bT2\b|\block(?:ed)?\b|CMP-079|RbacGate))(?=.*(?:rbac\.|Viewer|view-as|viewing as"
+    r"|§6|\blegs?\b|\brole\b|workspaces:write|permission|workspace\.limit\.count|\blimit\b"
+    r"|SCR-026/entry-|import-leg-lost))"
+)
+EXPORT_STEMS = GATE_WORDS + r"|\bt2\b|\block(?:s|ed|ing)?\b|\bworkspaces:write\b|\blegs?\b"
+# Numbers quoted from a draft or a checklist, each a C-row's evidence (S18 allows them by name).
+QUOTED_NUMBERS = {
+    "16.7 ms": "BQ-6's draft (D09-C15)",
+    "44 px": "BQ-13's draft (D09-C19)",
+    "2 panels": "`14:636`'s checklist item, quoted (D09-C7)",
+}
+# The base zoom a 200 % frame is measured against.
+BASE_ZOOM = 100
+# The Included list names only what the bundle holds (BQ-2 RULED): nothing the Excluded list
+# names, and no density, is ever said to be in it.
+INCLUDED_CTX_RE = r"(?i)\bincluded list\b|\bthe file includes\b|\bincluded item\b"
+TICKET_RE = r"(?i)\bticket\b"
+INCLUDED_VERB_RE = r"\bnames?\b|\blists?\b|\bincludes?\b|\bholds?\b|\bcarries\b|\bshows?\b"
+INCLUDED_EXTRA_RE = (
+    r"(?i)\bdensit\w*|\bapi keys?\b|\bcredentials\b|\btokens?\b|\benvironment\b|\balert\b"
+    r"|\bp&l\b|\bpositions or orders\b|\baccount ids?\b|\baccount bindings?\b"
+)
+# The sentences a frame's facts are restated in, held word for word where they stand (M13).
+REQUIRED = (
+    ("5", "Both refusals name both numbers in the words the user reads", "versions"),
+    ("7", "every rejection lists Choose another file among its exits", "exits-a3"),
+)
+# A sentence that speaks after the send, where a workspace may exist; a create claim anywhere else
+# is a claim that something exists before Import as new workspace (S10).
+POST_SEND_RE = (
+    r"(?i)\bafter the send\b|\bonce the file is sent\b|\bwhen the import succeeds\b|\bsucceeded\b"
+    r"|\bthe server (?:creates|has created|gave|makes)\b|\bon success\b"
+    r"|\bonce the workspace exists\b"
+    r"|\bsends the (?:checked )?file\b|\bin one request\b|\beverything or nothing\b"
+    r"|\bone transaction\b|\bsuccessful import\b|\bthe new workspace opens\b|\bthe report\b"
+    r"|\bafter (?:it|the import) (?:is|was) sent\b|\bthe import (?:goes on|finishes)\b"
+    r"|\bmay have happened\b"
+    r"|\bwhether\b"
+)
+# The account names the importer cannot see (S3): the fixture's labels however spaced, an id
+# shape, an account named after "account", or a proper name a filter or a binding is said to carry.
+FOREIGN_RES = (
+    r"(?i)\b(?:acct|a/c)\b",
+    r"(?i)\buid\b\W{0,3}\d",
+    r"(?i)\baccount\s*(?:id|no\.?|number|#)\s*[:#]?\s*\d",
+    r"(?i)\b(?:sub-?)?accounts?\b\s+(?:called|named|labell?ed|titled)\s+\S",
+    r"\b(?:[Ss]ub-?)?[Aa]ccounts?\s*[:(]?\s*[\"'`]?(?!IDs?\b)[A-Z0-9][\w-]*",
+)
+FOREIGN_NAMED_RE = (
+    r"\b(?:named|called|naming|labell?ed|titled)\s+[\"'`]?(?P<n>[A-Z][\w-]*(?:[ -][A-Z0-9][\w-]*)*)"
+)
+FOREIGN_CTX_RE = r"(?i)\bfilters?\b|\baccounts?\b|\bbindings?\b|\bdesks?\b|\bportfolios?\b"
+PROPER_OK = {"Scalping", "Wall", "Positions", "Import", "Export", "Layout", "Order-flow"}
+
+
+NUM_UNIT_RE = (
+    r"(?<![\w.#/-])(\d{1,3}(?:[,   ]\d{3})+|\d+(?:\.\d+)?)\s*(MB|MiB|KiB|ms|px|%|fps|s"
+    r"|levels?|values|nodes|layouts?|panes?|panels?|workspaces?|indicator presets?|presets?"
+    r"|characters?|code points)(?![\w])"
+)
+LIMIT_LEAD_RE = (
+    r"(?i)(?:at most|up to|limit(?: is| of|:)|cap(?:ped)?(?: is| at| of|:)|no more than"
+    r"|maximum(?: of)?|max|holds?|over|more than|deeper than|within|beyond|exceeds?)\s*"
+    r"(?:a |an |the )?$"
+)
+LIMIT_TAIL_RE = r"(?i)^\s*(?:limit|cap|maximum|max)\b"
+UNIT_FAMILY = {
+    "mb": "mb",
+    "mib": "mib",
+    "kib": "kib",
+    "ms": "ms",
+    "px": "px",
+    "%": "pct",
+    "fps": "fps",
+    "s": "s",
     "level": "depth",
     "levels": "depth",
     "values": "nodes",
     "nodes": "nodes",
-    "layouts": "layouts_max",
-    "panes": "panes_max",
-    "panels": "panes_max",
-    "workspaces": "workspaces_max",
-    "indicator presets": "presets_max",
-    "presets": "presets_max",
+    "layout": "layouts",
+    "layouts": "layouts",
+    "pane": "panes",
+    "panes": "panes",
+    "panel": "panes",
+    "panels": "panes",
+    "workspace": "workspaces",
+    "workspaces": "workspaces",
+    "indicator preset": "presets",
+    "indicator presets": "presets",
+    "preset": "presets",
+    "presets": "presets",
+    "character": "chars",
+    "characters": "chars",
+    "code points": "chars",
 }
+# The show-delay BQ-9 rules for the import (its default, ruled as proposed; PROPOSED for the
+# export).
+SHOW_DELAY_MS = 150
+
+
+NUMBER_SETS: dict[int, tuple[dict[str, set[float]], dict[str, set[float]]]] = {}
+
+
 # key | string | the doc that holds it verbatim, in quotes (E09-D09 §3.1, E15-D02 §8.1, E15-D03).
 REASONS_TABLE = """
 rbac.view_as | Read-only while viewing as {user}. | E09D09
@@ -935,6 +1364,7 @@ STATES_TABLE = """
 24 | import: presets over their limits | SCR-026/rejected-malformed, SCR-026/refused-server
 25 | import: done, the report | SCR-026/report
 26 | import: cancelled | SCR-026/cancelled
+27 | import: the send's answer never came | SCR-026/refused-unconfirmed
 """
 # doc | line | frames — the upstream lines the inventory reconciles with; each line's needle is its
 # CITED_TABLE row and every frame it names is in KIND (EXEMPT `reconcile`: a tool-table check).
@@ -963,6 +1393,7 @@ DEVIATIONS = {
     "the branch": "`design/e15-workspace-import-export-hifi`",
     "the densities": "densities",
     "the symbol cap": "BQ-10",
+    "the intervals": "intervals",
 }
 AC_IDS = (
     [f"AC-{i}" for i in range(1, 7)]
@@ -970,37 +1401,6 @@ AC_IDS = (
     + [f"DoD-{i}" for i in range(1, 12)]
 )
 TRACE_STATUS = ("done", "heuristic-only", "routed", "text pending")
-# The ruled outcomes each BQ row keeps (the orchestrator's ruling, RULING).
-BQ_TERMS = {
-    "BQ-1": ("`docs/design/E15/E15-D09.md`", "no `15` edit", "two content-only `14` pointer lines"),
-    "BQ-2": (EXCLUDED, "is never written anywhere", "owner approval pending (#2701)"),
-    "BQ-3": ("dropped and listed, never remapped", "no account the importer cannot see is ever"),
-    "BQ-4": ("Migrated from format version 1 to 2.", "`schema_version`, never an app version"),
-    "BQ-5": (
-        "size → parse depth / node count → schema → version → per-pane registry → preview",
-        "nothing is created before Import as new workspace",
-    ),
-    "BQ-6": ("Import anyway",),
-    "BQ-7": ("never gated (a read)",),
-    "BQ-8": ("`<slug>.cv-workspace-v<schema_version>.json`",),
-    "BQ-9": ("`lg`", "not a Tab stop"),
-    "BQ-10": ("Item · Type · Action · Reason", "drops and remaps first", "exactly three Action"),
-    "BQ-11": ("no Import verb", "Choose another file focused"),
-    "BQ-12": ('`role="region"`', "Copy report"),
-    "BQ-13": ("Choose file… is a real `<button>`",),
-    "BQ-14": ("view-as first", "Export… is never gated"),
-    "BQ-15": ("ten boards", "at most three light twins"),
-    "BQ-16": ("D09-G1",),
-}
-CONDITION_TERMS = {
-    "Condition 1": (
-        "every string from the file is untrusted",
-        "the server re-checks size, depth, nodes, schema and version",
-    ),
-    "Condition 2": ("view-as first", "Export… is never gated"),
-    "Condition 3": ("case-insensitive vocabulary lists", "whole clauses"),
-    "Condition 4": ("Cancel, Esc, ×, Close and Choose another file are never gated",),
-}
 # The standing additions, stated in the header (A3 whole), and the written sections' fixed
 # sentences: T2 stated once (§6), the exits sentence (§7).
 A3_STANDING = (
@@ -1086,79 +1486,1309 @@ SUMMARY_MAX = 10
 MARKER_RE = r"<!-- audit:([A-Za-z0-9_.-]+)=(\S+) -->"
 MARKER_LOOSE_RE = r"<!--\s*audit:[^\n]*?(?:-->|$)"
 NUMBER_BEFORE_RE = r"\(?(\d{1,3}(?:[,\u202f\u00a0]\d{3})+|\d[\d.:]*)\)?"
-# key count — every marker key the spec carries and how many times at least (a marker deleted is a
-# FAIL); a new marker may be added freely, then pinned here.
+# key count — every marker key the spec carries and exactly how many times (M8: a marker
+# deleted or added unpinned is a FAIL).
+# --- held whole: generated from the spec, then reviewed; a change here is a change there ---
+PRODUCERS = {
+    "SCR-025/export-entry": (
+        "Export… opened from SCR-025's Share section (E15-D08, PENDING by name), the tab's "
+        "`[⋯]` (`D03:384`) or the rail's workspace menu (`D02:511`), on a stored workspace"
+    ),
+    "SCR-025/export-unavailable": (
+        "the viewer's unsaved default (`D03:583`, `D03:625`), or a workspace with no stored "
+        "copy (`D03:384`)"
+    ),
+    "SCR-025/export-preparing": (
+        "Export… chosen on the stored workspace Scalping; `exportWorkspace` called "
+        "(`22:12676`), its bundle not back yet"
+    ),
+    "SCR-025/export-preview": (
+        "the bundle arrived and passed the check of §2.3: the preview is built from it and "
+        "Download file saves that same bundle (`D02:511`)"
+    ),
+    "SCR-025/export-failed": (
+        "`exportWorkspace` answered `store_unavailable` or nothing (`D02:511`, `FL:139`); the "
+        "same frame for a `403` or `404`, for a bundle the check of §2.3 declines and for a "
+        "failed write (§2.4)"
+    ),
+    "SCR-025/export-done": ("the save sheet returned a file and its write ended, whole (§2.4)"),
+    "SCR-025/export-cancelled": ("the OS save sheet closed without saving (`FL:146`)"),
+    "SCR-025/export-reflow-200": ("the export dialog at 200 % zoom (`05:131`)"),
+    "SCR-026/entry": (
+        'an Owner or Manager session under the workspace limit opens "+" or the rail\'s '
+        "workspace menu (`D03:365`; the rail's item is D09-A22's)"
+    ),
+    "SCR-026/entry-view-as": (
+        'a session viewing as alex opens "+" or the rail\'s workspace menu (`D02:519`, '
+        "`D03:564`; the rail's item, D09-A22)"
+    ),
+    "SCR-026/entry-permission": (
+        'a Viewer session opens "+" or the rail\'s workspace menu (`04:1139`, `D03:564`; the '
+        "rail's item, D09-A22)"
+    ),
+    "SCR-026/entry-limit": (
+        'an Owner session at the workspace limit opens "+" or the rail\'s workspace menu '
+        "(`22:8525`, `D03:564`; the rail's item, D09-A22)"
+    ),
+    "SCR-026/pick": ("Import… chosen: the dialog opens empty (`D02:513`)"),
+    "SCR-026/drag-over": ("one .json file dragged over the zone"),
+    "SCR-026/drag-over-rejected": (
+        "two files, or a file whose type is not JSON, dragged over the zone"
+    ),
+    "SCR-026/validating": ("`scalping.json` chosen: the worker checks it (`D02:515`, `14:633`)"),
+    "SCR-026/creating": (
+        "Import as new workspace pressed on a valid preview: the file is sent once"
+    ),
+    "SCR-026/import-leg-lost": (
+        "the session lost its permission while the dialog was open (`D02:645`)"
+    ),
+    "SCR-026/cancelled": ("Cancel, `Esc` or × before the send (`FL:162`)"),
+    "SCR-026/compact": ("the import dialog at the compact density"),
+    "SCR-026/reflow-200": ("the import dialog at 200 % zoom (`05:131`)"),
+    "SCR-026/preview": ("`scalping.json` passed every step: §4.2 is its table (`D02:516`)"),
+    "SCR-026/preview-migrated": (
+        "a format version 1 file opened by a later app that reads format version 2 (E15-S07 "
+        "migrates it forward, `BL:1111`)"
+    ),
+    "SCR-026/preview-over-budget": (
+        "`wall.json` passed every step and the layout that opens, Wall, estimates over the "
+        "frame budget (`D02:133`)"
+    ),
+    "SCR-026/budget-confirm": (
+        "Import as new workspace pressed on `SCR-026/preview-over-budget` (`D02:292`, `D03:629`)"
+    ),
+    "SCR-026/report": (
+        "the import succeeded: the new workspace opened in a tab behind the dialog (`D02:520`)"
+    ),
+    "SCR-026/rejected-version-newer": (
+        "a file whose `schema_version` is newer than this app reads (`D02:517`, `11:2871`)"
+    ),
+    "SCR-026/rejected-version-older": (
+        "a file below the oldest format version this app reads (BQ-4)"
+    ),
+    "SCR-026/rejected-malformed": (
+        "a file missing a required key (`D02:518`); its variants: a parse error, a layout over "
+        "the pane limit, too many layouts, too many indicator presets"
+    ),
+    "SCR-026/rejected-oversized": ("a file over the size cap (`D02:518`, `BL:1136`)"),
+    "SCR-026/rejected-wrong-type": (
+        "`report.csv` dropped: the picker filters by type, a drop does not"
+    ),
+    "SCR-026/rejected-nodes": (
+        "a file nested deeper than the depth limit (`22:19626`); over the node count is its "
+        "variant (`BL:1136`)"
+    ),
+    "SCR-026/refused-limit": (
+        "another window reached the workspace limit first: the send answered `409 "
+        "limit_reached` (`FL:164`)"
+    ),
+    "SCR-026/refused-server": (
+        "the server's own re-check refused the file at the send (`422 validation_failed`)"
+    ),
+    "SCR-026/refused-unconfirmed": (
+        "the send's answer never came: a timeout or a dropped connection after the file was "
+        "sent (D09-G1)"
+    ),
+}
+COPY_KEYS = {
+    "SCR-025/export-entry": ("`e15.export.menu_item`"),
+    "SCR-025/export-unavailable": ("`e15.export.menu_item` · `ws.export.unstored`"),
+    "SCR-025/export-preparing": (
+        "`e15.export.title` · `e15.export.close` · `e15.export.preparing` · `e15.export.cancel`"
+    ),
+    "SCR-025/export-preview": (
+        "`e15.export.title` · `e15.export.close` · `e15.export.unsaved` · "
+        "`e15.export.included` · `e15.export.excluded` · `e15.export.caveat` · "
+        "`e15.export.over_limit` · `e15.export.cancel` · `e15.export.download`"
+    ),
+    "SCR-025/export-failed": (
+        "`e15.export.title` · `e15.export.close` · `e15.export.failed` · "
+        "`e15.export.failed_gone` · `e15.export.failed_unlisted` · `e15.export.save_failed` · "
+        "`e15.export.cancel` · `e15.export.retry`"
+    ),
+    "SCR-025/export-done": (
+        "`e15.export.title` · `e15.export.close` · `e15.export.done` · `e15.export.excluded` · "
+        "`e15.export.close_button`"
+    ),
+    "SCR-025/export-cancelled": (
+        "`e15.export.title` · `e15.export.close` · `e15.export.unsaved` · "
+        "`e15.export.included` · `e15.export.excluded` · `e15.export.caveat` · "
+        "`e15.export.over_limit` · `e15.export.cancel` · `e15.export.download`"
+    ),
+    "SCR-025/export-reflow-200": ("—"),
+    "SCR-026/entry": ("`e15.import.menu_item`"),
+    "SCR-026/entry-view-as": ("`e15.import.menu_item` · `rbac.view_as`"),
+    "SCR-026/entry-permission": ("`e15.import.menu_item` · `rbac.permission`"),
+    "SCR-026/entry-limit": ("`e15.import.menu_item` · `workspace.limit.count`"),
+    "SCR-026/pick": (
+        "`e15.import.title` · `e15.import.close` · `e15.import.trust` · `e15.import.choose` · "
+        "`e15.import.drop_hint` · `e15.import.help` · `e15.import.cancel`"
+    ),
+    "SCR-026/drag-over": ("`e15.import.drop_active`"),
+    "SCR-026/drag-over-rejected": ("`e15.import.drop_rejected`"),
+    "SCR-026/validating": ("`e15.import.checking` · `e15.import.cancel`"),
+    "SCR-026/creating": ("`e15.import.confirm` · `e15.import.close_view`"),
+    "SCR-026/import-leg-lost": ("`e15.import.confirm` · `rbac.permission`"),
+    "SCR-026/cancelled": ("—"),
+    "SCR-026/compact": ("—"),
+    "SCR-026/reflow-200": ("—"),
+    "SCR-026/preview": (
+        "`e15.import.caption` · `e15.import.col.item` · `e15.import.col.type` · "
+        "`e15.import.col.action` · `e15.import.col.reason` · `e15.import.action.add` · "
+        "`e15.import.action.drop` · `e15.import.action.remap` · "
+        "`e15.import.reason.unknown_kind` · `e15.import.reason.account` · "
+        "`e15.import.reason.remap` · `e15.import.clash` · `e15.import.cancel` · "
+        "`e15.import.confirm`"
+    ),
+    "SCR-026/preview-migrated": ("`e15.import.caption` · `e15.import.migrated`"),
+    "SCR-026/preview-over-budget": ("`e15.import.caption_budget` · `e15.import.budget`"),
+    "SCR-026/budget-confirm": (
+        "`layout.cost.import.title` · `layout.cost.import.body` · `layout.cost.import.confirm` "
+        "· `e15.import.cancel`"
+    ),
+    "SCR-026/report": (
+        "`e15.import.report.heading` · `e15.import.report.done` · `e15.import.report.caption` "
+        "· `e15.import.report.copy` · `e15.import.report.copied` · `e15.import.report.close`"
+    ),
+    "SCR-026/rejected-version-newer": (
+        "`e15.import.rejected.version_newer` · `e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/rejected-version-older": (
+        "`e15.import.rejected.version_older` · `e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/rejected-malformed": (
+        "`e15.import.rejected.malformed` · `e15.import.rejected.parse` · "
+        "`e15.import.rejected.panes` · `e15.import.rejected.layouts` · "
+        "`e15.import.rejected.presets` · `e15.import.rejected.invalid` · "
+        "`e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/rejected-oversized": (
+        "`e15.import.rejected.oversized` · `e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/rejected-wrong-type": (
+        "`e15.import.rejected.wrong_type` · `e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/rejected-nodes": (
+        "`e15.import.rejected.depth` · `e15.import.rejected.nodes` · "
+        "`e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/refused-limit": (
+        "`e15.import.nothing` · `e15.import.refused.limit` · `e15.import.cancel`"
+    ),
+    "SCR-026/refused-server": (
+        "`e15.import.nothing` · `e15.import.refused.server` · `e15.import.refused.store` · "
+        "`e15.import.refused.size` · `e15.import.choose_another` · `e15.import.cancel`"
+    ),
+    "SCR-026/refused-unconfirmed": ("`e15.import.refused.unconfirmed` · `e15.import.close_view`"),
+}
+DESCRIPTIVE: dict[str, tuple[str, ...]] = {
+    "SCR-025/export-entry": (
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "Focus",
+    ),
+    "SCR-025/export-unavailable": (
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "Focus",
+    ),
+    "SCR-025/export-preparing": (
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "Timing",
+        "Focus",
+    ),
+    "SCR-025/export-preview": (
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "Description",
+        "Focus",
+    ),
+    "SCR-025/export-failed": (
+        "Variants, PROPOSED, the same frame with its own sentence",
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "Focus",
+    ),
+    "SCR-025/export-done": (
+        "Components",
+        "Layout (comfortable / compact)",
+        "Tokens (dark and light, the same names)",
+        "File name",
+        "Focus",
+    ),
+    "SCR-025/export-cancelled": ("Components, layout and tokens", "Focus"),
+    "SCR-025/export-reflow-200": ("Layout",),
+    "SCR-026/entry": (),
+    "SCR-026/entry-view-as": (),
+    "SCR-026/entry-permission": (),
+    "SCR-026/entry-limit": (),
+    "SCR-026/pick": (),
+    "SCR-026/drag-over": (),
+    "SCR-026/drag-over-rejected": (),
+    "SCR-026/validating": (),
+    "SCR-026/creating": (),
+    "SCR-026/import-leg-lost": (),
+    "SCR-026/cancelled": (),
+    "SCR-026/compact": (),
+    "SCR-026/reflow-200": (),
+    "SCR-026/preview": (),
+    "SCR-026/preview-migrated": (),
+    "SCR-026/preview-over-budget": (),
+    "SCR-026/budget-confirm": (),
+    "SCR-026/report": (),
+    "SCR-026/rejected-version-newer": (
+        "anatomy",
+        "tokens",
+        "",
+        "redlines",
+        "",
+        "versions",
+        "keys",
+        "",
+    ),
+    "SCR-026/rejected-version-older": (
+        "anatomy",
+        "tokens",
+        "",
+        "redlines",
+        "",
+        "versions",
+        "keys",
+        "",
+    ),
+    "SCR-026/rejected-malformed": (
+        "anatomy",
+        "tokens",
+        "",
+        "redlines",
+        "",
+        "key",
+        "",
+        "counts",
+        "keys",
+        "",
+    ),
+    "SCR-026/rejected-oversized": ("anatomy", "tokens", "", "redlines", "", "size", "", "keys", ""),
+    "SCR-026/rejected-wrong-type": (
+        "anatomy",
+        "tokens",
+        "",
+        "redlines",
+        "",
+        "type",
+        "",
+        "",
+        "keys",
+        "",
+    ),
+    "SCR-026/rejected-nodes": ("anatomy", "tokens", "", "redlines", "", "scan", "keys", ""),
+    "SCR-026/refused-limit": ("anatomy", "", "tokens", "", "redlines", "", "race", ""),
+    "SCR-026/refused-server": ("anatomy", "tokens", "", "redlines", "", "key", "", "keys", ""),
+    "SCR-026/refused-unconfirmed": ("anatomy", "", "tokens", "", "redlines", "", "way on"),
+}
+BOARDS = {
+    "01": (
+        "`SCR-025/export-preview`, `SCR-025/export-done`",
+        "dark",
+    ),
+    "02": (
+        "`SCR-026/pick`, with the redlines of §3",
+        "dark",
+    ),
+    "03": (
+        "`SCR-026/validating`, `SCR-026/preview`",
+        "dark",
+    ),
+    "04": (
+        "`SCR-026/rejected-version-newer`, `SCR-026/rejected-version-older`, "
+        "`SCR-026/rejected-malformed`, `SCR-026/rejected-oversized`, "
+        "`SCR-026/rejected-wrong-type`, with the CVD strip",
+        "dark",
+    ),
+    "05": (
+        "`SCR-026/preview-over-budget`, `SCR-026/budget-confirm`, `SCR-026/refused-limit`",
+        "dark",
+    ),
+    "06": (
+        "`SCR-026/report`",
+        "dark",
+    ),
+    "07": (
+        "`SCR-026/entry`, `SCR-026/entry-view-as`, `SCR-026/entry-permission`, "
+        "`SCR-026/entry-limit`, `SCR-026/import-leg-lost`, `SCR-025/export-entry`, "
+        "`SCR-025/export-unavailable`",
+        "dark",
+    ),
+    "08": (
+        "the keyboard, focus and announcement walk of §7, from the entry through choosing a "
+        "file and the table to the report",
+        "dark",
+    ),
+    "09": (
+        "`SCR-026/pick`, `SCR-026/preview`, `SCR-026/rejected-version-newer`",
+        "light",
+    ),
+    "10": (
+        "`SCR-025/export-preview`, `SCR-026/report`",
+        "light",
+    ),
+}
+KEYBOARD_HEAD = "| Frames | Initial focus | Tab order | `Enter` | `Esc` | Focus on close |"
+KEYBOARD = {
+    (
+        "the menus: `SCR-025/export-entry`, `SCR-025/export-unavailable`, `SCR-026/entry`, "
+        "`SCR-026/entry-view-as`, `SCR-026/entry-permission`, `SCR-026/entry-limit`"
+    ): (
+        "the menu's first item (CMP-041)",
+        "arrows, not `Tab`: `↑` and `↓` reach every item, the T2 item and the unavailable one "
+        "included",
+    ),
+    ("`SCR-025/export-preparing`"): (
+        "Cancel",
+        "× → Cancel",
+    ),
+    ("`SCR-025/export-preview`, `SCR-025/export-cancelled`"): (
+        'the title (`tabindex="-1"`) on the preview; Download file once the save sheet has '
+        "closed unsaved",
+        "× → the body, a stop only while it scrolls → Cancel → Download file",
+    ),
+    ("`SCR-025/export-failed`"): (
+        "Try again",
+        "× → Cancel → Try again",
+    ),
+    ("`SCR-025/export-done`"): (
+        "Close",
+        "× → Close",
+    ),
+    ("`SCR-026/pick`, `SCR-026/drag-over`, `SCR-026/drag-over-rejected`, `SCR-026/validating`"): (
+        "Choose file…",
+        "× → Choose file… → Cancel",
+    ),
+    ("`SCR-026/preview`, `SCR-026/preview-migrated`, `SCR-026/preview-over-budget`"): (
+        "Choose file…, where it already was: the preview's arrival never moves focus (`05:96`)",
+        "× → Choose file… → the table's scroll region → Cancel → Import as new workspace",
+    ),
+    ("`SCR-026/budget-confirm`, a CMP-044 `alertdialog` stacked over the preview"): (
+        "Cancel",
+        "Cancel → Import anyway; it has no close ×",
+    ),
+    ("`SCR-026/creating`"): (
+        "Import as new workspace, busy, where it was",
+        "× → the table's scroll region → Close → Import as new workspace (Choose file… and the "
+        "zone have left the body, §3.5)",
+    ),
+    ("`SCR-026/import-leg-lost`"): (
+        "Import as new workspace, where it was: focus never moves (§6)",
+        "× → Choose file… → the table's scroll region → Cancel → Import as new workspace, "
+        "still a stop (§6)",
+    ),
+    ("the six rejections and `SCR-026/refused-server`"): (
+        "Choose another file",
+        "× → Choose file… → Cancel → Choose another file",
+    ),
+    ("`SCR-026/refused-limit`"): (
+        "Cancel, the named fallback once the verb has left the footer (`15:468`)",
+        "× → Cancel",
+    ),
+    ("`SCR-026/refused-unconfirmed`"): (
+        "Close",
+        "× → Close",
+    ),
+    ("`SCR-026/report`"): (
+        'the heading "Import report" (`tabindex="-1"`), on arrival only',
+        "× → the table's scroll region → Copy report → Close",
+    ),
+    ("`SCR-026/cancelled`"): (
+        "—: the dialog has closed",
+        "—",
+    ),
+    ("`SCR-025/export-reflow-200`, `SCR-026/reflow-200`, `SCR-026/compact`"): (
+        "as the frame it reflows",
+        "as that frame",
+    ),
+}
+PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
+    (
+        "| Part | Component and variant | Tokens (one set of names; dark, light and high "
+        "contrast resolve them, §8) | Redlines (comfortable; compact changes only the control "
+        "heights) |"
+    ): (
+        "pinned-row",
+        (
+            '| The message | CMP-027 `inline`, severity `error`, `live="polite"` overriding '
+            'the `role="alert"` default (`15:306`; slice 4\'s H37, `S4:919`) | the glyph '
+            "CMP-019 `danger` at `size.icon` in `color.status.danger.strong`, `x-circle` once "
+            "E05-T06 registers it (`15:307`); the words `type.ui.body` + `color.text.primary` "
+            "on the card's `color.surface.overlay`, no fill (§8 rows 1 and 7) | the glyph 16 "
+            "<!-- audit:redline.size.icon=16 --> px, `space.inset.xs` to the words; "
+            "`space.stack.md`, 12 <!-- audit:redline.space.stack.md=12 --> px, above and below "
+            "the message; the words wrap, never truncate |",
+            "| A key or a file name inside the message | a text node of its own, never a link "
+            "(§5.5) | `type.num.sm` (mono) + `color.text.primary` | inline in the sentence; a "
+            "key at most 64 <!-- audit:design.key_cap=64 --> characters, a file name at most "
+            "40 <!-- audit:design.file_cap=40 --> characters, an ellipsis past either |",
+            "| The version numbers | whole numbers, parsed and read (§5.3) | `type.num.sm` + "
+            "`color.text.primary` | inline in the sentence |",
+            "| Choose file… and its words | CMP-067 behind a CMP-001 `secondary` button (§3) | "
+            "as `SCR-026/pick` | as `SCR-026/pick` |",
+            "| The footer | CMP-001 `secondary` Cancel, then CMP-001 `primary` Choose another "
+            "file; on `SCR-026/refused-limit` Cancel alone; on `SCR-026/refused-unconfirmed` "
+            "Close alone, a CMP-001 `primary` | `color.action.secondary.default` + "
+            "`color.text.primary`; `color.action.primary.default` + `color.text.on-action` (§8 "
+            "rows 18 and 19) | 32 <!-- audit:redline.size.control.comfortable=32 --> px tall, "
+            "24 <!-- audit:redline.size.control.compact=24 --> px at compact; "
+            "`space.inset.sm`, 8 <!-- audit:redline.space.inset.sm=8 --> px, apart; "
+            "`space.dialog.padding`, 24 <!-- audit:redline.space.dialog.padding=24 --> px, "
+            "inside the card |",
+            "| Focus on arrival | CMP-039's ring on Choose another file, on Cancel at the "
+            "limit, or on Close after an unanswered send | `color.focus.ring` at "
+            "`border.focus`, 2 <!-- audit:redline.border.focus=2 --> px (§8 row 20) | outside "
+            "the control, never clipped by the footer |",
+        ),
+    ),
+    (
+        "| Case | Frame | Check (§5.4) | The problem and the limit it names | The way on | "
+        "`layout.import_rejected{reason}` |"
+    ): (
+        "pinned-row",
+        (
+            "| a newer format version | `SCR-026/rejected-version-newer` | 4 version | both "
+            "format versions, the file's 2 <!-- audit:fixture.newer_format=2 --> and this "
+            "app's 1 <!-- audit:fixture.app_format=1 --> | \"Export it again from a version 1 "
+            'app, or update this app."; Choose another file | `version-newer` |',
+            "| an older format version, unsupported | `SCR-026/rejected-version-older` | 4 "
+            "version | both, the file's 0 <!-- audit:fixture.older_format=0 --> and the oldest "
+            'this app reads | "Update the app that exported it, then export it again."; Choose '
+            "another file | `version-older` |",
+            "| a required key missing | `SCR-026/rejected-malformed` | 3 schema | the key, in "
+            "mono | Choose another file | `malformed` |",
+            "| not JSON at all | its variant | 2 parse | the line where the text stops being "
+            "JSON | Choose another file | `malformed` |",
+            "| a layout over the panel limit | its variant | 3 schema | the count and the "
+            "limit, at most 16 <!-- audit:contract.panes_max=16 --> panels a layout | Choose "
+            "another file | `malformed` |",
+            "| too many layouts | its variant | 3 schema | the count and the limit, at most 32 "
+            "<!-- audit:contract.layouts_max=32 --> layouts a workspace | Choose another file "
+            "| `malformed` |",
+            "| too many indicator presets | its variant | 3 schema | the count and the limit, "
+            "at most 200 <!-- audit:contract.presets_max=200 --> indicator presets a file | "
+            "Choose another file | `malformed` |",
+            "| a file over the size limit | `SCR-026/rejected-oversized` | 1 size | the file's "
+            "size and the limit, at most 2 <!-- audit:contract.size_mb=2 --> MB | Choose "
+            "another file | `oversized` |",
+            "| not a JSON file | `SCR-026/rejected-wrong-type` | 1 size, its type first | the "
+            'file\'s name | "Choose a .json workspace file."; Choose another file | '
+            "`wrong-type` |",
+            "| nested too deeply | `SCR-026/rejected-nodes` | 2 parse | the limit, at most 16 "
+            "<!-- audit:contract.depth=16 --> levels | Choose another file | `malformed` (BQ-5 "
+            "RULED) |",
+            "| too many values | its variant | 2 parse | the limit, at most 10,000 <!-- "
+            "audit:contract.nodes=10000 --> values, PROPOSED (D09-G5) | Choose another file | "
+            "`malformed` |",
+            "| the workspace limit, met at the send | `SCR-026/refused-limit` | the send | the "
+            'limit, 32 <!-- audit:contract.workspaces_max=32 --> workspaces | "Delete one, '
+            'then import again."; Cancel | none (§5.5) |',
+            "| the server's re-check, at the send | `SCR-026/refused-server` | the send | the "
+            "first key the server named, in mono | Choose another file | none (§5.5) |",
+            "| a file larger than the server takes, `413` | its variant | the send | that the "
+            "server takes no file this large; the number is the server's (D09-G5) | Choose "
+            "another file | none (§5.5) |",
+            "| the send's answer never came | `SCR-026/refused-unconfirmed` | the send | that "
+            'the import could not be confirmed | "Check your workspaces before importing '
+            'again."; Close | none (§5.5) |',
+        ),
+    ),
+    ("| The file's `schema_version` | Outcome | Frame | Words (§9) | Event |"): (
+        "pinned-row",
+        (
+            "| above the newest this app reads (the fixture: 2 <!-- "
+            "audit:fixture.newer_format=2 --> against 1 <!-- audit:fixture.app_format=1 -->) | "
+            "refused whole, both versions named, then the way on: export it again from an app "
+            "that writes the older format, or update this app (AC 2; `11:2871`; `D02:517`) | "
+            "`SCR-026/rejected-version-newer` | `e15.import.rejected.version_newer` | "
+            "`version-newer` |",
+            "| the newest this app reads | the checks go on to the registry, then the preview "
+            "| `SCR-026/preview` | — | — |",
+            "| older, still read (a later build, the file one format behind it) | migrated "
+            "forward before the preview, which shows the migrated document, and said so above "
+            'the table: "Migrated from format version 1 to 2." (E15-S07\'s rule, `BL:1136`) | '
+            "`SCR-026/preview-migrated` | `e15.import.migrated` | none at the preview; on "
+            "success `layout.imported` carries the file's own `schemaVersion` |",
+            "| below the floor (the fixture: 0 <!-- audit:fixture.older_format=0 --> against 1 "
+            "<!-- audit:fixture.app_format=1 -->) | refused whole, both versions named, then "
+            "the way on: update the app that exported it, then export it again (the ticket's "
+            "`version-older`) | `SCR-026/rejected-version-older` | "
+            "`e15.import.rejected.version_older` | `version-older` |",
+            "| absent, empty, or not a whole number | a schema failure, the key "
+            '`schema_version` named in mono: "is missing" when it is absent, "isn\'t valid" '
+            "otherwise (§5.4) | `SCR-026/rejected-malformed` | `e15.import.rejected.malformed` "
+            "· `e15.import.rejected.invalid` | `malformed` |",
+        ),
+    ),
+    ("| Step | Limit | Source | Past it | Words (§9) |"): (
+        "pinned-row",
+        (
+            "| 1 size | a file of at most 2 <!-- audit:contract.size_mb=2 --> MB, read from "
+            "the chosen file's size before a byte of it is read | E15-S07's default "
+            "(`BL:1136`) until `22` sets the cap (D09-G5); a 2 <!-- audit:contract.size_mb=2 "
+            "--> MB file is checked within 500 <!-- audit:contract.parse_ms=500 --> ms in a "
+            "worker (`14:633`) | `SCR-026/rejected-oversized` | "
+            "`e15.import.rejected.oversized` |",
+            "| 2 parse | nesting at most 16 <!-- audit:contract.depth=16 --> levels | the "
+            "server's own rule for a workspace body (`22:19626`), reused (BQ-5 RULED) | "
+            "`SCR-026/rejected-nodes` | `e15.import.rejected.depth` |",
+            "| 2 parse | at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED | "
+            'E15-S07 names a node-count limit and fuzzes "a document with 10000 nested nodes" '
+            "(`BL:1136`); no contract carries a number (D09-G5) | `SCR-026/rejected-nodes`, "
+            "its variant | `e15.import.rejected.nodes` |",
+            "| 3 schema | the envelope's `schema_version` first, then the shape of a version "
+            "this app reads: every required key and every known key's type (`22:21209–21230`) "
+            "| `22:21209–21230`; an unknown key ignored by the client and refused by the "
+            "server on its write path (C-6.3; `04:853`); the bundle and `ChartTemplateInput` "
+            "are not closed yet (D09-G4) | `SCR-026/rejected-malformed` | "
+            "`e15.import.rejected.malformed` |",
+            "| 3 schema | at most 16 <!-- audit:contract.panes_max=16 --> panels a layout | "
+            "the contract's 16 (`D02:133`) | `SCR-026/rejected-malformed`, its variant | "
+            "`e15.import.rejected.panes` |",
+            "| 3 schema | at most 32 <!-- audit:contract.layouts_max=32 --> layouts a "
+            "workspace | the store's limit (`22:8725`); the bundle carries none (D09-G5) | "
+            "`SCR-026/rejected-malformed`, its variant | `e15.import.rejected.layouts` |",
+            "| 3 schema | at most 200 <!-- audit:contract.presets_max=200 --> indicator "
+            "presets, the array whole or not at all | `22:21229–21230`, where the server also "
+            "refuses the array beyond 1 MiB of preset JSON | `SCR-026/rejected-malformed`, its "
+            "variant; the server's refusal is `SCR-026/refused-server` | "
+            "`e15.import.rejected.presets` |",
+            "| 4 version | the format versions this app reads (§5.3) | `22:21215`; D09-G2 | "
+            "the two version refusals; the migrated preview | §5.3 |",
+            "| 5 registry | each pane's kind and each setting against the registry | the "
+            "open-ended kinds (`22:19778`); settings that never hold account ids (`22:19838`) "
+            "| never a rejection: an unknown kind or an account-scoped setting is a Drop row "
+            "(§4.2) | `e15.import.reason.unknown_kind` |",
+            "| the send | at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a "
+            "user | `22:8525` | `SCR-026/refused-limit` | `e15.import.refused.limit` |",
+            "| the send | everything above, checked again by the server | E15-S07 (`BL:1136`); "
+            "`04:54`; C-2.12 | `SCR-026/refused-server` | `e15.import.refused.server` |",
+        ),
+    ),
+    (
+        "| # | Step | What the worker checks | The limit (the Fixture paragraph) | When it "
+        "fails, or what it finds | `layout.import_rejected{reason}` |"
+    ): (
+        "pinned-row",
+        (
+            "| 1 | size | the file's type and size, from its metadata, before a byte of it "
+            "reaches the parser: a file over the cap is never parsed (`BL:1136`); the type "
+            "check refuses a file only when its name, read after §5.5's cleaning, does not end "
+            "in `.json` and its media type is not `application/json`, so a blank type never "
+            "refuses a `.json` name; a picked file's type is checked too, because `accept` "
+            "only filters what the OS picker offers | 2 <!-- audit:contract.size_mb=2 --> MB, "
+            "E15-S07's default (`BL:1136`), PROPOSED for `22` (D09-G5) | "
+            "`SCR-026/rejected-oversized`; a dropped file that is not JSON: "
+            "`SCR-026/rejected-wrong-type` | `oversized`; `wrong-type` |",
+            "| 2 | parse depth / node count | the JSON, parsed in the worker with both limits "
+            "counted while it parses, so a hostile file stalls a worker and never the page "
+            "(`BL:1136`) | depth 16 <!-- audit:contract.depth=16 --> levels, the server's own "
+            "rule for a request body (`22:19626`); 10,000 <!-- audit:contract.nodes=10000 --> "
+            "values (`BL:1136`), PROPOSED (D09-G5) | `SCR-026/rejected-nodes` (the depth, with "
+            "the node count its variant); invalid JSON: `SCR-026/rejected-malformed`'s parse "
+            "variant, which names the line | `malformed` |",
+            "| 3 | schema | first the envelope, `schema_version` present and a whole number "
+            "(D09-D25), else the malformed outcome that names it; then the shape of that "
+            "format version, only when this app reads it (one shape per readable version, "
+            "D09-G2), against `WorkspaceBundle` (`22:21209–21230`): every required key present "
+            "and every known key's value of its kind, a pane's kind an open string for a "
+            "reader (`22:19778`), no layout over its panes, no workspace over its layouts, the "
+            "indicator presets whole or not at all; an unknown key is ignored and never read "
+            "into the app (C-6.3); a version above the newest or below the floor skips the "
+            "shape and goes to step 4, so the shape never shadows the version outcome (D09-Q5) "
+            "| 16 <!-- audit:contract.panes_max=16 --> panes a layout (`D02:133`); 32 <!-- "
+            "audit:contract.layouts_max=32 --> layouts a workspace (`22:8725`); 200 <!-- "
+            "audit:contract.presets_max=200 --> presets a file (`22:21229–21230`) | "
+            "`SCR-026/rejected-malformed`: the missing key, or the known key whose value is "
+            "the wrong kind, named in mono, or its panes, layouts and presets variants | "
+            "`malformed` |",
+            "| 4 | version | the file's `schema_version` (`22:21215`) against the format "
+            "version this app reads (BQ-4 RULED): newer is refused; older and still readable "
+            "is migrated forward in the worker; older than the oldest this app reads is "
+            "refused | this app reads format version 1 <!-- audit:fixture.app_format=1 -->; "
+            "the order of versions and the oldest one read are D09-G2's | "
+            "`SCR-026/rejected-version-newer`; `SCR-026/rejected-version-older`; a migration "
+            "is no failure: `SCR-026/preview-migrated` | `version-newer`; `version-older` |",
+            "| 5 | per-pane registry | each pane's kind against this build's registry "
+            "(`22:19778`) and each pane setting against the registry's list for its kind "
+            "(`BL:1136`) | — | nothing fails here: an unknown kind is a Drop row, never a "
+            "refusal (AC 3); a setting the registry marks account-scoped is a Drop row, and so "
+            "is a setting it does not list for its kind, a newer build's option (D09-D35); the "
+            "Positions pane is the one Remap (§4.2) | — |",
+            "| — | preview | the table of §4.2, built from the document already parsed, with "
+            "no second parse (`BL:1136`) | the panel budget of the layout that opens (§4.4) | "
+            "over the budget: the budget line and the stacked confirm (§4.4) | "
+            "`budget-exceeded`, only when that confirm is cancelled |",
+        ),
+    ),
+    ("| Event | Frames | How it speaks | String (§9) |"): (
+        "pinned-row",
+        (
+            "| a dialog opens | every dialog frame | no live region: read as focus enters it, "
+            "the title and then what focus lands on (`15:468`) | `e15.export.title` · "
+            "`e15.import.title` |",
+            "| the export file is being prepared | `SCR-025/export-preparing` | CMP-038's one "
+            '`role="status"` region, once (`15:409–417`) | `e15.export.preparing` |',
+            "| preparing the file fails | `SCR-025/export-failed` | the CMP-027 message, "
+            "polite, once | `e15.export.failed` |",
+            "| the export file is saved | `SCR-025/export-done` | polite, once: the completion "
+            "line | `e15.export.done` |",
+            "| the save sheet closes unsaved | `SCR-025/export-cancelled` | never: the preview "
+            "is as it was and focus is on Download file | — |",
+            "| the check starts | `SCR-026/validating` | polite, once, through the import "
+            "dialog's status region; CMP-023 is never a live region itself (`15:262–270`) | "
+            "`e15.import.checking` |",
+            "| the check passes | `SCR-026/preview`, `SCR-026/preview-migrated`, "
+            "`SCR-026/preview-over-budget` | polite, once, through the same region: the "
+            "caption, its counts first, so the summary comes before the rows (`14:632`); after "
+            "the migration line on a migrated file, with the budget sentence on a file over "
+            "the budget | `e15.import.migrated` · `e15.import.caption` · "
+            "`e15.import.caption_budget` |",
+            "| the check fails | the six rejections | the CMP-027 message, polite, once; the "
+            "status region adds nothing (`S4:919`); focus moves to Choose another file once "
+            "the message has been read, and the message is not that button's description, so "
+            "it is read once | the six messages and their variants |",
+            "| a file is dragged over the zone | `SCR-026/drag-over`, "
+            "`SCR-026/drag-over-rejected` | never: the words change for the pointer's user, "
+            "and the keyboard path never drags | `e15.import.drop_active` · "
+            "`e15.import.drop_rejected` |",
+            "| the budget confirm opens | `SCR-026/budget-confirm` | no live region: an "
+            "`alertdialog` read as focus enters it, its title and its body | "
+            "`layout.cost.import.title` · `layout.cost.import.body` |",
+            "| Import as new workspace or Import anyway pressed | `SCR-026/creating` | nothing "
+            "at the press: the button keeps its name with `aria-busy` (`15:48–57`) | — |",
+            "| the import succeeds | `SCR-026/report` | polite, once: the success line; focus "
+            "moves to the report's heading | `e15.import.report.done` |",
+            "| the import succeeds after the view was closed | after `SCR-026/creating` | "
+            "polite, once, through CMP-212's region: a persistent CMP-045 `success` toast with "
+            "the success line and the action View report, which reopens the report as the "
+            "dialog's final step (PROPOSED; a toast with an action never times out, "
+            "`15:483–490`) | `e15.import.report.done` · `e15.import.report.view` |",
+            "| a refusal arrives after the view was closed | after `SCR-026/creating` | "
+            'polite, once, through CMP-212\'s region (`politeness="polite"`, as a refusal at '
+            'the send speaks here, D09-C12): a persistent CMP-045 `danger` toast, "Nothing was '
+            "imported.\", with the action Review, which reopens SCR-026 at the refusal's frame "
+            "(PROPOSED; a toast with an action never times out, `15:483–490`) | "
+            "`e15.import.nothing` · `e15.import.review` |",
+            "| a refusal at the send | `SCR-026/refused-limit`, `SCR-026/refused-server`, "
+            "`SCR-026/refused-unconfirmed` | polite, once; focus moves to the frame's named "
+            "button once the message has been read, and the message is not that button's "
+            "description, so it is read once. PROPOSED departure from slice 4's conventions "
+            "33, which speaks a refusal at its point of action assertively (`S4:140`): the "
+            "refused verb leaves the footer and focus moves with it, so an interruption would "
+            "only cut that reading short (D09-C12) | `e15.import.nothing` · "
+            "`e15.import.refused.limit` · `e15.import.refused.server` · "
+            "`e15.import.refused.unconfirmed` |",
+            '| Copy report pressed | `SCR-026/report` | CMP-033\'s "Copied", polite, once; '
+            "never the copied text (`15:366`) | `e15.import.report.copied` |",
+            "| a press on a T2 control | `SCR-026/entry-view-as`, `SCR-026/entry-permission`, "
+            "`SCR-026/entry-limit`, `SCR-026/import-leg-lost` | polite, once per press: its "
+            "reason (§6) | `rbac.view_as` · `rbac.permission` · `workspace.limit.count` |",
+            "| a leg goes while the dialog is open | `SCR-026/import-leg-lost` | the shell's "
+            "one access-changed announcement; the dialog adds none and focus stays (§6) | — |",
+        ),
+    ),
+    ("| Moment | What the tree exposes (role · name · state · description) | Source |"): (
+        "pinned-row",
+        (
+            '| the import dialog opens on `SCR-026/pick` | `dialog` · "Import workspace"; '
+            'focus on the button "Choose file…", described by "or drop a workspace file here" '
+            'and "JSON, up to 2 MB"; the native input is labelled by that button and stays out '
+            "of the Tab order; the trust note is a `note` read in browse mode; the zone around "
+            "the button has no role and no name | `15:694`; `D02:513` |",
+            '| the check runs, `SCR-026/validating` | `progressbar` · named by "Checking '
+            'scalping.json…" · its value the share of the five steps done, its text "Checking '
+            'scalping.json… step 3 of 5"; Cancel is reached as before | `15:262–270`; '
+            "`D02:515` |",
+            "| `Tab` reaches the preview's table | the scroll region · named by its caption "
+            '"Preview — 7 panels and 2 layouts to add · 3 dropped · 1 remapped"; inside, a '
+            "`table` with that caption, four `columnheader`s — Item, Type, Action, Reason — "
+            "and each Item cell a `rowheader`; each Action glyph has no name, its word is the "
+            "cell's text | `15:530`; `14:632` |",
+            '| a rejection, focus on Choose another file | button · "Choose another file", '
+            "focused once the message's polite region has read it, e.g. \"This file was "
+            "exported by format version 2 and can't be imported into format version 1. Nothing "
+            'was imported. Export it again from a version 1 app, or update this app."; the '
+            "message is not the button's description, so it is read once | `15:306`; `05:150` |",
+            "| the malformed file's key | inside the message, plain text read in order, its "
+            "punctuation as the reader's settings speak it; at most 64 <!-- "
+            'audit:design.key_cap=64 --> characters, then "(shortened)" (§5.5) | `14:632` |',
+            '| the budget confirm opens | `alertdialog` · "Open Wall with 12 panels?" · '
+            'described by its body; focus on "Cancel" | `15:468`; `D02:292` |',
+            '| the report arrives | heading · "Import report" (focused) inside a `region` '
+            'named "Import report"; the success line; the table as above, its caption "Report '
+            '— 7 panels and 2 layouts added · 3 dropped · 1 remapped"; the buttons "Copy '
+            'report" and "Close" | `D02:520` |',
+            '| the menu\'s Import… for a Viewer | menu item · "Import…" · `aria-disabled` · '
+            'described by "Your role can\'t save workspaces."; the lock glyph named "Not '
+            'available" leads the label | `E09D09:49`; `E09D09:89` |',
+            '| the export dialog opens on `SCR-025/export-preview` | `dialog` · "Export '
+            'Scalping"; focus on the title; the Included and the Excluded list are lists read '
+            "in browse mode, one item per clause | `D02:511` |",
+        ),
+    ),
+    (
+        "| Included item | Built from the bundle (`22:21209–21230`) | For Scalping | Left out "
+        "when |"
+    ): (
+        "pinned-row",
+        (
+            "| the layouts, with their names | `layouts[]`, each `name` (at most 40 <!-- "
+            "audit:contract.name_max=40 --> characters, `22:19638`), in the bundle's order | 2 "
+            "<!-- audit:fixture.export_layouts=2 --> layouts (Layout 1, Order-flow) | the "
+            "workspace has no layout yet |",
+            "| the panels | every pane of every layout, `layouts[].panes[]` | 7 <!-- "
+            "audit:fixture.export_panels=7 --> panels | no layout holds a panel |",
+            "| the symbols | each distinct `symbol` of a pane or of a drawing, in the order "
+            "first met | symbols BTCUSDT, ETHUSDT | no pane or drawing names a symbol |",
+            "| the sync groups | each distinct `pane_config.sync_group` | sync groups A and B "
+            "| no pane is in a group |",
+            "| the panel settings | each pane's `pane_config.settings` | each panel's settings "
+            "| no layout holds a panel |",
+            '| the drawings | `drawings[]`, with ", with their text labels" while one carries '
+            "a `label` (at most 120 <!-- audit:contract.label_max=120 --> code points, "
+            "`21:3300`) | 12 drawings, with their text labels | there is no drawing |",
+            "| the chart templates | `chart_templates[]` | 1 chart template | there is none |",
+            "| the indicator presets | `indicator_presets[]`: every live preset of the caller, "
+            "never truncated (`22:21226–21230`) | 3 indicator presets | there is none |",
+        ),
+    ),
+    ("| # | Question | Built here (the ruled outcome) | Status |"): (
+        "bq-terms",
+        (
+            "| BQ-1 | the deliverable path, the branch, the Penpot page, the `14` / `15` edit "
+            "set, the PR | this file, `docs/design/E15/E15-D09.md`, and its tool "
+            "`e15_d09_import_export_audit.py`; the ticket's spec path and branch are the first "
+            "two deviations; the Penpot page `E15-D09 Workspace import and export`; two "
+            "content-only `14` pointer lines, after SCR-025's checklist (`14:624`) and "
+            "SCR-026's (`14:636`), and PROPOSED A-rows for `14:628–629` and `14:636` (§11); no "
+            "`15` edit — A-rows only (§10); the PR says `Refs #363` and `Partial:`, never a "
+            "closing keyword | RULED (6396085915) |",
+            "| BQ-2 | the trust claims, word for word | the Excluded list, first-class and "
+            "drawn as a list, in AC 1's words: \"Never included: credentials — API keys or "
+            "tokens; accounts, trade-group and user ids; environment binding (DEMO or LIVE); "
+            'alert and rule bindings; P&L, positions or orders." — a C-row to `D02:511`, an '
+            "extension and not a contradiction; the Included list names only what "
+            "`WorkspaceBundle` holds (`22:21209–21230`); the import's trust note is `D02:513` "
+            'verbatim: "A workspace file never carries credentials or account bindings. '
+            'Importing creates a new workspace and changes nothing else."; the sharing claim '
+            "in `22:12679`'s description is never written anywhere (its G-row names it without "
+            "repeating it); the tool gates both sentences byte for byte on every frame that "
+            "shows them; owner approval pending (#2701) | RULED (6396085915) — owner approval "
+            "pending (#2701) |",
+            "| BQ-3 | account-scoped elements on import | dropped and listed, never remapped, "
+            "and no account the importer cannot see is ever named in the preview, the report "
+            'or a reason: its row reads "workspaces never carry account bindings" (§4.2 row '
+            '3); the word "Remap" is kept for the one true remap, the Positions pane that '
+            "shows your own accounts (§4.2 row 4); `14:628–629` and the checklist item of "
+            "`14:636` get PROPOSED A-rows (§11); E15-S07 receives D09-G1…G8, G13 and G14 by "
+            "hand-off row (§12) | RULED (6396085915) — owner approval pending (#2701) |",
+            "| BQ-4 | the version rule | a newer file refused with both versions and the "
+            "constructive second sentence, no Import verb (`SCR-026/rejected-version-newer`); "
+            'an older compatible file migrated forward with "Migrated from format version 1 to '
+            "2.\" (E15-S07's rule, `SCR-026/preview-migrated`); an older unsupported file "
+            "refused with both versions (`SCR-026/rejected-version-older`, the ticket's "
+            "`version-older`); the comparison on `schema_version`, never an app version | "
+            "RULED (6396085915) — owner approval pending (#2701) |",
+            "| BQ-5 | size, shape and the refused parse | the five check steps in order, size "
+            "→ parse depth / node count → schema → version → per-pane registry → preview; "
+            "nothing is created before Import as new workspace and nothing kept after a "
+            "refusal; the limits in copy rendered from the tool's facts (the Fixture "
+            'paragraph), the node count PROPOSED with D09-G5; every refusal says "Nothing was '
+            'imported." | RULED (6396085915) |',
+            "| BQ-6 | the panel budget on a valid file | per layout, for the layout that "
+            "opens: caught in the preview as the caption's last sentence and a warning line "
+            "(`SCR-026/preview-over-budget`), then applied through US-LAY-001's CMP-044 "
+            'confirm re-verbed "Import anyway", its Cancel focused (`SCR-026/budget-confirm`); '
+            "a confirm, not a refusal, whose cancel fires `budget-exceeded` | RULED "
+            "(6396085915) |",
+            "| BQ-7 | the export surface and Export…'s availability | Export… in three places "
+            "— SCR-025's Share section (E15-D08, PENDING by name), the tab's `[⋯]` (`D03:384`) "
+            "and the rail's workspace menu (`D02:511`) — and one CMP-043 `md` dialog with the "
+            "Included and Excluded lists built from the fetched bundle; Export… is a read "
+            "(`22:12676`), never gated (a read): T1 for every session, view-as included; on "
+            "the viewer's unsaved default it is an availability state (`D03:583`) | RULED "
+            "(6396085915) |",
+            "| BQ-8 | the file name and the completion | "
+            "`<slug>.cv-workspace-v<schema_version>.json`, the slug the workspace name "
+            "lower-cased, ASCII-folded, every other character a `-`, capped like a name "
+            "(D09-G14); the fixture `scalping.cv-workspace-v1.json`; a drawn completion step "
+            "naming the saved file (`SCR-025/export-done`); a dismissed save sheet keeps the "
+            "preview (`SCR-025/export-cancelled`) | RULED (6396085915) |",
+            "| BQ-9 | the import dialog | CMP-043 `lg` with its steps in one chrome — choose, "
+            "validating, preview, the send, the report; Choose file… a real button fronting "
+            "the labelled native input; the drop zone not a Tab stop; a name clash "
+            "disambiguated by the server (`D02:516`); Cancel, `Esc` and × before the send "
+            "close the dialog with nothing imported | RULED (6396085915) |",
+            "| BQ-10 | the preview table | CMP-049 table mode, the caption first with the "
+            "counts; the columns Item · Type · Action · Reason; drops and remaps first, "
+            "additions after; exactly three Action words, each a word with a decorative glyph; "
+            "the unknown kinds by stored name with the ticket's reason; strings from the file "
+            "as text, capped (the Fixture paragraph; the symbol cap is the fourth deviation) | "
+            "RULED (6396085915) |",
+            '| BQ-11 | the rejection frames | six CMP-027 `inline` frames, `live="polite"`, '
+            "the dialog kept open with Choose another file focused beside its Cancel; no "
+            "Import verb on any of them (AC 2: omitted, never T2-locked); each names its "
+            'problem and its limit and says "Nothing was imported."; each fires one '
+            "`layout.import_rejected{reason}` | RULED (6396085915) |",
+            '| BQ-12 | the post-import report | the dialog\'s final step, a `role="region"` '
+            'named "Import report" with the table re-rendered (§4.3) and Copy report '
+            "(CMP-033); it stays until Close and is never a toast | RULED (6396085915) |",
+            "| BQ-13 | the keyboard path and the tree | Choose file… is a real `<button>` "
+            "whose `Enter` or `Space` opens the OS picker; the drop zone only adds to the "
+            "input; the table is one Tab stop read with its headers; each announcement polite "
+            "and once (§7) | RULED (6396085915) |",
+            "| BQ-14 | T2 per role, view-as first | Import… is a write (`22:8521`): its legs "
+            "in the server's order, view-as first (`rbac.view_as`), then the permission "
+            "(`rbac.permission`), then the state (`workspace.limit.count`), keys as merged "
+            "E15-D02 (`D02:655`) and E15-D03 (`D03:564`) carry them; Export… is never gated; a "
+            "rejected file never T2-locks Import because the verb is absent; an absence is "
+            "never a lock and validity is never a lock; T2 is stated once (§6) | RULED "
+            "(6396085915) |",
+            "| BQ-15 | the boards under the cap | ten boards with at most three light twins — "
+            "two here (§0); every other frame not drawn, the text binding, drawn on request | "
+            "RULED (6396085915) |",
+            "| BQ-16 | the gate tool, the mutation list and the G-rows | the tool in E15-D08's "
+            "form with D09's own row ids: per-frame gates over every row of every table and "
+            "the prose, case-insensitive vocabulary lists, whole clauses; S1–S20 each a "
+            "`--self-test` mutation; the G-rows D09-G1…G14 to `22`'s owner (`22` first, C-6.1) "
+            "| RULED (6396085915) |",
+            "| Condition 1 | security — every string from the file is untrusted | every string "
+            "from the file is untrusted: text only, never markup and never a link, capped with "
+            "the cap stated, the malformed reason naming the key in mono, truncated; the "
+            "report echoes no raw file content beyond those capped names; the client's parse "
+            "is a courtesy — the server re-checks size, depth, nodes, schema and version "
+            "(E15-S07) and `SCR-026/validating` says so; a refused parse is never a partial "
+            "import; nothing is created before Import as new workspace and nothing kept after "
+            "a refusal | RULED (6396085915) — binding on every frame |",
+            "| Condition 2 | A1 — the T2 rule | Import… is a write, its legs in the server's "
+            "order, view-as first (`rbac.view_as`), then `rbac.permission`, then "
+            "`workspace.limit.count`; Export… is never gated; a rejected file never T2-locks "
+            "Import; an absence is never a lock; validity is never a lock | RULED (6396085915) "
+            "— binding on every frame |",
+            "| Condition 3 | A2 — the gates | the tool reads every frame table row by row, "
+            "every other table and the prose, with case-insensitive vocabulary lists (the "
+            "gated-exit words, the environment words, the sharing claim, the markup and link "
+            "words) against whole clauses, never first words; one `--self-test` mutation per "
+            "ruled sentence and per frame element, S1–S20 the minimum | RULED (6396085915) — "
+            "binding from the first commit |",
+            "| Condition 4 | A3 / A4 — the exits and honesty | Cancel, Esc, ×, Close and "
+            "Choose another file are never gated on any frame, view-as and the Viewer's "
+            "included; merged texts at their merge shas; every departure a PROPOSED A, C or "
+            'G-row; "RULED" cites 6396085915; no lane is an authority | RULED (6396085915) — '
+            "binding on every frame |",
+        ),
+    ),
+    ("| Id | Ticket item | Where | Status |"): (
+        "trace-row",
+        (
+            '| AC-1 | "The user learns what travels before exporting": the included and the '
+            "excluded lists, the excluded one naming accounts, environment binding and "
+            "credentials | `SCR-025/export-preview`, `SCR-025/export-done` (§2.1); the "
+            "Excluded sentence byte for byte (BQ-2 RULED) | done |",
+            '| AC-2 | "A newer-version file is refused, not partially applied": both versions '
+            "named, no option that applies part of the file | `SCR-026/rejected-version-newer` "
+            "(§5.1); BQ-4 and BQ-11 RULED | done |",
+            '| AC-3 | "Unknown panel types are reported, not silently dropped": both listed by '
+            "stored type name with the ticket's reason, and the report repeats them | §4.2 "
+            "rows 1–2 and §4.3 rows 1–2; `SCR-026/preview`, `SCR-026/report` | done |",
+            '| AC-4 | "Account references are remapped and disclosed": shown dropped, the '
+            "report in plain language, naming no account the importer cannot see | §4.2 rows "
+            "3–4 (BQ-3 RULED: dropped and listed); `SCR-026/report` | done |",
+            '| AC-5 | "The file is malformed or oversized": the problem and the limit named, '
+            "the dialog open for another file | `SCR-026/rejected-malformed`, "
+            "`SCR-026/rejected-oversized` (§5.1) | done |",
+            '| AC-6 | "Import is performed without a pointer": a keyboard path for every step, '
+            "the table read as a table with headers | `SCR-026/pick` (Choose file…, the drop "
+            "zone off the Tab order), §7, board 08 | done |",
+            "| DL-1 | Export surface: the entry from SCR-025 and from the workspace menu | "
+            "`SCR-025/export-entry` (§2.1; BQ-7 RULED) | done |",
+            "| DL-2 | The pre-export preview's included list | `SCR-025/export-preview` | done |",
+            "| DL-3 | The excluded list, first-class | `SCR-025/export-preview`, "
+            "`SCR-025/export-done` | done |",
+            "| DL-4 | The file name with the schema version | `SCR-025/export-done`; BQ-8 "
+            "RULED | done |",
+            "| DL-5 | The export completion state | `SCR-025/export-done` | done |",
+            "| DL-6 | SCR-026 import hi-fi in both themes: the drop zone with a visible label, "
+            "the keyboard alternative, the picker | `SCR-026/pick`; boards 02 and 09 | done |",
+            "| DL-7 | The diff-style preview as a table, never a canvas | §4.2; "
+            "`SCR-026/preview` | done |",
+            "| DL-8 | Item, type, action, reason; drops and remaps first | §4.2 | done |",
+            "| DL-9 | The validation states | §5.1; `SCR-026/preview-over-budget` | done |",
+            "| DL-10 | The post-import report, persistent and copyable | `SCR-026/report`; "
+            "§4.3 | done |",
+            "| DL-11 | Parse and validation progress for large files | `SCR-026/validating` | "
+            "done |",
+            "| DL-12 | The copy set for the trust claims, word by word | §9; BQ-2 RULED, owner "
+            "approval pending (#2701) | done |",
+            "| DL-13 | Redlines and the spec page | this file (the first deviation) | done |",
+            "| DL-14 | The Storybook list for CMP-067 | §10 (an A-row) | done |",
+            "| DL-15 | The constructive route on a refusal | `SCR-026/rejected-version-newer`, "
+            "`SCR-026/rejected-version-older` | done |",
+            "| DL-16 | The budget overflow through US-LAY-001's confirm | "
+            "`SCR-026/budget-confirm` | done |",
+            "| DL-17 | The untrusted-string rule | §1.2 (Condition 1); the caps and renders "
+            "clauses of §3–§5 | done |",
+            "| DL-18 | The limits stated; no environment travels; the server re-checks | the "
+            "Fixture paragraph; §1.2; `SCR-026/validating`; §5.4 | done |",
+            "| DL-19 | The accessibility notes: caption with counts, action as text, errors "
+            "announced, report region, polite progress | §4, §7 | done |",
+            "| DL-20 | The annotated events | the event clauses of §2–§5; §12 | done |",
+            "| DL-21 | The reuse note for SCR-089 | §11 | done |",
+            "| DoD-1 | Export preview drawn with both lists | `SCR-025/export-preview` (§2.1); "
+            "board 01 is the boards PR's (§0) | routed |",
+            "| DoD-2 | SCR-026 drawn in both themes: drop zone, picker, preview table, the six "
+            "validation states, the report | §3–§5 and §8; boards 02–06, 09 and 10 are the "
+            "boards PR's (§0) | routed |",
+            "| DoD-3 | The version mismatch names both versions and a constructive step; no "
+            "partial-apply path | `SCR-026/rejected-version-newer` | done |",
+            "| DoD-4 | Diff indicators text plus icon; contrast and colour vision checked | §8 "
+            "(the tool's numbers) | done |",
+            "| DoD-5 | Keyboard-only walkthrough incl. file selection; the table navigable "
+            "with headers | §7; the owner's walk on board 08 (§14) | heuristic-only |",
+            "| DoD-6 | The copy signed off on the trust claims | the owner's `approved` "
+            "(#2701) | routed |",
+            "| DoD-7 | The untrusted-string rule and the limits stated | §1.2; §5.4; §5.5; the "
+            "Fixture paragraph | done |",
+            "| DoD-8 | SCR-026's sign-off items satisfied | §13 | done |",
+            "| DoD-9 | The spec merged; CMP-067's Storybook list agreed | this PR; §10 | routed |",
+            "| DoD-10 | The reuse note for SCR-089 filed | §11 | done |",
+            "| DoD-11 | The CDO sign-off recorded | the owner | routed |",
+        ),
+    ),
+}
+POINTER_LINES = (
+    (
+        "- **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §2 (E15-D09; owner "
+        "approval pending; text-first, the boards follow in a second PR: Export… in its three "
+        "places, never gated; the export preview's Included and Excluded lists; the file name "
+        "with its format version; the completion)."
+    ),
+    (
+        "- **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §3–§5 (E15-D09; owner "
+        "approval pending; text-first, the boards follow in a second PR: the import dialog, "
+        "the five check steps, the preview table with drops and remaps first, the six "
+        "rejections with no Import verb, the report, T2 view-as first and the keyboard path)."
+    ),
+)
+DECK_CELLS = {
+    "e15.export.menu_item": ('"Export…"'),
+    "e15.export.title": ('"Export {workspace}" · fixture "Export Scalping"'),
+    "e15.export.close": ('"Close Export {workspace}" · fixture "Close Export Scalping"'),
+    "e15.export.preparing": ('"Preparing the file…"'),
+    "e15.export.unsaved": (
+        '"Unsaved changes aren\'t in the file: it holds {workspace} as last saved." · fixture '
+        '"Unsaved changes aren\'t in the file: it holds Scalping as last saved."'
+    ),
+    "e15.export.included": (
+        '"The file includes: {layouts} ({layout_names}) · {panels} · symbols {symbols} · sync '
+        "groups {groups} · each panel's settings · {drawings}, with their text labels · "
+        '{templates} · {presets}." · fixture "The file includes: 2 layouts (Layout 1, '
+        "Order-flow) · 7 panels · symbols BTCUSDT, ETHUSDT · sync groups A and B · each "
+        "panel's settings · 12 drawings, with their text labels · 1 chart template · 3 "
+        'indicator presets."'
+    ),
+    "e15.export.excluded": (
+        '"Never included: credentials — API keys or tokens; accounts, trade-group and user '
+        "ids; environment binding (DEMO or LIVE); alert and rule bindings; P&L, positions or "
+        'orders."'
+    ),
+    "e15.export.caveat": ('"The file does show your symbols, layouts and settings."'),
+    "e15.export.over_limit": (
+        '"{reason} You can save it, but this app won\'t import it." · {reason} is the '
+        "import's own first sentence (§5.2); fixture \"This file has 240 indicator presets; a "
+        "file may carry at most 200. You can save it, but this app won't import it.\""
+    ),
+    "e15.export.cancel": ('"Cancel"'),
+    "e15.export.download": ('"Download file"'),
+    "e15.export.failed": (
+        '"Couldn\'t prepare the file: the workspace store is unavailable. Nothing was exported."'
+    ),
+    "e15.export.failed_gone": (
+        '"Couldn\'t prepare the file: this workspace can no longer be read. Nothing was exported."'
+    ),
+    "e15.export.failed_unlisted": (
+        "\"Couldn't prepare the file: it holds something this preview can't show. Nothing was "
+        'exported."'
+    ),
+    "e15.export.save_failed": ('"Couldn\'t save the file. Nothing was exported."'),
+    "e15.export.retry": ('"Try again"'),
+    "e15.export.done": (
+        '"Exported {workspace} as {file}." · fixture "Exported Scalping as '
+        'scalping.cv-workspace-v1.json."'
+    ),
+    "e15.export.close_button": ('"Close"'),
+    "e15.import.menu_item": ('"Import…"'),
+    "e15.import.title": ('"Import workspace"'),
+    "e15.import.close": ('"Close Import workspace"'),
+    "e15.import.trust": (
+        '"A workspace file never carries credentials or account bindings. Importing creates a '
+        'new workspace and changes nothing else."'
+    ),
+    "e15.import.choose": ('"Choose file…"'),
+    "e15.import.drop_hint": ('"or drop a workspace file here"'),
+    "e15.import.help": ('"JSON, up to {size_mb} MB" · fixture "JSON, up to 2 MB"'),
+    "e15.import.drop_active": ('"Drop to check the file"'),
+    "e15.import.drop_rejected": ('"Drop one .json file"'),
+    "e15.import.cancel": ('"Cancel"'),
+    "e15.import.checking": (
+        '"Checking {file}… step {i} of {n}" · fixture "Checking scalping.json… step 3 of 5"'
+    ),
+    "e15.import.caption": (
+        '"Preview — {panels} and {layouts} to add · {dropped} dropped · {remapped} remapped" · '
+        'fixture "Preview — 7 panels and 2 layouts to add · 3 dropped · 1 remapped"'
+    ),
+    "e15.import.col.item": ('"Item"'),
+    "e15.import.col.type": ('"Type"'),
+    "e15.import.col.action": ('"Action"'),
+    "e15.import.col.reason": ('"Reason"'),
+    "e15.import.action.add": ('"Add"'),
+    "e15.import.action.drop": ('"Drop"'),
+    "e15.import.action.remap": ('"Remap"'),
+    "e15.import.reason.unknown_kind": ('"not available in this version"'),
+    "e15.import.reason.account": ('"workspaces never carry account bindings"'),
+    "e15.import.reason.remap": ('"shows your own accounts"'),
+    "e15.import.clash": (
+        '"Imported as {clash}: a workspace named {workspace} exists." · fixture "Imported as '
+        'Scalping (2): a workspace named Scalping exists."'
+    ),
+    "e15.import.confirm": ('"Import as new workspace"'),
+    "e15.import.close_view": ('"Close"'),
+    "e15.import.slow": ('"Still importing…"'),
+    "e15.import.migrated": (
+        '"Migrated from format version {from} to {to}." · fixture "Migrated from format '
+        'version 1 to 2."'
+    ),
+    "e15.import.caption_budget": (
+        '"Preview — {panels} and {layouts} to add. {layout} opens at about {estimate} ms per '
+        'frame (estimated), over the {budget} ms budget." · fixture "Preview — 12 panels and 1 '
+        "layout to add. Wall opens at about 17.9 ms per frame (estimated), over the 16 ms "
+        'budget."'
+    ),
+    "e15.import.budget": (
+        '"{layout} opens with {panels}: about {estimate} ms per frame (estimated), over the '
+        '{budget} ms budget." · fixture "Wall opens with 12 panels: about 17.9 ms per frame '
+        '(estimated), over the 16 ms budget."'
+    ),
+    "layout.cost.import.title": (
+        '"Open {layout} with {panels}?" · fixture "Open Wall with 12 panels?"'
+    ),
+    "layout.cost.import.body": (
+        '"Frame time now: {measured} ms per frame (p95, last 10 s, measured), about {fps} fps. '
+        "With {layout}'s {panels}: about {estimate} ms (estimated), about {estfps} fps. "
+        "Budget: {budget} ms ({budgetfps} fps). That is over the performance budget, so charts "
+        'may stutter." · fixture "Frame time now: 11.8 ms per frame (p95, last 10 s, '
+        "measured), about 60 fps. With Wall's 12 panels: about 17.9 ms (estimated), about 56 "
+        "fps. Budget: 16 ms (60 fps). That is over the performance budget, so charts may "
+        'stutter."'
+    ),
+    "layout.cost.import.confirm": ('"Import anyway"'),
+    "e15.import.report.heading": ('"Import report"'),
+    "e15.import.report.done": (
+        '"Imported {clash}: {panels}, {layouts}, {dropped_items} dropped, {remapped} '
+        'remapped." · fixture "Imported Scalping (2): 7 panels, 2 layouts, 3 items dropped, 1 '
+        'remapped."'
+    ),
+    "e15.import.report.caption": (
+        '"Report — {panels} and {layouts} added · {dropped} dropped · {remapped} remapped" · '
+        'fixture "Report — 7 panels and 2 layouts added · 3 dropped · 1 remapped"'
+    ),
+    "e15.import.report.copy": ('"Copy report"'),
+    "e15.import.report.copied": ('"Copied"'),
+    "e15.import.report.copy_failed": ('"Couldn\'t copy the report."'),
+    "e15.import.report.close": ('"Close"'),
+    "e15.import.report.view": ('"View report"'),
+    "e15.import.review": ('"Review"'),
+    "e15.import.choose_another": ('"Choose another file"'),
+    "e15.import.rejected.version_newer": (
+        "\"This file was exported by format version {file} and can't be imported into format "
+        "version {app}. Nothing was imported. Export it again from a version {app} app, or "
+        'update this app." · fixture "This file was exported by format version 2 and can\'t be '
+        "imported into format version 1. Nothing was imported. Export it again from a version "
+        '1 app, or update this app."'
+    ),
+    "e15.import.rejected.version_older": (
+        '"This file was exported by format version {file} and this app reads format version '
+        "{floor} or later. Nothing was imported. Update the app that exported it, then export "
+        'it again." · fixture "This file was exported by format version 0 and this app reads '
+        "format version 1 or later. Nothing was imported. Update the app that exported it, "
+        'then export it again."'
+    ),
+    "e15.import.rejected.malformed": (
+        '"This isn\'t a workspace file: `{key}` is missing. Nothing was imported." · fixture '
+        "\"This isn't a workspace file: `layouts[1].grid_spec.root` is missing. Nothing was "
+        'imported."'
+    ),
+    "e15.import.rejected.parse": (
+        "\"This isn't a workspace file: it stops being valid JSON at line {line}. Nothing was "
+        'imported." · fixture "This isn\'t a workspace file: it stops being valid JSON at line '
+        '212. Nothing was imported."'
+    ),
+    "e15.import.rejected.panes": (
+        '"This file has a layout with {n} panels; a layout holds at most {max}. Nothing was '
+        'imported." · fixture "This file has a layout with 30 panels; a layout holds at most '
+        '16. Nothing was imported."'
+    ),
+    "e15.import.rejected.layouts": (
+        '"This file has {n} layouts; a workspace holds at most {max}. Nothing was imported." · '
+        'fixture "This file has 40 layouts; a workspace holds at most 32. Nothing was '
+        'imported."'
+    ),
+    "e15.import.rejected.presets": (
+        '"This file has {n} indicator presets; a file may carry at most {max}. Nothing was '
+        'imported." · fixture "This file has 240 indicator presets; a file may carry at most '
+        '200. Nothing was imported."'
+    ),
+    "e15.import.rejected.invalid": (
+        "\"This isn't a workspace file: `{key}` isn't valid. Nothing was imported.\" · fixture "
+        "\"This isn't a workspace file: `layouts[0].crosshair_sync` isn't valid. Nothing was "
+        'imported."'
+    ),
+    "e15.import.rejected.oversized": (
+        '"This file is {size} MB; the limit is {max} MB. Nothing was imported." · fixture '
+        '"This file is 3.4 MB; the limit is 2 MB. Nothing was imported."'
+    ),
+    "e15.import.rejected.wrong_type": (
+        "\"That isn't a JSON file ({name}). Nothing was imported. Choose a .json workspace "
+        'file." · fixture "That isn\'t a JSON file (report.csv). Nothing was imported. Choose '
+        'a .json workspace file."'
+    ),
+    "e15.import.rejected.depth": (
+        '"This file is nested too deeply: the limit is {max} levels. Nothing was imported." · '
+        'fixture "This file is nested too deeply: the limit is 16 levels. Nothing was '
+        'imported."'
+    ),
+    "e15.import.rejected.nodes": (
+        '"This file has more than {max} values: the limit is {max}. Nothing was imported." · '
+        'fixture "This file has more than 10,000 values: the limit is 10,000. Nothing was '
+        'imported."'
+    ),
+    "e15.import.nothing": ('"Nothing was imported."'),
+    "e15.import.refused.limit": (
+        '"You have {max} workspaces, the most you can have. Delete one, then import again." · '
+        'fixture "You have 32 workspaces, the most you can have. Delete one, then import '
+        'again."'
+    ),
+    "e15.import.refused.server": (
+        '"The server didn\'t accept this file: `{key}` isn\'t valid." · fixture "The server '
+        "didn't accept this file: `layouts[0].panes[3].pane_config` isn't valid.\""
+    ),
+    "e15.import.refused.store": (
+        '"The workspace store didn\'t answer. Choose the file again in a moment."'
+    ),
+    "e15.import.refused.size": (
+        '"The server didn\'t accept this file: it is larger than the server takes."'
+    ),
+    "e15.import.refused.unconfirmed": (
+        '"We couldn\'t confirm the import. Check your workspaces before importing again."'
+    ),
+    "e15.import.shortened": ('"(shortened)"'),
+    "rbac.view_as": (
+        '"Read-only while viewing as {user}." · fixture "Read-only while viewing as alex."'
+    ),
+    "rbac.permission": (
+        '"Your role can\'t save workspaces." · template "Your role can\'t {verb}."'
+    ),
+    "workspace.limit.count": ('"You have the most workspaces you can have."'),
+    "ws.export.unstored": ('"This workspace isn\'t saved."'),
+}
 MARKER_TABLE = """
-boards 1
-light_twins 1
-mutations 1
-bq_rows 1
-conditions 1
-frames_drawn 1
-frames_total 1
-frames_not_drawn 1
+boards 2
+light_twins 2
+mutations 2
+fixture.export_layouts 2
+fixture.export_panels 3
+fixture.panels 3
+fixture.layouts 2
+fixture.dropped 3
+fixture.unknown_kinds 2
+fixture.remapped 3
+fixture.app_format 7
+fixture.newer_format 4
+fixture.older_format 4
+fixture.budget_panels 2
+fixture.measured_ms 2
+fixture.estimate_ms 2
+contract.budget_ms 3
+contract.size_mb 6
+contract.parse_ms 3
+contract.depth 4
+contract.nodes 4
+contract.layouts_max 5
+contract.panes_max 7
+contract.workspaces_max 7
+contract.presets_max 5
+contract.name_max 6
+contract.symbol_max 2
+contract.kind_max 2
+contract.label_max 3
+design.key_cap 9
+design.file_cap 12
+contract.dialog_lg_px 5
+contract.dialog_md_px 6
+bq_rows 2
+conditions 2
+frames_drawn 2
+frames_total 2
+frames_not_drawn 2
 states 1
-fixture.export_layouts 1
-fixture.export_panels 1
-fixture.panels 1
-fixture.layouts 1
-fixture.dropped 1
-fixture.unknown_kinds 1
-fixture.remapped 1
-fixture.app_format 1
-fixture.newer_format 1
-fixture.older_format 1
-fixture.budget_panels 1
-fixture.measured_ms 1
-fixture.estimate_ms 1
-contract.budget_ms 1
-contract.size_mb 1
-contract.parse_ms 1
-contract.depth 1
-contract.nodes 1
-contract.layouts_max 1
-contract.panes_max 1
-contract.workspaces_max 1
-contract.presets_max 1
-contract.name_max 1
-contract.symbol_max 1
-contract.kind_max 1
-contract.label_max 1
-contract.dialog_lg_px 1
-contract.dialog_md_px 1
-design.key_cap 1
-design.file_cap 1
+redline.size.control.comfortable 20
+redline.size.row.height 7
+redline.space.inset.sm 18
+redline.radius.card 8
+redline.border.hairline 8
+redline.border.focus 6
+redline.space.dialog.padding 5
+redline.space.stack.md 22
+redline.size.control.compact 17
+redline.radius.dialog 4
+redline.opacity.scrim 4
+redline.space.inset.xl 4
+redline.size.icon 15
+redline.border.thick 7
+redline.size.target.min 1
 fixture.rows 1
-contract.reason_max 1
-contract.refresh_fps 1
-frames_export 1
-frames_import 1
-checklist_items 1
-missing_tokens 1
-pairs_rows 1
-pairs_fail 1
+contract.reason_max 2
+missing_tokens 2
+pairs_rows 2
+pairs_fail 2
 pairs_registered 1
 pairs_proposed 1
-rows.A 1
-rows.C 1
-rows.D 1
+contract.refresh_fps 1
+frames_import 2
+checklist_items 1
+frames_export 1
 rows.G 1
+rows.C 1
+rows.A 1
 rows.Q 1
-redline.opacity.scrim 1
-redline.border.hairline 1
-redline.border.thick 1
-redline.border.focus 1
-redline.radius.dialog 1
-redline.radius.card 1
-redline.space.dialog.padding 1
-redline.space.stack.md 1
-redline.space.inset.sm 1
-redline.space.inset.xl 1
-redline.size.row.height 1
-redline.size.icon 1
-redline.size.control.compact 1
-redline.size.control.comfortable 1
+rows.D 1
 """
+SHA_COUNTS = {
+    "ed8a22246263ace73f39e4434e6d5f57b1a857bd": 1,
+    "1044c4f602eff6ae1a2cf42201ab398f6c4234d1": 1,
+    "7be6eac6a705cf24ba534ce4f7d31349a1e29932": 1,
+    "c73aec08246f06d28c70e8b959c658bc1a0c4d09": 2,
+    "6e2c1211fc5f4675457d57011a346642f92710c5": 2,
+    "baccf724a1fa3ad66f9333e440a7f5e8668b6eff": 1,
+    "c4989493461ec6b6d22b9254633452a6362b750e": 3,
+    "04a8caa9513e90debcf7cbc41a9ca585496eba01": 1,
+}
+
+TRACE_HEAD = "| Id | Ticket item | Where | Status |"
+BQ_HEAD = "| # | Question | Built here (the ruled outcome) | Status |"
+DECK_STATIC = {k: v for k, v in DECK_CELLS.items() if k not in TEMPLATES}
 MARKERS = {k: int(n) for k, n in (ln.split() for ln in MARKER_TABLE.strip().splitlines())}
 
 
@@ -1282,38 +2912,195 @@ def split_clauses(text: str, seps: str = ";") -> list[str]:
     return [c for c in out if c]
 
 
-def sentences(text: str) -> list[str]:
-    """A line of prose or a table row as clauses: cells, then `;`, `. ` and ` — ` outside quotes
-    and code."""
-    out: list[str] = []
-    for part in split_clauses(text, ";|"):
-        for piece in re.split(r"(?<=[.!?]) (?=[A-Z`*(\[])| — ", part):
-            if piece.strip():
-                out.append(piece.strip())
-    return out
-
-
 def unquote(text: str) -> str:
     """The clause with its quoted copy blanked (a UI string never counts as a description)."""
     return re.sub(r'"[^"\n]*"', '""', text)
 
 
+def compact(text: str) -> str:
+    """Lower-cased letters and digits only: a label however it is spaced or hyphenated."""
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def blank(text: str, phrases: tuple[str, ...]) -> str:
+    for phrase in phrases:
+        text = text.replace(phrase, " " * len(phrase))
+    return text
+
+
+def plain(text: str) -> str:
+    """A clause as the vocabulary lists read it: the audit markers and "fail closed" blanked,
+    quoted copy blanked, code spans read as their text."""
+    text = re.sub(MARKER_RE, " ", text)
+    for pattern in EXIT_BLANK:
+        text = re.sub(pattern, lambda m: " " * len(m.group(0)), text)
+    return unquote(text).replace("`", "")
+
+
+def clause_bounds(text: str, pos: int, split: str = CLAUSE_SPLIT_RE) -> tuple[int, int]:
+    start, end = 0, len(text)
+    for m in re.finditer(split, text):
+        if m.end() <= pos:
+            start = m.end()
+        elif m.start() >= pos:
+            end = m.start()
+            break
+    return start, end
+
+
+def negated(text: str, start: int) -> bool:
+    """A negator earlier in the match's clause governs it, unless a contrast boundary (but, only,
+    while, a new subject and verb ...) lies between the negator and the match."""
+    text = text.replace("e.g.", "e·g·").replace("i.e.", "i·e·")
+    a, _ = clause_bounds(text, start, NEG_SPLIT_RE)
+    head = text[a:start]
+    negs = list(re.finditer(NEGATOR_RE, head))
+    if not negs or len(re.findall(r"\S+", head[negs[-1].end() :])) > NEGATION_REACH:
+        return False
+    return not re.search(CONTRAST_RE, head[negs[-1].end() :])
+
+
 def hits(pattern: str, text: str) -> list[str]:
-    """Every match of a vocabulary list in `text` that no negator within the window precedes."""
-    out: list[str] = []
-    for m in re.finditer(pattern, text):
-        before = re.findall(r"[\w’']+", text[: m.start()].lower())[-NEGATION_WINDOW:]
-        if not NEGATORS & set(before):
+    """Every match of a vocabulary list in `text` that no negator governs."""
+    return [m.group(0) for m in re.finditer(pattern, text) if not negated(text, m.start())]
+
+
+def clause_of(text: str, pos: int) -> str:
+    a, b = clause_bounds(text, pos)
+    return text[a:b]
+
+
+def exit_gated(clause: str) -> list[str]:
+    """A3: a clause that names an exit and a gated-exit stem in the same clause, no negator
+    governing the stem."""
+    text = plain(clause)
+    out = []
+    for m in re.finditer(GATE_RE, text):
+        if negated(text, m.start()):
+            continue
+        if re.search(EXIT_RE, clause_of(text, m.start())):
             out.append(m.group(0))
     return out
 
 
-def exit_gated(clause: str) -> list[str]:
-    """A3: a clause that names an exit and a non-negated gated-exit word (the exit is read in the
-    raw clause, the gating words outside its quoted copy)."""
-    if not re.search(EXIT_RE, clause):
-        return []
-    return hits(GATE_RE, unquote(clause))
+def foreign(text: str) -> bool:
+    """S3: an account the importer cannot see is named."""
+    flat = compact(text)
+    if any(compact(a) in flat for a in FIXTURE["foreign_accounts"]):
+        return True
+    body = plain(text)
+    if any(re.search(p, body) for p in FOREIGN_RES):
+        return True
+    if re.search(FOREIGN_CTX_RE, body):
+        for m in re.finditer(FOREIGN_NAMED_RE, body):
+            if m.group("n").split()[0] not in PROPER_OK:
+                return True
+    return False
+
+
+def order_problem(
+    text: str, words: tuple[tuple[str, str], ...], want: tuple[str, ...], least: int, cue: bool
+) -> bool:
+    """A chain or a list naming `least` or more of `words` (two in an arrow chain) in another order
+    than `want`; `cue`: only where the sentence orders them (an arrow, "then", "first", "legs")."""
+    body = re.sub(
+        r"`[^`\n]*`", lambda m: m.group(0).strip("`"), unquote(re.sub(MARKER_RE, " ", text))
+    )
+    found: list[tuple[int, str]] = []
+    parts = re.split(r"→|->|(?<![<>=-])>(?![=>])", body)
+    if len(parts) > 1:
+        for k, part in enumerate(parts):
+            hits_ = [(m.start(), name) for name, p in words for m in re.finditer(p, part)]
+            if hits_:
+                found.append((k, (max(hits_) if k == 0 else min(hits_))[1]))
+    else:
+        for name, pattern in words:
+            m = re.search(pattern, body)
+            if m:
+                found.append((m.start(), name))
+    if len(found) < (2 if re.search(r"→|->|(?<![<>=-])>(?![=>])", body) else least):
+        return False
+    if cue and not re.search(ORDER_CUE_RE, body):
+        return False
+    seq = list(dict.fromkeys(name for _, name in sorted(found)))
+    if len(seq) == 2 and re.search(r"(?i)\bafter\b", body):
+        seq.reverse()
+    return seq != [w for w in want if w in seq]
+
+
+def steps_problem(text: str) -> str | None:
+    """S9: an arrow chain is the whole ruled chain; any other list keeps the ruled order."""
+    body = re.sub(r"`[^`\n]*`", "``", unquote(re.sub(MARKER_RE, " ", text)))
+    if re.search(r"→|->", body) and len([1 for _, p in STEP_WORDS if re.search(p, body)]) >= 2:
+        chain = STEPS_CLAUSE.removeprefix("steps: ")
+        if chain not in text:
+            return "a chain of the check steps that is not the ruled one"
+    if order_problem(body, STEP_WORDS, STEPS, 3, False):
+        return "the check steps out of order"
+    return None
+
+
+def legs_problem(text: str) -> bool:
+    """S17: the legs out of the server's order, in a chain, a list or a sentence ordering them."""
+    body = plain(text)
+    if re.search(LEG_WRONG_RE, body):
+        return True
+    if re.search(LEG_CTX_RE, body) and hits(LEG_FIRST_RE, body):
+        return True
+    return order_problem(text, LEG_WORDS, ("view_as", "permission", "limit"), 2, True)
+
+
+def focus_problem(text: str, line: str, forced: bool, own_focus: str | None = None) -> str | None:
+    """S20: on a rejection or a refusal, a focus claim names Choose another file, unless its
+    clause names the frame whose focus the control is (a frame's own focus is its row's clause)."""
+    ctx = (
+        forced
+        or re.search(REJECTION_CTX_RE, plain(text))
+        or re.search(REJECTION_CTX_RE, plain(line))
+    )
+    if not ctx:
+        return None
+    body = plain(text)
+    frames = set(re.findall(FRAME_NAME_RE, line))
+    own = own_focus
+    if own is None and len(frames) == 1:
+        name = frames.pop()
+        if name in KIND:
+            own = FOCUS.get(name, FOCUS.get(KIND[name][0], ""))
+    for m in re.finditer(FOCUS_CLAIM_RE, body):
+        control = (m.group("a") or m.group("b") or m.group("c")).lower()
+        if own is not None:
+            if control != own.lower():
+                return control
+            continue
+        if control == "choose another file":
+            continue
+        rule = FOCUS_EXCEPT.get(control)
+        if rule and re.search(rule, clause_of(body, m.start())):
+            continue
+        return control
+    return None
+
+
+def near(control: str, stems: str, text: str, after: int = 6, before: int = 3) -> str | None:
+    """A stem no negator governs, within `after` words after a control or `before` words before
+    it: a sentence about the control, never one that only shares a sentence with it."""
+    fwd = rf"(?i)\W+(?:\S+\s+){{0,{after}}}?(?P<s>{stems})"
+    back = rf"(?i)\W+(?:\S+\s+){{0,{before}}}?(?:{control})"
+    for c in re.finditer(rf"(?i){control}", text):
+        m = re.match(fwd, text[c.end() :])
+        if m:
+            s, e = c.end() + m.start("s"), c.end() + m.end()
+            a, b = clause_bounds(text, s)
+            if not negated(text, s) and a <= c.start() and e <= b:
+                return m.group("s")
+    for st in re.finditer(rf"(?i){stems}", text):
+        m = re.match(back, text[st.end() :])
+        if m:
+            a, b = clause_bounds(text, st.start())
+            if not negated(text, st.start()) and st.end() + m.end() <= b:
+                return st.group(0)
+    return None
 
 
 def label_of(clause: str) -> str:
@@ -1421,6 +3208,12 @@ def contract_facts(t: dict[str, str], themes: dict[str, dict[str, Any]]) -> dict
         "presets_max": num(r"refuses it whole beyond (\d+) items", bundle),
         "reason_max": num(r"One sentence, ≤ (\d+) characters", t["E09D09"]),
         "budget_ms": num(r"\| Frame time \| \*\*<(\d+) ms p95\*\*", t["C"]),
+        "presets_user": num(r"most (\d+), the per-user cap", bundle),
+        "presets_mib": num(r"or (\d+) MiB of preset JSON", bundle),
+        "create_kib": num(r"Bodies over (\d+) KiB are refused with `413`", create),
+        "example_mb": num(r"When a (\d+) MB file", bl),
+        "body_pct": num(r"the card at most (\d+) % of the viewport", cmp043),
+        "p95_window_s": num(r"p95, last (\d+) s", t["D03"]),
         "refresh_fps": num(r"\*\*(\d+) fps sustained\*\*", t["C"]),
         "dialog_px": [int(x) for x in sizes.groups()] if sizes else [],
         "pane_kinds": re.findall(r"^\s+(\w+),$", kinds, MULTI),
@@ -1471,7 +3264,23 @@ def variables(facts: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Per deck key, the fixture and contract values its template renders with."""
     fx, fm, c, bud = FIXTURE, FIXTURE["format"], counts(facts), FIXTURE["budget"]
     mine = {"panels": plural(c["panels"], "panel"), "layouts": plural(c["layouts"], "layout")}
-    tally = {**mine, "dropped": c["dropped"], "remapped": c["remapped"], "clash": fx["clash"]}
+    tally = {
+        **mine,
+        "dropped": c["dropped"],
+        "dropped_items": plural(c["dropped"], "item"),
+        "remapped": c["remapped"],
+        "clash": fx["clash"],
+    }
+    included = {
+        "layouts": plural(len(fx["export_layouts"]), "layout"),
+        "layout_names": ", ".join(fx["export_layouts"]),
+        "panels": plural(fx["export_panels"], "panel"),
+        "symbols": ", ".join(fx["export_symbols"]),
+        "groups": " and ".join(fx["export_groups"]),
+        "drawings": plural(fx["export_drawings"], "drawing"),
+        "templates": plural(fx["export_templates"], "chart template"),
+        "presets": plural(fx["export_presets"], "indicator preset"),
+    }
     wall = {
         "panels": plural(bud["panels"], "panel"),
         "layouts": plural(bud["layouts"], "layout"),
@@ -1485,6 +3294,11 @@ def variables(facts: dict[str, Any]) -> dict[str, dict[str, Any]]:
     }
     return {
         "e15.export.done": {"workspace": fx["workspace"], "file": fx["export_file"]},
+        "e15.export.title": {"workspace": fx["workspace"]},
+        "e15.export.close": {"workspace": fx["workspace"]},
+        "e15.export.unsaved": {"workspace": fx["workspace"]},
+        "e15.export.included": included,
+        "rbac.view_as": {"user": fx["user"]},
         "e15.import.help": {"size_mb": facts["size_mb"]},
         "e15.import.checking": {"file": fx["import_file"], "i": fx["step"][0], "n": fx["step"][1]},
         "e15.import.rejected.version_newer": {"file": fm["newer"], "app": fm["app"]},
@@ -1585,6 +3399,23 @@ DRAG = {
 LEGS = "legs: `rbac.view_as` → `rbac.permission` → `workspace.limit.count`"
 COMPONENT = 'component: CMP-027 `inline`, `live="polite"`, above the still-live Choose file…'
 COMPONENT_EXPORT = 'component: CMP-027 `inline`, `live="polite"`, in the dialog body'
+COMPONENT_GONE = (
+    'component: CMP-027 `inline`, `live="polite"`, in the dialog body, the zone and Choose '
+    "file… gone (§5.5)"
+)
+STATE_CONFIRM = (
+    "state: nothing created yet — no workspace, layout or pane exists until Import anyway sends "
+    "the file"
+)
+STATE_UNKNOWN = (
+    "state: unknown — the answer never came, so the new workspace may or may not exist, and "
+    "nothing is sent again by itself"
+)
+IMPORT_VERB_ONCE = "import verb: none — omitted, so the file is never sent twice (D09-G1)"
+SHAPE = (
+    "shape: not checked — a format version this app does not read skips the shape rules, so "
+    "the outcome is the version refusal and never a shape failure (§3.4, step 3)"
+)
 DENSITY = (
     "density: compact — the table's rows at the compact `size.row.height` and the controls at "
     "`size.control.compact`, the dialog padding unchanged"
@@ -1693,6 +3524,8 @@ def expected(
     out += content_clauses(name, kind, params, facts, q)
     if name in VERSION_FRAMES:
         add("compares", compares_clause(VERSION_FRAMES[name]), "version-field")
+        if VERSION_FRAMES[name] != "migrated":
+            add("shape", SHAPE, "version-shape")
     if name in FILE_STRING_FRAMES:
         add("caps", caps_clause(facts), "caps")
         add("renders", RENDERS, "renders")
@@ -1768,6 +3601,18 @@ def content_clauses(
         add("live", "live: polite, once — the completion line", "live")
     elif kind == "export-cancelled":
         add("state", STATE_EXPORT, "state")
+        add(
+            "included",
+            "included: a CMP-036 list built from the fetched bundle, one item per clause — "
+            f'"{INCLUDED}"',
+            "included",
+        )
+        add(
+            "excluded",
+            f'excluded: a CMP-036 list, first-class, one item per clause — "{EXCLUDED}"',
+            "excluded",
+        )
+        add("caveat", f'caveat: "{CAVEAT}"', "caveat")
     elif kind == "pick":
         add("picker", PICKER, "picker")
         add("drop zone", DROP_ZONE, "drop-zone")
@@ -1822,6 +3667,7 @@ def content_clauses(
             "the preview",
             "event",
         )
+        add("state", STATE_CONFIRM, "created-early")
     elif kind == "busy":
         add(
             "busy",
@@ -1839,9 +3685,15 @@ def content_clauses(
         )
         add("reason", reason_clause(params["key"]), "t2-key")
         add("legs", LEGS, "legs")
+    elif kind == "unconfirmed":
+        add("component", COMPONENT_GONE, "component")
+        add("message", f"message: {q('e15.import.refused.unconfirmed')}", "message")
+        add("state", STATE_UNKNOWN, "unconfirmed")
+        add("import verb", IMPORT_VERB_ONCE, "import-verb")
+        add("live", "live: polite, once", "live")
     elif kind in NOTHING_KINDS:
         reason = params["reason"]
-        add("component", COMPONENT, "component")
+        add("component", COMPONENT_GONE if reason == "limit" else COMPONENT, "component")
         add("message", f"message: {q(*MESSAGES[reason])}", "message")
         if reason in VARIANTS:
             add("variants", f"variants: {q(*VARIANTS[reason])}", "message")
@@ -1934,31 +3786,34 @@ def board_cell_ok(board: str) -> bool:
 
 
 def excluded_problem(line: str, frame: bool) -> bool:
-    """S1: every "Never included" is the ruled sentence, byte for byte (outside a frame row,
-    E15-D02's own sentence may be quoted, a C-row)."""
-    for m in re.finditer(r"(?i)never included", line):
+    """S1: every "Never included" opens the ruled sentence, byte for byte, as a whole quoted string
+    (outside a frame row E15-D02's own sentence may be quoted, a C-row)."""
+    for m in re.finditer(r"(?i)never\s*included", line):
         rest = line[m.start() :]
-        if not (rest.startswith(EXCLUDED) or (not frame and rest.startswith(D02_EXCLUDED))):
+        whole = [EXCLUDED] if frame else [EXCLUDED, D02_EXCLUDED]
+        quoted = line[m.start() - 1 : m.start()] == '"'
+        if not (quoted and any(rest.startswith(w + '"') for w in whole)):
             return True
     return False
 
 
 def trust_problem(line: str) -> bool:
-    """BQ-2: every "A workspace file never carries" is the trust note, byte for byte."""
+    """BQ-2: every "A workspace file never carries" is the trust note, byte for byte, as a whole
+    quoted string."""
     return any(
-        not line[m.start() :].startswith(TRUST_NOTE)
-        for m in re.finditer(r"(?i)a workspace file never carries", line)
+        line[m.start() - 1 : m.start()] != '"' or not line[m.start() :].startswith(TRUST_NOTE + '"')
+        for m in re.finditer(r"(?i)a\s*workspace\s*file\s*never\s*carries", line)
     )
 
 
 def vocabulary_gate(where: str, text: str, frame: bool) -> str | None:
-    """The checks every ladder runs first: the sharing claim (S2), a foreign account (S3), the
-    Excluded sentence (S1) and the trust note, byte for byte."""
-    if re.search(SHARE_RE, text):
+    """The checks every ladder runs first: the sharing claim and its paraphrases (S2, markdown
+    emphasis and spacing read through), an account the importer cannot see (S3), the Excluded
+    sentence (S1) and the trust note, each byte for byte."""
+    if re.search(SHARE_RE, re.sub(r"[*_`]+", "", text)):
         return fail("share-claim", f"{where}: the sharing claim is written (BQ-2 RULED: never)")
-    for acct in FIXTURE["foreign_accounts"]:
-        if acct.lower() in text.lower():
-            return fail("foreign-account", f"{where}: names an account the importer cannot see")
+    if foreign(text):
+        return fail("foreign-account", f"{where}: names an account the importer cannot see")
     if excluded_problem(text, frame):
         return fail(
             "excluded", f"{where}: the Excluded sentence is not the ruled one, byte for byte"
@@ -1968,38 +3823,342 @@ def vocabulary_gate(where: str, text: str, frame: bool) -> str | None:
     return None
 
 
-def prose_checks(
-    clauses: list[str], where: str, import_scope: bool, facts: dict[str, Any]
-) -> str | None:
-    """The clause checks every ladder shares, on quoted-copy-free clauses: an account binding
-    remapped (S4), the check steps or the T2 legs out of order in an arrow chain (S9, S17), an app
-    version compared (S8), a limit in prose that is not the tool's (S18) and, on an import
-    surface, an account named (S3)."""
-    for clause in clauses:
-        if hits(REMAP_RE, clause) and re.search(ACCOUNT_RE, clause):
-            return fail("account-remap", f"{where}: an account binding remapped (BQ-3: dropped)")
-        if "→" in clause:
-            at = [m.start() for w in STEPS if (m := re.search(rf"(?i)\b{w}\b", clause))]
-            if len(at) == len(STEPS) and at != sorted(at):
-                return fail("steps", f"{where}: the check steps out of order: {clause[:60]!r}")
-            view_as, perm = clause.find("`rbac.view_as`"), clause.find("`rbac.permission`")
-            if view_as >= 0 and perm >= 0 and perm < view_as:
-                return fail("legs-order", f"{where}: view-as is not the first leg: {clause[:60]!r}")
-        if re.search(DROP_RE, clause) and hits(TAB_STOP_RE, clause):
-            return fail("drop-zone", f"{where}: the drop zone made a Tab stop: {clause[:60]!r}")
-        if re.search(r"(?i)\bcompar", clause) and hits(APP_VERSION_RE, clause):
-            return fail("version-field", f"{where}: an app version compared, not `schema_version`")
-        for m in re.finditer(LIMIT_PHRASE_RE, clause):
-            fact = facts.get(LIMIT_UNITS[m.group(2).lower()])
-            if fact is not None and re.sub(r",", "", m.group(1)) != str(fact):
-                return fail("limit-number", f"{where}: {m.group(0)!r} is not the tool's {fact}")
-        if import_scope and re.search(FOREIGN_RE, clause):
-            return fail("foreign-account", f"{where}: names an account the importer cannot see")
+def number_sets(facts: dict[str, Any]) -> tuple[dict[str, set[float]], dict[str, set[float]]]:
+    """Per unit, every value the tool derives (the allowed set) and the limits a "at most N" or
+    "N MB limit" phrase may state (S18): a number printed without its marker must be one of them."""
+    if id(facts) not in NUMBER_SETS:
+        known_copy(facts)
+        NUMBER_SETS[id(facts)] = derive_numbers(facts)
+    return NUMBER_SETS[id(facts)]
+
+
+def derive_numbers(facts: dict[str, Any]) -> tuple[dict[str, set[float]], dict[str, set[float]]]:
+    fx, bud, c = FIXTURE, FIXTURE["budget"], counts(facts)
+    caps = {
+        facts["name_max"],
+        facts["symbol_max"],
+        facts["kind_max"],
+        DESIGN_CAPS["key_cap"],
+        DESIGN_CAPS["file_cap"],
+        facts["label_max"],
+        facts["reason_max"],
+    }
+    redline = {float(v) for k, v in facts["redline"].items() if not k.startswith("opacity.")}
+    limits = {
+        "mb": {facts["size_mb"]},
+        "depth": {facts["depth"]},
+        "nodes": {facts["nodes"]},
+        "layouts": {facts["layouts_max"]},
+        "panes": {facts["panes_max"]},
+        "workspaces": {facts["workspaces_max"]},
+        "presets": {facts["presets_max"], facts["presets_user"]},
+        "chars": caps,
+        "ms": {facts["parse_ms"], facts["budget_ms"]},
+        "kib": {facts["create_kib"]},
+        "mib": {facts["presets_mib"]},
+    }
+    allowed = {k: set(v) for k, v in limits.items()}
+    allowed["mb"] |= {float(fx["oversized_mb"]), facts["example_mb"]}
+    allowed["ms"] |= {SHOW_DELAY_MS, fx["measured_ms"], fx["estimate_ms"]}
+    allowed["px"] = redline | set(facts["dialog_px"]) | {fx["reflow"]["margin"]}
+    allowed["pct"] = {fx["reflow"]["zoom"], facts["body_pct"], BASE_ZOOM}
+    allowed["fps"] = {
+        facts["refresh_fps"],
+        fps(fx["measured_ms"], facts),
+        fps(fx["estimate_ms"], facts),
+    }
+    allowed["s"] = {facts["p95_window_s"]}
+    allowed["layouts"] |= {
+        len(fx["export_layouts"]),
+        fx["layouts_in_file"],
+        bud["layouts"],
+        c["layouts"],
+    }
+    allowed["panes"] |= {fx["export_panels"], c["panels"], bud["panels"], fx["panes_in_file"]}
+    allowed["presets"] |= {fx["presets_in_file"], fx["export_presets"]}
+    return (
+        {k: {float(x) for x in v} for k, v in allowed.items()},
+        {k: {float(x) for x in v} for k, v in limits.items()},
+    )
+
+
+def number_problem(text: str, facts: dict[str, Any]) -> str | None:
+    """S18: every number with its unit, printed without its marker, outside quoted copy and code,
+    is the tool's: a limit phrase states the limit, any other number is one the tool derives."""
+    body = re.sub(r"`[^`\n]*`", "``", unquote(text))
+    allowed, limits = number_sets(facts)
+    for m in re.finditer(NUM_UNIT_RE, body):
+        if m.group(0) in QUOTED_NUMBERS:
+            continue
+        family = UNIT_FAMILY.get(m.group(2).lower())
+        if family is None:
+            continue
+        value = float(re.sub(r"[,   ]", "", m.group(1)))
+        is_limit = re.search(LIMIT_LEAD_RE, body[: m.start()]) or re.match(
+            LIMIT_TAIL_RE, body[m.end() :]
+        )
+        pool = limits.get(family, allowed.get(family, set())) if is_limit else allowed.get(family)
+        if pool is None or value not in pool:
+            return m.group(0)
     return None
 
 
-def frame_gate(name: str, c: list[str], facts: dict[str, Any], deck: set[str] | None) -> str | None:
-    """The FRAME ladder: the first FAIL of one frame row, its obligations from KIND."""
+# Per facts object, its UI strings; the facts are held here too, so no id is ever reused while a
+# cache below is keyed by it.
+KNOWN: dict[int, tuple[dict[str, Any], list[str]]] = {}
+
+
+def known_copy(facts: dict[str, Any]) -> list[str]:
+    """Every UI string the tool holds: the deck rendered and as templates, the reasons, the
+    upstream words, and the alternative renderings the text offers by name."""
+    if id(facts) in KNOWN:
+        return KNOWN[id(facts)][1]
+    out = [render(k, facts) for k in TEMPLATES] + list(TEMPLATES.values())
+    out += [s.strip('"') for s in DECK_STATIC.values() if s.startswith('"')]
+    out += [s for s, _ in UPSTREAM_TABLE] + [D02_EXCLUDED, MALFORMED_D02] + list(QUOTE_EXAMPLES)
+    out += [REASONS[k].format(user=FIXTURE["user"]) for k in REASONS]
+    KNOWN[id(facts)] = (facts, out)
+    return out
+
+
+def head_words(text: str, n: int = 3) -> tuple[str, ...]:
+    return tuple(re.findall(r"[a-z0-9']+", text.lower().replace("’", "'"))[:n])
+
+
+HEADS: dict[int, set[tuple[str, ...]]] = {}
+
+
+def quoted_problem(text: str, known: list[str]) -> str | None:
+    """M11/M13: a quoted string that opens like a UI string of the tool is that string, or a part
+    of it, byte for byte (a version, a limit or a word changed in a quote is a FAIL)."""
+    if id(known) not in HEADS:
+        heads = {head_words(s) for k in known for s in re.split(r"(?<=[.!?…]) ", k) if s}
+        HEADS[id(known)] = {h for h in heads if len(h) == 3}
+    heads = HEADS[id(known)]
+    for found in re.finditer(r'"([^"\n]+)"', text):
+        q = found.group(1)
+        if any(q in k for k in known):
+            continue
+        if head_words(q) in heads:
+            return q
+    return None
+
+
+PRE_SEND_SUBS = ("1.2", "3.3", "3.4", "4.2", "4.4")
+REFUSAL_SUBS = ("1.2", "3.4", "5", "5.1", "5.2", "5.3", "5.4", "5.5")
+EXPORT_NAME_RE = r"Export…|Download file|\bthe export dialog\b|\bexport dialog\b"
+AVAILABILITY_RE = r"(?i)unsaved default|no stored copy|never stored|availability"
+T2_POINTER_RE = (
+    r"SCR-026/entry-view-as|SCR-026/entry-permission|SCR-026/entry-limit|SCR-026/import-leg-lost"
+    r"|§6's (?:form|legs|rule|alone)|as §6 states|takes §6's"
+)
+CONTROL_RE = "|".join(re.escape(c) for c in CONTROL_NAMES if c != "Export…")
+
+
+def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | None:
+    """The vocabulary ladder every free clause, cell and sentence runs: the first FAIL of `text`.
+    `ctx` names where it is (`where`), its frame's kind (`kind`, None in prose), its subsection
+    (`sub`) and the whole line around it (`line`), which decide the scoped lists."""
+    where, kind, sub = ctx["where"], ctx.get("kind"), ctx.get("sub", "")
+    body = plain(text)
+    prose = kind is None
+    gated = exit_gated(text)
+    if gated:
+        return fail("exit-gated", f"exit drawn gated in {where} ({gated[0]!r}): {text[:60]!r}")
+    env_text = text
+    for pattern in ENV_OK_RE:
+        env_text = re.sub(pattern, lambda m: " " * len(m.group(0)), env_text)
+    if hits(ENV_RE, blank(plain(env_text), ENV_OK)):
+        return fail("env", f"{where}: an environment travels into an import: {text[:60]!r}")
+    locked: bool
+    if prose:
+        locked = not re.search(AVAILABILITY_RE, body) and bool(
+            near(EXPORT_NAME_RE, EXPORT_STEMS, body)
+        )
+    else:
+        locked = bool(ctx.get("export")) and bool(hits(LOCK_RE, body))
+    if locked:
+        return fail(
+            "export-gated", f"Export… drawn gated in {where} (a read, never T2): {text[:60]!r}"
+        )
+    refusal = (
+        (kind in NOTHING_KINDS | {"unconfirmed"})
+        if not prose
+        else (sub in REFUSAL_SUBS[2:] or bool(re.search(REJECTION_CTX_RE, body)))
+    )
+    if refusal:
+        lock = (
+            near(CONTROL_WORDS, LOCK_WORDS + "|" + GATE_WORDS, body)
+            if prose
+            else hits(LOCK_RE, body)
+        )
+        verbs = hits(IMPORT_VERB_RE, body)
+        if prose and re.search(VERB_HOME_RE, body):
+            verbs = [
+                v for v in verbs if not re.match(r"(?i)import (?:as new workspace|anyway)$", v)
+            ]
+        if verbs and not lock:
+            return fail(
+                "import-verb", f"{where} offers an Import verb on a refusal (AC 2): {verbs[0]!r}"
+            )
+        if lock:
+            return fail("rejection-lock", f"{where}: a refusal drawn locked or T2: {text[:60]!r}")
+    lock_hit: bool
+    if prose:
+        validity = sub not in ("6", "6.1") and not re.search(T2_CONTEXT_RE, body)
+        lock_hit = validity and bool(near(CONTROL_WORDS, LOCK_WORDS + "|" + GATE_WORDS, body))
+    else:
+        validity = kind not in T2_KINDS | NOTHING_KINDS | {"availability", "unconfirmed"}
+        lock_hit = validity and not ctx.get("export") and bool(hits(LOCK_RE, body))
+    if lock_hit:
+        return fail("t2-over", f"{where} is not T2 (validity is no lock): {text[:60]!r}")
+    work = body
+    for name in CONTROL_NAMES:
+        work = work.replace(name, "control")
+    early = (
+        kind in PRE_SEND_KINDS
+        if not prose
+        else sub[:1] != "2"
+        or bool(re.search(r"(?i)\b(?:workspaces?|layouts?|panes?|tabs?)\b", body))
+    )
+    if early and claims(CREATE_RE, work, post=True):
+        return fail("created-early", f"{where}: something exists before the send: {text[:60]!r}")
+    kept = (kind in NOTHING_KINDS | {"cancelled"}) if not prose else refusal or sub in REFUSAL_SUBS
+    if kept and claims(KEEP_RE, work):
+        return fail("partial", f"{where}: something of a refused file is kept: {text[:60]!r}")
+    return unit_gate_2(text, body, ctx, facts, prose)
+
+
+def claims(pattern: str, text: str, post: bool = False) -> bool:
+    """A create or keep claim: matched, no negator governing it, no temporal word before it in
+    its clause (`when it is imported` says when, never that it already happened)."""
+    for m in re.finditer(pattern, text):
+        if negated(text, m.start()):
+            continue
+        a, b = clause_bounds(text, m.start(), NEG_SPLIT_RE)
+        if re.search(TEMPORAL_RE, text[a : m.start()]) or (
+            post and re.search(POST_SEND_RE, text[a:b])
+        ):
+            continue
+        return True
+    return False
+
+
+def unit_gate_2(
+    text: str, body: str, ctx: dict[str, Any], facts: dict[str, Any], prose: bool
+) -> str | None:
+    """The ladder's second half: the lists every clause reads wherever it stands."""
+    where, sub, line = ctx["where"], ctx.get("sub", ""), ctx.get("line", text)
+    marked = blank(body, MARKUP_OK)
+    for m in re.finditer(MARKUP_RE, marked):
+        if not negated(marked, m.start()) and re.search(
+            FILE_SUBJECT_RE, clause_of(marked, m.start())
+        ):
+            return fail(
+                "untrusted-markup", f"{where}: a file string rendered as markup: {text[:60]!r}"
+            )
+    for m in re.finditer(REMAP_RE, body):
+        if negated(body, m.start()) or re.search(TRUE_REMAP_RE, body):
+            continue
+        if re.search(ACCOUNT_RE, clause_of(body, m.start())):
+            return fail("account-remap", f"{where}: an account binding remapped: {text[:60]!r}")
+    if near(DROP_RE.removeprefix("(?i)"), TAB_STOP_RE.removeprefix("(?i)"), body) or re.search(
+        r"(?i)\benter (?:on|in) the (?:drop )?zone\b", body
+    ):
+        return fail("drop-zone", f"{where}: the drop zone made a Tab stop: {text[:60]!r}")
+    if re.search(COMPARE_RE, body) and hits(APP_VERSION_RE, body):
+        return fail("version-field", f"{where}: an app version compared: {text[:60]!r}")
+    problem = steps_problem(text)
+    if problem:
+        return fail("steps", f"{where}: {problem}: {text[:60]!r}")
+    if legs_problem(text):
+        return fail("legs-order", f"{where}: view-as is not the first leg: {text[:60]!r}")
+    if hits(RECHECK_RE, body):
+        return fail("server-recheck", f"{where}: the server's re-check denied: {text[:60]!r}")
+    shown = (re.search(FILE_SUBJECT_RE, body) or re.search(FILE_SUBJECT_RE, plain(line))) and hits(
+        UNCAPPED_RE, body
+    )
+    if shown or (re.search(FILE_SUBJECT_RE, body) and hits(UNCAPPED_BARE_RE, body)):
+        return fail("caps", f"{where}: a string from the file past its cap: {text[:60]!r}")
+    if hits(RAW_RE, body):
+        return fail("raw-echo", f"{where}: file content echoed, logged or sent: {text[:60]!r}")
+    if (
+        re.search(INCLUDED_CTX_RE, body)
+        and not re.search(TICKET_RE, body)
+        and near(INCLUDED_VERB_RE, INCLUDED_EXTRA_RE.removeprefix("(?i)"), body, 3, 0)
+    ):
+        return fail("included", f"{where}: the Included list names what the bundle never holds")
+    if hits(PRIVILEGE_RE, body):
+        return fail(
+            "privilege", f"{where}: a file that grants the exporter something: {text[:60]!r}"
+        )
+    if hits(HONESTY_RE, blank(body, HONESTY_OK)):
+        return fail("honesty", f"{where}: a claim no text-first spec can make (A4): {text[:60]!r}")
+    if prose and sub not in ("6", "6.1") and hits(r"\bT2\b", body):
+        if hits(T2_RESTATE_RE, body):
+            return fail("t2-once", f"{where}: T2 restated outside §6 (A1): {text[:60]!r}")
+    forced = ctx.get("kind") in NOTHING_KINDS | {"unconfirmed"}
+    control = focus_problem(text, line, forced, ctx.get("focus"))
+    if control:
+        return fail("rejection-focus", f"{where}: focus on {control!r} on a refusal: {text[:60]!r}")
+    number = number_problem(text, facts)
+    if number:
+        return fail("limit-number", f"{where}: {number!r} is not a number the tool derives")
+    quoted = quoted_problem(text, ctx["known"])
+    if quoted:
+        return fail("quoted-copy", f"{where}: a UI string differs from the deck's: {quoted[:50]!r}")
+    return None
+
+
+def sentences(text: str) -> list[str]:
+    """A line of prose or a table cell as clauses: split on `;` and `|`, on a sentence's end and on
+    ` — `, never inside double-quoted copy or a code span."""
+    out: list[str] = []
+    for part in split_clauses(text, ";|"):
+        buf: list[str] = []
+        code = quote = False
+        i = 0
+        while i < len(part):
+            ch = part[i]
+            if code:
+                code = ch != "`"
+            elif quote:
+                quote = ch != '"'
+            elif ch == "`":
+                code = True
+            elif ch == '"':
+                quote = True
+            elif part.startswith(" — ", i):
+                out.append("".join(buf).strip())
+                buf, i = [], i + 3
+                continue
+            elif ch in ".!?" and re.match(r" [A-Z0-9`*(\[\"]", part[i + 1 : i + 3] or ""):
+                buf.append(ch)
+                out.append("".join(buf).strip())
+                buf, i = [], i + 2
+                continue
+            buf.append(ch)
+            i += 1
+        out.append("".join(buf).strip())
+    return [s for s in out if s]
+
+
+def clause_label(clause: str) -> str:
+    """A free clause's label: its words before the first ": " (none when the clause opens on copy,
+    code or a sentence)."""
+    if clause.startswith("Esc →"):
+        return "Esc"
+    m = re.match(r"([^:`\"]{1,72}?): ", clause)
+    return m.group(1) if m else ""
+
+
+def frame_gate(
+    name: str, c: list[str], facts: dict[str, Any], deck: set[str] | None, known: list[str]
+) -> str | None:
+    """The FRAME ladder: the first FAIL of one frame row, its obligations from the tool's tables.
+    Every cell is read: the Producer and every free clause by the vocabulary ladder, the expected
+    clauses whole, the free clauses' labels, the Producer and the copy keys against the tool's own
+    text, the Class and the Board cells against the inventory and §0."""
     if len(c) != 6:
         return fail("cells", f"frame {name}: {len(c)} cells, six expected")
     kind, params = KIND[name]
@@ -2014,57 +4173,49 @@ def frame_gate(name: str, c: list[str], facts: dict[str, Any], deck: set[str] | 
     found = vocabulary_gate(f"frame {name}", " | ".join(c), frame=True)
     if found:
         return found
-    clauses = split_clauses(producer) + split_clauses(shows)
+    clauses = split_clauses(shows)
     for clause in clauses:
         if label_of(clause) == "footer":
             for label, note in footer_items(clause):
                 if re.fullmatch(EXIT_RE, label) and hits(GATE_RE, note):
                     return fail("exit-gated", f"exit {label} drawn gated in the footer of {name}")
-            continue
+    want = {label for label, _, _ in expected(name, kind, params, facts)}
+    free = [x for x in clauses if label_of(x) not in want]
+    for clause in [producer] + free:
         gated = exit_gated(clause)
         if gated:
             return fail("exit-gated", f"exit drawn gated in {name} ({gated[0]!r}): {clause[:60]!r}")
-    plain = unquote(producer + " ; " + shows)
-    if name.startswith("SCR-026/"):
-        text = plain
-        for allowed in ENV_ALLOWED:
-            text = text.replace(allowed, "")
-        if hits(ENV_RE, text):
-            return fail("env", f"frame {name}: an environment travels into an import")
-    rest = split_clauses(shows)
-    if name.startswith("SCR-025/"):
-        open_ = [
-            unquote(x) for x in split_clauses(producer) + rest if label_of(x) != "availability"
-        ]
-        if any(hits(LOCK_RE, x) for x in open_):
-            return fail("export-gated", f"Export… drawn gated in {name} (a read, never T2)")
     found = rejection_gate(name, kind, shows)
     if found:
         return found
-    found = prose_checks(
-        [unquote(x) for x in rest], f"frame {name}", name.startswith("SCR-026/"), facts
-    )
-    if found:
-        return found
-    if name.startswith("SCR-026/") and any(
-        hits(MARKUP_RE, unquote(x)) for x in rest if label_of(x) != "renders"
-    ):
-        return fail("untrusted-markup", f"frame {name}: a file string rendered as markup")
-    if kind in PRE_SEND_KINDS and any(
-        hits(CREATE_RE, unquote(x)) for x in rest if label_of(x) != "state"
-    ):
-        return fail("created-early", f"frame {name}: something exists before the send")
-    lab = labelled(shows)
-    locked = any(hits("(?i)" + LOCK_WORDS, unquote(x)) for x in rest)
-    if kind not in T2_KINDS and ({"T2", "legs", "reason"} & set(lab) or locked):
+    ctx: dict[str, Any] = {
+        "where": f"frame {name}",
+        "kind": kind,
+        "line": producer + " ; " + shows,
+        "known": known,
+        "export": name.startswith("SCR-025/") and kind != "availability",
+        "focus": FOCUS.get(name, FOCUS.get(kind)),
+    }
+    for clause in [producer] + free:
+        found = unit_gate(clause, ctx, facts)
+        if found:
+            return found
+    if kind not in T2_KINDS and {"T2", "legs", "reason"} & set(labelled(shows)):
         return fail("t2-over", f"frame {name} is not T2 (over-conversion; validity is no lock)")
-    found = clause_gate(name, kind, params, facts, lab)
+    found = clause_gate(name, kind, params, facts, labelled(shows))
     if found:
         return found
+    labels = tuple(clause_label(x) for x in free)
+    if labels != DESCRIPTIVE[name]:
+        return fail("clause-label", f"frame {name}: free clauses {labels}, the tool's are fixed")
+    if producer != PRODUCERS[name]:
+        return fail("producer", f"frame {name}: the Producer cell is not the tool's, whole")
     if deck is not None:
         for key in re.findall(r"`([^`]+)`", keys):
             if key not in deck:
                 return fail("key-deck", f"copy key not in the deck (§9) in {name}: {key}")
+    if keys != COPY_KEYS[name]:
+        return fail("copy-keys", f"frame {name}: the copy keys are not the tool's, whole")
     return None
 
 
@@ -2117,7 +4268,12 @@ def clause_gate(
     return None
 
 
-def frame_gates(spec: str, facts: dict[str, Any], deck: set[str] | None) -> list[str]:
+FRAME_CACHE: dict[tuple[object, ...], str | None] = {}
+
+
+def frame_gates(
+    spec: str, facts: dict[str, Any], deck: set[str] | None, known: list[str]
+) -> list[str]:
     """Every frame row through the FRAME ladder, then the inventory both ways."""
     bad: list[str] = []
     seen: dict[str, int] = {}
@@ -2125,7 +4281,16 @@ def frame_gates(spec: str, facts: dict[str, Any], deck: set[str] | None) -> list
         seen[name] = seen.get(name, 0) + 1
         if name not in KIND:
             continue
-        found = frame_gate(name, c, facts, deck)
+        key = (
+            id(facts),
+            id(known),
+            name,
+            " | ".join(c),
+            None if deck is None else tuple(sorted(deck)),
+        )
+        if key not in FRAME_CACHE:
+            FRAME_CACHE[key] = frame_gate(name, c, facts, deck, known)
+        found = FRAME_CACHE[key]
         if found:
             bad.append(found)
     extra = sorted(n for n in seen if n not in KIND)
@@ -2155,6 +4320,8 @@ def table_gate(spec: str, head: str, report: bool) -> str | None:
         return fail("preview-columns", f"{where} has no table")
     if re.sub(r" +", " ", lines[0]) != TABLE_HEAD:
         return fail("preview-columns", f"{where}: the columns are not {TABLE_HEAD}")
+    if len(lines) < 2 or not re.fullmatch(r"\|[ :|-]+\|", lines[1].strip()):
+        return fail("preview-columns", f"{where}: its separator row carries text")
     body = lines[2:]
     for i, line in enumerate(body):
         found = vocabulary_gate(f"{where} row {i + 1}", line, frame=False)
@@ -2182,7 +4349,8 @@ def table_gate(spec: str, head: str, report: bool) -> str | None:
 
 
 def board_gates(spec: str) -> tuple[list[str], dict[str, Any]]:
-    """§0: the cap, the light twins, the exports and the reconciliation with the frame rows."""
+    """§0: the cap, the light twins, the exports, every cell of every row against the tool's
+    (BOARDS: the Draws and the Theme whole) and the reconciliation with the frame rows."""
     bad: list[str] = []
     s0 = section(spec, 0, 1)
     boards = re.findall(BOARD_RE, s0, MULTI)
@@ -2198,15 +4366,20 @@ def board_gates(spec: str) -> tuple[list[str], dict[str, Any]]:
             bad.append(fail("board-cells", f"§0 board {num}: fewer than four cells after its name"))
             continue
         draws, theme, export, status = c[0], c[1], c[2], c[3]
+        frames = set(re.findall(FRAME_NAME_RE, draws))
         if slug.endswith("-light") != (theme == "light"):
             bad.append(fail("board-theme", f"§0 board {num}: its slug and its theme disagree"))
+        elif theme not in ("dark", "light"):
+            bad.append(fail("board-theme", f"§0 board {num}: its Theme cell is not dark or light"))
         if export != f"`docs/design/E15/img/E15-D09-{num}-{slug}.png`":
             bad.append(fail("board-export", f"§0 board {num}: export path {export} not its name"))
         if status != "pending":
             bad.append(fail("board-status", f"§0 board {num}: status {status!r} (text-first)"))
-        frames = set(re.findall(FRAME_NAME_RE, draws))
-        for f in sorted(frames - set(KIND)):
+        unknown = sorted(frames - set(KIND))
+        for f in unknown:
             bad.append(fail("board-unknown", f"§0 board {num} names an unknown frame {f}"))
+        if not unknown and num in BOARDS and draws != BOARDS[num][0]:
+            bad.append(fail("board-draws", f"§0 board {num}: its Draws cell is not the tool's"))
         for f in frames:
             named.setdefault(f, set()).add(num)
         if not frames and num not in TABLE_BOARDS:
@@ -2237,7 +4410,8 @@ def board_gates(spec: str) -> tuple[list[str], dict[str, Any]]:
 
 
 def head_gates(spec: str) -> tuple[list[str], dict[str, int]]:
-    """The header, the deviations, the AC trace, the ruled questions and conditions, A3."""
+    """The header, the deviations, the AC trace and the ruled questions and conditions, each row
+    whole against the tool's (M15: a qualifier added or the pending mark dropped is a FAIL), A3."""
     bad: list[str] = []
     head = spec[: spec.find("\n## ")]
     bad += [
@@ -2263,34 +4437,42 @@ def head_gates(spec: str) -> tuple[list[str], dict[str, int]]:
     bad += [
         fail("trace-repeats", f"AC trace repeats {i}") for i in sorted(set(ids)) if ids.count(i) > 1
     ]
+    trace_rows = {cells(r)[0]: squeeze(r) for r in PINNED[TRACE_HEAD][1]}
+    pending = not re.search(PLACEHOLDER_RE, spec)
     for i, row in found.items():
-        if cells(row)[-1] not in TRACE_STATUS:
+        status = cells(row)[-1]
+        if status not in TRACE_STATUS:
             bad.append(fail("trace-status", f"AC trace {i}: status not one of {TRACE_STATUS}"))
-    if not re.search(PLACEHOLDER_RE, spec):
-        bad += [
-            fail("trace-pending", f"AC trace {i} still says text pending, and no section does")
-            for i, row in found.items()
-            if cells(row)[-1] == "text pending"
-        ]
+        elif status == "text pending" and pending:
+            bad.append(fail("trace-pending", f"AC trace {i} still says text pending"))
+        elif ids.count(i) == 1 and i in trace_rows and squeeze(row) != trace_rows[i]:
+            bad.append(fail("trace-row", f"AC trace {i} is not the tool's row, whole"))
     bqs = block(spec, "## The questions", "\n## ")
-    bq = {m.group(1): m.group(0) for m in re.finditer(r"^\| (BQ-\d+) +\|.*$", bqs, MULTI)}
-    for i in range(1, 17):
-        bq_row = bq.get(f"BQ-{i}")
-        if bq_row is None:
-            bad.append(fail("bq-missing", f"BQ-{i} missing from the questions table"))
-        elif f"RULED ({RULING})" not in cells(bq_row)[-1]:
-            bad.append(fail("bq-ruled", f"BQ-{i} not RULED ({RULING})"))
-    for qid, terms in BQ_TERMS.items():
-        if qid in bq and any(t not in bq[qid] for t in terms):
-            bad.append(fail("bq-terms", f"{qid} row lost its ruled outcome ({' / '.join(terms)})"))
-    conds = {m.group(1): m.group(0) for m in re.finditer(r"^\| (Condition \d) +\|.*$", bqs, MULTI)}
-    for cid, terms in CONDITION_TERMS.items():
-        c_row = conds.get(cid)
-        if c_row is None or any(t not in c_row for t in terms) or "RULED" not in cells(c_row)[-1]:
-            bad.append(fail("condition", f"{cid} missing or lost its ruled terms"))
+    if f"{RULING}, on the BQ comment {BQ_COMMENT}" not in bqs.split("\n")[0]:
+        bad.append(fail("bq-ruled", "the questions' heading lost the ruling or the BQ comment"))
+    want = {cells(r)[0]: squeeze(r) for r in PINNED[BQ_HEAD][1]}
+    have = {
+        m.group(1): squeeze(m.group(0))
+        for m in re.finditer(r"^\| (BQ-\d+|Condition \d) +\|.*$", bqs, MULTI)
+    }
+    for qid, row in want.items():
+        got = have.get(qid)
+        if got is None and qid.startswith("Condition"):
+            bad.append(fail("condition", f"{qid} missing from the questions table"))
+        elif got is None:
+            bad.append(fail("bq-missing", f"{qid} missing from the questions table"))
+        elif qid.startswith("Condition"):
+            if got != row:
+                bad.append(fail("condition", f"{qid} is not the ruled row, whole"))
+        elif f"RULED ({RULING})" not in cells(got)[-1]:
+            bad.append(fail("bq-ruled", f"{qid} not RULED ({RULING})"))
+        elif got != row:
+            bad.append(fail("bq-terms", f"{qid} row is not the ruled one, whole (M15)"))
     if A3_STANDING not in spec[: spec.find("\n## 0. ")]:
         bad.append(fail("standing", "the standing additions lost A3: the exits are never gated"))
-    return bad, {"bq_rows": len(bq), "ac_rows": len(ids), "conditions": len(conds)}
+    bq_n = len([q for q in have if q.startswith("BQ-")])
+    conds = len([q for q in have if q.startswith("Condition")])
+    return bad, {"bq_rows": bq_n, "ac_rows": len(ids), "conditions": conds}
 
 
 NEEDLES: dict[
@@ -2360,8 +4542,111 @@ def pointer_runs(lines: list[str]) -> list[list[int]] | None:
     return runs
 
 
+INVISIBLE_OK = {"\n", "\t"}
+CONFUSABLE_SCRIPTS = ("CYRILLIC", "GREEK", "ARMENIAN", "CHEROKEE", "COPTIC")
+CONFUSABLE_OK = {"Δ"}
+
+
+def invisible_problem(text: str) -> str | None:
+    """A character that hides or impersonates (Trojan-Source hygiene for a public repository): a
+    format or control character, a letter of a script that mimics Latin, an HTML entity."""
+    for ch in set(text):
+        if ch in INVISIBLE_OK:
+            continue
+        cat = unicodedata.category(ch)
+        if cat in ("Cf", "Cc", "Co", "Cs", "Zl", "Zp"):
+            return f"U+{ord(ch):04X}"
+        name = unicodedata.name(ch, "")
+        if ch not in CONFUSABLE_OK and name.split(" ")[0] in CONFUSABLE_SCRIPTS:
+            return f"U+{ord(ch):04X} {name}"
+    m = re.search(r"&(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z]+);", text)
+    return m.group(0) if m else None
+
+
+def container_problem(spec: str) -> str | None:
+    """Text a reader of the rendered page never sees, or HTML that renders: a comment other than
+    an audit marker, a fenced block, a raw HTML tag outside code."""
+    for m in re.finditer(r"<!--.*?(?:-->|$)", spec, MULTI):
+        if not re.fullmatch(MARKER_RE, m.group(0)) and not re.match(r"<!--\s*audit:", m.group(0)):
+            return m.group(0)[:40]
+    if "```" in spec or "~~~" in spec:
+        return "a fenced block"
+    body = re.sub(r"`[^`\n]*`", "", re.sub(MARKER_RE, "", spec))
+    tag = re.search(r"</?[A-Za-z][\w-]*(?:\s[^<>\n]*)?>", body)
+    return tag.group(0)[:40] if tag else None
+
+
+def wrap_problem(spec: str) -> int | None:
+    """M14: a paragraph or a list item is one line, so no sentence is ever split across two (a
+    wrapped sentence would evade every sentence gate)."""
+    lines = spec.split("\n")
+    for i in range(len(lines) - 1):
+        a, b = lines[i], lines[i + 1]
+        if not a.strip() or not b.strip() or a.startswith(("|", "#")) or b.startswith("|"):
+            continue
+        if re.match(r"(?:- |\d+\. |#)", b):
+            continue
+        return i + 2
+    return None
+
+
+RULED_FORM_RE = (
+    r"BQ-\d+(?:,? (?:and )?BQ-\d+)* RULED|RULED \(" + RULING + r"\)|PROPOSED unless RULED"
+    r"|RULED by the orchestrator|\(RULED, binding on every frame\)|\"RULED\" cites "
+    + RULING
+    + r"|conditions RULED"
+)
+
+
+def ruled_problems(spec: str) -> list[str]:
+    """A4: "RULED" only where a ruling stands — a BQ by number, or the ruling's id — and never on a
+    decision of this spec (§1.4's rows are PROPOSED; a ruled question is the BQ table's)."""
+    bad: list[str] = []
+    body = re.sub(RULED_FORM_RE, "", spec)
+    for m in re.finditer(r"^\| (D09-D\d+) +\|.*$", section(spec, 1, 2), MULTI):
+        if re.search(r"(?i)\bruled\b", m.group(0)):
+            return [fail("ruled", f"{m.group(1)} claims a ruling; a decision is PROPOSED")]
+    for m in re.finditer(r"\bRULED\b", body):
+        ln = body[body.rfind("\n", 0, m.start()) + 1 : body.find("\n", m.start())]
+        return [fail("ruled", f"RULED without its ruling: {ln[:60]!r}")]
+    for n in re.findall(r"BQ-(\d+)(?:,? (?:and )?BQ-\d+)* RULED", spec):
+        if not 1 <= int(n) <= 16:
+            return [fail("ruled", f"BQ-{n} RULED names no ruled question")]
+    return bad
+
+
+KNOWN_KEYS = set(CITE_KEYS.split("|"))
+
+
+def cite_key_problem(spec: str) -> str | None:
+    """A4: a line cite to a document the tool does not pin (E15-D08 is PENDING: named only)."""
+    for m in re.finditer(r"`([A-Za-z][A-Za-z0-9]*):(\d+)(?:–\d+)?`", spec):
+        if m.group(1) not in KNOWN_KEYS:
+            return m.group(0)
+    pending = re.search(r"\bD08:\d+", spec)
+    return pending.group(0) if pending else None
+
+
+def sha_problems(spec: str) -> list[str]:
+    """A4: every commit id is a pinned merge's (E15-D08 has none), each printed as often as the tool
+    pins it, so none is swapped for a ref or edited in one of its copies."""
+    bad: list[str] = []
+    for tok in sorted(set(re.findall(r"\b[0-9a-f]{7,40}\b", spec))):
+        if not re.search(r"[a-f]", tok) or tok.isdigit():
+            continue
+        if not any(s.startswith(tok) for s in KNOWN_SHAS):
+            bad.append(fail("sha", f"a commit id no pinned merge has: {tok}"))
+    for sha, want in SHA_COUNTS.items():
+        have = len(re.findall(rf"\b{sha[:8]}[0-9a-f]*\b", spec))
+        if have != want:
+            bad.append(fail("sha", f"{sha[:8]} printed {have} times, the tool pins {want}"))
+    return bad
+
+
 def text_gates(spec: str, t: dict[str, str], facts: dict[str, Any]) -> list[str]:
-    """Reasons, upstream copy, the `14` pointer lines, placeholders, the repository-wide rules."""
+    """Reasons, upstream copy, the `14` pointer lines whole, placeholders, the repository-wide
+    rules: private paths, closing keywords, invisible or impersonating characters, comments and
+    raw HTML, wrapped paragraphs, "RULED", unpinned cites, commit ids, dangling ids."""
     bad: list[str] = []
     for key, string, doc in rows(REASONS_TABLE):
         if f'"{string}"' not in t[doc]:
@@ -2376,11 +4661,18 @@ def text_gates(spec: str, t: dict[str, str], facts: dict[str, Any]) -> list[str]
     plan14 = t["14"].split("\n")
     at = [i for i, ln in enumerate(plan14) if POINTER in ln]
     runs = pointer_runs(plan14)
-    if runs is None or len(at) != 2 or at[0] not in runs[0] or at[1] not in runs[1]:
+    if (
+        runs is None
+        or len(at) != 2
+        or at[0] not in runs[0]
+        or at[1] not in runs[1]
+        or tuple(plan14[i] for i in at) != POINTER_LINES
+    ):
         bad.append(
             fail(
                 "pointer-14",
-                f"`14` pointer lines at {[i + 1 for i in at]}, not after the checklists",
+                f"`14` pointer lines at {[i + 1 for i in at]}: not after the checklists or not the "
+                "tool's text, byte for byte",
             )
         )
     for n, text in re.findall(PLACEHOLDER_RE, spec):
@@ -2393,20 +4685,31 @@ def text_gates(spec: str, t: dict[str, str], facts: dict[str, Any]) -> list[str]
             for p in FORBIDDEN
             if re.search(p, txt)
         ]
+        odd = invisible_problem(txt)
+        if odd:
+            bad.append(fail("invisible", f"{label}: an invisible or impersonating character {odd}"))
         if label == "tool":
             continue
         if re.search(CLOSING, txt, re.IGNORECASE):
             bad.append(fail("closing", f"{label}: a closing keyword (text-first: Refs + Partial)"))
-        if label == "14" and (re.search(SHARE_RE, txt) or excluded_problem(txt, frame=True)):
-            bad.append(
-                fail("share-claim", "`14` pointer lines: the sharing claim or a changed sentence")
-            )
         for r in sorted(set(re.findall(r"\bC-\d+\.\d+\b", txt))):
             if not re.search(rf"^\*\*{re.escape(r)}\b", constitution, MULTI):
                 bad.append(fail("rule-id", f"{label}: dangling rule id {r}"))
         for c in sorted(set(re.findall(r"\b(?:CMP|SCR)-\d{3}\b", txt))):
             if f"### {c} " not in t["15" if c.startswith("CMP") else "14"]:
                 bad.append(fail("catalogue-id", f"{label}: no catalogue heading for {c}"))
+    hidden = container_problem(spec)
+    if hidden:
+        bad.append(fail("comment", f"spec: text a reader never sees, or raw HTML: {hidden!r}"))
+    wrapped = wrap_problem(spec)
+    if wrapped:
+        bad.append(fail("wrap", f"spec line {wrapped}: a paragraph runs on to a second line"))
+    bad += ruled_problems(spec) + sha_problems(spec)
+    cite = cite_key_problem(spec)
+    if cite:
+        bad.append(
+            fail("cite-unpinned", f"a line cite to a document the tool does not pin: {cite}")
+        )
     return bad
 
 
@@ -2426,6 +4729,12 @@ NUMERIC_FACTS = (
     "reason_max",
     "budget_ms",
     "refresh_fps",
+    "presets_user",
+    "presets_mib",
+    "create_kib",
+    "example_mb",
+    "body_pct",
+    "p95_window_s",
 )
 
 
@@ -2471,40 +4780,148 @@ def table_indices(spec: str) -> set[int]:
     return out
 
 
-def line_gate(line: str, sec: int, facts: dict[str, Any]) -> str | None:
-    """The LINE ladder: one line of prose or a non-frame table row, whole clauses."""
-    found = vocabulary_gate(f"§{sec} line {line[:40]!r}", line, frame=False)
+def line_subsections(spec: str) -> list[str]:
+    """The `### n.m` subsection of each line ("n" before its first subsection, "-1" before §0)."""
+    out, current = [], "-1"
+    for ln in spec.split("\n"):
+        m = re.match(r"## (\d+)\. ", ln)
+        if m:
+            current = m.group(1)
+        m = re.match(r"### (\d+\.\d+) ", ln)
+        if m:
+            current = m.group(1)
+        out.append(current)
+    return out
+
+
+def table_spans(spec: str) -> dict[int, str]:
+    """For each table row (0-based line), the squeezed header row of the table it belongs to."""
+    out: dict[int, str] = {}
+    head = ""
+    for i, ln in enumerate(spec.split("\n")):
+        if not ln.startswith("|"):
+            head = ""
+            continue
+        if not head:
+            head = squeeze(ln)
+        out[i] = head
+    return out
+
+
+def squeeze(line: str) -> str:
+    return re.sub(r" {2,}", " ", line.strip())
+
+
+def line_gate(line: str, sec: int, sub: str, facts: dict[str, Any], known: list[str]) -> str | None:
+    """The LINE ladder: one line of prose or one row of a table no other ladder reads, every
+    sentence or cell through the vocabulary ladder."""
+    where = f"§{sec} line {line[:40]!r}"
+    found = vocabulary_gate(where, line, frame=False)
     if found:
         return found
-    for clause in sentences(line):
-        gated = exit_gated(clause)
-        if gated:
-            return fail("exit-gated", f"exit drawn gated in §{sec} ({gated[0]!r}): {clause[:60]!r}")
-    if sec in (3, 4, 5):
-        text = unquote(line)
-        for allowed in ENV_ALLOWED:
-            text = text.replace(allowed, "")
-        if hits(ENV_RE, text):
-            return fail("env", f"§{sec}: an environment travels into an import: {line[:60]!r}")
-        if any(hits(MARKUP_RE, unquote(x)) for x in sentences(line)):
-            return fail("untrusted-markup", f"§{sec}: a file string rendered as markup")
-    clauses = [unquote(x) for x in sentences(line)]
-    return prose_checks(clauses, f"§{sec}", sec in (3, 4, 5), facts)
+    if line.startswith("|"):
+        units = cells(line)
+        if re.match(DECK_ROW_RE, line):
+            units = [units[1], units[3]] if len(units) > 3 else units
+        units = [s for u in units for s in sentences(u)]
+    else:
+        units = sentences(line)
+    ctx: dict[str, Any] = {"where": f"§{sec}", "sub": sub, "line": line, "known": known}
+    for unit in units:
+        found = unit_gate(unit, ctx, facts)
+        if found:
+            return found
+    return None
 
 
-def line_gates(spec: str, facts: dict[str, Any]) -> list[str]:
-    """Every line no other ladder reads: prose, headings and the tables of §1 and §6-§16."""
+def line_gates(spec: str, facts: dict[str, Any], known: list[str]) -> list[str]:
+    """Every line no other ladder reads: prose, headings, list items and the tables that are
+    neither frames, §4.2 and §4.3, §0's boards nor a table the tool holds whole."""
     bad: list[str] = []
-    secs = line_sections(spec)
-    tables = table_indices(spec)
+    secs, subs = line_sections(spec), line_subsections(spec)
+    tables, spans = table_indices(spec), table_spans(spec)
     for i, line in enumerate(spec.split("\n")):
-        if i in tables or re.match(BOARD_RE, line):
+        if i in tables or re.match(BOARD_RE, line) or not line.strip():
             continue
         if 2 <= secs[i] <= 5 and re.match(FRAME_RE, line):
             continue
-        found = line_gate(line, secs[i], facts)
-        if found:
-            bad.append(found)
+        head = spans.get(i)
+        if head in PINNED or head == KEYBOARD_HEAD and squeeze(line) != head:
+            if head == KEYBOARD_HEAD:
+                cell = cells(line)
+                rest = " | ".join(cell[3:])
+                found = line_gate("| " + rest + " |", secs[i], subs[i], facts, known)
+                if found:
+                    bad.append(found)
+            continue
+        key = (id(facts), id(known), line, secs[i], subs[i])
+        if key not in LINE_CACHE:
+            LINE_CACHE[key] = line_gate(line, secs[i], subs[i], facts, known)
+        if LINE_CACHE[key]:
+            bad.append(str(LINE_CACHE[key]))
+    return bad
+
+
+# One line's verdict, kept for the run: a mutation changes a line or two, the rest are re-read
+# from here (`--self-test` runs every gate once per mutation).
+LINE_CACHE: dict[tuple[int, int, str, int, str], str | None] = {}
+
+
+def pinned_gates(spec: str) -> list[str]:
+    """The tables the tool holds whole (they restate frame facts or record a ruling): each row
+    squeezed, compared with the tool's, in order (M13, M15)."""
+    bad: list[str] = []
+    found: dict[str, list[str]] = {}
+    lines = spec.split("\n")
+    for i, head in table_spans(spec).items():
+        line = squeeze(lines[i])
+        if head in PINNED and line != head and not re.fullmatch(r"\|[ :|-]+\|", line):
+            found.setdefault(head, []).append(line)
+    spans = table_spans(spec)
+    for i, head in spans.items():
+        if spans.get(i - 1) is None or squeeze(lines[i - 1]) != head:
+            continue
+        if not re.fullmatch(r"\|[ :|-]+\|", squeeze(lines[i])):
+            bad.append(fail("separator", f"a table's separator row carries text: {head[:40]!r}"))
+    for head, (code, want) in PINNED.items():
+        have = found.get(head, [])
+        if code != "pinned-row":
+            continue
+        for n, (a, b) in enumerate(zip(have, want, strict=False), 1):
+            if a != b:
+                bad.append(fail("pinned-row", f"{head[:40]!r} row {n} is not the tool's, whole"))
+                break
+        else:
+            if len(have) != len(want):
+                bad.append(
+                    fail("pinned-row", f"{head[:40]!r}: {len(have)} rows, the tool's {len(want)}")
+                )
+    return bad
+
+
+def keyboard_gates(spec: str) -> list[str]:
+    """§7's keyboard model: every row's frames, initial focus and Tab order are the tool's (the
+    focus a rejection lands on, the drop zone never a stop: S19, S20)."""
+    bad: list[str] = []
+    spans = table_spans(spec)
+    rows = [
+        cells(ln)
+        for i, ln in enumerate(spec.split("\n"))
+        if spans.get(i) == KEYBOARD_HEAD
+        and squeeze(ln) != KEYBOARD_HEAD
+        and not re.fullmatch(r"\|[ :|-]+\|", squeeze(ln))
+    ]
+    have = {r[0]: (r[1], r[2]) for r in rows if len(r) >= 3}
+    for frames, (focus, tab) in KEYBOARD.items():
+        got = have.get(frames)
+        if got is None:
+            bad.append(fail("keyboard", f"§7's keyboard model lacks the row {frames[:50]!r}"))
+        elif got != (focus, tab):
+            bad.append(fail("keyboard", f"§7's keyboard row {frames[:40]!r}: focus or Tab order"))
+    for frames in sorted(set(have) - set(KEYBOARD)):
+        bad.append(
+            fail("keyboard", f"§7's keyboard model has a row the tool lacks {frames[:40]!r}")
+        )
     return bad
 
 
@@ -2568,6 +4985,11 @@ def measured_gates(s8: str, ctx: Ctx) -> list[str]:
             bad.append(
                 fail("cvd", f"§8 colour-vision row differs or is missing: {r['a']} vs {r['b']}")
             )
+    pairs = {(r["fg"], r["bg"], r["role"]) for r in ctx.measured["matrix"]}
+    for key in sorted(set(found) - pairs):
+        bad.append(
+            fail("contrast-row", f"§8 has a row the tool does not measure: {key[0]} on {key[1]}")
+        )
     if FORCED_COLORS not in s8:
         bad.append(fail("forced-colors", "§8 lacks the `forced-colors: active` rendering (R2)"))
     return bad
@@ -2580,22 +5002,34 @@ def deck_rows(spec: str) -> dict[str, str] | None:
     return {m.group(1): m.group(3) for m in re.finditer(DECK_ROW_RE, section(spec, 9, 10), MULTI)}
 
 
+def deck_cell(key: str, facts: dict[str, Any]) -> str:
+    """A deck row's String cell as the tool holds it: a template with its fixture rendering, or the
+    static string whole."""
+    if key in TEMPLATES:
+        template, rendering = TEMPLATES[key], render(key, facts)
+        return f'"{template}"' if rendering == template else f'"{template}" · fixture "{rendering}"'
+    return DECK_STATIC[key]
+
+
 def deck_gates(deck: dict[str, str], facts: dict[str, Any]) -> list[str]:
-    """§9: every gated template verbatim, no jargon, every reason key one short sentence."""
+    """§9: every String cell the tool's whole (M11: a reason, a label or a list changed is a FAIL),
+    the deck's keys the tool's, no jargon, every reason key one short sentence."""
     bad: list[str] = []
-    for key, template in TEMPLATES.items():
-        cell = deck.get(key, "")
-        if not cell.startswith(f'"{template}"'):
-            bad.append(fail("deck-template", f"§9 {key}: not the tool's template, byte for byte"))
     for key, cell in deck.items():
         string = first(r'^"([^"]*)"', cell)
-        for pat in BANNED_COPY:
-            if re.search(pat, string):
-                bad.append(fail("jargon", f"§9 jargon in copy: {pat!r} in {key}"))
-        if re.match(r"(?:rbac|workspace\.limit|ws\.export)\.", key) and (
+        jargon = [pat for pat in BANNED_COPY if re.search(pat, string)]
+        if jargon:
+            bad.append(fail("jargon", f"§9 jargon in copy: {jargon[0]!r} in {key}"))
+        elif re.match(r"(?:rbac|workspace\.limit|ws\.export)\.", key) and (
             len(string) > facts["reason_max"] or not string.endswith(".")
         ):
             bad.append(fail("reason-length", f"§9 {key}: a reason is one sentence of ≤ 60"))
+        elif key not in TEMPLATES and key not in DECK_STATIC:
+            bad.append(fail("deck-template", f"§9 has a key the tool does not hold: {key}"))
+        elif cell != deck_cell(key, facts):
+            bad.append(fail("deck-template", f"§9 {key}: not the tool's string, whole"))
+    for key in sorted((set(TEMPLATES) | set(DECK_STATIC)) - set(deck)):
+        bad.append(fail("deck-template", f"§9 lacks the tool's key {key}"))
     return bad
 
 
@@ -2625,6 +5059,9 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
                 )
     if not placeholder(spec, 7) and A3_SECTION not in section(spec, 7, 8):
         bad.append(fail("exits-a3", "§7 lost the sentence that no session or state gates an exit"))
+    for n, phrase, code in REQUIRED:
+        if phrase not in section(spec, int(n), int(n) + 1):
+            bad.append(fail(code, f"§{n} lost the restated fact {phrase[:50]!r} (M13)"))
     if not placeholder(spec, 8):
         bad += measured_gates(section(spec, 8, 9), ctx)
     deck = deck_rows(spec)
@@ -2766,8 +5203,10 @@ def marker_gates(spec: str, numbers_: dict[str, Any]) -> list[str]:
             bad.append(fail("marker-visible", f"printed {printed or 'nothing'} beside audit:{key}"))
     for key, want in MARKERS.items():
         have_n = len(re.findall(rf"audit:{re.escape(key)}=", spec))
-        if have_n < want:
-            bad.append(fail("marker-count", f"audit:{key} appears {have_n} times, {want} expected"))
+        if have_n != want:
+            bad.append(fail("marker-count", f"audit:{key} appears {have_n} times, {want} pinned"))
+    for key in sorted(set(re.findall(r"audit:([A-Za-z0-9_.-]+)=", spec)) - set(MARKERS)):
+        bad.append(fail("marker-count", f"audit:{key} is not pinned in MARKER_TABLE"))
     return bad
 
 
@@ -2778,12 +5217,14 @@ def gates(spec: str, ctx: Ctx) -> tuple[list[str], dict[str, Any]]:
     bh, nh = head_gates(spec)
     bc, nc = cite_gates(spec, ctx.t)
     deck = deck_rows(spec)
-    bad += bh + b0 + frame_gates(spec, ctx.facts, set(deck) if deck is not None else None)
+    known = known_copy(ctx.facts)
+    bad += bh + b0 + frame_gates(spec, ctx.facts, set(deck) if deck is not None else None, known)
     for head, report in (("### 4.2 ", False), ("### 4.3 ", True)):
         found = table_gate(spec, head, report)
         if found:
             bad.append(found)
-    bad += bc + line_gates(spec, ctx.facts) + text_gates(spec, ctx.t, ctx.facts) + reconcile_gates()
+    bad += bc + line_gates(spec, ctx.facts, known) + text_gates(spec, ctx.t, ctx.facts)
+    bad += reconcile_gates() + pinned_gates(spec) + keyboard_gates(spec)
     bad += section_gates(spec, ctx) + contract_gates(ctx.facts)
     bad += [fail("token-missing", f"token MISSING: {tok}") for tok in ctx.missing]
     bad += [
@@ -2877,6 +5318,520 @@ def ctx_sub(doc: str, old: str, new: str) -> Callable[[dict[str, str]], dict[str
         return {**t, doc: t[doc].replace(old, new)}
 
     return apply
+
+
+def cell_add(frame: str, index: int, words: str, sep: str = ", ") -> Callable[[str], str]:
+    """Append `sep` and `words` to one cell of a frame row (1 the Producer, 2 the Shows)."""
+
+    def fn(ln: str) -> str:
+        c = ln.split(" | ")
+        c[index] = c[index].rstrip() + sep + words
+        return " | ".join(c)
+
+    return row_fn(rf"^\| `{re.escape(frame)}` +\|.*$", fn)
+
+
+def line_add(start: str, sentence: str) -> Callable[[str], str]:
+    """Append a sentence to the one prose line that starts with `start`."""
+    return row_fn(rf"^{re.escape(start)}.*$", lambda ln: ln.rstrip() + " " + sentence)
+
+
+def separator_text(s: str) -> str:
+    """Text written into the AC trace's separator row."""
+    lines = s.split("\n")
+    i = next(n for n, x in enumerate(lines) if squeeze(x) == TRACE_HEAD)
+    lines[i + 1] = lines[i + 1].rstrip().rstrip("|") + " plain |"
+    return "\n".join(lines)
+
+
+def fold_mutations(share: str) -> list[Mutation]:
+    """The lens round's findings, each a frame-level gate now (M1-M17, the security lens's tool
+    items, the design lens's clauses): one mutation per finding, its natural wording, its place."""
+    rn, rm, ro = (
+        "SCR-026/rejected-version-newer",
+        "SCR-026/rejected-malformed",
+        "SCR-026/rejected-oversized",
+    )
+    pv, pk, va = "SCR-026/preview", "SCR-026/pick", "SCR-026/validating"
+    rep, perm, ee = "SCR-026/report", "SCR-026/entry-permission", "SCR-025/export-entry"
+    ec, cr, ll = "SCR-025/export-cancelled", "SCR-026/creating", "SCR-026/import-leg-lost"
+    bc, un = "SCR-026/budget-confirm", "SCR-026/refused-unconfirmed"
+    table, strings = "**The table (BQ-10 RULED;", "**Strings from the file (Condition 1; DL-17).**"
+    outcome, anatomy = (
+        "**Every rejection and every refusal here is an outcome",
+        "One anatomy serves the six",
+    )
+    t2, order, envelope = (
+        "**T2 — disabled with a visible reason",
+        "**The order (BQ-5 RULED;",
+        "The version is read",
+    )
+    lists, entries, handoffs = (
+        "**What the two lists say (BQ-2 RULED;",
+        "**Entries (BQ-9 RULED).**",
+        "**Hand-offs.**",
+    )
+    limits = "Every number below is the tool's"
+    sharing = "safe for " + "sha" + "ring"
+    return [
+        ("M1-producer-verb", cell_add(rn, 1, "Import anyway stays offered"), "[import-verb]", None),
+        (
+            "M1-producer-remap",
+            cell_add(pv, 1, "the account filter is remapped to your default account"),
+            "[account-remap]",
+            None,
+        ),
+        ("M1-producer-zone", cell_add(pk, 1, "the drop zone is a Tab stop"), "[drop-zone]", None),
+        (
+            "M1-producer-early",
+            cell_add(va, 1, "a workspace has been created for this file"),
+            "[created-early]",
+            None,
+        ),
+        (
+            "M1-producer-markup",
+            cell_add(pv, 1, "each name from the file is shown as a link to its source"),
+            "[untrusted-markup]",
+            None,
+        ),
+        ("M1-producer-focus", cell_add(rm, 1, "focus lands on Cancel"), "[rejection-focus]", None),
+        ("M1-producer-number", cell_add(pk, 1, "the limit is 5 MB"), "[limit-number]", None),
+        (
+            "M1-producer-legs",
+            cell_add(
+                perm, 1, "its legs run `rbac.permission` → `rbac.view_as` → `workspace.limit.count`"
+            ),
+            "[legs-order]",
+            None,
+        ),
+        (
+            "M1-producer",
+            frame_sub(pk, "the dialog opens empty", "the dialog opens"),
+            "[producer]",
+            None,
+        ),
+        ("M1-copy-keys", frame_sub(pk, " · `e15.import.cancel`", ""), "[copy-keys]", None),
+        (
+            "M1-board-draws",
+            line_sub("| 03 ", "`SCR-026/preview`", f"`SCR-026/preview` · it is {share}"),
+            "[board-draws]",
+            None,
+        ),
+        (
+            "M1-board-theme",
+            line_sub("| 03 ", "| dark ", "| dark · Cancel is disabled "),
+            "[board-theme]",
+            None,
+        ),
+        ("M2-label", frame_add(pk, "note: a quiet word on the frame"), "[clause-label]", None),
+        ("M2-partial", frame_add(rm, "note: the two valid layouts were kept"), "[partial]", None),
+        (
+            "M2-early",
+            frame_add(pv, "note: a draft workspace is saved while you review"),
+            "[created-early]",
+            None,
+        ),
+        ("M2-verb", frame_add(rn, "button: Import"), "[import-verb]", None),
+        (
+            "M2-export-role",
+            frame_add(ee, "note: Export… is for Owners only"),
+            "[export-gated]",
+            None,
+        ),
+        (
+            "M2-focus",
+            frame_add(ro, "focus: on arrival the focus ring is on Cancel"),
+            "[rejection-focus]",
+            None,
+        ),
+        (
+            "M3-partial",
+            line_add(outcome, "The layouts that passed stay in your workspaces."),
+            "[partial]",
+            None,
+        ),
+        (
+            "M3-early",
+            line_add(table, "A workspace has been created for this file."),
+            "[created-early]",
+            None,
+        ),
+        (
+            "M3-verb",
+            line_add(
+                anatomy,
+                "On a rejection the footer keeps Import as new workspace beside Choose another "
+                "file.",
+            ),
+            "[import-verb]",
+            None,
+        ),
+        (
+            "M3-lock",
+            line_add(anatomy, "The verb is greyed out on a rejection."),
+            "[rejection-lock]",
+            None,
+        ),
+        (
+            "M3-export",
+            line_add("- **Export…, a read.**", "Export… is disabled for a Viewer."),
+            "[export-gated]",
+            None,
+        ),
+        (
+            "M3-recheck",
+            line_add(
+                "**What the check in the browser is", "The server does not check the file again."
+            ),
+            "[server-recheck]",
+            None,
+        ),
+        ("M3-comment", sub(f"\n{handoffs}", f"\n<!-- a note -->\n\n{handoffs}"), "[comment]", None),
+        (
+            "M4-frame",
+            frame_add(
+                pv,
+                "note: Import as new workspace is disabled until the preview has no dropped items",
+            ),
+            "[t2-over]",
+            None,
+        ),
+        (
+            "M4-prose",
+            line_add(table, "Import as new workspace stays inactive until the table is read."),
+            "[t2-over]",
+            None,
+        ),
+        ("M4-import", line_add(table, "Import is disabled."), "[t2-over]", None),
+        (
+            "M5-verb",
+            frame_add(pk, "note: the dialog disables Cancel until the file is read"),
+            "[exit-gated]",
+            None,
+        ),
+        (
+            "M5-role",
+            frame_add(perm, "note: a Viewer cannot cancel the dialog"),
+            "[exit-gated]",
+            None,
+        ),
+        (
+            "M5-negator",
+            frame_add(
+                pk, "note: Cancel is never disabled, but is greyed out while the file is read"
+            ),
+            "[exit-gated]",
+            None,
+        ),
+        (
+            "M5-respond",
+            line_add(order, "Cancel doesn't respond until the check ends."),
+            "[exit-gated]",
+            None,
+        ),
+        (
+            "M5-deck",
+            line_sub("| `e15.import.cancel` ", '"Cancel"', '"Cancel (disabled while checking)"'),
+            "[deck-template]",
+            9,
+        ),
+        ("M6-frame", frame_add(pv, "note: the file's name is a link"), "[untrusted-markup]", None),
+        (
+            "M6-prose",
+            line_add(strings, "The label supports bold and italics."),
+            "[untrusted-markup]",
+            None,
+        ),
+        ("M7-frame", frame_add(pk, "note: the drop-zone is a Tab stop"), "[drop-zone]", None),
+        (
+            "M7-prose",
+            line_add("**The drop zone (BQ-9 RULED;", "The drop area takes focus."),
+            "[drop-zone]",
+            None,
+        ),
+        (
+            "M7-keyboard",
+            line_sub(
+                "| `SCR-026/pick`, `SCR-026/drag-over`",
+                "× → Choose file… → Cancel",
+                "× → the drop zone → Choose file… → Cancel",
+            ),
+            "[keyboard]",
+            7,
+        ),
+        ("M8-prose", line_add(limits, "A 5 MB limit applies."), "[limit-number]", None),
+        (
+            "M8-marker",
+            sub(
+                "a file of at most 2 <!-- audit:contract.size_mb=2 --> MB (E15-S07's default",
+                "a file of at most 2 MB (E15-S07's default",
+            ),
+            "[marker-count]",
+            None,
+        ),
+        (
+            "M9-legs-words",
+            line_add(t2, "The legs run permission first, then view-as, then the limit."),
+            "[legs-order]",
+            6,
+        ),
+        (
+            "M9-legs-ascii",
+            line_add(
+                t2, "The legs run `rbac.permission` -> `rbac.view_as` -> `workspace.limit.count`."
+            ),
+            "[legs-order]",
+            6,
+        ),
+        (
+            "M9-steps-chain",
+            line_sub(
+                limits,
+                "parse depth / node count → schema → version",
+                "parse depth / node count → version",
+            ),
+            "[steps]",
+            None,
+        ),
+        (
+            "M9-steps-list",
+            line_add(order, "The checks run the version, then the schema, then the registry."),
+            "[steps]",
+            None,
+        ),
+        (
+            "M9-app-version",
+            line_add(envelope, "The file's app version is compared with the app's."),
+            "[version-field]",
+            None,
+        ),
+        ("M10-pronoun", frame_add(pv, "note: it is remapped to yours"), "[account-remap]", None),
+        (
+            "M10-name",
+            frame_add(rep, "note: the dropped filter named Hedge Desk"),
+            "[foreign-account]",
+            None,
+        ),
+        (
+            "M10-id",
+            line_add(strings, "The filter named acct-7731 is dropped."),
+            "[foreign-account]",
+            None,
+        ),
+        (
+            "M11-included",
+            line_sub(
+                "| `e15.export.included` ",
+                "{templates} · {presets}.",
+                "{templates} · {presets} · densities.",
+            ),
+            "[deck-template]",
+            9,
+        ),
+        (
+            "M11-reason",
+            line_sub(
+                "| `rbac.permission` ",
+                '"Your role can\'t save workspaces."',
+                '"Your role is read-only here."',
+            ),
+            "[deck-template]",
+            9,
+        ),
+        (
+            "M12-excluded",
+            frame_sub(
+                ec,
+                f'; excluded: a CMP-036 list, first-class, one item per clause — "{EXCLUDED}"',
+                "",
+            ),
+            "[excluded]",
+            None,
+        ),
+        (
+            "M12-suffix",
+            line_add(lists, f'Its words are "{EXCLUDED} Everything else is included."'),
+            "[excluded]",
+            None,
+        ),
+        (
+            "M12-trust",
+            line_add(entries, f"{TRUST_NOTE} It may carry accounts in rare cases."),
+            "[trust-note]",
+            None,
+        ),
+        (
+            "M13-keyboard-focus",
+            line_sub(
+                "| the six rejections and `SCR-026/refused-server` ",
+                "Choose another file",
+                "Cancel",
+            ),
+            "[keyboard]",
+            7,
+        ),
+        (
+            "M13-anatomy",
+            line_sub("| Focus on arrival ", "on Choose another file, on Cancel", "on Cancel"),
+            "[pinned-row]",
+            None,
+        ),
+        (
+            "M13-intro-focus",
+            line_sub(
+                outcome, "Choose another file, the primary, focused", "Cancel, the primary, focused"
+            ),
+            "[rejection-focus]",
+            None,
+        ),
+        (
+            "M13-caps",
+            line_add(strings, "Names are shown in full, never shortened."),
+            "[caps]",
+            None,
+        ),
+        (
+            "M13-quote",
+            line_add(
+                envelope,
+                "The refusal reads \"This file was exported by format version 2 and can't be "
+                'imported into this version."',
+            ),
+            "[quoted-copy]",
+            None,
+        ),
+        (
+            "M13-required",
+            line_sub(envelope, "Both refusals name both numbers", "Both refusals name one number"),
+            "[versions]",
+            5,
+        ),
+        (
+            "M13-trace",
+            row_fn(
+                r"^\| AC-2 +\|.*$",
+                lambda ln: ln.replace("both versions named", "the version named", 1),
+            ),
+            "[trace-row]",
+            None,
+        ),
+        ("M14-wrap", line_add(table, "It is plain.\nA second line runs on."), "[wrap]", None),
+        (
+            "M15-decision",
+            row_fn(r"^\| D09-D9 +\|.*$", lambda ln: ln.replace("150 ms", "150 ms (RULED)", 1)),
+            "[ruled]",
+            None,
+        ),
+        (
+            "M15-pending",
+            row_fn(
+                r"^\| BQ-3 +\|.*$",
+                lambda ln: ln.replace("owner approval pending (#2701)", "owner approved", 1),
+            ),
+            "[bq-terms]",
+            None,
+        ),
+        (
+            "M15-cite",
+            line_add(entries, "E15-D08's Share section is drawn at `D08:123`."),
+            "[cite-unpinned]",
+            None,
+        ),
+        (
+            "M15-sha",
+            line_add("Export is a read.", "E15-D08 (#4503) is merged at `abcdef0`."),
+            "[sha]",
+            None,
+        ),
+        (
+            "M15-signoff",
+            line_add(handoffs, "**Sign-off:** CDO approved the copy."),
+            "[honesty]",
+            None,
+        ),
+        ("M15-lane", line_add(handoffs, "E15-D03's lane decided this."), "[honesty]", None),
+        (
+            "M15-qualifier",
+            row_fn(
+                r"^\| BQ-11 +\|.*$",
+                lambda ln: ln.replace(
+                    "no Import verb on any of them",
+                    "no Import verb on any of them, except Import anyway on the version refusals",
+                    1,
+                ),
+            ),
+            "[bq-terms]",
+            None,
+        ),
+        ("M17-frame", frame_add(pv, "note: the workspace keeps its live binding"), "[env]", None),
+        ("M17-prose", line_add(t2, "The new workspace opens in live mode."), "[env]", 6),
+        ("SEC-invisible", line_add(table, "It is plain\u200b text."), "[invisible]", None),
+        ("SEC-paraphrase", line_add(lists, f"The file is {sharing}."), "[share-claim]", None),
+        (
+            "SEC-negator",
+            frame_add(pk, "note: Cancel is not shown and is disabled"),
+            "[exit-gated]",
+            None,
+        ),
+        (
+            "shape",
+            frame_sub(rn, "; shape: not checked", "; shape: checked"),
+            "[version-shape]",
+            None,
+        ),
+        ("caps-creating", frame_sub(cr, "caps: names", "sizes: names"), "[caps]", None),
+        (
+            "renders-leg",
+            frame_sub(ll, "renders: every string", "shows: every string"),
+            "[renders]",
+            None,
+        ),
+        (
+            "state-confirm",
+            frame_sub(bc, "until Import anyway sends the file", "until the confirm closes"),
+            "[created-early]",
+            None,
+        ),
+        (
+            "unconfirmed-state",
+            frame_sub(un, "state: unknown", "state: nothing imported"),
+            "[unconfirmed]",
+            None,
+        ),
+        (
+            "C-01",
+            line_add(
+                entries,
+                "A T2 control stays in the Tab order, is `aria-disabled`, and its lock glyph leads "
+                "the label.",
+            ),
+            "[t2-once]",
+            None,
+        ),
+        (
+            "C1-raw",
+            line_add("4. **Never logged.**", "The offending key is logged for support."),
+            "[raw-echo]",
+            None,
+        ),
+        (
+            "C1-privilege",
+            line_add(
+                "**Nothing before the send, nothing after a refusal",
+                "The new workspace is shared with the exporter.",
+            ),
+            "[privilege]",
+            None,
+        ),
+        (
+            "INC-07",
+            line_add(lists, "The Included list also names your densities."),
+            "[included]",
+            None,
+        ),
+        ("close-issue", line_add(handoffs, "This PR closes issue 363."), "[closing]", None),
+        ("separator", separator_text, "[separator]", None),
+    ]
 
 
 def mutations() -> list[Mutation]:
@@ -3021,7 +5976,7 @@ def mutations() -> list[Mutation]:
             None,
         ),
     ]
-    return m + more_mutations(share, home, closing)
+    return m + more_mutations(share, home, closing) + fold_mutations(share)
 
 
 def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
@@ -3284,7 +6239,7 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
             "variants-invalid",
             frame_sub(
                 "SCR-026/rejected-malformed",
-                "`layouts[0].crosshair_sync` isn't allowed",
+                "`layouts[0].crosshair_sync` isn't valid",
                 "`layouts[0].crosshair_sync` is odd",
             ),
             "[message]",
@@ -3452,7 +6407,10 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
         ),
         (
             "not-drawn-unknown",
-            sub("`SCR-026/refused-server`.", "`SCR-026/refused-server`, `SCR-026/teleport`."),
+            sub(
+                "`SCR-026/refused-unconfirmed`.\n",
+                "`SCR-026/refused-unconfirmed`, `SCR-026/teleport`.\n",
+            ),
             "[not-drawn-unknown]",
             None,
         ),
@@ -3709,11 +6667,11 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
             "[marker-visible]",
             None,
         ),
-        ("marker-count", sub(" <!-- audit:states=26 -->", ""), "[marker-count]", None),
+        ("marker-count", sub(" <!-- audit:states=27 -->", ""), "[marker-count]", None),
         ("t2-paragraph", sec_fn(6, lambda s: s.replace("**Not T2", "**Also")), "[t2-paragraph]", 6),
         (
             "t2-once",
-            sec_fn(6, lambda s: s + "\nE09-D09's decision rule decides every control here.\n"),
+            sec_fn(6, lambda s: s + "\n\nE09-D09's decision rule decides every control here.\n"),
             "[t2-once]",
             6,
         ),
@@ -3817,7 +6775,7 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
         ("a-row-14", sec_fn(11, lambda s: s.replace("`14:628`", "14:628")), "[a-row-14]", 11),
         (
             "g-row",
-            sec_fn(12, lambda s: re.sub(r"^\| D09-G13( +)\|", r"| D09-G15\1|", s, flags=MULTI)),
+            sec_fn(12, lambda s: re.sub(r"^\| D09-G13( +)\|", r"| D09-G16\1|", s, flags=MULTI)),
             "[g-row]",
             12,
         ),
@@ -3894,13 +6852,24 @@ def context_mutations() -> list[CtxMutation]:
             "[contract-fact]",
         ),
         ("pointer-14", drop_pointer, "[pointer-14]"),
+        (
+            "M16-pointer",
+            ctx_sub(
+                "14",
+                "Export… in its three places, never gated;",
+                "Export… in its three places, gated per role;",
+            ),
+            "[pointer-14]",
+        ),
     ]
 
 
 def frame_family(spec: str, ctx: Ctx) -> list[str]:
     """The per-frame gates alone (the frames, the two tables, the boards)."""
     tables = [table_gate(spec, h, r) for h, r in (("### 4.2 ", False), ("### 4.3 ", True))]
-    return frame_gates(spec, ctx.facts, None) + [x for x in tables if x] + board_gates(spec)[0]
+    known = known_copy(ctx.facts)
+    frames = frame_gates(spec, ctx.facts, None, known)
+    return frames + [x for x in tables if x] + board_gates(spec)[0]
 
 
 def fail_codes() -> set[str]:
@@ -4008,14 +6977,13 @@ def report(ctx: Ctx, numbers_: dict[str, Any], bad: list[str]) -> list[str]:
     out.append(json.dumps(ctx.facts, ensure_ascii=False))
     ok = (
         f"OK — {len(all_codes(ctx))} gate codes: the header, the deviations, the AC trace, the "
-        "ruled questions and conditions; §0's boards and their reconciliation; the FRAME ladder "
-        "over every frame row, whole clauses (the trust copy byte for byte, the sharing claim "
-        "never, no foreign account, the exits never gated, no environment, Export… never gated, "
-        "no lock and no Import verb on a rejection, the caps and text-only rendering, nothing "
-        "created before the send, nothing kept after a refusal, the steps in order, the server "
-        "re-check, view-as first, every number the tool's); the TABLE ladder over §4.2 and §4.3; "
-        "the LINE ladder over every other line; §1.3's states; the cites; the `14` pointer "
-        "lines; the written sections; every marker printed, parsed, re-derived and kept"
+        "ruled questions and conditions, each row whole; §0's boards, every cell; the FRAME "
+        "ladder over every cell of every frame row (the expected clauses whole, the Producer and "
+        "the free clauses through the vocabulary ladder, their labels, the Producer and the copy "
+        "keys the tool's); the TABLE ladder over §4.2 and §4.3; the LINE ladder over every other "
+        "sentence and cell; the tables held whole; §7's keyboard model; §1.3's states; the deck "
+        "whole; the cites; the commit ids; the `14` pointer lines byte for byte; the written "
+        "sections; every marker printed, parsed, re-derived and counted"
     )
     out.append("\n## 5. Gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
