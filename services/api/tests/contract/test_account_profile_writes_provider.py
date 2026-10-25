@@ -386,7 +386,7 @@ def test_a_manager_with_a_live_grace_is_403_audited_and_changes_nothing(
     assert (viewing.status_code, viewing.json()["code"]) == (403, "view_as_read_only")
     monkeypatch.setattr(w.world.resolver, "resolve", lambda _request: None)
     assert answered(send(w, write), write)["code"] == "unauthenticated"
-    actions = {r["action"] for r in w.world.audit.records} & {"rbac.denied", "profile.created"}
+    actions = {r["action"] for r in w.world.audit.records} & {"rbac.denied", write.action}
     assert (w.rows.seen, _new(w), actions) == ([], [], set())
 
 
