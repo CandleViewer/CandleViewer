@@ -201,8 +201,8 @@ class CancelAllJoin:
         """The join's own task, once every member has arrived (class docstring)."""
         try:
             slot = await self._slot()
-        except Exception:  # a defect before anything left: nothing was sent, each its own cancel
-            self._abandon("slot")
+        except BaseException:  # cut short (teardown) or a defect before anything left: nothing
+            self._abandon("slot")  # was sent, so each member sends its own cancel
             raise
         if not slot:
             self._abandon("slot")

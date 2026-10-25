@@ -614,6 +614,24 @@ async def test_a_slot_wait_that_fails_abandons_the_fold_and_its_failure_is_logge
     assert (failed["task"], failed["failure"]) == ("oms-cancel-all-call", "RuntimeError")
 
 
+async def test_a_slot_wait_cut_short_at_teardown_abandons_the_fold() -> None:
+    """`aclose` cutting the call short while it still waits for its slot: nothing has left, so
+    the fold is abandoned and each member still waiting sends its own cancel, never left
+    waiting for an answer that cannot come."""
+    venue = _venue("a", "b")
+    port, sleeps = await _waiting(venue)
+    async with asyncio.timeout(5):
+        with port.fold(_REF, _BTC, _ids("a", "b")) as join:
+            first = asyncio.create_task(port.cancel_order(_cancel("a")))
+            await _settle()
+            last = asyncio.create_task(port.cancel_order(_cancel("b")))
+            await _settle()
+            assert sleeps.asked == [1.0, 1.0] and _methods(venue) == []  # waiting for its slot
+            await port.aclose()
+            assert (await first).ok and (await last).ok
+    assert join.abandoned == "slot" and _methods(venue) == ["cancel_order", "cancel_order"]
+
+
 # --- CR-S4F-12: a KILL's cancel never waits on a fold --------------------------------------------
 
 
