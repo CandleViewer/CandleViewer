@@ -440,6 +440,33 @@ def test_the_account_id_reaches_the_terminal_alone(on_tty: TerminalRun) -> None:
     assert ACCOUNT_ID not in on_tty.stdout + on_tty.stderr
 
 
+#: A rerun's prompts (`--skip-invite --account-id`, which step 7 of the runbook gives after a
+#: failure past the invite): the sign-in, the key, then the step-up.
+RERUN_PROMPTS = [
+    ("Owner username or email", EMAIL, False), ("Password", PASSWORD, True),
+    ("A new code from the authenticator", CODES[1], True),
+    ("Bybit demo account UID", EXCHANGE_UID, False), ("Key label", "", False),
+    ("Read-only key?", "", False), ("Bybit API key", API_KEY, True),
+    ("Bybit API secret", API_SECRET, True), ("A new code for the keys step-up", CODES[2], True),
+]  # fmt: skip
+
+
+def test_on_a_rerun_no_secret_typed_at_the_terminal_comes_back_on_it(tmp_path: Path) -> None:
+    """D-1: a rerun asks for the password at the sign-in, where a first run reuses the invite's,
+    then for every code and secret after it. On a real terminal ECHO is off at each of those
+    prompts and nothing typed there reaches the terminal, while the email and the UID are echoed
+    back; what was typed silently is what was sent."""
+    again = on_a_terminal(tmp_path, full_run(), RERUN_PROMPTS, "--skip-invite", "--account-id",
+                          ACCOUNT_ID)  # fmt: skip
+    assert again.returncode == 0 and again.unanswered == [], again.stderr
+    assert again.echo_off == [True] * sum(silent for _, _, silent in RERUN_PROMPTS)
+    assert [s for s in SECRETS if s in again.terminal + again.stdout + again.stderr] == []
+    assert EMAIL in again.terminal and EXCHANGE_UID in again.terminal
+    sent = [json.loads(line) for line in again.logs["requests.jsonl"].splitlines()]
+    assert [r["route"] for r in sent] == [LOGIN, VERIFY, STEP_UP, IMPORT]
+    assert all(r["path_ok"] and all(r["body_ok"].values()) for r in sent)
+
+
 # --- the bootstrap: #4479's CLI in bootstrap-owner, while api is stopped ------------------------
 
 
