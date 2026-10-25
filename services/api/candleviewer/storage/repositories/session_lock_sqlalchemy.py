@@ -5,6 +5,8 @@ TCP keepalives on that session (CR-S3L2-03) and keeps the connection it asked on
 that session holds the lock, so a holder whose session ends (a crash, a cut connection, a Postgres
 restart) loses it with the session, and the keepalives bound how long Postgres keeps the session
 of a holder whose host or network died: about `STALE_HOLDER_S`, the stale-holder window.
+`confirm()` asks, on that session, whether it still holds the key (its `pg_locks` row), the OMS
+lane's watchdog's probe.
 `release()` asks `pg_advisory_unlock(key)`, then ends the session whatever the unlock did, so the
 lock is gone either way. The OMS runtime holds one per environment for its facade's life
 (`oms_wiring.environment_lock_key`); `storage.retention.locks.PgAdvisoryRunLock` is the reaper's
@@ -38,6 +40,13 @@ KEEPALIVE: Final = MappingProxyType(
     {"idle": "10", "interval": "5", "count": "3", "user_timeout": "25000"}
 )
 STALE_HOLDER_S: Final = 25
+#: Whether this session holds the lock: its `pg_locks` row, the key's two unsigned 32-bit halves
+#: as `classid` and `objid` (`objsubid` 1), on this backend.
+_HELD: Final = sa.text(
+    "SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted"
+    " AND pid = pg_backend_pid() AND classid::bigint = :high AND objid::bigint = :low"
+    " AND objsubid = 1)"
+)
 
 
 class SqlAlchemySessionLock:
@@ -45,6 +54,7 @@ class SqlAlchemySessionLock:
 
     def __init__(self, engine: AsyncEngine, key: int, *, timeout_s: float) -> None:
         self._engine, self._key, self._timeout_s = engine, key, timeout_s
+        self._halves = {"high": (key >> 32) & 0xFFFF_FFFF, "low": key & 0xFFFF_FFFF}
         self._held: AsyncConnection | None = None
 
     @property
@@ -85,6 +95,23 @@ class SqlAlchemySessionLock:
         except Exception as failed:
             strip_driver_text(failed)
             raise StorageTierUnavailable("the session lock could not be asked") from None
+
+    async def confirm(self) -> bool:
+        """Whether this lock's session still holds it, asked on that session within `timeout_s`
+        (the OMS lane's watchdog, CR-S3L2-03): False when it is not held here, or the session no
+        longer holds the key. `StorageTierUnavailable`, stripped, when the session cannot answer
+        (ended, or past the bound): the caller cannot tell, and takes it as lost."""
+        connection = self._held
+        if connection is None:
+            return False
+        try:
+            async with asyncio.timeout(self._timeout_s):
+                held = bool((await connection.execute(_HELD, self._halves)).scalar())
+                await connection.commit()
+        except Exception as failed:
+            strip_driver_text(failed)
+            raise StorageTierUnavailable("the session lock could not be confirmed") from None
+        return held
 
     async def release(self) -> None:
         """Unlock, then end the session the lock was held on, whatever the unlock did; a lock not

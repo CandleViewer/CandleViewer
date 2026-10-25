@@ -1227,9 +1227,12 @@ class OwnedSink(MachineEventSink, Protocol):
 class EnvironmentLock(Protocol):
     """SEC-S3N-01 (#913 L2): the environment's lock, which one OMS process per environment and
     database holds for its facade's life: `acquire()` answers whether it is now held, never
-    waiting for another holder; `release()` gives it up."""
+    waiting for another holder; `confirm()` whether its session still holds it, the watchdog's
+    probe (`LaneHeartbeat`); `release()` gives it up."""
 
     async def acquire(self) -> bool: ...
+
+    async def confirm(self) -> bool: ...
 
     async def release(self) -> None: ...
 
@@ -1308,6 +1311,12 @@ LANE_AUDIT_PAGE_S: Final = 5.0
 #: bound on asking for the lock at the start, for the pool's connection and for the statement.
 ENVIRONMENT_LOCK_NAMESPACE: Final = b"cv.oms.environment:"
 ENVIRONMENT_LOCK_TIMEOUT_S: Final = 5.0
+#: The order lane's heartbeat (the orchestrator's ruling 2 of 2026-10-25 12:22Z; CR-S3L1A-02), in
+#: seconds: how often the lane ticks, the environment lock's watchdog asking on the same tick
+#: (ruling 3), and how long without a tick reads it wedged: past a tick and the watchdog's bound
+#: (`ENVIRONMENT_LOCK_TIMEOUT_S`), and within a lane read's own (`HOP_TIMEOUT_S`).
+LANE_TICK_S: Final = 1.0
+LANE_STALE_S: Final = 10.0
 
 
 def environment_lock_key(environment: str) -> int:
@@ -1316,6 +1325,73 @@ def environment_lock_key(environment: str) -> int:
     its own (`storage.retention.locks.advisory_key`)."""
     digest = hashlib.blake2b(ENVIRONMENT_LOCK_NAMESPACE + environment.encode(), digest_size=8)
     return int.from_bytes(digest.digest(), "big", signed=True)
+
+
+class LaneHeartbeat:
+    """The order lane's heartbeat, and the environment lock's watchdog on the same tick (#913 L2;
+    the orchestrator's rulings 2 and 3 of 2026-10-25 12:22Z; CR-S3L1A-02, CR-S3L2-03).
+
+    On the lane, `run()` ticks every `LANE_TICK_S` and, on the same tick, asks the environment's
+    lock whether its session still holds it (`EnvironmentLock.confirm`, within
+    `ENVIRONMENT_LOCK_TIMEOUT_S`). A lock not held, or a session that cannot answer, is lost:
+    logged CRITICAL (`oms_environment_lock_lost`) and paged once, and `fenced` for good, so the
+    runtime refuses every new submit while its exits, stops and KILLs run on (never a silent run
+    without the lock, never a blocked exit: C-2.6, C-2.21); a restart is the way back.
+
+    From any thread (`/readyz` reads on a worker thread), `stale()` answers whether the lane has
+    not ticked within `LANE_STALE_S`: a wedged lane, alive but stuck. The first stale read of each
+    stall pages (`oms_lane_stalled`). The tick's time and the fence are single assignments, read
+    in place (20 Sec.6.2); the stall's flag is under a lock."""
+
+    def __init__(
+        self,
+        lock: EnvironmentLock,
+        pager: Pager,
+        *,
+        clock: Callable[[], float] = time.monotonic,
+        wait: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._lock, self._pager, self._clock, self._wait = lock, pager, clock, wait
+        self._ticked_at = clock()  # built as its lane starts: fresh until its first tick
+        self._fenced = False
+        self._stall = threading.Lock()
+        self._stalled = False
+
+    @property
+    def fenced(self) -> bool:
+        """Whether the environment's lock was lost: no new submit is admitted (ruling 3)."""
+        return self._fenced
+
+    async def run(self) -> None:
+        """Tick, and watch the lock while it is held, until cancelled (the stop's closer)."""
+        while True:
+            self._ticked_at = self._clock()
+            if not self._fenced:
+                await self._watch()
+            await self._wait(LANE_TICK_S)
+
+    async def _watch(self) -> None:
+        error: str | None = None
+        try:
+            async with asyncio.timeout(ENVIRONMENT_LOCK_TIMEOUT_S):
+                held = await self._lock.confirm()
+        except Exception as exc:  # it cannot tell: taken as lost (C-2.21)
+            held, error = False, type(exc).__name__
+        if not held:
+            self._fenced = True
+            _log().critical("oms_environment_lock_lost", error=error)
+            _page(self._pager, "oms_environment_lock_lost")
+
+    def stale(self) -> bool:
+        """Whether the lane has not ticked within `LANE_STALE_S`; the first stale read of each
+        stall pages, and a fresh read ends the stall."""
+        stale = self._clock() - self._ticked_at > LANE_STALE_S
+        with self._stall:
+            first, self._stalled = stale and not self._stalled, stale
+        if first:
+            _log().critical("oms_lane_stalled", stale_s=LANE_STALE_S)
+            _page(self._pager, "oms_lane_stalled")
+        return stale
 
 
 def lane_audit_wal(settings: Settings) -> str:
@@ -1461,6 +1537,7 @@ class _Parts:
     exits: OrderExits
     lane: Lane
     cancel_all: CancelAll
+    heartbeat: LaneHeartbeat
 
 
 @dataclass(frozen=True, slots=True)
@@ -1474,6 +1551,8 @@ class OnLane:
     parts: _Parts
 
     async def submit(self, request: OrderRequest, context: SubmitContext) -> SubmitOutcome:
+        if self.parts.heartbeat.fenced:  # ruling 3: no new order once the lock is lost
+            raise OmsNotReady
         return await _on_lane(self.parts, self.parts.submission.submit(request, context), None)
 
     async def answer_replay(self, account_id: AccountId, replay: Replay) -> SubmitOutcome:
@@ -1599,6 +1678,19 @@ async def _on_lane[T](
         raise OmsNotReady from None
 
 
+async def _cancelled(task: asyncio.Task[Any]) -> None:
+    """`task` cancelled and waited for, on its own loop."""
+    task.cancel()
+    await asyncio.wait({task})
+
+
+def _heartbeat_ended(task: asyncio.Task[None]) -> None:
+    """A heartbeat that ended other than by its stop's cancel leaves the lane unticked, which
+    reads `degraded` and pages (`LaneHeartbeat.stale`): logged by its error's class."""
+    if not task.cancelled() and (error := task.exception()) is not None:
+        _log().critical("oms_lane_heartbeat_ended", error=type(error).__name__)
+
+
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
     """The tasks still running once `timeout_s` has passed, or none."""
     if not tasks:
@@ -1713,8 +1805,10 @@ class OmsRuntime:
         max_machines: int = MAX_MACHINES,
         registry: Registry | None = None,
         lane: Callable[[], Lane] = OrderLane,
+        heartbeat: Callable[[EnvironmentLock, Pager], LaneHeartbeat] = LaneHeartbeat,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
+        self._heartbeat = heartbeat
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._gate, self._standings = gate, standings
@@ -1753,17 +1847,28 @@ class OmsRuntime:
     @property
     def state(self) -> OmsState:
         """`ok` once ready; `degraded` once it will not get ready (it failed closed, its sweep
-        refused, or its startup task ended without it) or its order lane died, paged at its first
-        read (SEC-S3L1A-02); else `starting` (20 Sec.6.2)."""
+        refused, or its startup task ended without it), or its order lane died, paged at its first
+        read (SEC-S3L1A-02), or stalled, unticked for `LANE_STALE_S`, paged at the first read of
+        each stall (ruling 2); else `starting` (20 Sec.6.2). The exit routes read this."""
         if (parts := self._parts) is not None and parts.lane.dead:
             if self._lane_paged.acquire(blocking=False):  # once per death: never released
                 _page(self._pager, "oms_lane_died")
+            return "degraded"
+        if parts is not None and parts.heartbeat.stale():  # a wedged lane (ruling 2)
             return "degraded"
         if self._ready.is_set():
             return "ok"
         startup = self._startup
         failed = self._failed or (startup is not None and startup.done())
         return "degraded" if failed else "starting"
+
+    @property
+    def readiness(self) -> OmsState:
+        """`/readyz`'s `oms` check (20 Sec.6.2): `state`, and `degraded` too once the environment's
+        lock is lost (ruling 3), when every new submit is refused, while `state`, which the exit
+        routes read, keeps them open (C-2.6)."""
+        state, parts = self.state, self._parts
+        return "degraded" if parts is not None and parts.heartbeat.fenced else state
 
     @property
     def submission(self) -> OnLane:
@@ -1814,10 +1919,11 @@ class OmsRuntime:
     def run[T](self, coro: Coroutine[Any, Any, T]) -> asyncio.Task[T]:
         """The route's submit, as a task the runtime tracks and the route shields (24 Sec.8.4 step
         12), which awaits the pipeline on the order lane (`OnLane`): `stop()` drains it. Before
-        anything is composed, or once the stop has begun, `OmsNotReady`. On the serving loop, the
-        one that started the runtime, only, where the task keeps the 24 h record (CR-S3C2-01):
-        another is a `RuntimeError`. Refused either way, the coroutine is closed."""
-        if self._stopping or self._parts is None:
+        anything is composed, once the stop has begun, or once the environment's lock is lost
+        (ruling 3), `OmsNotReady`. On the serving loop, the one that started the runtime, only,
+        where the task keeps the 24 h record (CR-S3C2-01): another is a `RuntimeError`. Refused
+        either way, the coroutine is closed."""
+        if self._stopping or self._parts is None or self._parts.heartbeat.fenced:
             coro.close()
             raise OmsNotReady
         if self._loop is not asyncio.get_running_loop():
@@ -2273,13 +2379,19 @@ class OmsRuntime:
             # theirs are, is ended before the trading port closes
             after = [name for name, _ in closers].index("machines") + 1
             closers.insert(after, ("cancel_all_folds", lambda: lane.call(folds.aclose())))
+            self._phase = "heartbeat"  # rulings 2 and 3: the lane's tick and the lock's watchdog
+            heartbeat = self._heartbeat(stores.lock, self._pager)
+            beating = spawn(heartbeat.run(), name="oms-lane-heartbeat")
+            beating.add_done_callback(_heartbeat_ended)
+            # it watches the lock until the lock's own closer, the last, releases it
+            closers.insert(len(closers) - 1, ("heartbeat", lambda: lane.call(_cancelled(beating))))
         except BaseException:  # within the reserve less the join, as a cancelled start waits
             reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S  # (ruling 6, SEC-S3L1CG-01)
             await _closed(closers, asyncio.get_running_loop().time() + reserve)
             raise
         return _Parts(
             submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
-            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)),
+            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
         )  # fmt: skip
 
     def _now_us(self) -> int:
