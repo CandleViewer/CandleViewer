@@ -50,8 +50,8 @@ and `16` (which must equal the base).
    from the gate it names, and every text is restored byte-identically (sha256 of the in-memory
    baseline and of the spec, hand-off, `15` and `16` re-read from disk); a mutation of the tool's
    own state (the CVD port, M-62) is undone and re-checked. G-Q3, G-C15 and G-DR14 gate the
-   orchestrator's decision of 2026-10-25 14:42Z through M-99, M-100 and M-101 (DECIDED, never
-   RULED: "RULED" cites comment 6397030902 only); M-102 to M-117 are the round-1 record's forms,
+   orchestrator's 14:42Z decisions through M-99, M-100 and M-101 (each marked "RULED
+   (6401561066)"; "RULED" cites comment 6397030902 or 6401561066, never a lane thread); M-102 to M-117 are the round-1 record's forms,
    M-118 to M-124 the round-2 classes (motion vocabulary, sample nouns, the carried subject, a
    negation chain, a rate in words or fps, a cite's own sub-clause, the tag suppressed).
 
@@ -114,6 +114,8 @@ SEMANTIC = ("semantic-dark", "semantic-light", "semantic-hc")
 # ---- the ruling and the fixed facts
 RULING_ID = "6397030902"
 BQ_LIST_ID = "6396755099"
+RULING_1442_ID = "6401561066"  # the 14:42Z decisions: D04-Q3, D04-C15 / CR-T1, DR-14
+RULED_1442 = f"RULED ({RULING_1442_ID})"
 OWNER_MARK = "owner approval pending (#2701)"
 OWNER_BQS = ("BQ-2", "BQ-11", "BQ-17")
 # sha → (PR, a path the merge touched): the merged inputs the spec cites (its Start / Inputs lines)
@@ -436,11 +438,30 @@ DOUBLE_NEG = re.compile(
 )
 
 
+# a flip negates everything after it: "it is not true that the bar never eases" asserts the easing
+# and "it is false that the bar eases" denies it (record r3)
+FLIP = re.compile(
+    r"\b(?:it|this)(?:(?: is| was|['’]s) (?:not (?:true|the case)|false|untrue|wrong)"
+    r"| (?:isn['’]t|wasn['’]t) (?:true|the case)) (?:that|to say that)\b"
+)
+
+
 def live(clause: str, term: str, keep_quotes: bool = False) -> bool:
     """`term` asserted in `clause` once every negated mention is removed. A negation covers only
     its own term (at most three words before it) and a list of its terms coordinated after it; a
-    double negation or a negation chain asserts its term."""
+    double negation or a negation chain asserts its term; a flip ("it is not true that …", "it is
+    false that …") inverts what follows it."""
     t = norm_text(clause) if keep_quotes else norm_text(unquote(clause))
+    f = FLIP.search(t)
+    if f:
+        rest = t[f.end() :]
+        return _live(t[: f.start()], term) or (
+            re.search(term, rest) is not None and not live(rest, term, True)
+        )
+    return _live(t, term)
+
+
+def _live(t: str, term: str) -> bool:
     t = DOUBLE_NEG.sub(" ", t)
     # a negation covers a coordinated list of its terms too ("nothing loops, pulses or drifts")
     listed = rf"(?:(?:,\s*(?:or\s+|nor\s+|and\s+)?|\s+(?:or|nor|and)\s+)(?:{term})\w*)*"
@@ -452,7 +473,8 @@ _SEP = re.compile(r"(;\s|(?<=[.!?])\s+|\s—\s)")
 # a clause that opens on a pronoun ("; it eases", "; no, it is drawn as shipped") reads with the
 # previous clause's subject in its place (record r2: the subject carried across "; " and " — ")
 PRONOUN = re.compile(
-    r"^\W*(?:(?:no|yes|and|but|so|then|instead|rather),?\s+)?(?:it|they|this|these|those)\b",
+    r"^\W*(?:(?:no|yes|and|but|so|then|instead|rather),?\s+)?(?:it|they|this|these|those)\b"
+    r"(?!\s+(?:is|was)\s+(?:not\s+)?(?:true|false|untrue|wrong|the case)\b)",  # a flip (r3)
     re.IGNORECASE,
 )
 SUBJECT_END = re.compile(
@@ -470,14 +492,19 @@ SUBCLAUSE = re.compile(
 )
 
 
+PAREN = re.compile(r"\([^()]*\)")
+
+
 def cited_rest(clause: str, term: str, near: str, unless: str, keep_quotes: bool) -> bool:
     """A sub-clause the cite (`unless`) does not cover asserts `term`, its subject (`near`) named
-    in it or in a sub-clause before it."""
+    in it or in a sub-clause before it. A cite in parentheses covers only its parenthesis: the
+    words around it are read without it (record r3)."""
     seen = False
     for x in SUBCLAUSE.split(clause):
-        n = norm_text(x if keep_quotes else unquote(x))
+        y = PAREN.sub(lambda m: " " if re.search(unless, norm_text(m[0])) else m[0], x)
+        n = norm_text(y if keep_quotes else unquote(y))
         seen = seen or not near or re.search(near, n) is not None
-        if seen and not re.search(unless, norm_text(x)) and live(x, term, keep_quotes):
+        if seen and not re.search(unless, norm_text(y)) and live(y, term, keep_quotes):
             return True
     return False
 
@@ -1374,6 +1401,7 @@ MOTION_VOCAB = (
     r"|\btick(?:s|ed|ing)? up\b|\bpuls\w*|\bbounc\w*|\bscal(?:e|es|ed|ing) (?:up|down|in|out)\b"
     r"|\bdissolv\w*"
     r"|\bblend\w*|\bzoom\w*|\bgr[eo]w(?:s|n|ing)?\b"
+    r"|\broll(?:s|ed|ing)?\b|\bodometer\w*"  # record r3
 )
 SAMPLE_NOUN = r"(?:samples?|readings?|ticks?|updates?|values?)"  # what a sample is called (r2)
 REDUCED = (
@@ -1390,7 +1418,10 @@ TIMED = (
     r"|\b(?:a|an|one|1) (?:tenth|fifth|eighth|quarter|third|sixth|hundredth|twentieth)"
     r" of a second\b|\bhalf a second\b|\b(?:split|fraction of a) second\b"
     r"|\b0?[.,]\d*[1-9]\d* ?s(?:ec(?:onds?)?)?\b"
-    r"|\b(?:not|never|no longer|isn't|aren't) (?:\w+ )?instant\w*"
+    r"|\b(?:not|never|no longer|isn't|aren't|hardly|barely|scarcely) (?:\w+ )?instant\w*"
+    # a duration in frames, two or more (one frame is the never-animates reading; record r3)
+    r"|\b(?:[2-9]|\d{2,}|two|three|four|five|six|seven|eight|nine|ten|twelve|several|a few"
+    r"|multiple|many|some) (?:\w+ )?frames\b|\b(?:over|across|for) (?:\w+ )?frames\b"
 )
 STATE_WORDS = r"(?:running|paused|completing|completed|cancelled|halted|failed|degraded|orphaned)"
 STATE_CHANGE = (
@@ -1515,6 +1546,7 @@ GATED = (
     r"|algo\.manage|\bblock(?:s|ed)\b|\bunavailable\b|\bpermission\w*"
     r"|\bgr[ae]yed\b|\bdimmed\b|\binert\b|\bheld back\b|\bhold(?:s|ing)? back\b|\bwithh[eo]ld\w*"
     r"|\bsuppress\w*|\bdeferred\b|\buntil the run (?:settles|ends|stops|finishes)\b"  # record r2
+    r"|\bignor(?:e|es|ed|ing)\b|\bswallow\w*|\bdisabl(?:e|es|ing)\b|\bno ?ops?\b|\bdoes nothing\b"  # r3
 )
 NOT_EXITS = (
     r"\bcloses #\d+|\bclos(?:e|es|ing) (?:all )?(?:open )?positions?\b"  # an issue, a position
@@ -1784,6 +1816,9 @@ def g_step(t: Texts) -> list[str]:
         r"\bgrid(?:'s)? (?:row(?:'s)? )?bars?\b|\bbars? (?:in|inside|within) (?:a |the )?grid"
         r"|\bbars? (?:in|inside|within|on) (?:a |the )?(?:grid(?:'s)? )?rows?\b|\bin a grid row\b"
         r"|\brow's bars?\b"  # possessive only: the hand-off's "(row bar: a step)" names Mo-1
+        # every bar, a grid bar included, and bars named by where they sit (record r3)
+        r"|\b(?:every|each|all|any|all the|all of the) (?:progress )?bars?\b(?! whose)"
+        r"|\b(?:algos tab|scr ?070|algos (?:grid|table|list|screen))\b.*\bbars?\b"
     )
     bad += [f"claim: {c!r}" for c in claims(swept(t), moving, near=near)]
     grid = [x for x in c8_rows(t.hand) if x[0].startswith("Bars in grid rows")]
@@ -1967,6 +2002,9 @@ def g_focused(t: Texts) -> list[str]:
 COUNTDOWNS = (
     r"\bcount ?downs?\b|\bnext slice in\b|\bremaining time\b|\btime (?:remaining|left)\b"
     r"|\b(?:slice |next slice |run )?timers?\b"
+    # "time to next slice", "seconds until the next child" (record r3)
+    r"|\b(?:time|seconds?|minutes?|wait) (?:to|until|till|before) (?:the )?next\b"
+    r"|\b(?:seconds?|minutes?|time) (?:left|remaining|to go)\b|\bslice clock\b|\beta\b"
 )
 
 
@@ -1985,7 +2023,12 @@ def g_countdown(t: Texts) -> list[str]:
     c8 = [x for x in c8_rows(t.hand) if x[0].startswith("Countdowns")]
     if not c8 or 'aria-live="off"' not in c8[0][1] or "never animates" not in c8[0][1]:
         bad.append("C.8 countdowns row is not off and still")
-    bad += [f"claim: {c!r}" for c in claims(swept(t), COUNTDOWN_MOVE, near=COUNTDOWNS)]
+    # quoted copy is a claim too; only the ticket's own quoted ask is a cite (record r3: a quote
+    # the ticket does not hold, then "and it does", carried the claim through the quote)
+    asks = [uncite_ask(plain(x, t.values)) for x in swept(t)]
+    bad += [
+        f"claim: {c!r}" for c in claims(asks, COUNTDOWN_MOVE, near=COUNTDOWNS, keep_quotes=True)
+    ]
     return one("G-COUNTDOWN", bad)
 
 
@@ -1999,10 +2042,15 @@ TWEEN = (
 )
 
 
+_NEXT = r"(?:next|new|following|subsequent|later)"
 BETWEEN_SAMPLES = (
-    rf"\bbetween (?:two |the |each |successive )?{SAMPLE_NOUN}"
-    rf"|\b(?:toward\w*|until|for) (?:the |each )?(?:next|new) {SAMPLE_NOUN}"
-    rf"|\bfrom (?:one|each|a) {SAMPLE_NOUN} to the next\b"
+    rf"\bbetween (?:two |the |each |successive |consecutive )?{SAMPLE_NOUN}"
+    rf"|\b(?:toward\w*|until|for) (?:the |each )?{_NEXT} {SAMPLE_NOUN}"
+    rf"|\bfrom (?:one|each|a|the|this) (?:\w+ )?{SAMPLE_NOUN} to (?:the |a )?{_NEXT}\b"
+    # "to the following one", "across successive readings" (record r3)
+    rf"|\bto the (?:following|subsequent) (?:one|{SAMPLE_NOUN})\b"
+    rf"|\b(?:across|over|through|along) (?:\w+ )?(?:successive|consecutive|subsequent)"
+    rf" {SAMPLE_NOUN}"
 )
 
 
@@ -2034,6 +2082,43 @@ def g_dialog(t: Texts) -> list[str]:
         f"claim: {c!r}" for c in claims(swept(t), DIALOG_MOVE, near=DIALOGS, unless=DIALOG_CITED)
     ]
     return one("G-DIALOG", bad)
+
+
+# §7.3's never-animates items no other sweep owns: the theme and density switch, DEMO ↔ LIVE, the
+# "Emulated" tag and the stale shading (record r3); state flips, numbers, countdowns, T2 ↔ enabled
+# and the carriers are G-INSTANT's, G-NOFADE's, G-TWEEN's, G-COUNTDOWN's and G-BANNER's (one FAIL
+# per form)
+_SWITCH = r"(?:switch\w*|toggl\w*|chang\w*|flips?|swaps?)"
+NEVER_ITEMS = (
+    rf"\b(?:theme|density|colou?r scheme|dark mode|light mode)(?: and density)? {_SWITCH}"
+    rf"|\b{_SWITCH} (?:between |of )?(?:the )?(?:theme|density|dark and light|light and dark)\b"
+    r"|\bdemo ?(?:↔|<->|<>|→|->|/|to|and|or|vs\.?) ?live\b|\blive ?(?:↔|<->|<>|→|->|/|to|and|or)"
+    r" ?demo\b|\b(?:environment|env|demo|live|trading mode|account mode) (?:switch\w*|toggl\w*"
+    r"|badges?|chips?|pills?)\b|\bemulated (?:tags?|badges?|chips?|pills?)\b|\bstale shad\w*"
+)
+
+
+def g_never(t: Texts) -> list[str]:
+    """§7.3 (E30-D04:553): the never-animates items take one frame in both modes; any motion
+    vocabulary on one of them is a claim."""
+    bad = (
+        [] if "one frame in both modes" in section(t.spec, "7.3 Never animates") else ["§7.3 gone"]
+    )
+    moving = MOTION_VOCAB + "|" + MOVE_VERBS + r"|\bflash\w*"
+    bad += [f"claim: {c!r}" for c in claims(swept(t), moving, near=NEVER_ITEMS)]
+    # a state flip and a T2 ↔ enabled change in any motion word; a fade or a duration there is
+    # G-NOFADE's and G-INSTANT's claim (one FAIL per form)
+    asks = [uncite_ask(plain(x, t.values)) for x in swept(t)]
+    flips = STATE_CHANGE + r"|\bstatus labels?\b|\bcmp 246\b|\bt2 controls?\b"
+    flip_move = moving.replace(r"|\btransition\w*", "")  # "a state transition" names the flip
+    owned = set(claims(asks, TIMED, near=STATE_CHANGE, keep_quotes=True))
+    owned |= set(claims(asks, FADE, near=STATEISH, keep_quotes=True))
+    bound = re.compile(rf"(?:{flips})[^.;|,]{{0,40}}?(?:{flip_move})")  # the item as subject
+    for c in (c for x in asks for u in units(x) for c in clauses(u)):
+        n = norm_text(c)
+        if bound.search(n) and live(c, flip_move, True) and n[:70] not in owned:
+            bad.append(f"claim: {n[:70]!r}")
+    return one("G-NEVER", bad)
 
 
 def g_q1(t: Texts) -> list[str]:
@@ -2181,7 +2266,8 @@ SHIPPED = (
     r"|\b(?:no|without|drops?|dropped|removes?|removed|loses?|lost) (?:the |a |its |any )?"
     r"proposed (?:stamps?|mark\w*|badges?|labels?|tags?|chips?)\b"
     r"|\bproposed (?:stamp|mark|badge|label|tag) (?:is )?(?:dropped|removed|gone)\b"
-    r"|\b(?:not|never|no longer|isn't|aren't) (?:\w+ )?proposed\b"
+    r"|\b(?:not|never|no longer|isn't|aren't) (?:\w+ ){0,3}?proposed\b"
+    r"|\bga\b|\bgenerally available\b|\bgeneral availability\b"  # record r3
     r"|(?<!not )(?<!never )\bun(?:stamped|marked|flagged)\b"
 )
 
@@ -2340,7 +2426,8 @@ TAG_KEY_LINE = 363  # D03:363, the copy key `tag.emulated`: the word and the acc
 # bare (record r2); the name itself is case-sensitive, so the prop `emulated` is no name
 NAME_OF_TAG = re.compile(
     r"(?:accessible name|aria-label|\bnamed|\blabell?ed|tag's name|\bname|\bannounced as"
-    r"|\bread (?:out )?as)\s*(?:\bis\b|\breads\b|=|:)?\s*(?:\bas\b\s*)?"
+    r"|\bread (?:out )?as|\b(?:tag|it)(?=\s+(?:reads?|says|announces|speaks)\b))"  # "reads" (r3)
+    r"\s*(?:\bis\b|\breads?\b|\bsays\b|\bannounces\b|\bspeaks\b|=|:)?\s*(?:\bas\b\s*)?"
     r"(?:[\"“'‘`]((?-i:Emulated)[^\"”'’`\n]*)[\"”'’`]|((?-i:Emulated)\b[^.;|\n\"“`]*))",
     re.IGNORECASE,
 )
@@ -2582,7 +2669,7 @@ LANE_ID = re.compile(r"\bLANE-[A-Za-z0-9-]+")
 
 
 def g_ruled(t: Texts) -> list[str]:
-    """Condition: "RULED" cites comment 6397030902; the twenty rows are there."""
+    """Condition: "RULED" cites comment 6397030902 or 6401561066; the twenty rows are there."""
     bad: list[str] = []
     head = next((ln for ln in t.spec.split("\n") if ln.startswith("## The twenty questions")), "")
     if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID})" not in head:
@@ -2591,13 +2678,13 @@ def g_ruled(t: Texts) -> list[str]:
         bad.append("the hand-off does not cite the ruling comment")
     for text in (t.spec, t.hand):
         for cid in re.findall(r"comment (\d{9,})", text):
-            if cid not in (RULING_ID, BQ_LIST_ID):
+            if cid not in (RULING_ID, RULING_1442_ID, BQ_LIST_ID):
                 bad.append(f"comment {cid} is not the ruling")
         # "RULED" cites the comment, never a lane thread (record r1)
         bad += [f"{m[0]} is a lane thread, not a #988 comment" for m in LANE_ID.finditer(text)]
         for m in re.finditer(r"\bRULED by ([^.;:]{0,80})", text):
-            if RULING_ID not in m[1]:
-                bad.append(f"RULED by {m[1][:40]!r} does not cite comment {RULING_ID}")
+            if RULING_ID not in m[1] and RULING_1442_ID not in m[1]:
+                bad.append(f"RULED by {m[1][:40]!r} does not cite a ruling comment")
     bq = list(rows_by(section(t.spec, "The twenty questions"), r"BQ-\d+"))
     if bq != [f"BQ-{i}" for i in range(1, 21)]:
         bad.append("the BQ table is not BQ-1…BQ-20")
@@ -2827,31 +2914,30 @@ def g_cvd_port(t: Texts) -> list[str]:
     )
 
 
-# the 14:42Z decisions are not in comment 6397030902, so they are never marked RULED (record r1)
-LANE_RULING = "the orchestrator's decision of 2026-10-25 14:42Z (its #988 comment is owed)"
+# the 14:42Z decisions are ruled in comment 6401561066 and cite it as RULED_1442
 PENDING_WORDS = r"\bpending\b|\bawait\w*|\brequested\b|\bmay instead\b|\bopen\b"
 
 
 def g_q3(t: Texts) -> list[str]:
-    """L-9 / D04-Q3 (the 14:42Z decision): `cancelled` takes `slash` (CR-G4, PROPOSED); Q3 is
-    DECIDED, never RULED (RULED cites comment 6397030902 only)."""
+    """L-9 / D04-Q3 (comment 6401561066): `cancelled` takes `slash` (CR-G4, PROPOSED); Q3 is
+    marked "RULED (6401561066)"."""
     q3 = bullet(section(t.spec, "13.3 Open questions"), "D04-Q3")
     bad: list[str] = []
-    if "DECIDED" not in q3 or LANE_RULING not in q3 or "RULED" in q3.replace("DECIDED", ""):
-        bad.append("D04-Q3 is not DECIDED by the 14:42Z decision")
+    if RULED_1442 not in q3:
+        bad.append(f"D04-Q3 is not {RULED_1442}")
     if re.search(PENDING_WORDS, norm_text(q3)):
         bad.append("D04-Q3 still reads as pending")
     # the family's glyph is G-ENCODE's; a missing CR-G4 row is G-CR's
     g4 = rows_by(section(t.hand, "§D Change requests"), r"CR-[A-Z0-9]+").get("CR-G4", [])
-    if g4 and ("`slash`" not in g4[1] or "PROPOSED" not in g4[-1] or "DECIDED" not in g4[-1]):
-        bad.append("CR-G4 is not the PROPOSED `slash` with D04-Q3 DECIDED")
+    if g4 and ("`slash`" not in g4[1] or "PROPOSED" not in g4[-1] or RULED_1442 not in g4[-1]):
+        bad.append(f"CR-G4 is not the PROPOSED `slash` with D04-Q3 {RULED_1442}")
     if g4 and "open" in g4[-1]:
         bad.append("CR-G4 still reads D04-Q3 open")
     return one("G-Q3", bad)
 
 
 def g_c15(t: Texts) -> list[str]:
-    """D04-C15 (the 14:42Z decision): A-7.2 binds `danger.strong` for the bar fill; CR-T1 carries
+    """D04-C15 (comment 6401561066): A-7.2 binds `danger.strong` for the bar fill; CR-T1 carries
     the measurement to E05's tokens owner, PROPOSED, with the measured values anchored."""
     bad: list[str] = []
     a72 = next((r for r in table_rows(section(t.hand, "Table A")) if r[0] == "A-7.2"), [])
@@ -2872,13 +2958,13 @@ def g_c15(t: Texts) -> list[str]:
         if t1[5] != "PROPOSED":
             bad.append("CR-T1 is not PROPOSED")
     c15 = rows_by(section(t.spec, "13.1 Contradictions"), r"D04-C\d+").get("D04-C15", [])
-    if "CR-T1" not in " ".join(c15) or LANE_RULING not in " ".join(c15):
+    if "CR-T1" not in " ".join(c15) or RULED_1442 not in " ".join(c15):
         bad.append("D04-C15 does not cite the ruling and CR-T1")
     return one("G-C15", bad)
 
 
 def g_dr14(t: Texts) -> list[str]:
-    """DR-14 (the 14:42Z decision): class (a) CONFIRMED by the `16`:178 cite; FO H21 stays the
+    """DR-14 (comment 6401561066): class (a) CONFIRMED by the `16`:178 cite; FO H21 stays the
     owner's."""
     d = drift_rows(t.hand).get("DR-14", {})
     rep = d.get("Replacement", "")
@@ -2887,7 +2973,7 @@ def g_dr14(t: Texts) -> list[str]:
         return []  # no confirmed cite at all: G-DRIFT's FAIL, not a second one
     if d.get("Class") != "a":
         bad.append("DR-14 is not class (a)")
-    if "CONFIRMED" not in rep or LANE_RULING not in rep or "`16`:178" not in rep:
+    if "CONFIRMED" not in rep or RULED_1442 not in rep or "`16`:178" not in rep:
         bad.append("DR-14 is not marked CONFIRMED by the `16`:178 cite")
     if "H21 stays with the owner" not in rep:
         bad.append("DR-14 decides FO H21")
@@ -2906,7 +2992,7 @@ def g_mutlist(t: Texts) -> list[str]:
 GATES: tuple[Callable[[Texts], list[str]], ...] = (
     g_triad, g_encode, g_word_leads, g_twin, g_twin16, g_reduce_instant, g_instant, g_nofade,
     g_banner, g_step, g_cadence, g_easing, g_motion_tokens, g_loop, g_focused, g_countdown,
-    g_tween, g_dialog, g_q1, g_tier, g_kind, g_reduce_source, g_cr, g_one_entry, g_resume,
+    g_tween, g_never, g_dialog, g_q1, g_tier, g_kind, g_reduce_source, g_cr, g_one_entry, g_resume,
     g_halted, g_t2, g_exits, g_tag, g_tagname, g_emulated, g_afford, g_untouched, g_boards,
     g_budget,
     g_drift, g_drift_scope, g_pin, g_ruled, g_ac, g_crow, g_owner, g_stories, g_handoff,
@@ -3631,13 +3717,13 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-99",
         "G-Q3",
-        "14:42Z decision",
-        spec=line_edit("- **D04-Q3**", "DECIDED", "awaiting ruling"),
+        "comment 6401561066",
+        spec=line_edit("- **D04-Q3**", RULED_1442, "awaiting ruling"),
     ),
     Mutation(
         "M-100",
         "G-C15",
-        "14:42Z decision",
+        "comment 6401561066",
         hand=row_edit(
             "Table A",
             "A-7.2",
@@ -3650,7 +3736,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-101",
         "G-DR14",
-        "14:42Z decision",
+        "comment 6401561066",
         hand=row_edit(
             "§E Drift ledger",
             "DR-14",
@@ -3780,7 +3866,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-116",
         "G-RULED",
-        "RULED cites comment 6397030902",
+        "RULED cites comment 6397030902 or 6401561066",
         spec=prose_at(
             "14.3 Deviations",
             "D04-Q3 is RULED by the orchestrator's ruling of 2026-10-25 14:42Z (LANE-hcl1-98).",
@@ -3844,6 +3930,79 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-EMULATED",
         "BQ-4 / T Sec (the tag suppressed)",
         spec=prose_at("4.3 The `emulated: true`", "The Emulated tag is suppressed on dense rows."),
+    ),
+    # record r3: one mutation per class of form that passed at round 3
+    Mutation(
+        "M-125",
+        "G-TWEEN",
+        "BQ-10 rule 2 (roll)",
+        spec=prose_at("7.3 Never animates", "The sizes roll to each new value."),
+    ),
+    Mutation(
+        "M-126",
+        "G-HALTED",
+        "BQ-9 (GA as shipped)",
+        spec=prose_at("7.3 Never animates", "The `halted` variant is generally available."),
+    ),
+    Mutation(
+        "M-127",
+        "G-INSTANT",
+        "BQ-11 (barely instant)",
+        spec=prose_at("7.3 Never animates", "State changes are barely instant."),
+    ),
+    Mutation(
+        "M-128",
+        "G-EXITS",
+        "R-4 (Esc swallowed)",
+        spec=prose_at("7.3 Never animates", "`Esc` is swallowed while a run is live."),
+    ),
+    Mutation(
+        "M-129",
+        "G-INSTANT",
+        "BQ-11 (a duration in frames)",
+        spec=prose_at("7.3 Never animates", "A state change takes three frames."),
+    ),
+    Mutation(
+        "M-130",
+        "G-TWEEN",
+        "BQ-10 rule 3 (a flip)",
+        spec=prose_at(
+            "7.3 Never animates", "It is false that the bar never glides between samples."
+        ),
+    ),
+    Mutation(
+        "M-131",
+        "G-DIALOG",
+        "BQ-14 (a cite exempts its parenthesis only)",
+        spec=prose_at(
+            "5. CMP-245", "Dialogs open with a scale-up (per CMP-043 as ruled) and a fade."
+        ),
+    ),
+    Mutation(
+        "M-132",
+        "G-TWEEN",
+        "BQ-10 rule 3 (to the following sample)",
+        spec=prose_at(
+            "7.3 Never animates", "The card bar glides from one sample to the following one."
+        ),
+    ),
+    Mutation(
+        "M-133",
+        "G-COUNTDOWN",
+        "BQ-13 (the countdown under another name)",
+        spec=prose_at("7.3 Never animates", "The time until the next slice slides on each tick."),
+    ),
+    Mutation(
+        "M-134",
+        "G-STEP",
+        "BQ-10 (every bar, by where it sits)",
+        spec=prose_at("7.3 Never animates", "On SCR-070, every bar eases to its new value."),
+    ),
+    Mutation(
+        "M-135",
+        "G-NEVER",
+        "§7.3 (a never-animates item)",
+        spec=prose_at("7.3 Never animates", "DEMO ↔ LIVE cross-fades; the theme switch slides."),
     ),
 )
 
