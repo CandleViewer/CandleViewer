@@ -676,25 +676,29 @@ async def test_the_lanes_deny_carries_an_exit_routes_step_to_the_exit_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """24 Sec.8.4 and 15.5: an exit route records each refusal it makes through `deny`, naming its
-    step (the cancel's `key`, `replay` and `guard`, as `placeOrder`'s records do), so the lane's
-    hop carries the step to the exit service unchanged, unbounded as a refusal's record is."""
+    step (the cancel's `key`, `replay` and `guard`, as `placeOrder`'s records do) and, where it has
+    one, its reason, so the lane's hop carries the row, the operation, the refusal and every named
+    argument to the exit service unchanged, unbounded as a refusal's record is."""
     lane = Recording()
     async with started(World().runtime(lane=lambda: lane)) as runtime:
-        refusal = ExitOutcome(kind="refused", status=400, code="validation_failed")
-        seen = list[dict[str, Any]]()
+        refusal = ExitOutcome(kind="refused", status=409, code="conflict")
+        seen = list[tuple[tuple[Any, ...], dict[str, Any]]]()
 
-        async def deny(*_args: Any, **kwargs: Any) -> ExitOutcome:
-            seen.append(kwargs)
+        async def deny(*args: Any, **kwargs: Any) -> ExitOutcome:
+            seen.append((args, kwargs))
             return refusal
 
         monkeypatch.setattr(runtime._composed().exits, "deny", deny)
         lane.hops.clear()
-        nothing = cast(Any, None)
+        row, actor, request_id = cast(Any, object()), cast(Any, object()), UUID(int=9)
         got = await runtime.exits.deny(
-            nothing, "cancel", refusal, actor=nothing, request_id=None, step="key"
-        )
+            row, "amend", refusal, actor=actor, request_id=request_id, step="class",
+            reason="reclassified",
+        )  # fmt: skip
         assert got is refusal
-        assert seen == [{"actor": None, "request_id": None, "step": "key", "reason": None}]
+        named = {"actor": actor, "request_id": request_id, "step": "class"}
+        named["reason"] = "reclassified"
+        assert seen == [((row, "amend", refusal), named)]
         assert [bound for _, bound in lane.hops] == [None]
 
 

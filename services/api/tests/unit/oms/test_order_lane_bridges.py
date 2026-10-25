@@ -1,6 +1,7 @@
 """#913 slice 3 L1b (E29-T04, 29 CV-C13): the nine `Served*` bridges, each on a real order lane
-whose serving loop is this test's (CR-S3L1B-02). A stalled serving loop is one blocked on an
-event; each wait is a bound on the test, never a time it expects."""
+whose serving loop is this test's (CR-S3L1B-02), and the `OnLane*` bridges' parameters against
+their services'. A stalled serving loop is one blocked on an event; each wait is a bound on the
+test, never a time it expects."""
 
 from __future__ import annotations
 
