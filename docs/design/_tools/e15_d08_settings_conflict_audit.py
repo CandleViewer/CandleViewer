@@ -10,22 +10,26 @@ layering), both imported, never re-implemented; the CVD rows use
 two dialogs draw (text 4.5, body text 7.0 in high contrast, non-text 3.0; the 7:1 aims, the
 rejected and the decorative rows reported, never gated); (2) every bound token, resolved or
 MISSING; (3) the greyscale luma and CVD rows of the danger and boundary colours (reported); (4) the
-contract facts the frames quote, parsed from `22` / `14` / `15` / `23` / E15-D02 / E09-D09 text,
-never typed; (5) the gates: the header, the deviations, the AC trace, the ruled questions, §0's
-boards and their reconciliation with the frame rows, the PER-FRAME gates over every `SCR-025/` and
-`SCR-029/` row of §2-§4 (each frame's obligations come from the tool's own KIND table, never from
+contract facts the frames quote, parsed from `22` / `14` / `15` / `23` / E15-D02 / E09-D09 / slice 4
+text, never typed; (5) the gates, each FAIL led by its code in brackets: the header, the
+deviations, the AC trace, the ruled questions, the numbered sections in order, §0's boards and
+their reconciliation with the frame rows, the PER-FRAME gates over every `SCR-025/` and `SCR-029/`
+row of §2-§4 (each frame's obligations come from the tool's own KIND and FOOTER tables, never from
 the row's Class cell, which must agree), the entry-point matrix, the reason and upstream strings,
 the copy keys, the cites (a moved line is a WARN; a fragment gone or ambiguous is a FAIL; a cite
 missing from CITED_TABLE is a FAIL), the `14` pointer lines, private paths and hosts, closing
-keywords, dangling rule and catalogue ids, every `**Placeholder (§n):**` paragraph still in the
-spec (a FAIL, so a skeleton never passes), and the written sections: §5's one T2 paragraph and its
-not-T2 list, §7's tables equal to sections 1 and 3, §8's templates and consequence lines, §11's
-G-rows and §12's sign-off items; (6) the counts. `--json` is the only source of every
-number in the spec; `--check` re-derives every `<!-- audit:KEY=VALUE -->` marker (markers are
-checked on every run); `--self-test` applies each named mutation of `mutations()` to an in-memory
-copy of the spec and passes only when each adds exactly one new FAIL naming its gate, the per-frame
-gates are clean on the unmutated spec and the spec on disk is byte-identical afterwards. Exit 1 on
-a gated FAIL.
+keywords, dangling rule and catalogue ids, placeholders, and the written sections: §5's one T2
+paragraph and its not-T2 list, §5.1's exits row, §6's exits sentence, §7's tables equal to
+sections 1 and 3, §8's deck, §11's G-rows and §12's sign-off items; (6) the counts. `--json` is the
+only source of every number in the spec: every `<!-- audit:KEY=VALUE -->` marker is re-derived on
+every run, the number printed beside it must equal it, a malformed marker is a FAIL and no marker
+the spec carries may disappear; `--check` adds the markers summary line. `--self-test` applies each
+named mutation of `mutations()` to an in-memory copy of the spec (and each of
+`context_mutations()` to an in-memory copy of the plan texts) and passes only when each adds
+exactly one new FAIL carrying its expected text, every gate code of this file is behind at least
+one mutation (EXEMPT names the few that no spec or plan-text edit reaches, with the reason), M1-M17
+of the brief all run, the per-frame gates are clean on the unmutated spec and the spec on disk is
+byte-identical afterwards. Exit 1 on any FAIL, with or without a flag.
 
 Usage: python3 -I -B docs/design/_tools/e15_d08_settings_conflict_audit.py [--json] [--check]
        [--self-test]
@@ -79,16 +83,26 @@ MERGE_SHAS = (
 )
 PENPOT_PAGE = "E15-D08 Workspace settings and conflicts"
 STATUS_WORDS = ("text-first", "PROPOSED unless RULED", "boards PENDING", "≤ 10 boards", "≤ 1/3")
-# Generic patterns only (the repo is public): a local home path, a design-tool host, a team or file
-# id query, a home-relative path. Split literals keep the tool from matching itself.
+# Generic patterns only (the repo is public): a local home path (POSIX, Windows or UNC), a
+# design-tool host, a team or file id query, a home-relative path, a tailnet host, an IPv4
+# address. Split literals keep the tool from matching itself.
 FORBIDDEN = (
     r"/(?:ho[m]e|Users)/[^/\s]+/",
+    r"\b[A-Za-z]:\\(?:Users|Documents and Settings)\\",
+    r"\\\\[\w.-]+\\[\w$.-]+",
     r"penpot\.[a-z0-9-]+\.[a-z]{2,}",
     r"team-i[d]=",
     r"file-i[d]=",
     r"~/[a-z0-9-]+/",
+    r"\.ts\.n[e]t\b",
+    r"\b(?:\d{1,3}\.){3}\d{1,3}\b",
 )
-CLOSING = r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b\s+#\d+"
+# A closing keyword in any form GitHub links: `Closes #N`, `Fixes: #N`, `owner/repo#N` or an
+# issue URL (text-first PRs say `Refs` and `Partial:` only).
+CLOSING = (
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b:?\s+"
+    r"(?:(?:[\w.-]+/[\w.-]+)?#\d+|https?://\S+/issues/\d+)"
+)
 POINTER = "[E15-D08.md](../design/E15/E15-D08.md)"
 # Each pointer line sits right after its screen's sign-off checklist in `14`.
 POINTER_AFTER = (
@@ -121,6 +135,7 @@ DOC_PATHS = {
     "README": DESIGN / "README.md",
 }
 EN_DASH = "\u2013"
+TIMES = "\u00d7"
 CITE_RE = (
     r"`(04|05|11|14|15|16|21|22|23|BL|D01|D02|FL|S3|S4|D09|E16D03|README):(\d+)(?:"
     + EN_DASH
@@ -488,12 +503,45 @@ OVERWRITE_TITLE = "Replace the version saved at {hhmm}?"
 QUEUE_RULE = "the dialog never opens while focus is in an order-capable panel"
 SAVED_SENTENCE = "Saved workspace settings."
 TYPED_LABEL = '"Type {workspace} to confirm"'
-IRREVERSIBLE = "can't be undone"
+# The frame-row sentences the content gates render from FIXTURE and the parsed facts (MJ2 (d): no
+# contract or fixture number in a frame row is free).
+NAME_HELP = '"Up to {max} characters. Each workspace needs its own name."'
+LONG_PRODUCER = "Name typed to {n} characters"
+DIRTY_PRODUCER = 'Name edited to "{renamed}"'
+ONE_INVALID = ('"Can\'t save — 1 problem"', '"Fix 1 field."')
+DELETE_PRODUCER = "on {workspace} ({n} layouts, "
+DELETE_BODY = '"It has {n} layouts, and {layout} has unsaved changes. Deleting can\'t be undone."'
+RACING_LINE = '"Nothing was deleted — this is now your only workspace."'
+CAP_PRODUCER = "holds {n} layouts"
+REVERT_AGAINST = "the difference summary against the version saved at {hhmm}"
+REVERT_DONE = '"{layout} reverted to the version saved at {hhmm}."'
+LOADED_LINE = '"{layout} now shows the version saved at {hhmm}."'
+REFRESHED_PRODUCER = "a third window wrote at {time}"
+OVERFLOW_PRODUCER = "{panels} panel added and {symbols} symbols changed"
+KEEP_ROUTE = "Keep mine opens `SCR-029/keep-mine-confirm`"
+TYPED_RULES = (
+    "matched exactly after trimming, case-sensitive",
+    "`Enter` in the field never confirms",
+)
+QUEUED_LINES = (
+    "autosave stops for {layout} until the conflict is settled",
+    '"{layout} changed in another window."',
+)
+DANGER_WORDS = ("Danger zone", "the `danger` glyph")
+BY_REFERENCE = "as `SCR-029/conflict`, its table and its four lines unchanged"
+SAVING_ROUTES = (
+    "a `412` takes the queued route (`SCR-029/conflict-queued`)",
+    "a `412` turns it into `SCR-029/conflict-from-preset`",
+)
+REFLOW_PRODUCER = "200 % zoom on the {frame} frame"
 # frame | kind | parameters — the independent inventory every per-frame gate reads; a row's Class
-# cell must agree with it and never decides. `keys` = the T2 reason keys the row must name; `time`
-# = the fixture time its consequence lines render; `diff` = the summary case it renders.
+# cell must agree with it and never decides. `keys` = the T2 reason keys the row names, the first
+# one's sentence quoted in its Shows cell; `time` = the fixture time its consequence lines render;
+# `diff` = the summary case it renders; `star=producer` = its `*` is the dirty layout of its
+# producer; `size` = the CMP-043 / CMP-044 size the row must state; `loaded` = it quotes Load
+# theirs' outcome line.
 KIND_TABLE = """
-SCR-025/default | form |
+SCR-025/default | form | size=md
 SCR-025/compact | inset |
 SCR-025/planned-description | planned | gap=D08-G1
 SCR-025/planned-defaults | planned | gap=D08-G2
@@ -503,33 +551,46 @@ SCR-025/dirty | form-dirty |
 SCR-025/invalid-empty | invalid | rule=empty
 SCR-025/invalid-long | invalid | rule=long
 SCR-025/invalid-duplicate | invalid | rule=taken
-SCR-025/discard-prompt | discard-prompt |
+SCR-025/discard-prompt | discard-prompt | size=sm
 SCR-025/saving | busy |
 SCR-025/saved | outcome |
 SCR-025/failed | refusal |
-SCR-025/settings-conflict | settings-conflict | time=conflict
-SCR-025/delete-confirm | delete-confirm |
+SCR-025/settings-conflict | settings-conflict | time=conflict;size=md
+SCR-025/delete-confirm | delete-confirm | star=producer;size=md
 SCR-025/delete-racing | delete-racing | keys=workspace.limit.last
 SCR-025/delete-last | t2-state | keys=workspace.limit.last
 SCR-025/viewer-read-only | t2-viewer | keys=notice.panel_read_only,rbac.permission
 SCR-025/view-as | t2-view-as | keys=rbac.view_as
-SCR-025/leg-lost | t2-leg | keys=rbac.permission
+SCR-025/leg-lost | t2-leg | keys=notice.panel_read_only,rbac.permission
 SCR-025/reflow-200 | reflow |
-SCR-029/unsaved | unsaved | diff=ac3
+SCR-029/unsaved | unsaved | diff=ac3;size=md
 SCR-029/unsaved-overflow | unsaved | diff=overflow
 SCR-029/unsaved-saving | unsaved-busy |
-SCR-029/revert | revert |
+SCR-029/revert | revert | diff=ac3;size=md
 SCR-029/viewer-unsaved | unsaved-t2 | keys=rbac.permission
 SCR-029/view-as-unsaved | unsaved-t2 | keys=rbac.view_as
 SCR-029/reflow-200 | reflow |
 SCR-029/compact | inset |
-SCR-029/conflict | conflict | time=conflict;table=yes
+SCR-029/conflict | conflict | time=conflict;table=yes;loaded=yes;size=md
 SCR-029/conflict-from-preset | conflict | time=conflict;table=yes
 SCR-029/conflict-refreshed | conflict | time=refreshed
 SCR-029/conflict-queued | queued |
-SCR-029/keep-mine-confirm | overwrite-confirm | time=conflict
+SCR-029/keep-mine-confirm | overwrite-confirm | time=conflict;size=sm
 SCR-029/save-as-t2 | conflict-t2 | keys=layout.limit.count
 SCR-029/leg-lost | conflict-t2 | keys=rbac.permission
+"""
+# kinds | the footer's labels in order (D08-D16; `S4:1645`: Cancel first, the primary or danger
+# action last). A kind not listed draws no footer.
+FOOTER_TABLE = """
+form, form-dirty, invalid, busy, refusal | Cancel · Save
+t2-state, t2-viewer, t2-view-as, t2-leg | Cancel · Save
+discard-prompt | Keep editing · Discard changes
+settings-conflict | Cancel · Load theirs · Keep mine
+delete-confirm, delete-racing | Cancel · Delete workspace
+unsaved, unsaved-busy, unsaved-t2 | Cancel · Discard changes · Save layout
+revert | Cancel · Revert to saved
+conflict, conflict-t2 | Cancel · Save mine as new layout… · Load theirs · Keep mine
+overwrite-confirm | Cancel · Replace saved version
 """
 DIRTY_KINDS = {
     "form-dirty",
@@ -538,6 +599,7 @@ DIRTY_KINDS = {
     "busy",
     "refusal",
     "settings-conflict",
+    "t2-leg",
     "unsaved",
     "unsaved-busy",
     "unsaved-t2",
@@ -547,6 +609,9 @@ DIRTY_KINDS = {
     "overwrite-confirm",
     "conflict-t2",
 }
+# The dirty marker each screen draws: SCR-025's dirty title, SCR-029's dirty tab (`D02:280`).
+DIRTY_MARK = {"SCR-025": "`Workspace settings *`", "SCR-029": "`Scalping *`"}
+STAR_SPAN = r"`[^`\n]*\*[^`\n]*`"
 T2_KINDS = {
     "t2-state",
     "t2-viewer",
@@ -556,6 +621,7 @@ T2_KINDS = {
     "conflict-t2",
     "delete-racing",
 }
+ONE_NOTICE_KINDS = {"t2-viewer", "t2-view-as", "t2-leg"}
 VALIDITY_KINDS = {"form", "invalid", "delete-confirm"}
 SCR029_DIALOG_KINDS = {"unsaved", "unsaved-busy", "unsaved-t2", "revert", "conflict", "conflict-t2"}
 DIALOG_KINDS = SCR029_DIALOG_KINDS | {
@@ -567,28 +633,56 @@ DIALOG_KINDS = SCR029_DIALOG_KINDS | {
 }
 FORM_KINDS = {"form", "form-dirty", "invalid", "busy", "refusal"} | (T2_KINDS - SCR029_DIALOG_KINDS)
 EXIT_KINDS = DIALOG_KINDS | FORM_KINDS
-CONFLICT_412_KINDS = {"conflict", "conflict-t2", "queued", "settings-conflict"}
+CONFLICT_412_KINDS = {"conflict", "conflict-t2", "queued", "settings-conflict", "overwrite-confirm"}
 BUSY_KINDS = {"busy", "unsaved-busy"}
-UNVERBED_KINDS = SCR029_DIALOG_KINDS | {"overwrite-confirm", "discard-prompt", "settings-conflict"}
+SIZE_SM = {"discard-prompt", "overwrite-confirm"}
+# kind -> the component the row must name (m5); SCR-029's own kinds are M17's (CMP-043 only).
+COMPONENT = {
+    "form": 'CMP-043 `role="dialog"`',
+    "discard-prompt": 'CMP-044 `standard` `role="alertdialog"`',
+    "settings-conflict": 'CMP-043 `role="alertdialog"`',
+    "delete-confirm": 'CMP-044 `typed` `role="alertdialog"`',
+    "overwrite-confirm": 'CMP-044 `standard` `role="alertdialog"`',
+}
 SAFE = ("Cancel", "Keep editing")
-EXIT_RE = r"\b(?:Cancel|Esc|Close|Discard(?: changes)?|Keep editing|Load theirs)\b"
 DESTRUCTIVE = ("Discard changes", "Load theirs", "Keep mine", "Revert to saved")
 UNVERBED = ("OK", "Yes", "No", "Confirm", "Discard", "Apply", "Done")
-# Words that make a planned inset read as a control (M5) or as a lock or a dimmed control (M6).
+# The exits (A3): never gated anywhere in a row — a T2 clause, a footer note, the exits clause, the
+# `Esc` mapping, the close button, or any sentence that pairs an exit with a gating word.
+EXIT_RE = (
+    r"\b(?:Cancel|Esc|Close|Discard(?: changes)?|Keep editing|Load theirs|Revert to saved)\b"
+    r"|close " + TIMES
+)
+GATED_RE = (
+    r"\bT2\b|\block(?:ed)?\b|\bpadlock\b|\U0001f512|aria-disabled|\bdisabled\b|\bunavailable\b"
+    r"|\bgated\b|\bblocked\b|\bgr[ae]yed\b|\bdimmed\b"
+)
+NEGATED_RE = (
+    r"\b(?:never|not|no|nor)\b (?:the |a |by |as )?"
+    r"(?:T2|gated|lock(?:ed)?|`?disabled`?|`aria-disabled`|unavailable|dimmed)\b"
+)
+# A planned inset (BQ-2 RULED) is a fixed sentence with three free parts: its place, its words and
+# its caption (MJ4: an allow-list); the free parts are then read for control and dimming words.
+PLANNED_HEAD = "the board's annotation layer, "
+PLANNED_STAMP = 'the `planned` stamp, the words "'
+PLANNED_TAIL = (
+    "; full-strength `color.text.secondary` on `color.surface.raised`, `radius.card`; nothing "
+    "operable and nothing focusable; the shipped dialog renders none of it (an absence by plan, §5)"
+)
 CONTROL_RE = (
-    r"\bfield well\b|\bCMP-(?:003|004|007|009|048|062|063|105|106|219|220)\b|\btoggle\b"
-    r"|\bswitch\b|\bselect\b|\bcombobox\b|\blistbox\b|\bradio|\bsegmented\b|\bcheckbox\b"
-    r"|\bpicker\b|\binput\b|▾|\[ \]"
+    r"\bfield\b|\bwell\b|\bCMP-\d{3}\b|\btoggle\b|\bswitch\b|\bselect\b|\bcombobox\b|\blistbox\b"
+    r"|\bradio|\bsegmented\b|\bcheckbox\b|\bpicker\b|\binput\b|\bdropdown\b|\bslider\b"
+    r"|\bstepper\b|\btext ?(?:area|box)\b|\bbutton\b|\beditable\b|\boperable\b|\bfocusable\b|▾"
+    r"|\[ \]"
 )
 DIM_RE = (
-    r"\bT2\b|\block\b|opacity\.disabled|aria-disabled|color\.text\.disabled|\bdimmed\b|\bgreyed\b"
+    r"\bT2\b|\block(?:ed)?\b|opacity|aria-disabled|color\.text\.disabled|\bdisabled\b|\bdimmed\b"
+    r"|\bgr[ae]yed\b|\bfaded\b|\bmuted\b|\binert\b|\btranslucent\b|\bhalf\b|\bghost(?:ed)?\b"
 )
 T2_DIM_RE = r"opacity\.disabled|color\.text\.disabled"
-# An environment control on SCR-025 (BQ-8 RULED: none at all, not even contract-pending).
-ENV_RE = (
-    r"(?i)default environment|environment for new panels|pin(?:ned)? to LIVE|environment binding"
-    r"|\bDEMO\s*/\s*LIVE\b|environment (?:select|picker|toggle|switch|control)"
-)
+# An environment control on SCR-025 (BQ-8 RULED: none at all, not even contract-pending), read in
+# every SCR-025 frame row and in the table rows of §0, §2 and §8.
+ENV_RE = r"(?i:\benvironments?\b|\btestnet\b)|\b(?:LIVE|Live|DEMO|Demo)\b|\bCMP-07[45]\b"
 # id | a ticket route (yes / no) | the words its Route cell holds | the frame it opens, or "none"
 # (no dialog: the working copy is kept and the tab keeps its `*`).
 ENTRY_TABLE = """
@@ -615,7 +709,8 @@ notice.panel_read_only | Read-only — your role can't save workspaces. | D02
 workspace.limit.last | You need at least one workspace. | D02
 layout.limit.count | This workspace has the most layouts it can hold. | D02
 """
-# string | doc | frames — upstream copy the frames quote verbatim (each must still exist upstream).
+# string | doc | frames — upstream copy the frames quote verbatim (each must still exist upstream);
+# the T2 reasons are REASONS_TABLE's and the frames' `keys` (no second gate on the same words).
 UPSTREAM_TABLE = """
 You have unsaved layout changes. | D02 | SCR-029/unsaved
 Layout 1 in Scalping has changes that aren't saved. | D02 | SCR-029/unsaved
@@ -628,8 +723,6 @@ That name is already in use. | D02 | SCR-025/invalid-duplicate
 Revert Layout 1 to the version saved at 13:40? Your unsaved changes are lost. | D02 | SCR-029/revert
 Discard unsaved changes? | S4 | SCR-025/discard-prompt
 Keep editing | S4 | SCR-025/discard-prompt
-You need at least one workspace. | 22 | SCR-025/delete-last, SCR-025/delete-racing
-Read-only — your role can't save workspaces. | D02 | SCR-025/viewer-read-only
 This workspace isn't saved. | D02 | SCR-025/viewer-read-only
 """
 # The name rules (AC 6; BQ-4 RULED): rule -> (the error line, the summary link). `{max}` is `22`'s.
@@ -678,10 +771,9 @@ COPY_KEY_RE = (
     r"|layout\.limit\.[a-z_]+)$"
 )
 PLACEHOLDER_RE = r"\*\*Placeholder \(§(\d+)\):\*\* ([^\n]+)"
-# Section gates that wake up once a placeholder is replaced. §7's table: `| n | `fg` on `bg` | role
-# | dark | light | hc | verdict | registered or PROPOSED | where |`, each cell within CELL_TOLERANCE
-# of the tool's value and the verdict and the `pairs.mjs` column the tool's own words.
-CELL_TOLERANCE = 0.0051
+# §7's table: `| n | `fg` on `bg` | role | dark | light | hc | verdict | registered or PROPOSED |
+# where |`, each cell the tool's value as printed (2 decimals, 4 within 0.005 of a bar), the verdict
+# and the `pairs.mjs` column the tool's own words.
 CONTRAST_ROW_RE = (
     r"^\| (\d+) +\| `([a-z0-9.-]+)` on `([a-z0-9.-]+)` +\| ([a-z-]+) +\| ([\d.]+) +\| ([\d.]+) +\|"
     r" ([\d.]+) +\| ([^|]+?) +\| (registered|PROPOSED) +\|"
@@ -709,6 +801,132 @@ FRAME_RE = r"^\| `((?:SCR-025|SCR-029)/[a-z0-9-]+)` +\|.*$"
 BOARD_RE = r"^\| (\d\d) +\| `(E15-D08 / (\d\d) [a-z0-9-]+)` +\|(.*)$"
 ENTRY_RE = r"^\| (E\d+) +\|(.*)$"
 FRAME_NAME_RE = r"`((?:SCR-025|SCR-029)/[a-z0-9-]+)`"
+# The written sections' fixed sentences: A3 as the header's standing additions quote the ruling
+# and as §6 states it, and its row in §5.1 (MJ1); the planned insets' absence restated outside
+# their rows (MJ4); the T2 paragraph's own sentences, each exactly once in the file and inside §5
+# (m8: T2 is stated once).
+A3_STANDING = (
+    "**A3** the exits are never gated — Cancel, Esc, Discard and Close on every frame, never "
+    "locked by view-as, the kill switch, a lockout or a state."
+)
+A3_SENTENCE = (
+    "never T2, never held by a busy send, never locked by view-as, the kill switch, a risk "
+    "lockout, a lost leg or any state"
+)
+EXITS_ROW = "Cancel, `Esc`, Close, Keep editing, Discard changes, Load theirs, Revert to saved"
+PLANNED_CLAIMS = (
+    (2, "never a control, never T2, never dimmed"),
+    (2, "all at full strength; no CMP"),
+    (5, "an absence is never a lock, never T2 and never dimmed"),
+    (7, "full strength, never dimmed"),
+)
+T2_ONCE = (
+    "E09-D09's decision rule decides every control here",
+    "A T2 control keeps its native role and its full label",
+)
+SECTIONS = [str(n) for n in range(16)]
+# The brief's A2 list: each of these must stay in `mutations()` (m11).
+A2_NAMES = (
+    "M1-dirty-star",
+    "M2-t2-lock",
+    "M3-reason-key",
+    "M4-view-as-order",
+    "M5-planned-control",
+    "M6-planned-dim",
+    "M7-cancel-first",
+    "M8-focus-safe",
+    "M9-esc-cancel",
+    "M10-exit-gated",
+    "M11-typed-field",
+    "M12-consequence",
+    "M13-overwrite-time",
+    "M14-412",
+    "M15-number",
+    "M16-env-control",
+    "M17-cmp-044",
+)
+# The gate codes no edit of the spec or of a cited plan text can trip, so no mutation stands
+# behind them (m12): each checks the token files or this tool's own tables.
+EXEMPT = {
+    "token-missing": "a bound token resolves through the token JSON, not the spec",
+    "contrast-fail": "a pair's ratio is measured from the token JSON; §7's cells are pinned",
+    "reason-form": "checks REASONS_TABLE, this tool's own table, for length and full stop",
+    "reconcile": "checks RECONCILE_TABLE against CITED_TABLE and KIND_TABLE, tool tables",
+}
+MARKER_RE = r"<!-- audit:([A-Za-z0-9_.-]+)=(\S+) -->"
+MARKER_LOOSE_RE = r"<!--\s*audit:[^\n]*?(?:-->|$)"
+NUMBER_BEFORE_RE = r"\(?(\d[\d.:]*)"
+# key count — every marker key the spec carries and how many times (MJ2 (b): a marker deleted is a
+# FAIL); a new marker may be added freely, then pinned here.
+MARKER_TABLE = """
+boards 2
+light_twins 2
+mutations 2
+fixture.layouts 2
+contract.name_max 7
+contract.name_min 3
+contract.layouts_max 6
+contract.dialog_md_px 6
+contract.confirm_delay_ms 5
+contract.conflict_ms 7
+contract.control_comfortable 4
+contract.control_compact 4
+fixture.saved_time 1
+fixture.conflict_time 1
+fixture.refreshed_time 1
+fixture.ac3.panels_added 2
+fixture.ac3.symbols_changed 2
+fixture.ac3.groups_added 2
+fixture.overflow.panels_added 1
+fixture.overflow.symbols_changed 2
+fixture.list_cap 5
+fixture.overflow.hidden 3
+planned_insets 1
+contract.reason_max 4
+bq_rows 2
+frames_total 2
+frames_025 3
+frames_029 4
+frames_drawn 2
+frames_not_drawn 2
+redline.opacity.scrim 1
+redline.space.dialog.padding 1
+redline.space.stack.md 1
+redline.radius.dialog 1
+redline.space.stack.lg 1
+redline.space.stack.xs 1
+redline.space.inset.sm 1
+redline.radius.control 1
+redline.space.inset.md 1
+redline.border.thick 1
+redline.radius.card 1
+contract.opacity_disabled 3
+redline.border.focus 1
+composite.dark 2
+composite.light 2
+composite.high-contrast 2
+fixture.ac3.lines 2
+fixture.overflow.lines 2
+entry_ticket_routes 1
+entry_rows 2
+missing_tokens 2
+contract.dialog_sm_px 1
+contract.dialog_lg_px 1
+pairs_rows 2
+pairs_fail 2
+pairs_registered 1
+pairs_proposed 1
+aaa_rows 2
+aaa_met 2
+checklist_items 2
+deck_rows 1
+rows.G 1
+rows.C 1
+rows.A 1
+rows.Q 1
+rows.D 1
+"""
+MARKERS = {k: int(n) for k, n in (ln.split() for ln in MARKER_TABLE.strip().splitlines())}
 
 
 def rows(table: str, parts: int = -1) -> list[list[str]]:
@@ -762,6 +980,17 @@ def kind_table() -> dict[str, tuple[str, dict[str, str]]]:
 
 
 KIND = kind_table()
+
+
+def footer_table() -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for kinds, labels in rows(FOOTER_TABLE):
+        for kind in kinds.split(", "):
+            out[kind] = labels.split(" · ")
+    return out
+
+
+FOOTERS = footer_table()
 
 
 def theme_tokens(name: str) -> dict[str, Any]:
@@ -872,6 +1101,9 @@ def contract_facts(t: dict[str, str], themes: dict[str, dict[str, Any]]) -> dict
     w_in = api[api.index("    WorkspaceInput:") : api.index("    Workspace:\n")]
     delete = api[api.index("operationId: deleteWorkspace") :]
     delete = delete[: delete.index("operationId:", 30)]
+    ws_ops = api[
+        api.index("operationId: createWorkspace") : api.index("operationId: deleteWorkspace")
+    ]
     icon = api[api.index("    WorkspaceIconToken:") : api.index("    WorkspaceInput:")]
     scr029 = t["14"][t["14"].index("### SCR-029") : t["14"].index("### SCR-030")]
     cmp043 = t["15"][t["15"].index("### CMP-043") : t["15"].index("### CMP-044")]
@@ -894,6 +1126,11 @@ def contract_facts(t: dict[str, str], themes: dict[str, dict[str, Any]]) -> dict
         "icon_tokens": first(r"enum: \[([^\]]+)\]", icon).split(", "),
         "last_workspace_message": first(r'message: "([^"]+)"', delete),
         "version_conflict_412": bool(re.search(r"- code: version_conflict\n\s+status: 412", api)),
+        "refusal_codes": [
+            c
+            for c in ("name_taken", "concurrent_update", "store_unavailable")
+            if re.search(rf"\b{c}\b", ws_ops)
+        ],
         "layouts_max": int(first(r"`limit_reached` \((\d+) live layouts\)", api)),
         "workspaces_max": int(first(r"`limit_reached` \((\d+) live workspaces\)", api)),
         "settings_density": first(r"density: \{ type: string, enum: \[([^\]]+)\] \}", api).split(
@@ -909,6 +1146,7 @@ def contract_facts(t: dict[str, str], themes: dict[str, dict[str, Any]]) -> dict
         "saved_time": first(r"the version saved at (\d\d:\d\d)\? Your unsaved changes", d02),
         "conflict_time": first(r"Saved now \((\d\d:\d\d:\d\d)\)", d02),
         "conflict_table": values,
+        "reflow_frame": first(rf"200 % zoom on the (\d+ {TIMES} \d+) frame", t["S4"]),
         "control_compact": int(resolve(themes["dark"], "size.control.compact")),
         "control_comfortable": int(resolve(themes["dark"], "size.control.comfortable")),
         "opacity_disabled": float(resolve(themes["dark"], "opacity.disabled")),
@@ -972,6 +1210,20 @@ def table_text(facts: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
+READ: dict[Path, str] = {}
+
+
+def read_once(path: Path) -> str:
+    if path not in READ:
+        READ[path] = path.read_text(encoding="utf-8")
+    return READ[path]
+
+
+def fail(code: str, msg: str) -> str:
+    """A FAIL line led by its gate code; `--self-test` checks every code has a mutation (m12)."""
+    return f"[{code}] {msg}"
+
+
 def frame_rows(spec: str) -> list[tuple[str, list[str], str]]:
     """(frame, cells, the whole line) for every frame row of §2-§4."""
     out = []
@@ -994,202 +1246,413 @@ def footer_items(shows: str) -> list[tuple[str, str]]:
     return out
 
 
-def legs(line: str) -> list[str] | None:
-    m = re.search(r"legs ((?:`[a-z_.]+`\s*(?:→\s*)?)+)", line)
+def legs(text: str) -> list[str] | None:
+    m = re.search(r"legs ((?:`[a-z_.]+`\s*(?:→\s*)?)+)", text)
     return re.findall(r"`([a-z_.]+)`", m.group(1)) if m else None
+
+
+def t2_clauses(shows: str) -> list[str]:
+    """Every `T2:` clause of a Shows cell (a row may carry more than one)."""
+    return [m.group(1) for m in re.finditer(r"T2: ([^;|]+)", shows)]
+
+
+def t2_controls(text: str) -> list[str]:
+    """The controls a `T2:` clause gates: its list up to the first "(", `(also …)` aside."""
+    head = re.sub(r" \(also [^()]*\)", "", text).split(" (")[0]
+    return [n.strip() for n in re.split(r", | and ", head) if n.strip()]
+
+
+def plain(text: str) -> str:
+    """A clause with its quoted copy and its negated gating words taken out (`never T2`)."""
+    return re.sub(NEGATED_RE, "", re.sub(r'"[^"]*"', '""', text))
+
+
+def exit_gated(shows: str, items: list[tuple[str, str]]) -> bool:
+    """A3 / M10: an exit drawn gated anywhere in the row (MJ1)."""
+    if any(re.search(EXIT_RE, plain(c)) for c in t2_clauses(shows)):
+        return True
+    if any(re.fullmatch(EXIT_RE, lab) and re.search(GATED_RE, note) for lab, note in items):
+        return True
+    if any(re.search(GATED_RE, plain(i)) for i in clause(shows, "exits T1:").split(" · ")):
+        return True
+    for part in shows.split(";"):
+        part = part.strip()
+        if part.startswith(("footer:", "exits T1:")):
+            continue
+        text = plain(part.split("T2:")[0])
+        if re.search(EXIT_RE, text) and re.search(GATED_RE, text):
+            return True
+    return False
+
+
+def star_spans(text: str) -> list[str]:
+    return re.findall(STAR_SPAN, text)
+
+
+def board_cell_ok(board: str) -> bool:
+    nums = re.findall(r"\d\d", board)
+    return bool(re.fullmatch(r"\d\d(?:, \d\d)*(?: \(inset\))?", board)) and all(
+        1 <= int(n) <= BOARD_CAP for n in nums
+    )
+
+
+def class_gates(name: str, kind: str, cls: str) -> list[str]:
+    """The Class cell agrees with the tool's KIND (it never decides)."""
+    bad: list[str] = []
+    if kind in T2_KINDS and not re.search(r"\bT2\b", cls):
+        bad.append(fail("class-t2", f"Class cell disagrees with the tool's KIND: {name} is T2"))
+    if kind not in T2_KINDS and re.search(r"\bT2\b", cls):
+        bad.append(fail("class-not-t2", f"Class cell disagrees with the KIND: {name} is not T2"))
+    for want, kinds_ in (
+        ("validity look", VALIDITY_KINDS),
+        ("busy", BUSY_KINDS),
+        ("outcome", {"outcome"}),
+        ("T4", {"refusal", "delete-racing"}),
+        ("absence (planned)", {"planned"}),
+    ):
+        if kind in kinds_ and want not in cls:
+            bad.append(fail("class-word", f"Class cell disagrees with the KIND: {name} is {want}"))
+    return bad
+
+
+def star_gates(
+    name: str, kind: str, params: dict[str, str], producer: str, shows: str
+) -> list[str]:
+    """M1 and its inverse: the screen's dirty marker on every dirty frame, none on a clean one."""
+    mark = DIRTY_MARK[name.split("/")[0]]
+    if params.get("star") == "producer":
+        if f"{FIXTURE['layout']} `*`" not in producer:
+            return [fail("dirty-star", f"dirty frame {name} without its `*` (in its producer)")]
+        if star_spans(shows):
+            return [fail("clean-star", f"clean frame {name} draws a dirty `*` in its Shows cell")]
+        return []
+    if kind in DIRTY_KINDS:
+        if mark not in shows:
+            return [fail("dirty-star", f"dirty frame {name} without its `*` ({mark} in Shows)")]
+        return []
+    if star_spans(producer + shows):
+        return [fail("clean-star", f"clean frame {name} draws a dirty `*`")]
+    return []
+
+
+def planned_gates(name: str, params: dict[str, str], shows: str) -> list[str]:
+    """M5, M6 (MJ4): a planned inset is the fixed sentence; its free words are never a control,
+    never T2, never dimmed, and carry the caption naming its G-row."""
+    if not (
+        shows.startswith(PLANNED_HEAD) and shows.endswith(PLANNED_TAIL) and PLANNED_STAMP in shows
+    ):
+        return [fail("planned-form", f"planned inset {name} is not the fixed inset sentence")]
+    bad: list[str] = []
+    free = shows.removeprefix(PLANNED_HEAD).removesuffix(PLANNED_TAIL)
+    caption = f'"Waits for its contract ({params["gap"]})."'
+    if caption not in free:
+        bad.append(fail("planned-caption", f"planned inset {name} without its contract caption"))
+    words = free.replace(caption, '""')
+    if re.search(CONTROL_RE, words):
+        bad.append(fail("planned-control", f"planned inset {name} drawn as a control"))
+    if re.search(DIM_RE, words):
+        bad.append(fail("planned-dim", f"planned inset {name} marked T2 or dimmed"))
+    return bad
+
+
+def t2_gates(name: str, kind: str, params: dict[str, str], c: list[str]) -> list[str]:
+    """M2-M4 and the rest of E09-D09's T2 form, per gated row (A1)."""
+    bad: list[str] = []
+    shows, keys, line = c[2], c[4], " | ".join(c)
+    clauses = t2_clauses(shows)
+    lock_ok = bool(clauses)
+    for cl in clauses:
+        gated = [n for n in t2_controls(cl) if not re.fullmatch(EXIT_RE, n)]
+        lock_ok = (
+            lock_ok and ("the lock leading each" if len(gated) > 1 else "the lock leading") in cl
+        )
+    if not lock_ok:
+        bad.append(fail("t2-lock", f"T2 frame {name} draws no lock leading each gated label"))
+    want = params["keys"].split(",")
+    for key in want:
+        if f"`{key}`" not in shows:
+            bad.append(fail("t2-key", f"T2 frame {name} lacks its reason key {key} in Shows"))
+        if f"`{key}`" not in keys:
+            bad.append(
+                fail("t2-key-cell", f"T2 frame {name} lacks its reason key {key} in Copy keys")
+            )
+    reason = REASONS[want[0]].format(user=FIXTURE["target"])
+    if f'"{reason}"' not in shows:
+        bad.append(fail("t2-say", f"T2 frame {name} does not quote its reason {reason!r}"))
+    order = legs(shows)
+    if order is None:
+        bad.append(fail("legs", f"T2 frame {name} lacks its legs (view-as first)"))
+    elif order[0] != "rbac.view_as":
+        bad.append(fail("legs-order", f"view-as leg not first in {name}: {' → '.join(order)}"))
+    if re.search(T2_DIM_RE, line):
+        bad.append(fail("t2-dim", f"T2 frame {name} conveyed by dimming"))
+    if "§5" not in line:
+        bad.append(fail("t2-cite", f"T2 frame {name} does not cite §5 (T2 stated once)"))
+    if "`disabled`" in re.sub(r"never (?:the )?`disabled`", "", line):
+        bad.append(fail("t2-native", f"T2 frame {name} drawn with the native `disabled` attribute"))
+    if kind == "t2-state" and ("aria-describedby" not in line or "aria-disabled" not in line):
+        bad.append(fail("t2-sr", f"disabled delete lacks its reason for a screen reader in {name}"))
+    outside = re.sub(r"T2: [^;|]+", "", shows)
+    if re.search(r"\block(?:ed)?\b|\bpadlock\b", plain(outside)):
+        bad.append(fail("t2-lock-scope", f"a lock drawn outside the T2 clause of {name}"))
+    controls = [n for cl in clauses for n in t2_controls(cl)]
+    for label, note in footer_items(shows):
+        if not re.fullmatch(EXIT_RE, label) and (label in controls) != bool(
+            re.search(r"\bT2\b", note)
+        ):
+            bad.append(fail("t2-footer", f"footer of {name} and its T2 clause disagree on {label}"))
+    return bad
+
+
+REASONS = {key: string for key, string, _ in rows(REASONS_TABLE)}
 
 
 def frame_gates(spec: str, facts: dict[str, Any], deck: set[str] | None) -> list[str]:
     """The per-frame gates (A2: M1-M17 and the rest). A frame's obligations come from KIND."""
     bad: list[str] = []
-    found = frame_rows(spec)
     seen: dict[str, int] = {}
-    for name, c, line in found:
+    for name, c, line in frame_rows(spec):
         seen[name] = seen.get(name, 0) + 1
         if name not in KIND:
-            bad.append(f"frame {name} is not in the tool's inventory (KIND_TABLE)")
             continue
         if len(c) != 6:
-            bad.append(f"frame {name}: {len(c)} cells, six expected")
+            bad.append(fail("cells", f"frame {name}: {len(c)} cells, six expected"))
             continue
         kind, params = KIND[name]
         producer, shows, cls, keys, board = c[1], c[2], c[3], c[4], c[5]
-        if kind in T2_KINDS and not re.search(r"\bT2\b", cls):
-            bad.append(f"Class cell disagrees with the tool's KIND: {name} is T2")
-        if kind not in T2_KINDS and kind != "planned" and re.search(r"\bT2\b", cls):
-            bad.append(f"Class cell disagrees with the tool's KIND: {name} is not T2")
-        for want, kinds_ in (
-            ("validity look", VALIDITY_KINDS),
-            ("busy", BUSY_KINDS),
-            ("outcome", {"outcome"}),
-            ("T4", {"refusal", "delete-racing"}),
-            ("absence (planned)", {"planned"}),
-        ):
-            if kind in kinds_ and want not in cls:
-                bad.append(f"Class cell disagrees with the tool's KIND: {name} is {want}")
-        nums = re.findall(r"\d\d", board)
-        if board != NOT_DRAWN and (
-            not re.fullmatch(r"\d\d(?:, \d\d)*(?: \(inset\))?", board)
-            or any(not 1 <= int(n) <= BOARD_CAP for n in nums)
-        ):
-            bad.append(f"frame {name} without a board or the not-drawn cell ({board!r})")
+        bad += class_gates(name, kind, cls)
+        if board != NOT_DRAWN and not board_cell_ok(board):
+            bad.append(fail("board-cell", f"frame {name} without a board or the not-drawn cell"))
         for key in re.findall(r"`([^`]+)`", keys):
             if not re.fullmatch(COPY_KEY_RE, key):
-                bad.append(f"copy key outside the registered namespaces in {name}: {key}")
+                bad.append(
+                    fail("key-namespace", f"copy key outside the namespaces in {name}: {key}")
+                )
             elif deck is not None and key not in deck:
-                bad.append(f"copy key not in the deck (§8) in {name}: {key}")
-        if kind in DIRTY_KINDS and not re.search(r"`[^`\n]*\*[^`\n]*`", line):
-            bad.append(f"dirty frame {name} without its `*`")
+                bad.append(fail("key-deck", f"copy key not in the deck (§8) in {name}: {key}"))
+        bad += star_gates(name, kind, params, producer, shows)
+        layout_n = FIXTURE["layout"].split(" ")[-1]
+        if any(n != layout_n for n in re.findall(r"\bLayout (\d+)\b", line)):
+            bad.append(
+                fail("fixture-name", f"frame {name} names a layout other than the fixture's")
+            )
         if name.startswith("SCR-025/") and re.search(ENV_RE, line):
-            bad.append(f"environment control on SCR-025 in {name} (BQ-8 RULED: none)")
+            bad.append(fail("env", f"environment control on SCR-025 in {name} (BQ-8 RULED: none)"))
         if kind == "planned":
-            if re.search(CONTROL_RE, line):
-                bad.append(f"planned inset {name} drawn as a control")
-            if re.search(DIM_RE, line):
-                bad.append(f"planned inset {name} marked T2 or dimmed")
-            if f"Waits for its contract ({params['gap']})." not in line:
-                bad.append(f"planned inset {name} without its contract caption")
+            bad += planned_gates(name, params, shows)
         if kind in T2_KINDS:
-            if not re.search(r"\block\b", line):
-                bad.append(f"T2 frame {name} draws no lock")
-            for key in params.get("keys", "").split(","):
-                if key and f"`{key}`" not in line:
-                    bad.append(f"T2 frame {name} lacks its reason key {key}")
-            order = legs(line)
-            if order is None:
-                bad.append(f"T2 frame {name} lacks its legs (view-as first)")
-            elif order[0] != "rbac.view_as":
-                bad.append(f"view-as leg not first in {name}: {' → '.join(order)}")
-            if re.search(T2_DIM_RE, line):
-                bad.append(f"T2 frame {name} conveyed by dimming")
-            if "§5" not in line:
-                bad.append(f"T2 frame {name} does not cite §5 (T2 stated once)")
-        if kind == "t2-state" and (
-            facts["last_workspace_message"] not in line or "aria-describedby" not in line
-        ):
-            bad.append(f"disabled delete lacks its reason for a screen reader in {name}")
-        if kind in ("t2-viewer", "t2-view-as") and "one notice" not in line:
-            bad.append(f"read-only frame {name} without its one notice")
+            bad += t2_gates(name, kind, params, c)
+        if kind in ONE_NOTICE_KINDS and "one notice" not in shows:
+            bad.append(fail("one-notice", f"read-only frame {name} without its one notice"))
         if kind in VALIDITY_KINDS:
             if "validity-reason" not in line:
-                bad.append(f"validity frame {name} without its validity-reason")
-            if re.search(r"\block\b", line):
-                bad.append(f"validity frame {name} with a lock")
-        bad += dialog_gates(name, kind, shows, line)
-        bad += content_gates(name, kind, params, producer, line, facts)
-    for name, n in seen.items():
-        if n > 1:
-            bad.append(f"frame {name} appears in {n} rows (one row per frame)")
-    for name in KIND:
-        if name not in seen:
-            bad.append(f"frame {name} missing from the state tables of §2-§4")
+                bad.append(fail("validity-reason", f"validity frame {name} without its reason"))
+            if re.search(r"\block(?:ed)?\b|\bpadlock\b|\U0001f512", plain(line)):
+                bad.append(fail("validity-lock", f"validity frame {name} with a lock"))
+        bad += dialog_gates(name, kind, params, shows)
+        bad += content_gates(name, kind, params, producer, shows, facts)
+    extra = sorted(n for n in seen if n not in KIND)
+    twice = sorted(n for n, k in seen.items() if k > 1)
+    missing = sorted(n for n in KIND if n not in seen)
+    if extra or twice or missing:
+        bad.append(
+            fail(
+                "inventory",
+                f"frame rows and the tool's inventory differ: unknown {extra}, twice {twice}, "
+                f"missing {missing}",
+            )
+        )
     return bad
 
 
-def dialog_gates(name: str, kind: str, shows: str, line: str) -> list[str]:
-    """M7-M10, M17 and AC 1: footer order, initial focus, Esc, the exits, the weights, the role."""
+def dialog_gates(name: str, kind: str, params: dict[str, str], shows: str) -> list[str]:
+    """M7-M10, M17, MJ8 and AC 1: the footer's verbs, order and weights, initial focus, every
+    `Esc`, the exits, the component and its size."""
     bad: list[str] = []
     items = footer_items(shows)
-    if kind in DIALOG_KINDS:
-        if not items or items[0][0] not in SAFE:
-            bad.append(f"safe action not first in the footer of {name}")
-        if not clause(shows, "initial focus:").startswith(SAFE):
-            bad.append(f"initial focus not on the safe action in {name}")
+    labels = [label for label, _ in items]
+    want = FOOTERS.get(kind)
+    if want is not None:
+        if any(label in UNVERBED for label in labels):
+            bad.append(fail("unverbed", f"unverbed button in {name}"))
+        elif sorted(labels) != sorted(want):
+            bad.append(fail("footer-set", f"footer of {name} is not {' · '.join(want)}"))
+        elif labels[0] not in SAFE:
+            bad.append(fail("safe-first", f"safe action not first in the footer of {name}"))
+        elif labels != want:
+            bad.append(fail("footer-order", f"footer of {name} out of D08-D16's order"))
+        for i, (label, note) in enumerate(items):
+            weighted = re.search(r"`(?:primary|danger)`", note)
+            if label in SAFE and "`secondary`" not in note:
+                bad.append(fail("safe-weight", f"safe action {label} not `secondary` in {name}"))
+            elif label in DESTRUCTIVE and weighted:
+                bad.append(
+                    fail("x1-weight", f"destructive choice carries primary weight in {name}")
+                )
+            elif weighted and label not in SAFE + DESTRUCTIVE and i != len(items) - 1:
+                bad.append(fail("primary-last", f"primary or danger {label} not last in {name}"))
+    if kind in DIALOG_KINDS and not clause(shows, "initial focus:").startswith(SAFE):
+        bad.append(fail("focus-safe", f"initial focus not on the safe action in {name}"))
     if kind in EXIT_KINDS:
-        esc = re.search(r"Esc → ([A-Z][a-z]+(?: [a-z]+)?)", shows)
-        if not esc or esc.group(1) != "Cancel":
-            bad.append(f"Esc not mapped to Cancel in {name}")
-        exits = [e.strip().split(" ")[0] for e in clause(shows, "exits T1:").split(" · ")]
-        exits_full = [e.strip() for e in clause(shows, "exits T1:").split(" · ")]
-        if not (set(exits_full) & set(SAFE)) or "Esc" not in exits:
-            bad.append(f"frame {name} without its T1 exits (Cancel and Esc)")
-    gated = re.search(EXIT_RE, clause(shows, "T2:")) is not None
-    gated = gated or any(
-        re.fullmatch(EXIT_RE, label) and re.search(r"\bT2\b|disabled", note)
-        for label, note in items
-    )
-    if gated:
-        bad.append(f"exit drawn gated in {name}")
-    if kind in SCR029_DIALOG_KINDS:
-        if "CMP-043" not in line or 'role="alertdialog"' not in line or "CMP-044" in line:
-            bad.append(f"SCR-029 dialog {name} not a CMP-043 alertdialog")
-        if any(
-            label in DESTRUCTIVE and re.search(r"`(?:primary|danger)`", note)
-            for label, note in items
-        ):
-            bad.append(f"destructive or overwriting choice carries primary weight in {name}")
-    if kind in UNVERBED_KINDS and any(label in UNVERBED for label, _ in items):
-        bad.append(f"unverbed button in {name}")
+        maps = re.findall(r"Esc → ([A-Z][a-z]+(?: [a-z]+)?)", shows)
+        if not maps or any(m != "Cancel" for m in maps):
+            bad.append(fail("esc", f"Esc not mapped to Cancel in {name}"))
+        exits = [e.strip() for e in clause(shows, "exits T1:").split(" · ")]
+        if not (set(exits) & set(SAFE)) or "Esc" not in exits:
+            bad.append(fail("exits-t1", f"frame {name} without its T1 exits (Cancel and Esc)"))
+    if exit_gated(shows, items):
+        bad.append(fail("exit-gated", f"exit drawn gated in {name}"))
+    if kind in SCR029_DIALOG_KINDS and (
+        'CMP-043 `role="alertdialog"`' not in shows or "CMP-044" in shows
+    ):
+        bad.append(fail("cmp-043", f"SCR-029 dialog {name} not a CMP-043 alertdialog"))
+    comp = COMPONENT.get(kind)
+    if comp:
+        other = "alertdialog" if kind == "form" else "CMP-04" + ("4" if "CMP-043" in comp else "3")
+        if comp not in shows or other in shows:
+            bad.append(fail("component", f"frame {name} is not {comp}"))
+    sizes = re.findall(r'`size="(\w+)"`', shows)
+    expect = params.get("size") or ("sm" if kind in SIZE_SM else "md")
+    if ("size" in params and not sizes) or any(s != expect for s in sizes):
+        bad.append(fail("size", f'frame {name} does not state `size="{expect}"` (D08-D25)'))
     return bad
 
 
 def content_gates(
-    name: str, kind: str, params: dict[str, str], producer: str, line: str, facts: dict[str, Any]
+    name: str,
+    kind: str,
+    params: dict[str, str],
+    producer: str,
+    shows: str,
+    facts: dict[str, Any],
 ) -> list[str]:
-    """The kind's own content: summaries, consequence lines, the typed field, the refusals."""
+    """The kind's own content, rendered from FIXTURE and the parsed facts (MJ2 (d)): summaries,
+    consequence lines, the typed field, the refusals, the routes, every quoted number."""
     bad: list[str] = []
-    delay, name_max = facts["confirm_delay_ms"], facts["name_max"]
-    if kind in BUSY_KINDS and ("`loading`" not in line or "`aria-busy`" not in line):
-        bad.append(f"busy frame {name} not in the busy form")
-    if kind == "outcome" and (SAVED_SENTENCE not in line or "polite" not in line):
-        bad.append(f"terminal state {name} without its polite announcement")
+    line = producer + " | " + shows
+    delay, name_max, fx = facts["confirm_delay_ms"], facts["name_max"], FIXTURE
+    saved, hhmm = str(facts["saved_time"]), str(facts["conflict_time"])[:5]
+    if kind in BUSY_KINDS and ("`loading`" not in shows or "`aria-busy`" not in shows):
+        bad.append(fail("busy", f"busy frame {name} not in the busy form"))
+    if kind == "outcome" and (SAVED_SENTENCE not in shows or "polite" not in shows):
+        bad.append(fail("outcome", f"terminal state {name} without its polite announcement"))
+    if kind == "form" and NAME_HELP.format(max=name_max) not in shows:
+        bad.append(fail("name-help", f"frame {name} lacks the name's help with its maximum"))
+    if kind == "form-dirty" and DIRTY_PRODUCER.format(renamed=fx["renamed"]) not in producer:
+        bad.append(fail("dirty-fixture", f"dirty frame {name} lacks its fixture edit"))
     if kind == "invalid":
         message, link = (x.format(max=name_max) for x in INVALID_RULES[params["rule"]])
-        need = [f'"{message}"', f'"{link}"', "error summary"]
+        need = [f'"{message}"', f'"{link}"', "error summary", *ONE_INVALID]
         if params["rule"] == "long":
-            need.append(f'"{name_max + 1}/{name_max}"')
+            need += [f'"{name_max + 1}/{name_max}"', LONG_PRODUCER.format(n=name_max + 1)]
+        if params["rule"] == "taken":
+            need.append("`409 name_taken`")
         if any(n not in line for n in need):
-            bad.append(f"invalid-name frame {name} lacks its rule message or summary link")
+            bad.append(
+                fail("invalid", f"invalid-name frame {name} lacks its rule, summary or fixture")
+            )
+    if kind == "refusal" and (
+        "`503 store_unavailable`" not in producer or "`409 concurrent_update`" not in shows
+    ):
+        bad.append(fail("refusal", f"failed frame {name} lacks its refusals"))
     if kind == "delete-confirm":
-        if TYPED_LABEL.format(workspace=FIXTURE["workspace"]) not in line:
-            bad.append(f"delete frame {name} lacks the typed field")
-        if IRREVERSIBLE not in line:
-            bad.append(f"delete frame {name} lacks its irreversibility line")
-        if "CMP-044 `typed`" not in line:
-            bad.append(f"delete frame {name} is not a CMP-044 typed confirm")
-    if kind in ("delete-confirm", "overwrite-confirm") and f"`confirmDelayMs` {delay}" not in line:
-        bad.append(f"confirm {name} lacks its confirm delay")
+        typed = [TYPED_LABEL.format(workspace=fx["workspace"]), *TYPED_RULES]
+        if any(x not in shows for x in typed):
+            bad.append(fail("typed-field", f"delete frame {name} lacks the typed field"))
+        if DELETE_BODY.format(n=fx["layouts"], layout=fx["layout"]) not in shows:
+            bad.append(fail("delete-body", f"delete frame {name} lacks its body with the loss"))
+        if DELETE_PRODUCER.format(workspace=fx["workspace"], n=fx["layouts"]) not in producer:
+            bad.append(fail("delete-fixture", f"delete frame {name} lacks its fixture"))
+    if kind in ("delete-confirm", "overwrite-confirm", "discard-prompt") and (
+        f"`confirmDelayMs` {delay}" not in shows
+    ):
+        bad.append(fail("confirm-delay", f"confirm {name} lacks its confirm delay"))
     if kind == "delete-racing" and (
-        "`409 last_workspace`" not in producer or facts["last_workspace_message"] not in line
+        "`409 last_workspace`" not in producer or RACING_LINE not in shows
     ):
-        bad.append(f"racing delete {name} lacks its refusal")
+        bad.append(fail("racing", f"racing delete {name} lacks its refusal"))
     if kind in CONFLICT_412_KINDS and "412" not in producer:
-        bad.append(f"conflict frame {name} without its `412` producer")
+        bad.append(fail("conflict-412", f"conflict frame {name} without its `412` producer"))
     if "diff" in params:
-        sentences = render_summary(FIXTURE[params["diff"]])
+        sentences = render_summary(fx[params["diff"]])
         overflow = sentences[-1] if sentences[-1].startswith("and ") else ""
-        if any(f'"{s}"' not in line for s in sentences if s != overflow):
-            bad.append(f"difference summary differs from the rendered fixture in {name}")
-        if overflow and f'"{overflow}"' not in line:
-            bad.append(f"overflow line missing in {name}")
+        if any(f'"{s}"' not in shows for s in sentences if s != overflow):
+            bad.append(fail("summary", f"difference summary differs from the fixture in {name}"))
+        if overflow and f'"{overflow}"' not in shows:
+            bad.append(fail("overflow", f"overflow line missing in {name}"))
+    if params.get("diff") == "overflow":
+        case = fx["overflow"]
+        want = OVERFLOW_PRODUCER.format(panels=case["panels_added"], symbols=len(case["pairs"]))
+        if want not in producer:
+            bad.append(fail("overflow-producer", f"frame {name} lacks its overflow fixture"))
     if kind == "settings-conflict" and any(
-        f'"{FIXTURE[k]}"' not in line for k in ("renamed", "renamed_elsewhere")
+        f'"{fx[k]}"' not in shows for k in ("renamed", "renamed_elsewhere")
     ):
-        bad.append(f"settings conflict {name} lacks its two values of the name")
+        bad.append(fail("settings-names", f"settings conflict {name} lacks the two names"))
     if kind in ("conflict", "settings-conflict"):
-        full = frame_time(params, facts)
-        heads = ['"Yours (not saved)"', f'"Saved now ({full})"']
-        if params.get("table") == "yes":
-            heads.append(table_text(facts))
-        if any(h not in line for h in heads):
-            bad.append(f"conflict frame {name} lacks the side-by-side summary")
-        lines = LAYOUT_LINES if kind == "conflict" else SETTINGS_LINES
-        what = "conflict verb" if kind == "conflict" else "settings conflict verb"
-        for verb, text in consequence(lines, full).items():
-            if f'"{text}"' not in line:
-                bad.append(f"{what} {verb} lacks its consequence line in {name}")
-    if kind == "overwrite-confirm":
-        hhmm = str(facts["conflict_time"])[:5]
-        if OVERWRITE_TITLE.format(hhmm=hhmm) not in line or "can't be recovered" not in line:
-            bad.append(f'overwrite confirm {name} lacks its time or "can\'t be recovered"')
-        if "CMP-044 `standard`" not in line or "CMP-044 `typed`" in line:
-            bad.append(f"overwrite confirm {name} is not a plain CMP-044 standard")
-    if kind == "queued" and (
-        QUEUE_RULE not in line or f"within {facts['conflict_ms']} ms" not in line
+        bad += consequence_gates(name, kind, params, shows, facts)
+    if kind == "conflict" and KEEP_ROUTE not in shows:
+        bad.append(
+            fail("keep-route", f"conflict frame {name}: Keep mine does not open its confirm")
+        )
+    if params.get("loaded") and LOADED_LINE.format(layout=fx["layout"], hhmm=hhmm) not in shows:
+        bad.append(fail("loaded-line", f"conflict frame {name} lacks Load theirs' outcome line"))
+    if params.get("time") == "refreshed" and (
+        REFRESHED_PRODUCER.format(time=fx["refreshed_time"]) not in producer
     ):
-        bad.append(f"queued conflict {name} lacks the queue rule")
-    if kind == "reflow" and "200 %" not in line:
-        bad.append(f"reflow frame {name} lacks its zoom")
+        bad.append(fail("refreshed-time", f"refreshed conflict {name} lacks its third write"))
+    if kind == "conflict-t2" and BY_REFERENCE not in shows:
+        bad.append(fail("by-reference", f"frame {name} does not keep SCR-029/conflict's content"))
+    if kind == "unsaved-busy" and any(r not in shows for r in SAVING_ROUTES):
+        bad.append(fail("saving-routes", f"saving frame {name} lacks its `412` routes"))
+    if kind == "revert" and (
+        REVERT_AGAINST.format(hhmm=saved) not in shows
+        or REVERT_DONE.format(layout=fx["layout"], hhmm=saved) not in shows
+    ):
+        bad.append(fail("revert-done", f"revert frame {name} lacks its saved time"))
+    if "layout.limit.count" in params.get("keys", "") and (
+        CAP_PRODUCER.format(n=facts["layouts_max"]) not in producer
+    ):
+        bad.append(fail("save-as-cap", f"frame {name} lacks the layout limit it reached"))
+    if kind == "overwrite-confirm":
+        title = OVERWRITE_TITLE.format(hhmm=hhmm)
+        keep = consequence(LAYOUT_LINES, str(facts["conflict_time"]))["Keep mine"]
+        if title not in shows or f'"{keep}"' not in shows:
+            bad.append(
+                fail(
+                    "overwrite", f'overwrite confirm {name} lacks its time or "can\'t be recovered"'
+                )
+            )
+    queue = [QUEUE_RULE, f"within {facts['conflict_ms']} ms"]
+    queue += [x.format(layout=fx["layout"]) for x in QUEUED_LINES]
+    if kind == "queued" and any(x not in shows for x in queue):
+        bad.append(fail("queue-rule", f"queued conflict {name} lacks the queue rule"))
+    if kind in ("form", "t2-state") and any(x not in shows for x in DANGER_WORDS):
+        bad.append(fail("danger-words", f"frame {name}: the danger zone not named in words"))
+    if kind == "reflow" and REFLOW_PRODUCER.format(frame=facts["reflow_frame"]) not in producer:
+        bad.append(fail("reflow", f"reflow frame {name} lacks its zoom on its frame"))
+    return bad
+
+
+def consequence_gates(
+    name: str, kind: str, params: dict[str, str], shows: str, facts: dict[str, Any]
+) -> list[str]:
+    """M12, AC 4: the side-by-side summary and one consequence line per verb, in footer order."""
+    bad: list[str] = []
+    full = frame_time(params, facts)
+    heads = ['"Yours (not saved)"', f'"Saved now ({full})"']
+    if params.get("table") == "yes":
+        heads.append(table_text(facts))
+    if any(h not in shows for h in heads):
+        bad.append(fail("side-by-side", f"conflict frame {name} lacks the side-by-side summary"))
+    lines = consequence(LAYOUT_LINES if kind == "conflict" else SETTINGS_LINES, full)
+    what = "conflict verb" if kind == "conflict" else "settings conflict verb"
+    for verb, text in lines.items():
+        if f'"{text}"' not in shows:
+            bad.append(fail("consequence", f"{what} {verb} lacks its consequence line in {name}"))
+    at = [shows.find(f'"{lines[label.rstrip("…")]}"') for label in FOOTERS[kind]]
+    if all(a >= 0 for a in at) and at != sorted(at):
+        bad.append(fail("consequence-order", f"consequence lines of {name} out of footer order"))
     return bad
 
 
@@ -1202,46 +1665,50 @@ def board_gates(spec: str) -> tuple[list[str], dict[str, Any]]:
     light = 0
     for num, title, num2, rest in boards:
         c = cells("|" + rest)
-        if num != num2:
-            bad.append(f"§0 board {num}: its name carries {num2}")
         slug = title.split(" ", 3)[-1]
+        light += slug.endswith("-light")
+        if num != num2:
+            bad.append(fail("board-name", f"§0 board {num}: its name carries {num2}"))
         if len(c) < 4:
-            bad.append(f"§0 board {num}: fewer than four cells after its name")
+            bad.append(fail("board-cells", f"§0 board {num}: fewer than four cells after its name"))
             continue
         draws, theme, export, status = c[0], c[1], c[2], c[3]
-        light += slug.endswith("-light")
         if slug.endswith("-light") != (theme == "light"):
-            bad.append(f"§0 board {num}: its slug and its theme disagree")
+            bad.append(fail("board-theme", f"§0 board {num}: its slug and its theme disagree"))
         if export != f"`docs/design/E15/img/E15-D08-{num}-{slug}.png`":
-            bad.append(f"§0 board {num}: export path {export} does not match its name")
+            bad.append(fail("board-export", f"§0 board {num}: export path {export} not its name"))
         if status != "pending":
-            bad.append(f"§0 board {num}: status {status!r} (text-first: pending)")
+            bad.append(fail("board-status", f"§0 board {num}: status {status!r} (text-first)"))
         frames = set(re.findall(FRAME_NAME_RE, draws))
+        for f in sorted(frames - set(KIND)):
+            bad.append(fail("board-unknown", f"§0 board {num} names an unknown frame {f}"))
         for f in frames:
-            if f not in KIND:
-                bad.append(f"§0 board {num} names an unknown frame {f}")
             named.setdefault(f, set()).add(num)
         if not frames and num not in TABLE_BOARDS:
-            bad.append(f"§0 board {num} draws no frame")
+            bad.append(fail("board-empty", f"§0 board {num} draws no frame"))
     if len(boards) > BOARD_CAP or light * 3 > len(boards):
-        bad.append(f"§0 board cap broken: {len(boards)} boards, {light} light twins")
+        bad.append(fail("board-cap", f"§0 cap broken: {len(boards)} boards, {light} light twins"))
     nd_line = first(r"\*\*Not drawn — the text is binding; drawn on request\*\*([^\n]*)", s0)
     not_drawn = set(re.findall(FRAME_NAME_RE, nd_line))
     for name, c, _ in frame_rows(spec):
-        if len(c) != 6 or name not in KIND:
+        if len(c) != 6 or name not in KIND or (c[5] != NOT_DRAWN and not board_cell_ok(c[5])):
             continue
         mine = set(re.findall(r"\d\d", c[5])) if c[5] != NOT_DRAWN else set()
         if mine != named.get(name, set()):
             bad.append(
-                f"frame {name}: its row says boards {sorted(mine)}, "
-                f"§0 says {sorted(named.get(name, set()))}"
+                fail(
+                    "board-reconcile",
+                    f"frame {name}: its row says boards {sorted(mine)}, "
+                    f"§0 says {sorted(named.get(name, set()))}",
+                )
             )
         if (c[5] == NOT_DRAWN) != (name in not_drawn):
-            bad.append(f"frame {name}: its not-drawn cell and §0's not-drawn line disagree")
-    for f in not_drawn - set(KIND):
-        bad.append(f"§0's not-drawn line names an unknown frame {f}")
-    numbers = {"boards": len(boards), "light_twins": light}
-    return bad, numbers
+            bad.append(
+                fail("not-drawn", f"frame {name}: its cell and §0's not-drawn line disagree")
+            )
+    for f in sorted(not_drawn - set(KIND)):
+        bad.append(fail("not-drawn-unknown", f"§0's not-drawn line names an unknown frame {f}"))
+    return bad, {"boards": len(boards), "light_twins": light}
 
 
 def entry_gates(spec: str) -> tuple[list[str], dict[str, int]]:
@@ -1253,22 +1720,24 @@ def entry_gates(spec: str) -> tuple[list[str], dict[str, int]]:
     for eid, ticket, words, target in rows(ENTRY_TABLE):
         c = found.get(eid)
         if c is None or len(c) < 4:
-            bad.append(f"entry-point matrix lacks {eid} ({words})")
+            bad.append(fail("entry-missing", f"entry-point matrix lacks {eid} ({words})"))
             continue
         route, outcome, esc = c[0], c[1], c[2]
         if words not in route or (ticket == "yes") != ("(ticket)" in route):
-            bad.append(f"entry point {eid}: its route cell is not {words!r}")
+            bad.append(fail("entry-route", f"entry point {eid}: its route cell is not {words!r}"))
         if target == "none":
-            ok = outcome.startswith("no dialog —") and re.search(r"`[^`\n]*\*[^`\n]*`", outcome)
+            ok = outcome.startswith("no dialog —") and re.search(STAR_SPAN, outcome)
             if not ok:
-                bad.append(f"entry point unmapped: {eid} ({words})")
+                bad.append(fail("entry-unmapped", f"entry point unmapped: {eid} ({words})"))
             if esc != "— (no dialog)":
-                bad.append(f"entry point {eid}: Esc cell {esc!r} on a route with no dialog")
+                bad.append(
+                    fail("entry-esc-none", f"entry point {eid}: Esc cell {esc!r}, no dialog")
+                )
         else:
-            if f"`{target}`" not in outcome and target in present:
-                bad.append(f"entry point unmapped: {eid} ({words})")
+            if (f"`{target}`" not in outcome and target in present) or outcome.startswith("no "):
+                bad.append(fail("entry-unmapped", f"entry point unmapped: {eid} ({words})"))
             if esc != "Esc → Cancel":
-                bad.append(f"Esc not mapped to Cancel on entry point {eid}")
+                bad.append(fail("entry-esc", f"Esc not mapped to Cancel on entry point {eid}"))
     numbers = {
         "entry_rows": len(found),
         "entry_ticket_routes": sum("(ticket)" in c[0] for c in found.values() if c),
@@ -1281,57 +1750,90 @@ def head_gates(spec: str) -> tuple[list[str], dict[str, int]]:
     """The header, the deviations, the AC trace and the ruled questions."""
     bad: list[str] = []
     head = spec[: spec.find("\n## ")]
-    bad += [f"header: merge sha missing: {s[:9]}" for s in MERGE_SHAS if s not in head]
+    bad += [
+        fail("head-sha", f"header: merge sha missing: {s[:9]}") for s in MERGE_SHAS if s not in head
+    ]
     if BASE not in head:
-        bad.append("header: the base sha is missing")
+        bad.append(fail("head-base", "header: the base sha is missing"))
     if PENPOT_PAGE not in head:
-        bad.append("header: the Penpot page name is missing")
-    bad += [f"header: the status line lost {w!r}" for w in STATUS_WORDS if w not in head]
+        bad.append(fail("head-penpot", "header: the Penpot page name is missing"))
+    bad += [
+        fail("head-status", f"header: status lost {w!r}") for w in STATUS_WORDS if w not in head
+    ]
     devs = [ln for ln in head.split("\n") if ln.startswith("- **Deviation — ")]
     for dev, words in DEVIATIONS.items():
         if not any(words in ln for ln in devs):
-            bad.append(f"deviation missing: {dev} ({words})")
+            bad.append(fail("deviation", f"deviation missing: {dev} ({words})"))
     trace = block(spec, "## Acceptance-criteria trace", "\n## ")
     ids = re.findall(r"^\| ((?:AC|DL|DoD|N)-\d+) +\|", trace, MULTI)
-    bad += [f"AC trace lacks {i}" for i in AC_IDS if i not in ids]
-    bad += [f"AC trace repeats {i}" for i in set(ids) if ids.count(i) > 1]
+    bad += [fail("trace-lacks", f"AC trace lacks {i}") for i in AC_IDS if i not in ids]
+    bad += [
+        fail("trace-repeats", f"AC trace repeats {i}") for i in sorted(set(ids)) if ids.count(i) > 1
+    ]
     bqs = block(spec, "## The questions", "\n## ")
     bq = {m.group(1): m.group(0) for m in re.finditer(r"^\| (BQ-\d+) +\|.*$", bqs, MULTI)}
     for i in range(1, 17):
         row = bq.get(f"BQ-{i}")
         if row is None:
-            bad.append(f"BQ-{i} missing from the questions table")
+            bad.append(fail("bq-missing", f"BQ-{i} missing from the questions table"))
         elif "RULED" not in cells(row)[-1]:
-            bad.append(f"BQ-{i} not RULED")
+            bad.append(fail("bq-ruled", f"BQ-{i} not RULED"))
     for qid, terms in BQ_TERMS.items():
         if qid in bq and any(t not in bq[qid] for t in terms):
-            bad.append(f"{qid} row lost its ruled outcome ({' / '.join(terms)})")
-    numbers = {"bq_rows": len(bq), "ac_rows": len(ids)}
-    return bad, numbers
+            bad.append(fail("bq-terms", f"{qid} row lost its ruled outcome ({' / '.join(terms)})"))
+    return bad, {"bq_rows": len(bq), "ac_rows": len(ids)}
+
+
+NEEDLES: dict[
+    tuple[int, ...], tuple[list[str], list[str], set[tuple[str, int]], dict[str, int]]
+] = {}
+
+
+def needle_gates(
+    t: dict[str, str],
+) -> tuple[list[str], list[str], set[tuple[str, int]], dict[str, int]]:
+    """The CITED_TABLE needles against the plan texts, computed once per set of texts (the texts'
+    own hashes key the cache, so an edited copy of them is checked afresh)."""
+    key = tuple(hash(v) for v in t.values())
+    if key not in NEEDLES:
+        bad: list[str] = []
+        warns: list[str] = []
+        lines = {k: v.split("\n") for k, v in t.items()}
+        pinned: set[tuple[str, int]] = set()
+        for doc, line_s, want in rows(CITED_TABLE, 2):
+            line, doc_lines = int(line_s), lines[doc]
+            pinned.add((doc, line))
+            shift = sum(POINTER in ln for ln in doc_lines[: line - 1]) if doc == "14" else 0
+            total = t[doc].count(want)
+            at = [i + 1 for i, ln in enumerate(doc_lines) if want in ln]
+            if total == 0:
+                bad.append(fail("cite-gone", f"cited text gone: `{doc}:{line}` {want[:40]!r}"))
+            elif total > 1:
+                bad.append(
+                    fail("cite-ambiguous", f"cited text twice: `{doc}:{line}` {want[:40]!r}")
+                )
+            elif at[0] not in (line, line + shift):
+                warns.append(f"`{doc}:{line}` now at :{at[0]} ({want[:40]!r})")
+        NEEDLES[key] = (bad, warns, pinned, {k: len(v) for k, v in lines.items()})
+    bad, warns, pinned, lengths = NEEDLES[key]
+    return list(bad), list(warns), set(pinned), lengths
 
 
 def cite_gates(spec: str, t: dict[str, str]) -> tuple[list[str], dict[str, int]]:
     """Each CITED_TABLE needle once in its file, at its line (`14`: or as many lines lower as there
-    are pointer lines above it); every `KEY:line` cite in the spec has a CITED_TABLE row."""
-    bad: list[str] = []
-    lines = {k: v.split("\n") for k, v in t.items()}
-    pinned: set[tuple[str, int]] = set()
-    CITE_WARN.clear()
-    for doc, line_s, want in rows(CITED_TABLE, 2):
-        line, doc_lines = int(line_s), lines[doc]
-        pinned.add((doc, line))
-        shift = sum(POINTER in ln for ln in doc_lines[: line - 1]) if doc == "14" else 0
-        total = t[doc].count(want)
-        at = [i + 1 for i, ln in enumerate(doc_lines) if want in ln]
-        if total == 0:
-            bad.append(f"cited text gone: `{doc}:{line}` {want[:40]!r}")
-        elif total > 1:
-            bad.append(f"cited text ambiguous: `{doc}:{line}` {want[:40]!r} ({total} matches)")
-        elif at[0] not in (line, line + shift):
-            CITE_WARN.append(f"`{doc}:{line}` now at :{at[0]} ({want[:40]!r})")
-    used = [(m.group(1), int(m.group(2))) for m in re.finditer(CITE_RE, spec)]
+    are pointer lines above it); every `KEY:line` cite in the spec has a CITED_TABLE row, and a
+    range's end lies after its start and inside its file."""
+    bad, warns, pinned, lengths = needle_gates(t)
+    CITE_WARN[:] = warns
+    found = list(re.finditer(CITE_RE, spec))
+    used = [(m.group(1), int(m.group(2))) for m in found]
     for doc, line in sorted(set(used) - pinned):
-        bad.append(f"cite not pinned in the tool's CITED_TABLE: `{doc}:{line}`")
+        bad.append(
+            fail("cite-unpinned", f"cite not pinned in the tool's CITED_TABLE: `{doc}:{line}`")
+        )
+    for m in found:
+        if m.group(3) and not int(m.group(2)) < int(m.group(3)) <= lengths[m.group(1)]:
+            bad.append(fail("cite-range", f"cite range {m.group(0)} ends outside its file"))
     return bad, {"cites_pinned": len(pinned), "cites_used": len(set(used))}
 
 
@@ -1340,45 +1842,49 @@ def text_gates(spec: str, t: dict[str, str], facts: dict[str, Any]) -> list[str]
     bad: list[str] = []
     for key, string, doc in rows(REASONS_TABLE):
         if f'"{string}"' not in t[doc]:
-            bad.append(f"reason string drifted from {doc}: {key} {string!r}")
-        if len(string) > facts["reason_max"] or not string.endswith("."):
-            bad.append(f"reason {key}: {len(string)} characters or no full stop")
-        if key.startswith("rbac.") and re.search(r"\d", string):
-            bad.append(f"reason {key} names a number")
-    if facts["permission_sentence"] != "Your role can't save workspaces.":
-        bad.append(f"E09-D09's template and verb give {facts['permission_sentence']!r}")
+            bad.append(fail("reason-drift", f"reason string drifted from {doc}: {key} {string!r}"))
+        if (
+            len(string) > facts["reason_max"]
+            or not string.endswith(".")
+            or (key.startswith("rbac.") and re.search(r"\d", string))
+        ):
+            bad.append(fail("reason-form", f"reason {key}: too long, no full stop or a number"))
+    if facts["permission_sentence"] != REASONS["rbac.permission"]:
+        bad.append(
+            fail("permission", f"E09-D09's template and verb give {facts['permission_sentence']!r}")
+        )
     rows_by_name = {name: line for name, _, line in frame_rows(spec)}
     for string, doc, frames in rows(UPSTREAM_TABLE):
         if string not in t[doc]:
-            bad.append(f"upstream string gone from {doc}: {string!r}")
+            bad.append(fail("upstream-gone", f"upstream string gone from {doc}: {string!r}"))
         for frame in [f.strip() for f in frames.split(",")]:
             if frame in rows_by_name and string not in rows_by_name[frame]:
-                bad.append(f"frame {frame} lacks the upstream string {string!r}")
+                bad.append(fail("upstream-frame", f"frame {frame} lacks the upstream {string!r}"))
     plan14 = t["14"].split("\n")
     at = [i for i, ln in enumerate(plan14) if POINTER in ln]
     want = [i + 1 for i, ln in enumerate(plan14) if any(ln.endswith(a) for a in POINTER_AFTER)]
     if at != want:
-        bad.append(f"`14` pointer lines at {[i + 1 for i in at]}, expected right after {want}")
+        bad.append(fail("pointer-14", f"`14` pointer lines at {[i + 1 for i in at]}, not {want}"))
     for n, text in re.findall(PLACEHOLDER_RE, spec):
-        bad.append(f"placeholder §{n} still in the spec: {text[:70]}")
-    constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
+        bad.append(fail("placeholder", f"placeholder §{n} still in the spec: {text[:70]}"))
+    constitution = read_once(ROOT / "CONSTITUTION.md")
     pointer_lines = "\n".join(plan14[i] for i in at)
-    for label, txt in (
-        ("spec", spec),
-        ("tool", TOOL.read_text(encoding="utf-8")),
-        ("14", pointer_lines),
-    ):
-        bad += [f"{label}: forbidden text {p}" for p in FORBIDDEN if re.search(p, txt)]
+    for label, txt in (("spec", spec), ("tool", read_once(TOOL)), ("14", pointer_lines)):
+        bad += [
+            fail("forbidden", f"{label}: forbidden text {p}")
+            for p in FORBIDDEN
+            if re.search(p, txt)
+        ]
         if label != "tool" and re.search(CLOSING, txt, re.IGNORECASE):
-            bad.append(f"{label}: a closing keyword (text-first: Refs + Partial only)")
+            bad.append(fail("closing", f"{label}: a closing keyword (text-first: Refs + Partial)"))
         if label == "tool":
             continue
         for r in sorted(set(re.findall(r"\bC-\d+\.\d+\b", txt))):
             if not re.search(rf"^\*\*{re.escape(r)}\b", constitution, MULTI):
-                bad.append(f"{label}: dangling rule id {r}")
+                bad.append(fail("rule-id", f"{label}: dangling rule id {r}"))
         for c in sorted(set(re.findall(r"\b(?:CMP|SCR)-\d{3}\b", txt))):
             if f"### {c} " not in t["15" if c.startswith("CMP") else "14"]:
-                bad.append(f"{label}: no catalogue heading for {c}")
+                bad.append(fail("catalogue-id", f"{label}: no catalogue heading for {c}"))
     return bad
 
 
@@ -1389,17 +1895,11 @@ def reconcile_gates() -> list[str]:
     pinned = {(doc, int(line)) for doc, line, _ in rows(CITED_TABLE, 2)}
     for doc, line, frames in rows(RECONCILE_TABLE, 2):
         if (doc, int(line)) not in pinned:
-            bad.append(f"reconciliation row `{doc}:{line}` has no CITED_TABLE needle")
+            bad.append(fail("reconcile", f"reconciliation row `{doc}:{line}` has no needle"))
         for frame in [f.strip() for f in frames.split(",")]:
             if frame not in KIND:
-                bad.append(f"reconciliation row `{doc}:{line}` names an unknown frame {frame}")
+                bad.append(fail("reconcile", f"reconciliation row `{doc}:{line}` names {frame}"))
     return bad
-
-
-def live(spec: str, n: int) -> str:
-    """Section n's text once it is written; empty while it is missing or still a placeholder."""
-    text = section(spec, n, n + 1)
-    return "" if not text or f"**Placeholder (§{n}):**" in text else text
 
 
 def checklist_items(t: dict[str, str]) -> list[str]:
@@ -1411,72 +1911,106 @@ def checklist_items(t: dict[str, str]) -> list[str]:
     return out
 
 
+def table_rows(text: str) -> list[str]:
+    return re.findall(r"^\|.*$", text, MULTI)
+
+
 def section_gates(spec: str, ctx: Ctx) -> list[str]:
-    """§5, §7, §8, §11 and §12 once written: the one T2 paragraph and its not-T2 list; the measured
-    table equal to the tool's matrix; the deck's templates and consequence lines, no jargon; a
-    G-row for every planned inset; every sign-off item."""
+    """The numbered sections in order (MJ7), then §5, §5.1, §6, §7, §8, §11 and §12: the one T2
+    paragraph and its not-T2 list, T2 stated once, the exits row and sentence, the planned insets'
+    absence restated, the measured tables, the deck, the G-rows, the sign-off items; and no
+    environment control anywhere SCR-025 is described (§0, §2, §8)."""
     bad: list[str] = []
-    s5 = live(spec, 5)
-    if s5 and ("**T2" not in s5 or "**Not T2" not in s5):
-        bad.append("§5 lacks the one T2 paragraph or its not-T2 list")
-    s7 = live(spec, 7)
-    if s7:
-        found = {(m[2], m[3], m[4]): m for m in re.finditer(CONTRAST_ROW_RE, s7, MULTI)}
-        for r in ctx.measured["matrix"]:
-            m = found.get((r["fg"], r["bg"], r["role"]))
-            if m is None:
-                bad.append(f"§7 table lacks {r['fg']} on {r['bg']} ({r['role']})")
-                continue
-            cells_ = dict(zip(THEMES, (m[5], m[6], m[7]), strict=True))
-            if any(abs(float(cells_[th]) - float(r[th])) > CELL_TOLERANCE for th in THEMES):
-                bad.append(f"§7 measured cell differs: {r['fg']} on {r['bg']} ({r['role']})")
-            if m[8].strip() != r["verdict"] or m[9] != r["pairs"]:
-                bad.append(f"§7 verdict or pairs.mjs column differs: {r['fg']} on {r['bg']}")
-        greys = {g[1]: g for g in re.finditer(GREY_ROW_RE, s7, MULTI)}
-        for tok, vals in ctx.measured["grey"].items():
-            g = greys.get(tok)
-            if g is None or [int(g[2]), int(g[3]), int(g[4])] != [vals[th] for th in THEMES]:
-                bad.append(f"§7 greyscale row differs or is missing: {tok}")
-        cvds = {(c[1], c[2]): c for c in re.finditer(CVD_ROW_RE, s7, MULTI)}
-        for r in ctx.measured["cvd"]:
-            c = cvds.get((r["a"], r["b"]))
-            if c is None or [float(c[i]) for i in range(3, 7)] != r["dE76"] or c[7] != r["verdict"]:
-                bad.append(f"§7 colour-vision row differs or is missing: {r['a']} vs {r['b']}")
-    s8 = live(spec, 8)
-    if s8:
-        strings = re.findall(r'^\| `[^`]+` +\|[^|\n]*\| ("[^|\n]*")', s8, MULTI)
-        for pat in BANNED_COPY:
-            bad += [
-                f"§8 jargon in user copy: {pat!r} in {x[:40]!r}"
-                for x in strings
-                if re.search(pat, x)
-            ]
-        for key, forms in DIFF_TEMPLATES.items():
-            if any(form not in s8 for form in forms):
-                bad.append(f"§8 lacks the template e15.diff.{key} in both forms")
-        for lines in (LAYOUT_LINES, SETTINGS_LINES):
-            for verb, text in lines.items():
-                if text.format(hhmm="{hh:mm}", layout="{layout}") not in s8:
-                    bad.append(f"§8 lacks the consequence line of {verb}")
-    s11 = live(spec, 11)
-    if s11:
-        for gap in sorted({p["gap"] for kind, p in KIND.values() if kind == "planned"}):
-            if not re.search(rf"^\| {gap} +\|", s11, MULTI):
-                bad.append(f"§11 lacks the G-row {gap} that its planned inset names")
-    s12 = live(spec, 12)
-    if s12:
-        bad += [
-            f"§12 lacks the sign-off item {i!r}" for i in checklist_items(ctx.t) if i not in s12
+    heads = re.findall(r"^## (\d+)\. ", spec, MULTI)
+    if heads != SECTIONS:
+        return [
+            fail("sections", f"the numbered sections are {heads}, not ## 0. to ## 15. in order")
         ]
+    s5, s6, s7, s8 = (section(spec, n, n + 1) for n in (5, 6, 7, 8))
+    if "**T2" not in s5 or "**Not T2" not in s5:
+        bad.append(fail("t2-paragraph", "§5 lacks the one T2 paragraph or its not-T2 list"))
+    for needle in T2_ONCE:
+        if spec.count(needle) != 1 or needle not in s5:
+            bad.append(fail("t2-once", f"T2 is stated more than once, or not in §5: {needle!r}"))
+    exits = [r for r in table_rows(s5) if r.startswith(f"| {EXITS_ROW}")]
+    if len(exits) != 1 or any(x != "T1" for x in cells(exits[0])[2:7]):
+        bad.append(fail("exits-matrix", "§5.1's exits row is not T1 for every session"))
+    if A3_SENTENCE not in s6:
+        bad.append(fail("exits-a3", "§6 lost the sentence that no session or state gates an exit"))
+    if A3_STANDING not in spec[: spec.find("\n## 0. ")]:
+        bad.append(fail("exits-a3", "the standing additions lost A3: the exits are never gated"))
+    for n, claim in PLANNED_CLAIMS:
+        if claim not in section(spec, n, n + 1):
+            bad.append(fail("planned-claims", f"§{n} lost the planned insets' {claim!r}"))
+    bad += measured_gates(s7, ctx)
+    strings = re.findall(r'^\| `[^`]+` +\|[^|\n]*\| ("[^|\n]*")', s8, MULTI)
+    for pat in BANNED_COPY:
+        bad += [
+            fail("jargon", f"§8 jargon in copy: {pat!r} in {x[:40]!r}")
+            for x in strings
+            if re.search(pat, x)
+        ]
+    for key, forms in DIFF_TEMPLATES.items():
+        if any(form not in s8 for form in forms):
+            bad.append(fail("template", f"§8 lacks the template e15.diff.{key} in both forms"))
+    for lines in (LAYOUT_LINES, SETTINGS_LINES):
+        for verb, text in lines.items():
+            if text.format(hhmm="{hh:mm}", layout="{layout}") not in s8:
+                bad.append(fail("deck-line", f"§8 lacks the consequence line of {verb}"))
+    s11 = section(spec, 11, 12)
+    for gap in sorted({p["gap"] for kind, p in KIND.values() if kind == "planned"}):
+        if not re.search(rf"^\| {gap} +\|", s11, MULTI):
+            bad.append(fail("g-row", f"§11 lacks the G-row {gap} that its planned inset names"))
+    s12 = section(spec, 12, 13)
+    bad += [
+        fail("sign-off", f"§12 lacks the item {i!r}")
+        for i in checklist_items(ctx.t)
+        if i not in s12
+    ]
+    scope = table_rows(section(spec, 0, 1)) + table_rows(section(spec, 2, 3)) + table_rows(s8)
+    scope.append(first(r"(\*\*Not drawn — the text is binding[^\n]*)", spec))
+    for row in scope:
+        if re.search(ENV_RE, row) and not re.match(FRAME_RE, row):
+            bad.append(fail("env", f"environment control where SCR-025 is drawn: {row[:60]!r}"))
+    return bad
+
+
+def measured_gates(s7: str, ctx: Ctx) -> list[str]:
+    """§7: every pair, greyscale and colour-vision value as the tool prints it (no tolerance)."""
+    bad: list[str] = []
+    found = {(m[2], m[3], m[4]): m for m in re.finditer(CONTRAST_ROW_RE, s7, MULTI)}
+    for r in ctx.measured["matrix"]:
+        m = found.get((r["fg"], r["bg"], r["role"]))
+        if m is None:
+            bad.append(fail("contrast-row", f"§7 table lacks {r['fg']} on {r['bg']} ({r['role']})"))
+            continue
+        if [m[5], m[6], m[7]] != [show(r[th]) for th in THEMES]:
+            bad.append(
+                fail("contrast-cell", f"§7 cell differs: {r['fg']} on {r['bg']} ({r['role']})")
+            )
+        if m[8].strip() != r["verdict"] or m[9] != r["pairs"]:
+            bad.append(
+                fail("contrast-verdict", f"§7 verdict or pairs.mjs differs: {r['fg']} on {r['bg']}")
+            )
+    greys = {g[1]: g for g in re.finditer(GREY_ROW_RE, s7, MULTI)}
+    for tok, vals in ctx.measured["grey"].items():
+        g = greys.get(tok)
+        if g is None or [int(g[2]), int(g[3]), int(g[4])] != [vals[th] for th in THEMES]:
+            bad.append(fail("grey", f"§7 greyscale row differs or is missing: {tok}"))
+    cvds = {(c[1], c[2]): c for c in re.finditer(CVD_ROW_RE, s7, MULTI)}
+    for r in ctx.measured["cvd"]:
+        c = cvds.get((r["a"], r["b"]))
+        if c is None or [float(c[i]) for i in range(3, 7)] != r["dE76"] or c[7] != r["verdict"]:
+            bad.append(
+                fail("cvd", f"§7 colour-vision row differs or is missing: {r['a']} vs {r['b']}")
+            )
     return bad
 
 
 def deck_ids(spec: str) -> set[str] | None:
-    """§8's keyed ids, or None while §8 is a placeholder."""
+    """§8's keyed ids, or None while §8 is missing."""
     s8 = section(spec, 8, 9)
-    if not s8 or "**Placeholder (§8):**" in s8:
-        return None
-    return set(re.findall(r"^\| `([^`]+)` +\|", s8, MULTI))
+    return set(re.findall(r"^\| `([^`]+)` +\|", s8, MULTI)) if s8 else None
 
 
 def count_frames(spec: str) -> dict[str, Any]:
@@ -1499,7 +2033,8 @@ def count_frames(spec: str) -> dict[str, Any]:
 
 
 class Ctx:
-    """Everything the gates read besides the spec: the texts, the themes, the facts, the matrix."""
+    """Everything the gates read besides the spec: the texts, the themes, the facts, the matrix.
+    `with_texts` swaps in an edited copy of the plan texts and re-parses the facts from it."""
 
     def __init__(self) -> None:
         self.t = {k: p.read_text(encoding="utf-8") for k, p in DOC_PATHS.items()}
@@ -1508,12 +2043,19 @@ class Ctx:
         self.measured = measure(self.themes)
         self.missing = [tok for tok in BINDINGS if resolve(self.themes["dark"], tok) == "MISSING"]
 
+    def with_texts(self, t: dict[str, str]) -> Ctx:
+        other = object.__new__(Ctx)
+        other.__dict__.update(self.__dict__)
+        other.t = t
+        other.facts = contract_facts(t, self.themes)
+        return other
+
 
 def numbers_of(spec: str, ctx: Ctx, extra: dict[str, Any]) -> dict[str, Any]:
     f, m = ctx.facts, ctx.measured
     numbers: dict[str, Any] = dict(extra)
     numbers.update(count_frames(spec))
-    numbers["mutations"] = len(mutations())
+    numbers["mutations"] = len(mutations()) + len(context_mutations())
     numbers["contract"] = {
         "name_min": f["name_min"],
         "name_max": f["name_max"],
@@ -1549,15 +2091,9 @@ def numbers_of(spec: str, ctx: Ctx, extra: dict[str, Any]) -> dict[str, Any]:
             "lines": len(render_summary(over)),
         },
     }
-    for k in (
-        "pairs_rows",
-        "pairs_fail",
-        "pairs_registered",
-        "pairs_proposed",
-        "aaa_rows",
-        "aaa_met",
-    ):
+    for k in ("pairs_rows", "pairs_fail", "pairs_registered", "pairs_proposed", "aaa_rows"):
         numbers[k] = m[k]
+    numbers["aaa_met"] = m["aaa_met"]
     numbers["composite"] = m["composite"]
     # The redlines §2.2 quotes in px (or as an opacity): every bound spacing, radius, border and
     # opacity token, resolved in dark (density re-points the control height only, `16:125`).
@@ -1577,9 +2113,15 @@ def numbers_of(spec: str, ctx: Ctx, extra: dict[str, Any]) -> dict[str, Any]:
 
 
 def marker_gates(spec: str, numbers: dict[str, Any]) -> list[str]:
+    """M15 (MJ2): a marker's value is the tool's, the number printed beside it is the marker's,
+    every marker parses, and no marker the spec carries disappears (MARKER_TABLE's counts)."""
     flat = flatten(numbers)
-    bad = []
-    for key, val in re.findall(r"<!-- audit:([a-z0-9_.-]+)=([^ ]+) -->", spec):
+    bad: list[str] = []
+    for m in re.finditer(MARKER_LOOSE_RE, spec, MULTI):
+        if not re.match(MARKER_RE, m.group(0)):
+            bad.append(fail("marker-parse", f"malformed marker {m.group(0)[:60]!r}"))
+    for m in re.finditer(MARKER_RE, spec):
+        key, val = m.group(1), m.group(2)
         have = flat.get(key)
         same = str(have).lower() == val.lower()
         try:
@@ -1587,7 +2129,22 @@ def marker_gates(spec: str, numbers: dict[str, Any]) -> list[str]:
         except ValueError:
             pass
         if have is None or not same:
-            bad.append(f"marker audit:{key}={val} vs tool {have}")
+            bad.append(fail("marker-value", f"marker audit:{key}={val} vs tool {have}"))
+        before = spec[spec.rfind("\n", 0, m.start()) + 1 : m.start()]
+        token = before.rstrip().split(" ")[-1] if before.strip() else ""
+        number = re.fullmatch(NUMBER_BEFORE_RE, token)
+        if number and number.group(1) != val:
+            bad.append(
+                fail("marker-visible", f"printed {number.group(1)} beside audit:{key}={val}")
+            )
+        elif not number and not re.search(rf"(?<![\d.:]){re.escape(val)}(?![\d.:])", before):
+            bad.append(
+                fail("marker-visible", f"audit:{key}={val} with no {val} before it on its line")
+            )
+    for key, want in MARKERS.items():
+        have_n = len(re.findall(rf"audit:{re.escape(key)}=", spec))
+        if have_n < want:
+            bad.append(fail("marker-count", f"audit:{key} appears {have_n} times, {want} expected"))
     return bad
 
 
@@ -1600,19 +2157,22 @@ def gates(spec: str, ctx: Ctx) -> tuple[list[str], dict[str, Any]]:
     bc, nc = cite_gates(spec, ctx.t)
     bad += bh + b0 + frame_gates(spec, ctx.facts, deck_ids(spec)) + b3 + bc
     bad += text_gates(spec, ctx.t, ctx.facts) + reconcile_gates() + section_gates(spec, ctx)
-    bad += [f"token MISSING: {tok}" for tok in ctx.missing]
+    bad += [fail("token-missing", f"token MISSING: {tok}") for tok in ctx.missing]
     bad += [
-        f"contrast FAIL: {r['element']}"
+        fail("contrast-fail", f"contrast FAIL: {r['element']}")
         for r in ctx.measured["matrix"]
         if r["verdict"] in ("FAIL", "MISSING")
     ]
-    for fact in ("version_conflict_412", "settings_default_environment", "unstored_absent"):
-        if not ctx.facts[fact]:
-            bad.append(f"contract fact changed: {fact}")
-    if ctx.facts["ws_layout_topic"]:
-        bad.append("`23` now carries a workspace or layout topic: revisit the WS G-row (BQ-13)")
-    if ctx.facts["last_workspace_message"] != "You need at least one workspace.":
-        bad.append("`22` deleteWorkspace's last_workspace sentence changed")
+    f = ctx.facts
+    for fact in ("version_conflict_412", "unstored_absent"):
+        if not f[fact]:
+            bad.append(fail("contract-fact", f"contract fact changed: {fact}"))
+    if len(f["refusal_codes"]) != 3:
+        bad.append(fail("contract-fact", f"`22` workspace refusals now {f['refusal_codes']}"))
+    if f["last_workspace_message"] != REASONS["workspace.limit.last"]:
+        bad.append(fail("contract-fact", "`22` deleteWorkspace's last_workspace sentence changed"))
+    if f["ws_layout_topic"]:
+        bad.append(fail("ws-topic", "`23` now carries a workspace or layout topic: see D08-G6"))
     numbers = numbers_of(spec, ctx, {**n0, **n3, **nh, **nc})
     bad += marker_gates(spec, numbers)
     return bad, numbers
@@ -1636,6 +2196,11 @@ def frame_re(frame: str, pattern: str, repl: str) -> Callable[[str], str]:
     return row_fn(rf"^\| `{re.escape(frame)}` +\|.*$", lambda ln: re.sub(pattern, repl, ln))
 
 
+def line_sub(start: str, old: str, new: str) -> Callable[[str], str]:
+    """Replace `old` once in the one line that starts with `start`."""
+    return row_fn(rf"^{re.escape(start)}.*$", lambda ln: ln.replace(old, new, 1))
+
+
 def sec_fn(n: int, fn: Callable[[str], str]) -> Callable[[str], str]:
     """Apply `fn` to section n's text only (unchanged when the section is gone)."""
 
@@ -1646,12 +2211,38 @@ def sec_fn(n: int, fn: Callable[[str], str]) -> Callable[[str], str]:
     return apply
 
 
+def sub(old: str, new: str) -> Callable[[str], str]:
+    return lambda s: s.replace(old, new, 1)
+
+
+def set_marker(key: str, old: str, new: str) -> Callable[[str], str]:
+    """Every `old <!-- audit:key=old -->` becomes `new <!-- audit:key=new -->`: a count the
+    mutation itself changes stays printed and marked consistently."""
+    a, b = f"{old} <!-- audit:{key}={old} -->", f"{new} <!-- audit:{key}={new} -->"
+    return lambda s: s.replace(a, b)
+
+
+def chain(*fns: Callable[[str], str]) -> Callable[[str], str]:
+    def apply(s: str) -> str:
+        for fn in fns:
+            s = fn(s)
+        return s
+
+    return apply
+
+
+def ctx_sub(doc: str, old: str, new: str) -> Callable[[dict[str, str]], dict[str, str]]:
+    """A context mutation: every `old` -> `new` in an in-memory copy of one plan text."""
+
+    def apply(t: dict[str, str]) -> dict[str, str]:
+        return {**t, doc: t[doc].replace(old, new)}
+
+    return apply
+
+
 def mutations() -> list[tuple[str, Callable[[str], str], str]]:
     """(name, the in-memory change, the text the one new FAIL must carry): M1-M17 of the brief's A2,
-    then the gates the spec adds. Each must apply, and each must add exactly one new FAIL."""
-    keep_mine = (
-        '"Keep mine replaces the version saved at 14:05. That version can\'t be recovered." '
-    )
+    then at least one per gate code (m12), led by the lenses' pins (MJ1-MJ9, MINOR-4/5, NIT-8)."""
     conflict_footer = (
         "footer: Cancel (`secondary`) · Save mine as new layout… (`secondary`) · "
         "Load theirs (`secondary`) · Keep mine (`secondary`)"
@@ -1660,17 +2251,20 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
         "footer: Save mine as new layout… (`secondary`) · Load theirs (`secondary`) · "
         "Keep mine (`secondary`) · Cancel (`secondary`)"
     )
-    return [
+    keep_line = (
+        ' "Keep mine replaces the version saved at 14:05. That version can\'t be recovered."'
+    )
+    m: list[tuple[str, Callable[[str], str], str]] = [
         (
             "M1-dirty-star",
             frame_re("SCR-029/unsaved", r"`([^`\n]*?) ?\*([^`\n]*)`", r"`\1\2`"),
-            "without its `*`",
+            "[dirty-star] dirty frame SCR-029/unsaved",
         ),
-        ("M2-t2-lock", frame_re("SCR-025/delete-last", r"\block\b", "glyph"), "draws no lock"),
+        ("M2-t2-lock", frame_re("SCR-025/delete-last", r"\block\b", "glyph"), "[t2-lock]"),
         (
             "M3-reason-key",
-            frame_re("SCR-025/viewer-read-only", r"`notice\.panel_read_only`", "the notice key"),
-            "lacks its reason key notice.panel_read_only",
+            frame_sub("SCR-025/viewer-read-only", "`notice.panel_read_only`", "the notice key"),
+            "[t2-key] T2 frame SCR-025/viewer-read-only lacks its reason key notice",
         ),
         (
             "M4-view-as-order",
@@ -1679,41 +2273,43 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 "legs `rbac.view_as` → `rbac.permission`",
                 "legs `rbac.permission` → `rbac.view_as`",
             ),
-            "view-as leg not first",
+            "[legs-order] view-as leg not first",
         ),
         (
             "M5-planned-control",
-            frame_sub("SCR-025/planned-defaults", "nothing operable", "a CMP-009 select"),
-            "drawn as a control",
+            frame_sub(
+                "SCR-025/planned-defaults", 'Default account"', 'Default account" in a select'
+            ),
+            "[planned-control] planned inset SCR-025/planned-defaults",
         ),
         (
             "M6-planned-dim",
             frame_sub(
                 "SCR-025/planned-theme",
-                "full-strength `color.text.secondary`",
-                "`color.text.secondary` at `opacity.disabled`",
+                'the words "Theme override"',
+                'the words "Theme override" at `opacity.disabled`',
             ),
-            "marked T2 or dimmed",
+            "[planned-dim] planned inset SCR-025/planned-theme",
         ),
         (
             "M7-cancel-first",
             frame_sub("SCR-029/conflict", conflict_footer, moved_footer),
-            "safe action not first",
+            "[safe-first] safe action not first in the footer of SCR-029/conflict",
         ),
         (
             "M8-focus-safe",
             frame_sub("SCR-029/unsaved", "initial focus: Cancel", "initial focus: Save layout"),
-            "initial focus not on the safe action",
+            "[focus-safe]",
         ),
         (
             "M9-esc-cancel",
             frame_sub("SCR-029/unsaved", "Esc → Cancel", "Esc → Discard changes"),
-            "Esc not mapped to Cancel",
+            "[esc] Esc not mapped to Cancel in SCR-029/unsaved",
         ),
         (
             "M10-exit-gated",
             frame_sub("SCR-029/viewer-unsaved", "T2: Save layout (", "T2: Save layout, Cancel ("),
-            "exit drawn gated",
+            "[exit-gated] exit drawn gated in SCR-029/viewer-unsaved",
         ),
         (
             "M11-typed-field",
@@ -1722,27 +2318,23 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 'the typed field labelled "Type Scalping to confirm" (',
                 "the typed field (",
             ),
-            "lacks the typed field",
+            "[typed-field]",
         ),
-        (
-            "M12-consequence",
-            frame_sub("SCR-029/conflict", keep_mine, ""),
-            "Keep mine lacks its consequence line",
-        ),
+        ("M12-consequence", frame_sub("SCR-029/conflict", keep_line, ""), "[consequence]"),
         (
             "M13-overwrite-time",
             frame_sub("SCR-029/keep-mine-confirm", " That version can't be recovered.", ""),
-            "lacks its time or",
+            "[overwrite] overwrite confirm SCR-029/keep-mine-confirm lacks its time or",
         ),
         (
             "M14-412",
             frame_sub("SCR-029/conflict", "answered `412 version_conflict`", "answered a refusal"),
-            "without its `412` producer",
+            "[conflict-412] conflict frame SCR-029/conflict",
         ),
         (
             "M15-number",
-            lambda s: s.replace("<!-- audit:boards=10 -->", "<!-- audit:boards=11 -->", 1),
-            "marker audit:boards=11",
+            set_marker("boards", "10", "11"),
+            "[marker-value] marker audit:boards=11 vs tool 10",
         ),
         (
             "M16-env-control",
@@ -1751,50 +2343,292 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 "Share (Export…)",
                 "Share (Export…, a Default environment for new panels select)",
             ),
-            "environment control on SCR-025",
+            "[env] environment control on SCR-025 in SCR-025/default",
         ),
         (
             "M17-cmp-044",
             frame_sub(
                 "SCR-029/conflict", 'CMP-043 `role="alertdialog"`', 'CMP-044 `role="alertdialog"`'
             ),
-            "not a CMP-043 alertdialog",
+            "[cmp-043] SCR-029 dialog SCR-029/conflict",
         ),
+    ]
+    return m + frame_mutations() + more_mutations() + section_mutations()
+
+
+def frame_mutations() -> list[tuple[str, Callable[[str], str], str]]:
+    """The per-frame gates beyond M1-M17: one mutation each, the lenses' pins first."""
+    v1 = "Cancel (`secondary`, the lock leading its label) · Save mine"
+    return [
         (
             "X1-primary-discard",
             frame_sub(
                 "SCR-029/unsaved", "Discard changes (`secondary`)", "Discard changes (`primary`)"
             ),
-            "carries primary weight",
+            "[x1-weight] destructive choice carries primary weight in SCR-029/unsaved",
+        ),
+        (
+            "X30-settings-primary",
+            frame_sub(
+                "SCR-025/settings-conflict", "Keep mine (`secondary`)", "Keep mine (`primary`)"
+            ),
+            "[x1-weight] destructive choice carries primary weight in SCR-025/settings-conflict",
+        ),
+        (
+            "X31-discard-prompt-danger",
+            frame_sub(
+                "SCR-025/discard-prompt",
+                "Discard changes (`secondary`)",
+                "Discard changes (`danger`)",
+            ),
+            "[x1-weight] destructive choice carries primary weight in SCR-025/discard-prompt",
         ),
         (
             "X2-unverbed",
             frame_sub("SCR-029/unsaved", "Save layout (`primary`)", "OK (`primary`)"),
-            "unverbed button",
+            "[unverbed] unverbed button in SCR-029/unsaved",
         ),
         (
-            "X3-diff-fixture",
-            frame_sub("SCR-029/unsaved", '"3 panels added."', '"Three panels added."'),
-            "differs from the rendered fixture",
-        ),
-        (
-            "X4-overflow",
-            frame_sub("SCR-029/unsaved-overflow", ' "and 2 more differences."', ""),
-            "overflow line missing",
-        ),
-        (
-            "X5-validity-lock",
+            "X33-typed-confirm-verb",
             frame_sub(
-                "SCR-025/default",
-                "Save in the validity look",
-                "Save in the validity look behind a lock",
+                "SCR-025/delete-confirm", "Delete workspace (`danger`)", "Confirm (`danger`)"
             ),
-            "validity frame SCR-025/default with a lock",
+            "[unverbed] unverbed button in SCR-025/delete-confirm",
         ),
         (
-            "X6-reason-sr",
-            frame_sub("SCR-025/delete-last", " through `aria-describedby`", ""),
-            "lacks its reason for a screen reader",
+            "X34-footer-verb-gone",
+            frame_sub("SCR-029/unsaved", " · Save layout (`primary`)", ""),
+            "[footer-set] footer of SCR-029/unsaved",
+        ),
+        (
+            "X35-form-cancel-first",
+            frame_sub(
+                "SCR-025/viewer-read-only",
+                "footer: Cancel (`secondary`) · Save (T2)",
+                "footer: Save (T2) · Cancel (`secondary`)",
+            ),
+            "[safe-first] safe action not first in the footer of SCR-025/viewer-read-only",
+        ),
+        (
+            "X36-footer-order",
+            frame_sub(
+                "SCR-029/conflict",
+                "Save mine as new layout… (`secondary`) · Load theirs (`secondary`)",
+                "Load theirs (`secondary`) · Save mine as new layout… (`secondary`)",
+            ),
+            "[footer-order] footer of SCR-029/conflict",
+        ),
+        (
+            "X37-cancel-primary",
+            frame_sub("SCR-029/revert", "Cancel (`secondary`)", "Cancel (`primary`)"),
+            "[safe-weight] safe action Cancel not `secondary` in SCR-029/revert",
+        ),
+        (
+            "X38-primary-not-last",
+            frame_sub(
+                "SCR-029/conflict",
+                "Save mine as new layout… (`secondary`)",
+                "Save mine as new layout… (`primary`)",
+            ),
+            "[primary-last]",
+        ),
+        (
+            "X39-esc-later",
+            frame_sub(
+                "SCR-025/dirty",
+                "exits T1: Cancel · Esc · Close",
+                "Esc → Discard changes; exits T1: Cancel · Esc · Close",
+            ),
+            "[esc] Esc not mapped to Cancel in SCR-025/dirty",
+        ),
+        (
+            "X40-exits-t1",
+            frame_sub("SCR-025/dirty", "exits T1: Cancel · Esc · Close", "exits T1: Close"),
+            "[exits-t1] frame SCR-025/dirty",
+        ),
+        (
+            "X41-exit-lock",
+            frame_sub("SCR-029/conflict", "Cancel (`secondary`) · Save mine", v1),
+            "[exit-gated] exit drawn gated in SCR-029/conflict",
+        ),
+        (
+            "X42-exit-second-t2",
+            frame_sub(
+                "SCR-029/viewer-unsaved",
+                "; initial focus: Cancel",
+                "; T2: Cancel (the lock leading its full label, §5); initial focus: Cancel",
+            ),
+            "[exit-gated] exit drawn gated in SCR-029/viewer-unsaved",
+        ),
+        (
+            "X43-exit-close-t2",
+            frame_sub(
+                "SCR-025/dirty",
+                "exits T1: Cancel · Esc · Close",
+                "exits T1: Cancel · Esc · Close (T2)",
+            ),
+            "[exit-gated] exit drawn gated in SCR-025/dirty",
+        ),
+        (
+            "X44-exit-esc-t2",
+            frame_sub("SCR-029/revert", "Esc → Cancel (focus", "Esc → Cancel (T2; focus"),
+            "[exit-gated] exit drawn gated in SCR-029/revert",
+        ),
+        (
+            "X45-exit-revert-t2",
+            frame_sub("SCR-029/revert", "Revert to saved (`secondary`)", "Revert to saved (T2)"),
+            "[exit-gated] exit drawn gated in SCR-029/revert",
+        ),
+        (
+            "X46-exit-kill-switch",
+            frame_sub(
+                "SCR-029/unsaved",
+                "; initial focus: Cancel",
+                "; while the kill switch is on, Cancel is unavailable; initial focus: Cancel",
+            ),
+            "[exit-gated] exit drawn gated in SCR-029/unsaved",
+        ),
+        (
+            "X47-exit-close-x",
+            frame_sub(
+                "SCR-025/default", f"the close {TIMES} named", f"the close {TIMES} (T2) named"
+            ),
+            "[exit-gated] exit drawn gated in SCR-025/default",
+        ),
+        (
+            "X19-overwrite-plain",
+            frame_sub("SCR-029/keep-mine-confirm", "CMP-044 `standard`", "CMP-044 `typed`"),
+            "[component] frame SCR-029/keep-mine-confirm",
+        ),
+        (
+            "X48-discard-cmp",
+            frame_sub(
+                "SCR-025/discard-prompt",
+                'CMP-044 `standard` `role="alertdialog"`',
+                'CMP-043 `role="alertdialog"`',
+            ),
+            "[component] frame SCR-025/discard-prompt",
+        ),
+        (
+            "X49-settings-cmp",
+            frame_sub(
+                "SCR-025/settings-conflict",
+                'CMP-043 `role="alertdialog"`',
+                'CMP-044 `standard` `role="alertdialog"`',
+            ),
+            "[component] frame SCR-025/settings-conflict",
+        ),
+        (
+            "X50-form-alertdialog",
+            frame_sub("SCR-025/default", 'CMP-043 `role="dialog"`', 'CMP-043 `role="alertdialog"`'),
+            "[component] frame SCR-025/default",
+        ),
+        (
+            "X51-size-lg",
+            frame_sub("SCR-029/conflict", '`size="md"`', '`size="lg"`'),
+            "[size] frame SCR-029/conflict",
+        ),
+        (
+            "X52-size-missing",
+            frame_sub("SCR-025/discard-prompt", ', `size="sm"`', ""),
+            "[size] frame SCR-025/discard-prompt",
+        ),
+        (
+            "M1b-star-shows-only",
+            frame_sub("SCR-029/conflict", "the tab keeps `Scalping *`", "the tab keeps `Scalping`"),
+            "[dirty-star] dirty frame SCR-029/conflict",
+        ),
+        (
+            "X53-leg-lost-star",
+            frame_sub(
+                "SCR-025/leg-lost", "the title keeps `Workspace settings *`", "the title stays"
+            ),
+            "[dirty-star] dirty frame SCR-025/leg-lost",
+        ),
+        (
+            "X54-delete-star",
+            frame_sub("SCR-025/delete-confirm", "Layout 1 `*`", "Layout 1"),
+            "[dirty-star] dirty frame SCR-025/delete-confirm",
+        ),
+        (
+            "X55-clean-star",
+            frame_sub(
+                "SCR-025/default", 'title "Workspace settings"', "title `Workspace settings *`"
+            ),
+            "[clean-star] clean frame SCR-025/default",
+        ),
+        (
+            "X56-env-dropdown",
+            frame_sub(
+                "SCR-025/default", "Share (Export…)", "Share (Export…, an Environment dropdown)"
+            ),
+            "[env] environment control on SCR-025 in SCR-025/default",
+        ),
+        (
+            "X57-env-pill",
+            frame_sub(
+                "SCR-025/view-as",
+                "Export… stays T1",
+                "the CMP-075 pill beside the title; Export… stays T1",
+            ),
+            "[env] environment control on SCR-025 in SCR-025/view-as",
+        ),
+        (
+            "X58-planned-stamp",
+            frame_sub("SCR-025/planned-density", "the `planned` stamp, ", ""),
+            "[planned-form] planned inset SCR-025/planned-density",
+        ),
+        (
+            "X59-planned-caption",
+            frame_sub(
+                "SCR-025/planned-theme", ' the caption "Waits for its contract (D08-G4)."', ""
+            ),
+            "[planned-caption]",
+        ),
+        (
+            "X60-planned-dropdown",
+            frame_sub(
+                "SCR-025/planned-description",
+                'the words "Description"',
+                'the words "Description" in a dropdown',
+            ),
+            "[planned-control] planned inset SCR-025/planned-description",
+        ),
+        (
+            "X61-planned-disabled",
+            frame_sub(
+                "SCR-025/planned-density", 'the words "Density"', 'the words "Density", disabled'
+            ),
+            "[planned-dim] planned inset SCR-025/planned-density",
+        ),
+        (
+            "X62-lock-phrase",
+            frame_sub("SCR-025/viewer-read-only", "the lock leading each full label, ", ""),
+            "[t2-lock] T2 frame SCR-025/viewer-read-only",
+        ),
+        (
+            "M3b-key-from-legs",
+            frame_sub("SCR-025/delete-last", " → `workspace.limit.last`", ""),
+            "[t2-key] T2 frame SCR-025/delete-last lacks its reason key workspace.limit.last",
+        ),
+        (
+            "X63-key-cell",
+            frame_sub("SCR-025/delete-last", "| `workspace.limit.last` · ", "| "),
+            "[t2-key-cell] T2 frame SCR-025/delete-last",
+        ),
+        (
+            "X64-reason-long",
+            frame_sub(
+                "SCR-029/viewer-unsaved",
+                '"Your role can\'t save workspaces."',
+                '"Your role does not hold the permission a workspace save needs."',
+            ),
+            "[t2-say] T2 frame SCR-029/viewer-unsaved",
+        ),
+        (
+            "X65-legs-gone",
+            frame_sub("SCR-025/view-as", "legs `rbac.view_as` first, ", ""),
+            "[legs] T2 frame SCR-025/view-as",
         ),
         (
             "X7-dim-t2",
@@ -1803,43 +2637,421 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 "in `color.text.tertiary`",
                 "in `color.text.tertiary` at `opacity.disabled`",
             ),
-            "conveyed by dimming",
+            "[t2-dim] T2 frame SCR-025/delete-last",
+        ),
+        (
+            "X66-t2-cite",
+            frame_re("SCR-029/save-as-t2", "§5", "§6"),
+            "[t2-cite] T2 frame SCR-029/save-as-t2",
+        ),
+        (
+            "X67-t2-native",
+            frame_sub(
+                "SCR-029/viewer-unsaved",
+                "`aria-disabled` and never the `disabled` attribute",
+                "the `disabled` attribute",
+            ),
+            "[t2-native] T2 frame SCR-029/viewer-unsaved",
+        ),
+        (
+            "X6-reason-sr",
+            frame_sub("SCR-025/delete-last", " through `aria-describedby`", ""),
+            "[t2-sr]",
+        ),
+        (
+            "X68-t2-footer",
+            frame_sub("SCR-025/viewer-read-only", "Save (T2)", "Save (`primary`)"),
+            "[t2-footer] footer of SCR-025/viewer-read-only and its T2 clause disagree on Save",
+        ),
+        (
+            "X147-lock-outside-t2",
+            frame_sub(
+                "SCR-025/viewer-read-only",
+                "(availability, not T2 — no lock, the availability look of §2)",
+                "(availability, the lock leading its label)",
+            ),
+            "[t2-lock-scope] a lock drawn outside the T2 clause of SCR-025/viewer-read-only",
+        ),
+        (
+            "X69-one-notice",
+            frame_sub(
+                "SCR-025/viewer-read-only",
+                "one notice at the top of the body",
+                "a notice at the top of the body",
+            ),
+            "[one-notice] read-only frame SCR-025/viewer-read-only",
+        ),
+        (
+            "X70-validity-reason",
+            frame_sub(
+                "SCR-025/invalid-empty",
+                'the `validity-reason` "Fix 1 field."',
+                'the reason "Fix 1 field."',
+            ),
+            "[validity-reason] validity frame SCR-025/invalid-empty",
+        ),
+        (
+            "X5-validity-lock",
+            frame_sub(
+                "SCR-025/default",
+                "Save in the validity look",
+                "Save in the validity look behind a lock",
+            ),
+            "[validity-lock] validity frame SCR-025/default with a lock",
+        ),
+        (
+            "X17-class-agrees",
+            frame_re("SCR-029/save-as-t2", r"\| T2 \(state, §5\)( +)\|", r"| T1 (state)\1|"),
+            "[class-t2] Class cell disagrees with the tool's KIND: SCR-029/save-as-t2 is T2",
+        ),
+        (
+            "X71-class-not-t2",
+            frame_re("SCR-025/dirty", r"\| T1( +)\|", r"| T2\1|"),
+            "[class-not-t2] Class cell disagrees with the KIND: SCR-025/dirty is not T2",
+        ),
+        (
+            "X72-class-word",
+            frame_re("SCR-025/saved", r"\| outcome( +)\|", r"| T1\1|"),
+            "[class-word] Class cell disagrees with the KIND: SCR-025/saved is outcome",
+        ),
+        (
+            "X73-board-cell",
+            frame_re("SCR-025/failed", r"\| 02( +)\|$", r"| 2\1|"),
+            "[board-cell] frame SCR-025/failed",
+        ),
+        (
+            "X74-key-namespace",
+            frame_sub("SCR-025/saved", "| `e15.settings.saved`", "| `ui.settings.saved`"),
+            "[key-namespace] copy key outside the namespaces in SCR-025/saved",
+        ),
+        (
+            "X75-inventory",
+            frame_sub("SCR-025/compact", "`SCR-025/compact`", "`SCR-025/compact-x`"),
+            "[inventory] frame rows and the tool's inventory differ",
+        ),
+        (
+            "X76-cells",
+            frame_re(
+                "SCR-025/view-as", r"\| not drawn — the text is binding; drawn on request +\|$", "|"
+            ),
+            "[cells] frame SCR-025/view-as: 5 cells",
+        ),
+    ]
+
+
+def more_mutations() -> list[tuple[str, Callable[[str], str], str]]:
+    """The content gates (every quoted number rendered), §0, §3.2, the header, cites and text."""
+    key = "**Key.**"
+    load = '"Load theirs replaces your unsaved changes. They can\'t be recovered."'
+    keep = '"Keep mine replaces the version saved at 14:07. That version can\'t be recovered."'
+    return [
+        (
+            "X3-diff-fixture",
+            frame_sub("SCR-029/unsaved", '"3 panels added."', '"Three panels added."'),
+            "[summary] difference summary differs from the fixture in SCR-029/unsaved",
+        ),
+        (
+            "X4-overflow",
+            frame_sub("SCR-029/unsaved-overflow", ' "and 2 more differences."', ""),
+            "[overflow] overflow line missing",
+        ),
+        (
+            "X77-overflow-producer",
+            frame_sub(
+                "SCR-029/unsaved-overflow",
+                "1 panel added and 5 symbols changed",
+                "1 panel added and 6 symbols changed",
+            ),
+            "[overflow-producer]",
         ),
         (
             "X8-invalid-message",
             frame_sub("SCR-025/invalid-long", '"Use at most 40 characters."', '"Too long."'),
-            "lacks its rule message or summary link",
+            "[invalid] invalid-name frame SCR-025/invalid-long",
+        ),
+        (
+            "X78-invalid-count",
+            frame_sub(
+                "SCR-025/invalid-long", "Name typed to 41 characters", "Name typed to 42 characters"
+            ),
+            "[invalid] invalid-name frame SCR-025/invalid-long",
+        ),
+        (
+            "X79-name-help",
+            frame_sub("SCR-025/default", '"Up to 40 characters.', '"Up to 41 characters.'),
+            "[name-help]",
+        ),
+        (
+            "X80-dirty-fixture",
+            frame_sub(
+                "SCR-025/dirty", 'Name edited to "Scalping 2"', 'Name edited to "Scalping 3"'
+            ),
+            "[dirty-fixture]",
+        ),
+        (
+            "X81-refusal",
+            frame_sub(
+                "SCR-025/failed", "a second `409 concurrent_update`", "a second racing write"
+            ),
+            "[refusal]",
+        ),
+        (
+            "X82-delete-body",
+            frame_sub(
+                "SCR-025/delete-confirm", 'body "It has 2 layouts,', 'body "It has 3 layouts,'
+            ),
+            "[delete-body]",
+        ),
+        (
+            "X83-delete-fixture",
+            frame_sub(
+                "SCR-025/delete-confirm", "on Scalping (2 layouts,", "on Scalping (3 layouts,"
+            ),
+            "[delete-fixture]",
+        ),
+        (
+            "X84-confirm-delay",
+            frame_sub("SCR-025/discard-prompt", "`confirmDelayMs` 400", "`confirmDelayMs` 300"),
+            "[confirm-delay] confirm SCR-025/discard-prompt",
+        ),
+        (
+            "X85-racing",
+            frame_sub("SCR-025/delete-racing", "`409 last_workspace`", "a refusal"),
+            "[racing]",
         ),
         (
             "X9-announce",
             frame_sub("SCR-025/saved", '"Saved workspace settings."', '"Done."'),
-            "without its polite announcement",
+            "[outcome]",
+        ),
+        (
+            "X86-busy",
+            frame_sub("SCR-025/saving", "`aria-busy`, ", ""),
+            "[busy] busy frame SCR-025/saving",
+        ),
+        (
+            "X21-settings-names",
+            frame_sub("SCR-025/settings-conflict", 'saved now "Scalping EU"', "saved now theirs"),
+            "[settings-names]",
+        ),
+        (
+            "X87-side-by-side",
+            frame_sub("SCR-029/conflict", '"Yours (not saved)"', '"Yours"'),
+            "[side-by-side] conflict frame SCR-029/conflict",
+        ),
+        (
+            "X88-line-order",
+            frame_sub(
+                "SCR-029/conflict-refreshed",
+                f"{load} {keep}",
+                f"{keep} {load}",
+            ),
+            "[consequence-order] consequence lines of SCR-029/conflict-refreshed",
+        ),
+        (
+            "X89-keep-route",
+            frame_sub(
+                "SCR-029/conflict",
+                "Keep mine opens `SCR-029/keep-mine-confirm`",
+                "Keep mine overwrites the saved version at once",
+            ),
+            "[keep-route] conflict frame SCR-029/conflict",
+        ),
+        (
+            "X90-loaded-line",
+            frame_sub("SCR-029/conflict", 'saved at 14:05." (polite)', 'saved at 14:06." (polite)'),
+            "[loaded-line]",
+        ),
+        (
+            "X91-refreshed-time",
+            frame_sub("SCR-029/conflict-refreshed", "wrote at 14:07:30", "wrote at 14:07:31"),
+            "[refreshed-time]",
+        ),
+        (
+            "X92-by-reference",
+            frame_sub("SCR-029/save-as-t2", ", its table and its four lines unchanged", ""),
+            "[by-reference] frame SCR-029/save-as-t2",
+        ),
+        (
+            "X93-saving-routes",
+            frame_sub(
+                "SCR-029/unsaved-saving",
+                "a `412` takes the queued route (`SCR-029/conflict-queued`)",
+                "a `412` waits",
+            ),
+            "[saving-routes]",
+        ),
+        (
+            "X94-revert-done",
+            frame_sub(
+                "SCR-029/revert",
+                'reverted to the version saved at 13:40."',
+                'reverted to the version saved at 13:41."',
+            ),
+            "[revert-done]",
+        ),
+        (
+            "X95-save-as-cap",
+            frame_sub("SCR-029/save-as-t2", "holds 32 layouts", "holds 31 layouts"),
+            "[save-as-cap]",
         ),
         (
             "X10-queue-rule",
             frame_sub("SCR-029/conflict-queued", QUEUE_RULE, "the dialog waits"),
-            "lacks the queue rule",
+            "[queue-rule]",
+        ),
+        (
+            "X148-queue-autosave",
+            frame_sub("SCR-029/conflict-queued", "autosave stops for Layout 1", "autosave goes on"),
+            "[queue-rule]",
+        ),
+        (
+            "X149-typed-enter",
+            frame_sub("SCR-025/delete-confirm", "; `Enter` in the field never confirms", ""),
+            "[typed-field]",
+        ),
+        (
+            "X150-danger-words",
+            frame_sub(
+                "SCR-025/delete-last", "and the `danger` glyph (words", "and a red mark (words"
+            ),
+            "[danger-words] frame SCR-025/delete-last",
+        ),
+        (
+            "X151-fixture-name",
+            frame_sub(
+                "SCR-029/unsaved", "Save layout writes Layout 1,", "Save layout writes Layout 2,"
+            ),
+            "[fixture-name] frame SCR-029/unsaved",
+        ),
+        (
+            "X96-reflow-frame",
+            frame_sub("SCR-029/reflow-200", f"1280 {TIMES} 800", f"1280 {TIMES} 720"),
+            "[reflow] reflow frame SCR-029/reflow-200",
+        ),
+        (
+            "X16-board-reconcile",
+            frame_re("SCR-025/failed", r"\| 02( +)\|$", r"| 03\1|"),
+            "[board-reconcile] frame SCR-025/failed: its row says boards",
+        ),
+        (
+            "X20-not-drawn-line",
+            sub(", `SCR-029/leg-lost`, `SCR-029/reflow-200`.", ", `SCR-029/reflow-200`."),
+            "[not-drawn] frame SCR-029/leg-lost",
+        ),
+        (
+            "X97-not-drawn-unknown",
+            sub(", `SCR-029/reflow-200`.", ", `SCR-029/reflow-200`, `SCR-029/ghost`."),
+            "[not-drawn-unknown]",
+        ),
+        (
+            "X98-board-name",
+            line_sub("| 05 ", "`E15-D08 / 05 ", "`E15-D08 / 06 "),
+            "[board-name] §0 board 05",
+        ),
+        (
+            "X99-board-cells",
+            row_fn(r"^\| 07 .*$", lambda ln: re.sub(r"\| pending +\|$", "|", ln)),
+            "[board-cells] §0 board 07",
+        ),
+        (
+            "X100-board-theme",
+            line_sub("| 09 ", "| light |", "| dark  |"),
+            "[board-theme] §0 board 09",
+        ),
+        (
+            "X101-board-export",
+            line_sub("| 03 ", "E15-D08-03-scr-025-danger-zone.png", "E15-D08-03-danger.png"),
+            "[board-export] §0 board 03",
+        ),
+        (
+            "X102-board-status",
+            line_sub("| 04 ", "| pending |", "| drawn   |"),
+            "[board-status] §0 board 04",
+        ),
+        (
+            "X103-board-unknown",
+            line_sub(
+                "| 06 ", "`SCR-029/unsaved-overflow`", "`SCR-029/unsaved-overflow`, `SCR-029/ghost`"
+            ),
+            "[board-unknown] §0 board 06",
+        ),
+        (
+            "X104-board-empty",
+            chain(
+                line_sub("| 08 ", "| 08 ", "| 11 "),
+                line_sub("| 11 ", "/ 08 ", "/ 11 "),
+                line_sub("| 11 ", "E15-D08-08-", "E15-D08-11-"),
+            ),
+            "[board-empty] §0 board 11",
+        ),
+        (
+            "X105-board-cap",
+            chain(
+                line_sub("| 03 ", "scr-025-danger-zone`", "scr-025-danger-zone-light`"),
+                line_sub("| 03 ", "| dark  |", "| light |"),
+                line_sub("| 03 ", "scr-025-danger-zone.png", "scr-025-danger-zone-light.png"),
+                line_sub("| 04 ", "scr-029-unsaved`", "scr-029-unsaved-light`"),
+                line_sub("| 04 ", "| dark  |", "| light |"),
+                line_sub("| 04 ", "scr-029-unsaved.png", "scr-029-unsaved-light.png"),
+                set_marker("light_twins", "2", "4"),
+            ),
+            "[board-cap]",
+        ),
+        (
+            "X106-entry-missing",
+            row_fn(r"^\| E7 +\|.*$", lambda ln: ln.replace("| E7 ", "| E15", 1)),
+            "[entry-missing] entry-point matrix lacks E7",
+        ),
+        (
+            "X107-entry-route",
+            row_fn(
+                r"^\| E7 +\|.*$",
+                lambda ln: ln.replace("closing a workspace tab", "closing a tab", 1),
+            ),
+            "[entry-route] entry point E7",
         ),
         (
             "X11-entry-unmapped",
             row_fn(
-                r"^\| E6 +\|.*$",
-                lambda ln: re.sub(r"\| no dialog — [^|]*\|", "| — |", ln, count=1),
+                r"^\| E6 +\|.*$", lambda ln: re.sub(r"\| no dialog — [^|]*\|", "| — |", ln, count=1)
             ),
-            "entry point unmapped: E6",
+            "[entry-unmapped] entry point unmapped: E6",
         ),
         (
-            "X12-cite-unpinned",
-            lambda s: s.replace("**Key.** `NN`", "**Key.** (`D02:999`) `NN`", 1),
-            "cite not pinned in the tool's CITED_TABLE: `D02:999`",
+            "X108-entry-esc-none",
+            row_fn(r"^\| E6 +\|.*$", lambda ln: ln.replace("— (no dialog)", "Esc → Cancel", 1)),
+            "[entry-esc-none] entry point E6",
         ),
         (
-            "X13-bq-outcome",
+            "X32-entry-esc",
             row_fn(
-                r"^\| BQ-8 +\|.*$",
-                lambda ln: ln.replace("no environment control at all", "an environment control", 1),
+                r"^\| E4 +\|.*$", lambda ln: ln.replace("Esc → Cancel", "Esc → Discard changes", 1)
             ),
-            "BQ-8 row lost its ruled outcome",
+            "[entry-esc] Esc not mapped to Cancel on entry point E4",
+        ),
+        (
+            "X109-head-sha",
+            sub("`ed8a22246263ace73f39e4434e6d5f57b1a857bd`", "`ed8a222`"),
+            "[head-sha] header: merge sha missing: ed8a22246",
+        ),
+        (
+            "X110-head-base",
+            sub("`0bf4b87c556a7ae8cba11a584b2f81708c0c9bd9`", "`0bf4b87c5`"),
+            "[head-base]",
+        ),
+        (
+            "X111-head-penpot",
+            sub(
+                "**Penpot page:** `E15-D08 Workspace settings and conflicts`",
+                "**Penpot page:** `E15-D08`",
+            ),
+            "[head-penpot]",
+        ),
+        (
+            "X112-head-status",
+            sub("boards PENDING (§0:", "boards to come (§0:"),
+            "[head-status] header: status lost 'boards PENDING'",
         ),
         (
             "X14-deviation",
@@ -1847,89 +3059,223 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 r"^- \*\*Deviation — the five fieldsets\.\*\*.*$",
                 lambda ln: ln.replace("five fieldsets", "fieldsets"),
             ),
-            "deviation missing: the five fieldsets",
-        ),
-        ("X15-ac-trace", row_fn(r"^\| AC-5 ", lambda ln: "| AC-50 "), "AC trace lacks AC-5"),
-        (
-            "X16-board-reconcile",
-            frame_re("SCR-025/failed", r"\| 02( +)\|$", r"| 03\1|"),
-            "SCR-025/failed: its row says boards",
+            "[deviation] deviation missing: the five fieldsets",
         ),
         (
-            "X17-class-agrees",
-            frame_re("SCR-029/save-as-t2", r"\| T2 \(state, §5\)( +)\|", r"| T1 (state)\1|"),
-            "Class cell disagrees with the tool's KIND: SCR-029/save-as-t2 is T2",
+            "X15-ac-trace",
+            row_fn(r"^\| AC-5 ", lambda ln: "| AC-50 "),
+            "[trace-lacks] AC trace lacks AC-5",
+        ),
+        (
+            "X113-trace-repeats",
+            row_fn(r"^\| AC-6 .*$", lambda ln: ln + "\n" + ln),
+            "[trace-repeats] AC trace repeats AC-6",
+        ),
+        (
+            "X114-bq-missing",
+            row_fn(r"^\| BQ-16 +\|.*$", lambda ln: ln.replace("| BQ-16 |", "| BQ-17 |", 1)),
+            "[bq-missing] BQ-16 missing",
+        ),
+        (
+            "X115-bq-ruled",
+            row_fn(
+                r"^\| BQ-15 +\|.*$", lambda ln: re.sub(r"\| RULED( +)\|$", r"| PROPOSED\1|", ln)
+            ),
+            "[bq-ruled] BQ-15 not RULED",
+        ),
+        (
+            "X13-bq-outcome",
+            row_fn(
+                r"^\| BQ-8 +\|.*$",
+                lambda ln: ln.replace("no environment control at all", "an environment control", 1),
+            ),
+            "[bq-terms] BQ-8 row lost its ruled outcome",
+        ),
+        (
+            "X12-cite-unpinned",
+            sub(f"{key} `NN`", f"{key} (`D02:999`) `NN`"),
+            "[cite-unpinned] cite not pinned in the tool's CITED_TABLE: `D02:999`",
+        ),
+        (
+            "X116-cite-range",
+            sub(f"`D02:635{EN_DASH}675`", f"`D02:635{EN_DASH}630`"),
+            "[cite-range]",
         ),
         (
             "X18-upstream",
             frame_sub(
                 "SCR-029/unsaved", "Applying Order-flow replaces them.", "Order-flow replaces them."
             ),
-            "lacks the upstream string",
+            "[upstream-frame] frame SCR-029/unsaved",
         ),
         (
-            "X19-overwrite-plain",
-            frame_sub("SCR-029/keep-mine-confirm", "CMP-044 `standard`", "CMP-044 `typed`"),
-            "is not a plain CMP-044 standard",
+            "X117-placeholder",
+            sub("## 15. Summary\n", "## 15. Summary\n\n**Placeholder (§15):** to write.\n"),
+            "[placeholder] placeholder §15",
         ),
         (
-            "X20-not-drawn-line",
-            lambda s: s.replace(
-                ", `SCR-029/leg-lost`, `SCR-029/reflow-200`.", ", `SCR-029/reflow-200`.", 1
-            ),
-            "SCR-029/leg-lost: its not-drawn cell and §0's not-drawn line disagree",
+            "X118-home-path",
+            sub(key, f"{key} (`/ho" + "me/alex/x/`)"),
+            "[forbidden] spec: forbidden text",
         ),
         (
-            "X21-settings-names",
-            frame_sub("SCR-025/settings-conflict", 'saved now "Scalping EU"', "saved now theirs"),
-            "lacks its two values of the name",
+            "X119-windows-path",
+            sub(key, key + " (C:" + "\\" + "Users" + "\\" + "alex" + "\\" + "x)"),
+            "[forbidden] spec: forbidden text",
+        ),
+        ("X120-ip-address", sub(key, f"{key} (10.0.0" + ".7)"), "[forbidden] spec: forbidden text"),
+        (
+            "X145-unc-path",
+            sub(key, key + " (" + "\\\\" + "nas\\share)"),
+            "[forbidden] spec: forbidden text",
         ),
         (
-            "X22-deck-key",
-            sec_fn(
-                8,
-                lambda t: re.sub(
-                    r"^\| `e15\.conflict\.queued_status`",
-                    "| `e15.conflict.queued_line`",
-                    t,
-                    count=1,
-                    flags=MULTI,
-                ),
-            ),
-            "copy key not in the deck (§8) in SCR-029/conflict-queued: e15.conflict.queued_status",
+            "X146-tailnet",
+            sub(key, f"{key} (`box.tail1.ts" + ".net`)"),
+            "[forbidden] spec: forbidden text",
+        ),
+        ("X121-closing", sub(key, f"{key} Closes #362."), "[closing] spec: a closing keyword"),
+        (
+            "X122-closing-colon",
+            sub(key, f"{key} Fixes: #362."),
+            "[closing] spec: a closing keyword",
+        ),
+        (
+            "X123-closing-repo",
+            sub(key, f"{key} Resolves owner/repo#362."),
+            "[closing] spec: a closing keyword",
+        ),
+        (
+            "X124-closing-url",
+            sub(key, f"{key} Closes https://example.org/o/r/issues/362."),
+            "[closing] spec: a closing keyword",
+        ),
+        ("X125-rule-id", sub(key, f"{key} (C-99.9)"), "[rule-id] spec: dangling rule id C-99.9"),
+        (
+            "X126-catalogue-id",
+            sub(key, f"{key} (CMP-999)"),
+            "[catalogue-id] spec: no catalogue heading for CMP-999",
+        ),
+    ]
+
+
+def section_mutations() -> list[tuple[str, Callable[[str], str], str]]:
+    """The written sections (§5-§8, §11, §12), the markers and the sections' order."""
+
+    row1 = (
+        r"(^\| 1 +\| `color\.text\.primary` on `color\.surface\.overlay`"
+        r" +\| hc-text +\| )13\.27"
+    )
+
+    def viewer_t2(ln: str) -> str:
+        parts = ln.split("|")
+        parts[5] = parts[5].replace("T1", "T2")
+        return "|".join(parts)
+
+    deck_row = (
+        '| `e15.settings.environment` | the Share section | "Default environment for new panels" '
+        "| PROPOSED |\n"
+    )
+
+    def add_deck_row(s: str) -> str:
+        n = str(len(deck_ids(s) or ()))
+        s = sec_fn(
+            8,
+            lambda t: t.replace("| `e15.settings.export`", deck_row + "| `e15.settings.export`", 1),
+        )(s)
+        return set_marker("deck_rows", n, str(int(n) + 1))(s)
+
+    return [
+        (
+            "X128-sections",
+            chain(sub("\n## 7. ", "\n## x7. "), sub("| 13.27 |", "| 13.37 |")),
+            "[sections]",
         ),
         (
             "X23-not-t2-list",
             sec_fn(5, lambda t: t.replace("**Not T2", "**Also not T2", 1)),
-            "§5 lacks the one T2 paragraph or its not-T2 list",
+            "[t2-paragraph]",
         ),
         (
-            "X24-g-row",
-            sec_fn(11, lambda t: re.sub(r"^\| D08-G2 ", "| D08-G9 ", t, count=1, flags=MULTI)),
-            "§11 lacks the G-row D08-G2",
-        ),
-        (
-            "X25-sign-off-item",
+            "X129-t2-once",
             sec_fn(
-                12,
-                lambda t: t.replace("no default destructive button", "no destructive default", 1),
+                6,
+                lambda t: t.replace(
+                    "**The exits, stated once",
+                    "E09-D09's decision rule decides every control here. **The exits, stated once",
+                    1,
+                ),
             ),
-            "§12 lacks the sign-off item 'no default destructive button'",
+            "[t2-once]",
+        ),
+        ("X130-exits-matrix", row_fn(r"^\| Cancel, `Esc`, Close.*$", viewer_t2), "[exits-matrix]"),
+        (
+            "X131-exits-a3",
+            sec_fn(
+                6,
+                lambda t: t.replace(
+                    "never locked by view-as, the kill switch",
+                    "locked by view-as, the kill switch",
+                    1,
+                ),
+            ),
+            "[exits-a3] §6 lost",
+        ),
+        (
+            "X144-exits-a3-standing",
+            sub(
+                "Close on every frame, never locked by view-as",
+                "Close on every frame, locked by view-as",
+            ),
+            "[exits-a3] the standing additions lost A3",
+        ),
+        (
+            "X132-planned-claim",
+            sec_fn(7, lambda t: t.replace("full strength, never dimmed", "dimmed", 1)),
+            "[planned-claims] §7 lost",
+        ),
+        (
+            "X133-contrast-row",
+            sec_fn(7, lambda t: re.sub(r"^\| 20 +\|.*\n", "", t, count=1, flags=MULTI)),
+            "[contrast-row] §7 table lacks color.text.tertiary on color.surface.overlay",
         ),
         (
             "X26-contrast-cell",
             sec_fn(
                 7,
                 lambda t: re.sub(
-                    r"(^\| 1 +\| `color\.text\.primary` on `color\.surface\.overlay`"
-                    r" +\| hc-text +\| )13\.27",
+                    row1,
                     r"\g<1>13.37",
                     t,
                     count=1,
                     flags=MULTI,
                 ),
             ),
-            "§7 measured cell differs: color.text.primary on color.surface.overlay (hc-text)",
+            "[contrast-cell] §7 cell differs: color.text.primary on color.surface.overlay",
+        ),
+        (
+            "X134-contrast-last-digit",
+            sec_fn(
+                7,
+                lambda t: re.sub(
+                    row1,
+                    r"\g<1>13.28",
+                    t,
+                    count=1,
+                    flags=MULTI,
+                ),
+            ),
+            "[contrast-cell] §7 cell differs: color.text.primary on color.surface.overlay",
+        ),
+        (
+            "X135-contrast-verdict",
+            sec_fn(
+                7,
+                lambda t: re.sub(
+                    r"(^\| 9 +\|.*\| )PROPOSED( +\|)", r"\g<1>registered\2", t, count=1, flags=MULTI
+                ),
+            ),
+            "[contrast-verdict]",
         ),
         (
             "X28-grey-cell",
@@ -1943,19 +3289,175 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
                     flags=MULTI,
                 ),
             ),
-            "§7 greyscale row differs or is missing: color.status.danger.default",
+            "[grey] §7 greyscale row differs or is missing: color.status.danger.default",
         ),
         (
             "X29-cvd-cell",
             sec_fn(
                 7, lambda t: t.replace("14.7 · 12.5 · 14.0 · 5.5", "14.7 · 12.5 · 14.0 · 5.6", 1)
             ),
-            "§7 colour-vision row differs or is missing: color.status.danger.strong vs",
+            "[cvd] §7 colour-vision row differs or is missing: color.status.danger.strong",
+        ),
+        (
+            "X136-jargon",
+            sec_fn(8, lambda t: t.replace('"Try again"', '"Try again (412)"', 1)),
+            "[jargon]",
         ),
         (
             "X27-template",
             sec_fn(8, lambda t: t.replace('"and {n} more differences."', '"and {n} more."', 1)),
-            "§8 lacks the template e15.diff.overflow in both forms",
+            "[template] §8 lacks the template e15.diff.overflow in both forms",
+        ),
+        (
+            "X137-deck-line",
+            sec_fn(
+                8,
+                lambda t: t.replace(
+                    '"Cancel keeps your changes in this dialog."',
+                    '"Cancel keeps your edits in this dialog."',
+                    1,
+                ),
+            ),
+            "[deck-line] §8 lacks the consequence line of Cancel",
+        ),
+        (
+            "X22-deck-key",
+            sec_fn(
+                8,
+                lambda t: re.sub(
+                    r"^\| `e15\.conflict\.queued_status`",
+                    "| `e15.conflict.queued_line`",
+                    t,
+                    count=1,
+                    flags=MULTI,
+                ),
+            ),
+            "[key-deck] copy key not in the deck (§8) in SCR-029/conflict-queued",
+        ),
+        ("X138-env-deck", add_deck_row, "[env] environment control where SCR-025 is drawn"),
+        (
+            "X139-env-anatomy",
+            line_sub(
+                "| Footer ", "end-aligned,", "end-aligned, a LIVE / DEMO toggle at its start,"
+            ),
+            "[env] environment control where SCR-025 is drawn",
+        ),
+        (
+            "X24-g-row",
+            sec_fn(11, lambda t: re.sub(r"^\| D08-G2 ", "| D08-G9 ", t, count=1, flags=MULTI)),
+            "[g-row] §11 lacks the G-row D08-G2",
+        ),
+        (
+            "X25-sign-off-item",
+            sec_fn(
+                12,
+                lambda t: t.replace("no default destructive button", "no destructive default", 1),
+            ),
+            "[sign-off] §12 lacks the item 'no default destructive button'",
+        ),
+        (
+            "X140-marker-visible",
+            sub("10 <!-- audit:boards=10 --> boards,", "11 <!-- audit:boards=10 --> boards,"),
+            "[marker-visible] printed 11 beside audit:boards=10",
+        ),
+        (
+            "X141-marker-rows-g",
+            set_marker("rows.G", "8", "9"),
+            "[marker-value] marker audit:rows.G=9 vs tool 8",
+        ),
+        (
+            "X142-marker-parse",
+            sub("<!-- audit:boards=10 --> boards,", "<!-- audit:boards=10--> boards,"),
+            "[marker-parse]",
+        ),
+        (
+            "X143-marker-count",
+            sub(" (2 <!-- audit:light_twins=2 --> light twins)", " (2 light twins)"),
+            "[marker-count] audit:light_twins appears 1 times, 2 expected",
+        ),
+    ]
+
+
+def context_mutations() -> list[tuple[str, Callable[[dict[str, str]], dict[str, str]], str]]:
+    """The gates that read the cited plan texts, each tripped through an in-memory copy of them."""
+
+    def swap_pointer(t: dict[str, str]) -> dict[str, str]:
+        lines = t["14"].split("\n")
+        i = next(n for n, ln in enumerate(lines) if POINTER in ln)
+        lines[i - 1], lines[i] = lines[i], lines[i - 1]
+        return {**t, "14": "\n".join(lines)}
+
+    topic = "| `layouts`      | `layout_ids` | Current layout tokens | 0 |\n"
+    return [
+        (
+            "C1-cite-gone",
+            ctx_sub(
+                "D02",
+                "layout events are analytics, never audit",
+                "layout events are analytics only",
+            ),
+            "[cite-gone] cited text gone: `D02:84`",
+        ),
+        (
+            "C2-cite-ambiguous",
+            lambda t: {**t, "D02": t["D02"] + "\nlayout events are analytics, never audit\n"},
+            "[cite-ambiguous] cited text twice: `D02:84`",
+        ),
+        ("C3-pointer-14", swap_pointer, "[pointer-14]"),
+        (
+            "C4-reason-drift",
+            ctx_sub(
+                "D09", "Read-only while viewing as {user}.", "Read-only while you view as {user}."
+            ),
+            "[reason-drift] reason string drifted from D09: rbac.view_as",
+        ),
+        (
+            "C5-permission",
+            ctx_sub("D09", '"Your role can\'t {verb}."', '"Your role cannot {verb}."'),
+            "[permission]",
+        ),
+        (
+            "C6-upstream-gone",
+            ctx_sub("D02", "Changed again in another window.", "Changed again elsewhere."),
+            "[upstream-gone] upstream string gone from D02",
+        ),
+        (
+            "C7-fact-412",
+            lambda t: {
+                **t,
+                "22": re.sub(
+                    r"(- code: version_conflict\n\s+status: )412", r"\g<1>409", t["22"], count=1
+                ),
+            },
+            "[contract-fact] contract fact changed: version_conflict_412",
+        ),
+        (
+            "C8-fact-unstored",
+            ctx_sub("22", "        icon_token:", "        description:"),
+            "[contract-fact] contract fact changed: unstored_absent",
+        ),
+        (
+            "C9-fact-refusals",
+            ctx_sub(
+                "22",
+                "`concurrent_update` (a racing write; retry)",
+                "`racing_update` (a racing write; retry)",
+            ),
+            "[contract-fact] `22` workspace refusals now",
+        ),
+        (
+            "C10-fact-last",
+            ctx_sub(
+                "22",
+                'message: "You need at least one workspace."',
+                'message: "Keep one workspace."',
+            ),
+            "[contract-fact] `22` deleteWorkspace's last_workspace sentence changed",
+        ),
+        (
+            "C11-ws-topic",
+            ctx_sub("23", "| `system`       |", topic + "| `system`       |"),
+            "[ws-topic]",
         ),
     ]
 
@@ -1967,7 +3469,20 @@ def frame_family(spec: str, ctx: Ctx) -> list[str]:
     )
 
 
+def gate_codes() -> set[str]:
+    """Every gate code of this file: the `fail("code", …)` calls above `mutations()`."""
+    src = TOOL.read_text(encoding="utf-8")
+    return set(re.findall(r'\bfail\(\s*"([a-z0-9-]+)"', src[: src.index("\ndef mutations(")]))
+
+
+def code_of(expect: str) -> str:
+    m = re.match(r"\[([a-z0-9-]+)\]", expect)
+    return m.group(1) if m else ""
+
+
 def self_test(spec: str, ctx: Ctx) -> list[str]:
+    """Each mutation adds exactly one new FAIL carrying its expected text; every gate code has a
+    mutation (EXEMPT aside); the A2 list is complete; the spec on disk is untouched."""
     bad: list[str] = []
     digest = hashlib.sha256(SPEC.read_bytes()).hexdigest()
     base, _ = gates(spec, ctx)
@@ -1976,15 +3491,33 @@ def self_test(spec: str, ctx: Ctx) -> list[str]:
         bad.append(
             f"self-test: the unmutated spec fails {len(family)} per-frame gates: {family[:2]}"
         )
-    names = [name for name, _, _ in mutations()]
+    spec_m, ctx_m = mutations(), context_mutations()
+    named = [(n, e) for n, _, e in spec_m] + [(n, e) for n, _, e in ctx_m]
+    names = [n for n, _ in named]
     if len(set(names)) != len(names):
         bad.append("self-test: two mutations share a name")
-    for name, fn, expect in mutations():
+    bad += [f"self-test: the brief's A2 mutation {n} is gone" for n in A2_NAMES if n not in names]
+    codes, covered = gate_codes(), {code_of(e) for _, e in named}
+    bad += [
+        f"self-test: gate code {c} has no mutation" for c in sorted(codes - covered - set(EXEMPT))
+    ]
+    bad += [f"self-test: EXEMPT names {c}, no gate code" for c in sorted(set(EXEMPT) - codes)]
+    bad += [f"self-test: {n} expects no known code" for n, e in named if code_of(e) not in codes]
+    runs: list[tuple[str, str, Ctx, str]] = []
+    for name, fn, expect in spec_m:
         mutated = fn(spec)
         if mutated == spec:
             bad.append(f"self-test {name}: the mutation did not apply")
             continue
-        got, _ = gates(mutated, ctx)
+        runs.append((name, mutated, ctx, expect))
+    for name, tfn, expect in ctx_m:
+        texts = tfn(dict(ctx.t))
+        if texts == ctx.t:
+            bad.append(f"self-test {name}: the mutation did not apply")
+            continue
+        runs.append((name, spec, ctx.with_texts(texts), expect))
+    for name, mutated, c, expect in runs:
+        got, _ = gates(mutated, c)
         new = sorted(set(got) - set(base))
         if len(new) != 1 or expect not in new[0]:
             bad.append(f"self-test {name}: expected one new FAIL with {expect!r}, got {new[:3]}")
@@ -2031,14 +3564,15 @@ def report(ctx: Ctx, numbers: dict[str, Any], bad: list[str]) -> list[str]:
         )
     )
     ok = (
-        "OK — the header, the deviations, the AC trace and the ruled questions; §0's boards "
-        "and their reconciliation; every per-frame gate (dirty marker, T2 anatomy with view-as "
-        "first, planned insets never controls, never T2, never dimmed, Cancel first and "
-        "focused, Esc → Cancel, the exits never gated, CMP-043 alertdialog, the weights, the "
-        "typed field, the consequence lines, the 412, the summaries); the entry-point matrix; "
-        "reasons and upstream strings; the cites; the `14` pointer lines; §5's T2 paragraph, §7's "
-        "matrix, greyscale and CVD rows, §8's deck, §11's G-rows and §12's items; no private path, "
-        "no closing keyword, no dangling id; no placeholder"
+        f"OK — {len(gate_codes())} gate codes: the header, the deviations, the AC trace, the ruled "
+        "questions and the numbered sections; §0's boards and their reconciliation; every "
+        "per-frame gate (the dirty marker and its inverse, T2 anatomy with view-as first, planned "
+        "insets as the fixed sentence, Cancel first, `secondary` and focused, every Esc → Cancel, "
+        "the exits never gated, the footer's verbs and weights, the component and its size, the "
+        "typed field, the consequence lines in footer order, the 412, every quoted number); the "
+        "entry-point matrix; reasons and upstream strings; the cites; the `14` pointer lines; §5, "
+        "§5.1, §6, §7, §8, §11 and §12; no environment control; every marker printed, parsed, "
+        "re-derived and kept; no private path, no closing keyword, no dangling id; no placeholder"
     )
     out.append("\n## 5. Gates: " + (ok if not bad else "\n".join("FAIL " + b for b in bad)))
     out += [f"WARN cited line drifted: {w}" for w in CITE_WARN]
@@ -2050,9 +3584,10 @@ def main(argv: list[str]) -> int:
     ctx = Ctx()
     spec = SPEC.read_text(encoding="utf-8")
     bad, numbers = gates(spec, ctx)
+    warns = list(CITE_WARN)
     out = report(ctx, numbers, bad)
     if "--check" in argv:
-        mism = [b for b in bad if b.startswith("marker")]
+        mism = [b for b in bad if b.startswith("[marker")]
         out.append("markers: " + ("clean" if not mism else "MISMATCH"))
     st_bad: list[str] = []
     if "--self-test" in argv:
@@ -2060,8 +3595,9 @@ def main(argv: list[str]) -> int:
         out.append(
             "self-test: "
             + (
-                f"ok — {len(mutations())} mutations, each caught once by one new FAIL; "
-                "the per-frame gates are clean on the unmutated spec; the spec on disk is unchanged"
+                f"ok — {numbers['mutations']} mutations, each caught once by one new FAIL; every "
+                f"gate code but the {len(EXEMPT)} EXEMPT has one; M1-M17 present; the per-frame "
+                "gates are clean on the unmutated spec; the spec on disk is unchanged"
                 if not st_bad
                 else "FAILED"
             )
@@ -2081,14 +3617,12 @@ def main(argv: list[str]) -> int:
             "summaries": {k: render_summary(FIXTURE[k]) for k in ("ac3", "overflow")},
             "problems": bad,
             "self_test": st_bad,
-            "cite_warnings": CITE_WARN,
+            "cite_warnings": warns,
             "palette": palette,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=1))
     else:
         print("\n".join(out))
-    if argv == ["--self-test"]:
-        return 1 if st_bad else 0
     return 1 if bad or st_bad else 0
 
 
