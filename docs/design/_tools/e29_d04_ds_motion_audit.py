@@ -5,22 +5,24 @@ Standalone, offline, stdlib only. It reads AS TEXT at the pinned base `6fc8aacc6
 the plan texts `05`, `14`, `15`, `16`, the merged E29-D01 / E29-D02 / E29-D03 texts, E09-D09,
 E30-D02, `theme.css`, `tools/contrast/pairs.mjs`, the CVD port's source
 `docs/research/_tools/cvd_simulate.py` and the E11-D05 tool's JND floor; then this ticket's spec
-and hand-off and the working-tree `15` and `16`, which must equal the base. It runs no repo code
-apart from the two design helpers the merged E29-D02 and E30-D04 tools load the same way, read
-through one `_load`: `contrast_check.contrast_ratio()` and the theme loader of
-`packages/ui/tokens/tests/verify_tokens.py` (`load`, `merged_set`, `resolve`, `over`,
-`delta_e76`, `rgb_to_lab`); both, and the token JSON they read, must equal the base
-(G-UNTOUCHED).
+and hand-off and the working-tree `15` and `16`, which must equal the base. It executes no repo
+code (RULED BQ-1): the WCAG ratio of `docs/design/_tools/contrast_check.py` and the theme
+layering, `over()` and CIELAB ΔE of `packages/ui/tokens/tests/verify_tokens.py` are ported and
+read only as text (G-CONTRAST-PORT re-reads their numbers and the layering at the base), as the
+CVD projection of `cvd_simulate.py` is (G-CVD-PORT). The branch may change the spec, the
+hand-off, this tool and the ticket's board PNGs, nothing else (G-UNTOUCHED).
 
 1. **Values.** Every token, motion, distance, contrast and count figure is COMPUTED and printed
    by `--json` (`values`): durations and easings from the primitives; the flash, loop, polite,
-   linger, hold, skeleton and size constants parsed from their cited lines (CITED_VALUES);
-   contrast per theme (dark, light, high contrast) through the helpers; CVD as CIE76 ΔE after the
-   Brettel / Viénot projection of `cvd_simulate.py` (ported verbatim; G-CVD-PORT re-reads its
-   constants) and the greyscale CIELAB L* gap; the counts from the spec's own tables. A figure in
-   the spec is written `VALUE <!-- audit:NAME=VALUE -->`; `--check` re-derives every marker and
-   the number in front of it, and FAILs on a hand-typed figure with a unit, a two-decimal number
-   or a Δ value outside a marker, and on an unfilled `{{audit:NAME}}`; `--fill` writes the
+   linger, hold, skeleton, size and row-count constants parsed from their cited lines
+   (CITED_VALUES); contrast per theme (dark, light, high contrast) through the ported helpers;
+   CVD as CIE76 ΔE after the Brettel / Viénot projection of `cvd_simulate.py` (ported verbatim;
+   G-CVD-PORT re-reads its constants) and the greyscale CIELAB L* gap; the counts from the spec's
+   own tables. A figure in the spec is written `VALUE <!-- audit:NAME=VALUE -->`; `--check`
+   re-derives every marker and the number in front of it, and FAILs on a figure with a unit
+   outside a marker (typed, spelled, in a code span or in a quote no cite verifies), a one- or
+   two-decimal number, a bare count beside what it counts, a Δ value, an HTML comment that is no
+   marker (it hides text from every gate) and an unfilled `{{audit:NAME}}`; `--fill` writes the
    marked value for each `{{audit:NAME}}` in the spec and the hand-off.
 2. **Cites.** Every `NN`:line, `D01`/`D02`/`D03`/`PRIM`:line, `Exx-Dyy`:line and `path`:line
    resolves at the base (FAIL when the line is gone or blank; WARN when it drifted at
@@ -31,21 +33,33 @@ through one `_load`: `contrast_check.contrast_ratio()` and the theme loader of
 3. **Gates (RULED comment 6399392172).** Every table row, bullet, prose sentence and heading of
    the spec and the hand-off is read, fenced copy-ready blocks included, after normalising (HTML
    comments, soft hyphens and zero-width characters dropped, NFKC, markup stripped, dashes to
-   spaces, lower case; quoted copy removed where a gate reads claims). WHOLE-UNIT reading: a
-   table row is one sentence across all its cells, a sentence runs across `;`, `—` and
-   parentheses, and a sentence that opens on a pronoun or a conjunction reads the previous
-   sentence's subject in its place. A negation covers only its own fragment (it stops at `;`,
-   `—`, a parenthesis, a colon, a cell, and a comma or a conjunction that opens a new clause); a
-   negation chain ("never fails to", "not without") asserts its term; a name that holds a
-   negation word ("NO SL", "Not available") is never one. A gate that pairs a subject with a
-   claim reads them within a few words of each other, across fragments; the structured tables
-   (the motion table, the state tables of §2, §4.1's legs, the `16` block) are read by column,
-   frame by frame. Vocabulary lists are case-insensitive. A section whose body still holds a
-   `> **To write (` line is skipped by its gates and fails G-PLACEHOLDER alone.
+   spaces, lower case; quoted copy removed whole where a gate reads claims). WHOLE-UNIT reading:
+   a table row is one sentence across all its cells, a sentence runs across `;`, `—` and
+   parentheses and ends at a full stop (a bold run included), and a sentence or a clause that
+   opens on a pronoun or a conjunction, or follows its subject's colon, reads that subject in its
+   place. A negation covers only its own fragment (it stops at `;`, `—`, a parenthesis, a colon, a
+   cell, and a comma or a conjunction that opens a new clause); a negation chain ("never fails
+   to", "never … without") asserts its term; a name that holds a negation word ("NO SL", "Not
+   available", "sees no") is never one. A gate pairs a subject with a claim within a few words or
+   inside one clause; the structured tables (the motion table, the state tables of §2, §4.1's
+   legs, the `16` block) are read by column, frame by frame. The structured cells are read
+   closed-world: a motion row's Property, Duration and Easing are a shipped token with its marker,
+   `none` or `by reference` (only the owners' recipes Mo-5, Mo-7, Mo-11 and Mo-13), only Mo-1, 2,
+   3, 4, 6 and 9 animate, a frame's Motion names one motion row or none, only the listed frames
+   name an animated row, a T2 frame carries the leg its id names, and an exit is known by its
+   control's name; every table of a section is read, and a second motion or frame table or a
+   repeated id fails. The prose of a motion section is swept like the rest. Vocabulary lists are
+   case-insensitive, camelCase split. G-SAFETY reads the security invariants (no withdrawal, no
+   key shown, no action without its audit, no write under view-as) so they hold after a careless
+   re-pin. A section whose body still holds a `> **To write (` line is skipped by its gates and
+   fails G-PLACEHOLDER alone.
 4. **Pins (default-deny).** A heading, table cell, prose sentence or fenced line that names
-   view-as, a fixture account (Main, Sub-n), an environment (LIVE / DEMO), flatten or a bulk
-   exit, the kill switch or a freeze, a native stop or NO SL, liquidation, reduce-only,
-   read-only, `aria-disabled`, audit, or keys and their kin is security-bearing; each must equal,
+   view-as, a fixture account (Main, Sub-n), an environment or its word or token (LIVE / DEMO,
+   `env`, `color.env.*`), a role (Owner, Manager, Viewer), a permission, a scope, T2 and its
+   keys (`rbac.*`, `recon.*`, `blotter.*`, …), flatten or a bulk exit, the kill switch or a
+   freeze, a native stop or NO SL, liquidation, reduce-only, read-only, `aria-disabled`, audit, a
+   fixture money value, or keys and their kin is security-bearing, and so is every clause of
+   §2.4, §2.5, §4 and §6 and every T2 cell, whatever it names; each must equal,
    whitespace-normalised and in document order, its entry of SEC_PIN_TXT (section, row and
    column or "prose", exact text). New, changed, moved, duplicated and gone clauses FAIL
    G-SEC-PIN; `--check` never re-pins; `--repin-security` prints the table from the current text
@@ -75,18 +89,19 @@ from __future__ import annotations
 import argparse
 import functools
 import hashlib
-import importlib.util
+import io
 import json
+import math
 import re
 import subprocess
 import sys
 import textwrap
+import tokenize
 import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
-from types import ModuleType
 
 ROOT = Path(__file__).resolve().parents[3]
 BASE = "6fc8aacc6"  # every cite was read here (the spec's Inputs line)
@@ -95,6 +110,10 @@ MULTI = re.MULTILINE
 
 SPEC_REL = "docs/design/E29/E29-D04.md"
 HAND_REL = "docs/design/E29/E29-D04-handoff.md"
+TOOL_REL = "docs/design/_tools/e29_d04_ds_motion_audit.py"
+# the only paths the branch may change (G-UNTOUCHED): the three files and the ticket's PNGs
+ALLOWED_REL = (SPEC_REL, HAND_REL, TOOL_REL)
+ALLOWED_PREFIX = "docs/design/E29/img/E29-D04-"
 P15_REL = "docs/plan/15-component-catalogue.md"
 P16_REL = "docs/plan/16-design-system-brief.md"
 DS_DIR_REL = "packages/ui/tokens"
@@ -148,6 +167,16 @@ PINS: dict[str, tuple[str, str]] = {
     "c899241c8": ("#4290", "docs/design/E05/E05-D02-data-display.md"),
     "3a2fc5c29": ("#4322", "docs/design/E05/E05-D02-form-controls.md"),
     "04a8caa95": ("#4414", "docs/design/E05/E05-D02-feedback-overlays.md"),
+    "c99ad48d7": ("#4073", "docs/design/E09/E09-D08.md"),
+    "16661c7bd": ("#3957", "docs/design/E11/E11-D06.md"),
+    "da7b0f8a9": ("#3905", "docs/design/E17/E17-D01.md"),
+    "c31b67c22": ("#4102", "docs/design/E17/E17-D01.md"),
+    "f798a64e6": ("#3923", "docs/design/E30/E30-D02.md"),
+    "88839ea33": ("#4375", "docs/design/E33/E33-D03.md"),
+    "05aa6fba1": ("#4402", "docs/design/E33/img/"),
+    "1e6c15a1a": ("#3920", "docs/design/E39/E39-D01.md"),
+    "e0bf7db3e": ("#3926", "docs/design/E42/E42-D02.md"),
+    "9b5c0d8bf": ("#4193", "docs/design/E42/E42-D04.md"),
 }
 # sha → the document it pins: a document id named next to it must be this one
 PIN_DOC = {
@@ -162,8 +191,21 @@ PIN_DOC = {
     "c899241c8": "e05 d02",
     "3a2fc5c29": "e05 d02",
     "04a8caa95": "e05 d02",
+    "c99ad48d7": "e09 d08",
+    "16661c7bd": "e11 d06",
+    "da7b0f8a9": "e17 d01",
+    "c31b67c22": "e17 d01",
+    "f798a64e6": "e30 d02",
+    "88839ea33": "e33 d03",
+    "05aa6fba1": "e33 d03",
+    "1e6c15a1a": "e39 d01",
+    "e0bf7db3e": "e42 d02",
+    "9b5c0d8bf": "e42 d04",
 }
-DOC_IDS = r"\b(e29 d01|e29 d02|e29 d03|d01|d02|d03|e30 d04|e09 d09|e39 d03|e05 d02)\b"
+DOC_IDS = (
+    r"\b(e29 d01|e29 d02|e29 d03|e30 d04|e30 d02|e09 d09|e09 d08|e39 d03|e39 d01|e05 d02|e11 d06"
+    r"|e17 d01|e33 d03|e42 d02|e42 d04|d01|d02|d03)\b"
+)
 HAND_PINS = ("9da45ae35", "c4270ba93", "75a33c164", "a59ba382b")
 MAX_BOARDS = 10  # RULED BQ-15: at most ten boards, seven dark and three light twins
 LIGHT_BOARDS = 3
@@ -240,6 +282,10 @@ CITED_VALUES: dict[str, tuple[str, int, str]] = {
     "cited.cmp015.period-ms": ("15", 192, r"one sweep per ([\d,]+) ms"),
     "cited.cmp015.stop-s": ("15", 192, r"stopped at (\d+) s"),
     "cited.theme.reduce-ms": ("theme.css", 63, r"transition-duration: ([\d.]+)ms"),
+    "cited.15.virtualized-rows": ("15", 527, r"default true above (\d+) rows"),
+    "cited.d01.virtualise-rows": ("D01", 284, r"Virtualise at ≥(\d+ \d{3}) rows"),
+    "cited.d02.fixture-rows": ("D02", 142, r"on a (\d+)-row fixture"),
+    "cited.d03.fixture-fills": ("D03", 72, r"a ([\d,]+)-fill fixture"),
 }
 # §5's pairs: name → (fg, bg, role); a bg "X over Y" is X at the `16` §7.1 flash peak over Y
 PAIRS: dict[str, tuple[str, str, str]] = {
@@ -423,6 +469,7 @@ def fenced(lines: list[str]) -> list[bool]:
     return out
 
 
+@functools.lru_cache(maxsize=8192)
 def section(text: str, head: str) -> str:
     """From the heading starting with `head` (outside fences) to the next heading of the same or
     a higher level outside a fence; "" when there is no such heading."""
@@ -480,6 +527,45 @@ def tables(block: str) -> list[tuple[list[str], list[list[str]]]]:
     return out
 
 
+def rows_with(block: str, *words: str) -> list[dict[str, str]]:
+    """The rows of EVERY table of `block` whose header holds every word of `words`
+    (case-insensitive), in document order, as dicts keyed by the header cells."""
+    out: list[dict[str, str]] = []
+    for head, body in tables(block):
+        joined = " | ".join(head).lower()
+        if all(w.lower() in joined for w in words):
+            out += [dict(zip(head, r, strict=False)) for r in body]
+    return out
+
+
+def doc_tables(text: str) -> list[tuple[str, list[str], int]]:
+    """Every table of `text` outside a fence: (its section heading, its header cells, its number
+    of body rows); the heading is the nearest one above it outside a fence ("" before any)."""
+    out: list[tuple[str, list[str], int]] = []
+    lines = text.split("\n")
+    fence = fenced(lines)
+    heading = ""
+    i = 0
+    while i < len(lines):
+        m = HEADING.match(lines[i])
+        if m and not fence[i]:
+            heading = m[2]
+        if (
+            not fence[i]
+            and re.match(r"^\s*\|", lines[i])
+            and i + 1 < len(lines)
+            and is_rule(lines[i + 1])
+        ):
+            j = i + 2
+            while j < len(lines) and re.match(r"^\s*\|", lines[j]):
+                j += 1
+            out.append((heading, split_row(lines[i]), j - i - 2))
+            i = j
+            continue
+        i += 1
+    return out
+
+
 def table_rows(block: str) -> list[list[str]]:
     """Every body row of every table of `block`."""
     return [r for _h, body in tables(block) for r in body]
@@ -529,6 +615,7 @@ QUOTED = re.compile(r'"[^"\n]*"|“[^”\n]*”')
 CODE = re.compile(r"`[^`\n]*`")
 
 
+@functools.lru_cache(maxsize=262144)
 def norm_text(text: str) -> str:
     """Rendered words only: comments, soft hyphens and markup dropped, NFKC, dashes to spaces,
     whitespace collapsed, lower case."""
@@ -551,7 +638,7 @@ def visible(text: str) -> str:
 
 # a hard fragment boundary: a semicolon, a spaced dash, a parenthesis or bracket, a colon, a
 # table cell, a sentence end; a negation never reaches across one
-HARD = re.compile(r";\s*|\s+[—–]\s+|[()\[\]]|:\s+|\s\|\s|(?<=[.!?])\s+")
+HARD = re.compile(r";\s*|\s+[—–]\s+|[()\[\]]|:\s+|\s\|\s|(?:(?<=[.!?])|(?<=[.!?]\*\*))\s+")
 # a soft boundary inside a fragment: a comma or a conjunction that opens a new clause
 SOFT = re.compile(
     r",\s+(?=(?:the|a|an|it|its|they|their|this|these|that|those|which|each|every|both|so|"
@@ -566,13 +653,28 @@ DOUBLE_NEG = re.compile(
     r"|\b(?:never|not|no|cannot|nothing)\s+(?:\S+\s+){0,2}?"
     r"(?:fail(?:s|ed|ing)?|lack(?:s|ed|ing)?|omit\w*|un|other|ceas\w*)\b"
 )
+# "never … without X" / "no … without X" asserts X (and what stands between): both words go
+NEG_WITHOUT = re.compile(r"\b(never|not|no|nothing|none)\b((?:\W+\w+){0,6}?\W+)without\b")
 NEG_REACH = 8  # words a negation covers inside its fragment
+
+
+def unnegate(t: str) -> str:
+    """`t` with each "never … without" pair blanked, keeping its length and the words between."""
+    return NEG_WITHOUT.sub(lambda m: " " * len(m[1]) + m[2] + " " * len("without"), t)
+
+
 # phrases whose negation word is part of a name or of the asserted claim, never a negation
 PROTECT: tuple[tuple[str, str], ...] = (
     (r"\bno sl\b", "no_sl"),
     (r"\bnot shown\b", "not_shown"),
     (r"\bnot offered\b", "not_offered"),
     (r"\bnot available\b", "not_available"),
+    (r"\bnot rendered\b", "not_rendered"),
+    (r"\bnot displayed\b", "not_displayed"),
+    (r"\bnot visible\b", "not_visible"),
+    (r"\b(sees?|gets?) no\b", r"\1_no"),
+    (r"\b(?:does not|doesn't|do not|don't|cannot|can't) see\b", "not_see"),
+    (r"\bno (\w+) (button|control|item)\b", r"no_\1_\2"),
 )
 
 
@@ -582,20 +684,22 @@ def protect(t: str) -> str:
     return t
 
 
-SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9`\"“*(])")
+SENTENCE_END = re.compile(r"(?:(?<=[.!?])|(?<=[.!?]\*\*))\s+(?=[A-Z0-9`\"“*(])")
 PRONOUN = re.compile(
     r"^(?:it|its|they|their|them|this|these|that|those|which|both|each|either|neither|such|"
     r"then|also|so|and|or|but|while|whose|here|there)\b"
 )
 
 
-def fragments(raw: str) -> list[str]:
-    return [f for f in HARD.split(raw) if f.strip()]
+@functools.lru_cache(maxsize=131072)
+def fragments(raw: str) -> tuple[str, ...]:
+    return tuple(f for f in HARD.split(raw) if f.strip())
 
 
+@functools.lru_cache(maxsize=524288)
 def _asserts(raw_fragment: str, term: str, keep_quotes: bool) -> bool:
     t = norm_text(raw_fragment if keep_quotes else unquote(raw_fragment))
-    t = protect(DOUBLE_NEG.sub(" ", t))
+    t = protect(DOUBLE_NEG.sub(" ", unnegate(t)))
     out = list(t)
     for m in NEG.finditer(t):
         start = m.end()
@@ -612,11 +716,13 @@ def _asserts(raw_fragment: str, term: str, keep_quotes: bool) -> bool:
 def live(raw: str, term: str, keep_quotes: bool = False) -> bool:
     """`term` asserted in `raw` once every negated mention is blanked: a negation covers its
     own fragment only, up to a soft boundary and at most NEG_REACH words; a negation chain
-    asserts its term."""
-    return any(_asserts(f, term, keep_quotes) for f in fragments(raw))
+    asserts its term. A quote is dropped whole first, so a dash inside it splits nothing."""
+    src = raw if keep_quotes else unquote(raw)
+    return any(_asserts(f, term, keep_quotes) for f in fragments(src))
 
 
-def units(text: str) -> list[str]:
+@functools.lru_cache(maxsize=256)
+def units(text: str) -> tuple[str, ...]:
     """Every unit a gate reads: each table row (its cells joined by " | "), each bullet, each
     prose paragraph and each heading; fenced copy-ready lines are read like the rest; HTML
     comments and placeholder lines are dropped."""
@@ -628,13 +734,15 @@ def units(text: str) -> list[str]:
             out.append(" ".join(para))
             para.clear()
 
-    for ln in visible(text).split("\n"):
+    lines = visible(text).split("\n")
+    for i, ln in enumerate(lines):
         s = ln.strip()
         if s.startswith("```"):
             flush()
         elif re.match(r"^\s*\|", ln):
             flush()
-            if not is_rule(ln):
+            header = i + 1 < len(lines) and is_rule(lines[i + 1])
+            if not is_rule(ln) and not header:  # a header row names columns, it claims nothing
                 out.append(" | ".join(split_row(s)))
         elif re.match(r"^\s*(?:[-*+]|\d+\.) ", ln) or s.startswith("#"):
             flush()
@@ -644,15 +752,16 @@ def units(text: str) -> list[str]:
         else:
             flush()
     flush()
-    return out
+    return tuple(out)
 
 
-def sentences(unit: str) -> list[str]:
+@functools.lru_cache(maxsize=131072)
+def sentences(unit: str) -> tuple[str, ...]:
     """A table row is one sentence across all its cells; prose splits at a sentence end only
     (never at a semicolon, a dash or a parenthesis)."""
     if " | " in unit:
-        return [unit]
-    return [s for s in SENTENCE_END.split(unit) if s.strip()]
+        return (unit,)
+    return tuple(s for s in SENTENCE_END.split(unit) if s.strip())
 
 
 def claims(
@@ -688,12 +797,13 @@ def claims(
     return hits
 
 
+@functools.lru_cache(maxsize=262144)
 def blanked(raw: str, keep_quotes: bool = False) -> str:
     """The sentence normalised, each fragment's negated words blanked, fragments joined by " ¦ "
     (so a term and its subject may sit in different fragments of one sentence)."""
     parts: list[str] = []
-    for f in fragments(raw):
-        t = protect(DOUBLE_NEG.sub(" ", norm_text(f if keep_quotes else unquote(f))))
+    for f in fragments(raw if keep_quotes else unquote(raw)):
+        t = protect(DOUBLE_NEG.sub(" ", unnegate(norm_text(f if keep_quotes else unquote(f)))))
         out = list(t)
         for m in NEG.finditer(t):
             start = m.end()
@@ -734,7 +844,7 @@ def pair_claims(
             for s in sentences(u):
                 n = norm_text(s if keep_quotes else unquote(s))
                 read = s
-                m = re.search(a, n)
+                m = re.search(a, blanked(s, keep_quotes))  # a negated mention is no subject
                 if m:
                     subject = m[0]
                 elif subject and PRONOUN.match(n):
@@ -745,6 +855,44 @@ def pair_claims(
                     continue
                 if adjacent(read, a, b, gap, keep_quotes):
                     hits.append(norm_text(read)[:72])
+    return hits
+
+
+def clause_claims(
+    texts: list[str],
+    a: str,
+    b: str,
+    keep_quotes: bool = False,
+    unless: str = "",
+    prep: Callable[[str], str] | None = None,
+) -> list[str]:
+    """Every clause (a fragment of a sentence: a row's cell, a part between `;`, `—`, a colon or
+    parentheses) where `a` and `b` are both asserted; a clause or a sentence that opens on a
+    pronoun or a conjunction reads the last subject (the phrase that matched `a`) in its place."""
+    hits: list[str] = []
+    for text in texts:
+        for u in units(text):
+            subject = ""
+            for s in sentences(u):
+                raw = prep(s) if prep else s
+                carry = False
+                for frag in blanked(raw, keep_quotes).split(" ¦ "):
+                    m = re.search(a, frag)
+                    led = False
+                    if m:
+                        subject = m[0]
+                    elif subject and (carry or PRONOUN.match(frag)):
+                        frag, led = subject + " " + frag, True
+                    # "`display`: the word as text, …": a subject alone before a colon leads in
+                    carry = (
+                        m is not None
+                        and len(frag.split()) <= 3
+                        and re.search(re.escape(m[0]) + r"\W{0,3}:", norm_text(raw)) is not None
+                    )
+                    if unless and re.search(unless, frag):
+                        continue
+                    if (led or re.search(a, frag)) and re.search(b, frag):
+                        hits.append(frag[:72])
     return hits
 
 
@@ -772,71 +920,118 @@ NULL_WORDS = (
 
 
 # ---------------------------------------------------------------------------- the design helpers
+# Ported, never executed (RULED BQ-1: the tool executes no repo code). The WCAG ratio of
+# `contrast_check.py` (`_linearize`, `relative_luminance`, `contrast_ratio`) and, from
+# `verify_tokens.py`, the theme layering (`THEMES` over `merged_set`, `resolve`), `hex_to_rgb`,
+# `over`, `rgb_to_lab` and `delta_e76` keep their numbers here as named constants, in the order
+# their source writes them; G-CONTRAST-PORT re-reads those functions at the base and fails when a
+# number, its order or the layering differs. The token JSON and `themes.json` are read at the base.
+
+WCAG_KNEE = 0.03928
+WCAG_SLOPE = 12.92
+WCAG_OFFSET = 0.055
+WCAG_SCALE = 1.055
+WCAG_GAMMA = 2.4
+WCAG_LUMA = (0.2126, 0.7152, 0.0722)
+WCAG_FLARE = 0.05
+HEX_LEN = 6
+HEX_SLICES = ((0, 2), (2, 4), (4, 6))
+HEX_RADIX = 16
+LAB_KNEE = 0.04045
+LAB_RGB_TO_XYZ = ((0.4124, 0.3576, 0.1805), (0.2126, 0.7152, 0.0722), (0.0193, 0.1192, 0.9505))
+LAB_WHITE = (0.95047, 1.0, 1.08883)
+LAB_EPSILON = 0.008856
+LAB_KAPPA = 7.787
+LAB_SCALE = (116, 16, 500, 200)
+OVER_ROUND = 0.5
 
 
-def _load(path: Path, name: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f"FAIL parse: cannot load {path}")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def _wcag_linearize(channel: int) -> float:
+    c = channel / 255
+    return c / WCAG_SLOPE if c <= WCAG_KNEE else ((c + WCAG_OFFSET) / WCAG_SCALE) ** WCAG_GAMMA
 
 
-@functools.lru_cache(maxsize=1)
-def helpers() -> tuple[ModuleType, ModuleType]:
-    """The theme loader of `verify_tokens.py` and `contrast_check.py`, loaded read-only."""
-    return _load(ROOT / LOADER_REL, "verify_tokens"), _load(ROOT / RATIO_REL, "contrast_check")
+def wcag_luminance(rgb3: tuple[int, int, int]) -> float:
+    r, g, b = rgb3
+    kr, kg, kb = WCAG_LUMA
+    return kr * _wcag_linearize(r) + kg * _wcag_linearize(g) + kb * _wcag_linearize(b)
 
 
-@functools.lru_cache(maxsize=4)
-def theme_colours(theme: str) -> dict[str, str]:
-    """Every colour name → its resolved hex in `theme`, layered as `verify_tokens.py` does."""
-    loader, _ratio = helpers()
-    layered: dict[str, object] = dict(loader.load(loader.PRIMITIVES))
-    layered.update(loader.merged_set(loader.THEMES[theme]))
-    out: dict[str, str] = {}
-    for name, entry in layered.items():
-        if isinstance(entry, dict) and entry.get("$type") == "color":
-            out[name] = str(loader.resolve(entry["$value"], layered))
-    return out
-
-
-def hex_of(theme: str, name: str) -> str:
-    value = theme_colours(theme).get(name, "MISSING")
-    if not re.fullmatch(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?", value):
-        raise SystemExit(f"FAIL parse: {name} does not resolve to a colour in {theme} ({value})")
-    if len(value) == 9:  # an alpha colour, painted over the raised surface of the same theme
-        loader, _ratio = helpers()
-        alpha = int(value[7:9], 16) / 255
-        return str(loader.over(value[:7], hex_of(theme, "color.surface.raised"), alpha)).upper()
-    return value.upper()
+def wcag_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
+    la, lb = wcag_luminance(a), wcag_luminance(b)
+    lighter, darker = max(la, lb), min(la, lb)
+    return (lighter + WCAG_FLARE) / (darker + WCAG_FLARE)
 
 
 def rgb(hex6: str) -> tuple[int, int, int]:
-    h = hex6.lstrip("#")
-    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    """`verify_tokens.hex_to_rgb`: the first six hex digits as (r, g, b)."""
+    h = hex6.lstrip("#")[:HEX_LEN]
+    (a0, a1), (b0, b1), (c0, c1) = HEX_SLICES
+    return int(h[a0:a1], HEX_RADIX), int(h[b0:b1], HEX_RADIX), int(h[c0:c1], HEX_RADIX)
 
 
-def paint(theme: str, spec: str, peak: float) -> str:
-    """A background: a colour name, or "X over Y" (X at the flash peak over Y)."""
-    if " over " in spec:
-        top, under = spec.split(" over ", 1)
-        loader, _ratio = helpers()
-        return str(loader.over(hex_of(theme, top), hex_of(theme, under), peak)).upper()
-    return hex_of(theme, spec)
+def rgb_to_lab(rgb3: tuple[int, int, int]) -> tuple[float, float, float]:
+    def chan(c: int) -> float:
+        v = c / 255.0
+        return ((v + WCAG_OFFSET) / WCAG_SCALE) ** WCAG_GAMMA if v > LAB_KNEE else v / WCAG_SLOPE
+
+    r, g, b = (chan(c) for c in rgb3)
+    (xr, xg, xb), (yr, yg, yb), (zr, zg, zb) = LAB_RGB_TO_XYZ
+    x = (r * xr + g * xg + b * xb) / LAB_WHITE[0]
+    y = (r * yr + g * yg + b * yb) / LAB_WHITE[1]
+    z = (r * zr + g * zg + b * zb) / LAB_WHITE[2]
+
+    def f(t: float) -> float:
+        return t ** (1 / 3) if t > LAB_EPSILON else (LAB_KAPPA * t) + (16 / 116)
+
+    fx, fy, fz = f(x), f(y), f(z)
+    k116, k16, k500, k200 = LAB_SCALE
+    return (k116 * fy) - k16, k500 * (fx - fy), k200 * (fy - fz)
 
 
-def ratio(theme: str, fg: str, bg: str, peak: float) -> float:
-    _loader, contrast = helpers()
-    return float(contrast.contrast_ratio(rgb(hex_of(theme, fg)), rgb(paint(theme, bg, peak))))
+def delta_e(a: str, b: str) -> float:
+    """`verify_tokens.delta_e76`: CIE76 ΔE between two hex colours."""
+    la, aa, ba = rgb_to_lab(rgb(a))
+    lb, ab, bb = rgb_to_lab(rgb(b))
+    return math.sqrt((la - lb) ** 2 + (aa - ab) ** 2 + (ba - bb) ** 2)
+
+
+def over(fg: str, bg: str, alpha: float) -> str:
+    """`verify_tokens.over`: `fg` at `alpha` over opaque `bg`, per channel, rounded half up."""
+    mix = [
+        math.floor(alpha * f + (1 - alpha) * b + OVER_ROUND)
+        for f, b in zip(rgb(fg), rgb(bg), strict=True)
+    ]
+    return "#" + "".join(f"{c:02X}" for c in mix)
+
+
+def resolve(value: object, tokens: dict[str, dict[str, object]], seen: frozenset[str]) -> object:
+    """`verify_tokens.resolve`: a DTCG `{token.path}` reference, resolved recursively."""
+    if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
+        ref = value[1:-1]
+        if ref in seen:
+            raise SystemExit(f"FAIL parse: circular reference {ref}")
+        if ref not in tokens:
+            raise SystemExit(f"FAIL parse: unset variable {ref}")
+        return resolve(tokens[ref]["$value"], tokens, seen | {ref})
+    if isinstance(value, dict):
+        return {k: resolve(v, tokens, seen) for k, v in value.items()}
+    if isinstance(value, list):
+        return [resolve(v, tokens, seen) for v in value]
+    return value
+
+
+@functools.lru_cache(maxsize=8)
+def token_file(name: str) -> dict[str, dict[str, object]]:
+    """One token set at the base: name → its entry."""
+    data = json.loads(at_base(f"{DS_DIR_REL}/{name}.tokens.json"))
+    return {str(k): v for k, v in data.items() if isinstance(v, dict)}
 
 
 @functools.lru_cache(maxsize=8)
 def ds_file(name: str) -> dict[str, object]:
     """One token file at the base: name → its raw `$value`."""
-    data = json.loads(at_base(f"{DS_DIR_REL}/{name}.tokens.json"))
-    return {k: v.get("$value") for k, v in data.items() if isinstance(v, dict)}
+    return {k: v.get("$value") for k, v in token_file(name).items()}
 
 
 @functools.lru_cache(maxsize=1)
@@ -855,6 +1050,114 @@ def expand(name: str, known: frozenset[str]) -> list[str]:
     if name.endswith(".*"):
         return sorted(n for n in known if n.startswith(name[:-1])) or [name]
     return [name]
+
+
+@functools.lru_cache(maxsize=1)
+def theme_sets() -> dict[str, tuple[str, ...]]:
+    """`themes.json` at the base: each theme's token sets in layering order."""
+    data = json.loads(at_base(f"{DS_DIR_REL}/themes.json"))
+    return {str(t["name"]): tuple(str(s) for s in t["sets"]) for t in data["themes"]}
+
+
+@functools.lru_cache(maxsize=4)
+def theme_colours(theme: str) -> dict[str, str]:
+    """Every colour name → its resolved hex in `theme`: the sets layered in `themes.json`'s order,
+    a later set overriding an earlier one (`verify_tokens.merged_set`)."""
+    layered: dict[str, dict[str, object]] = {}
+    for s in theme_sets()[theme]:
+        layered.update(token_file(s))
+    out: dict[str, str] = {}
+    for name, entry in layered.items():
+        if entry.get("$type") == "color":
+            out[name] = str(resolve(entry["$value"], layered, frozenset()))
+    return out
+
+
+def hex_of(theme: str, name: str) -> str:
+    value = theme_colours(theme).get(name, "MISSING")
+    if not re.fullmatch(r"#[0-9A-Fa-f]{6}(?:[0-9A-Fa-f]{2})?", value):
+        raise SystemExit(f"FAIL parse: {name} does not resolve to a colour in {theme} ({value})")
+    if len(value) == 9:  # an alpha colour, painted over the raised surface of the same theme
+        alpha = int(value[7:9], 16) / 255
+        return over(value[:7], hex_of(theme, "color.surface.raised"), alpha).upper()
+    return value.upper()
+
+
+def paint(theme: str, spec: str, peak: float) -> str:
+    """A background: a colour name, or "X over Y" (X at the flash peak over Y)."""
+    if " over " in spec:
+        top, under = spec.split(" over ", 1)
+        return over(hex_of(theme, top), hex_of(theme, under), peak).upper()
+    return hex_of(theme, spec)
+
+
+def ratio(theme: str, fg: str, bg: str, peak: float) -> float:
+    return wcag_ratio(rgb(hex_of(theme, fg)), rgb(paint(theme, bg, peak)))
+
+
+def lightness(hex6: str) -> float:
+    return rgb_to_lab(rgb(hex6))[0]
+
+
+# each ported function: (helper, function, the numbers its source writes, in order)
+PORTED: tuple[tuple[str, str, Callable[[], tuple[float, ...]]], ...] = (
+    (
+        RATIO_REL,
+        "_linearize",
+        lambda: (255, WCAG_SLOPE, WCAG_KNEE, WCAG_OFFSET, WCAG_SCALE, WCAG_GAMMA),
+    ),
+    (RATIO_REL, "relative_luminance", lambda: WCAG_LUMA),
+    (RATIO_REL, "contrast_ratio", lambda: (WCAG_FLARE, WCAG_FLARE)),
+    (
+        LOADER_REL,
+        "hex_to_rgb",
+        lambda: (HEX_LEN, *(x for s in HEX_SLICES for x in (*s, HEX_RADIX))),
+    ),
+    (
+        LOADER_REL,
+        "rgb_to_lab",
+        lambda: (
+            255.0,
+            WCAG_OFFSET,
+            WCAG_SCALE,
+            WCAG_GAMMA,
+            LAB_KNEE,
+            WCAG_SLOPE,
+            *(x for i in range(3) for x in (*LAB_RGB_TO_XYZ[i], LAB_WHITE[i])),
+            1,
+            3,
+            LAB_EPSILON,
+            LAB_KAPPA,
+            16,
+            116,
+            *LAB_SCALE,
+        ),
+    ),
+    (LOADER_REL, "delta_e76", lambda: (2, 2, 2)),
+    (LOADER_REL, "over", lambda: (1, OVER_ROUND)),
+)
+
+
+def source_numbers(src: str, func: str) -> list[float] | None:
+    """The numeric literals of `def func` in `src`, in order (tokenized, so strings and comments
+    never count); None when the function is not there."""
+    m = re.search(rf"^def {re.escape(func)}\(.*?(?=^\S|\Z)", src, re.MULTILINE | re.DOTALL)
+    if m is None:
+        return None
+    toks = tokenize.generate_tokens(io.StringIO(m[0]).readline)
+    return [float(t.string) for t in toks if t.type == tokenize.NUMBER]
+
+
+def helper_layering() -> dict[str, tuple[str, ...]]:
+    """`verify_tokens.THEMES` at the base, each theme's sets with `PRIMITIVES` first."""
+    src = at_base(LOADER_REL)
+    prim = grab(r'^PRIMITIVES = "([^"]+)"', src, "verify_tokens.PRIMITIVES")
+    block = grab(r"^THEMES = \{(.*?)^\}", src, "verify_tokens.THEMES", MULTI | re.DOTALL)
+    out: dict[str, tuple[str, ...]] = {}
+    for name, files in re.findall(r'"([a-z-]+)": \[([^\]]*)\]', block):
+        sets = [prim, *re.findall(r'"([^"]+)"', files)]
+        out[name] = tuple(s.removesuffix(".tokens.json") for s in sets)
+    return out
 
 
 # The Brettel (1997) / Viénot projection of `docs/research/_tools/cvd_simulate.py`, ported
@@ -905,16 +1208,6 @@ def simulate(hex6: str, deficiency: str) -> str:
     return "#" + "".join(f"{max(0, min(255, round(linear_to_srgb(c)))):02X}" for c in lin2)
 
 
-def delta_e(a: str, b: str) -> float:
-    loader, _ratio = helpers()
-    return float(loader.delta_e76(a, b))
-
-
-def lightness(hex6: str) -> float:
-    loader, _ratio = helpers()
-    return float(loader.rgb_to_lab(rgb(hex6))[0])
-
-
 # ---------------------------------------------------------------------------- the spec's tables
 
 MO_ID = r"Mo-\d+"
@@ -929,13 +1222,33 @@ def is_light(board: dict[str, str]) -> bool:
     return re.search(r"-light`?$", col(board, "Board").strip()) is not None
 
 
+def mo_list(spec: str) -> list[tuple[str, dict[str, str]]]:
+    """Every row of every motion table of §3.2, in order, keyed by its Mo id (a repeated id is
+    kept, so a later copy never shadows an earlier one)."""
+    rows = rows_with(section(spec, "3.2 The motion table"), "Mo", "Property")
+    return [(row_key(col(r, "Mo")), r) for r in rows]
+
+
 def mo_rows(spec: str) -> dict[str, dict[str, str]]:
-    rows = table_with(section(spec, "3.2 The motion table"), "Mo", "Property")
-    return {row_key(col(r, "Mo")): r for r in rows}
+    """The motion rows by id (for lookups; the gates read `mo_list`)."""
+    return dict(mo_list(spec))
 
 
 def state_rows(spec: str, head: str) -> list[dict[str, str]]:
-    return table_with(section(spec, head), "Frame", "State", "Word")
+    return rows_with(section(spec, head), "Frame", "State", "Word")
+
+
+MO_HEAD = ("Mo", "Property")
+FRAME_HEAD = ("Frame", "State", "Word")
+
+
+def table_places(spec: str, words: tuple[str, ...]) -> list[str]:
+    """The section heading of every table of the spec whose header holds `words`."""
+    return [
+        h
+        for h, head, _n in doc_tables(spec)
+        if all(w.lower() in " | ".join(head).lower() for w in words)
+    ]
 
 
 STATE_HEADS = (
@@ -954,7 +1267,7 @@ def all_state_rows(spec: str) -> list[tuple[str, dict[str, str]]]:
 
 
 def gated_rows(spec: str) -> list[dict[str, str]]:
-    return table_with(section(spec, "4.1 The gated controls"), "Control", "Legs")
+    return rows_with(section(spec, "4.1 The gated controls"), "Control", "Legs")
 
 
 def contrast_rows(spec: str) -> list[dict[str, str]]:
@@ -967,7 +1280,7 @@ def proposed_names(spec: str) -> set[str]:
 
 
 def copy_rows(spec: str) -> list[dict[str, str]]:
-    return table_with(section(spec, "6. Copy keys"), "Key", "String", "Status")
+    return rows_with(section(spec, "6. Copy keys"), "Key", "String", "Status")
 
 
 def c_rows(spec: str) -> dict[str, dict[str, str]]:
@@ -992,7 +1305,7 @@ def table_a(hand: str) -> list[dict[str, str]]:
 
 
 def block16_rows(hand: str) -> list[dict[str, str]]:
-    return table_with(section(hand, "C.6 The `16` block"), "Surface", "Enter")
+    return rows_with(section(hand, "C.6 The `16` block"), "Surface", "Enter")
 
 
 # ---------------------------------------------------------------------------- the base's facts
@@ -1081,8 +1394,9 @@ def motion_values() -> Values:
         out[f"motion.easing.{k}"] = ",".join(f"{x:g}" for x in curve)
     for k in ("compact", "comfortable"):
         out[f"ds.size.row.{k}"] = str(prim[f"size.row.{k}"])
+    out["ds.size.target.min"] = str(prim["size.target.min"])
     for name, (cid, n, pattern) in CITED_VALUES.items():
-        out[name] = grab(pattern, base_line(cid, n), f"{cid}:{n} {name}").replace(",", "")
+        out[name] = re.sub(r"[,\s]", "", grab(pattern, base_line(cid, n), f"{cid}:{n} {name}"))
     return out
 
 
@@ -1129,7 +1443,7 @@ def animated(row: dict[str, str]) -> bool:
 
 def count_values(spec: str) -> Values:
     bd = boards(spec)
-    mos = mo_rows(spec)
+    mos = dict(mo_list(spec))
     drs = drift_rows(spec)
     verdicts = [norm_text(col(d, "Verdict")) for d in drs.values()]
     unresolved = [k for k, d in drs.items() if drift_problems(k, d)]
@@ -1137,7 +1451,7 @@ def count_values(spec: str) -> Values:
         "count.boards": str(len(bd)),
         "count.boards-light": str(len([b for b in bd if is_light(b)])),
         "count.boards-dark": str(len([b for b in bd if not is_light(b)])),
-        "count.motion-rows": str(len(mos)),
+        "count.motion-rows": str(len(mo_list(spec))),
         "count.motion-animated": str(len([m for m in mos.values() if animated(m)])),
         "count.mutations": str(len(MUTATIONS)),
         "count.gates": str(len(GATE_TAGS)),
@@ -1149,6 +1463,7 @@ def count_values(spec: str) -> Values:
         "count.statuses": str(len(statuses())),
         "count.gap8": str(len(GAP8)),
         "count.pairs": str(len(PAIRS)),
+        "count.pairs-measured": str(len(MEASURED_ONLY)),
         "count.sec-pins": str(len(pin_rows(SEC_PIN_TXT))),
         "budget.spec-lines": str(SPEC_LINE_BUDGET),
         "budget.summary-lines": str(SUMMARY_LINES),
@@ -1188,10 +1503,28 @@ MARKER = re.compile(r"<!-- audit:([A-Za-z0-9_.\-]+)=([^ >]+) -->")
 FILL = re.compile(r"\{\{audit:([A-Za-z0-9_.\-]+)\}\}")
 NUMBER = re.compile(r"(?<![\w.])\d+(?:,\d{3})*(?:\.\d+)?")
 FIGURE = re.compile(
-    r"(?<![\w.,:#/>{-])(\d+(?:[.,]\d+)*)\s?(ms|s|hz|px|%|:1)(?![\w])", re.IGNORECASE
+    r"(?<![\w.,:#/>{-])(\d+(?:[.,]\d+)*)\s?-?\s?(ms|s|hz|px|%|:1|milliseconds?|seconds?|pixels?"
+    r"|hertz|percent)(?![\w])",
+    re.IGNORECASE,
 )
-TWO_DP = re.compile(r"(?<![\w.,:#/-])\d+\.\d{2}(?![\d.])")
-DELTA = re.compile(r"Δ[EL]\*?(?:76)?\s+\d")
+# a spelled figure with a unit ("eight seconds", "half a second", "four hundred milliseconds")
+SPELLED_FIGURE = re.compile(
+    r"\b(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty|forty"
+    r"|fifty|sixty|hundred|thousand|half|tenth|quarter)[\s-]+(?:and[\s-]+|of[\s-]+|a[\s-]+)*)+"
+    r"(?:milliseconds?|seconds|pixels?|hertz)\b|\b(?:half|tenth|quarter)[\s-]+(?:of[\s-]+)?a[\s-]+second\b",
+    re.IGNORECASE,
+)
+TWO_DP = re.compile(r"(?<![\w.,:#/-])\d+\.\d{1,2}(?!\d|\.\d)")
+# a bare count beside what it counts or a measure word beside its number
+BARE_COUNT = re.compile(
+    r"(?<![\w.,:#/>{-])\d[\d,]*(?:\.\d+)?\s+(?:cells?|rows?|starts?|times (?:a|per) second"
+    r"|per second|fps)\b|\b(?:peak|bar|ratio|opacity|floor)\s+(?:of\s+)?\d+(?:\.\d+)?(?![\w.])",
+    re.IGNORECASE,
+)
+TIME_UNIT = re.compile(r"\d+(?:[.,]\d+)*\s?-?\s?(?:ms|milliseconds?|seconds?|s)\b", re.IGNORECASE)
+# a quoted fragment G-CITE verifies: right after a `file`:line cite
+CITED_QUOTE = re.compile(r':\d+(?:[–-]\d+)?(?:, :\d+(?:[–-]\d+)?)* "[^"\n]+"')
+DELTA = re.compile(r"Δ[EL]\*?(?:76)?\s+(?:of\s+)?(?:about |around |roughly |some |nearly |~)?\d")
 # the copy columns a figure may sit in verbatim (fixtures, catalogue text)
 COPY_HEADS = ("word", "string", "old", "cell text", "copy")
 
@@ -1255,11 +1588,17 @@ def bare_figures(text: str) -> list[str]:
             prev = m.end()
         parts.append(work[prev:])
         work = "".join(parts)
+        # a quote holds copy, never a measurement, but a time in a quote no cite verifies does
+        loose = [q for q in QUOTED.findall(CITED_QUOTE.sub(" ", work)) if TIME_UNIT.search(q)]
+        spans = [c[0] for c in CODE.finditer(work) if FIGURE.search(c[0])]
         work = QUOTED.sub(" ", CODE.sub(" ", work))
-        work = re.sub(r"#\d+|\b[A-Za-z0-9.`/-]+:\d+(?:[–-]\d+)?", " ", work)
+        work = re.sub(r"#\d+|(?:`[^`\n]+`|\b[A-Za-z][A-Za-z0-9./-]*):\d+(?:[–-]\d+)?", " ", work)
         work = re.sub(r"§\s?\d+(?:\.\d+)*|^#+\s+\d+(?:\.\d+)*", " ", work)  # section numbers
         found = [m[0] for m in FIGURE.finditer(work)] + TWO_DP.findall(work)
-        found += [m[0] for m in DELTA.finditer(work)]
+        found += [m[0] for m in DELTA.finditer(work)] + [
+            m[0] for m in SPELLED_FIGURE.finditer(work)
+        ]
+        found += [m[0] for m in BARE_COUNT.finditer(work)] + loose + spans
         hits += [f"line {i}: {f!r}" for f in found]
     return hits
 
@@ -1288,6 +1627,11 @@ def marker_problems(name: str, text: str, values: Values) -> list[str]:
             prev = m.end()
         for m in FILL.finditer(CODE.sub("", line)):
             bad.append(f"{name}:{i} {{{{audit:{m[1]}}}}} is not filled (--fill)")
+        for m in re.finditer(r"<!--(.*?)-->", line):
+            if not MARKER.fullmatch(m[0]):
+                bad.append(
+                    f"{name}:{i} a comment that is no audit marker hides text from every gate"
+                )
     bad += [f"{name} {h}: a figure typed by hand" for h in bare_figures(text)]
     return bad
 
@@ -1312,14 +1656,22 @@ def lookup(lines: list[str], n: int, frag: str) -> str:
     return "moved" if len(found) == 1 else "ambiguous"
 
 
+@functools.lru_cache(maxsize=256)
+def split_lines_cached(text: str) -> tuple[str, ...]:
+    return tuple(text.split("\n"))
+
+
+def split_lines(text: str | None) -> list[str] | None:
+    return None if text is None else list(split_lines_cached(text))
+
+
 def cite_problems(texts: dict[str, str], fetch: Fetch) -> tuple[list[str], list[str], int]:
     fails: list[str] = []
     warns: list[str] = []
     done: set[tuple[str, int]] = set()
 
     def lines_of(rev: str, rel: str) -> list[str] | None:
-        t = fetch(rev, rel)
-        return None if t is None else t.split("\n")
+        return split_lines(fetch(rev, rel))
 
     for name, text in texts.items():
         for m in CITE.finditer(visible(text)):
@@ -1433,15 +1785,27 @@ class Texts:
 
 def swept(t: Texts) -> list[str]:
     """The texts every claim sweep reads: the spec without §8.2 (its rows name the gates and
-    their mutations) and the hand-off."""
-    return [t.spec.replace(section(t.spec, "8.2 The gate tool"), ""), t.hand]
+    their mutations) and the hand-off without Table A's Old cells (`15` verbatim, G-CITE's)."""
+    spec = t.spec.replace(section(t.spec, "8.2 The gate tool"), "")
+    return [drop_column(spec, "old"), drop_column(t.hand, "old")]
 
 
 def without(text: str, *heads: str) -> str:
+    """The text with the table rows of the sections `heads` dropped (their cells are read cell by
+    cell by the row checks); every prose line of those sections stays in the sweep."""
     for h in heads:
         block = section(text, h)
         if block:
-            text = text.replace(block, "")
+            lines = block.split("\n")
+            rows: set[int] = set()
+            for i in range(len(lines) - 1):
+                if re.match(r"^\s*\|", lines[i]) and is_rule(lines[i + 1]) and i not in rows:
+                    j = i
+                    while j < len(lines) and re.match(r"^\s*\|", lines[j]):
+                        rows.add(j)
+                        j += 1
+            kept = [ln for i, ln in enumerate(lines) if i not in rows]  # a stray row stays swept
+            text = text.replace(block, "\n".join(kept), 1)
     return text
 
 
@@ -1621,15 +1985,22 @@ def g_handoff(t: Texts) -> list[str]:
 
 
 def g_untouched(t: Texts) -> list[str]:
-    """RULED BQ-2: `15` and `16` byte-identical to the base, in the tree and on the branch; the
-    measured inputs (token JSON, the two helpers) too."""
+    """RULED BQ-2 and the binding conditions: `15` and `16` byte-identical to the base (a
+    missing file is a change), the measured inputs (token JSON, the helpers read as text) too;
+    and the branch, committed or not, tracked or not, changes nothing but the spec, the hand-off,
+    this tool and the ticket's board PNGs (`14`, `05`, the merged specs and every plan text
+    stay as they are)."""
     bad: list[str] = []
     if t.p15 != at_base(P15_REL):
-        bad.append("`15` differs from the base")
+        bad.append("`15` is missing or differs from the base")
     if t.p16 != at_base(P16_REL):
-        bad.append("`16` differs from the base")
+        bad.append("`16` is missing or differs from the base")
     bad += [f"{rel} differs from the base" for rel, text in t.inputs if text != at_base(rel)]
-    bad += [f"{n} changed on the branch" for n in t.diff_names if n in MEASURED]
+    bad += [
+        f"{n} changed on the branch"
+        for n in t.diff_names
+        if n not in ALLOWED_REL and not n.startswith(ALLOWED_PREFIX)
+    ]
     return one("G-UNTOUCHED", bad)
 
 
@@ -1649,11 +2020,16 @@ def g_placeholder(t: Texts) -> list[str]:
     return one("G-PLACEHOLDER", [f"{len(bad)} sections to write: " + ", ".join(bad)] if bad else [])
 
 
+def mutation_key(mid: str) -> tuple[int, ...]:
+    """`M1.10` → (1, 10): ids in their natural order."""
+    return tuple(int(x) for x in re.findall(r"\d+", mid))
+
+
 def mutation_groups() -> dict[str, list[str]]:
     groups: dict[str, list[str]] = {}
     for mu in MUTATIONS:
         groups.setdefault(mu.gate, []).append(mu.mid)
-    return groups
+    return {g: sorted(ids, key=mutation_key) for g, ids in groups.items()}
 
 
 def g_mutlist(t: Texts) -> list[str]:
@@ -1678,9 +2054,11 @@ def g_mutlist(t: Texts) -> list[str]:
 MOVE_VERBS = (
     r"cross ?fad\w*|\bfad(?:e|es|ed|ing)\b|\btween\w*|\beas(?:e|es|ed|ing)\b|\bslid(?:e|es|ing)\b"
     r"|\bscal(?:e|es|ed|ing)\b(?! of)|\bsweep\w*|\bmov(?:e|es|ed|ing)\b|\btranslat\w*|\bglid\w*"
-    r"|\banimat\w*|\bdrift\w*|\binterpolat\w*|\bbounc\w*|\bzoom\w*|\bdissolv\w*|\bblend\w*"
+    r"|\banimat\w*|\bdrift(?:s|ed|ing)?\b(?! ledger| rows?\b)|\binterpolat\w*|\bbounc\w*|\bzoom\w*"
+    r"|\bdissolv\w*|\bblend\w*"
     r"|\bmorph\w*|\bwip(?:e|es|ed|ing) (?:in|down|out)\b|\broll(?:s|ed|ing)? (?:in|down|out)\b"
-    r"|\bgrow(?:s|n|ing)?\b|\bshrink\w*|\bpops? in\b|\bspin\w*|\brotat\w*"
+    r"|\bgrow(?:s|n|ing)?\b|\bshrink\w*|\bpops? in\b|\bspin\w*|\brotat\w*|\baccordion\w*"
+    r"|\bunfold\w*|\bwobbl\w*|\bjiggl\w*|\bshak(?:e|es|ing)\b"
 )
 TIMED = (
     r"\b(?!0 )\d[\d,]*(?:\.\d+)? ?(?:ms|milliseconds?)\b|\bmilliseconds?\b"
@@ -1688,18 +2066,25 @@ TIMED = (
     r"|\blinear\b|\bover (?:the )?(?:motion\.duration\.)?(?:fast|normal|slow)\b"
     r"|\b(?:fast|normal|slow) / (?:standard|decelerate|accelerate)\b|\bgradual\w*|\bsmooth\w*"
 )
+SLOW = r"\bslow(?:er|est|ly)?\b|motion\.duration\.slow"
 TWIN = "prefers-reduced-motion"
 TWIN_NULL = (
     r"\bnone\b|\bn ?/ ?a\b|\bsame as (?:the )?(?:motion )?safe\b|\bunchanged\b|\bas above\b"
     r"|\bno (?:reduced (?:motion )?|prefers reduced motion )?(?:variant|twin|reading)\b|\btb[dc]\b"
 )
 TWIN_OK = (
-    r"\bframe 0\b|\bsteps?\b|\binstant\w*|\bstatic\b|\bno flash\b|\bno highlight\b|\bcut\b"
-    r"|\bswaps?\b|\bat once\b|\bno motion\b|\bper cmp \d{3}\b|\bnone moves\b"
+    r"\bframe 0\b|\binstant\w*|\bstatic\b|\bno flash\b|\bno highlight\b|\bthe same cut\b"
+    r"|\bat once\b|\bno motion\b|\bper cmp \d{3}\b"
 )
 TWIN_MISSING = (
-    r"\b(?:no|without|lacks?|lacking|missing)\s+(?:a |an |its |any )?"
-    r"(?:reduced(?: motion)? |prefers reduced motion |motion reduce )?(?:variant|twin|reading)\b"
+    r"\b(?:no|without|lacks?|lacking|missing|needs? no)\s+(?:a |an |its |any )?"
+    r"(?:reduced(?: motion)? |prefers reduced motion |motion reduce |non animated )?"
+    r"(?:variant|twin|reading|equivalent|handling)\b"
+    r"|\b(?:drops?|dropped|omits?|omitted|skips?|skipped|loses?|lost|removes?|removed)\s+"
+    r"(?:its |the |a |every |each )?(?:reduced motion |non animated )?(?:twin|equivalent|variant)s?\b"
+    r"|\btwins? (?:is |are )?(?:omitted|dropped|skipped|removed|missing|optional)\b"
+    r"|\breduced motion (?:is |are )?(?:ignored|skipped|bypassed|not applied|off)\b"
+    r"|\bexempt\w* from (?:the )?reduced motion\b"
 )
 CARRIER = (
     r"\bwords?\b|\bglyphs?\b|\btext\b|\bsign\b|\bmarkers?\b|\bdelta\b|\bvalues?\b|\btags?\b"
@@ -1708,92 +2093,283 @@ CARRIER = (
 # where a reduced reading starts in a raw sentence: what follows it must not move
 RAW_REDUCED = re.compile(
     r"\bunder (?:the )?(?:reduced? motion|reduce|prefers-reduced-motion)\b|\breduced motion\b"
-    r"|\b(?:its |the |a |every |each )?(?:reduced? |motion )?twins?\b"
+    r"|(?<![\w-])(?<!light )(?:its |the |a |every |each )?(?<!light )(?:reduced? |motion )?twins?\b"
+    r"(?![-\w]| of the server)"
     r"|prefers-reduced-motion|data-motion=\"?reduce|\breduce mode\b|\bwhen (?:motion is )?reduced\b",
     re.IGNORECASE,
 )
+# what a sentence naming the reduced reading must say: it is a cut, static or at frame 0
+REDUCED_SAYS = (
+    r"\bframe 0\b|\binstant\w*|\bstatic\b|\bno flash\b|\bno highlight\b|\bat once\b|\bno motion\b"
+    r"|\bthe same cut\b|\bone source\b|\bno transition runs\b|\bnone moves\b|\bevery twin\b"
+)
+# reduced readings that still move, in words no verb list holds
+REDUCED_MOVES = (
+    r"\bhalf strength\b|\bplays?\b|\bstill (?:dims?|fades?|moves?|animates?|runs?)\b|\bshorter\b"
+    r"|\bshorten\w*|\bsofter\b|\bsubtler\b|\bdimmer\b|\bfainter\b|\bgentler\b|\bquick(?:er|ly)\b"
+    r"|\bkeeps? (?:the )?(?:flash|fade|animat\w*|sweep\w*|ring)\b|\bover a moment\b|\bturns?\b"
+)
 NON_COMPOSITOR = (
-    r"\b(?:height|width|top|left|right|bottom|margins?|padding|box shadow|shadows?|filter"
-    r"|clip path|border(?: width| colou?r)?|outline|font size|line height|inset|max height"
-    r"|layout|reflow|background(?: colou?r| position)?)\b|\bcolou?r tweens?\b"
+    r"\b(?:height|width|top|left|right|bottom|margins?|padding|box shadow|shadows?|filter|blur"
+    r"|clip path|border(?: width| colou?r)?|outline|font size|font weight|line height|inset"
+    r"|max height|layout|reflow|flex(?: basis)?|grid template(?: rows| columns)?"
+    r"|letter spacing|text decoration|background(?: colou?r| position)?)\b|\bcolou?r tweens?\b"
 )
-PROPERTY_OK = re.compile(r"^(?:opacity|transform(?:: ?[a-z]+(?:\([^)]*\))?)?|none|by reference)\b")
+# a layout animation named by its effect rather than its property
+LAYOUT_MOTION = (
+    r"\baccordion\w*|\bunfold\w*|\bmake room\b|\bpush(?:es|ed)? (?:the )?(?:rows?|neighbou?rs?)\b"
+    r"|\bneighbou?rs? (?:slide|move|shift|animate|glide|drift)\w*|\brows? (?:below|above) "
+    r"(?:slide|move|shift|animate)\w*|\breflows? (?:smoothly|gradually|over)\b"
+    r"|\b(?:fades?|slides?|moves?|glides?|animates?|drifts?) (?:in)?to (?:the |its )?(?:closed today|block"
+    r"|group|section|list|other tab)\b"
+)
+PROPERTY_CELL = re.compile(
+    r"^(?:opacity(?: \(an overlay above the (?:cell|row)\))?"
+    r"|transform(?:: ?(?:translate[xyz]?|scale[xy]?|rotate)(?:\([^)]*\))?)?"
+    r"|none \(a cut\)"
+    r"|by reference \((?:cmp \d{3}|§\d+(?:\.\d+)*)\))$"
+)
+DURATION_CELL = re.compile(
+    r"^`motion\.duration\.(instant|fast|normal)` \((\d+) <!-- audit:motion\.duration\.\1=\2 --> ms\)$"
+)
+EASING_CELL = re.compile(
+    r"^(?:none|motion\.easing\.(?:standard|decelerate|accelerate)"
+    r"(?: to (?:open|close)(?:, motion\.easing\.(?:standard|decelerate|accelerate) to (?:open|close))?)?)$"
+)
+# the owners' recipes a row may cite by reference (Property, Duration, Easing): id → the owner
+# its Component and Property must name; never a row on CMP-114, CMP-115 or CMP-116
+BY_REF: dict[str, tuple[str, ...]] = {
+    "Mo-5": ("cmp 015",),
+    "Mo-7": ("cmp 123", "§2.4"),
+    "Mo-11": ("cmp 043",),
+    "Mo-13": ("cmp 028",),
+}
+DATA_CMP = r"\bcmp 11[456]\b"
+# RULED BQ-9: the rows that move under motion-safe; every other row is a cut or by reference
+ANIMATED_IDS = ("Mo-1", "Mo-2", "Mo-3", "Mo-4", "Mo-6", "Mo-9")
 DATA_ROW = r"\b(?:data )?rows?\b|\bcells?\b|\bgrid\b|\bblotter\b|\bcmp 11[456]\b|\bbadges?\b"
-EASING_WORDS = (
-    r"\blinear\b|\bease in\b|\bease out\b|\bease in out\b|\bsteps\(|\bspring\w*|\bbounce\w*"
-    r"|cubic bezier"
+# what moves, for a duration claim: a moving verb or the motion nouns of this spec
+MOTION_WORD = (
+    MOVE_VERBS + r"|\bflash\w*|\boverlays?\b|\bhighlights?\b|\btransitions?\b|\banimations?\b"
+    r"|\binserts?\b|\bexits?\b|\bfades?\b|\bslides?\b|\bmotion\b|\bsweeps?\b|\bopacity\b|\btransform\b"
 )
-LONG = (
-    r"motion\.duration\.slow|\bover (?:the )?(?:(\d[\d,]*) ?ms|(\d+(?:\.\d+)?) ?s)\b"
-    r"|\b(?:lasts?|lasting|takes?|runs?(?: for)?) (?:for )?(\d[\d,]*) ?ms\b"
-)
+SPELLED = {
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6, "seven": 7,
+    "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12, "fifteen": 15, "twenty": 20,
+    "thirty": 30, "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70, "eighty": 80,
+    "ninety": 90, "hundred": 100, "thousand": 1000,
+}  # fmt: skip
+FRACTION = {"half": 0.5, "quarter": 0.25, "tenth": 0.1, "fifth": 0.2, "third": 1 / 3}
+UNIT_MS = r"(?:ms|msecs?|milliseconds?)"
+UNIT_S = r"(?:s|secs?|seconds?)"
+# a spelled duration counts in a duration phrase: after over / for / in / lasts / takes / runs,
+# or before the motion it times ("a half second fade")
+DURATION_LEAD = r"\b(?:over|for|in|within|lasts?|lasting|takes?|taking|runs?|running|of)\s+(?:about |roughly |some |nearly |almost |around )?"
+WORD_NUM = r"(?:(?:" + "|".join(SPELLED) + r"|and)\s+){1,5}"
 
 
-def ms_of(text: str) -> list[float]:
-    """Every duration a cell binds, in ms: shipped tokens and hand-typed figures."""
+def _spelled_value(words: str) -> float | None:
+    total, current = 0.0, 0.0
+    for w in words.split():
+        if w == "and":
+            continue
+        v = SPELLED.get(w)
+        if v is None:
+            return None
+        if v in (100, 1000):
+            current = (current or 1) * v
+            if v == 1000:
+                total, current = total + current, 0.0
+        else:
+            current += v
+    return total + current
+
+
+def durations(text: str, anywhere: bool = False) -> list[float]:
+    """Every duration a text states, in ms, inside a duration phrase (after over / for / in /
+    lasts / takes / runs, or before the motion it times: "a 400 ms fade") or, with `anywhere`,
+    wherever a typed figure stands: typed (`400 ms`, `0.4 s`, `400-ms`, `1,200 milliseconds`) and
+    spelled (`two seconds`, `half a second`, `four hundred ms`, `a tenth of a second`) figures,
+    `motion.duration.*` tokens, `twice` and `× 2`. "About 5 s after" times nothing."""
+    plain = norm_text(_HIDDEN.sub(" ", text)).replace("`", "")
+    out: list[float] = []
+    typed = rf"(\d[\d,]*(?:\.\d+)?)\s*({UNIT_MS}|{UNIT_S})\b"
+    shapes = (
+        [rf"(?<![\w.]){typed}"]
+        if anywhere
+        else [
+            rf"{DURATION_LEAD}{typed}",
+            rf"(?<![\w.]){typed}\s+(?:{MOTION_WORD})",
+        ]
+    )
+    for shape in shapes:
+        for m in re.finditer(shape, plain):
+            v = float(m[1].replace(",", ""))
+            out.append(v if re.fullmatch(UNIT_MS, m[2]) else 1000 * v)
+    lead = rf"(?:{DURATION_LEAD}|\b)"
+    for m in re.finditer(
+        rf"{lead}(?:(a|one) )?(half|quarter|tenth|fifth|third)(?: of)?(?: a| an)?\s+{UNIT_S}\b",
+        plain,
+    ):
+        out.append(1000 * FRACTION[m[2]])
+    for m in re.finditer(rf"{lead}(?:a |one )?half\s+a\s+{UNIT_S}\b|\ba half {UNIT_S}\b", plain):
+        out.append(500.0)
+    spelled = (
+        rf"{DURATION_LEAD}({WORD_NUM})({UNIT_MS}|{UNIT_S})\b",
+        rf"\b({WORD_NUM})({UNIT_MS}|{UNIT_S})\s+(?:{MOTION_WORD})",
+    )
+    for shape in spelled:
+        for m in re.finditer(shape, plain):
+            w = _spelled_value(m[1])
+            if w:
+                out.append(w if re.fullmatch(UNIT_MS, m[2]) else 1000 * w)
     prim = ds_file("primitives")
-    plain = _HIDDEN.sub(" ", text)
-    out = [
-        float(str(prim[f"motion.duration.{k}"]).removesuffix("ms"))
-        for k in re.findall(r"motion\.duration\.([a-z-]+)", plain)
-        if f"motion.duration.{k}" in prim
-    ]
-    out += [float(x.replace(",", "")) for x in re.findall(r"(\d[\d,]*(?:\.\d+)?) ?ms\b", plain)]
-    out += [1000 * float(x) for x in re.findall(r"(\d+(?:\.\d+)?) ?s\b", plain)]
+    for m in re.finditer(
+        r"motion\.duration\.([a-z-]+)((?:\s*(?:twice|x 2|× 2|\* 2|times two))?)", plain
+    ):
+        if f"motion.duration.{m[1]}" in prim:
+            v = float(str(prim[f"motion.duration.{m[1]}"]).removesuffix("ms"))
+            out.append(2 * v if m[2].strip() else v)
     return out
+
+
+MARKED = re.compile(r"\d[\d,.]*\s*<!-- audit:[A-Za-z0-9_.\-]+=[^ >]+ -->")
 
 
 def motion_ready(t: Texts) -> bool:
     return not pending(t.spec, "3.2 The motion table")
 
 
-def g_row200(t: Texts) -> list[str]:
-    """RULED BQ-9 / BQ-12: no motion row longer than `motion.duration.normal`; `slow` never on a
-    row; no sentence gives a data row a longer motion."""
-    cap = float(t.values["motion.duration.normal"])
+def is_cut(r: dict[str, str]) -> bool:
+    return norm_text(col(r, "Property")).startswith("none")
+
+
+def by_ref_ok(k: str, r: dict[str, str]) -> bool:
+    """`by reference` is allowed: one of the owners' recipes, naming its owner, on no data row."""
+    comp = norm_text(col(r, "Component"))
+    owners = BY_REF.get(k, ())
+    return any(o in comp for o in owners) and not re.search(DATA_CMP, comp)
+
+
+def mo_structure(spec: str) -> list[str]:
+    """One motion table, in §3.2, and no repeated Mo id (a later copy never shadows another)."""
     bad: list[str] = []
-    if motion_ready(t):
-        for k, r in mo_rows(t.spec).items():
-            cells = " ".join(col(r, c) for c in ("Property", "Duration", "Easing"))
-            if "motion.duration.slow" in cells:
-                bad.append(f"{k} binds `motion.duration.slow`")
-            longest = max(ms_of(cells) or [0.0])
-            if longest > cap:
-                bad.append(f"{k} runs {longest:g} ms > {cap:g} ms")
-            easing = col(r, "Easing")
-            curves = re.findall(r"motion\.easing\.[a-z-]+", easing)
-            if any(c not in ds_names() for c in curves) or live(easing, EASING_WORDS):
-                bad.append(f"{k} eases on a curve that is not shipped")
-    for text in (without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)):
+    places = table_places(spec, MO_HEAD)
+    if places != ["3.2 The motion table"]:
+        bad.append(f"the motion tables sit in {places[:3]}, not once in §3.2")
+    ids = [k for k, _r in mo_list(spec)]
+    bad += [f"{k} is repeated" for k in sorted({k for k in ids if ids.count(k) > 1})]
+    return bad
+
+
+def long_claims(texts: list[str], cap: float) -> list[str]:
+    """Sentences (a row: across its cells) that time a motion past `cap` or bind `slow`."""
+    hits: list[str] = []
+    for text in texts:
         for u in units(text):
             for s in sentences(u):
                 b = blanked(s)
-                for m in re.finditer(LONG, b):
-                    ms, sec = m[1] or m[3], m[2]
-                    long_one = m[0].startswith("motion.duration.slow") or bool(
-                        (ms and float(ms.replace(",", "")) > cap)
-                        or (sec and 1000 * float(sec) > cap)
-                    )
-                    around = b[max(0, m.start() - 48) : m.end() + 48]
-                    if long_one and re.search(DATA_ROW, around):
-                        bad.append(f"claim: {b[:60]!r}")
+                if re.search(SLOW, b):
+                    hits.append(f"claim (slow): {b[:60]!r}")
+                    continue
+                for frag in b.split(" ¦ "):
+                    if any(d > cap for d in durations(frag)) and re.search(MOTION_WORD, frag):
+                        hits.append(f"claim: {frag[:60]!r}")
                         break
+    return hits
+
+
+def g_row200(t: Texts) -> list[str]:
+    """RULED BQ-9 / BQ-12: no motion row longer than `motion.duration.normal`, `slow` nowhere:
+    one motion table, each row's Duration a shipped token with its marker and its Easing a
+    shipped curve or none (`by reference` only for an owner's recipe); no free cell, frame,
+    sentence or `16`-block cell times a motion past the cap."""
+    cap = float(t.values["motion.duration.normal"])
+    bad: list[str] = []
+    if motion_ready(t):
+        bad += mo_structure(t.spec)
+        for k, r in mo_list(t.spec):
+            row = " | ".join(r.values())
+            if live(row, SLOW):
+                bad.append(f"{k} binds `slow`")
+            dur = " ".join(col(r, "Duration").split())
+            easing = norm_text(col(r, "Easing"))
+            if dur.startswith("by reference") or easing.startswith("by reference"):
+                if not by_ref_ok(k, r):
+                    bad.append(f"{k} is no owner's recipe and cannot be by reference")
+                elif not (dur.startswith("by reference") and easing.startswith("by reference")):
+                    bad.append(f"{k} mixes a recipe by reference with its own timing")
+                elif durations(MARKED.sub(" ", dur), anywhere=True):
+                    bad.append(f"{k} times its owner's recipe in a figure the owner does not cite")
+                continue
+            m = DURATION_CELL.match(dur)
+            if m is None:
+                bad.append(f"{k} Duration {dur[:30]!r} is not one shipped token with its marker")
+            elif float(m[2]) > cap:
+                bad.append(f"{k} runs {m[2]} ms > {cap:g} ms")
+            if not EASING_CELL.match(easing):
+                bad.append(f"{k} Easing {easing[:30]!r} is not a shipped curve or none")
+            for c in ("Component", "Trigger", "Limit"):
+                if any(d > cap for d in durations(blanked(col(r, c)))):
+                    bad.append(f"{k} {c} times it past {cap:g} ms")
+    for r in block16_rows(t.hand):
+        name = col(r, "Surface")[:24]
+        for c in ("Enter", "Hold"):
+            cell = norm_text(col(r, c)).replace("`", "")
+            if live(cell, SLOW):
+                bad.append(f"`16` block {name!r} {c}: `slow`")
+            names = re.findall(r"motion\.duration\.([a-z-]+)", cell)
+            names += re.findall(r"\bover (?:the )?([a-z]+)\b(?= /|;|,|$)", cell)
+            if any(x not in ("instant", "fast", "normal") for x in names if x in TOKEN_WORDS):
+                bad.append(
+                    f"`16` block {name!r} {c}: a duration that is not instant, fast or normal"
+                )
+        if any(d > cap for d in durations(col(r, "Enter"), anywhere=True)):
+            bad.append(f"`16` block {name!r}: its motion runs past {cap:g} ms")
+        bad += [f"`16` block {name!r}: {h}" for h in long_claims([col(r, "Hold / clear")], cap)]
+    texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
+    bad += long_claims(texts, cap)
     return one("G-ROW-200", bad)
 
 
+TOKEN_WORDS = ("instant", "fast", "normal", "slow", "slower", "medium", "long", "short")
+
+
 def g_compositor(t: Texts) -> list[str]:
-    """T Perf / RULED BQ-9: Property is opacity, a transform or none (a cut); no sentence
-    animates a layout or paint property."""
+    """T Perf / RULED BQ-9: a motion row's Property is opacity, a transform or none (a cut), read
+    whole (`opacity + color` fails); no sentence animates a layout or paint property, moves rows
+    under the pointer or lets neighbours make room."""
     bad: list[str] = []
     if motion_ready(t):
-        for k, r in mo_rows(t.spec).items():
+        for k, r in mo_list(t.spec):
             prop = norm_text(col(r, "Property"))
-            if not PROPERTY_OK.match(prop) or re.search(NON_COMPOSITOR, prop):
+            if not PROPERTY_CELL.match(prop) or re.search(NON_COMPOSITOR, prop):
                 bad.append(f"{k} Property {col(r, 'Property')[:30]!r}")
+            elif prop.startswith("by reference") and not (
+                by_ref_ok(k, r) and any(o in prop for o in BY_REF.get(k, ()))
+            ):
+                bad.append(f"{k} Property by reference names no owner of its own")
+        s31 = norm_text(section(t.spec, "3.1 Data-row rules"))
+        for phrase in (
+            "nothing moves under the pointer",
+            "live data never moves focus",
+            'wait behind the "updates paused" chip',
+        ):
+            if not pending(t.spec, "3.1 Data-row rules") and phrase not in s31:
+                bad.append(f"§3.1 does not say {phrase!r}")
     texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
     moving = MOVE_VERBS + "|" + TIMED + r"|\btransition\w*"
-    for c in pair_claims(texts, NON_COMPOSITOR, moving, 4):
-        bad.append(f"claim: {c!r}")
+    bad += [f"claim: {c!r}" for c in pair_claims(texts, NON_COMPOSITOR, moving, 4)]
+    bad += [f"claim (layout): {c!r}" for c in claims(texts, LAYOUT_MOTION)]
+    pointer = r"\bunder (?:the )?(?:pointer|cursor|mouse)\b"
+    bad += [f"claim (pointer): {c!r}" for c in pair_claims(texts, pointer, MOVE_VERBS, 4)]
+    for r in block16_rows(t.hand):
+        enter = col(r, "Enter").split("prefers-reduced-motion")[0]
+        name = col(r, "Surface")[:24]
+        if adjacent(enter, NON_COMPOSITOR, moving, 2) or live(enter, LAYOUT_MOTION):
+            bad.append(f"`16` block {name!r}: a layout or paint property moves")
+        if not live(enter, r"\bopacity\b|\btransform\b|\bframe 0\b"):
+            bad.append(f"`16` block {name!r}: Enter names neither opacity, a transform nor frame 0")
     return one("G-COMPOSITOR", bad)
 
 
@@ -1807,31 +2383,46 @@ def twin_ok(cell: str) -> bool:
     body = twin_body(cell)
     if body is None or nullish(body):
         return False
-    if live(body, MOVE_VERBS) or live(body, TIMED):
+    if moves(body):
         return True
     n = norm_text(unquote(body))
     return re.search(TWIN_NULL, n) is None and re.search(TWIN_OK, n) is not None
 
 
+def moves(text: str) -> bool:
+    """`text` asserts motion: a moving verb, a timing word or a reduced reading that still moves."""
+    return live(text, MOVE_VERBS) or live(text, TIMED) or live(text, REDUCED_MOVES)
+
+
+def is_flash(r: dict[str, str]) -> bool:
+    return re.search(r"\bflash\w*|\bvalue change\b", norm_text(col(r, "Component"))) is not None
+
+
 def g_twin(t: Texts) -> list[str]:
-    """AC2 / RULED BQ-9: every motion row and every `16`-block row has its twin, and an animated
-    row's twin names what still carries the change."""
+    """AC2 / RULED BQ-9: every motion row and every `16`-block row has its twin, an animated row's
+    twin names what still carries the change (the flash's: the sign or ▲ / ▼, T Tech); no
+    sentence drops, omits or exempts a twin; §3.5 pairs the flash with a text or glyph delta."""
     bad: list[str] = []
     if motion_ready(t):
-        rows = mo_rows(t.spec)
+        rows = mo_list(t.spec)
         if not rows:
             bad.append("§3.2 has no motion rows")
-        for k, r in rows.items():
+        for k, r in rows:
             twin = col(r, TWIN)
             body = twin_body(twin) or ""
-            moving = live(body, MOVE_VERBS) or live(body, TIMED)  # G-REDUCE-INSTANT's
             if not twin_ok(twin):
                 bad.append(f"{k}: no `prefers-reduced-motion` twin")
-            elif animated(r) and not moving and not live(body, CARRIER):
+            elif animated(r) and not moves(body) and not live(body, CARRIER):
                 bad.append(f"{k}: the twin does not name what carries the change")
-        table = table_with(section(t.spec, "3.2 The motion table"), "Property")
+            elif is_flash(r) and not live(body, r"▲|▼|\bsign(?:ed)?\b"):
+                bad.append(f"{k}: the flash's twin names neither the sign nor ▲ / ▼")
+        table = rows_with(section(t.spec, "3.2 The motion table"), "Property")
         bad += [f"{col(r, 'Mo')[:12]!r} is not a motion-row id" for r in table
                 if not re.fullmatch(MO_ID, col(r, "Mo"))]  # fmt: skip
+    if not pending(t.spec, "3.5 The flash"):
+        s35 = norm_text(section(t.spec, "3.5 The flash"))
+        if "pairs with a text or glyph delta" not in s35:
+            bad.append("§3.5 does not pair the flash with a text or glyph delta")
     if not pending(t.hand, "C.6 The `16` block"):
         rows16 = block16_rows(t.hand)
         if not rows16:
@@ -1847,39 +2438,66 @@ def g_twin(t: Texts) -> list[str]:
                 n = norm_text(s)
                 if re.search(TWIN_MISSING, n) and not re.search(r"\bthe tool\b|\bfails?\b", n):
                     bad.append(f"claim: {n[:60]!r}")
+    flash_alone = (
+        r"\b(?:colou?rs?|hues?|tints?) (?:alone|only)\b|\bonly (?:by |through |with )?(?:its |the |a )?"
+        r"(?:colou?r|hue|tint)s?\b|\bcolou?r only\b"
+    )
+    bad += [f"claim (colour): {c!r}" for c in pair_claims(swept(t), r"\bflash\w*", flash_alone, 6)]
     return one("G-TWIN", bad)
 
 
 def g_reduce_instant(t: Texts) -> list[str]:
-    """AC2 / RULED BQ-9: every twin is instant; nothing moves under reduced motion."""
+    """AC2 / RULED BQ-9: every twin is instant; a sentence naming the reduced reading says it is
+    static, a cut or at frame 0, and nothing in it moves; `data-motion` is the one source and the
+    in-app setting wins (§3.6)."""
     bad: list[str] = []
     if motion_ready(t):
-        for k, r in mo_rows(t.spec).items():
+        for k, r in mo_list(t.spec):
             body = twin_body(col(r, TWIN)) or ""
-            if live(body, MOVE_VERBS) or live(body, TIMED):
+            if moves(body):
                 bad.append(f"{k}: the twin moves")
-        if "every twin is instant" not in norm_text(section(t.spec, "3.6 Reduced motion")):
-            bad.append("§3.6 does not state that every twin is instant")
+        s36 = norm_text(section(t.spec, "3.6 Reduced motion"))
+        for phrase in (
+            "every twin is instant",
+            "in app setting wins",
+            "no component reads the media",
+        ):
+            if phrase not in s36:
+                bad.append(f"§3.6 does not say {phrase!r}")
     for r in block16_rows(t.hand):
         for m in re.finditer(r"`?prefers-reduced-motion`?:\s*([^;|]*)", col(r, "Enter")):
-            if live(m[1], MOVE_VERBS) or live(m[1], TIMED):
+            if moves(m[1]):
                 bad.append(f"`16` block {col(r, 'Surface')[:24]!r}: the twin moves")
     texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
     for text in texts:
         for u in units(text):
             for s in sentences(u):
                 at = RAW_REDUCED.search(s)
-                if at and (live(s[at.start() :], MOVE_VERBS) or live(s[at.start() :], TIMED)):
+                if not at:
+                    continue
+                rest = s[at.start() :]
+                pre = s[max(0, at.start() - 24) : at.start()]  # "a shortened twin"
+                if re.search(TWIN_MISSING, norm_text(s)):
+                    continue  # a twin said to be missing is G-TWIN's
+                if (
+                    moves(rest)
+                    or live(pre, REDUCED_MOVES)
+                    or not re.search(REDUCED_SAYS, norm_text(s))
+                ):
                     bad.append(f"claim: {norm_text(s)[:60]!r}")
+    source = (
+        r"\b(?:os|system) (?:signal|setting|preference) wins\b|\bcomponents? reads? the media query"
+    )
+    bad += [f"claim (source): {c!r}" for c in claims(texts, source)]
     return one("G-REDUCE-INSTANT", bad)
 
 
 KIND = (
-    r"status words?|state words?|labels?|glyphs?|icons?"
-    r"|(?:state|status|tag|chip|pill|tier|marker|badge|background) fills?|fill colou?rs?"
-    r"|fill tones?|pills?|tags?|badges?|markers?|protection chips?|chips?"
+    r"status words?|state words?|labels?|glyphs?|icons?|words?|text|tints?|accents?|colou?rs?"
+    r"|tones?|backgrounds?|(?:state|status|tag|chip|pill|tier|marker|badge|background) fills?"
+    r"|fill colou?rs?|fill tones?|fills?|pills?|tags?|badges?|markers?|protection chips?|chips?"
     r"|liq(?:uidation)? tiers?|tiers?|t2|lock(?: glyph)?|enabled|disabled|demo|live(?! regions?)"
-    r"|environment pills?|env pills?|states?|status"
+    r"|environment pills?|env pills?|states?|status|no_sl|✓|⟳|⚠|△"
 )
 # a frame whose id names a state (a status, a liq tier, a chip state, T2, the display or the
 # toggle): its Motion names a cut row only
@@ -1888,29 +2506,48 @@ SWAP_ROW = (
     r"\bstate (?:swaps?|changes?|transitions?|flips?)\b|\bstatus (?:swaps?|changes?|transitions?)\b"
     r"|↔|\bswaps?\b"
 )
+# the only frames that may name an animated row (default-deny): frame → its row
+FRAME_ANIMATED: dict[str, str] = {
+    "CMP-114/row-new": "Mo-1",
+    "CMP-114/row-lingering-closed": "Mo-2",
+    "CMP-114/marker-corrected": "Mo-4",
+    "CMP-116/bar-profit": "Mo-3",
+    "CMP-116/bar-loss": "Mo-3",
+    "CMP-123/holding": "Mo-7",
+}
+FRAME_MOTION = re.compile(r"^(?:—|Mo-\d+)$")
 
 
 def g_instant(t: Texts) -> list[str]:
     """RULED BQ-11: every state swap is a cut at frame 0 in both modes — status words, glyphs,
     fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO / LIVE —
-    `motion.duration.instant`, no easing; no sentence or row animates one."""
+    `motion.duration.instant`, no easing. Default-deny: only Mo-1, 2, 3, 4, 6 and 9 animate; a
+    frame's Motion names one row or —, only FRAME_ANIMATED's frames name an animated row, and no
+    other frame cell, cut row or sentence animates a state."""
     bad: list[str] = []
-    if motion_ready(t):
+    rows = mo_list(t.spec) if motion_ready(t) else []
+    if rows:
         swaps = 0
-        for k, r in mo_rows(t.spec).items():
+        for k, r in rows:
             subject = norm_text(col(r, "Component") + " " + col(r, "Trigger"))
-            if not re.search(SWAP_ROW, subject):
-                continue
-            swaps += 1
-            if not norm_text(col(r, "Property")).startswith("none"):
-                bad.append(f"{k} (a state swap) has Property {col(r, 'Property')[:20]!r}")
-            dur = col(r, "Duration")
-            names = set(re.findall(r"motion\.duration\.[a-z-]+", dur))
-            if names != {"motion.duration.instant"} or any(ms_of(dur)):
-                bad.append(f"{k} (a state swap) binds {sorted(names) or dur[:20]!r}")
-            easing = col(r, "Easing")
-            if "motion.easing" in easing or live(easing, MOVE_VERBS + "|" + TIMED):
-                bad.append(f"{k} (a state swap) eases")
+            animated_row = not is_cut(r) and not (
+                by_ref_ok(k, r) and col(r, "Property").startswith("by")
+            )
+            if animated_row and k not in ANIMATED_IDS:
+                bad.append(f"{k} animates but is not one of RULED BQ-9's animated rows")
+            if re.search(SWAP_ROW, subject):
+                swaps += 1
+                if not is_cut(r):
+                    bad.append(f"{k} (a state swap) has Property {col(r, 'Property')[:20]!r}")
+            if is_cut(r):
+                dur = col(r, "Duration")
+                if set(re.findall(r"motion\.duration\.[a-z-]+", dur)) != {
+                    "motion.duration.instant"
+                }:
+                    bad.append(f"{k} (a cut) binds {dur[:24]!r}")
+                cells = " | ".join(v for c, v in r.items() if not c.lower().startswith("prefers"))
+                if live(_HIDDEN.sub(" ", cells), MOVE_VERBS + "|" + TIMED):
+                    bad.append(f"{k} (a cut) moves or eases")
         if not swaps:
             bad.append("§3.2 has no state-swap row (a cut)")
     if not pending(t.spec, "3.3 State swaps"):
@@ -1919,19 +2556,30 @@ def g_instant(t: Texts) -> list[str]:
         for phrase in ("frame 0", "both modes", "no easing"):
             if phrase not in s33:
                 bad.append(f"§3.3 does not say {phrase!r}")
-    rows = mo_rows(t.spec) if motion_ready(t) else {}
-    cuts = {k for k, r in rows.items() if norm_text(col(r, "Property")).startswith("none")}
+    byid = dict(rows)
+    cuts = {k for k, r in rows if is_cut(r)}
+    places = table_places(t.spec, FRAME_HEAD)
+    for h in sorted(set(places)):
+        if not h.startswith(STATE_HEADS) or places.count(h) > 1:
+            bad.append(f"a frame table in {h[:28]!r} (one per entry of §2)")
+    frames = [col(r, "Frame") for _h, r in all_state_rows(t.spec)]
+    bad += [f"{f[:32]} is repeated" for f in sorted({f for f in frames if frames.count(f) > 1})]
     for head, r in all_state_rows(t.spec):
         if pending(t.spec, head):
             continue
-        frame, motion = col(r, "Frame"), col(r, "Motion")
-        if live(motion, MOVE_VERBS) or live(motion, TIMED):
-            bad.append(f"{frame[:32]}: a state frame that moves ({motion[:24]!r})")
-        refs = [row_key(x) for x in re.findall(r"\bMo[- ]\d+\b", motion)]
-        if rows and any(x not in rows for x in refs):
+        frame, motion = col(r, "Frame").strip("`"), col(r, "Motion").strip()
+        if not FRAME_MOTION.match(motion):
+            bad.append(f"{frame[:32]}: Motion {motion[:24]!r} is not one motion row or —")
+            continue
+        others = " | ".join(v for c, v in r.items() if c not in ("Frame", "Motion", "Word"))
+        if live(others, MOVE_VERBS):
+            bad.append(f"{frame[:32]}: a state frame that moves outside its Motion cell")
+        if motion == "—" or not byid:
+            continue
+        if motion not in byid:
             bad.append(f"{frame[:32]}: names a motion row §3.2 does not have")
-        if rows and SWAP_FRAME.search(frame) and any(x not in cuts for x in refs):
-            bad.append(f"{frame[:32]}: a state swap that names an animated row")
+        elif motion not in cuts and FRAME_ANIMATED.get(frame) != motion:
+            bad.append(f"{frame[:32]}: names the animated {motion}, which only FRAME_ANIMATED may")
     for r in block16_rows(t.hand):
         enter = col(r, "Enter")
         if re.search(SWAP_ROW, norm_text(col(r, "Surface"))) and (
@@ -1939,26 +2587,64 @@ def g_instant(t: Texts) -> list[str]:
         ):
             bad.append(f"`16` block {col(r, 'Surface')[:24]!r} (a state swap) is not a cut")
     texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
-    bad += [f"claim: {c!r}" for c in pair_claims(texts, KIND, MOVE_VERBS + "|" + TIMED, 3)]
+    moving = MOVE_VERBS + "|" + TIMED + r"|\btransition(?:s|ed|ing)? (?:from|to|between|into)\b"
+    hits = clause_claims(texts, KIND, moving, prep=neutral_tokens)
+    bad += [f"claim: {c!r}" for c in hits]
     return one("G-INSTANT", bad)
+
+
+def neutral_tokens(s: str) -> str:
+    """A sentence with every design-system token but the motion ones read as "a token", so a
+    state word inside a name (`color.status.info.subtle`) is no subject."""
+    return re.sub(r"`?\b(?!motion\.)[a-z]+(?:\.[a-z0-9_*{}-]+)+`?", " a token ", s)
 
 
 LOOP_WORDS = (
     r"shimmer\w*|\bpuls(?:e|es|ed|ing|at\w*)\b|\bloop\w*|\bthrob\w*|\bblink\w*|\bflicker\w*"
     r"|\bstrob(?:e|es|ing|oscop\w*)\b|\bbreath(?:e|es|ed|ing)\b|\bglimmer\w*|\btwinkl\w*"
-    r"|\bsparkl\w*|\boscillat\w*|\binfinite\w*"
+    r"|\bsparkl\w*|\boscillat\w*|\binfinite\w*|\bsheen\b|\bshin(?:e|es|ing)\b|\bglow\w*"
+    r"|\bheartbeat\w*|\bmarquee\w*|\bripple\w*|\bwav(?:e|es|ing)\b|\brepeat(?:s|ing)\b"
+    r"|\bcycl(?:e|es|ed|ing)\b|\bcontinuous\w*|\bforever\b|\bendless\w*|\bperpetual\w*"
+    r"|\bindeterminate\b|\bping(?:s|ing)?\b|\bover and over\b|\bon repeat\b"
+)
+# where the ticket's own word "pending shimmer" may stand, quoted: the departure records
+TICKET_SECTIONS = (
+    "Acceptance-criteria trace",
+    "The sixteen questions",
+    "Deviations",
+    "7.2 Contradictions",
 )
 TICKET_UNIT = r"\bticket'?s?\b|\bt scope\b|\bdl 7\b"
 
 
+# a Latin word with a Cyrillic letter in it reads as a Latin word and evades every list
+MIXED_SCRIPT = re.compile(r"\b(?=\w*[A-Za-z])(?=\w*[\u0400-\u04ff])\w+\b")
+
+
+def decamel(text: str) -> str:
+    """`pulseOnPending` → `pulse On Pending`, so an identifier keeps its words."""
+    return re.sub(r"(?<=[a-z0-9])(?=[A-Z])", " ", text)
+
+
 def g_loop(t: Texts) -> list[str]:
-    """RULED BQ-10: no shimmer, pulse or loop anywhere (case-insensitive) — only the ticket's own
-    word, quoted where its departure is recorded."""
-    bad = [f"claim: {c!r}" for c in claims(swept(t), LOOP_WORDS)]
-    for text in swept(t):
+    """RULED BQ-10: no shimmer, pulse or loop anywhere (case-insensitive, camelCase split, no
+    Cyrillic letter inside a Latin word) — only the ticket's own word, quoted where its departure
+    is recorded."""
+    texts = [decamel(x) for x in swept(t)]
+    bad = [f"claim: {c!r}" for c in claims(texts, LOOP_WORDS)]
+    for text in texts:
+        bad += [f"a word mixing scripts: {w!r}" for w in MIXED_SCRIPT.findall(visible(text))]
+    for name, text in (("spec", texts[0]), ("hand-off", texts[1])):
+        allowed = set()
+        if name == "spec":
+            allowed = {u for h in TICKET_SECTIONS for u in units(section(text, h))}
         for u in units(text):
-            for q in QUOTED.findall(u):
-                if re.search(LOOP_WORDS, norm_text(q)) and not re.search(TICKET_UNIT, norm_text(u)):
+            for s in sentences(u):
+                for q in QUOTED.findall(s):
+                    if not re.search(LOOP_WORDS, norm_text(q)):
+                        continue
+                    if re.search(TICKET_UNIT, norm_text(u)) and u in allowed:
+                        continue
                     bad.append(f"quoted {norm_text(q)[:40]!r} outside the ticket's departure")
     return one("G-LOOP", bad)
 
@@ -1966,37 +2652,58 @@ def g_loop(t: Texts) -> list[str]:
 PER_TICK = (
     r"\b(?:per|every|each|on|with|at|for)\s+(?:each\s+|every\s+|a\s+|the\s+|single\s+)?"
     r"(?:(?:price|mark|market|ws|data|value|feed|book|order|row)\s+)*"
-    r"(?:ticks?|updates?|messages?|prints?|trades?|deltas?)\b"
+    r"(?:ticks?|updates?|messages?|prints?|trades?|deltas?|changes?|refresh\w*|repaints?"
+    r"|fills?|executions?)\b"
+    r"|\b(?:every|each|on every|on each|at every|at each) (?:ws |data |animation |painted )?frames?\b"
     r"|\bper ?tick\b|\btick by tick\b|\btick rate\b|\btick driven\b"
+    r"|\bwhenever (?:the |a |its |any )?(?:price|value|mark|figure|number|cell|quantity)s? "
+    r"(?:changes?|moves?|updates?|ticks?)\b|\b\w+ times (?:a|per) second\b"
+    r"|\b(?:each|every|any) (?:price |value |mark )?(?:change|update|tick|fill|refresh|repaint)\b"
+    r"|\b(?:each|every) time (?:the |a |its )?(?:mark |last )?(?:price|value|quote|mark|figure)s? "
+    r"(?:moves?|changes?|ticks?|updates?)\b|\bwhenever (?:a |the )?(?:new )?(?:quote|price|tick|trade"
+    r"|print|update|fill)s? (?:arrives?|lands?|comes in)\b"
 )
 MOTIONISH = (
     MOVE_VERBS + r"|\bflash\w*|\bhighlight\w*|\boverlays?\b|\btransition\w*|\bpuls\w*|\bblink\w*"
+    r"|\breplay\w*|\btriggers? a\b|\bre ?fir\w*|\bfires?\b"
 )
 LIMIT_OK = r"between starts|\bonce\b|\bone shot\b|\bat most\b|≤|\bno repeat\b"
 NUMBERISH = (
-    r"\b(?:digits?|numbers?|numerals?|prices?|sizes?|values?|figures?|pnl|quantit\w*|qty|totals?)\b"
+    r"\b(?:digits?|numbers?|numerals?|prices?|sizes?|values?|figures?|pnl|quantit\w*|qty|totals?"
+    r"|timers?|counters?|countdowns?|ages?)\b"
 )
 TWEEN = (
-    r"count(?:s|ing|ed)? (?:up|down)|\btween\w*|interpolat\w*|roll(?:s|ing)? (?:up|over)|odometer"
+    r"count(?:s|ing|ed)? (?:up|down)|\btween\w*|interpolat\w*|roll(?:s|ing)? (?:up|over|to)"
+    r"|odometer|\bglid\w*|\banimat\w* to\b|\bticks? (?:up|down)\b"
 )
 
 
 def g_tick(t: Texts) -> list[str]:
     """RULED BQ-9 / BQ-11: nothing animates per tick or per price update; every animated row
-    states its limit, the flash at most `05`'s rate."""
-    bad = [f"claim: {c!r}" for c in pair_claims(swept(t), MOTIONISH, PER_TICK, 4)]
+    states its limit; the value flash starts on a settled value at most once per `16`'s gap."""
+    texts = [decamel(x) for x in swept(t)]
+    bad = [f"claim: {c!r}" for c in pair_claims(texts, MOTIONISH, PER_TICK, 6)]
     cap = float(t.values["cited.05.flash-max-per-s"])
+    gap = t.values["cited.16.flash-gap-ms"]
     if motion_ready(t):
-        for k, r in mo_rows(t.spec).items():
-            if not animated(r):
+        for k, r in mo_list(t.spec):
+            if is_cut(r):
                 continue
             limit = norm_text(_HIDDEN.sub(" ", col(r, "Limit")))
-            if not re.search(LIMIT_OK, limit):
+            if not re.search(LIMIT_OK, limit) and not col(r, "Property").startswith("by"):
                 bad.append(f"{k} animates with no stated limit")
-            for gap in re.findall(r"≥ ?(\d[\d,]*) ?ms between starts", limit):
-                if 1000 / float(gap.replace(",", "")) > cap:
+            for g in re.findall(r"≥ ?(\d[\d,]*) ?ms between starts", limit):
+                if 1000 / float(g.replace(",", "")) > cap:
                     bad.append(f"{k} starts more often than {cap:g} per second")
-    bad += [f"claim (tween): {c!r}" for c in pair_claims(swept(t), NUMBERISH, TWEEN, 4)]
+            if live(" | ".join(r.values()), PER_TICK):
+                bad.append(f"{k} runs per tick or per update")
+            if is_flash(r):
+                marker = f"≥ {gap} <!-- audit:cited.16.flash-gap-ms={gap} --> ms between starts"
+                if marker not in col(r, "Limit"):
+                    bad.append(f"{k}: the flash's Limit is not `16`'s gap between starts")
+                if not re.search(r"\bsettled\b", norm_text(col(r, "Trigger"))):
+                    bad.append(f"{k}: the flash starts on something other than a settled value")
+    bad += [f"claim (tween): {c!r}" for c in pair_claims(texts, NUMBERISH, TWEEN, 4)]
     s34 = section(t.spec, "3.4 Never per tick")
     if not pending(t.spec, "3.4 Never per tick") and "per tick" not in norm_text(s34):
         bad.append("§3.4 does not state the per-tick rule")
@@ -2005,17 +2712,54 @@ def g_tick(t: Texts) -> list[str]:
 
 # ---- the components (RULED BQ-5, BQ-7, BQ-8, BQ-14)
 
-PENDING_NEAR = r"\bpending\b|\bamend(?:ing|s)?\b|\boptimistic\w*|\bunconfirmed\b|\bin flight\b"
+# an order-side pending subject: a pending amend, row or value, an amend, an unconfirmed or
+# in-flight write ("PENDING" alone is a document status and never one)
+PENDING_NEAR = (
+    r"\bpending (?:amend\w*|rows?|orders?|moments?|tags?|values?|frames?|states?|edits?|prices?)\b"
+    r"|\bamend(?:ing|s|ed)?\b|\boptimistic\w*|\bunconfirmed\b|\bin flight\b|\bunacknowledged\b"
+)
 AS_CONFIRMED = (
     r"\b(?:as|like) (?:if )?(?:confirmed|applied|accepted|final|filled|committed|done)\b"
-    r"|\boptimistically\b|\bbefore (?:the |an? |bybit'?s? )?(?:ack\w*|acknowledg\w*|confirmation)\b"
-    r"|\bpaints? the new (?:price|value)\b"
+    r"|\boptimistically\b|\bbefore (?:the |an? |bybit'?s? )?(?:ack\w*|acknowledg\w*|confirm\w*)\b"
+    r"|\b(?:paints?|shows?|keeps?|draws?) the new (?:price|value)\b|\bat once\b|\bas soon as\b"
+    r"|\breplac(?:es|ed|ing) the (?:old|live|confirmed) (?:one|value|price)\b|\bdims?\b|\bdimmed\b"
+    r"|\breads? (?:working|confirmed|amended|filled)\b|\bdrawn like\b|\b(?:tag|marker) (?:is )?dropped\b"
+    r"|\bthe grid updates\b|\bupdates optimistically\b"
+)
+# drawn as confirmed in words that need no pending subject
+PENDING_STRONG = (
+    r"\b(?:paints?|shows?|draws?|displays?) the new (?:price|value|quantity)\b[^.;]*\bbefore\b"
+    r"|\bbefore (?:the |an? )?(?:bybit'?s? |exchange'?s? )?(?:ack\w*|acknowledg\w*|confirm\w*)\b"
+    r"|\b(?:drawn|shown|painted|reads?) as (?:working|confirmed|amended|filled|done)\b"
+    r"|\bvalue cell (?:show|keep|paint|hold|tak)(?:s|es|ing)? the new (?:value|price)\b"
+    r"|\b(?:disappears?|vanish\w*|is (?:removed|dropped|cleared)|clears?)\b[^.;]*"
+    r"\b(?:the moment|as soon as)\b[^.;]*\b(?:sent|submitted)\b"
+)
+# the pending state itself said to be absent
+PENDING_ABSENT = (
+    r"\bno pending (?:tag|marker|state|frame)\b|\bwithout (?:a |the |its )?pending (?:tag|marker)\b"
+    r"|\bthe pending (?:tag|marker) is (?:dropped|removed|hidden|omitted)\b"
+)
+# a frame that draws an unacknowledged write: by its B-state, not by a word in it
+PENDING_FRAME = re.compile(
+    r"/(?:status-(?:sending|amending|cancelling|unknown)|amend-(?:pending|unconfirmed)"
+    r"|sl-(?:amending|attaching|verifying)|marker-verifying|row-closing|(?:closed-today-)?provisional)$"
+)
+PENDING_STATE = r"\b(?:submitting|amend_pending|cancel_pending|amending|pending|unconfirmed|verifying|attaching)\b"
+IN_FLIGHT_WORD = (
+    r"\bpending\b|\bstill live\b|\bmay still be live\b|\bchecking\b|\bsending\b|\bamending\b"
+    r"|\bcancelling\b|\bverifying\b|\battaching\b|\bclosing\b|…|\bunknown\b|→"
+)
+CONFIRMED_LOOK = (
+    r"✓|\bcheck\b|\bconfirmed\b|\bapplied\b|\bamended\b|\baccepted\b|\bdone\b|\bfilled\b"
 )
 
 
 def g_pending(t: Texts) -> list[str]:
     """RULED BQ-5: a pending or optimistic row is a state — the ⟳ marker, the tag and the
-    "still live" words — never drawn as confirmed."""
+    "still live" words — never drawn as confirmed. Every frame of an unacknowledged write (by its
+    B-state) keeps an in-flight word and shows no confirmed word or ✓; no sentence draws one as
+    confirmed."""
     bad: list[str] = []
     if not pending(t.spec, "2.2 CMP-115"):
         rows = [r for r in state_rows(t.spec, "2.2 CMP-115") if re.search(
@@ -2033,16 +2777,28 @@ def g_pending(t: Texts) -> list[str]:
             if live(" | ".join(r.values()), r"\bconfirmed\b|\bapplied\b"):
                 bad.append(f"{f}: drawn as confirmed")
     for head, r in all_state_rows(t.spec):
-        if pending(t.spec, head) or head.startswith("2.2 "):
+        if pending(t.spec, head):
             continue
-        if not re.search(r"\bpending\b|\boptimistic", norm_text(col(r, "State") + col(r, "Frame"))):
+        frame = col(r, "Frame").strip("`")
+        if not (PENDING_FRAME.search(frame) or live(col(r, "State"), PENDING_STATE)):
             continue
-        word = norm_text(col(r, "Word"))
-        if not re.search(r"\bpending\b|\bstill live\b|\bchecking\b|⟳", word) or live(
-            " | ".join(r.values()), r"\bconfirmed\b|\bapplied\b"
-        ):
-            bad.append(f"{col(r, 'Frame')[:32]}: a pending frame drawn as confirmed")
-    bad += [f"claim: {c!r}" for c in pair_claims(swept(t), PENDING_NEAR, AS_CONFIRMED, 6)]
+        word = col(r, "Word")
+        if not re.search(IN_FLIGHT_WORD, norm_text(word)):
+            bad.append(f"{frame[:32]}: a pending frame's Word has no in-flight word")
+        if live(word, CONFIRMED_LOOK, keep_quotes=True) or live(col(r, "Glyph"), CONFIRMED_LOOK):
+            bad.append(f"{frame[:32]}: a pending frame drawn as confirmed")
+        if "amend" in frame and re.search(r"\bpending\b|\bstill live\b", norm_text(word)):
+            if "color.status.info.subtle" not in col(r, "Fill"):
+                bad.append(f"{frame[:32]}: its pending tag is not on `color.status.info.subtle`")
+            if "⟳" not in col(r, "Glyph") and "refresh" not in col(r, "Glyph"):
+                bad.append(f"{frame[:32]}: its pending amend has no ⟳")
+    bad += [f"claim: {c!r}" for c in pair_claims(swept(t), PENDING_NEAR, AS_CONFIRMED, 12)]
+    bad += [f"claim: {c!r}" for c in claims(swept(t), PENDING_STRONG)]
+    for text in swept(t):
+        for u in units(text):
+            for s in sentences(u):
+                if re.search(PENDING_ABSENT, norm_text(unquote(s))):
+                    bad.append(f"claim (no pending state): {norm_text(s)[:60]!r}")
     return one("G-PENDING", bad)
 
 
@@ -2053,6 +2809,32 @@ HOLD_ONLY = (
     r"|\b(?:hold|typed)[- ]only\b|\b(?:hold|typed)(?: confirm\w*| word)? (?:alone|only)\b"
     r"|\bonly (?:a |the )?(?:hold|typed)\b|\beither (?:a |the )?(?:hold|typed)\b"
     r"|\bwithout (?:a |the )?(?:hold|typed)\b|\b(?:drops?|skips?|omits?) (?:a |the )?(?:hold|typed)\b"
+    r"|\b(?:no|not|without) (?:a |the |its )?(?:typed|hold)\w*"
+    r"|\b(?:typed|hold)\w*(?: word| confirm\w*| ring| step)? (?:is |are |stays |becomes )?"
+    r"(?:optional|waived|dropped|skipped|not required|not needed)\b"
+    r"|\bsingle (?:enter|press|click|activation)\b|\b(?:a|one) (?:click|tap)\b"
+    r"|\bconfirm\w* (?:by|with) (?:a |one )?(?:single )?(?:click|enter|press|tap)\b"
+    r"|\breplaces? the (?:hold|typed)\w*"
+)
+# a confirm whose typed word or hold depends on who or what
+CONDITIONAL = (
+    r"\bfor the \w+s? only\b|\bonly for\b|\bif the\b|\bif (?:it|its|they)\b|\bwhen the (?:account"
+    r"|order|size|notional|position)\b|\bunless\b|\bdepending on\b"
+)
+# the typed word moved to DEMO ("a typed word on DEMO"; never "`hold` in DEMO and `typed` in LIVE")
+DEMO_TYPED = (
+    r"\b(?:on|in) demo\b[^.;¦|]{0,12}\btyped\b(?! (?:word )?(?:on|in) live)"
+    r"|\btyped\b(?: word| confirm\w*)? (?:on|in) demo\b"
+)
+# the confirm said to be skipped whatever the environment
+NO_CONFIRM = r"\bno confirm\w*|\bwithout (?:a |any )?confirm\w*|\bconfirm\w* (?:is |are )?(?:optional|skipped|waived)\b"
+# the subjects a hold-only claim names without a flatten word: the typed word, the hold
+CONFIRM_SUBJECT = r"\btyped (?:word|confirm\w*)\b|\bthe hold\b|\bhold ring\b"
+# the frames §2.4 must draw for the composite (default-deny on deletion)
+FLATTEN_FRAMES = ("CMP-123/holding", "CMP-123/armed", "CMP-123/typed-live", "CMP-123/t2-view-as")
+WAIVED = (
+    r"\boptional\w*|\bmay (?:skip|omit|drop)\b|\bskip\w*|\bwaiv\w*|\bnot required\b|\bdropped\b"
+    r"|\bsingle (?:enter|press|click|activation)\b|\b(?:a|one) click\b"
 )
 HOLD_HOSTS = (
     "2.1 ",
@@ -2071,39 +2853,65 @@ HOLD_HOSTS = (
 
 
 def g_flatten(t: Texts) -> list[str]:
-    """RULED BQ-7 / AC3: CMP-123's confirm is a composite — hold AND typed on LIVE — defined
-    once in §2.4; no host restates its hold."""
+    """RULED BQ-7 / AC3: CMP-123's confirm is a composite — hold AND typed on LIVE (asserted,
+    neither negated nor waived), hold alone on DEMO — defined once in §2.4; no sentence of the
+    flatten context drops either on LIVE; no host restates the hold, in figures or words."""
     bad: list[str] = []
     if not pending(t.spec, "2.4 CMP-123"):
-        rows = table_with(section(t.spec, "2.4 CMP-123"), "Environment", "Confirm")
+        rows = rows_with(section(t.spec, "2.4 CMP-123"), "Environment", "Confirm")
         lives = [r for r in rows if "LIVE" in col(r, "Environment")]
         if not lives:
             bad.append("§2.4 has no LIVE confirm row")
         for r in lives:
-            c = norm_text(col(r, "Confirm"))
+            raw = col(r, "Confirm")
+            c = norm_text(raw)
             both = re.search(r"\bhold\b.*\b(?:and|\+|plus|then|with)\b.*\btyped\b", c) or re.search(
                 r"\btyped\b.*\b(?:and|\+|plus|then|with)\b.*\bhold\b", c
             )
-            if not both or re.search(r"\bhold\b[^|]*\bor\b[^|]*\btyped\b|\beither\b", c):
+            asserted = live(raw, r"\bhold\b") and live(raw, r"\btyped\b")
+            if (
+                not both
+                or not asserted
+                or re.search(r"\bhold\b[^|]*\bor\b[^|]*\btyped\b|\beither\b", c)
+            ):
                 bad.append("the LIVE confirm is not hold and typed")
-        if not any("DEMO" in col(r, "Environment") and "hold" in col(r, "Confirm") for r in rows):
+            elif live(raw, WAIVED) or re.search(CONDITIONAL, c) or re.search(r"\bdemo\b", c):
+                bad.append(
+                    "the LIVE confirm waives, conditions or moves its hold or its typed word"
+                )
+        demos = [r for r in rows if "DEMO" in col(r, "Environment")]
+        if not any("hold" in col(r, "Confirm") for r in demos):
             bad.append("§2.4 has no DEMO hold row")
+        if any(live(col(r, "Confirm"), r"\btyped\b") for r in demos):
+            bad.append("the DEMO confirm takes the typed word, which LIVE alone adds")
+        frames = {col(r, "Frame").strip("`") for r in state_rows(t.spec, "2.4 CMP-123")}
+        bad += [f"§2.4 does not draw {f}" for f in FLATTEN_FRAMES if f not in frames]
+    context = set(units(section(t.spec, "2.4 CMP-123")))
     for text in swept(t):
         for u in units(text):
+            flatten_ctx = u in context or u.startswith("A-5.")
             for s in sentences(u):
                 n = DOUBLE_NEG.sub(" ", norm_text(unquote(s)))
+                near = flatten_ctx or re.search(FLATTEN_NEAR, n)
                 if (
-                    re.search(FLATTEN_NEAR, n)
+                    (near or re.search(CONFIRM_SUBJECT, n))
                     and re.search(LIVE_ENV, n)
                     and re.search(HOLD_ONLY, n)
                 ):
                     bad.append(f"claim: {n[:60]!r}")
-    hold = t.values.get("cited.cmp044.hold-ms", "")
+                elif near and (re.search(DEMO_TYPED, n) or re.search(NO_CONFIRM, n)):
+                    bad.append(f"claim (DEMO or no confirm): {n[:60]!r}")
+    hold = float(t.values.get("cited.cmp044.hold-ms", "0") or 0)
     for head in HOLD_HOSTS:
         block = section(t.spec, head)
         if not block or pending(t.spec, head):
             continue
-        if "audit:cited.cmp044.hold-ms=" in block or re.search(rf"\b{hold}\s*ms\b", visible(block)):
+        restated = "audit:cited.cmp044.hold-ms=" in block
+        for u in units(block):
+            for s in sentences(u):
+                if live(s, r"\bhold\w*") and (hold in durations(s, anywhere=True) or durations(s)):
+                    restated = True
+        if restated:
             bad.append(f"§{head.split(' ')[0].rstrip('.')} restates the hold (AC3: §2.4 only)")
     return one("G-FLATTEN", bad)
 
@@ -2112,13 +2920,21 @@ CONTROL_ROLE = (
     r"\brole ?= ?\W?(?:radio(?:group)?|button|switch|checkbox|option|menuitem\w*|tab|slider"
     r"|spinbutton|combobox|listbox|textbox)\b|\btabindex\b|\btab stop\b|\bfocusable\b"
     r"|\baria (?:checked|pressed|disabled|selected)\b|\bcontrol role\b|\bradiogroup\b"
+    r"|\bbuttons?\b|\bradio (?:buttons?|groups?)\b|\boperable\b|\bclickable\b|\binteractive\b"
+    r"|\bmenus?\b|\bdisabled with a reason\b|\b(?:carries|takes|shows|has) a reason\b"
+    r"|\bopens? (?:the |a )?(?:confirm|menu|dialog)\b|\bon (?:click|enter|press)\b"
+    r"|\b(?:is|as) a control\b|\bselectable\b|\bpressable\b"
 )
 T2_TERMS = r"\bt2\b|\block\b|\baria disabled\b|\bcmp 079\b|\bnot_available\b|\brbac\.\w+"
-DISPLAY_NEAR = r"\bdisplay (?:variant|frames?|mode)\b|\bread only display\b|cmp 129/display"
+DISPLAY_NEAR = (
+    r"\bdisplay (?:variant|frames?|mode|is|has|gets|takes)\b|\bread only display\b|cmp 129/display"
+    r"|\bthe display\b|\bdisplay:|(?:^|\s)display$"
+)
 
 
 def g_display(t: Texts) -> list[str]:
-    """RULED BQ-8: CMP-129's `display` variant has no control role and no T2."""
+    """RULED BQ-8: CMP-129's `display` variant has no control role and no T2: its frames carry
+    no glyph, motion or T2 and no word of interaction (quotes read too)."""
     bad: list[str] = []
     if not pending(t.spec, "2.5 CMP-129"):
         rows = [r for r in state_rows(t.spec, "2.5 CMP-129") if "/display" in col(r, "Frame")]
@@ -2126,15 +2942,17 @@ def g_display(t: Texts) -> list[str]:
             bad.append("§2.5 has no display frame")
         for r in rows:
             f = col(r, "Frame")[:32]
-            if not nullish(col(r, "T2")):
-                bad.append(f"{f}: T2 {col(r, 'T2')[:20]!r}")
-            cells = " | ".join(v for k, v in r.items() if k != "T2")
-            if live(cells, CONTROL_ROLE) or live(cells, T2_TERMS):
+            for c in ("Glyph", "Motion", "T2"):
+                if not nullish(col(r, c)):
+                    bad.append(f"{f}: {c} {col(r, c)[:20]!r}")
+            cells = " | ".join(v for k, v in r.items() if k not in ("Frame", "Word"))
+            if live(cells, CONTROL_ROLE, keep_quotes=True) or live(
+                cells, T2_TERMS, keep_quotes=True
+            ):
                 bad.append(f"{f}: a control role or the T2 look")
     terms = CONTROL_ROLE + "|" + T2_TERMS
-    bad += [
-        f"claim: {c!r}" for c in pair_claims(swept(t), DISPLAY_NEAR, terms, 6, keep_quotes=True)
-    ]
+    hits = clause_claims(swept(t), DISPLAY_NEAR, terms, keep_quotes=True)
+    bad += [f"claim: {c!r}" for c in hits]
     return one("G-DISPLAY", bad)
 
 
@@ -2162,17 +2980,80 @@ LEG_WORDS: tuple[tuple[str, int], ...] = (
     (r"rbac\.env\b", 3),
     (r"\bclient states?\b|\bfrozen\b|\blockout\b|recon\.|feed\.|arm\.", 4),
 )
-HIDDEN_FOR = r"\bhidden\b|\bhid(?:e|es|ing)\b|\bnot_shown\b|\bnot_offered\b|\babsent\b"
+# a leg written in words, for a Legs cell that names no key (in the order of LEG_WORDS)
+LEG_KEYS = ("rbac.view_as", "rbac.permission", "rbac.account_read_only", "rbac.env", "frozen")
+HIDDEN_FOR = (
+    r"\bhidden\b|\bhid(?:e|es|ing)\b|\bnot_shown\b|\bnot_offered\b|\babsent\b|\binvisible\b"
+    r"|\bremoved\b|\bnot_rendered\b|\bnot_displayed\b|\bnot_visible\b|\bomitted\b"
+    r"|\bsees?_no\b|\bgets?_no\b|\bno_\w+_(?:button|control|item)\b|\bwithheld from\b|\bnot_see\b"
+    r"|\bsees? only\b"
+)
 HIDDEN_NEAR = r"\bviewer\w*\b|\bview ?as\b|\bmanagers?\b(?! (?:is|are) not offered)"
+LEG_KEY = re.compile(
+    r"(?<![\w./])((?:rbac|recon|feed|arm|refusal|blotter|guard|sl)\.[a-z_.*{}]*[a-z_*}])"
+    r"|(?<![\w.])(frozen|lockout)(?![\w])"
+)
+# the frames whose id names their T2 leg: the leg their T2 cell must carry (default-deny)
+FRAME_LEG: tuple[tuple[str, str], ...] = (
+    ("t2-view-as", "rbac.view_as"),
+    ("t2-viewer", "rbac.permission"),
+    ("t2-read-only", "rbac.account_read_only"),
+    ("owner-only", "rbac.owner_only"),
+    ("t2-held", "blotter.held"),
+)
+ORDER_BEFORE = r"\b(?:before|ahead of|in front of|prior to|then)\b|→"
+ORDER_AFTER = r"\b(?:after|behind|later than)\b"
 
 
 def legs_of(cell: str) -> list[str]:
-    return re.findall(r"`([a-z][a-z_]*(?:\.[a-z_{}*]+)+|frozen|lockout)`", cell)
+    """The legs a cell names, in order: every key (backticked or not), else, for a chain written
+    in words (`view-as → permission → …`), the words read as their keys."""
+    keys = [m[1] or m[2] for m in LEG_KEY.finditer(cell)]
+    if keys or "→" not in cell:
+        return keys
+    found = sorted(
+        (m.start(), rank) for rx, rank in LEG_WORDS for m in re.finditer(rx, norm_text(cell))
+    )
+    return [LEG_KEYS[rank] for _p, rank in found]
+
+
+def order_claims(n: str) -> list[str]:
+    """The ordering errors of one normalised sentence: a leg said to come before a later one,
+    after an earlier one, first while it is not view-as, or legs in any order."""
+    found = sorted((m.start(), m.end(), r) for rx, r in LEG_WORDS for m in re.finditer(rx, n))
+    bad: list[str] = []
+    if re.search(r"\bin any order\b|\bany order\b|\bunordered\b", n) and (
+        len(found) > 1 or re.search(r"\blegs?\b", n)
+    ):
+        bad.append("legs in any order")
+    if not found:
+        return bad
+    for m in re.finditer(r"\blast\b", n):
+        left = [r for _s, e, r in found if 0 <= m.start() - e <= 24]
+        if left and left[-1] != 4:
+            bad.append("a leg other than the client states last")
+    if re.search(
+        r"\b(?:rbac\.)?view[ _]?as\b[^.;¦]{0,40}\b(?:after|behind) (?:every|all|the) other legs?\b",
+        n,
+    ):
+        bad.append("view-as after the other legs")
+    for cue, after in ((ORDER_BEFORE, False), (ORDER_AFTER, True)):
+        for m in re.finditer(cue, n):
+            left = [r for _s, e, r in found if e <= m.start()]
+            right = [r for s, _e, r in found if s >= m.end()]
+            if left and right and (left[-1] < right[0] if after else left[-1] > right[0]):
+                bad.append("legs out of the server's order")
+    for m in re.finditer(r"\bfirst\b", n):
+        left = [r for _s, e, r in found if 0 <= m.start() - e <= 24]
+        if left and left[-1] != 0:
+            bad.append("a leg other than view-as first")
+    return bad
 
 
 def g_viewas(t: Texts) -> list[str]:
     """RULED BQ-13: every gated control's legs start at view-as and follow the server's order;
-    no sentence orders them otherwise; nothing is hidden from a Viewer."""
+    every T2 frame whose id names its leg carries exactly that leg; no sentence orders the legs
+    otherwise or in any order; nothing is hidden from a Viewer."""
     bad: list[str] = []
     if not pending(t.spec, "4.1 The gated controls"):
         rows = gated_rows(t.spec)
@@ -2180,31 +3061,28 @@ def g_viewas(t: Texts) -> list[str]:
             bad.append("§4.1 has no gated controls")
         for r in rows:
             legs = legs_of(col(r, "Legs"))
-            if not legs:
-                continue
             name = col(r, "Control")[:24]
+            if not legs:
+                if not norm_text(col(r, "Legs")).startswith("none"):
+                    bad.append(f"{name}: no legs")
+                continue
             if legs[0] != "rbac.view_as":
                 bad.append(f"{name}: the first leg is {legs[0]}, not view-as")
             ranks = [leg_rank(k) for k in legs]
             if ranks != sorted(ranks):
                 bad.append(f"{name}: the legs are out of the server's order")
+    for head, r in all_state_rows(t.spec):
+        if pending(t.spec, head):
+            continue
+        frame = col(r, "Frame").strip("`")
+        want = next((k for part, k in FRAME_LEG if part in frame), None)
+        if want is not None and legs_of(col(r, "T2"))[:1] != [want]:
+            bad.append(f"{frame[:32]}: its T2 is not {want}")
     for text in swept(t):
         for u in units(text):
             for s in sentences(u):
-                n = norm_text(s)
-                found = sorted(
-                    (m.start(), rank) for rx, rank in LEG_WORDS for m in re.finditer(rx, n)
-                )
-                ranks = [r for _p, r in found]
-                if ("→" in n or " then " in n) and len(set(ranks)) > 1 and ranks != sorted(ranks):
-                    bad.append(f"claim (order): {n[:60]!r}")
-                if re.search(
-                    r"\b(?:permission|account scope|env\w*)\b[^.;|]*\b(?:before|ahead of)\b"
-                    r"[^.;|]*\bview ?as\b|\bview ?as\b[^.;|]*\b(?:comes? |is )?(?:last|after "
-                    r"(?:the )?(?:permission|account|env\w*))",
-                    n,
-                ):
-                    bad.append(f"claim (order): {n[:60]!r}")
+                n = blanked(s)
+                bad += [f"claim (order): {x}: {n[:60]!r}" for x in order_claims(n)]
             for chain_m in re.finditer(r"`[a-z][a-z_.*{}]*`(?:\s*→\s*`[a-z][a-z_.*{}]*`)+", u):
                 chain_legs = re.findall(r"`([^`]+)`", chain_m[0])
                 if not any(x.startswith("rbac.") for x in chain_legs):
@@ -2213,10 +3091,13 @@ def g_viewas(t: Texts) -> list[str]:
                 if chain_legs[0] != "rbac.view_as" or ranks != sorted(ranks):
                     shown = " → ".join(chain_legs)[:60]
                     bad.append(f"legs out of order or without view-as: {shown}")
-    bad += [
-        f"claim (hidden): {c!r}"
-        for c in pair_claims(swept(t), HIDDEN_NEAR, HIDDEN_FOR, 4, unless=r"\bgroup by\b|\badmin\b")
-    ]
+    hidden = clause_claims(swept(t), HIDDEN_NEAR, HIDDEN_FOR, unless=r"\bgroup by\b|\badmin\b")
+    bad += [f"claim (hidden): {c!r}" for c in hidden]
+    anatomy = r"\b(?:the |a )?disabled attribute\b|\bnative disabled\b"
+    bad += [f"claim (T2 anatomy): {c!r}" for c in claims(swept(t), anatomy)]
+    s42 = norm_text(section(t.spec, "4.2 Never gated"))
+    if not pending(t.spec, "4.2 Never gated") and "emits no audit and no analytics" not in s42:
+        bad.append("§4.2 does not say a T2 press emits no audit and no analytics")
     return one("G-VIEWAS", bad)
 
 
@@ -2227,33 +3108,55 @@ EXIT_WORDS = (
 NOT_EXIT = r"\b(?:closes|completes) #\d+|\bclosing keyword"
 GATED = (
     r"\bt2\b|\bgated\b|\bgat(?:e|es|ing)\b|\block(?:s|ed|ing)?\b|\bdisabled\b|\bunavailable\b"
-    r"|\bblocked\b|\baria disabled\b|\bnot_available\b"
+    r"|\bblocked\b|\baria disabled\b|\bnot_available\b|\bgre[ay]ed\b|\binactive\b|\bwithheld\b"
+    r"|\bsuspended\b|\bdimmed\b|\b(?:turned|switched) off\b|\brejected\b|\brefused\b"
+    r"|\bwaits? (?:for|behind|on)\b|\bpaused\b|\bheld back\b|\bnot_offered\b|\bdisallowed\b"
+    r"|\bdenied\b|\btakes? the \S+ leg\b|\b(?:shows?|carries|takes) a reason\b|\bwith a reason\b"
+    r"|\btakes? (?:the )?(?:rbac|recon|feed|arm|refusal)\.|\btakes? (?:the )?(?:frozen|lockout)\b"
+    r"|\bis off\b|\bread only\b|\bneeds? (?:a |the )?(?:fresh|live|current|healthy)\b"
 )
 STATE_GATE = (
     r"rbac\.env|\bfrozen\b|\blockout\b|\barm(?:ed|ing)?\b|\barm\.\w+|refusal\.\w+|recon\.\w+"
     r"|feed\.\w+|\bkill switch\b|\breconcil\w+|\bdesync\w*|\bstale\b|\bmaintenance\b"
-    r"|\brate limit\w*|\b429\b"
+    r"|\brate limit\w*|\b429\b|\breconnect\w*|\bverif(?:y|ied|ying)\b|\bfeed (?:state|status)\b"
+    r"|\bfresh feed\b|\bstate keys?\b"
 )
 EXCEPTION = (
-    r"\boffline\b|\bunreachable\b|\bod 11\b|\bmanagers?\b[^.;|]*\bkill switch\b"
-    r"|\bkill switch\b[^.;|]*\bmanagers?\b"
+    r"\boffline\b|\bunreachable\b|\bod 11\b|\bmanagers?\b[^.;|¦]*\bkill switch\b"
+    r"|\bkill switch\b[^.;|¦]*\bmanagers?\b"
 )
 EXIT_FORBIDDEN = re.compile(
     r"^(?:rbac\.env|frozen|lockout|arm\..*|refusal\..*|recon\..*|feed\..*)$"
 )
+# a gated control that is an exit by its name, whatever its Kind cell says
+EXIT_CONTROL = r"\bclose\b|\bcancel\b|\bflatten\b|\blowering the quantity\b|\bquantity cut\b"
+NOT_EXIT_CONTROL = r"\breverse\b|\bedit price\b|\bedit trigger\b|\bquantity up\b|\bresolve\b"
+
+
+def is_exit_control(r: dict[str, str]) -> bool:
+    name = norm_text(unquote(col(r, "Control")) + " " + col(r, "Control"))
+    return re.search(EXIT_CONTROL, name) is not None and not re.search(NOT_EXIT_CONTROL, name)
 
 
 def g_exits(t: Texts) -> list[str]:
-    """RULED BQ-13: exits are never gated by a state key or `rbac.env` (the two drawn
-    exceptions aside); no sentence gates one."""
+    """RULED BQ-13: exits are never gated by a state key or `rbac.env` (the drawn exceptions
+    aside): an exit is known by its control's name, whatever its Kind says; no clause gates one."""
     bad: list[str] = []
     if not pending(t.spec, "4.1 The gated controls"):
         for r in gated_rows(t.spec):
-            if "exit" not in norm_text(col(r, "Kind")):
+            kind_exit = "exit" in norm_text(col(r, "Kind"))
+            if is_exit_control(r) and not kind_exit:
+                bad.append(f"{col(r, 'Control')[:24]} is an exit and its Kind says otherwise")
+            if not (kind_exit or is_exit_control(r)):
                 continue
             for k in legs_of(col(r, "Legs")):
                 if EXIT_FORBIDDEN.match(k):
                     bad.append(f"{col(r, 'Control')[:24]} (an exit) takes `{k}`")
+            for clause in blanked(col(r, "Drawn")).split(" ¦ "):
+                if re.search(STATE_GATE, clause) and not re.search(EXCEPTION, clause):
+                    bad.append(
+                        f"{col(r, 'Control')[:24]} (an exit) is drawn gated: {clause[:40]!r}"
+                    )
     for head, r in all_state_rows(t.spec):
         if pending(t.spec, head):
             continue
@@ -2265,12 +3168,17 @@ def g_exits(t: Texts) -> list[str]:
         for k in legs_of(col(r, "T2")):
             if EXIT_FORBIDDEN.match(k):
                 bad.append(f"{col(r, 'Frame')[:32]} (an exit frame) takes `{k}`")
-    bad += [
-        f"claim: {c!r}"
-        for c in pair_claims(
-            swept(t), EXIT_WORDS, GATED, 6, unless=EXCEPTION + "|" + NOT_EXIT, need=STATE_GATE
-        )
-    ]
+    for text in swept(t):
+        for u in units(text):
+            for s in sentences(u):
+                for frag in blanked(s).split(" ¦ "):
+                    if (
+                        re.search(EXIT_WORDS, frag)
+                        and re.search(GATED, frag)
+                        and re.search(STATE_GATE, frag)
+                        and not re.search(EXCEPTION + "|" + NOT_EXIT, frag)
+                    ):
+                        bad.append(f"claim: {frag[:60]!r}")
     return one("G-EXITS", bad)
 
 
@@ -2280,24 +3188,137 @@ SUMMED = (
 )
 COLOUR_ONLY = (
     r"\b(?:colou?rs?|fills?|hues?|tints?|borders?) (?:alone|only)\b"
-    r"|\bonly (?:by |through |via |with )?(?:its |the |a )?(?:\w+ )?(?:colou?r|fill|hue|tint)s?\b"
+    r"|\bonly (?:by |through |via |with )?(?:its |the |a )?(?:\w+ )?(?:colou?r|fill|hue|tint|border)s?\b"
 )
 ENV_NEAR = r"\benv\w*\b|\bdemo\b|\blive\b(?! regions?)|\bpills?\b"
+# C-2.11: the blotter switches no environment, and a trade group carries one
+# the environment by a colour name, `rbac.env` on a DEMO row, the other block made writable,
+# LIVE and DEMO summed in words
+ENV_WRONG = (
+    r"\b(?:live|demo)\b[^.;¦|]{0,40}\b(?:red|green|grey|gray|greyer|grayer|amber|blue|orange|yellow)\b"
+    r"|\b(?:red|green|grey|gray|greyer|grayer|amber|blue|orange|yellow)\b[^.;¦|]{0,40}\b(?:live|demo)\b"
+    r"|rbac\.env\b[^.;¦|]{0,24}\bdemo\b"
+    r"|\bother environment'?s? (?:rows?|block|controls?)\b[^.;¦|]{0,30}\b(?:editable|writable|tradable"
+    r"|sendable|act(?:s|ive)?)\b"
+    r"|\bone (?:total|figure|sum) for (?:live|demo) and (?:live|demo)\b|\badds? (?:live|demo) and (?:live|demo)\b"
+    r"|\binto one (?:figure|total|sum)\b|\bsums? (?:live|demo) (?:and|with) (?:live|demo)\b"
+)
+ENV_SWITCH = (
+    r"\benvironment switch\w*|\bswitch(?:es|ing)? (?:the |its )?environments?\b|\bhotkey switches\b"
+    r"|\b(?:trade groups?|groups?|rows?|totals?) (?:may |can |does |do |will )?mix(?:es)? (?:the )?environments\b"
+    r"|\bmixes environments\b|\btwo (?:environment )?pills\b"
+    r"|\bboth pills\b|\bcarries both environments\b"
+)
 
 
 def g_env(t: Texts) -> list[str]:
     """C-2.11 / RULED BQ-13: totals per environment, never summed; the environment never by
-    colour alone; a mixed view's row name leads with its environment."""
+    colour or a border alone; no environment switch, no trade group across environments; a
+    LIVE word never drawn with `color.env.demo` alone, nor DEMO with `color.env.live`; a mixed
+    view's row name leads with its environment."""
     totals = r"\btotals?\b|\bpnl\b|\bp&l\b"
     bad = [f"claim (summed): {c!r}" for c in pair_claims(swept(t), totals, SUMMED, 4)]
     bad += [f"claim (colour): {c!r}" for c in pair_claims(swept(t), ENV_NEAR, COLOUR_ONLY, 6)]
+    bad += [f"claim (C-2.11): {c!r}" for c in claims(swept(t), ENV_SWITCH)]
+    bad += [f"claim (environment): {c!r}" for c in claims(swept(t), ENV_WRONG)]
+    for text in swept(t):
+        for u in units(text):
+            if re.search(r"rbac\.env\b\W{0,4}\(?a demo row", norm_text(unquote(u))):
+                bad.append(f"`rbac.env` on a DEMO row: {u[:40]!r}")
+    for text in swept(t):
+        for u in units(text):
+            raw = _HIDDEN.sub(" ", u)
+            tokens = set(re.findall(r"color\.env\.(live|demo)\b", raw))
+            words = {w.lower() for w in re.findall(r"\b(LIVE|DEMO)\b", unquote(raw) + " " + raw)}
+            if len(tokens) == 1 and words and not (tokens & words):
+                bad.append(f"`color.env.{tokens.pop()}` drawn for {sorted(words)}: {u[:40]!r}")
     if not pending(t.spec, "4.3 Environment"):
         s43 = norm_text(section(t.spec, "4.3 Environment"))
         if "leads with its environment" not in s43:
             bad.append("§4.3 does not say the row name leads with its environment")
         if "never summed" not in s43:
             bad.append("§4.3 does not say the totals are never summed")
+        if 'the text pill "live" or "demo"' not in s43:
+            bad.append('§4.3 does not name the pill "LIVE" or "DEMO"')
     return one("G-ENV", bad)
+
+
+# the security invariants no sentence may contradict, whatever re-pin a careless edit carries
+SAFETY_CLAIMS: tuple[tuple[str, str], ...] = (
+    ("a withdrawal (C-2.8)", r"\bwithdraw\w*|\btransfers? (?:funds|money|between accounts)\b"),
+    (
+        "a key shown (C-12.2)",
+        (
+            r"\b(?:api )?keys?\b[^.;¦]{0,30}\b(?:shown|displayed|visible|printed|logged)\b"
+            r"|\b(?:shows?|displays?|prints?|logs?) (?:the |an? )?(?:api )?(?:keys?|secrets?)\b"
+        ),
+    ),
+    (
+        "an action without its audit (C-2.9)",
+        (
+            r"\b(?:runs?|goes|is sent|sends?|happens|works|closes|cancels|flattens)\b[^.;¦]{0,24}"
+            r"\bwithout (?:an? |its |any )?audit\b|\bskips? (?:the |its )?audit\b"
+            r"|\baudit (?:is |are )?(?:skipped|optional|bypassed|off)\b"
+        ),
+    ),
+    (
+        "the kill switch bypassed",
+        (
+            r"\bkill switch\b[^.;¦]{0,30}\b(?:bypass\w*|ignored|skipped|overridden)\b"
+            r"|\bbypass\w* the kill switch\b"
+        ),
+    ),
+    (
+        "real data in a fixture",
+        (
+            r"\breal (?:balances?|accounts?|keys?|order ids?)\b[^.;¦]{0,30}\b(?:shown|appears?|displayed|used)\b"
+            r"|\b(?:shows?|displays?|uses?) (?:a |the )?real (?:balances?|accounts?|keys?)\b"
+        ),
+    ),
+    (
+        "a write under view-as",
+        (
+            r"\b(?:available|allowed|enabled|sendable|writes?)\b[^.;¦]{0,30}\bwhile viewing as\b"
+            r"|\bview ?as (?:may|can) (?:write|send|trade|place)\b"
+        ),
+    ),
+    (
+        "a Viewer's write",
+        r"\bviewers? (?:may|can) (?:use|send|press|flatten|close|cancel|trade|place|amend|write)\b",
+    ),
+    (
+        "RBAC on the client (C-12.4)",
+        r"\b(?:rbac|narrows?|scop\w*|permission\w*)\b[^.;¦]{0,40}\bclient side\b",
+    ),
+    (
+        "a Manager beyond the assigned accounts",
+        (
+            r"\bmanagers?'?s? (?:account filter|filter|options?|rows?|headings?|totals?|footer)\b[^.;¦]{0,120}"
+            r"\b(?:every|all) (?:accounts?|legs?)\b|\b(?:every|any|each) managers? (?:holds?|has) \S*write\b"
+        ),
+    ),
+)
+
+
+def g_safety(t: Texts) -> list[str]:
+    """C-2.8, C-2.9, C-12.2, C-12.4 and the binding conditions: no sentence contradicts a
+    security invariant — no withdrawal, no key shown, no action without its audit, the kill switch
+    never bypassed, fixtures only, no write under view-as or by a Viewer, RBAC server-side, a
+    Manager's scope the assigned accounts — so the pinned text holds after a careless re-pin."""
+    bad: list[str] = []
+    for what, rx in SAFETY_CLAIMS:
+        bad += [f"claim ({what}): {c!r}" for c in claims(swept(t), rx)]
+    # an absence said outright ("runs without an audit") is read before any negation is blanked
+    absent = SAFETY_CLAIMS[2][1]
+    for text in swept(t):
+        for u in units(text):
+            for s in sentences(u):
+                n = norm_text(unnegate(unquote(s)))
+                if re.search(absent, n) and not re.search(
+                    r"\b(?:never|not|no)\b[^.;]{0,12}\bwithout\b", n
+                ):
+                    bad.append(f"claim (an action without its audit (C-2.9)): {n[:60]!r}")
+    return one("G-SAFETY", bad)
 
 
 # ---- a11y, tokens, copy (RULED BQ-12, BQ-13, BQ-14)
@@ -2305,20 +3326,40 @@ def g_env(t: Texts) -> list[str]:
 A11Y_LINES = ("Keyboard:", "Accessible name:", "Live region:")
 A11Y_ENTRIES = STATE_HEADS
 A11Y_HAND = ("C.1 A-1", "C.2 A-2", "C.3 A-3", "C.4 A-4")
-A11Y_TABLE_A = ("CMP-123", "CMP-049")
+A11Y_TABLE_A = ("CMP-123", "CMP-049", "CMP-105")
+A11Y_MIN_WORDS = 6
+A11Y_PLACEHOLDER = (
+    r"\b(?:see above|see below|as above|to follow|to be (?:written|defined|decided)|tb[dc]|todo"
+    r"|fill in|later)\b"
+)
 ROW_UPDATE = (
-    r"\brow updates?\b|\beach row\b|\bevery row\b|\bper row\b|\brow by row\b"
-    r"|\bindividual rows?\b|\bevery (?:price |value )?update\b|\beach update\b"
+    r"\brow (?:updates?|changes?)\b|\beach row\b|\bevery row\b|\bper row\b|\brow by row\b"
+    r"|\bindividual rows?\b|\b(?:every|each|any) (?:price |value )?(?:update|change)\b"
+    r"|\bvalue changes\b|\b(?:every|each) fill\b|\brows\b(?= (?:announce|speak|read))"
+    r"|\b(?:their|its) own updates\b"
 )
 ANNOUNCE = (
     r"\bannounc\w*|\baria live\b|\b(?:to|into|in|through) (?:the |a )?live regions?\b|\bspoken\b"
-    r"|\bspeaks?\b|\bread (?:out|aloud)\b|\bpolite\w*|\bassertive\w*"
+    r"|\bspeaks?\b|\bread (?:out|aloud)\b|\bpolite\w*|\bassertive\w*|\bvoiced\b|\bnarrat\w*"
 )
+
+
+def a11y_problem(text: str) -> str:
+    """Why an a11y line says nothing: blank, a placeholder, or fewer than six words."""
+    if nullish(text):
+        return "is blank"
+    n = norm_text(text)
+    if re.search(A11Y_PLACEHOLDER, n):
+        return "is a placeholder"
+    if len(re.findall(r"[\w`+↑↓←→]+", n)) < A11Y_MIN_WORDS:
+        return f"has fewer than {A11Y_MIN_WORDS} words"
+    return ""
 
 
 def g_a11y(t: Texts) -> list[str]:
     """RULED BQ-14: every entry carries the three a11y lines (keyboard model, accessible-name
-    composition, live-region policy); row updates are never announced individually."""
+    composition, live-region policy), each a real line, never a placeholder; row updates are
+    never announced individually."""
     bad: list[str] = []
     for head in A11Y_ENTRIES:
         if pending(t.spec, head):
@@ -2329,13 +3370,19 @@ def g_a11y(t: Texts) -> list[str]:
             continue
         for label in A11Y_LINES:
             line = bullet(block, label)
-            if not line or nullish(line.split(":**", 1)[-1]):
-                bad.append(f"§{head.split(' ')[0]} has no {label[:-1]} line")
+            why = a11y_problem(line.split(":**", 1)[-1]) if line else "is missing"
+            if why:
+                bad.append(f"§{head.split(' ')[0]} {label[:-1]} line {why}")
     for head in A11Y_HAND:
         if pending(t.hand, head):
             continue
         line = bullet(section(t.hand, head), "A11y")
         bad += [f"{head} A11y has no {lab[:-1]}" for lab in A11Y_LINES if lab not in line]
+        for lab in A11Y_LINES:
+            part = re.split(r"(?:Keyboard|Accessible name|Live region):", line.split(lab, 1)[-1])[0]
+            words = re.findall(r"[\w`+↑↓←→]+", norm_text(part))
+            if lab in line and (re.search(A11Y_PLACEHOLDER, norm_text(part)) or len(words) < 4):
+                bad.append(f"{head} A11y {lab[:-1]} is a placeholder or empty")
     if not pending(t.hand, "C.5 Table A"):
         rows = table_a(t.hand)
         for cmp in A11Y_TABLE_A:
@@ -2349,7 +3396,7 @@ def g_a11y(t: Texts) -> list[str]:
 
 DS_FAMILIES = (
     "color", "space", "size", "type", "radius", "elevation", "opacity", "motion", "border",
-    "shadow", "z", "zindex", "font",
+    "shadow", "z", "zindex", "font", "icon", "duration", "easing", "spacing",
 )  # fmt: skip
 DS_SHAPED = re.compile(
     rf"(?<![\w./@#-])((?:{'|'.join(DS_FAMILIES)})\.[a-z0-9-]+(?:\.[a-z0-9{{}},*-]+)*)(?![\w(])",
@@ -2357,6 +3404,20 @@ DS_SHAPED = re.compile(
 )
 DS_NAME = re.compile(
     r"`((?:color|space|size|type|radius|elevation|opacity|motion|border|font)\.[a-z0-9.{},*-]+)`"
+)
+# a backticked dotted name with a design-system word in any segment (`flash.opacity.peak`)
+DS_ANY_SEGMENT = re.compile(
+    rf"`([a-z][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:{'|'.join(DS_FAMILIES)})(?:\.[a-z0-9-]+)*)`"
+)
+# a family written kebab, camel or upper-snake (`color-blotter-flash`, `colorBlotterFlash`,
+# `COLOR_BLOTTER_FLASH`, `bg-…`, `text-…`): a design-system name in another spelling
+DS_KEBAB = re.compile(rf"`((?:{'|'.join(DS_FAMILIES)}|bg|text)-[a-z0-9]+(?:-[a-z0-9]+)*)`")
+DS_CAMEL = re.compile(rf"\b((?:{'|'.join(DS_FAMILIES)}|bg|text)(?:[A-Z][a-z0-9]+)+)\b")
+DS_UPPER = re.compile(
+    rf"\b((?:{'|'.join(f.upper() for f in DS_FAMILIES)}|BG|TEXT)(?:_[A-Z0-9]+)+)\b"
+)
+DS_PREFIX = re.compile(
+    r"\b(?:tokens|theme)\.(?=(?:" + "|".join(DS_FAMILIES) + r")\.)", re.IGNORECASE
 )
 
 
@@ -2389,31 +3450,51 @@ def recorded_names(t: Texts) -> set[str]:
 
 
 def g_name(t: Texts) -> list[str]:
-    """RULED BQ-12: no new design-system name — every name (backticked or bare, any case, or a
-    CSS variable) is shipped, or recorded in §5's PROPOSED register or a §7.4 row."""
+    """RULED BQ-12: no new design-system name — every name (backticked or bare, any case, a
+    `tokens.` / `theme.` prefix dropped, any segment, kebab, camel or upper-snake, or a CSS
+    variable) is shipped, recorded in §5's PROPOSED register or a §7.4 row, or a name `15`
+    already uses."""
     known = ds_names()
     css_known = {n.replace(".", "-") for n in known}
     recorded = recorded_names(t)
+    p15 = at_base(P15_REL)
     bad: list[str] = []
     for name, text in (("spec", t.spec), ("hand-off", t.hand)):
-        body = drop_column(visible(text), "old")  # Table A's Old cells: `15` verbatim
-        for n in sorted({m.lower() for m in DS_SHAPED.findall(body)}):
+        body = DS_PREFIX.sub("", drop_column(visible(text), "old"))  # Old cells: `15` verbatim
+        shaped = {m.lower() for m in DS_SHAPED.findall(body)}
+        shaped |= {m.lower() for m in DS_ANY_SEGMENT.findall(body.lower())}
+        for n in sorted(shaped):
             if all(x in known for x in expand(n, known)) or n in recorded:
                 continue
             bad.append(f"{name}: `{n}` is neither shipped nor recorded")
-        for m in re.finditer(r"--(?:cv-)?([a-z][a-z0-9-]*)", body.lower()):
-            if m[1].split("-")[0] in DS_FAMILIES and m[1] not in css_known:
-                bad.append(f"{name}: `--{m[1]}` is not a shipped name's variable")
+        for n in DS_KEBAB.findall(body):
+            if n not in css_known:
+                bad.append(f"{name}: `{n}` spells a design-system name that is not shipped")
+        for n in DS_CAMEL.findall(body) + DS_UPPER.findall(body):
+            if n not in p15:
+                bad.append(f"{name}: `{n}` spells a design-system name that is not shipped")
+        css = (
+            r"var\(\s*--(?:cv-)?([a-z][a-z0-9-]*)|--cv-([a-z][a-z0-9-]*)|--((?:"
+            + "|".join(DS_FAMILIES)
+            + r")-[a-z0-9-]+)"
+        )
+        for m in re.finditer(css, body.lower()):
+            v = m[1] or m[2] or m[3]
+            if v not in css_known:
+                bad.append(f"{name}: `--{v}` is not a shipped name's variable")
     return one("G-TOKEN", bad)
 
 
 REASON_MAX = 60
 REASON_FAMILIES = ("rbac", "recon", "blotter", "guard", "feed", "notice", "inflight", "panel")
+COPY_KEY = re.compile(r"`((?:" + "|".join(REASON_FAMILIES) + r")\.[a-z_.*{}]*[a-z_*}])`")
 
 
 def g_copy(t: Texts) -> list[str]:
-    """RULED BQ-13: T2 only with registered keys; every other key PROPOSED with its owner;
-    every new reason one sentence of at most sixty characters with a full stop."""
+    """RULED BQ-13: T2 only with registered keys; every other key PROPOSED with its owner, on a
+    §4.1 leg and on a frame's T2 alike; every reason key the texts name is registered, in §6 or
+    in the §7.4 ledger; every new reason one sentence of at most sixty characters with a full
+    stop."""
     bad: list[str] = []
     reg = registered_reasons()
     proposed: set[str] = set()
@@ -2426,10 +3507,10 @@ def g_copy(t: Texts) -> list[str]:
             if not idents:
                 continue
             ident, status = idents[0], norm_text(col(r, "Status"))
-            if status.startswith("registered") and ident not in reg:
+            if status.startswith("registered") and not all(i in reg for i in idents):
                 bad.append(f"`{ident}` is not registered at the base")
             elif status.startswith("proposed"):
-                proposed.add(ident)
+                proposed |= set(idents)
                 if nullish(col(r, "Owner")):
                     bad.append(f"`{ident}` is PROPOSED with no owner")
             elif not status.startswith(("registered", "proposed")):
@@ -2439,11 +3520,24 @@ def g_copy(t: Texts) -> list[str]:
                 s = strings[0].strip('"“”')
                 if len(s) > REASON_MAX or not s.endswith("."):
                     bad.append(f"`{ident}`: the reason is not one sentence of ≤ {REASON_MAX}")
+    known = reg | proposed
     if not pending(t.spec, "4.1 The gated controls"):
         for r in gated_rows(t.spec):
             for k in legs_of(col(r, "Legs")):
-                if k not in reg and k not in proposed and not k.endswith("*"):
+                if k not in known and not k.endswith("*"):
                     bad.append(f"`{k}` (§4.1) is neither registered nor PROPOSED in §6")
+    for head, r in all_state_rows(t.spec):
+        for k in legs_of(col(r, "T2")):
+            if k not in known and not k.endswith("*"):
+                bad.append(f"`{k}` ({col(r, 'Frame')[:28]}) is neither registered nor PROPOSED")
+    recorded = known | set(COPY_KEY.findall(section(t.spec, "6. Copy keys")))
+    recorded |= set(COPY_KEY.findall(section(t.spec, "7.4 Drift ledger")))
+    families = {k.split(".")[0] for k in recorded}
+    for name, text in (("spec", t.spec), ("hand-off", t.hand)):
+        for k in sorted(set(COPY_KEY.findall(visible(text)))):
+            wild = k.endswith("*") and k.split(".")[0] in families
+            if k not in recorded and not wild:
+                bad.append(f"{name}: `{k}` is neither registered nor in §6 or §7.4")
     return one("G-COPY", bad)
 
 
@@ -2451,22 +3545,42 @@ def g_copy(t: Texts) -> list[str]:
 # A clause of the spec or the hand-off (a heading, a table cell, a prose sentence, a fenced line)
 # is security-bearing when it names, case-insensitive at a word boundary: view-as; flatten or a
 # bulk exit; the kill switch or a freeze; a native stop, NO SL or a stop-loss; liquidation;
-# reduce-only; read-only; `aria-disabled`; audit; keys, signatures, withdrawals, transfers or
-# `ret_msg`; and, case-sensitive, a fixture account (Main, Sub-n) or an environment word.
+# reduce-only; read-only; `aria-disabled`; audit; keys, signatures, secrets, withdrawals,
+# transfers, `ret_msg`, a balance, an order id or a uid; the environment (`environment`, `env`,
+# `color.env.*`, the `"live"` / `"demo"` enums); T2 and its reason keys (`rbac.*`, `recon.*`,
+# `blotter.*`, `guard.mismatch*`, `inflight.*`, `notice.*`, `panel.*`, `feed.*`, `arm.*`,
+# `refusal.*`), CMP-079, "Not available", the `lock`, hiding, `403`, `account_scope_denied`,
+# stickiness, the C-2.6 carve-out, a C-2 / C-12 rule, a `x:write` permission, a permission, a
+# role, a scope, a Viewer or a Manager; a fixture money value (USDT, BTC, PnL); the CSV export and
+# its watermark; and, case-sensitive, a fixture account (Main, Sub-n), the Owner or an environment
+# word (LIVE, DEMO). Every clause of the sections SECURE_SECTIONS names, and every T2 cell, is
+# security-bearing whatever it names (pinned by location).
 BEARING = re.compile(
-    r"\bview(?:ing)?[- ]as\b|\brbac\.view_as\b"
+    r"\bview(?:ing)?[- ]as\b|\brbac\.\w+"
     r"|\bflatten\w*|\bclose[- ]all\b|\bcancel[- ]all\b|\bcancelallorders\b|\bcloseallpositions\b"
-    r"|\bflattenallbutton\b|\bCMP-(?:123|211)\b|\bpanic\b"
+    r"|\bflattenallbutton\b|\bCMP-(?:123|211|079|075|139)\b|\bpanic\b"
     r"|\bkill[- ]switch\b|\bfrozen\b|\bfreeze\b|\bhold[- ]to[- ]confirm\b|\btyped (?:confirm\w*|word)\b"
     r"|\bnative[- ](?:stop|sl)\b|\bno sl\b|\bstop[- ]loss\b|\bliquidat\w*|\breduce[- ]only\b"
     r"|\bread[- ]only\b|\baria-disabled\b|\baudit\w*|\bdestructive\b"
     r"|\bapi[- ]?keys?\b|\bkey (?:material|ids?|vault)\b|\bsignatures?\b|\bwithdraw\w*"
-    r"|\btransfers?\b|\bret_msg\b|\bcredentials?\b",
+    r"|\btransfers?\b|\bret_msg\b|\bcredentials?\b|\bsecrets?\b|\bpass(?:word|phrase)s?\b"
+    r"|\b(?:session|auth\w*|access|bearer|api) tokens?\b|\bbalances?\b|\border ids?\b|\buids?\b"
+    r"|\benvironments?\b|\benv\b|\bcolor\.env\.\w+|\"(?:live|demo|testnet)\""
+    r"|\brecon\.|\bblotter\.|\bguard\.mismatch|\binflight\.|\bnotice\.|\bpanel\.|\bfeed\.|\barm\."
+    r"|\brefusal\.|\bt2\b|\brbacgate\b|\bnot available\b|\block\b|\bhidden\b|\bhid(?:e|es|ing)\b"
+    r"|\b403\b|\baccount_scope_denied\b|\bsticky\b|\bcarve-out\b|\bC-(?:2|12)\.\d+\b"
+    r"|\b\w+:(?:write|read)\b|\bpermissions?\b|\broles?\b|\bscop(?:e|es|ed|ing)\b"
+    r"|\bviewers?\b|\bmanagers?\b|\bUSDT\b|\bBTC\b|\b[ur]?PnL\b|\bP&L\b|\bCSV\b|\bwatermark\w*",
     re.IGNORECASE,
 )
 BEARING_CASED = re.compile(
-    r"\b(?:LIVE|DEMO|TESTNET|Demo|Testnet|Main)\b|\bLive\b(?! regions?)|\bSub-\d+\b"
+    r"\b(?:LIVE|DEMO|TESTNET|Demo|Testnet|Main|Owners?)\b|\bLive\b(?! regions?)|\bSub-\d+\b"
 )
+# pinned by location: every clause of these sections, whatever it names (RULED BQ-16)
+SECURE_SECTIONS: dict[str, tuple[str, ...]] = {
+    "spec": ("2.4 CMP-123", "2.5 CMP-129", "4. T2", "4.1 ", "4.2 ", "4.3 ", "6. Copy keys"),
+    "hand-off": ("C.4 A-4", "C.5 Table A"),
+}
 LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+\.)\s")
 PIN_SPLIT = re.compile(r"(?<=[.!?])\s+")
 PIN_SEP = " ‖ "
@@ -2548,8 +3662,13 @@ def bearing(clause: str) -> bool:
     return BEARING.search(clause) is not None or BEARING_CASED.search(clause) is not None
 
 
+def secured(name: str, sec: str, where: str) -> bool:
+    """A clause pinned by its place: a section of SECURE_SECTIONS, or any table's T2 cell."""
+    return sec.startswith(SECURE_SECTIONS.get(name, ())) or where.endswith(f"{PIN_SEP}T2")
+
+
 def bearing_clauses(name: str, text: str) -> list[Clause]:
-    return [c for c in text_clauses(name, text) if bearing(c[2])]
+    return [c for c in text_clauses(name, text) if bearing(c[2]) or secured(name, c[0], c[1])]
 
 
 def render_pins(spec: str, hand: str) -> str:
@@ -2711,6 +3830,22 @@ def g_cvd_port(t: Texts) -> list[str]:
     return one("G-CVD-PORT", [] if port == theirs else ["the port differs from cvd_simulate.py"])
 
 
+def g_contrast_port(t: Texts) -> list[str]:
+    """RULED BQ-1 / BQ-16: the ported contrast helpers equal their source at the base, read as
+    text and never run: each function's numbers in order, and the theme layering of
+    `verify_tokens.THEMES` equal to `themes.json`'s."""
+    bad: list[str] = []
+    for rel, func, mine in PORTED:
+        theirs = source_numbers(at_base(rel), func)
+        if theirs is None:
+            bad.append(f"{rel} has no `{func}` at {BASE}")
+        elif [float(x) for x in mine()] != theirs:
+            bad.append(f"the port of `{func}` differs from {rel}")
+    if helper_layering() != theme_sets():
+        bad.append("the theme layering differs from `verify_tokens.THEMES`")
+    return one("G-CONTRAST-PORT", bad)
+
+
 UNRESOLVED = (
     r"\bunresolved\b|\bstill open\b|\bnot (?:yet )?(?:resolved|answered|corrected)\b|\btb[dc]\b"
     r"|\bno owner\b|\bno replacement\b"
@@ -2726,7 +3861,8 @@ def drift_problems(k: str, d: dict[str, str]) -> list[str]:
         if nullish(col(d, c)):
             bad.append(f"{k}: no {c}")
     rep = col(d, "Replacement")
-    if not (DS_NAME.search(rep) or "Deliberate exception" in rep) or live(rep, UNRESOLVED):
+    exact = DS_NAME.search(rep) or COPY_KEY.search(rep) or re.search(r"\bCMP-\d{3}\b", rep)
+    if not (exact or "Deliberate exception" in rep) or live(rep, UNRESOLVED):
         bad.append(f"{k}: the Replacement names no exact name")
     if norm_text(col(d, "Verdict")) not in ("corrected", "justified"):
         bad.append(f"{k}: verdict {col(d, 'Verdict')!r} (unresolved)")
@@ -2780,6 +3916,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-VIEWAS": g_viewas,
     "G-EXITS": g_exits,
     "G-ENV": g_env,
+    "G-SAFETY": g_safety,
     "G-A11Y": g_a11y,
     "G-TOKEN": g_name,
     "G-COPY": g_copy,
@@ -2788,6 +3925,7 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-ORPHAN": g_orphan,
     "G-CONTRAST": g_contrast,
     "G-CVD-PORT": g_cvd_port,
+    "G-CONTRAST-PORT": g_contrast_port,
     "G-DRIFT": g_drift,
 }
 GATE_TAGS = tuple(GATES)
@@ -2803,14 +3941,14 @@ GATE_RULES: dict[str, str] = {
     "G-BOARDS": "at most ten boards, at most three light twins (BQ-15)",
     "G-BUDGET": "the spec at most 600 lines, §9 at most ten (BQ-1)",
     "G-HANDOFF": "one hand-off, §A to §F (BQ-1)",
-    "G-UNTOUCHED": "`15` and `16` byte-identical to the base (BQ-2)",
+    "G-UNTOUCHED": "`15` and `16` byte-identical; the branch changes its three files only (BQ-2)",
     "G-PLACEHOLDER": "no section left to write",
     "G-MUTLIST": "this table lists the tool's mutations (BQ-16)",
-    "G-ROW-200": "no motion row past `motion.duration.normal`; never `slow` (BQ-9, BQ-12)",
-    "G-COMPOSITOR": "Property is opacity, a transform or none (BQ-9)",
+    "G-ROW-200": "no motion past `motion.duration.normal`, never `slow`; one table (BQ-9, BQ-12)",
+    "G-COMPOSITOR": "Property is opacity, a transform or none; no layout motion (BQ-9)",
     "G-TWIN": "a `prefers-reduced-motion` twin on every row (BQ-9; AC2)",
     "G-REDUCE-INSTANT": "every twin instant (BQ-9; AC2)",
-    "G-INSTANT": "the eight kinds of state swap at frame 0 in both modes (BQ-11)",
+    "G-INSTANT": "state swaps at frame 0; six rows and six frames animate (BQ-9, BQ-11)",
     "G-LOOP": "no shimmer, pulse or loop word, any case (BQ-10)",
     "G-TICK": "nothing per tick or update; the flash rate (BQ-9)",
     "G-PENDING": "pending is a state, never drawn as confirmed (BQ-5)",
@@ -2818,15 +3956,17 @@ GATE_RULES: dict[str, str] = {
     "G-DISPLAY": "CMP-129's display variant: no control role, no T2 (BQ-8)",
     "G-VIEWAS": "the legs in order, view-as first; nothing hidden (BQ-13)",
     "G-EXITS": "exits never gated by a state key or `rbac.env` (BQ-13)",
-    "G-ENV": "totals per environment; never colour alone (BQ-13)",
+    "G-ENV": "totals per environment; never colour alone; no switch (BQ-13; C-2.11)",
+    "G-SAFETY": "no sentence contradicts a security invariant (C-2.8, C-2.9, C-12.4)",
     "G-A11Y": "the three a11y lines on every entry (BQ-14)",
-    "G-TOKEN": "no new token name (BQ-12)",
-    "G-COPY": "registered keys, or PROPOSED with an owner (BQ-13)",
-    "G-SEC-PIN": "the security text pinned, default-deny (BQ-16)",
+    "G-TOKEN": "no new token name, in any spelling (BQ-12)",
+    "G-COPY": "registered keys or PROPOSED with an owner, legs and frames (BQ-13)",
+    "G-SEC-PIN": "the security text pinned by word and by place, default-deny (BQ-16)",
     "G-STATES": "D01 D2's statuses, D02's tiers and chip states, the markers (AC1; BQ-5)",
     "G-ORPHAN": "every SCR-063 and SCR-078 component mapped (AC1; BQ-3)",
     "G-CONTRAST": "the tool's pairs, each at its bar in three themes (BQ-14)",
     "G-CVD-PORT": "the CVD port equals `cvd_simulate.py` (BQ-16)",
+    "G-CONTRAST-PORT": "the contrast port equals its two helpers; no repo code runs (BQ-1)",
     "G-DRIFT": "every drift row resolved (BQ-12)",
 }
 
@@ -2856,7 +3996,11 @@ def read_inputs() -> tuple[tuple[str, str], ...]:
 
 
 def diff_names() -> tuple[str, ...]:
-    return tuple(n for n in git_out("diff", "--name-only", BASE).split("\n") if n)
+    """Every path the branch changes against the base: committed, staged, in the tree or new and
+    untracked (G-UNTOUCHED)."""
+    changed = git_out("diff", "--name-only", BASE).split("\n")
+    changed += git_out("ls-files", "--others", "--exclude-standard").split("\n")
+    return tuple(sorted({n for n in changed if n}))
 
 
 # ---------------------------------------------------------------------------- the fixture fill
@@ -3061,6 +4205,56 @@ def nudge_projection() -> Callable[[], None]:
     return lambda: PROJECTIONS.__setitem__(sim, old)
 
 
+def insert_before(
+    head: str,
+    words: tuple[str, ...],
+    pick: Callable[[dict[str, str]], bool],
+    row: Callable[[dict[str, str]], str],
+) -> Edit:
+    """Insert `row(r)` before the first row `pick` chooses in the first table of `head` whose
+    header holds `words` (a copy of a row placed ahead of it, for a repeated id)."""
+
+    def run(text: str, _v: Values) -> str:
+        block = section(text, head)
+        lines = block.split("\n")
+        for i in range(len(lines) - 1):
+            if not (lines[i].lstrip().startswith("|") and is_rule(lines[i + 1])):
+                continue
+            header = split_row(lines[i])
+            if not all(w.lower() in " | ".join(header).lower() for w in words):
+                continue
+            for j in range(i + 2, len(lines)):
+                if not lines[j].lstrip().startswith("|"):
+                    break
+                r = dict(zip(header, split_row(lines[j]), strict=False))
+                if pick(r):
+                    lines.insert(j, row(r))
+                    return text.replace(block, "\n".join(lines), 1)
+            return text
+        return text
+
+    return run
+
+
+def slow_cell(v: Values, _cell: str) -> str:
+    """A Duration cell binding `motion.duration.slow` with its marker (M1.3)."""
+    return f"`motion.duration.slow` ({marker(v, 'motion.duration.slow')} ms)"
+
+
+def nudge_knee() -> Callable[[], None]:
+    """Move the ported WCAG knee to `verify_tokens`' sRGB knee (G-CONTRAST-PORT); returns the
+    undo. No token channel lies between the two knees, so no ratio moves."""
+    global WCAG_KNEE
+    old = WCAG_KNEE
+    WCAG_KNEE = LAB_KNEE
+
+    def undo() -> None:
+        global WCAG_KNEE
+        WCAG_KNEE = old
+
+    return undo
+
+
 FIXTURES_SENTENCE = "No key material, signature, full order id or real balance appears"
 
 
@@ -3092,6 +4286,7 @@ class Mutation:
     p16: Callable[[str], str] | None = None
     patch: Callable[[], Callable[[], None]] | None = None  # moves tool state; returns the undo
     pinned: bool = False  # True: held to the baseline's pins (a G-SEC-PIN mutation)
+    names: Callable[[tuple[str, ...]], tuple[str, ...]] | None = None  # the branch's changed paths
 
 
 # ---------------------------------------------------------------------------- the fixture
@@ -3629,7 +4824,13 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M6.5",
         "G-INSTANT",
         "BQ-11 liq tier",
-        spec=mo_edit(swap_row, "Duration", to("`motion.duration.fast`")),
+        spec=with_values(
+            lambda v: mo_edit(
+                swap_row,
+                "Duration",
+                to(f"`motion.duration.fast` ({marker(v, 'motion.duration.fast')} ms)"),
+            )
+        ),
     ),
     Mutation(
         "M6.6",
@@ -3966,9 +5167,698 @@ MUTATIONS: tuple[Mutation, ...] = (
             to(LONG_REASON),
         ),
     ),
+    # ---- round 1 (the lenses' frame-level cases; each trips its gate alone)
+    # G-ROW-200: one motion table, no repeated id, a closed Duration / Easing grammar, `16`, prose
+    Mutation(
+        "M1.3",
+        "G-ROW-200",
+        "BQ-9 (a repeated id)",
+        spec=with_values(
+            lambda v: insert_before(
+                "3.2 The motion table",
+                MO_WORDS,
+                lambda r: row_key(col(r, "Mo")) == "Mo-3",
+                lambda r: join_row(
+                    [slow_cell(v, c) if k.startswith("Duration") else c for k, c in r.items()]
+                ),
+            )
+        ),
+    ),
+    Mutation(
+        "M1.4",
+        "G-ROW-200",
+        "BQ-9 (a second table)",
+        spec=with_values(
+            lambda v: prose_at(
+                "3.2 The motion table",
+                "| Mo | Component | Trigger | Property | Duration | Easing | "
+                "prefers-reduced-motion twin | Limit | Board |\n"
+                "| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n"
+                "| Mo-14 | a state swap of the row menu | the state changes | none (a cut) | "
+                f"`motion.duration.instant` ({marker(v, 'motion.duration.instant')} ms) | none | "
+                "prefers-reduced-motion: the same cut at frame 0 | — | 06, 07 |",
+            )
+        ),
+    ),
+    Mutation(
+        "M1.5",
+        "G-ROW-200",
+        "BQ-9 (by reference)",
+        spec=mo_edit(lambda r: row_key(col(r, "Mo")) == "Mo-3", "Duration", to("by reference")),
+    ),
+    Mutation(
+        "M1.6",
+        "G-ROW-200",
+        "BQ-9 (`16` block)",
+        hand=with_values(
+            lambda v: sub_in(
+                "C.6 The `16` block",
+                "own opacity over `fast` /",
+                f"own opacity over {marker(v, 'motion.duration.slow')} milliseconds /",
+            )
+        ),
+    ),
+    Mutation(
+        "M1.7",
+        "G-ROW-200",
+        "BQ-9 (a spelled unit)",
+        spec=with_values(
+            lambda v: mo_edit(
+                lambda r: row_key(col(r, "Mo")) == "Mo-1",
+                "Duration",
+                to(f"{marker(v, 'motion.duration.slow')} milliseconds"),
+            )
+        ),
+    ),
+    Mutation(
+        "M1.8",
+        "G-ROW-200",
+        "BQ-9 (prose)",
+        spec=prose_at(
+            "3.1 ",
+            lambda v: f"A new row fades in over {marker(v, 'motion.duration.slow')} milliseconds.",
+        ),
+    ),
+    Mutation(
+        "M1.9",
+        "G-ROW-200",
+        "BQ-9 (no Duration)",
+        spec=mo_edit(lambda r: row_key(col(r, "Mo")) == "Mo-1", "Duration", to("")),
+    ),
+    Mutation(
+        "M1.10",
+        "G-ROW-200",
+        "BQ-12 (an Easing not shipped)",
+        spec=mo_edit(lambda r: row_key(col(r, "Mo")) == "Mo-1", "Easing", to("easeOutBack")),
+    ),
+    Mutation(
+        "M2.2",
+        "G-ROW-200",
+        "BQ-12 (`16` block)",
+        hand=sub_in("C.6 The `16` block", "own opacity over `fast` /", "own opacity over `slow` /"),
+    ),
+    Mutation(
+        "M2.3",
+        "G-ROW-200",
+        "BQ-12 (any case)",
+        spec=mo_edit(
+            lambda r: row_key(col(r, "Mo")) == "Mo-1", "Duration", to("`motion.duration.Slow`")
+        ),
+    ),
+    Mutation(
+        "M2.4",
+        "G-ROW-200",
+        "BQ-12 (prose)",
+        spec=prose_at("3.1 ", "Mo-2 binds `motion.duration.slow`."),
+    ),
+    Mutation(
+        "M2.5",
+        "G-ROW-200",
+        "BQ-12 (a free cell)",
+        spec=mo_edit(
+            lambda r: row_key(col(r, "Mo")) == "Mo-2",
+            "Limit",
+            appended(" over `motion.duration.slow`"),
+        ),
+    ),
+    # G-COMPOSITOR: the Property grammar, the `16` block, the §3.2 tail, layout words, the pointer
+    Mutation(
+        "M3.3",
+        "G-COMPOSITOR",
+        "BQ-9 (by reference)",
+        spec=mo_edit(
+            lambda r: row_key(col(r, "Mo")) == "Mo-1", "Property", to("by reference (CMP-015)")
+        ),
+    ),
+    Mutation(
+        "M3.4",
+        "G-COMPOSITOR",
+        "T Perf (`16` block)",
+        hand=sub_in(
+            "C.6 The `16` block", "the row's own opacity over", "the row's own height over"
+        ),
+    ),
+    Mutation(
+        "M3.5",
+        "G-COMPOSITOR",
+        "T Perf (the §3.2 tail)",
+        spec=prose_at("3.2 The motion table", "The docked drawer animates the canvas width."),
+    ),
+    Mutation(
+        "M3.6",
+        "G-COMPOSITOR",
+        "BQ-9 (a Property read whole)",
+        spec=mo_edit(lambda r: row_key(col(r, "Mo")) == "Mo-1", "Property", to("opacity + color")),
+    ),
+    Mutation(
+        "M3.7",
+        "G-COMPOSITOR",
+        "T Perf (a layout word)",
+        spec=prose_at("3.1 ", "A collapsing group accordions shut."),
+    ),
+    Mutation(
+        "M3.8",
+        "G-COMPOSITOR",
+        "D01:406 (the pointer)",
+        spec=prose_at("3.1 ", "Rows move under the pointer."),
+    ),
+    # G-TWIN, G-REDUCE-INSTANT: wording, the paired delta, one source
+    Mutation(
+        "M4.4",
+        "G-TWIN",
+        "AC2 (wording)",
+        spec=prose_at("3.6 ", "Mo-3 has no reduced-motion equivalent."),
+    ),
+    Mutation(
+        "M4.5",
+        "G-TWIN",
+        "T Tech (the paired delta)",
+        spec=sub_in(
+            "3.5 ", "Every flash pairs with a text or glyph delta", "A flash may be colour only"
+        ),
+    ),
+    Mutation(
+        "M5.3",
+        "G-REDUCE-INSTANT",
+        "AC2 (wording)",
+        spec=prose_at("3.6 ", "Reduced motion keeps the flash at half strength."),
+    ),
+    Mutation(
+        "M5.4",
+        "G-REDUCE-INSTANT",
+        "AC2 (one source)",
+        spec=sub_in(
+            "3.6 ",
+            "the in-app setting wins over the OS signal",
+            "the OS signal wins over the in-app setting",
+        ),
+    ),
+    # G-INSTANT: default-deny frames and rows, the §3.2 tail, clause reading, one frame table
+    Mutation(
+        "M6.9",
+        "G-INSTANT",
+        "BQ-11 (the §3.2 tail)",
+        spec=prose_at(
+            "3.2 The motion table", "The status word cross-fades from Working to Filled."
+        ),
+    ),
+    Mutation(
+        "M6.10",
+        "G-INSTANT",
+        "BQ-11 (a frame default-deny)",
+        spec=edit_row(
+            "2.1 CMP-114",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-114/marker-verifying`",
+            "Motion",
+            to("Mo-1"),
+        ),
+    ),
+    Mutation(
+        "M6.11",
+        "G-INSTANT",
+        "BQ-11 (a bare word)",
+        spec=prose_at("3.3 ", "The word fades from Working to Filled."),
+    ),
+    Mutation(
+        "M6.12",
+        "G-INSTANT",
+        "BQ-9 (a row default-deny)",
+        spec=with_values(
+            lambda v: add_row(
+                "3.2 The motion table",
+                MO_WORDS,
+                "| Mo-14 | the protection chip (B8 state) | the chip's state is re-read | opacity | "
+                f"`motion.duration.fast` ({marker(v, 'motion.duration.fast')} ms) | "
+                "`motion.easing.standard` | prefers-reduced-motion: the chip is there at frame 0; "
+                "its word is the change | once per re-read | 06, 07 |",
+            )
+        ),
+    ),
+    Mutation(
+        "M6.13",
+        "G-INSTANT",
+        "BQ-8 (a second frame table)",
+        spec=prose_at(
+            "2.5 CMP-129",
+            "| Frame | State | Word | Glyph | Fill | Motion | T2 | Board |\n"
+            "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+            '| `CMP-129/display-hedge` | `display`, hedge | "Hedge" | — | `color.surface.canvas` | — '
+            "| — | 05 |",
+        ),
+    ),
+    # G-LOOP: the widened words, camelCase, a double negation
+    Mutation(
+        "M7.4", "G-LOOP", "BQ-10 (a word)", spec=prose_at("2.2 ", "The pending tag shows a sheen.")
+    ),
+    Mutation(
+        "M7.5",
+        "G-LOOP",
+        "BQ-10 (camelCase)",
+        hand=sub_in(
+            "C.2 A-2",
+            "- **Props**: `order: OrderRowData` ·",
+            "- **Props**: `order: OrderRowData` · `pulseOnPending?: boolean` ·",
+        ),
+    ),
+    Mutation(
+        "M7.6",
+        "G-LOOP",
+        "BQ-10 (a double negation)",
+        spec=prose_at("2.2 ", "A pending row is never drawn without its shimmer."),
+    ),
+    # G-TICK: per update in words; the flash's Trigger and Limit
+    Mutation(
+        "M8.3",
+        "G-TICK",
+        "BQ-9 (whenever)",
+        spec=prose_at("2.3 ", "The flash fires whenever the price changes."),
+    ),
+    Mutation(
+        "M8.4",
+        "G-TICK",
+        "BQ-9 (the flash's Trigger)",
+        spec=mo_edit(is_flash, "Trigger", to("every price change")),
+    ),
+    Mutation(
+        "M8.5",
+        "G-TICK",
+        "BQ-9 (the flash's Limit)",
+        spec=mo_edit(is_flash, "Limit", to("at most one start per painted batch")),
+    ),
+    # G-PENDING: by B-state, the confirmed look, the widened claims
+    Mutation(
+        "M9.3",
+        "G-PENDING",
+        "BQ-5 (a pending frame's glyph)",
+        spec=edit_row(
+            "2.1 CMP-114",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-114/sl-amending`",
+            "Glyph",
+            to("✓ `check`"),
+        ),
+    ),
+    Mutation(
+        "M9.4",
+        "G-PENDING",
+        "BQ-5 (a claim)",
+        spec=prose_at("2.2 ", "A pending amend shows the new price at once."),
+    ),
+    # G-FLATTEN: negation read; the flatten context carried
+    Mutation(
+        "M10.4",
+        "G-FLATTEN",
+        "BQ-7 (a negated typed word)",
+        spec=edit_row(
+            "2.4 CMP-123",
+            ("Environment", "Confirm"),
+            lambda r: "LIVE" in col(r, "Environment"),
+            "Confirm",
+            to("CMP-044 `hold` with no typed word"),
+        ),
+    ),
+    Mutation(
+        "M10.5",
+        "G-FLATTEN",
+        "BQ-7 (the §2.4 context)",
+        spec=prose_at("2.4 ", "On LIVE the typed word is optional."),
+    ),
+    # G-DISPLAY: quotes read, the widened roles
+    Mutation(
+        "M11.3",
+        "G-DISPLAY",
+        "BQ-8 (a quoted role)",
+        spec=edit_row(
+            "2.5 CMP-129",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-129/display-hedge`",
+            "State",
+            appended('; takes role="button"'),
+        ),
+    ),
+    Mutation(
+        "M11.4",
+        "G-DISPLAY",
+        "BQ-8 (a claim)",
+        spec=prose_at("2.5 ", "The display variant is a button."),
+    ),
+    # G-VIEWAS: a frame's T2 leg, hiding words, an ordinal order
+    Mutation(
+        "M12.4",
+        "G-VIEWAS",
+        "BQ-13 (a frame's leg)",
+        spec=edit_row(
+            "2.1 CMP-114",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-114/t2-viewer`",
+            "T2",
+            to("`rbac.owner_only`"),
+        ),
+    ),
+    Mutation(
+        "M12.5",
+        "G-VIEWAS",
+        "BQ-13 (hiding)",
+        spec=prose_at("4.2 ", "A Viewer sees no Close button."),
+    ),
+    Mutation(
+        "M12.6",
+        "G-VIEWAS",
+        "BQ-13 (an ordinal)",
+        spec=prose_at("4.1 ", "Client states are checked first."),
+    ),
+    # G-EXITS: clause reading, the Kind trick, an unbackticked leg
+    Mutation(
+        "M13.3",
+        "G-EXITS",
+        "BQ-13 (a gating word)",
+        spec=prose_at("4.2 ", "Cancel is greyed out while the account is stale."),
+    ),
+    Mutation(
+        "M13.4",
+        "G-EXITS",
+        "BQ-13 (the Kind cell)",
+        spec=edit_row(
+            "4.1 The gated controls",
+            GATED_WORDS,
+            lambda r: col(r, "Control").startswith('"Close ▾"'),
+            "Kind",
+            to("new exposure"),
+        ),
+    ),
+    Mutation(
+        "M13.5",
+        "G-EXITS",
+        "BQ-13 (an unbackticked leg)",
+        spec=edit_row(
+            "4.1 The gated controls",
+            GATED_WORDS,
+            lambda r: col(r, "Control").startswith('"Close ▾"'),
+            "Legs",
+            appended(" → rbac.env"),
+        ),
+    ),
+    # G-A11Y: a placeholder line; an announcement in other words
+    Mutation(
+        "M14.3",
+        "G-A11Y",
+        "BQ-14 (a placeholder)",
+        spec=line_edit(
+            "- **Live region:** Row updates are never announced individually (T a11y).",
+            "- **Live region:**",
+            "- **Live region:** later. Was:",
+        ),
+    ),
+    Mutation(
+        "M14.4",
+        "G-A11Y",
+        "BQ-14 (read aloud)",
+        spec=prose_at("2.1 ", "Row changes are read aloud."),
+    ),
+    # G-UNTOUCHED: the branch's file list; a missing `16`
+    Mutation(
+        "M15.3",
+        "G-UNTOUCHED",
+        "condition (`14`)",
+        names=lambda n: (*n, "docs/plan/14-screens-catalogue.md"),
+    ),
+    Mutation(
+        "M15.4",
+        "G-UNTOUCHED",
+        "condition (a merged spec)",
+        names=lambda n: (*n, "docs/design/E29/E29-D03.md"),
+    ),
+    Mutation("M15.5", "G-UNTOUCHED", "BQ-2 (`16` missing)", p16=lambda _x: ""),
+    # G-VALUE: a quoted time, a spelled unit, a marker dropped
+    Mutation(
+        "M16.3",
+        "G-VALUE",
+        "condition (a quote)",
+        spec=prose_at("5. ", 'The fade is "120 ms" long.'),
+    ),
+    Mutation(
+        "M16.4",
+        "G-VALUE",
+        "condition (a spelled unit)",
+        spec=prose_at("5. ", "Rows are 26 pixels high."),
+    ),
+    Mutation(
+        "M16.5",
+        "G-VALUE",
+        "condition (a marker dropped)",
+        spec=sub_in(
+            "3.5 ",
+            "at peak 0.25 <!-- audit:cited.16.flash-peak-opacity=0.25 -->",
+            "at peak 0.25",
+        ),
+    ),
+    # G-TOKEN: any segment, kebab
+    Mutation(
+        "M17.4",
+        "G-TOKEN",
+        "BQ-12 (any segment)",
+        spec=prose_at("3.5 ", "The overlay binds `flash.opacity.peak`."),
+    ),
+    Mutation(
+        "M17.5",
+        "G-TOKEN",
+        "BQ-12 (kebab)",
+        spec=prose_at("3.5 ", "The overlay binds `color-blotter-flash`."),
+    ),
+    # G-SEC-PIN: a T2 cell, the C-2.11 sentence, the Manager scope, an environment token order
+    Mutation(
+        "M18.4",
+        "G-SEC-PIN",
+        "BQ-16 (a T2 cell)",
+        spec=edit_row(
+            "2.4 CMP-123",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-123/t2-manager-kill-switch`",
+            "T2",
+            to("—"),
+        ),
+        pinned=True,
+    ),
+    Mutation(
+        "M18.5",
+        "G-SEC-PIN",
+        "BQ-16 (C-2.11)",
+        spec=sub_in(
+            "4.3 ",
+            " The blotter offers no environment switch, and no hotkey switches the environment "
+            "(C-2.11; E30-D02:267).",
+            "",
+        ),
+        pinned=True,
+    ),
+    Mutation(
+        "M18.6",
+        "G-SEC-PIN",
+        "BQ-16 (a fixture account)",
+        spec=sub_in("4. T2", '"Sub-1" and "Sub-2"', '"Sub-1" and "Alice-prod"'),
+        pinned=True,
+    ),
+    Mutation(
+        "M19.2",
+        "G-SEC-PIN",
+        "BQ-16 (an environment token)",
+        hand=sub_in(
+            "C.1 A-1",
+            "the environment pill `color.env.live` / `color.env.demo`",
+            "the environment pill `color.env.demo` / `color.env.live`",
+        ),
+        pinned=True,
+    ),
+    # G-ENV: C-2.11 in words; a token against its word
+    Mutation(
+        "M36.2",
+        "G-ENV",
+        "C-2.11 (a switch)",
+        spec=prose_at("4.3 ", "The blotter offers an environment switch."),
+    ),
+    Mutation(
+        "M36.3",
+        "G-ENV",
+        "BQ-13 (a token against its word)",
+        spec=edit_row(
+            "2.1 CMP-114",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-114/env-mixed-view`",
+            "State",
+            lambda c: c.replace("`color.env.live`", "`color.env.demo`"),
+        ),
+    ),
+    # G-COPY: a frame's T2 key
+    Mutation(
+        "M37.3",
+        "G-COPY",
+        "BQ-13 (a frame's key)",
+        spec=edit_row(
+            "2.4 CMP-123",
+            STATE_WORDS,
+            lambda r: col(r, "Frame") == "`CMP-123/offline-rest-unreachable`",
+            "T2",
+            to("`rbac.managers_ok`"),
+        ),
+    ),
+    # G-CONTRAST-PORT: a ported number moved
+    Mutation("M38", "G-CONTRAST-PORT", "BQ-1", patch=nudge_knee),
+    # G-SAFETY: the security invariants, held after a careless re-pin
+    Mutation(
+        "M39.1",
+        "G-SAFETY",
+        "C-2.8",
+        spec=prose_at("2.4 ", "A withdrawal control may be added later."),
+    ),
+    Mutation(
+        "M39.2",
+        "G-SAFETY",
+        "C-12.2",
+        spec=prose_at("2.1 ", "The API key is shown in the account header."),
+    ),
+    Mutation(
+        "M39.3",
+        "G-SAFETY",
+        "C-2.9",
+        spec=prose_at("4.2 ", "Cancel all runs without an audit record."),
+    ),
+    Mutation(
+        "M39.4",
+        "G-SAFETY",
+        "BQ-13 (view-as)",
+        spec=prose_at("4.2 ", "Reverse is available while viewing as another user."),
+    ),
+    Mutation(
+        "M39.5",
+        "G-SAFETY",
+        "C-12.4",
+        spec=sub_in(
+            "4.2 ",
+            "RBAC narrows a filter's options server-side",
+            "RBAC narrows a filter's options client-side",
+        ),
+    ),
+    # round 1, the lenses' pin-only cases made semantic
+    Mutation(
+        "M10.6",
+        "G-FLATTEN",
+        "BQ-7 (a condition)",
+        spec=edit_row(
+            "2.4 CMP-123",
+            ("Environment", "Confirm"),
+            lambda r: "LIVE" in col(r, "Environment"),
+            "Confirm",
+            appended(", the typed word only for the Owner"),
+        ),
+    ),
+    Mutation(
+        "M10.7",
+        "G-FLATTEN",
+        "BQ-7 (a frame deleted)",
+        spec=drop_row(
+            "2.4 CMP-123", STATE_WORDS, lambda r: col(r, "Frame") == "`CMP-123/typed-live`"
+        ),
+    ),
+    Mutation(
+        "M12.7",
+        "G-VIEWAS",
+        "BQ-13 (last)",
+        spec=prose_at("4.1 ", "View-as is checked last."),
+    ),
+    Mutation(
+        "M13.6",
+        "G-EXITS",
+        "BQ-13 (a drawn exception)",
+        spec=edit_row(
+            "4.1 The gated controls",
+            GATED_WORDS,
+            lambda r: col(r, "Control").startswith('"Cancel ▾"'),
+            "Drawn",
+            appended("; the account is reconciling"),
+        ),
+    ),
+    Mutation(
+        "M36.4",
+        "G-ENV",
+        "BQ-13 (a colour name)",
+        spec=prose_at("4.3 ", "LIVE rows are told apart by a red fill."),
+    ),
+    Mutation(
+        "M36.5",
+        "G-ENV",
+        "BQ-13 (`rbac.env` on DEMO)",
+        spec=sub_in("4.1 The gated controls", "`rbac.env` (a LIVE row)", "`rbac.env` (a DEMO row)"),
+    ),
+    Mutation(
+        "M12.8",
+        "G-VIEWAS",
+        "BQ-13 (any order)",
+        hand=sub_in(
+            "§E ", "the legs fire in their order, view-as first", "the legs fire in any order"
+        ),
+    ),
+    Mutation(
+        "M12.9",
+        "G-VIEWAS",
+        "BQ-13 (view-as after)",
+        spec=sub_in(
+            "4. T2", "is checked ahead of every other leg", "is checked after every other leg"
+        ),
+    ),
+    Mutation(
+        "M13.7",
+        "G-EXITS",
+        "BQ-13 (a state key)",
+        spec=sub_in(
+            "4.2 ",
+            "are never gated by a state key or `rbac.env`",
+            "are gated by a state key",
+        ),
+    ),
+    Mutation(
+        "M9.5",
+        "G-PENDING",
+        "BQ-5 (the value cell)",
+        hand=sub_in(
+            "C.2 A-2",
+            "the value cell keeping the live value",
+            "the value cell showing the new value",
+        ),
+    ),
+    Mutation(
+        "M11.5",
+        "G-DISPLAY",
+        "BQ-8 (a lead-in)",
+        hand=sub_in(
+            "C.4 A-4", "with neither a control role nor a reason", "with a button role and a reason"
+        ),
+    ),
+    Mutation(
+        "M39.6",
+        "G-SAFETY",
+        "BQ-13 (a Manager's scope)",
+        spec=sub_in(
+            "4. T2",
+            "name and count only the Manager's own accounts and legs",
+            "name and count every account and leg",
+        ),
+    ),
+    Mutation(
+        "M14.5",
+        "G-A11Y",
+        "BQ-14 (a hand-off line emptied)",
+        hand=lambda text, _v: re.sub(
+            r"(- \*\*A11y\*\*: Keyboard: ).*?(; Accessible name:)", r"\1\2", text, count=1
+        ),
+    ),
+    Mutation(
+        "M16.6",
+        "G-VALUE",
+        "condition (a hidden comment)",
+        spec=prose_at("3.3 ", "<!-- a shimmer, drawn after all -->"),
+    ),
 )
-
-
 # ---------------------------------------------------------------------------- --self-test
 
 
@@ -4017,14 +5907,15 @@ def selftest(
         h = mu.hand(h1, values) if mu.hand else h1
         q15 = mu.p15(p15) if mu.p15 else p15
         q16 = mu.p16(p16) if mu.p16 else p16
-        if (s, h, q15, q16) == (s1, h1, p15, p16) and mu.patch is None:
+        qnames = mu.names(names) if mu.names else names
+        if (s, h, q15, q16, qnames) == (s1, h1, p15, p16, names) and mu.patch is None:
             ok = False
             lines.append(f"  {mu.mid} [{mu.gate}] NOT APPLIED (its target is not in the text)")
             continue
         undo = mu.patch() if mu.patch else None
         try:
             pins = base_t.pins if mu.pinned else render_pins(s, h)
-            fails, _w = audit(Texts(s, h, q15, q16, inputs, values, names, pins))
+            fails, _w = audit(Texts(s, h, q15, q16, inputs, values, qnames, pins))
         finally:
             if undo:
                 undo()
@@ -4052,13 +5943,17 @@ def selftest(
 # ---------------------------------------------------------------------------- main
 
 
+def read_bytes_text(rel: str) -> str:
+    """A file as bytes decoded, so a line-ending change is a change; "" when it is missing (a
+    missing `15` or `16` is G-UNTOUCHED's FAIL, never a traceback)."""
+    path = ROOT / rel
+    return path.read_bytes().decode("utf-8", errors="replace") if path.is_file() else ""
+
+
 def read_texts() -> tuple[str, str, str, str]:
     spec = (ROOT / SPEC_REL).read_text(encoding="utf-8")
     hand = (ROOT / HAND_REL).read_text(encoding="utf-8")
-    # `15` / `16` as bytes, so a line-ending change is a change (G-UNTOUCHED)
-    p15 = (ROOT / P15_REL).read_bytes().decode("utf-8")
-    p16 = (ROOT / P16_REL).read_bytes().decode("utf-8")
-    return spec, hand, p15, p16
+    return spec, hand, read_bytes_text(P15_REL), read_bytes_text(P16_REL)
 
 
 def main(argv: list[str]) -> int:
@@ -4128,12 +6023,21 @@ def main(argv: list[str]) -> int:
 SEC_PIN_TXT = r"""
 § spec ‖ E29-D04 — Design-system contributions and motion
 @ prose
+  **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-25): the owner's
+  `approved` comment on #823 stands in for "Design-system team accepted ownership; CDO sign-off
+  recorded"; nothing here claims that approval.
+@ prose
   **Scope** (the ticket): the five catalogued components SCR-063 and SCR-078 introduce or extend —
   CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge, CMP-123 FlattenAllButton and CMP-129
   PositionModeToggle — and the reuse contract for CMP-105 AccountMultiSelect, made design-system
   entries with props, states, tokens and the three a11y lines; and the motion spec for the blotter
   rows (row insert and remove, the value-change flash, the correction highlight), nothing longer
   than `motion.duration.normal` on a data row.
+@ prose
+  **Key.** `NN`:line = `docs/plan/NN-*.md`; `D01`:line, `D02`:line and `D03`:line =
+  `docs/design/E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md`; `PRIM`:line =
+  `packages/ui/tokens/primitives.tokens.json`; `T` = the ticket text (#823: `T Scope`, `T AC1` to
+  `T AC3`, `T DoD`, `T Tech`, `T a11y`, `T Perf`).
 @ prose
   **Numbers.** Every token, motion, distance, contrast and count figure carries an `audit` marker
   (an HTML comment `NAME=VALUE`) that `docs/design/_tools/e29_d04_ds_motion_audit.py` re-derives
@@ -4149,17 +6053,38 @@ SEC_PIN_TXT = r"""
 @ row AC3 — The destructive control is specifi ‖ Ticket item
   AC3 — The destructive control is specified once: FlattenAllButton's confirm is defined in the
   design system and referenced, not redefined, by E30, E31 and E39
+@ row Scope — CMP-114 PositionsGrid with the l ‖ Ticket item
+  Scope — CMP-114 PositionsGrid with the liq-proximity warning rows
+@ row Scope — CMP-115 OrderRow with its pendin ‖ Ticket item
+  Scope — CMP-115 OrderRow with its pending and rejected variants
+@ row Scope — CMP-116 PnLBadge (sign, currency ‖ Ticket item
+  Scope — CMP-116 PnLBadge (sign, currency, R-multiple)
 @ row Scope — CMP-123 FlattenAllButton (destru ‖ Ticket item
   Scope — CMP-123 FlattenAllButton (destructive, hold-to-confirm)
 @ row Scope — CMP-123 FlattenAllButton (destru ‖ Where
   §2.4: hold and typed on LIVE (RULED BQ-7)
+@ row Scope — CMP-129 PositionModeToggle (one- ‖ Ticket item
+  Scope — CMP-129 PositionModeToggle (one-way / hedge, disabled with a reason)
 @ row Scope — CMP-129 PositionModeToggle (one- ‖ Where
   §2.5: the read-only `display` variant and the toggle (RULED BQ-8)
+@ row Scope — the CMP-105 AccountMultiSelect r ‖ Ticket item
+  Scope — the CMP-105 AccountMultiSelect reuse contract
+@ row Scope — the ticket's motion list: "row i ‖ Ticket item
+  Scope — the ticket's motion list: "row insert/remove, value-change flash …, pending shimmer,
+  correction flash on a reconciled row"
+@ row Out of scope — implementation and Storyb ‖ Ticket item
+  Out of scope — implementation and Storybook code
 § spec ‖ The sixteen questions — RULED (orchestrator, com
+@ prose
+  BQ-2, BQ-10, BQ-11 and BQ-12 are owner-level and are marked "owner approval pending (#2701)"
+  wherever they depart from the ticket's AC, DoD or Scope text; the twelve others are the
+  orchestrator's.
 @ row BQ-3 ‖ Built here
   contributed CMP-114, CMP-115, CMP-116 and CMP-129; amended CMP-123 and CMP-049; CMP-105 a reuse
   contract; the routed ones answered by delta or change request (§2.8); the rest consumed (§2.9);
   D02 gap 8's elements are named parts of their parent entries (§2.10)
+@ row BQ-4 ‖ Built here
+  §2.1; row actions take CMP-079's `allowed` + `reason`, never a role prop
 @ row BQ-7 ‖ Question
   CMP-123: the flatten confirm specified once
 @ row BQ-7 ‖ Built here
@@ -4177,15 +6102,14 @@ SEC_PIN_TXT = r"""
   §4: CMP-079's `allowed` + `reason`; the legs view-as → permission → account scope or read-only
   grant → `rbac.env` → client states; exits never gated; no string redefined (§6)
 § spec ‖ Deviations (recorded, not hidden)
-@ prose
-  **The tool's helpers.** The tool measures contrast through the repo's design helpers,
-  `contrast_check.contrast_ratio()` and the `verify_tokens.py` loader, loaded read-only (the
-  E29-D02 and E30-D04 tools' method); it runs no other repo code, and its CVD projection is a port
-  gated against `docs/research/_tools/cvd_simulate.py` (RULED BQ-16).
+@ heading
+  ## Deviations (recorded, not hidden)
 § spec ‖ 0. Planned boards (PENDING; ten: seven dark, thr
 @ row 02 ‖ Draws
   `CMP-115/*`: the fifteen statuses, each glyph + word; the amend moments (editing, pending,
   unconfirmed, rejected); the native-stop row
+@ row 03 ‖ Board
+  `E29-D04 / 03 pnl-badge-numerics`
 @ row 04 ‖ Board
   `E29-D04 / 04 flatten-confirm`
 @ row 04 ‖ Draws
@@ -4199,10 +6123,24 @@ SEC_PIN_TXT = r"""
   the flatten confirm: a hold with a discrete second press, and on LIVE the typed confirm as well
 @ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Answered
   §2.4, CMP-123's composite, defined once (RULED BQ-7; A-5)
+@ row D02 gap 1 (D02:610); D03 CR-4; E05-D02 G ‖ Asked of E29-D04
+  treegrid roles, one roving stop, detail lines and the virtualisation thresholds
+@ row D02 gaps 5, 6 and 7 (D02:614–616); D02:3 ‖ Asked of E29-D04
+  T2 and busy on CMP-041, CMP-005 and CMP-057; CMP-055, CMP-056 and CMP-042; CMP-075's row pill;
+  CMP-139 on row actions
+@ row D02 gap 12 (D02:621); D03 CR-2 ‖ Asked of E29-D04
+  CMP-078's account scope; the stale tokens
 @ row D02 gap 13 (D02:622) ‖ Asked of E29-D04
   CMP-028's tone; CMP-105 as a filter picker; CMP-129's read-only display; CMP-019
-@ row E39-D03 C9 (E39-D03:383); E33-D03 D03-A2 ‖ Asked of E29-D04
-  CMP-123's data contract; a CMP-123 sentence routed to E33-D04
+@ row D03 CR-1, CR-3, CR-6, CR-8, CR-9 and CR- ‖ Asked of E29-D04
+  CMP-028's account line; CMP-239's states; the drawer motion names; registering
+  `color.text.primary` on `color.status.success.subtle` (D03:396); CMP-099's CSV form; CMP-079's
+  reason keys
+@ row D02 OQ-C, OQ-L, OQ-R and OQ-S (D02:652, ‖ Asked of E29-D04
+  coloured digits; the row form of `guard.mismatch`; `Ctrl+Shift+F`; 2b on a text SplitButton
+@ row E39-D03 C9 and C14 (E39-D03:383, :388); ‖ Asked of E29-D04
+  CMP-123's data contract; the one-gate reading of FLATTEN ALL; a CMP-123 sentence routed to
+  E33-D04
 § spec ‖ 2. The component contributions
 @ prose
   Contributed whole (hand-off A-1 to A-4): CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116
@@ -4212,7 +6150,21 @@ SEC_PIN_TXT = r"""
   components D02 §15 and D03 §11.2 route here (§2.8), CMP-209's drawer motion among them as A-8;
   consumed as catalogued: the rest (§2.9); D02 gap 8's elements are named parts of their parent
   entries, never new ids (§2.10; RULED BQ-3).
+@ prose
+  Every state table reads Frame, State, Word, Glyph, Fill, Motion, T2 and Board: the Word is the
+  merged copy, cited and never redefined (RULED BQ-13); Motion names a §3.2 row, and a state swap
+  names only a cut, Mo-8 (Mo-12 for a row's busy glyph; RULED BQ-11); T2 is "—" or the reason key
+  the control shows.
+@ prose
+  Forced colours (`forced-colors: active`): the hue-only carriers, CMP-116's accent bar, the
+  Critical accent, the environment pill's border and the T2 fill and hairline, take D02:527's
+  system colours, and every state they mark keeps its word, glyph or `aria-*`.
 § spec ‖ 2.1 CMP-114 PositionsGrid
+@ prose
+  `15` today (`15`:1240–1272): props `positions`, `groupBy` symbol, account or manager, `columns`
+  and `onFlatten`; a `PositionRow` with money as `number`, two margin modes and no environment, R,
+  rPnL today, protection or position mode; an A11y line that defers to CMP-049; a Tokens line
+  naming two bare status families (`15`:1245); no Variants, States or Motion line.
 @ prose
   Proposal (hand-off A-1; RULED BQ-4): CMP-049's `treegrid` (§2.7) with D02 D-1's levels
   (D02:142); `PositionRow` gains `env`, `rPnlToday`, `r` (null without a stop), `protection` (the
@@ -4222,31 +6174,125 @@ SEC_PIN_TXT = r"""
   Manager stays the Owner's view choice, never T2 (D02:374); `rowActions` take CMP-079's `allowed`
   + `reason` (`15`:814), never a role prop (E09-D09:34).
 @ prose
+  Named parts, no new ids: `LiqTierCell`, `ProtectionChip`, `RowMarker`, `GroupHeaderRow`,
+  `TotalsRow`, `UpdatesPausedChip` and `ClosedTodayLine` (D02 §5.6: one per environment block,
+  collapsed by default; expanded, its own CMP-049 table of closed positions, `role="table"`, whose
+  Net is a CMP-116 badge, D02:244); their props are hand-off C.1's `AccountGroup` and `markers`.
+@ prose
   Variants: `density`; `groupBy`; one environment or mixed (the Env column only while the account
   scope spans both, D02:146; the LIVE block, then the DEMO block, D02:441); the narrow dock at 360
   px (D02:469).
+@ head 7
+  T2
+@ row `CMP-114/row-default` ‖ Word
+  "BTCUSDT ▲ Long 0.250 BTC"
+@ row `CMP-114/row-default` ‖ T2
+  —
+@ row `CMP-114/row-hover` ‖ Word
+  "BTCUSDT ▲ Long 0.250 BTC"
+@ row `CMP-114/row-hover` ‖ T2
+  —
+@ row `CMP-114/row-selected` ‖ T2
+  —
+@ row `CMP-114/cell-focused` ‖ T2
+  —
+@ row `CMP-114/row-new` ‖ T2
+  —
+@ row `CMP-114/row-closing` ‖ State
+  a close in flight: Close in CMP-001's loading state with its label kept, `aria-busy`, not T2
+  (D02:341)
+@ row `CMP-114/row-closing` ‖ T2
+  —
+@ row `CMP-114/row-lingering-closed` ‖ Word
+  "Closed +12.40 USDT"
+@ row `CMP-114/row-lingering-closed` ‖ T2
+  —
+@ row `CMP-114/row-stale` ‖ T2
+  —
+@ row `CMP-114/t2-viewer` ‖ Frame
+  `CMP-114/t2-viewer`
 @ row `CMP-114/t2-viewer` ‖ State
   T2: a Viewer's Close ▾, `aria-disabled`, its reason the panel notice (D02:433)
+@ row `CMP-114/t2-viewer` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-114/t2-viewer` ‖ T2
+  `rbac.permission`
+@ row `CMP-114/env-mixed-view` ‖ Frame
+  `CMP-114/env-mixed-view`
+@ row `CMP-114/env-mixed-view` ‖ State
+  a mixed view: the row's name leads with its environment; the pill is text in a `color.env.live`
+  border (D02:441, :516)
 @ row `CMP-114/env-mixed-view` ‖ Word
   "LIVE"
+@ row `CMP-114/env-mixed-view` ‖ T2
+  —
+@ row `CMP-114/liq-watch` ‖ T2
+  —
+@ row `CMP-114/liq-near` ‖ T2
+  —
+@ row `CMP-114/liq-critical` ‖ T2
+  —
+@ row `CMP-114/sl-protected` ‖ T2
+  —
+@ row `CMP-114/sl-attaching` ‖ T2
+  —
+@ row `CMP-114/sl-verifying` ‖ T2
+  —
+@ row `CMP-114/sl-amending` ‖ T2
+  —
 @ row `CMP-114/sl-naked` ‖ Word
   "NO SL ! 12 s"
+@ row `CMP-114/sl-naked` ‖ T2
+  —
 @ row `CMP-114/sl-naked-unrecoverable` ‖ State
   `naked_unrecoverable`: the row keeps a reduce-only Close
 @ row `CMP-114/sl-naked-unrecoverable` ‖ Word
   "NO SL — owner paged"
+@ row `CMP-114/sl-naked-unrecoverable` ‖ T2
+  —
 @ row `CMP-114/sl-frozen` ‖ Frame
   `CMP-114/sl-frozen`
 @ row `CMP-114/sl-frozen` ‖ State
   `amend_lock.frozen`: a tighten is still sent (D02:234)
 @ row `CMP-114/sl-frozen` ‖ Word
   "· frozen"
+@ row `CMP-114/sl-frozen` ‖ T2
+  —
+@ row `CMP-114/marker-verifying` ‖ T2
+  —
+@ row `CMP-114/marker-corrected` ‖ T2
+  —
 @ row `CMP-114/group-header` ‖ Word
   "▾ Main · LIVE · One-way · 1 position · uPnL +8.00 · rPnL today +37.40"
+@ row `CMP-114/group-header` ‖ T2
+  —
+@ row `CMP-114/totals-row` ‖ State
+  the totals row, one per environment, a trailing `rowgroup` (D02:142, :156)
 @ row `CMP-114/totals-row` ‖ Word
   "LIVE total"
+@ row `CMP-114/totals-row` ‖ T2
+  —
+@ row `CMP-114/closed-today-collapsed` ‖ State
+  the Closed today line, collapsed by default, one per environment block, `aria-expanded="false"`
+  (D02:244)
+@ row `CMP-114/closed-today-collapsed` ‖ Word
+  "▸ Closed today (since 00:00 UTC) · 3 · net +40.20 USDT · incl. provisional"
+@ row `CMP-114/closed-today-collapsed` ‖ T2
+  —
+@ row `CMP-114/closed-today-expanded` ‖ Word
+  "▾ Closed today (since 00:00 UTC) · 3 · net +40.20 USDT · incl. provisional"
+@ row `CMP-114/closed-today-expanded` ‖ T2
+  —
+@ row `CMP-114/closed-today-none` ‖ T2
+  —
+@ row `CMP-114/closed-today-provisional` ‖ T2
+  —
+@ row `CMP-114/closed-today-divergent` ‖ T2
+  —
 @ row `CMP-114/updates-paused-chip` ‖ Fill
   `color.neutral.subtle`; `color.status.danger.subtle` while a held row carries NO SL
+@ row `CMP-114/updates-paused-chip` ‖ T2
+  —
 @ prose
   - **Keyboard:** A treegrid with one roving stop (D02:447): `↑` / `↓` rows, `←` / `→` cells (on a
   group header `→` expands and `←` collapses), `Home` / `End`, `PageUp` / `PageDown`; `Space`
@@ -4272,27 +6318,131 @@ SEC_PIN_TXT = r"""
   Proposal (hand-off A-2; RULED BQ-5): `status` widens to D01 D2's fifteen labels (D01:174–191),
   each a word with the CMP-019 glyph name D01 proposes (D01:170), drawn meanwhile as the text
   glyph; null or unmapped reads "Working — state not reported" (D02:274); `purpose` joins the type
-  ("Limit · Take profit", D02:160); the sections are Working and "Conditional — not triggered"
-  (D02:281); the native-stop row's Cancel takes its `sl.note` sentence (D02:291).
+  ("Limit · Take profit", D02:160, OQ-O pending); the sections are Working and "Conditional — not
+  triggered" (D02:281); the native-stop row's Cancel takes its `sl.note` sentence (D02:291).
 @ prose
   A Cancel sent behind an amend is busy, "Cancelling…" with `aria-busy`, never T2; a native stop's
   tighten in flight reads E32-D01's "Moving the stop to 63,980.0 — waiting for Bybit…" on the same
   tag (D02:320).
+@ head 7
+  T2
+@ row `CMP-115/status-sending` ‖ T2
+  —
+@ row `CMP-115/status-working` ‖ T2
+  —
+@ row `CMP-115/status-triggered` ‖ T2
+  —
+@ row `CMP-115/status-partial` ‖ T2
+  —
+@ row `CMP-115/status-cancelling` ‖ T2
+  —
+@ row `CMP-115/status-amending` ‖ T2
+  —
+@ row `CMP-115/status-unknown` ‖ T2
+  `blotter.unknown` (PROPOSED; E29-D03 owns it)
+@ row `CMP-115/status-quarantined` ‖ T2
+  —
+@ row `CMP-115/status-held` ‖ Glyph
+  `lock`
+@ row `CMP-115/status-held` ‖ T2
+  `blotter.held` (PROPOSED; E29-D03 owns it)
+@ row `CMP-115/status-untracked` ‖ T2
+  `blotter.untracked` (PROPOSED; E29-D03 owns it)
+@ row `CMP-115/status-filled` ‖ T2
+  —
+@ row `CMP-115/status-cancelled` ‖ T2
+  —
+@ row `CMP-115/status-rejected` ‖ T2
+  —
+@ row `CMP-115/status-expired` ‖ T2
+  —
 @ row `CMP-115/status-killed` ‖ State
   killed by the kill switch
 @ row `CMP-115/status-killed` ‖ Word
   "Killed (kill switch)"
+@ row `CMP-115/status-killed` ‖ T2
+  —
+@ row `CMP-115/amend-editing` ‖ T2
+  —
+@ row `CMP-115/amend-pending` ‖ State
+  pending (not applied): the value cell keeps the live value; Edit takes `blotter.amend_in_flight`
+@ row `CMP-115/amend-pending` ‖ T2
+  `blotter.amend_in_flight` (PROPOSED; E29-D03 owns it)
+@ row `CMP-115/amend-unconfirmed` ‖ State
+  unconfirmed (`unknown`): amend and an unpressed Cancel take `blotter.unknown`
+@ row `CMP-115/amend-unconfirmed` ‖ T2
+  `blotter.unknown` (PROPOSED; E29-D03 owns it)
+@ row `CMP-115/amend-rejected` ‖ T2
+  —
 @ row `CMP-115/native-stop-row` ‖ Frame
   `CMP-115/native-stop-row`
 @ row `CMP-115/native-stop-row` ‖ State
   a native-stop row: Cancel is T2 with its `sl.note` sentence (D02:291)
 @ row `CMP-115/native-stop-row` ‖ Word
   "Market · Stop loss"
+@ row `CMP-115/native-stop-row` ‖ T2
+  `sl.note` (its D02 sentence PROPOSED to E32-D01)
+@ row `CMP-115/cancel-t2-held` ‖ Frame
+  `CMP-115/cancel-t2-held`
 @ row `CMP-115/cancel-t2-held` ‖ State
   Cancel on a held order: T2, `aria-disabled`, the reason as the item's second line
+@ row `CMP-115/cancel-t2-held` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-115/cancel-t2-held` ‖ T2
+  `blotter.held` (PROPOSED; E29-D03 owns it)
+@ prose
+  - **Accessible name:** In a mixed view the environment leads (§4.3), then the state word with
+  its glyph named once, then the type with its purpose, price, quantity and account; the State
+  cell's whole line is the description, a pending amend's included ("Amend to 2,495.00 sent to
+  Bybit.
+@ prose
+  The order is still at 2,500.00 until Bybit confirms.", D02:320); a T2 control keeps its full
+  label, its reason the description.
+§ spec ‖ 2.3 CMP-116 PnLBadge
+@ head 7
+  T2
+@ row `CMP-116/bar-profit` ‖ Word
+  "+8.00 USDT"
+@ row `CMP-116/bar-profit` ‖ T2
+  —
+@ row `CMP-116/bar-loss` ‖ Word
+  "−121.50 USDT"
+@ row `CMP-116/bar-loss` ‖ T2
+  —
+@ row `CMP-116/bar-flat` ‖ Word
+  "0.00 USDT"
+@ row `CMP-116/bar-flat` ‖ T2
+  —
+@ row `CMP-116/r-null` ‖ T2
+  —
+@ row `CMP-116/fee-paid` ‖ Word
+  "−3.49 USDT", read as "fee paid 3.49 USDT"
+@ row `CMP-116/fee-paid` ‖ T2
+  —
+@ row `CMP-116/funding-received` ‖ Word
+  "+0.84 USDT", read as "funding received 0.84 USDT"
+@ row `CMP-116/funding-received` ‖ T2
+  —
+@ row `CMP-116/provisional` ‖ T2
+  —
+@ row `CMP-116/divergent` ‖ T2
+  —
+@ row `CMP-116/strip-greyscale` ‖ T2
+  —
+@ row `CMP-116/strip-deuteranopia` ‖ T2
+  —
+@ prose
+  - **Accessible name:** The sign and the value in words as visually hidden text, never an
+  `aria-label` on the span (`15`:238): "profit 8.00 USDT", "loss 121.50 USDT", "fee paid 3.49
+  USDT", "funding received 0.84 USDT"; a null R reads "R unavailable: no stop price"
+  (D02:184–185); the bar is `aria-hidden`.
 § spec ‖ 2.4 CMP-123 FlattenAllButton (the flatten confir
 @ heading
   ### 2.4 CMP-123 FlattenAllButton (the flatten confirm, defined once)
+@ prose
+  `15` today (`15`:1403–1411): `scope` account or all-accounts and `onConfirm`; a Purpose that
+  picks one ConfirmDialog variant (`15`:1405); a bare danger family in Tokens (`15`:1408); a Data
+  contract naming Bybit's routes and blind to stops (E39-D03:383).
 @ prose
   Gap: D02 gap 13 (D02:622), and CMP-044 and CMP-211 each describe a hold of their own
   (`15`:476–478, :2506).
@@ -4310,82 +6460,269 @@ SEC_PIN_TXT = r"""
   `scope: "all-accounts"` is the shell's FLATTEN ALL…, whose button is CMP-211 and whose dialog is
   this definition.
 @ prose
+  E30, E31 and E39 reference this section and restate neither its hold nor a confirm step (AC3;
+  D01:522).
+@ prose
   The confirm is the table below: CMP-044 `hold` with its discrete second press, and on LIVE the
   typed word first, which CMP-044 already allows, as its `typedConfirmValue` gates a `hold`
   Confirm (`15`:476; `docs/design/E05/E05-D02-feedback-overlays.md`:286–287).
 @ prose
+  The ring, its percentage text, the armed label, the window and the key-repeat rule are CMP-044's
+  and E39-D03's, cited and never restated (`15`:478; E39-D03:118–123); the ring is dialog motion,
+  never a data row's, so the data-row cap of §3 does not bind it (Mo-7, by reference).
+@ prose
   Flatten account… leaves the ⋯ menu while its account's snapshot failed, nothing being loaded to
   act on (D02:389).
 @ prose
-  The word typed on LIVE is its copy owner's: D02 routes bulk words to D03's deck ("CLOSE",
-  D02:349) and names none for Flatten account (D02:353), so it stays an open item, never chosen
-  here.
+  On LIVE the word typed for `all-accounts` is `FLATTEN`, the catalogue's fixed word (`15`:476,
+  :2506; `14`:296; E39-D03:123), and E39-D03's one-gate reading of FLATTEN ALL meets this
+  composite in D04-C9; the word for `account` is its copy owner's and stays open (hand-off Q-17):
+  CMP-044's rule names "the object's own name", here the account label (`15`:476), and D02 routes
+  the bulk words to D03's deck ("CLOSE", D02:349).
+@ prose
+  Composition with E33-D04 A-6 (PENDING, by name): A-5.1 replaces the Purpose's "`hold` or
+  `typed`" choice with this composite and appends after E33-D04 A-6.1's sentence, whichever lands
+  first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-op; the route
+  names stay E39-D03 C9's.
+@ head 1
+  Environment
+@ head 2
+  Confirm
+@ head 3
+  Discrete keyboard path
+@ head 4
+  prefers-reduced-motion
+@ head 5
+  Source
 @ row DEMO ‖ Environment
   DEMO
+@ row DEMO ‖ Confirm
+  CMP-044 `hold` for 800 ms (PROPOSED `motion.duration.hold-confirm`, E39-D03:407; a 300 –2,000 ms
+  setting, `15`:476)
+@ row DEMO ‖ Discrete keyboard path
+  a second `Enter`, CMP-044's armed press
+@ row DEMO ‖ prefers-reduced-motion
+  the percentage text, static
+@ row DEMO ‖ Source
+  D01:274; D02:353
 @ row LIVE ‖ Environment
   LIVE
 @ row LIVE ‖ Confirm
   CMP-044 `hold` and the typed word (`typedConfirmValue` gates the hold, `15`:476)
 @ row LIVE ‖ Discrete keyboard path
   the typed word, then a second `Enter`
+@ row LIVE ‖ prefers-reduced-motion
+  the percentage text, static
 @ row LIVE ‖ Source
   D02:353 "Live adds the typed confirm"
+@ head 1
+  Frame
+@ head 2
+  State
+@ head 3
+  Word
+@ head 4
+  Glyph
+@ head 5
+  Fill
+@ head 6
+  Motion
+@ head 7
+  T2
+@ head 8
+  Board
 @ row `CMP-123/default` ‖ Frame
   `CMP-123/default`
+@ row `CMP-123/default` ‖ State
+  default: the item in the account header's ⋯ menu (D02:238)
 @ row `CMP-123/default` ‖ Word
   "Flatten account…"
+@ row `CMP-123/default` ‖ Glyph
+  —
+@ row `CMP-123/default` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/default` ‖ Motion
+  —
+@ row `CMP-123/default` ‖ T2
+  —
+@ row `CMP-123/default` ‖ Board
+  04
 @ row `CMP-123/hover` ‖ Frame
   `CMP-123/hover`
+@ row `CMP-123/hover` ‖ State
+  hover
 @ row `CMP-123/hover` ‖ Word
   "Flatten account…"
+@ row `CMP-123/hover` ‖ Glyph
+  —
+@ row `CMP-123/hover` ‖ Fill
+  `color.surface.hover`
+@ row `CMP-123/hover` ‖ Motion
+  —
+@ row `CMP-123/hover` ‖ T2
+  —
+@ row `CMP-123/hover` ‖ Board
+  04
 @ row `CMP-123/focus-visible` ‖ Frame
   `CMP-123/focus-visible`
+@ row `CMP-123/focus-visible` ‖ State
+  focus-visible: CMP-041's inset ring
 @ row `CMP-123/focus-visible` ‖ Word
   "Flatten account…"
+@ row `CMP-123/focus-visible` ‖ Glyph
+  —
+@ row `CMP-123/focus-visible` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/focus-visible` ‖ Motion
+  —
+@ row `CMP-123/focus-visible` ‖ T2
+  —
+@ row `CMP-123/focus-visible` ‖ Board
+  04
 @ row `CMP-123/holding` ‖ Frame
   `CMP-123/holding`
+@ row `CMP-123/holding` ‖ State
+  holding: the ring with its percentage text (`15`:478)
+@ row `CMP-123/holding` ‖ Word
+  "40 %"
+@ row `CMP-123/holding` ‖ Glyph
+  —
+@ row `CMP-123/holding` ‖ Fill
+  `color.status.danger.default` (the ring)
+@ row `CMP-123/holding` ‖ Motion
+  Mo-7
+@ row `CMP-123/holding` ‖ T2
+  —
+@ row `CMP-123/holding` ‖ Board
+  04
 @ row `CMP-123/armed` ‖ Frame
   `CMP-123/armed`
+@ row `CMP-123/armed` ‖ State
+  armed after the first discrete press (`15`:478)
+@ row `CMP-123/armed` ‖ Word
+  "Press again to …"
+@ row `CMP-123/armed` ‖ Glyph
+  —
+@ row `CMP-123/armed` ‖ Fill
+  `color.status.danger.default` (the outline)
+@ row `CMP-123/armed` ‖ Motion
+  —
+@ row `CMP-123/armed` ‖ T2
+  —
+@ row `CMP-123/armed` ‖ Board
+  04
 @ row `CMP-123/typed-live` ‖ Frame
   `CMP-123/typed-live`
 @ row `CMP-123/typed-live` ‖ State
   LIVE: the typed field comes first and the hold starts on a match (`15`:476)
 @ row `CMP-123/typed-live` ‖ Word
-  the typed word (open: its copy owner)
+  the typed word: `FLATTEN` for all accounts (`15`:2506); one account's word open (Q-17)
+@ row `CMP-123/typed-live` ‖ Glyph
+  —
+@ row `CMP-123/typed-live` ‖ Fill
+  `color.surface.raised`
+@ row `CMP-123/typed-live` ‖ Motion
+  —
+@ row `CMP-123/typed-live` ‖ T2
+  —
+@ row `CMP-123/typed-live` ‖ Board
+  04
 @ row `CMP-123/busy` ‖ Frame
   `CMP-123/busy`
+@ row `CMP-123/busy` ‖ State
+  busy while its account loads: `aria-busy`, ⟳ leading the label, not T2 (D02:388)
 @ row `CMP-123/busy` ‖ Word
   "Flatten account…"
+@ row `CMP-123/busy` ‖ Glyph
+  ⟳ `refresh`
+@ row `CMP-123/busy` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/busy` ‖ Motion
+  —
+@ row `CMP-123/busy` ‖ T2
+  —
+@ row `CMP-123/busy` ‖ Board
+  04
 @ row `CMP-123/t2-view-as` ‖ Frame
   `CMP-123/t2-view-as`
 @ row `CMP-123/t2-view-as` ‖ State
   T2 under view-as, the panel notice its reason (D02:435)
 @ row `CMP-123/t2-view-as` ‖ Word
   "Flatten account…"
+@ row `CMP-123/t2-view-as` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-123/t2-view-as` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/t2-view-as` ‖ Motion
+  Mo-8
 @ row `CMP-123/t2-view-as` ‖ T2
   `rbac.view_as`
+@ row `CMP-123/t2-view-as` ‖ Board
+  04
 @ row `CMP-123/t2-viewer` ‖ Frame
   `CMP-123/t2-viewer`
+@ row `CMP-123/t2-viewer` ‖ State
+  T2 for a Viewer (`positions:write`)
 @ row `CMP-123/t2-viewer` ‖ Word
   "Flatten account…"
+@ row `CMP-123/t2-viewer` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-123/t2-viewer` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/t2-viewer` ‖ Motion
+  Mo-8
+@ row `CMP-123/t2-viewer` ‖ T2
+  `rbac.permission`
+@ row `CMP-123/t2-viewer` ‖ Board
+  04
 @ row `CMP-123/t2-read-only` ‖ Frame
   `CMP-123/t2-read-only`
 @ row `CMP-123/t2-read-only` ‖ State
   T2 on a read-only grant, the account header's notice
 @ row `CMP-123/t2-read-only` ‖ Word
   "Flatten account…"
+@ row `CMP-123/t2-read-only` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-123/t2-read-only` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/t2-read-only` ‖ Motion
+  Mo-8
+@ row `CMP-123/t2-read-only` ‖ T2
+  `rbac.account_read_only`
+@ row `CMP-123/t2-read-only` ‖ Board
+  04
 @ row `CMP-123/t2-manager-kill-switch` ‖ Frame
   `CMP-123/t2-manager-kill-switch`
 @ row `CMP-123/t2-manager-kill-switch` ‖ State
   T2 for a Manager under the kill switch while OD-11 is open (D02:421)
 @ row `CMP-123/t2-manager-kill-switch` ‖ Word
   "Flatten account…"
+@ row `CMP-123/t2-manager-kill-switch` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-123/t2-manager-kill-switch` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/t2-manager-kill-switch` ‖ Motion
+  Mo-8
 @ row `CMP-123/t2-manager-kill-switch` ‖ T2
   E39-D01's "Frozen — the owner closes or releases"
+@ row `CMP-123/t2-manager-kill-switch` ‖ Board
+  04
 @ row `CMP-123/offline-rest-unreachable` ‖ Frame
   `CMP-123/offline-rest-unreachable`
+@ row `CMP-123/offline-rest-unreachable` ‖ State
+  offline with REST unreachable: every write T2 (D02:397)
 @ row `CMP-123/offline-rest-unreachable` ‖ Word
   "Flatten account…"
+@ row `CMP-123/offline-rest-unreachable` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-123/offline-rest-unreachable` ‖ Fill
+  `color.surface.overlay`
+@ row `CMP-123/offline-rest-unreachable` ‖ Motion
+  Mo-8
+@ row `CMP-123/offline-rest-unreachable` ‖ T2
+  E17-D01's "Cannot reach server" notice
+@ row `CMP-123/offline-rest-unreachable` ‖ Board
+  04
 @ prose
   - **Keyboard:** The ⋯ item opens CMP-044 with focus on Cancel; the confirm takes a held `Enter`
   or a second `Enter` within CMP-044's window, after the typed word on LIVE; `Escape` or blur
@@ -4394,40 +6731,235 @@ SEC_PIN_TXT = r"""
 @ prose
   - **Accessible name:** Scope and effect, "Flatten account — Sub-1 · LIVE"; a T2 item keeps that
   name and its reason is the description (E09-D09:49).
+@ prose
+  - **Live region:** The result is polite, once, a change the user asked for; nothing speaks while
+  the hold runs.
 § spec ‖ 2.5 CMP-129 PositionModeToggle
+@ heading
+  ### 2.5 CMP-129 PositionModeToggle
+@ prose
+  `15` today (`15`:1474–1481): `value` one-way or hedge, `onChange` and `disabled?` /
+  `disabledReason?`; Tokens inherit CMP-003; no A11y, Variants or States line.
 @ prose
   Gap: SCR-063 shows the mode as text in the account group header (D02:238, :590), CMP-129 has no
   read-only form (D02:622), and a radio group writes on every arrow key (E05-D02:464–467).
+@ prose
+  Proposal (hand-off A-4; RULED BQ-8): two variants.
+@ prose
+  `display` is the mode as text, "One-way" or "Hedge" (the hedge Side adds " · hedge", D02:180);
+  it is no control and carries no reason.
 @ prose
   `toggle` is CMP-003's radio group with the change held behind its own CMP-044 `standard`
   confirm, so arrow-browsing never writes; `disabled?` / `disabledReason?` give way to CMP-079's
   `allowed` + `reason`, and its reasons are the view-as leg first, then the permission leg, which
   E09-D09's chooser reads as `rbac.owner_only` "Only the owner can change account settings."
   because no other role holds `accounts:write` (E09-D09:90; `15`:1479; D02:353).
+@ prose
+  The open-positions state has no registered key: PROPOSED to E30-D02's owner, never bound to T2
+  until merged.
+@ prose
+  The mode never animates: a change is a cut (Mo-8).
+@ head 1
+  Frame
+@ head 2
+  State
+@ head 3
+  Word
+@ head 4
+  Glyph
+@ head 5
+  Fill
+@ head 6
+  Motion
+@ head 7
+  T2
+@ head 8
+  Board
+@ row `CMP-129/display-one-way` ‖ Frame
+  `CMP-129/display-one-way`
+@ row `CMP-129/display-one-way` ‖ State
+  `display`, one-way: text in the group header
+@ row `CMP-129/display-one-way` ‖ Word
+  "One-way"
+@ row `CMP-129/display-one-way` ‖ Glyph
+  —
+@ row `CMP-129/display-one-way` ‖ Fill
+  `color.surface.canvas`
+@ row `CMP-129/display-one-way` ‖ Motion
+  —
+@ row `CMP-129/display-one-way` ‖ T2
+  —
+@ row `CMP-129/display-one-way` ‖ Board
+  05
+@ row `CMP-129/display-hedge` ‖ Frame
+  `CMP-129/display-hedge`
+@ row `CMP-129/display-hedge` ‖ State
+  `display`, hedge
+@ row `CMP-129/display-hedge` ‖ Word
+  "Hedge"
+@ row `CMP-129/display-hedge` ‖ Glyph
+  —
+@ row `CMP-129/display-hedge` ‖ Fill
+  `color.surface.canvas`
+@ row `CMP-129/display-hedge` ‖ Motion
+  —
+@ row `CMP-129/display-hedge` ‖ T2
+  —
+@ row `CMP-129/display-hedge` ‖ Board
+  05
+@ row `CMP-129/toggle-confirm` ‖ Frame
+  `CMP-129/toggle-confirm`
+@ row `CMP-129/toggle-confirm` ‖ State
+  `toggle`: an arrow lands on Hedge and nothing is written until the CMP-044 `standard` confirm
+@ row `CMP-129/toggle-confirm` ‖ Word
+  "Hedge"
+@ row `CMP-129/toggle-confirm` ‖ Glyph
+  —
+@ row `CMP-129/toggle-confirm` ‖ Fill
+  `color.surface.overlay` (the confirm)
+@ row `CMP-129/toggle-confirm` ‖ Motion
+  Mo-8
+@ row `CMP-129/toggle-confirm` ‖ T2
+  —
+@ row `CMP-129/toggle-confirm` ‖ Board
+  05
+@ row `CMP-129/toggle-t2-owner-only` ‖ Frame
+  `CMP-129/toggle-t2-owner-only`
+@ row `CMP-129/toggle-t2-owner-only` ‖ State
+  `toggle`, T2 for a Manager or a Viewer
+@ row `CMP-129/toggle-t2-owner-only` ‖ Word
+  "One-way"
+@ row `CMP-129/toggle-t2-owner-only` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-129/toggle-t2-owner-only` ‖ Fill
+  `color.surface.raised` with a `color.border.default` hairline
+@ row `CMP-129/toggle-t2-owner-only` ‖ Motion
+  Mo-8
+@ row `CMP-129/toggle-t2-owner-only` ‖ T2
+  `rbac.owner_only`
+@ row `CMP-129/toggle-t2-owner-only` ‖ Board
+  05
+@ row `CMP-129/toggle-t2-open-positions` ‖ Frame
+  `CMP-129/toggle-t2-open-positions`
+@ row `CMP-129/toggle-t2-open-positions` ‖ State
+  `toggle`, T2 while the account holds open positions
+@ row `CMP-129/toggle-t2-open-positions` ‖ Word
+  "Hedge"
+@ row `CMP-129/toggle-t2-open-positions` ‖ Glyph
+  `lock` "Not available"
+@ row `CMP-129/toggle-t2-open-positions` ‖ Fill
+  `color.surface.raised` with a `color.border.default` hairline
+@ row `CMP-129/toggle-t2-open-positions` ‖ Motion
+  Mo-8
+@ row `CMP-129/toggle-t2-open-positions` ‖ T2
+  PROPOSED to E30-D02's owner (no key bound)
+@ row `CMP-129/toggle-t2-open-positions` ‖ Board
+  05
+@ prose
+  - **Keyboard:** The `display` variant takes no Tab stop.
+@ prose
+  The `toggle` variant is CMP-003's radio group: arrows browse, `Enter` or `Space` opens the
+  confirm, only the confirm writes and `Escape` keeps the old mode (E05-D02:464–467).
+@ prose
+  - **Accessible name:** The mode as text, "One-way" or "Hedge"; the toggle's radio group takes
+  its host's label, and a T2 option's reason is its description, never its name.
+@ prose
+  - **Live region:** None of its own: the mode never speaks, and a confirmed change is its host's
+  polite line, once.
 § spec ‖ 2.6 CMP-105 AccountMultiSelect (reuse contract)
+@ prose
+  SCR-063's account filter uses it as the picker behind "+ Filter" (D02:375): `mode="account"`
+  over the server-scoped account list, a Manager's assigned accounts only, set server-side, so no
+  option shows a reason; none of `profileSummary`, `onEditProfile`, the group rows or the leg
+  rows.
 @ prose
   Each chosen account becomes a CMP-055 chip, "Account: Sub-1 ✕", its remove a labelled
   IconButton; the use adds no new variant and no T2 ever sits on a filter (D02:433).
 @ prose
+  Frames on board 05: `CMP-105/filter-picker`, `CMP-105/filter-chips` and
+  `CMP-105/filter-manager-scope`; hand-off A-7 adds the use to its Purpose, Props, A11y, API
+  sketch, Storybook and Tests, `profileSummary` and `onEditProfile` becoming optional.
+@ prose
   - **Accessible name:** A chip reads its filter, "Account: Sub-1", and its remove "Remove filter
   Account: Sub-1" (D02:375).
 § spec ‖ 2.7 CMP-049 Table (the base contract E05-D02 G12
+@ prose
+  Proposal (hand-off A-6): a `treegrid` variant, implied by `treegrid: true`, whose rows carry
+  `level` (outermost first) and, when they hold others, `expanded`, with totals in a trailing
+  `rowgroup` (D02:142); `stickyFirstColumn?: boolean|number` (`true` pins the first column,
+  E11-D04's ask; a number pins that many leading columns, SCR-063's select, Env, Account and
+  Symbol) and `stickyLastColumn?` (the actions column, D02:170); a `detail` line under a row,
+  opened by `→` and closed by `←` (D03:130, :445).
+@ prose
+  Windowing stays on from 50 rows, so D01 D8's 1,000 rows (D01:284) and D03 CR-4's default sit
+  inside it; the two budgets become the variant's tests: the roles, levels and indices on a 500
+  -row fixture (D02:142) and a 1,000 -row window painted with no per-row layout read (D03:72).
 @ prose
   - **Accessible name:** The caption names the table; a row is named by its `rowheader` cell (the
   Symbol in SCR-063, D02:142) with its level and position; a totals row by its label ("LIVE
   total").
 § spec ‖ 2.8 The routed components (deltas and change req
 @ prose
+  - **2.8.1 CMP-028 Callout (D03 CR-1).** Answered by the entry as it stands: `live?: "off"`
+  mounts the account line with no live role, the slot's shared regions its only voices, and
+  `actions?` takes Details, Review and Resolve… (`15`:314, :317; D03:472); the Purpose already
+  names CMP-074 (`15`:313).
+@ prose
+  The reconciling, desync and locked lines are the info, warning and danger tones (D03:393–395);
+  Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:220).
+@ prose
+  - **2.8.2 CMP-078 StaleDataShade (D03 CR-2; D02 gap 12).** The grid-row variant exists
+  (`15`:803); the delta is an account scope and a reason line that names the account once ("Not up
+  to date · as of 14:02:11 UTC", D02:398), a change request to the owners of E17-D02 and E08-D11.
+@ prose
+  - **2.8.4 CMP-041 Menu, CMP-005 Checkbox and CMP-057 SplitButton (D02 gap 5).** CMP-041 already
+  has the T2 item and the busy item (`15`:448–449), and CMP-005's disabled-with-reason defers to
+  E09-D09 §2.2 (`15`:93), so the other environment's row checkbox is T2 inside CMP-079 (D02:145).
+@ prose
+  CMP-057 has no States line and its `primary` carries neither a reason nor a busy state
+  (`15`:602): a change request to E05's owner for `allowed` + `reason` on the primary and a busy
+  primary that keeps its label ("Closing…", "Cancelling…": `aria-busy`, the ⟳ leading it, never
+  T2), with 2b for a row's own reason (D02:668, OQ-S).
+@ prose
+  The tertiary T2 label measures 3.98 on a dark selected row, so there it takes
+  `color.text.secondary` (D02:614): a deliberate exception for the §7.4 ledger (DR-10).
+@ prose
+  CMP-056 gains per-tab sets, locked columns that read "Always shown" as helper text, outside the
+  T2 grammar, and "Reset to default" (D02:376).
+@ prose
   - **2.8.6 CMP-075 EnvBadgeLocal (D02 gap 7).** A compact per-row pill: "LIVE" or "DEMO" in
   `color.text.primary` on `color.surface.raised` with a `color.env.live` or `color.env.demo`
   border, LIVE in `font.weight.bold`, `type.ui.caption` and `radius.badge`, never colour alone
   (D02:516; D03:392); its 16 px height waits for a token (D02:619).
 @ prose
+  In a row the pill is `aria-hidden`, as the row's name already leads with its environment.
+@ prose
+  A change request to E05's owner; CMP-139 wraps the other environment's row actions with
+  `guard.mismatch.row`, PROPOSED to E30-D02 (D02:616).
+@ prose
+  ⚠ ✓ and never a colour emoji: the statuses' `loader`, `clock`, `zap`, `circle-half`, `refresh`,
+  `help-circle`, `octagon-alert`, `lock`, `link-off`, `check`, `slash`, `x`, `clock-strike` and
+  `stop-square`; the tiers' `triangle` and `alert-circle`; the tags' `alert-triangle` and `flag`;
+  SCR-078's `copy` and `external-link`; and a delta glyph for the price-like cells distinct from
+  the Side column's ▲ / ▼ and from CMP-001's arrows (§3.5).
+@ prose
+  - **2.8.9 CMP-099 PrintExportBar (D03 CR-9).** SCR-078 uses the CSV form, `formats: ["csv"]`;
+  running is CMP-038's busy form (`aria-busy`, the label kept), never T2; the file's first line is
+  the watermark naming the exporting identity, the accounts and the time (D03:181; D03:79).
+@ prose
   The record stays a contract gap: an export reaches no server, so SR-098's audit record waits for
   G7's path (D03:478; D02:605).
 @ prose
+  A change request to E05's owner for the progress line and the watermark.
+@ prose
+  - **2.8.10 CMP-079 RbacGate (D03 CR-11).** Its `reason` is a key of E09-D09 §3 (`15`:814).
+@ prose
   Registered keys bind as they stand: `rbac.*`, `notice.*`, `inflight.*`, `panel.*` and E30-D02's
   `frozen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`.
+@ prose
+  `recon.*` (D03:311), `blotter.*`, `guard.mismatch.row`, `feed.*` and the `sl.note` sentence of a
+  Cancel stay PROPOSED with their owners until E09-D09's owner registers them (§6; RULED BQ-13);
+  no string is redefined here.
 § spec ‖ 2.9 Consumed components (reuse only)
 @ prose
   Used as catalogued, never redefined: CMP-001 Button, CMP-002 IconButton, CMP-009 Select (Group
@@ -4442,9 +6974,12 @@ SEC_PIN_TXT = r"""
   dialog is CMP-123's, §2.4); CMP-079 RbacGate wraps every T2 control and CMP-019 Icon gives it
   its `lock`, "Not available".
 § spec ‖ 2.10 The AC1 map (every SCR-063 and SCR-078 elem
+@ head 3
+  Role here
 @ row CMP-114 ‖ Name
-  its named parts: the liquidation tier cell, the protection chip, the correction markers, the
-  group header row, the totals row and the "Updates paused" chip
+  PositionsGrid, with its named parts the liquidation tier cell, the protection chip, the
+  correction markers, the group header row, the totals row, the "Updates paused" chip and the
+  Closed today line
 @ row CMP-123, CMP-211 ‖ CMP
   CMP-123, CMP-211
 @ row CMP-123, CMP-211 ‖ Name
@@ -4452,18 +6987,40 @@ SEC_PIN_TXT = r"""
 @ row CMP-123, CMP-211 ‖ Role here
   amended (A-5): Flatten account… and its dialog; CMP-211 consumed: the shell's FLATTEN ALL…
   button
-@ row CMP-036, CMP-038, CMP-043, CMP-044, CMP- ‖ Name
+@ row CMP-075, CMP-139, CMP-019 ‖ CMP
+  CMP-075, CMP-139, CMP-019
+@ row CMP-075, CMP-139, CMP-019 ‖ Role here
+  consumed: the per-row pill, the other environment's block, the glyph names
+@ row CMP-099 ‖ Role here
+  consumed: SCR-078's Export CSV
+@ row CMP-079 ‖ CMP
+  CMP-079
+@ row CMP-079 ‖ Name
+  RbacGate
+@ row CMP-079 ‖ Role here
+  consumed: every T2
+@ row CMP-001, CMP-002, CMP-009, CMP-015, CMP- ‖ Name
+  Button, IconButton, Select, Skeleton, Tooltip, EmptyState, ErrorState, DensityToggle,
   KeyValueRow, InlineSpinnerText, Dialog, ConfirmDialog, Toast, ConnectionStatus,
   ReconnectOverlay, DegradedModeBanner, AuditActionTrigger, PriceInput, QtyInput,
   RiskLockoutBanner
-@ row CMP-036, CMP-038, CMP-043, CMP-044, CMP- ‖ Role here
-  consumed: SCR-078's summary and running export, the confirms, the cancel toast, the connection
-  and account states, every write's audit, the cell editor
+@ row CMP-001, CMP-002, CMP-009, CMP-015, CMP- ‖ Role here
+  consumed: Export CSV, the selection bar, the "N new fills" pill, Group by, the panel states, the
+  T2 echo, density; SCR-078's summary and running export, the confirms, the cancel toast, the
+  connection and account states, every write's audit, the cell editor
 § spec ‖ 3.1 Data-row rules
+@ prose
+  Every §3.2 row this spec specifies runs at most `motion.duration.normal` (200 ms), the ticket's
+  cap on a data row (T Scope; D01:125 "E29-D04 caps data-row motion at 200 ms"), and never
+  `motion.duration.slow`; Mo-5, Mo-7, Mo-11 and Mo-13 are their owners' recipes, cited by
+  reference, and none of them is a data row's.
 @ prose
   Live data never moves focus (`05`:96), a focused row never leaves (D01:408), and a focused
   control never sits inside a fading element (`docs/design/E05/E05-D02-feedback-overlays.md`:165).
 § spec ‖ 3.2 The motion table
+@ row Mo-2 ‖ prefers-reduced-motion t
+  prefers-reduced-motion: the row is gone at frame 0; its word ("Closed +12.40 USDT", "Filled",
+  "Cancelled") was the change
 @ row Mo-7 ‖ Component
   CMP-123's hold ring (the flatten confirm, §2.4)
 @ row Mo-7 ‖ prefers-reduced-motion t
@@ -4481,6 +7038,13 @@ SEC_PIN_TXT = r"""
   LIVE swap at frame 0 in both modes (Mo-8): `motion.duration.instant` (0 ms), no easing; the
   word, the glyph, the fill and a control's availability change in the same frame (E30-D04:553;
   E09-D08:220; E11-D06:359).
+@ prose
+  It covers an order's pending → working → filled or rejected steps (the ⟳ marker, the tag and the
+  "still live" words of a pending amend arrive and leave at frame 0, D02:320), a liq-tier crossing
+  and the Critical row's leading accent, every B8 state of the protection chip, a PnL sign and its
+  accent bar's hue, the hover, selection and focus treatments, a disclosure (Mo-10), the busy
+  glyph (Mo-12), the "Updates paused" chip, the "3 new fills" pill, CMP-129's mode word and every
+  T2 reason.
 § spec ‖ 3.4 Never per tick
 @ prose
   Nothing animates per tick or per price update (D02:465 "Never per tick"): ages and the "Last
@@ -4490,6 +7054,10 @@ SEC_PIN_TXT = r"""
 § spec ‖ 4. T2, view-as and environment on the components
 @ heading
   ## 4. T2, view-as and environment on the components
+@ prose
+  Every gated control of §2 takes CMP-079's `allowed` + `reason` (`15`:814) and keeps its native
+  role and its full label; no entry offers a `role` prop or a per-role variant, because the rule
+  branches on what the session carries, never on a role name (E09-D09:34).
 @ prose
   The T2 anatomy is E09-D09's, stated once in each merged spec and only pointed to here
   (E09-D09:49; D02:429; D03:208): `aria-disabled="true"`, never the `disabled` attribute, so the
@@ -4504,6 +7072,8 @@ SEC_PIN_TXT = r"""
   other leg and one panel-header notice describes every write; reads answer as the target, so the
   target's own read-side reasons still render (D02:435; E09-D09:95).
 @ prose
+  The C-2.6 carve-out stays sendable where the target's own permission and grant allow it (§4.2).
+@ prose
   The shell's view-as banner, its Exit and its countdown are E42-D02 D10's, cited and never
   restated here (E42-D02:136, :415); the countdown sits outside the live region (E42-D02:424) and
   never animates (§3.3).
@@ -4511,14 +7081,33 @@ SEC_PIN_TXT = r"""
   Account labels are the fixtures' "Main", "Sub-1" and "Sub-2", ellipsised with the full label in
   the tooltip and the accessible name (D02:149).
 @ prose
+  A reason never repeats the account, which is named once, in its header marker and line
+  (D03:321).
+@ prose
+  A Manager's rows, filter options, headings, totals, footer and CSV watermark name and count only
+  the Manager's own accounts and legs (D02:92; D03:76).
+@ prose
+  After `403 account_scope_denied` the refused control is T2 `rbac.account`, sticky until the next
+  `permission_change` or `GET /me` re-read, and the page echoes only an id the client itself sent
+  (E09-D09:55, :158).
+@ prose
   No `ret_msg` and no server `message` reach the DOM; a rejected amend shows D02's own line, and
   the exchange's text lives only behind the audited diagnostics (D02:152; D03:78, :80).
+@ prose
+  E09-D09's security statement holds for every entry, density, theme and story: "Every treatment
+  in this document is presentation.
 @ prose
   The server authorises every request against the 4-tuple of `24` §15.2 and answers `403` with a
   stable code and an audit record (`rbac.denied`) regardless of what the UI showed — a disabled
   button, a hidden route or a missing palette command is never relied on to prevent anything
   (C-2.12, C-12.4, `04` §7.3, E09-X01 D1-shared).
+@ prose
+  No flag, density, theme or role variant changes this (C-4.14)." (E09-D09:410; C-2.12, C-12.4)
 § spec ‖ 4.1 The gated controls (legs in order)
+@ heading
+  ### 4.1 The gated controls (legs in order)
+@ prose
+  One row per gated control of §2.
 @ prose
   Legs follow the server's order of E09-D09 §2.1, view-as first (E09-D09:40); a key that is not
   registered is PROPOSED with its owner on its row and in §6; a control's own drawn cases that are
@@ -4530,20 +7119,77 @@ SEC_PIN_TXT = r"""
   D02:668); a reason that covers a scope renders once as a notice that every gated control of the
   scope points at — the panel header for a Viewer, for view-as and offline, the other
   environment's section row, the account header for a read-only grant.
+@ head 1
+  Control
+@ head 2
+  Component
+@ head 3
+  Kind
+@ head 4
+  Legs (in order)
+@ head 5
+  Drawn exceptions
+@ head 6
+  Renders
+@ head 7
+  Source
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Control
+  "Close ▾" and its items "Close 25 %", "Close 50 %", "Close custom size…" and "Close at limit…"
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Component
+  CMP-114 (CMP-057 per row)
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Kind
+  exit
 @ row "Close ▾" and its items "Close 25 %", "C ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
 @ row "Close ▾" and its items "Close 25 %", "C ‖ Drawn exceptions
   offline with REST unreachable; a Manager under the kill switch, E39-D01's "Frozen — the owner
   closes or releases" (OD-11 pending); the other environment's rows, `guard.mismatch.row`
   (PROPOSED, E30-D02)
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Renders
+  2b on the row's SplitButton, repeated as the row menu item's second line; a scope's reason
+  through its notice
+@ row "Close ▾" and its items "Close 25 %", "C ‖ Source
+  D02:333, :421, :429
+@ row "Reverse…" ‖ Control
+  "Reverse…"
+@ row "Reverse…" ‖ Component
+  CMP-114 (a row menu item)
+@ row "Reverse…" ‖ Kind
+  new exposure
 @ row "Reverse…" ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only` → `rbac.env` (a LIVE row) → client
   states: `frozen`, `recon.*`, `feed.*`, `refusal.trading_disabled.*`, `arm.locked`,
   `blotter.close_in_flight`, E39-D01's lockout line, E17-D01's feed lines
+@ row "Reverse…" ‖ Drawn exceptions
+  —
+@ row "Reverse…" ‖ Renders
+  2a, the item's second line
+@ row "Reverse…" ‖ Source
+  D02:337, :431; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01), `blotter.close_in_flight`
+  (E29-D03), §6
+@ row "Edit price", "Edit trigger" and a quant ‖ Control
+  "Edit price", "Edit trigger" and a quantity-up commit (the inline editors)
+@ row "Edit price", "Edit trigger" and a quant ‖ Component
+  CMP-115 (CMP-100 or CMP-101 in the cell)
+@ row "Edit price", "Edit trigger" and a quant ‖ Kind
+  new exposure (an entry order's amend)
 @ row "Edit price", "Edit trigger" and a quant ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only` → `rbac.env` (a risk-increasing
   amend on a LIVE row) → client states: `frozen`, `recon.*`, `feed.*`, `blotter.amend_in_flight`,
   E39-D01's lockout line
+@ row "Edit price", "Edit trigger" and a quant ‖ Drawn exceptions
+  —
+@ row "Edit price", "Edit trigger" and a quant ‖ Renders
+  2a under the editor; a T2 cell keeps its value with no glyph among the numerals
+@ row "Edit price", "Edit trigger" and a quant ‖ Source
+  D02:345, :149; D03:208; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01),
+  `blotter.amend_in_flight` (E29-D03), §6
+@ row "Cancel ▾" (the primary) ‖ Control
+  "Cancel ▾" (the primary)
+@ row "Cancel ▾" (the primary) ‖ Component
+  CMP-115 (CMP-057 per row)
+@ row "Cancel ▾" (the primary) ‖ Kind
+  exit
 @ row "Cancel ▾" (the primary) ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
 @ row "Cancel ▾" (the primary) ‖ Drawn exceptions
@@ -4551,43 +7197,115 @@ SEC_PIN_TXT = r"""
   E30-D02); the order's own kind, never an account state: a native-stop row, `sl.note`'s first
   sentence (PROPOSED to E32-D01), and Untracked, Held and Unknown orders, `blotter.untracked`,
   `blotter.held` and `blotter.unknown` (PROPOSED, E29-D03)
+@ row "Cancel ▾" (the primary) ‖ Renders
+  2b on the row's SplitButton, repeated as the row menu item's second line
+@ row "Cancel ▾" (the primary) ‖ Source
+  D02:345, :429
+@ row "Edit qty" lowering the quantity; a reco ‖ Control
+  "Edit qty" lowering the quantity; a recorded take-profit's edit and Cancel
+@ row "Edit qty" lowering the quantity; a reco ‖ Component
+  CMP-115 (CMP-101 in the cell; the take-profit row, through `setPositionTpSl`)
+@ row "Edit qty" lowering the quantity; a reco ‖ Kind
+  exit (a quantity cut; a protective write)
 @ row "Edit qty" lowering the quantity; a reco ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
+@ row "Edit qty" lowering the quantity; a reco ‖ Drawn exceptions
+  offline with REST unreachable; while an amend of the order, or another TP/SL write for the
+  position, is in flight: `blotter.amend_in_flight` (PROPOSED, E29-D03), the twin of the server's
+  refusal of a second amend and of one write per position at a time
+@ row "Edit qty" lowering the quantity; a reco ‖ Renders
+  2a under the editor; 2b on the take-profit row, repeated as its menu item's second line
+@ row "Edit qty" lowering the quantity; a reco ‖ Source
+  D02:345, :431, :435; D03:208, :222
 @ row "Close selected" and "Close all in view… ‖ Control
   "Close selected" and "Close all in view…" (CMP-114); "Cancel selected" and "Cancel all in view…"
   (CMP-115)
+@ row "Close selected" and "Close all in view… ‖ Component
+  CMP-114 and CMP-115 (the selection bar and the toolbar, CMP-001)
+@ row "Close selected" and "Close all in view… ‖ Kind
+  exit (bulk)
 @ row "Close selected" and "Close all in view… ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
 @ row "Close selected" and "Close all in view… ‖ Drawn exceptions
   offline with REST unreachable; a Manager's closes under the kill switch (OD-11 pending); every
   target keeps its own row's gates
+@ row "Close selected" and "Close all in view… ‖ Renders
+  2a beside the button; a scope's reason through its notice
+@ row "Close selected" and "Close all in view… ‖ Source
+  D02:349, :433
 @ row "Flatten account…" (the account header's ‖ Control
   "Flatten account…" (the account header's ⋯ and `Ctrl+Shift+F`)
 @ row "Flatten account…" (the account header's ‖ Component
   CMP-123 (`scope: account`)
+@ row "Flatten account…" (the account header's ‖ Kind
+  exit (bulk, one account)
 @ row "Flatten account…" (the account header's ‖ Legs (in order)
   `rbac.view_as` → `rbac.permission` → `rbac.account_read_only`
 @ row "Flatten account…" (the account header's ‖ Drawn exceptions
   offline with REST unreachable; a Manager under the kill switch, E39-D01's "Frozen — the owner
   closes or releases" (OD-11 pending)
+@ row "Flatten account…" (the account header's ‖ Renders
+  2a, the menu item's second line
+@ row "Flatten account…" (the account header's ‖ Source
+  D02:353, :421
+@ row "Edit risk caps…" (the account header's ‖ Control
+  "Edit risk caps…" (the account header's ⋯); the position-mode `toggle`
+@ row "Edit risk caps…" (the account header's ‖ Component
+  CMP-041 item in CMP-114's group header; CMP-129
+@ row "Edit risk caps…" (the account header's ‖ Kind
+  an account setting (`accounts:write`; the position-mode write)
 @ row "Edit risk caps…" (the account header's ‖ Legs (in order)
   `rbac.view_as` → `rbac.owner_only`
+@ row "Edit risk caps…" (the account header's ‖ Drawn exceptions
+  —
+@ row "Edit risk caps…" (the account header's ‖ Renders
+  2a, the item's second line, its admin link dropped (E09-D09:44); 2a beside the radio group, the
+  open-positions reason waiting for its owner's key (§6)
+@ row "Edit risk caps…" (the account header's ‖ Source
+  D02:97, :353, :622; E09-D09:76, :104; `15`:1479
+@ row "Resolve…" on the account line ‖ Control
+  "Resolve…" on the account line
+@ row "Resolve…" on the account line ‖ Component
+  CMP-028 (the account line, §2.8.1)
+@ row "Resolve…" on the account line ‖ Kind
+  an owner action (the B19 lock)
 @ row "Resolve…" on the account line ‖ Legs (in order)
   `rbac.view_as` → `rbac.owner_only` with the verb "resolve the lock" (PROPOSED, an E09-D09 §3.2
   amendment)
+@ row "Resolve…" on the account line ‖ Drawn exceptions
+  drawn "pending route": out of the build until its route exists
+@ row "Resolve…" on the account line ‖ Renders
+  2a, the reason beside it
+@ row "Resolve…" on the account line ‖ Source
+  D03:220, :321
+@ row the row checkbox ‖ Control
+  the row checkbox
+@ row the row checkbox ‖ Component
+  CMP-005 in CMP-114 and CMP-115
+@ row the row checkbox ‖ Kind
+  selection (sends nothing)
 @ row the row checkbox ‖ Legs (in order)
   none: a Viewer and view-as keep it
+@ row the row checkbox ‖ Drawn exceptions
+  the other environment's rows, `guard.mismatch.row` (PROPOSED, E30-D02)
+@ row the row checkbox ‖ Renders
+  the block's section-row notice
+@ row the row checkbox ‖ Source
+  D02:145, :433
 § spec ‖ 4.2 Never gated
+@ heading
+  ### 4.2 Never gated
 @ prose
   - **Exits keep their legs and nothing more.** Cancel, close and its items, the bulk closes and
   cancels, Flatten account…, a quantity cut and a recorded take-profit's edit and Cancel are never
   gated by a state key or `rbac.env`: in every account state of D02 §10.2 and §10.3, and under the
   kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:82).
 @ prose
-  Two drawn exceptions remain: offline with REST unreachable, where every write is T2 (D02:333,
-  :431), and a Manager's closes and Flatten account… under the kill switch, E39-D01's "Frozen —
-  the owner closes or releases" while OD-11 is pending; a Manager's Cancel stays sendable there
-  (D02:421; E39-D01:66, :687).
+  The drawn exceptions are two account states and one environment: offline with REST unreachable,
+  where every write is T2 (D02:333, :431); a Manager's closes and Flatten account… under the kill
+  switch, E39-D01's "Frozen — the owner closes or releases" while OD-11 is pending, a Manager's
+  Cancel staying sendable there (D02:421; E39-D01:66, :687); and the other environment's rows,
+  read-only behind `guard.mismatch.row` (D-4, D02:145).
 @ prose
   A Cancel's own reasons — a native-stop row, an Untracked, Held or Unknown order (§4.1) — name
   what the order is, never the account's state, and a Cancel sent while the order's amend is in
@@ -4604,9 +7322,22 @@ SEC_PIN_TXT = r"""
   itself; they are T2 only for a Viewer, a read-only grant, the other environment's rows and
   offline with REST unreachable (D02:338).
 @ prose
+  - **Reads and view choices carry no T2 for any role:** sorting, grouping, the FilterBar's chips,
+  "+ Filter" and "Clear all", the CMP-105 account filter, selecting the session environment's
+  rows, Columns, density, Chart and opening SCR-078 (D02:339, :433).
+@ prose
+  RBAC narrows a filter's options server-side and shows no reason there: a Manager's account
+  filter lists the assigned accounts only (D02:375; RULED BQ-8).
+@ prose
   Export CSV builds its file client-side, a read that stays T1; should G7's path become a
   write-method operation, it takes `rbac.view_as` alone, in 2b in the drawer's title bar (D03:181,
   :519).
+@ prose
+  **Nothing is hidden.** A Viewer sees every control, each write T2 with its reason (`14`:85;
+  D02:433); hiding belongs to admin navigation alone (E09-D09:44).
+@ prose
+  The one choice not offered is Group by: Manager, for a Manager and a Viewer, a view choice, not
+  a capability (D02:374).
 @ prose
   - **Busy and form validity are not T2** (E09-D09:231): a close in flight ("Closing…"), a cancel
   held behind an amend ("Cancelling…"), an account loading, its Flatten account… included, and an
@@ -4621,7 +7352,12 @@ SEC_PIN_TXT = r"""
   - **A T2 press is quiet to the server, and its swaps are cuts:** `Enter`, `Space`, `F2` or the
   bound hotkey sends nothing and re-shows the reason inline with one polite announcement, and it
   emits no audit and no analytics (E09-D09:49, :243; D02:429).
+@ prose
+  T2 ↔ enabled and a change of reason are frame-0 cuts in both modes with no motion row (§3.3); a
+  permission change re-renders every gated control where it stands, and focus stays (D02:400).
 § spec ‖ 4.3 Environment
+@ heading
+  ### 4.3 Environment
 @ prose
   The environment is the text pill "LIVE" or "DEMO" (CMP-075): `color.text.primary` on
   `color.surface.raised` with a `color.env.live` or `color.env.demo` border, never colour alone
@@ -4631,6 +7367,10 @@ SEC_PIN_TXT = r"""
   In a mixed view every row's accessible name leads with its environment, group headers read "Main
   · DEMO" and the panel is named "Positions and orders — LIVE and DEMO" (D02:441).
 @ prose
+  The session environment's block comes first, each block with its section row, its account
+  groups, its Closed today line and its own pinned totals row; a trade group never mixes
+  environments, so its row carries one pill (D02:441).
+@ prose
   Totals are per environment and never summed: one totals row per environment, its rowheader "LIVE
   total" (D02:142, :156).
 @ prose
@@ -4638,34 +7378,160 @@ SEC_PIN_TXT = r"""
   `guard.mismatch.row` (PROPOSED, E30-D02), and `Ctrl+A`, "all in view" and every bulk dialog take
   the session environment's rows only (D02:145; C-2.11).
 @ prose
+  The Env column exists while the session's account scope spans both environments, decided on a
+  scope change and never on a row's arrival (D02:146); in a one-environment view a row carries no
+  pill and its name does not lead with its environment, so the CMP-075 badge in the tab strip
+  carries it (D02:146), with the group header ("Main · LIVE", D02:238) and the totals row ("LIVE
+  total", D02:142).
+@ prose
+  The blotter offers no environment switch, and no hotkey switches the environment (C-2.11;
+  E30-D02:267).
+@ prose
   DEMO ↔ LIVE is a frame-0 cut in both modes, and the pill never animates (§3.3).
 § spec ‖ 5. Tokens and contrast (measured; every number f
+@ head 4
+  Role
+@ row `t2-label` ‖ Pair
+  `t2-label`
+@ row `t2-reason` ‖ Pair
+  `t2-reason`
+@ row `t2-label-selected` ‖ Pair
+  `t2-label-selected`
+@ row `env-live-border` ‖ Pair
+  `env-live-border`
+@ row `env-live-border` ‖ fg
+  `color.env.live`
+@ row `env-demo-border` ‖ Pair
+  `env-demo-border`
+@ row `env-demo-border` ‖ fg
+  `color.env.demo`
 @ row `flatten-confirm-label` ‖ Pair
   `flatten-confirm-label`
+@ row `t2-label-selected-tertiary` ‖ Pair
+  `t2-label-selected-tertiary`
 @ prose
   **Read from the table.** The closest margins pass: `bar-sell-selected` at 3.13 in dark and 3.70
   in light, `env-demo-border` at 3.64 in dark, `bar-buy-selected` at 3.84 and `no-sl-glyph` at
   3.85 in light, and `flatten-confirm-label` at 4.54 in high contrast; none of them carries
   meaning alone, since a word, a sign or a glyph does (§2).
 @ prose
+  On a selected row `color.text.tertiary` measures 3.98 in dark, under the text bar, so a T2 label
+  on a selected row takes `color.text.secondary` at 6.24 (D02:614): the one deliberate exception
+  to E09-D09's tertiary label (E09-D09:49), recorded in §7.4 and routed to E09-D09's owner.
+@ prose
   LIVE and DEMO stay ΔE76 91.9 or more apart under every simulation and ΔL* 2.4 in greyscale on
   light, so the words LIVE and DEMO carry the environment (§4.3; `14`:81).
+@ head 2
+  Owner (cited)
 § spec ‖ 6. Copy keys
+@ heading
+  ## 6. Copy keys
+@ prose
+  Every reason and notice string the entries carry is its owner's, cited at its line; this spec
+  writes no string of its own (RULED BQ-13).
+@ prose
+  Registered keys are E09-D09's (E09-D09:89–95, :263–273), E30-D02's state keys and the state
+  vocabularies E09-D09 registers beside them, E39-D01's and E17-D01's (E09-D09:85; D02:431).
+@ prose
+  A PROPOSED key carries its owner on its row, here and in §4.1, and binds no T2 until its owner
+  registers it, because CMP-079's `reason` is a key of E09-D09's vocabulary (`15`:814; D03:536).
+@ prose
+  A PROPOSED reason is one data-free sentence of at most sixty characters with a full stop
+  (E09-D09:85); `sl.note`'s sentence keeps its owner's words.
+@ prose
+  D02 §10.2 and §10.3 still print `blotter.reconciling`, `blotter.verifying`,
+  `blotter.stale_locked` and `blotter.locked_after_kill` (D02:408–410, :422); D03 replaced them
+  with the `recon.*` keys (D03:552), so the entries bind `recon.*` alone, and the merged D02 text
+  is its owner's to correct, never edited here (hand-off §F).
+@ prose
+  D03's fifth key, `recon.reduce`, sits on SCR-060's Submit alone (D03:319), on no component of
+  this spec.
+@ prose
+  No reason names an account, a symbol, a price or a count, and none restates a registered string
+  in other words (E09-D09:85; D03:321).
+@ head 1
+  Key
+@ head 2
+  String
+@ head 3
+  Status
+@ head 4
+  Owner
+@ head 5
+  Used on
 @ row `rbac.view_as` ‖ Key
   `rbac.view_as`
 @ row `rbac.view_as` ‖ String
   "Read-only while viewing as {user}."
+@ row `rbac.view_as` ‖ Status
+  registered (E09-D09:95)
+@ row `rbac.view_as` ‖ Owner
+  E09-D09
+@ row `rbac.view_as` ‖ Used on
+  §4.1: the first leg of every write; the panel-header notice while viewing (D02:435)
+@ row `rbac.permission` ‖ Key
+  `rbac.permission`
+@ row `rbac.permission` ‖ String
+  "Your role can't {verb}." with the verbs "change positions" and "place orders"
+@ row `rbac.permission` ‖ Status
+  registered (E09-D09:89, :110)
+@ row `rbac.permission` ‖ Owner
+  E09-D09
+@ row `rbac.permission` ‖ Used on
+  §4.1: the Viewer's panel-header notice, "Your role can't change positions." and "Your role can't
+  place orders." (D02:433)
+@ row `rbac.owner_only` ‖ Key
+  `rbac.owner_only`
+@ row `rbac.owner_only` ‖ String
+  "Only the owner can {verb}." with the verb "change account settings"
+@ row `rbac.owner_only` ‖ Status
+  registered (E09-D09:90, :104)
+@ row `rbac.owner_only` ‖ Owner
+  E09-D09
+@ row `rbac.owner_only` ‖ Used on
+  §4.1: "Edit risk caps…" and CMP-129's toggle
+@ row `rbac.owner_only` with the verb "resolve ‖ Key
+  `rbac.owner_only` with the verb "resolve the lock"
+@ row `rbac.owner_only` with the verb "resolve ‖ String
+  "Only the owner can resolve the lock."
+@ row `rbac.owner_only` with the verb "resolve ‖ Status
+  PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:321)
+@ row `rbac.owner_only` with the verb "resolve ‖ Owner
+  E29-D03, for E09-D09's owner
+@ row `rbac.owner_only` with the verb "resolve ‖ Used on
+  §4.1: "Resolve…" on the account line
+@ row `rbac.account`, `rbac.account_read_only` ‖ Key
+  `rbac.account`, `rbac.account_read_only`
+@ row `rbac.account`, `rbac.account_read_only` ‖ String
+  "This account isn't assigned to you."; "You can view this account, not trade it."
+@ row `rbac.account`, `rbac.account_read_only` ‖ Status
+  registered (E09-D09:91, :92)
+@ row `rbac.account`, `rbac.account_read_only` ‖ Owner
+  E09-D09
 @ row `rbac.account`, `rbac.account_read_only` ‖ Used on
   a refused write after `403 account_scope_denied`, sticky (E09-D09:55); §4.1: every write of an
   account held with a read-only grant, through its header's notice (D02:433)
+@ row `rbac.env` ‖ Key
+  `rbac.env`
 @ row `rbac.env` ‖ String
   "Live trading isn't enabled for you."
+@ row `rbac.env` ‖ Status
+  registered (E09-D09:93)
+@ row `rbac.env` ‖ Owner
+  E09-D09
 @ row `rbac.env` ‖ Used on
   §4.1: Reverse… and a risk-increasing amend on a LIVE row, never an exit (D02:95)
+@ row `notice.panel_read_only`, `glyph.name`, ‖ Key
+  `notice.panel_read_only`, `glyph.name`, `panel.no_longer_shown`, `inflight.not_sent`,
+  `inflight.read_only`
 @ row `notice.panel_read_only`, `glyph.name`, ‖ String
   "Read-only — {rbac sentence, first letter lower-cased}"; "Not available"; "No longer shown —
   access to {account} was withdrawn."; "Not sent — your access changed. {reason}"; "Not sent —
   read-only after three wrong codes."
+@ row `notice.panel_read_only`, `glyph.name`, ‖ Status
+  registered (E09-D09:263, :264, :269, :270, :273)
+@ row `notice.panel_read_only`, `glyph.name`, ‖ Owner
+  E09-D09
 @ row `notice.panel_read_only`, `glyph.name`, ‖ Used on
   the panel-header notice for a Viewer, for view-as and offline (D02:431); the name of the CMP-019
   `lock` on every T2 control; a revoked account's rows (D02:400); the refusal at the point of
@@ -4675,64 +7541,214 @@ SEC_PIN_TXT = r"""
   `frozen`
 @ row `frozen` ‖ String
   "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work."
+@ row `frozen` ‖ Status
+  registered (E30-D02:422)
+@ row `frozen` ‖ Owner
+  E30-D02
 @ row `frozen` ‖ Used on
   §4.1: the Owner's Reverse… and entry edits under the kill switch (D02:420)
+@ row `arm.locked`, `arm.refused`, `refusal.tr ‖ Key
+  `arm.locked`, `arm.refused`, `refusal.trading_disabled.maintenance`,
+  `refusal.trading_disabled.no_active_key`, `guard.mismatch`
 @ row `arm.locked`, `arm.refused`, `refusal.tr ‖ String
   "One-click trading is locked" (`arm.refused`; `arm.locked`'s description reads "one-click off —
   Ctrl+Shift+T to arm"); "Order entry is paused for maintenance"; "{account} has no active API
   key"; "Order is for a LIVE account while the workspace is DEMO"
+@ row `arm.locked`, `arm.refused`, `refusal.tr ‖ Status
+  registered (E30-D02:405, :406, :431, :436, :438)
+@ row `arm.locked`, `arm.refused`, `refusal.tr ‖ Owner
+  E30-D02
 @ row `arm.locked`, `arm.refused`, `refusal.tr ‖ Used on
   §4.1: Reverse… on a Live account, before a press and after one (D02:337); new exposure under
   maintenance, and with no active key, held once by the account header (D02:395); CMP-139's
   reason, whose row form is PROPOSED below
+@ row E39-D01's control string and lockout lin ‖ Key
+  E39-D01's control string and lockout line (no key)
 @ row E39-D01's control string and lockout lin ‖ String
   "Frozen — the owner closes or releases"; "Locked · daily loss limit · until 00:00 UTC · closing
   and reducing still work"
+@ row E39-D01's control string and lockout lin ‖ Status
+  registered with E39-D01's vocabulary (E09-D09:85; D02:431)
+@ row E39-D01's control string and lockout lin ‖ Owner
+  E39-D01 (E39-D01:66, :508)
 @ row E39-D01's control string and lockout lin ‖ Used on
   §4.1: a Manager's closes and Flatten account… under the kill switch, OD-11 pending (D02:421);
   new exposure under a risk lockout (D02:423)
+@ row E17-D01's feed and offline lines (no key ‖ Key
+  E17-D01's feed and offline lines (no key)
+@ row E17-D01's feed and offline lines (no key ‖ String
+  "Price feed stale Ns"; "Rate limited — retry in N s"; "Cannot reach server"
+@ row E17-D01's feed and offline lines (no key ‖ Status
+  registered with E17-D01's vocabulary (E09-D09:85)
+@ row E17-D01's feed and offline lines (no key ‖ Owner
+  E17-D01 (E17-D01:179, :194, :197)
+@ row E17-D01's feed and offline lines (no key ‖ Used on
+  §4.1: new exposure on a stale symbol and in the 429 window (D02:393, :394); every write while
+  offline with REST unreachable (D02:397)
+@ row `recon.reconciling`, `recon.desync`, `re ‖ Key
+  `recon.reconciling`, `recon.desync`, `recon.stale`, `recon.killlock`
 @ row `recon.reconciling`, `recon.desync`, `re ‖ String
   "Reconciling with Bybit — new orders are paused."; "Data being verified — new orders are
   paused."; "Stale — new orders locked until the owner resolves it."; "After the kill switch — new
   orders locked until resolved."
+@ row `recon.reconciling`, `recon.desync`, `re ‖ Status
+  PROPOSED (D03:315–318)
+@ row `recon.reconciling`, `recon.desync`, `re ‖ Owner
+  E29-D03, for E09-D09's owner (D03:536)
 @ row `recon.reconciling`, `recon.desync`, `re ‖ Used on
   §4.1: every new-exposure control of an account that is reconciling, being verified, on a stale
   lock or on the lock the kill switch leaves
+@ row `guard.mismatch.row` ‖ Key
+  `guard.mismatch.row`
 @ row `guard.mismatch.row` ‖ String
   "DEMO rows are read-only in a LIVE session."
 @ row `guard.mismatch.row` ‖ Status
   PROPOSED (D02:145; OQ-L, D02:661), with its converse "LIVE rows are read-only in a DEMO
   session."
+@ row `guard.mismatch.row` ‖ Owner
+  E30-D02
+@ row `guard.mismatch.row` ‖ Used on
+  §4.1 and §4.3: the other environment's block notice, its controls and its checkboxes
+@ row `feed.clock_drift`, `feed.system_unknown ‖ Key
+  `feed.clock_drift`, `feed.system_unknown`
+@ row `feed.clock_drift`, `feed.system_unknown ‖ String
+  "New orders wait until the clock is back in sync."; "New orders wait until the trading status is
+  known."
+@ row `feed.clock_drift`, `feed.system_unknown ‖ Status
+  PROPOSED (D02:395)
+@ row `feed.clock_drift`, `feed.system_unknown ‖ Owner
+  E17-D01
+@ row `feed.clock_drift`, `feed.system_unknown ‖ Used on
+  §4.1: new exposure while the clock is out of sync, and while `system` is unknown
+@ row `blotter.close_in_flight` ‖ Key
+  `blotter.close_in_flight`
+@ row `blotter.close_in_flight` ‖ String
+  "A close for this position is already in flight."
+@ row `blotter.close_in_flight` ‖ Status
+  PROPOSED (D02:341); named for E29-D03, which registers none (D03:311)
+@ row `blotter.close_in_flight` ‖ Owner
+  E29-D03, the D02 and D03 author, for E09-D09's owner
+@ row `blotter.close_in_flight` ‖ Used on
+  §4.1: Reverse… and the close items while a close of the position is in flight
+@ row `blotter.amend_in_flight` ‖ Key
+  `blotter.amend_in_flight`
+@ row `blotter.amend_in_flight` ‖ String
+  "An amend is already in flight."
+@ row `blotter.amend_in_flight` ‖ Status
+  PROPOSED (D02:345, :431)
+@ row `blotter.amend_in_flight` ‖ Owner
+  E29-D03, the D02 and D03 author, for E09-D09's owner
 @ row `blotter.amend_in_flight` ‖ Used on
   §4.1: an entry's edits and a quantity cut while an amend is in flight; a native stop's edit and
   a recorded take-profit's edit and Cancel while a TP/SL write for the position is pending
+@ row `blotter.untracked`, `blotter.held`, `bl ‖ Key
+  `blotter.untracked`, `blotter.held`, `blotter.unknown`
+@ row `blotter.untracked`, `blotter.held`, `bl ‖ String
+  "Not placed by CandleViewer — manage it on Bybit."; "Held for owner review — nothing can be
+  sent."; "We could not confirm this order with Bybit; checking."
+@ row `blotter.untracked`, `blotter.held`, `bl ‖ Status
+  PROPOSED (D02:345; D01:183, :186)
+@ row `blotter.untracked`, `blotter.held`, `bl ‖ Owner
+  E29-D03, the D02 and D03 author, for E09-D09's owner
+@ row `blotter.untracked`, `blotter.held`, `bl ‖ Used on
+  §4.1: Cancel on an Untracked, a Held or an Unknown order, and an amend on an Unknown one
+@ row `sl.note`, its first sentence ‖ Key
+  `sl.note`, its first sentence
 @ row `sl.note`, its first sentence ‖ String
   "Every position keeps a native stop — you can move it, not delete it."
+@ row `sl.note`, its first sentence ‖ Status
+  PROPOSED as a Cancel's reason (D02:345); its owner's words, outside the sixty-character bound
+@ row `sl.note`, its first sentence ‖ Owner
+  E32-D01
 @ row `sl.note`, its first sentence ‖ Used on
   §4.1: Cancel on a native-stop row (C-2.6)
+@ row the open-positions reason (no key yet) ‖ Key
+  the open-positions reason (no key yet)
+@ row the open-positions reason (no key yet) ‖ String
+  none written here
+@ row the open-positions reason (no key yet) ‖ Status
+  PROPOSED: a key and its string, asked of E30-D02's owner (RULED BQ-8)
+@ row the open-positions reason (no key yet) ‖ Owner
+  E30-D02
+@ row the open-positions reason (no key yet) ‖ Used on
+  `CMP-129/toggle-t2-open-positions` (§2.5); no T2 binds it until it is registered
 § spec ‖ 7.1 A-rows
-@ row A-5 ‖ Component
-  CMP-123 FlattenAllButton
+@ prose
+  A-1 to A-4 are the whole entries of CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge
+  and CMP-129 PositionModeToggle (hand-off C.1 to C.4); A-5 (CMP-123 FlattenAllButton, A-5.1 to
+  A-5.8, composing E33-D04 A-6, PENDING, by name), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7
+  (CMP-105 AccountMultiSelect, A-7.1 to A-7.6) and A-8 (CMP-209 RightRail, one row; DR-7) are Old
+  → New rows (hand-off C.5); the `16` block is a new block (hand-off C.6), its recipe owner
+  E05-D03 (#3174).
 § spec ‖ 7.2 Contradictions (C-rows)
+@ head 4
+  Owner
+@ row D04-C2 ‖ Ticket or source says
+  T Scope: CMP-115 "incl. pending/optimistic and rejected variants"
+@ row D04-C4 ‖ Ticket or source says
+  T Scope: the ticket's motion list names a "pending shimmer"
+@ row D04-C5 ‖ Ticket or source says
+  T Scope times the row motion ("row insert/remove, value-change flash … correction flash") and
+  leaves a state change untimed; `16`:173 counts "state change" among what transitions communicate
 @ row D04-C5 ‖ Resolution
   Every state swap is a cut: status words, glyphs, fills, pills, the liq tier, the protection
   chip, T2 ↔ enabled and DEMO / LIVE change at frame 0 in both modes, `motion.duration.instant`,
   no easing (§3.3; Mo-8, Mo-10, Mo-12); no token CR (RULED BQ-11; owner approval pending (#2701))
+@ row D04-C9 ‖ Ticket or source says
+  E39-D03:123 and :388 (C14) read FLATTEN ALL as one gate per action, `hold` in DEMO and `typed`
+  in LIVE: E39-D03:388 "in LIVE the typed word replaces the hold"; `14`:294 "plus a typed confirm
+  in Live" asks for both
+@ row D04-C9 ‖ Resolution
+  §2.4 composes them on LIVE, the typed word first and then the hold (RULED BQ-7; `15`:476), which
+  is C14's "compose hold → typed and say so" branch; `FLATTEN` stays the word for `all-accounts`
+  (`15`:2506), and CMP-211's `confirmMode` takes CMP-123's dialog (D04-G7)
+@ row D04-C10 ‖ Resolution
+  Widened by `05`:148 and D02:465 to the discrete safety events nobody requested: Near and
+  Critical crossings, NO SL, a fill, a rejection, offline and reconnected (§2.1, §2.2); a row
+  update is still never announced individually
 § spec ‖ 7.3 Contract gaps (G-rows)
+@ head 3
+  Owner
 @ row D04-G4 ‖ Gap
   `closeAllPositions` states neither the order of its close and cancel nor that a failed close
   keeps its stop (D02:620): A-5.6 names the routes and shapes neither
 @ row D04-G5 ‖ Gap
   CSV export has no endpoint, permission, audit action or size limit (D03:519, G7): CMP-099's
   export writes no server record yet
+@ row D04-G6 ‖ Gap
+  No route for "Resolve…" and no server refusal while reconciling or desync (D03:522, G10):
+  CMP-028's Resolve… is drawn "pending route", and the `recon.*` pause binds this client only
 @ row D04-G7 ‖ Gap
   CMP-211 offers a `group` scope (`15`:2505) and CMP-123 has none; SCR-063 draws Flatten account…
-  alone (D02:155)
+  alone (D02:155); `confirmMode` is one-valued (`15`:2505), so CMP-211 cannot carry hold and typed
+  together on LIVE (D04-C9)
 @ row D04-G7 ‖ Owner
   E39-D03's owner (CMP-211), with E29-T09
+@ row D04-G8 ‖ Gap
+  E17-D01 §6 counts an entry's price change as a risk-increasing amend and `24` §8.10 does not
+  (D02:669, OQ-T): the `rbac.env` leg on "Edit price" follows E17-D01 until it rules
+@ row D04-G9 ‖ Gap
+  `position.reversed`, `grid.exported` and `order.diagnostics_viewed` are not in `24` §15.5
+  (D02:620; `14`:1478; D03:521, G9): Reverse…, Export CSV and the diagnostics read emit no
+  registered audit action yet
 § spec ‖ 7.4 Drift ledger (RULED BQ-12; owner approval pe
+@ head 6
+  Owner
 @ row DR-3 ‖ Bound
   CMP-123 `color.status.danger`
+@ row DR-10 ‖ Bound
+  E09-D09's T2 label `color.text.tertiary` on a dark selected row
+@ row DR-10 ‖ Replacement (exact)
+  Deliberate exception (DR-10): `color.text.secondary` there, 6.24 against the 4.5 text bar, where
+  tertiary measures 3.98 (§5, `t2-label-selected`)
+@ row DR-12 ‖ Bound
+  the reason keys `blotter.reconciling`, `blotter.verifying`, `blotter.stale_locked` and
+  `blotter.locked_after_kill`, which D03 superseded, and the five `blotter.*` names D02 leaves to
+  E29-D03, registered nowhere (D02:341, :345, :431)
+@ row DR-12 ‖ Replacement (exact)
+  `recon.reconciling`, `recon.desync`, `recon.stale` and `recon.killlock` (D03:552) in place of
+  the four, bound alone here (§6); the five registered or replaced by their owner, the Old → New
+  pair in hand-off Q-2
 § spec ‖ 8.1 Ticket, stories and screens
 @ row The flatten confirm, defined once (§2.4; ‖ Item
   The flatten confirm, defined once (§2.4; AC3)
@@ -4740,13 +7756,25 @@ SEC_PIN_TXT = r"""
   SCR-063; the shell's FLATTEN ALL…
 @ row The flatten confirm, defined once (§2.4; ‖ CMP
   CMP-123, CMP-044, CMP-211
+@ row The fills drawer: its treegrid, its host ‖ Item
+  The fills drawer: its treegrid, its host and its CSV export (§2.7, §2.8.8, §2.8.9)
 § spec ‖ 8.2 The gate tool: gates and mutations
 @ row G-FLATTEN ‖ Gate
   G-FLATTEN
 @ row G-FLATTEN ‖ Rule (RULED)
   hold and typed on LIVE, defined once (BQ-7; AC3)
+@ row G-DISPLAY ‖ Rule (RULED)
+  CMP-129's display variant: no control role, no T2 (BQ-8)
 @ row G-VIEWAS ‖ Rule (RULED)
   the legs in order, view-as first; nothing hidden (BQ-13)
+@ row G-EXITS ‖ Rule (RULED)
+  exits never gated by a state key or `rbac.env` (BQ-13)
+@ row G-ENV ‖ Gate
+  G-ENV
+@ row G-ENV ‖ Rule (RULED)
+  totals per environment; never colour alone; no switch (BQ-13; C-2.11)
+@ row G-SAFETY ‖ Rule (RULED)
+  no sentence contradicts a security invariant (C-2.8, C-2.9, C-12.4)
 § spec ‖ 9. Summary for #823 (at most ten lines)
 @ prose
   - Four entries are written whole (CMP-114, CMP-115, CMP-116, CMP-129), three amended field by
@@ -4761,7 +7789,8 @@ SEC_PIN_TXT = r"""
   behind a confirm (RULED BQ-8).
 @ prose
   - Every gated control takes CMP-079's `allowed` + `reason` with view-as first, and exits are
-  never gated by a state key (RULED BQ-13); §5 measures 27 pairs in three themes.
+  never gated by a state key (RULED BQ-13); §5 measures 27 gated pairs and 2 measured ones in
+  three themes.
 § hand-off ‖ E29-D04 — Per-component hand-off (`16` §11.4; th
 @ prose
   Four entries written whole — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge and
@@ -4777,7 +7806,26 @@ SEC_PIN_TXT = r"""
 @ prose
   E29-T09 pastes each block verbatim after the owner's approval (RULED BQ-2; owner approval
   pending (#2701)), keeping every value and dropping its `audit` marker.
-§ hand-off ‖ §B Density and theme matrix
+§ hand-off ‖ §B The `16` §11.4 checklist, density and themes
+@ head 5
+  CMP-123 (A-5)
+@ row Accessible name and role ‖ `16` §11.4 line
+  Accessible name and role
+@ row Accessible name and role ‖ Evidence
+  each entry's Accessible name line; roles `treegrid`, `row`, `rowheader` and the trailing totals
+  `rowgroup` (A-6.5), CMP-044's `alertdialog` (`15`:478), CMP-003's radio group for the `toggle`,
+  and none for `display` and CMP-116
+@ row Live data ‖ `16` §11.4 line
+  Live data
+@ row Live data ‖ Evidence
+  polite at most once per 2 s per field, the latest value; assertive once for a fill, a rejection,
+  offline and reconnected, NO SL and a Critical crossing; never per tick (spec §2.1, §2.2;
+  D02:465); CMP-116 N/A: the host's region speaks for it (spec §2.3)
+@ row Motion pair ‖ Evidence
+  the spec §3.2 rows and their instant twins: CMP-114 and CMP-115 Mo-1, Mo-2, Mo-3, Mo-4, Mo-8,
+  Mo-10 and Mo-12; CMP-116 none of its own, the host's Mo-3; CMP-123 Mo-7 and Mo-11 by reference;
+  CMP-129 Mo-8 alone; CMP-049 the consumer's Mo-1 and Mo-2 (A-6.4); CMP-105 unchanged (`15`:1100)
+§ hand-off ‖ Density and theme matrix
 @ row CMP-123 FlattenAllButton ‖ Entry
   CMP-123 FlattenAllButton
 § hand-off ‖ §C Copy-ready `15` entries and the `16` block (P
@@ -4794,8 +7842,19 @@ SEC_PIN_TXT = r"""
 @ code
   - **Tier**: Organism (trading) · **Purpose**: the cross-account positions grid of SCR-063, a
   CMP-049 `treegrid` whose named parts are the liquidation tier cell, the protection chip, the row
-  markers, the group header row, the totals row and the "Updates paused" chip; CMP-115 OrderRow is
-  its Working-orders sibling and CMP-123 the account header's Flatten account….
+  markers, the group header row, the totals row, the "Updates paused" chip and the Closed today
+  line; CMP-115 OrderRow is its Working-orders sibling and CMP-123 the account header's Flatten
+  account….
+@ code
+  - **Props**: `positions: PositionRow[]` · `groupBy: "account" | "symbol" | "trade_group" |
+  "manager"` (default `account`; Group by Manager is the Owner's view choice, never T2) ·
+  `columns: ColumnId[]` (per tab; select, Env, Account and Symbol always shown) · `envScope: "one"
+  | "mixed"` (from the account list, never from the rows in view) · `density: "compact" |
+  "comfortable"` · `selectedRowIds: string[]` · `onSelectionChange` · `rowActions:
+  Record<RowActionId, { allowed: boolean; reason?: string; busy?: boolean }>` (CMP-079's pair;
+  never a role prop) · `held?: { newRows: number; closedRows: number; noSl: boolean }` (the
+  "Updates paused" chip) · `accounts: AccountGroup[]` (the group header rows, the totals rows and
+  each block's Closed today line) · `onRowOpen(rowId)` · `onFlattenAccount(accountId)`.
 @ code
   - **Variants**: compact and comfortable, 24 and 32 px rows; grouped by account (default),
   symbol, trade group or manager; one environment or mixed (the Env column and the LIVE, then DEMO
@@ -4810,7 +7869,10 @@ SEC_PIN_TXT = r"""
   accent). The protection chip: the B8 states with `amend_lock.frozen` (`flat` leaves the frame).
   The row markers of E29-D02 and E29-D03; the group header row with its state marker and ⋯ menu;
   the totals row, one per environment, never summed; the "Updates paused" chip, critical while a
-  held row carries NO SL; the panel states of E29-D02 §10.1, by name.
+  held row carries NO SL; the Closed today line per environment block, collapsed ("▸ Closed today
+  (since 00:00 UTC) · 3 · net +40.20 USDT · incl. provisional"), expanded (its own table,
+  `role="table"`, Net a CMP-116 badge), "· none" (does not expand), and a row's Net provisional or
+  divergent; the panel states of E29-D02 §10.1, by name.
 @ code
   - **A11y**: Keyboard: a treegrid with one roving stop; arrows by row and cell, `→` and `←`
   expand and collapse a group header, `Space` selects, `Enter` opens SCR-064, `Shift+F10` the row
@@ -4822,14 +7884,32 @@ SEC_PIN_TXT = r"""
   per field; filled, rejected, offline and reconnected, NO SL and Critical crossings are
   assertive, once.
 @ code
+  - **Tokens**: rows `size.row.compact` / `size.row.comfortable`; cells `space.inset.sm` /
+  `space.inset.md`; words `type.ui.body`, numerals `type.num.base`, chips and tags
+  `type.ui.caption` with `radius.badge` and `space.inset.xs` (Deliberate exception (DR-9): no
+  height token, E29-D04 §7.4); fills `color.surface.raised`, `color.surface.hover` and
+  `color.surface.selected`, group headers `color.surface.canvas`, totals `color.surface.overlay`;
+  focus `color.focus.ring` with `border.focus`; the tier glyphs `color.text.secondary`,
+  `color.status.warning.strong` and `color.status.danger.strong`; tags `color.status.info.subtle`,
+  `color.status.warning.subtle` and `color.status.danger.subtle` under `color.text.primary`; stale
+  rows `color.data-confidence.stale.surface` and `color.data-confidence.stale.text`; the
+  environment pill `color.env.live` / `color.env.demo`; the T2 look per CMP-079, its label
+  `color.text.secondary` on a dark selected row (Deliberate exception (DR-10), E29-D04 §7.4); the
+  Closed today line `color.surface.canvas`; forced colours per E29-D02 §12 (D02:527). (Replaces
+  the two bare status families of the old Tokens line.)
+@ code
   - **API sketch**: `interface PositionRow { id: string; accountId: string; env: "live" | "demo";
   symbol: string; side: "long" | "short"; positionIdx: 0 | 1 | 2; size: string; entryPrice:
   string; markPrice: string; liqPrice: string | null; unrealizedPnl: string; rPnlToday: string; r:
   string | null; leverage: string; marginMode: "cross" | "isolated" | "portfolio"; positionMode:
   "one-way" | "hedge"; protection: { state: "protected" | "attaching" | "verifying" | "amending" |
   "naked" | "naked_unrecoverable"; frozen: boolean }; adlRank: number | null; liqTier: "none" |
-  "watch" | "near" | "critical" }`; money and price fields are the generated `packages/protocol`
-  decimal strings, never `number`.
+  "watch" | "near" | "critical"; markers?: RowMarkerId[] }`, `RowMarkerId` being the seventeen row
+  markers of E29-D02 and E29-D03; `interface AccountGroup { id: string; label: string; env: "live"
+  | "demo"; positionMode: "one-way" | "hedge"; state?: string; rPnlToday: string; closedToday?: {
+  count: number; net: string; provisional: boolean } }`, `state` being the account's D02 §10.2
+  marker key; money and price fields are the generated `packages/protocol` decimal strings, never
+  `number`.
 @ code
   - **Data contract**: `positions` from the private `positions` WS topic (`23` §15.2
   `PositionUpdate`) merged with the REST position-list snapshot; `positionMode` from
@@ -4838,10 +7918,15 @@ SEC_PIN_TXT = r"""
   of view (a contract gap).
 @ code
   - **Tests**: unit, visual, axe, keyboard row and cell navigation, the treegrid roles, levels and
-  indices on a 500-row fixture, the live-region cadence (never per tick), the T2 tests (view-as
+  indices on a 500 -row fixture, the live-region cadence (never per tick), the T2 tests (view-as
   first, `aria-disabled`, no audit or analytics on a T2 press), busy is never T2, performance
   (1,000 rows at the frame budget).
 § hand-off ‖ C.2 A-2 — CMP-115 OrderRow
+@ code
+  - **Props**: `order: OrderRowData` · `rowActions: Record<"cancel" | "editPrice" | "editTrigger"
+  | "editQty", { allowed: boolean; reason?: string; busy?: boolean }>` (CMP-079's pair) ·
+  `onCancel` · `onAmend(field, value)` · `amend?: { moment: "editing" | "pending" | "unconfirmed"
+  | "rejected"; value: string }` · `onDismissRejected`.
 @ code
   - **Variants**: compact and comfortable, as CMP-114; the sections Working and "Conditional — not
   triggered"; the native-stop row, whose Cancel is T2 with its `sl.note` sentence (PROPOSED to
@@ -4859,12 +7944,63 @@ SEC_PIN_TXT = r"""
   `blotter.amend_in_flight` are PROPOSED with E29-D03 as their owner. Filled and Cancelled linger
   about 5 s.
 @ code
+  - **A11y**: Keyboard: CMP-114's treegrid model; `Enter`, `F2` or a double-click opens the cell
+  editor (CMP-100 or CMP-101 in the cell), `↑` / `↓` step a tick or a lot, `Enter` alone commits
+  and `Escape`, `Tab` or a click elsewhere restores the live value; Accessible name: in a mixed
+  view the environment leads, then the state word with its glyph named once, then the type with
+  its purpose, price, quantity and account, the State cell's whole line in the description; Live
+  region: row updates are never announced individually; filled and rejected are assertive, once,
+  and so is a rejected amend; "Amend confirmed: price 2,495.00." is polite, once; the pending tag,
+  the age and the counters never speak.
+@ code
+  - **API sketch**: `interface OrderRowData { id: string; accountId: string; env: "live" | "demo";
+  symbol: string; side: "buy" | "sell"; type: string; purpose: string; price: string | null;
+  triggerPrice: string | null; qty: string; filledQty: string; avgFillPrice: string | null;
+  timeInForce: string; reduceOnly: boolean; closeOnTrigger: boolean; createdAt: string | null;
+  parent: string | null; status: OrderStatus; nativeStop: boolean; markers?: RowMarkerId[] }`,
+  `OrderStatus` being the fifteen D01 D2 states (`submitting`, `submitted`, `triggered`,
+  `partially_filled`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined`, `held`,
+  `untracked`, `filled`, `cancelled`, `rejected`, `expired`, `killed`); decimals as the generated
+  `packages/protocol` strings.
+@ code
   - **Data contract**: the private `orders` WS topic (`23` §15.1 `OrderUpdate`, never throttled)
   merged with the REST open-orders snapshot; `lifecycle_state` maps to the D01 D2 word, null or
   unmapped to "Working — state not reported"; a pending amend waits for the `change: "amend"`
   frame and a native stop's edit for the read that shows it; the exchange's text never reaches the
   row (`getOrderDiagnostics` only).
+@ code
+  - **Tests**: unit (the fifteen-word map; null reads "Working — state not reported"), visual,
+  axe, keyboard (the editor commits on `Enter` alone), the pending test (the live value and "still
+  live" stay until the frame), the T2 and busy tests, the live-region cadence.
+§ hand-off ‖ C.3 A-3 — CMP-116 PnLBadge
+@ code
+  - **Tier**: Atom (trading) · **Purpose**: a signed money value (unrealised and realised PnL, R,
+  fees, funding) whose digits stay neutral and whose sign is text; its hue rides on a 2 px accent
+  bar.
+@ code
+  - **A11y**: Keyboard: none, the badge is not interactive; Accessible name: the sign and the
+  value in words as visually hidden text, never an `aria-label` on the span: "profit 8.00 USDT",
+  "loss 121.50 USDT", "fee paid 3.49 USDT", "funding received 0.84 USDT", a null R "R unavailable:
+  no stop price"; the bar is `aria-hidden`; Live region: none of its own; the host's polite region
+  at most once per 2 s per field, latest value only, never per tick.
+@ code
+  - **Data contract**: the host passes the server's figure (unrealised PnL from the position
+  frame, realised PnL from E29-S06's composition, fees and funding from `executions`); the badge
+  formats and computes nothing.
 § hand-off ‖ C.4 A-4 — CMP-129 PositionModeToggle
+@ heading
+  ### C.4 A-4 — CMP-129 PositionModeToggle
+@ prose
+  Replaces `15`:1474–1481 (D02 gap 13 and E05-D02 D5; spec §2.5).
+@ code
+  ### CMP-129 PositionModeToggle (One-Way/Hedge)
+@ code
+  - **Tier**: Molecule (trading) · **Purpose**: the account's position mode, shown as text in
+  SCR-063's account group header, or changed behind its own confirm.
+@ code
+  - **Props**: `value: "one-way" | "hedge"` · `variant: "display" | "toggle"` (default `display`)
+  · `allowed?: boolean` · `reason?: string` (CMP-079's pair, `toggle` only) ·
+  `onRequestChange(value)` · `onConfirm`.
 @ code
   - **Variants**: `display`: the word as text, read-only, outside the Tab order, with neither a
   control role nor a reason. `toggle`: CMP-003's radio group, its change held behind a CMP-044
@@ -4874,45 +8010,133 @@ SEC_PIN_TXT = r"""
   arrowed but unwritten, the confirm open, T2 (the view-as leg first, then the permission leg,
   read as `rbac.owner_only` for `accounts:write`; the open-positions reason PROPOSED to E30-D02's
   owner, no key bound), busy while the write is in flight.
+@ code
+  - **A11y**: Keyboard: `display` takes no Tab stop; `toggle` is CMP-003's radio group, where
+  arrows browse, `Enter` or `Space` opens the confirm, only the confirm writes and `Escape` keeps
+  the old mode; Accessible name: the mode as text, "One-way" or "Hedge"; the radio group takes its
+  host's label and a T2 option's reason is its description; Live region: none of its own; a
+  confirmed change is the host's polite line, once.
+@ code
+  - **Tokens**: `display`: `type.ui.body` in `color.text.primary` on the header's
+  `color.surface.canvas`. `toggle`: CMP-003's, with the T2 look per CMP-079
+  (`color.text.tertiary`, `color.text.secondary`, `color.surface.raised`, `color.border.default`),
+  never `opacity.disabled`.
+@ code
+  - **Data contract**: reads the position mode from `ExchangeAccount.position_mode` (REST); the
+  `toggle` writes it through the account-config endpoint after the confirm, the Owner's alone
+  (`accounts:write`).
+@ code
+  - **Storybook**: DisplayOneWay, DisplayHedge, ToggleConfirm, T2OwnerOnly, T2OpenPositions (its
+  reason PROPOSED); each dark and light × compact and comfortable.
+@ code
+  - **Tests**: unit, visual, axe (`display` exposes no role), keyboard (arrows never write; only
+  the confirm sends), the T2 test.
+@ code
+  - **Motion spec**: none: a mode change is a cut at frame 0 (E29-D04 §3.2, Mo-8), the same under
+  `prefers-reduced-motion`.
+@ code
+  - **Design (DS spec):** [E29-D04.md](../design/E29/E29-D04.md) §2.5 (E29-D04; owner approval
+  pending).
 § hand-off ‖ C.5 Table A — Old (verbatim at `6fc8aacc6`) → Ne
+@ heading
+  ### C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field
+@ prose
+  A-5 composes with E33-D04 A-6 (PENDING, by name; RULED BQ-7): A-5.1 replaces the Old Purpose's
+  "`hold` or `typed`" choice with the composite and appends after E33-D04 A-6.1's sentence,
+  whichever lands first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a
+  no-op.
+@ prose
+  A "new bullet" row inserts the bullet after the line its Old cell sits on.
+@ head 1
+  A
+@ head 2
+  Component
+@ head 3
+  Field (`15`:line)
+@ head 4
+  Old (verbatim)
+@ head 5
+  New
+@ row A-5.1 ‖ A
+  A-5.1
 @ row A-5.1 ‖ Component
   CMP-123
+@ row A-5.1 ‖ Field (`15`:line)
+  Tier · Purpose (`15`:1405)
 @ row A-5.1 ‖ Old (verbatim)
   **Tier**: Molecule (trading, risk-critical) · **Purpose**: global panic-button — closes all
   positions and cancels all working orders for the active scope, gated by ConfirmDialog `hold` or
   `typed` variant.
 @ row A-5.1 ‖ New
-  the Old text, then (after E33-D04 A-6.1's sentence once that row has landed; PENDING): Two
-  scopes: `account`, SCR-063's Flatten account… in each account group header's ⋯ menu, and
-  `all-accounts`, the shell's FLATTEN ALL…, whose button is CMP-211 and whose dialog is this
-  entry's. Its confirm, CMP-044 `hold` with the typed word added where E29-D04 §2.4's table asks
-  for it, is defined once here and referenced, never restated, by E30, E31 and E39.
+  the Old text with "gated by ConfirmDialog `hold` or `typed` variant" replaced by "gated by
+  CMP-044 `hold`, and on LIVE by the typed word as well (E29-D04 §2.4)", then (after E33-D04
+  A-6.1's sentence once that row has landed; PENDING): Two scopes: `account`, SCR-063's Flatten
+  account… in each account group header's ⋯ menu, and `all-accounts`, the shell's FLATTEN ALL…,
+  whose button is CMP-211 and whose dialog is this entry's. Its confirm, CMP-044 `hold` with the
+  typed word first on LIVE (`FLATTEN` for `all-accounts`), is defined once here and referenced,
+  never restated, by E30, E31 and E39.
+@ row A-5.2 ‖ A
+  A-5.2
 @ row A-5.2 ‖ Component
   CMP-123
+@ row A-5.2 ‖ Field (`15`:line)
+  Props (`15`:1406)
+@ row A-5.2 ‖ Old (verbatim)
+  `scope: "account"|"all-accounts"`
+@ row A-5.2 ‖ New
+  `scope: "account" | "all-accounts"` · `env: "live" | "demo"` (the account's; E29-D04 §2.4's
+  confirm keys on it) · `allowed: boolean` · `reason?: string` (CMP-079's pair; never a role prop)
+  · `busy?: boolean` (the account loading: `aria-busy`, never T2)
+@ row A-5.3 ‖ A
+  A-5.3
 @ row A-5.3 ‖ Component
   CMP-123
+@ row A-5.3 ‖ Field (`15`:line)
+  Variants, States (new bullets after `15`:1406)
+@ row A-5.3 ‖ Old (verbatim)
+  `onConfirm`.
 @ row A-5.3 ‖ New
   the Old text, then two new bullets. **Variants**: `account` (SCR-063's Flatten account…) and
   `all-accounts` (the shell's FLATTEN ALL…, its button CMP-211), each on DEMO or LIVE (E29-D04
   §2.4's confirm table). **States**: default, hover, focus-visible; the CMP-044 dialog restating
   the account, its environment, the positions it closes and the orders it cancels, stops
   "cancelled with the position"; holding (CMP-044's ring with its percentage text); armed ("Press
-  again to …"); the typed word on LIVE; busy while the account loads (`aria-busy`, never T2); out
-  of the ⋯ menu while the account's snapshot failed; T2 for view-as, a Viewer and a read-only
-  grant, and for a Manager under the kill switch while OD-11 is open; offline with REST
-  unreachable (T2); the result, one `BulkAccountResult` line per account with "Retry failed".
+  again to …"); the typed word on LIVE (`FLATTEN` for `all-accounts`); busy while the account
+  loads (`aria-busy`, never T2); out of the ⋯ menu while the account's snapshot failed; T2 for
+  view-as, a Viewer and a read-only grant, and for a Manager under the kill switch while OD-11 is
+  open; offline with REST unreachable (T2); the result, one `BulkAccountResult` line per account
+  with "Retry failed".
+@ row A-5.4 ‖ A
+  A-5.4
 @ row A-5.4 ‖ Component
   CMP-123
+@ row A-5.4 ‖ Field (`15`:line)
+  A11y (`15`:1407)
+@ row A-5.4 ‖ Old (verbatim)
+  CMP-044 composition, always keyboard-operable (never a mouse-hold-only gate).
 @ row A-5.4 ‖ New
   the Old text, then: Keyboard: the item opens CMP-044 with focus on Cancel; the confirm takes a
   held `Enter` or a second `Enter` within CMP-044's window, after the typed word where E29-D04
   §2.4 asks for it; `Escape` or blur disarms and key repeat never confirms. Accessible name: scope
   and effect, "Flatten account — {account} · {environment}"; a T2 item keeps it and its reason is
   the description. Live region: the result is polite, once; nothing speaks while the hold runs.
+@ row A-5.5 ‖ A
+  A-5.5
 @ row A-5.5 ‖ Component
   CMP-123
+@ row A-5.5 ‖ Field (`15`:line)
+  Tokens (`15`:1408)
+@ row A-5.5 ‖ Old (verbatim)
+  `color.status.danger`.
+@ row A-5.5 ‖ New
+  `color.status.danger.default`. (The same replacement as E33-D04 A-6.2, PENDING: whichever lands
+  first applies and the other is then a no-op.)
+@ row A-5.6 ‖ A
+  A-5.6
 @ row A-5.6 ‖ Component
   CMP-123
+@ row A-5.6 ‖ Field (`15`:line)
+  Data contract (`15`:1409)
 @ row A-5.6 ‖ Old (verbatim)
   Bybit `/v5/order/cancel-all` + market-close per position
 @ row A-5.6 ‖ New
@@ -4921,26 +8145,215 @@ SEC_PIN_TXT = r"""
   `closeAllPositions` with `cancel_open_orders: false`, in one confirmed gesture with an
   `Idempotency-Key` each; stops end with their position, never as separate cancels, and a failed
   cancel does not hold the close back
+@ row A-5.7 ‖ A
+  A-5.7
 @ row A-5.7 ‖ Component
   CMP-123
+@ row A-5.7 ‖ Field (`15`:line)
+  Storybook (`15`:1410)
+@ row A-5.7 ‖ Old (verbatim)
+  AccountScope, AllAccountsScope.
+@ row A-5.7 ‖ New
+  AccountScope, AllAccountsScope, DemoHold, LiveHoldAndTyped, Armed, Busy, T2ViewAs, T2Viewer,
+  T2ReadOnly, T2ManagerKillSwitch, OfflineRestUnreachable, Result, ReducedMotion; each dark and
+  light × compact and comfortable.
+@ row A-5.8 ‖ A
+  A-5.8
 @ row A-5.8 ‖ Component
   CMP-123
+@ row A-5.8 ‖ Field (`15`:line)
+  Tests (`15`:1411), then Motion spec and Design
+@ row A-5.8 ‖ Old (verbatim)
+  unit, visual, axe, keyboard-only confirm path test.
 @ row A-5.8 ‖ New
   the Old text, then: on LIVE the hold starts once the typed word matches; key repeat never
   confirms; view-as is the first leg; a T2 press emits no audit or analytics; busy is never T2;
   the reduced-motion twin shows the percentage text, static. Then two new bullets. **Motion
   spec**: Mo-7, CMP-044's ring by reference (E29-D04 §3.2). **Design (DS spec):** E29-D04 §2.4
   (E29-D04; owner approval pending).
+@ row A-6.1 ‖ A
+  A-6.1
+@ row A-6.1 ‖ Component
+  CMP-049
+@ row A-6.1 ‖ Field (`15`:line)
+  Tier · Purpose (`15`:526)
+@ row A-6.1 ‖ Old (verbatim)
+  PositionsGrid (CMP-107)
+@ row A-6.1 ‖ New
+  PositionsGrid (CMP-114)
+@ row A-6.2 ‖ A
+  A-6.2
+@ row A-6.2 ‖ Component
+  CMP-049
+@ row A-6.2 ‖ Field (`15`:line)
+  Props (`15`:527)
+@ row A-6.2 ‖ Old (verbatim)
+  `caption: string` · `loading?: boolean` · `error?: {message, onRetry}`.
+@ row A-6.2 ‖ New
+  the Old text, then: `treegrid?: boolean` (implies `grid`; rows carry `level`, outermost first,
+  and a row that holds others `expanded`) · `stickyFirstColumn?: boolean | number` (`true` pins
+  the first column; a number pins that many leading columns) · `stickyLastColumn?: boolean` (an
+  actions column) · `detail?: (row: T) => ReactNode` (a detail line under a row, opened by `→`)
+@ row A-6.3 ‖ A
+  A-6.3
+@ row A-6.3 ‖ Component
+  CMP-049
+@ row A-6.3 ‖ Field (`15`:line)
+  Variants (`15`:528)
+@ row A-6.3 ‖ Old (verbatim)
+  forced by `grid` for a static table).
+@ row A-6.3 ‖ New
+  the Old text, then: treegrid (the APG Treegrid pattern: rows nest by `level`, `→` expands and
+  `←` collapses a row that holds others, a detail line opens under its row; implied by `treegrid`;
+  SCR-063, SCR-078 and E11-D04's chart table).
+@ row A-6.4 ‖ A
+  A-6.4
+@ row A-6.4 ‖ Component
+  CMP-049
+@ row A-6.4 ‖ Field (`15`:line)
+  States (`15`:529)
+@ row A-6.4 ‖ Old (verbatim)
+  or badges an inline IconButton, 2b).
+@ row A-6.4 ‖ New
+  the Old text, then: with `treegrid`, a row that holds others is expanded or collapsed
+  (`aria-expanded`), a detail line is open or closed and totals sit in a trailing `rowgroup`; the
+  base has no row motion, a consumer's insert and exit being E29-D04 Mo-1 and Mo-2.
+@ row A-6.5 ‖ A
+  A-6.5
+@ row A-6.5 ‖ Component
+  CMP-049
+@ row A-6.5 ‖ Field (`15`:line)
+  A11y (`15`:530)
+@ row A-6.5 ‖ Old (verbatim)
+  one polite live region for sort, filter, selection and load results.
+@ row A-6.5 ‖ New
+  the Old text, then: with `treegrid`, `role="treegrid"`, `aria-level` per layer, `aria-expanded`
+  on a row that holds others, `aria-rowcount` and `aria-rowindex` across the window, the first
+  cell a `rowheader` and totals in a trailing `rowgroup`. Keyboard: one roving stop; arrows by row
+  and cell, `→` expands and `←` collapses, `Home` / `End`, `PageUp` / `PageDown`, `Space` selects,
+  `Enter` opens a detail line or activates the cell's control, `Shift+F10` the row menu.
+  Accessible name: the caption names the table, a row its `rowheader` cell with its level and
+  position. Live region: a consumer's row updates are never announced individually; the base keeps
+  its one polite region for results.
+@ row A-6.6 ‖ A
+  A-6.6
+@ row A-6.6 ‖ Component
+  CMP-049
+@ row A-6.6 ‖ Field (`15`:line)
+  Storybook (`15`:532)
+@ row A-6.6 ‖ Old (verbatim)
+  FilteredEmpty, Reflow.
+@ row A-6.6 ‖ New
+  FilteredEmpty, Reflow, Treegrid, TreegridExpanded, StickyLeadColumns, DetailLines,
+  TotalsRowgroup.
+@ row A-6.7 ‖ A
+  A-6.7
+@ row A-6.7 ‖ Component
+  CMP-049
+@ row A-6.7 ‖ Field (`15`:line)
+  Tests (`15`:533), then Design
+@ row A-6.7 ‖ Old (verbatim)
+  performance test (scroll 10k rows @60fps).
+@ row A-6.7 ‖ New
+  the Old text, then: with `treegrid`, the roles, levels and indices asserted on a 500 -row
+  fixture, a 1,000 -row window painted with no per-row layout read, and expand and collapse by
+  keyboard. Then a new bullet: **Design (DS spec):** E29-D04 §2.7 (E29-D04; owner approval
+  pending).
+@ row A-7.1 ‖ A
+  A-7.1
+@ row A-7.1 ‖ Component
+  CMP-105
+@ row A-7.1 ‖ Field (`15`:line)
+  Tier · Purpose (`15`:1091)
+@ row A-7.1 ‖ Old (verbatim)
+  the account / trade-group selector of SCR-061 (E30-D03 §8).
 @ row A-7.1 ‖ New
   the Old text, then: Also SCR-063's account-filter picker, reused by contract (E29-D04 §2.6):
   `mode="account"` over the server-scoped account list, without `profileSummary`, `onEditProfile`,
   group rows or leg rows; each chosen account becomes a CMP-055 chip, "Account: Sub-1 ✕".
+@ row A-7.2 ‖ A
+  A-7.2
+@ row A-7.2 ‖ Component
+  CMP-105
+@ row A-7.2 ‖ Field (`15`:line)
+  Storybook (`15`:1099)
+@ row A-7.2 ‖ Old (verbatim)
+  HighContrast, ReducedMotion.
+@ row A-7.2 ‖ New
+  HighContrast, ReducedMotion, FilterPicker, FilterManagerScope.
+@ row A-7.3 ‖ A
+  A-7.3
+@ row A-7.3 ‖ Component
+  CMP-105
+@ row A-7.3 ‖ Field (`15`:line)
+  Tests (`15`:1100)
+@ row A-7.3 ‖ Old (verbatim)
+  unit (cap enforcement), visual, axe, keyboard multi-select
+@ row A-7.3 ‖ New
+  the Old text, then: the filter use (a Manager's options are the assigned accounts only, set
+  server-side; no T2 on a filter)
+@ row A-7.4 ‖ A
+  A-7.4
+@ row A-7.4 ‖ Component
+  CMP-105
+@ row A-7.4 ‖ Field (`15`:line)
+  Props (`15`:1092)
+@ row A-7.4 ‖ Old (verbatim)
+  `accounts: {id,label,badge:ProfileBadgeProps,selected,profileSummary}[]` · `onToggle` ·
+  `onSelectAll` · `onEditProfile(accountId)`
+@ row A-7.4 ‖ New
+  `accounts: {id,label,badge:ProfileBadgeProps,selected,profileSummary?}[]` · `onToggle` ·
+  `onSelectAll` · `onEditProfile?(accountId)` (`profileSummary` and `onEditProfile` optional:
+  SCR-063's account-filter picker passes neither, E29-D04 §2.6)
+@ row A-7.5 ‖ A
+  A-7.5
+@ row A-7.5 ‖ Component
+  CMP-105
+@ row A-7.5 ‖ Field (`15`:line)
+  A11y (`15`:1095)
+@ row A-7.5 ‖ Old (verbatim)
+  `aria-describedby` → the shared reason).
+@ row A-7.5 ‖ New
+  the Old text, then: the account-filter use (E29-D04 §2.6). Keyboard: `Alt+↓` or `Enter` opens,
+  `↑` / `↓`, `Home` / `End`, `Space` toggles, `Escape` closes and returns focus, and each chip's
+  remove is its own IconButton. Accessible name: a chip reads "Account: Sub-1" and its remove
+  "Remove filter Account: Sub-1". Live region: none of its own; the table's one polite region
+  speaks the filtered result once.
+@ row A-7.6 ‖ A
+  A-7.6
+@ row A-7.6 ‖ Component
+  CMP-105
+@ row A-7.6 ‖ Field (`15`:line)
+  API sketch (`15`:1097)
+@ row A-7.6 ‖ Old (verbatim)
+  profileSummary: string }>; onToggle: (id: string) => void; onSelectAll: () => void;
+  onEditProfile: (id: string) => void;
+@ row A-7.6 ‖ New
+  profileSummary?: string }>; onToggle: (id: string) => void; onSelectAll: () => void;
+  onEditProfile?: (id: string) => void;
+@ row A-8 ‖ A
+  A-8
+@ row A-8 ‖ Component
+  CMP-209
+@ row A-8 ‖ Field (`15`:line)
+  Tokens (`15`:2489)
+@ row A-8 ‖ Old (verbatim)
+  `motion.drawer`
+@ row A-8 ‖ New
+  `motion.duration.normal` with `motion.easing.decelerate` to open and `motion.easing.accelerate`
+  to close, as CMP-046 (`15`:499); a docked drawer that reflows its host arrives in one frame;
+  `prefers-reduced-motion`: at frame 0 (DR-7; E29-D04 Mo-6)
 § hand-off ‖ C.6 The `16` block (copy-ready; recipe owner E05
 @ code
   | state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled, DEMO /
   LIVE; a disclosure; a row's busy glyph) | at frame 0; `prefers-reduced-motion`: the same cut at
   frame 0 | none | E29-D04 Mo-8, Mo-10, Mo-12 |
 § hand-off ‖ §D Storybook stories per entry
+@ row CMP-114 PositionsGrid ‖ Stories
+  §C.1's Storybook line (RULED BQ-4): the default and grouped grids, the mixed environments, the
+  liq tiers, the protection chip, the row markers, selection, the paused chip, the Closed today
+  line, the narrow dock, the empty and loading panels, the Viewer's T2 and the reduced-motion
+  readings
 @ row CMP-115 OrderRow ‖ Stories
   §C.2's Storybook line (RULED BQ-5): one story per status family, the pending, unconfirmed and
   rejected amend, the editor, the native-stop row, the T2 Held order and the reduced-motion
@@ -4951,13 +8364,52 @@ SEC_PIN_TXT = r"""
   Table A's Storybook row (§C.5; RULED BQ-7): the `15` two (`15`:1410), the DEMO hold, the LIVE
   hold and typed word, armed, busy, every T2 frame of spec §2.4, offline, the result and the
   reduced-motion reading
+@ row CMP-123 FlattenAllButton ‖ Built in
+  E29-S01 for `scope: account`; the shell's host of `scope: all-accounts` (E39)
+@ row CMP-129 PositionModeToggle ‖ Stories
+  §C.4's Storybook line (RULED BQ-8): the two display stories, the toggle's confirm and its T2
+  frames, the open-positions one with its reason PROPOSED
+@ prose
+  A T2 story shows the reason node and the `lock` and never the `disabled` attribute (spec §4); a
+  ReducedMotion story sets `data-motion="reduce"` and shows every reading at frame 0 (spec §3.6).
+@ prose
+  The story code belongs to the implementing stories (T Out of scope).
 § hand-off ‖ §E Test hooks
+@ row CMP-114 PositionsGrid ‖ Tests
+  axe with no serious or critical violation (`15`:41); the treegrid's accessibility tree, its
+  roles, levels and indices on a 500 -row fixture (D02:142); the keyboard model of D02 §11.1
+  (D02:447); the live-region cadence: the focused row's changed values and the environment totals
+  at most once per 2 s per field, and row updates never announced individually (D02:465); the
+  environment test: totals per environment never summed, the Env column only on a scope change
+  (D02:146, :156); the exits test of spec §4.2; the T2 test of spec §4.1; every
+  `prefers-reduced-motion` reading at frame 0 (spec §3.2)
+@ row CMP-115 OrderRow ‖ Tests
+  axe; CMP-114's treegrid keyboard, `Enter` or `F2` opening the editor and only `Enter` committing
+  (D02:303); the live-region cadence: filled and rejected assertive once, every other status
+  change silent (D02:465); the environment (in a mixed view), then the status word, leading the
+  row's name; pending never drawn as confirmed, the confirmed value staying with "still live"
+  until Bybit answers (D02:320, :325); the T2 test of spec §4.1; every `prefers-reduced-motion`
+  reading at frame 0
+@ row CMP-116 PnLBadge ‖ Tests
+  axe; the accessible reading as visually hidden text, never an `aria-label` (spec §2.3); the sign
+  as text in greyscale and under deuteranopia (spec §5); no live region of its own
 @ row CMP-123 FlattenAllButton ‖ Entry
   CMP-123 FlattenAllButton
 @ row CMP-123 FlattenAllButton ‖ Tests
   axe; the keyboard-only confirm path of spec §2.4, key repeat never confirming; the result line
   polite once; the exits test: sendable for the Owner in every account state (spec §4.2); the T2
-  test of spec §4.1's flatten row; the hold's `prefers-reduced-motion` reading (spec §3.2)
+  test of spec §4.1's flatten row; the hold's static `prefers-reduced-motion` reading (spec §3.2)
+@ row CMP-129 PositionModeToggle ‖ Tests
+  axe; the display variant is no Tab stop and has no control role (spec §2.5); arrows browse the
+  toggle and only its confirm writes (E05-D02 D5); the toggle's T2 frames as spec §4.1's toggle
+  row
+@ row CMP-105 AccountMultiSelect, the filter u ‖ Tests
+  E30-D04's tests, unchanged (E30-D04:366), and the filter use: a Manager's options are the
+  assigned accounts only, set server-side, and no T2 sits on a filter (Table A A-7.3; spec §4.2)
+@ row CMP-049 Table ‖ Tests
+  the `15` tests, unchanged (`15`:533), and with `treegrid` the roles, levels and indices on a 500
+  -row fixture, a 1,000 -row window painted with no per-row layout read, and expand and collapse
+  by keyboard (Table A A-6.7)
 @ prose
   **The T2 test** (every row of spec §4.1): the legs fire in their order, view-as first; the
   control keeps its role and its full label with `aria-disabled="true"`, never the `disabled`
@@ -4965,34 +8417,113 @@ SEC_PIN_TXT = r"""
   once, politely, and emits no audit or analytics (E09-D09:228, :243; `15`:819).
 @ prose
   **The exits test** (spec §4.2): in every account state of D02 §10.2 and §10.3 the Owner's
-  Cancel, Close, the bulk closes and cancels and Flatten account… send; the two drawn exceptions
-  are the only T2 on an exit (D02:412).
+  Cancel, Close, the bulk closes and cancels and Flatten account… send; the drawn exceptions of
+  spec §4.2 are the only T2 on an exit (D02:412).
 § hand-off ‖ §F Open items
 @ prose
+  - **Q-1** The `recon.*` keys (D03:315–319) wait for E09-D09's owner to register them beside
+  E30-D02's (D03:536, :619); until then they stay PROPOSED on every row that names them, and
+  CMP-079 cannot carry them (`15`:814).
+@ prose
+  Owner: E09-D09's owner, with E29-D03 as the vocabulary owner.
+@ prose
+  - **Q-2** The five `blotter.*` keys D02 names for E29-D03 (D02:341, :345, :431) are registered
+  nowhere, since D03 registers only `recon.*` (D03:311); D02's four superseded keys still print at
+  D02:408–410 and :422 (D03:552).
+@ prose
+  The copy-ready pair for that author (spec DR-12): in D02 §10.2 and §10.3, `blotter.reconciling`
+  → `recon.reconciling`, `blotter.verifying` → `recon.desync`, `blotter.stale_locked` →
+  `recon.stale` and `blotter.locked_after_kill` → `recon.killlock`, each with D03's string
+  (D03:315–318).
+@ prose
+  Owner: the E29-D02 and E29-D03 author, to register or replace them with E09-D09's owner and to
+  correct the merged D02 text.
+@ prose
+  - **Q-3** `guard.mismatch.row` and its converse, the other environment's block notice (D02:145):
+  a row form of `guard.mismatch` (OQ-L, D02:661).
+@ prose
+  Owner: E30-D02's owner.
+@ prose
+  - **Q-4** `feed.clock_drift` and `feed.system_unknown` (D02:395, :620).
+@ prose
+  Owner: E17-D01's owner.
+@ prose
   - **Q-5** `sl.note`'s first sentence as the native-stop row's Cancel reason (D02:345).
+@ prose
+  Owner: E32-D01's owner.
+@ prose
+  - **Q-6** The verb "resolve the lock" for `rbac.owner_only` (D03:321), and Resolve…'s route,
+  which G10 records as missing (D03:522).
+@ prose
+  Owners: E09-D09's owner for the verb; D03's §11.1 owners, E29-T05, E29-T06, E29-T07 and E45, for
+  the route (D03:619).
 @ prose
   - **Q-7** CMP-129's open-positions reason: a key and its string, asked of E30-D02's owner (RULED
   BQ-8); until it is registered the toggle's T2 frames show `rbac.view_as` and `rbac.owner_only`
   only (spec §4.1), and no E29 surface hosts the toggle (D02:622).
 @ prose
+  Owner: E30-D02's owner.
+@ prose
+  - **Q-8** Rendering 2b on a row's text SplitButton (OQ-S, D02:668) and the selected-row T2 label
+  in `color.text.secondary` (spec §5; D02:614), both extensions of E09-D09 §2.2.
+@ prose
+  Owner: E09-D09's owner.
+@ prose
   - **Q-9** A Manager's closes under the kill switch read E39-D01's "Frozen — the owner closes or
   releases" until OD-11 rules (E39-D01:687; D02:654).
+@ prose
+  Owner: E39-D01's owner (OD-11).
 @ prose
   - **Q-10** CSV export for a Viewer (OQ-G, D02:656), and SR-098's identity watermark and audit
   record, which need G7's server path (D03:519, :619).
 @ prose
+  Owners: the owner for OQ-G; E29-S04 for the record.
+@ prose
   - **Q-11** `Ctrl+Shift+F`: Flatten account in the Positions context, or E39-D03's global flatten
   (OQ-R, D02:667), stays open; CMP-123 cites it and decides nothing (spec §2.4).
+@ prose
+  Owner: the owner, who rules OQ-R with E39-D03's owner.
 @ prose
   - **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
   first applies the shared Tokens row, and the other is then a no-op.
 @ prose
-  - **Q-16** The assertive NO SL, Critical-crossing and amend-rejected announcements are proposed
-  for E29-D05 (D02:465); the entries' live-region lines follow D02 until its review rules.
+  Owner: E29-T09, after the owner's approval (owner approval pending (#2701)).
 @ prose
-  - **Q-17** The typed word that Flatten account… asks on LIVE is named in no merged text: D02:353
-  names none, D02:349 routes the bulk words to D03's deck, which has none, and CMP-044 offers
-  fixed words for a scope without a name (`15`:476); spec §2.4 draws the field with its copy open.
+  Owner: E05-D03 (#3174) as recipe owner; E29-T09 applies it.
+@ prose
+  Owner: the E05 token lane.
+@ prose
+  Owner: E05's owner.
+@ prose
+  - **Q-16** The assertive NO SL, Critical-crossing and amend-rejected announcements are proposed
+  for E29-D05 (D02:465); the entries' live-region lines follow D02 until its review rules, a
+  widening of the ticket's a11y note recorded as spec D04-C10.
+@ prose
+  Owner: E29-D05.
+@ prose
+  - **Q-17** The typed word on LIVE: for `all-accounts` it is `FLATTEN` (`15`:476, :2506;
+  `14`:296; E39-D03:123); for `account` no merged text names it: D02:353 names none and D02:349
+  routes the bulk words to D03's deck ("CLOSE"), which has none.
+@ prose
+  Owner: E29-D03's owner, the copy deck's.
+@ prose
+  Owners: as spec §7.3 names them; E29-D06.
+@ prose
+  Owner: E29-T09, with E29-D03's owner and the `/tools/` owners.
+@ prose
+  Owner: E29-T09, which applies A-6, with E05's owner.
+@ head 2
+  Owner
+@ row CMP-078 StaleDataShade (spec §2.8.2) ‖ Change
+  an account scope and a reason line; the stale surface's black in dark and high contrast
+@ row CMP-075 EnvBadgeLocal (spec §2.8.6) ‖ CR
+  CMP-075 EnvBadgeLocal (spec §2.8.6)
+@ row CMP-139 EnvironmentAwareOrderGuard (spec ‖ CR
+  CMP-139 EnvironmentAwareOrderGuard (spec §2.8.6)
+@ row CMP-139 EnvironmentAwareOrderGuard (spec ‖ Change
+  the row form `guard.mismatch.row` (Q-3)
+@ row CMP-099 PrintExportBar (spec §2.8.9) ‖ Change
+  the progress line and the watermark
 """
 
 
