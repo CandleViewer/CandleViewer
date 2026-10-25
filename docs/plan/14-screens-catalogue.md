@@ -330,6 +330,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Components:** CMP-016 Tooltip, CMP-019 Icon (`lock`), CMP-022 Kbd, CMP-071 NavRail, CMP-073 WorkspaceSwitcher, CMP-079 RbacGate.
 - **Stories:** US-LAY-006, US-SET-001.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.2 (Penpot page `E15-D02`, board 08; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
+- **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §10 (E15-D05; PROPOSED, owner approval pending: the expanded rail and CMP-073 in colour: markers, search above 20, rename-in-place, the context menu, the typed-delete entry, the T2 states; Penpot page `E15-D05 Presets and switcher`, boards pending).
 - **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the rail in colour: item states, the markers, the collapsed tooltips, the > 20 search, the eight-item menu's T2 writes, the 125 % and 200 % reflow; Penpot page `E10-D03 Shell chrome hi-fi`; the twelve board exports in `docs/design/E10/img/`; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
 
@@ -549,7 +550,7 @@ Drag preview                Drop zones
 
 ### SCR-022 — Layout preset gallery
 
-- **Type:** Modal. Presets: 1×1, 2×1, 2×2, 1+3, 3+1, Scalping (chart+DOM+ticket+tape), Order-flow (chart+footprint+CVD+profile), Swing (3 timeframes), Analyst (read-only chart+journal+replay), Fan-out review (positions by account + group ticket).
+- **Type:** Modal. Presets: Scalping, Order-flow, Swing, 2×2, 1+3, Fan-out review, Analyst, 2×1, 1×2, 3×3, 1×1 (E15-D05 §6; E15-D01 §2.2 order; 3+1 cut, AM-2).
 
 ```
 +------------------ Layouts ------------------+
@@ -568,7 +569,8 @@ Drag preview                Drop zones
 - **Performance:** Thumbnails are static SVG (no live panels); applying a preset rebuilds the dock tree in <=300 ms and reuses existing panel instances where the type matches, avoiding GL context churn.
 - **Analytics/audit:** `layout.preset_previewed`, `layout.preset_applied`, `layout.preset_saved_as`, `layout.preset_deleted` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.6 (Penpot page `E15-D02`, board 12; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
-- **Design sign-off acceptance checklist:** [ ] built-in presets drawn (Scalper DOM, Footprint focus, Multi-chart 2x2, Analysis/journal, Replay) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
+- **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §5–§9 (E15-D05; PROPOSED, owner approval pending: the gallery and thumbnails in colour, the reconciled inventory, Your layouts with rename / key / delete, the SCR-029 route, CMP-217's menu; Penpot page `E15-D05 Presets and switcher`, boards pending).
+- **Design sign-off acceptance checklist:** [ ] built-in presets drawn (the eleven built-in presets of E15-D05 §6; the legacy checklist names map there) [ ] user presets with rename/delete [ ] 'applying replaces your current layout' confirmation [ ] empty user-preset state
 
 ### SCR-023 — Multi-chart sync configuration
 
