@@ -136,6 +136,22 @@ def test_detail_serves_known_tiers_in_22s_names_and_unknown_as_empty() -> None:
     assert client.get("/instruments/ETHUSDT").json()["risk_limit_tiers"] == []
 
 
+def test_detail_serves_exponent_form_tier_decimals_in_fixed_point() -> None:
+    tier = RiskLimitTier(
+        tier_id=1,
+        risk_limit_value=Decimal("3E+5"),
+        maintenance_margin_rate=Decimal("3.3E-3"),
+        initial_margin_rate=Decimal("6.6E-3"),
+        max_leverage=Decimal("1.5E+2"),
+    )
+    snap = dataclasses.replace(_snap(), risk_limits={"BTCUSDT": (tier,)})
+    body = _client(FakeReader(snap)).get("/instruments/BTCUSDT").json()
+    assert body["risk_limit_tiers"] == [
+        {"tier": 1, "risk_limit_value": "300000", "initial_margin": "0.0066",
+         "maintenance_margin": "0.0033", "max_leverage": "150"}
+    ]  # fmt: skip
+
+
 def test_delisted_detail_reports_delisted() -> None:
     body = _client(FakeReader(_snap())).get("/instruments/LUNAUSDT").json()
     assert body["delisted"] is True and body["status"] == "Closed"

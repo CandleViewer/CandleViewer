@@ -106,13 +106,15 @@ def _iso(us: int | None) -> str | None:
 
 
 def serialize_risk_limit_tier(t: RiskLimitTier) -> dict[str, object]:
-    """22's `InstrumentDetail.risk_limit_tiers[]` item (decimals as strings, C6)."""
+    """22's `InstrumentDetail.risk_limit_tiers[]` item (decimals as strings, C6). Fixed-point
+    `format(d, "f")`, never `str(d)`, which can answer exponent form (`1E+2`) outside 22's
+    Decimal pattern."""
     return {
         "tier": t.tier_id,
-        "risk_limit_value": str(t.risk_limit_value),
-        "initial_margin": str(t.initial_margin_rate),
-        "maintenance_margin": str(t.maintenance_margin_rate),
-        "max_leverage": str(t.max_leverage),
+        "risk_limit_value": format(t.risk_limit_value, "f"),
+        "initial_margin": format(t.initial_margin_rate, "f"),
+        "maintenance_margin": format(t.maintenance_margin_rate, "f"),
+        "max_leverage": format(t.max_leverage, "f"),
     }
 
 

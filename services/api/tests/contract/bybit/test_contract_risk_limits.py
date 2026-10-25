@@ -65,6 +65,14 @@ async def test_recorded_replies_map_to_ascending_decimal_tiers() -> None:
             assert tier.max_leverage == Decimal(row["maxLeverage"])
         values = [t.risk_limit_value for t in tiers]
         assert values == sorted(values) and len(set(values)) == len(values)
+        if symbol == "BTCUSDT":  # one row pinned by hand, independent of the parser's key names
+            assert tiers[0] == RiskLimitTier(
+                tier_id=1,
+                risk_limit_value=Decimal("300000"),
+                maintenance_margin_rate=Decimal("0.0033"),
+                initial_margin_rate=Decimal("0.0066"),
+                max_leverage=Decimal("150.00"),
+            )
     assert client.calls == [
         (PATH, {"category": "linear", "symbol": s}, EndpointClass.MARKET_DATA) for s in SYMBOLS
     ]

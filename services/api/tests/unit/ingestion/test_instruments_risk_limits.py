@@ -15,7 +15,10 @@ from candleviewer.exchange.base.instruments import InstrumentsFetchResult
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.exchange.bybit.instruments import parse_instruments
 from candleviewer.exchange.bybit.risk_limits import order_tiers, parse_risk_limit_page
-from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
+from candleviewer.ingestion.instruments_refresh import (
+    RISK_LIMITS_MAX_FAILURES,
+    InstrumentsRefreshScheduler,
+)
 from tests._corpus import rest
 
 _NOW = 1_700_000_000_000_000
@@ -67,10 +70,25 @@ class _Fetch:
         return _tiers(symbol)
 
 
-def _sched(fetch: _Fetch | None, repo: _Repo | None = None) -> InstrumentsRefreshScheduler:
+class _Clock:
+    def __init__(self) -> None:
+        self.us = _NOW
+
+    def __call__(self) -> int:
+        return self.us
+
+
+def _sched(
+    fetch: _Fetch | None,
+    repo: _Repo | None = None,
+    *,
+    clock: Callable[[], int] = lambda: _NOW,
+    budget_s: float = 15.0,
+) -> InstrumentsRefreshScheduler:
     return InstrumentsRefreshScheduler(
-        fetch_instruments_info=_catalogue, repository=repo or _Repo(), now_us=lambda: _NOW,
-        fetch_risk_limits=fetch, on_demand_timeout_s=0.05,
+        fetch_instruments_info=_catalogue, repository=repo or _Repo(), now_us=clock,
+        fetch_risk_limits=fetch, on_demand_timeout_s=0.05, on_demand_cooldown_s=60.0,
+        risk_limits_budget_s=budget_s,
     )  # fmt: skip
 
 
@@ -100,18 +118,71 @@ async def test_catalogue_refresh_refetches_the_asked_symbols_and_keeps_the_stale
 
 
 async def test_a_failed_tier_fetch_in_a_refresh_leaves_the_symbol_unknown_not_stale() -> None:
-    fetch = _Fetch()
-    sched = _sched(fetch)
+    fetch, clock = _Fetch(), _Clock()
+    sched = _sched(fetch, clock=clock)
     await sched.refresh_now()
     await sched.ensure_risk_limits("BTCUSDT")
     fetch.fail = True
     await sched.refresh_now()  # the catalogue still loads
     snap = sched.snapshot()
     assert snap is not None and snap.get("BTCUSDT") is not None
-    assert snap.risk_limit_tiers("BTCUSDT") is None
+    assert snap.risk_limit_tiers("BTCUSDT") is None  # the previous ladder is not kept
+    clock.us += 61_000_000  # past the cooldown the failed refresh fetch started
     assert await sched.ensure_risk_limits("BTCUSDT") is None  # retried, still failing
     fetch.fail = False
+    clock.us += 61_000_000
     assert await sched.ensure_risk_limits("BTCUSDT") == _tiers("BTCUSDT")
+
+
+async def test_ensure_risk_limits_waits_out_a_cooldown_after_a_failed_fetch() -> None:
+    fetch, clock = _Fetch(), _Clock()
+    sched = _sched(fetch, clock=clock)
+    await sched.refresh_now()
+    fetch.fail = True
+    assert await sched.ensure_risk_limits("BTCUSDT") is None
+    fetch.fail = False
+    clock.us += 59_000_000
+    assert await sched.ensure_risk_limits("BTCUSDT") is None  # cooling: no upstream call
+    assert fetch.calls == ["BTCUSDT"]
+    clock.us += 2_000_000
+    assert await sched.ensure_risk_limits("BTCUSDT") == _tiers("BTCUSDT")
+    assert fetch.calls == ["BTCUSDT", "BTCUSDT"]
+
+
+async def test_hanging_tier_fetches_never_hold_the_catalogue_swap_past_the_budget() -> None:
+    fetch = _Fetch()
+    sched = _sched(fetch, budget_s=0.05)
+    await sched.refresh_now()
+    for symbol in ("BTCUSDT", "ETHUSDT"):
+        await sched.ensure_risk_limits(symbol)
+    before = sched.snapshot()
+    fetch.calls.clear()
+    fetch.hang = True
+    async with asyncio.timeout(5):  # a guard only; the budget is 0.05 s
+        await sched.refresh_now()
+    snap = sched.snapshot()
+    assert snap is not None and snap is not before and snap.get("BTCUSDT") is not None
+    assert snap.risk_limit_tiers("BTCUSDT") is None and snap.risk_limit_tiers("ETHUSDT") is None
+    assert fetch.calls == ["BTCUSDT"]  # the budget ran out on the first; ETHUSDT stays unknown
+
+
+async def test_a_symbol_joins_the_refresh_on_success_and_leaves_after_repeated_failures() -> None:
+    fetch, clock = _Fetch(), _Clock()
+    sched = _sched(fetch, clock=clock)
+    await sched.refresh_now()
+    fetch.fail = True
+    await sched.ensure_risk_limits("BTCUSDT")
+    await sched.refresh_now()
+    assert fetch.calls == ["BTCUSDT"]  # a failed first fetch never joins the refreshed set
+    fetch.fail = False
+    clock.us += 61_000_000  # past the cooldown
+    assert await sched.ensure_risk_limits("BTCUSDT") == _tiers("BTCUSDT")
+    fetch.fail = True
+    for _ in range(RISK_LIMITS_MAX_FAILURES):
+        await sched.refresh_now()
+    assert fetch.calls == ["BTCUSDT"] * (2 + RISK_LIMITS_MAX_FAILURES)
+    await sched.refresh_now()  # dropped: no further upstream call
+    assert len(fetch.calls) == 2 + RISK_LIMITS_MAX_FAILURES
 
 
 async def test_ensure_risk_limits_is_unknown_without_a_catalogue_symbol_or_fetcher() -> None:

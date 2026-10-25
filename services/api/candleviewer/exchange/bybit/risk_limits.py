@@ -10,13 +10,16 @@ raises the client's taxonomy error, as for every other public read.
 Fail closed per symbol, not per row: the tiers feed the liquidation estimate (a maintenance
 margin rate), so one malformed or foreign row rejects the whole answer (`InstrumentParseError`)
 rather than leaving a gap in the ladder. `tier_id` is the venue's risk id (`id`), and the tiers
-are returned in ascending `risk_limit_value`, which must be strictly increasing.
+are returned in ascending `risk_limit_value`, which must be strictly increasing. The venue's
+`isLowestRisk` flag is a cross-check: at most one row may carry it, and that row must sort first.
+`result.category` must be `linear`. `mmDeduction` is not mapped (it is empty on the first tier and
+nothing reads it); a consumer that needs it is a contract change (24 §14.4).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 from typing import Any, Final, Protocol
@@ -86,6 +89,8 @@ def parse_risk_limit_page(payload: Mapping[str, Any], *, symbol: str) -> tuple[
     result = payload.get("result")
     if not isinstance(result, Mapping):
         raise InstrumentParseError("risk-limit: missing result object")
+    if result.get("category") != "linear":
+        raise InstrumentParseError("risk-limit: result.category is not linear")
     rows = result.get("list")
     if not isinstance(rows, list):
         raise InstrumentParseError("risk-limit: result.list is not a list")
@@ -95,11 +100,28 @@ def parse_risk_limit_page(payload: Mapping[str, Any], *, symbol: str) -> tuple[
     )
 
 
-def order_tiers(tiers: Sequence[RiskLimitTier]) -> tuple[RiskLimitTier, ...]:
-    """Ascending by `risk_limit_value`; a repeated value or no tier at all is refused."""
+def lowest_risk_ids(payload: Mapping[str, Any]) -> list[int]:
+    """The ids of a parsed page's rows flagged `isLowestRisk == 1`, one per flagged row (call
+    after the parse)."""
+    result = payload.get("result")
+    rows = result.get("list") if isinstance(result, Mapping) else None
+    return [
+        row["id"]
+        for row in rows or ()
+        if isinstance(row, Mapping) and row.get("isLowestRisk") == 1 and "id" in row
+    ]
+
+
+def order_tiers(
+    tiers: Sequence[RiskLimitTier], *, lowest_risk_ids: Collection[int] = ()
+) -> tuple[RiskLimitTier, ...]:
+    """Ascending by `risk_limit_value`; a repeated value or no tier at all is refused, and so is
+    a ladder where more than one tier is flagged lowest-risk or the flagged one is not first."""
     ordered = tuple(sorted(tiers, key=lambda t: t.risk_limit_value))
     if not ordered:
         raise InstrumentParseError("risk-limit: no tier for the symbol")
+    if len(lowest_risk_ids) > 1 or (lowest_risk_ids and ordered[0].tier_id not in lowest_risk_ids):
+        raise InstrumentParseError("risk-limit: isLowestRisk does not mark the first tier alone")
     for low, high in pairwise(ordered):
         if high.risk_limit_value <= low.risk_limit_value:
             raise InstrumentParseError("risk-limit: tier values are not strictly increasing")
@@ -111,6 +133,7 @@ async def fetch_risk_limits(client: PublicGetter, symbol: str) -> tuple[RiskLimi
     if not _SYMBOL_RE.fullmatch(symbol):
         raise InstrumentParseError("risk-limit: invalid symbol")
     tiers: list[RiskLimitTier] = []
+    flagged: list[int] = []
     cursor: str | None = None
     for _ in range(MAX_PAGES):
         params: dict[str, Any] = {"category": "linear", "symbol": symbol}
@@ -121,8 +144,9 @@ async def fetch_risk_limits(client: PublicGetter, symbol: str) -> tuple[RiskLimi
         )
         page, cursor = parse_risk_limit_page(payload, symbol=symbol)
         tiers.extend(page)
+        flagged += lowest_risk_ids(payload)
         if cursor is None:
-            return order_tiers(tiers)
+            return order_tiers(tiers, lowest_risk_ids=flagged)
     raise InstrumentParseError(f"risk-limit exceeded {MAX_PAGES} pages; refusing unbounded paging")
 
 
@@ -140,6 +164,7 @@ __all__ = [
     "PATH",
     "PublicGetter",
     "fetch_risk_limits",
+    "lowest_risk_ids",
     "make_risk_limits_fetcher",
     "order_tiers",
     "parse_risk_limit_page",

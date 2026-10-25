@@ -73,8 +73,14 @@ def test_parse_risk_limit_page_malformed_row_rejects_the_whole_answer(row: Any) 
 
 @pytest.mark.parametrize(
     "payload",
-    [{}, {"result": []}, {"result": {"list": {}}}],
-    ids=["none", "list", "dict"],
+    [
+        {},
+        {"result": []},
+        {"result": {"category": "linear", "list": {}}},
+        {"result": {"category": "inverse", "list": []}},
+        {"result": {"list": []}},
+    ],
+    ids=["none", "list", "dict", "inverse", "no-category"],
 )
 def test_parse_risk_limit_page_bad_envelope_raises(payload: dict[str, Any]) -> None:
     with pytest.raises(InstrumentParseError):
@@ -89,8 +95,30 @@ def test_order_tiers_refuses_an_empty_or_repeated_ladder() -> None:
         order_tiers([tier[0], tier[0]])
 
 
+@pytest.mark.parametrize(
+    "rows",
+    [
+        [_row(), _row(id=2, riskLimitValue="600000", isLowestRisk=1)],  # two flagged
+        [_row(isLowestRisk=0), _row(id=2, riskLimitValue="600000", isLowestRisk=1)],  # not first
+    ],
+    ids=["two-flagged", "flag-not-first"],
+)
+async def test_fetch_risk_limits_refuses_a_misplaced_lowest_risk_flag(
+    rows: list[dict[str, Any]],
+) -> None:
+    with pytest.raises(InstrumentParseError, match="isLowestRisk"):
+        await fetch_risk_limits(_Pages([_page(rows)]), SYMBOL)
+
+
+async def test_fetch_risk_limits_accepts_a_ladder_with_no_flag() -> None:
+    unflagged = _Pages([_page([_row(isLowestRisk=0)])])  # nothing to cross-check
+    assert [t.tier_id for t in await fetch_risk_limits(unflagged, SYMBOL)] == [1]
+
+
 async def test_fetch_risk_limits_follows_the_cursor_then_orders_the_tiers() -> None:
-    client = _Pages([_page([_row(id=2, riskLimitValue="600000")], "c1"), _page([_row()])])
+    client = _Pages(  # the one `isLowestRisk` row is on the second page and sorts first
+        [_page([_row(id=2, riskLimitValue="600000", isLowestRisk=0)], "c1"), _page([_row()])]
+    )
     tiers = await fetch_risk_limits(client, SYMBOL)
     assert [t.tier_id for t in tiers] == [1, 2] and client.cursors == [None, "c1"]
 
