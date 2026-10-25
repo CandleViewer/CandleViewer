@@ -28,6 +28,7 @@ from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.unit.accounts.test_profile_cache import _P, _row
+from tests.unit.accounts.test_profile_repository import _NO
 
 _ACCOUNT, _PROFILE = _P.account_id, _P.profile_id
 
@@ -78,7 +79,9 @@ async def test_the_cache_and_the_facade_share_one_store_and_count_on_the_registr
     await wired.effective.get_effective_profile(_ACCOUNT, _PROFILE)  # miss
     await wired.effective.get_effective_profile(_ACCOUNT, _PROFILE)  # hit
     scope = OwnerScope(uuid4())
-    await wired.repository.update_profile(scope, _ACCOUNT, _PROFILE, _P, expected_version=3)
+    await wired.repository.update_profile(
+        scope, _ACCOUNT, _PROFILE, _P, expected_version=3, write_ahead=_NO
+    )
     await wired.effective.get_effective_profile(_ACCOUNT, _PROFILE)  # miss: the write dropped it
     lookups = "cv_profile_cache_lookups_total"
     assert _count(metrics, lookups, result="miss") == 2
@@ -201,7 +204,9 @@ async def test_wire_profiles_hands_the_facade_the_doorbell_of_the_process_enviro
     wired = wire_profiles(real, _metrics(), bus)
     assert wired is not None
     owner = OwnerScope(uuid4())
-    await wired.repository.update_profile(owner, _ACCOUNT, _PROFILE, _P, expected_version=3)
+    await wired.repository.update_profile(
+        owner, _ACCOUNT, _PROFILE, _P, expected_version=3, write_ahead=_NO
+    )
     event = heard.get_nowait()
     assert (event.exchange_account_id, event.change) == (_ACCOUNT, "updated")
     assert event.profiles == (ProfileVersion(profile_id=_PROFILE, version=4),)

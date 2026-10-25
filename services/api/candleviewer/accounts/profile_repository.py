@@ -17,9 +17,10 @@ is never deleted (`AccountConflictError("default_profile")`).
 
 Every write, whatever its outcome, invalidates the account in `EffectiveProfiles` before it
 returns (SR-E28-15), and `version_bumps` counts the profile rows a write bumped. A refusal by a
-named rule or constraint is logged at WARN with that name, never with a value. Each write takes an
-optional `write_ahead` hook, run in the write's transaction before it commits (C-2.9) with the
-store's rows in stored units (`profile_from_row` reads them): E28-T02 (#906) wires the
+named rule or constraint is logged at WARN with that name, never with a value. Each write takes a
+required `write_ahead` hook, run in the write's transaction before it commits (C-2.9) with the
+store's rows in stored units (`profile_from_row` reads them; `None` is a `TypeError` before
+anything, the cache included): E28-T02 (#906) wires the
 `profile.created|updated|deleted` record through it, as a typed refusal when it fails, and maps the
 `ap_native_sl` rule (unreachable through `AccountProfile`, whose `require_native_sl` is
 `Literal[True]`) to `native_stop_mandatory` with its audit row (SR-E28-08).
@@ -118,6 +119,13 @@ def _unreadable(
         error=type(exc).__name__,  # never a value
     )
     return ProfileUnavailableError("stored profile unreadable")
+
+
+def _recorded(write_ahead: ProfileWriteAhead | None) -> None:
+    """A write takes its write-ahead record (C-2.9, #906 D2-2 R1S-02): typed out, and refused
+    before any statement for a dynamic caller, as a trade group's create refuses one."""
+    if write_ahead is None:
+        raise TypeError("a profile write is made with its write-ahead record (C-2.9)")
 
 
 def _read_back(account_id: UUID, row: AccountProfileRow | None) -> StoredProfile:
@@ -301,11 +309,12 @@ class ProfilesRepository:
         account_id: UUID,
         profile: AccountProfile,
         *,
-        write_ahead: ProfileWriteAhead | None = None,
+        write_ahead: ProfileWriteAhead,
     ) -> StoredProfile:
         """Store `profile` under its own id on account `account_id`, the path's; its `version` and
         `updated_at` are the database's. `AccountNotFoundError("profile")` when the account is not
         a live one, or when `profile` names another account: a path mismatch reads as missing."""
+        _recorded(write_ahead)
         if profile.account_id != account_id:
             raise AccountNotFoundError("profile")
         try:
@@ -332,12 +341,13 @@ class ProfilesRepository:
         profile: AccountProfile,
         *,
         expected_version: int | None,
-        write_ahead: ProfileWriteAhead | None = None,
+        write_ahead: ProfileWriteAhead,
     ) -> StoredProfile:
         """Every field of profile `profile_id` of account `account_id` (the path's ids) but
         `is_default`, which must be unchanged (`set_default_profile` moves it): a different one is
         `AccountRuleError("default_moves_alone")`. A `profile` naming another account or profile
         is `AccountNotFoundError("profile")`, like any path mismatch."""
+        _recorded(write_ahead)
         if (profile.account_id, profile.profile_id) != (account_id, profile_id):
             raise AccountNotFoundError("profile")
         try:
@@ -365,10 +375,11 @@ class ProfilesRepository:
         profile_id: UUID,
         *,
         expected_binding_version: int,
-        write_ahead: ProfileWriteAhead | None = None,
+        write_ahead: ProfileWriteAhead,
     ) -> DefaultProfileMove:
         """At the binding's version (`If-Match`): a stale one is `AccountVersionConflictError`
         and moves nothing; the answer carries the version after the move."""
+        _recorded(write_ahead)
         try:
             move = await self._store.set_default_profile(
                 scope,
@@ -402,9 +413,10 @@ class ProfilesRepository:
         profile_id: UUID,
         *,
         expected_version: int | None,
-        write_ahead: ProfileWriteAhead | None = None,
+        write_ahead: ProfileWriteAhead,
     ) -> AccountProfile:
         """Soft delete; the profile as it stood once deleted (its last revision)."""
+        _recorded(write_ahead)
         try:
             row = await self._store.delete_profile(
                 scope,

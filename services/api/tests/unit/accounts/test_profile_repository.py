@@ -63,6 +63,14 @@ def _profile(**changes: Any) -> AccountProfile:
 
 
 _P = _profile()
+_IDS = (_P.account_id, _P.profile_id)
+
+
+async def _no_record(before: object, after: object) -> None:
+    """A write's write-ahead hook that records nothing; the fake store never awaits it."""
+
+
+_NO = _no_record
 
 
 def _row(profile: AccountProfile = _P, *, version: int = 3, **values: Any) -> AccountProfileRow:
@@ -209,13 +217,11 @@ async def test_a_storage_error_reaches_the_caller_unchanged(read: str, raised: E
     [
         lambda r: r.get_profile(_OWNER, _P.account_id, _P.profile_id),
         _READS["read_profile"],
-        lambda r: r.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3),
-        lambda r: r.delete_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
-        lambda r: r.set_default_profile(
-            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
-        ),
+        lambda r: r.update_profile(_OWNER, *_IDS, _P, expected_version=3, write_ahead=_NO),
+        lambda r: r.delete_profile(_OWNER, *_IDS, expected_version=3, write_ahead=_NO),
+        lambda r: r.set_default_profile(_OWNER, *_IDS, expected_binding_version=3, write_ahead=_NO),
         lambda r: r.get_revision(_OWNER, _P.account_id, _P.profile_id, 2),
-        lambda r: r.create_profile(_OWNER, _P.account_id, _P),
+        lambda r: r.create_profile(_OWNER, _P.account_id, _P, write_ahead=_NO),
     ],
     ids=["get", "read", "update", "delete", "set_default", "revision", "create"],
 )
@@ -254,9 +260,13 @@ async def test_store_errors_map_to_domain_errors_unchained(
 @pytest.mark.parametrize(
     "call",
     [
-        lambda r: r.create_profile(_OWNER, uuid4(), _P),
-        lambda r: r.update_profile(_OWNER, uuid4(), _P.profile_id, _P, expected_version=3),
-        lambda r: r.update_profile(_OWNER, _P.account_id, uuid4(), _P, expected_version=3),
+        lambda r: r.create_profile(_OWNER, uuid4(), _P, write_ahead=_NO),
+        lambda r: r.update_profile(
+            _OWNER, uuid4(), _P.profile_id, _P, expected_version=3, write_ahead=_NO
+        ),
+        lambda r: r.update_profile(
+            _OWNER, _P.account_id, uuid4(), _P, expected_version=3, write_ahead=_NO
+        ),
     ],
     ids=["create-other-account", "update-other-account", "update-other-profile"],
 )
@@ -272,7 +282,7 @@ async def test_a_profile_naming_another_path_is_not_found_and_writes_nothing(cal
 
 async def test_create_sends_the_stored_values_and_returns_the_database_version() -> None:
     repo, store, cache, bumps = _repo(_row(version=1))
-    created = await repo.create_profile(_OWNER, _P.account_id, _P)
+    created = await repo.create_profile(_OWNER, _P.account_id, _P, write_ahead=_NO)
     assert created.profile.version == 1 and bumps.total == 0
     name, args, _ = store.calls[0]
     assert name == "create_profile"
@@ -282,12 +292,10 @@ async def test_create_sends_the_stored_values_and_returns_the_database_version()
 
 async def test_update_passes_the_expected_version_and_counts_one_bump() -> None:
     repo, store, cache, bumps = _repo(_row(version=4))
-    updated = await repo.update_profile(
-        _OWNER, _P.account_id, _P.profile_id, _P, expected_version=3
-    )
+    updated = await repo.update_profile(_OWNER, *_IDS, _P, expected_version=3, write_ahead=_NO)
     assert updated.profile.version == 4 and bumps.total == 1
     assert cache.invalidated == [_P.account_id]
-    assert store.calls[0][2] == {"expected_version": 3, "write_ahead": None}
+    assert store.calls[0][2] == {"expected_version": 3, "write_ahead": _NO}
 
 
 async def test_a_failed_write_still_invalidates_before_it_raises() -> None:
@@ -295,24 +303,25 @@ async def test_a_failed_write_still_invalidates_before_it_raises() -> None:
     for raised in (AccountProfileStoreStaleError(), RuntimeError("storage blip")):
         repo, _, cache, bumps = _repo(raised)
         with pytest.raises((AccountVersionConflictError, RuntimeError)):
-            await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3)
+            await repo.update_profile(_OWNER, *_IDS, _P, expected_version=3, write_ahead=_NO)
         assert cache.invalidated == [_P.account_id] and bumps.total == 0
 
 
 _WRITES: dict[str, tuple[Any, object]] = {
-    "create": (lambda r: r.create_profile(_OWNER, _P.account_id, _P), _row(version=1)),
+    "create": (
+        lambda r: r.create_profile(_OWNER, _P.account_id, _P, write_ahead=_NO),
+        _row(version=1),
+    ),
     "update": (
-        lambda r: r.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3),
+        lambda r: r.update_profile(_OWNER, *_IDS, _P, expected_version=3, write_ahead=_NO),
         _row(version=4),
     ),
     "delete": (
-        lambda r: r.delete_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3),
+        lambda r: r.delete_profile(_OWNER, *_IDS, expected_version=3, write_ahead=_NO),
         _row(version=4),
     ),
     "set_default": (
-        lambda r: r.set_default_profile(
-            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
-        ),
+        lambda r: r.set_default_profile(_OWNER, *_IDS, expected_binding_version=3, write_ahead=_NO),
         DefaultMove(
             profile=_row(version=4, is_default=True), previous=None, written=True, version=4
         ),
@@ -321,7 +330,8 @@ _WRITES: dict[str, tuple[Any, object]] = {
 
 
 async def _write(repo: ProfilesRepository, write: str, **kw: Any) -> object:
-    """One of the four writes on `_P`, at version 3 where it takes one."""
+    """One of the four writes on `_P`, at version 3 where it takes one, with a hook."""
+    kw.setdefault("write_ahead", _NO)
     if write == "create":
         return await repo.create_profile(_OWNER, _P.account_id, _P, **kw)
     if write == "update":
@@ -346,6 +356,18 @@ async def test_every_write_hands_its_write_ahead_hook_to_the_store(write: str) -
     repo, store, _, _ = _repo(_WRITES[write][1])
     await _write(repo, write, write_ahead=hook)
     assert store.calls[0][2]["write_ahead"] is hook
+
+
+@pytest.mark.parametrize("write", list(_WRITES))
+async def test_a_write_without_its_write_ahead_record_is_refused_before_the_store(
+    write: str,
+) -> None:
+    """C-2.9, #906 D2-2 R1S-02: the hook is required, and a dynamic caller's `None` is a
+    `TypeError` before the store or the cache is reached, so no write is made unrecorded."""
+    repo, store, cache, bumps = _repo(_WRITES[write][1])
+    with pytest.raises(TypeError, match="write-ahead record"):
+        await _write(repo, write, write_ahead=None)
+    assert (store.calls, cache.invalidated, bumps.total) == ([], [], 0)
 
 
 _BAD: dict[str, Any] = {"allowed_symbols": ("btcusdt",)}  # the model's refusal, not a CHECK's
@@ -435,7 +457,7 @@ async def test_every_write_invalidates_its_account_when_the_store_refuses(write:
 async def test_a_refusal_is_logged_by_its_name_and_never_a_value() -> None:
     repo, _, _, _ = _repo(AccountProfileStoreRuleError("ap_trading_caps"))
     with structlog.testing.capture_logs() as logs, pytest.raises(AccountRuleError):
-        await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=3)
+        await repo.update_profile(_OWNER, *_IDS, _P, expected_version=3, write_ahead=_NO)
     assert logs == [
         {
             "event": "profile.constraint_violation",
@@ -452,7 +474,7 @@ async def test_moving_the_default_counts_both_bumps_and_returns_both_profiles() 
     )
     repo, _, cache, bumps = _repo(move)
     moved = await repo.set_default_profile(
-        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
+        _OWNER, *_IDS, expected_binding_version=3, write_ahead=_NO
     )
     assert moved.profile.is_default and moved.previous is not None and moved.previous.name == "Old"
     assert bumps.total == 2 and cache.invalidated == [_P.account_id]
@@ -462,7 +484,7 @@ async def test_setting_the_default_again_writes_and_counts_nothing() -> None:
     move = DefaultMove(profile=_row(is_default=True), previous=None, written=False, version=3)
     repo, _, _, bumps = _repo(move)
     moved = await repo.set_default_profile(
-        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=3
+        _OWNER, *_IDS, expected_binding_version=3, write_ahead=_NO
     )
     assert moved.previous is None and moved.version == 3 and bumps.total == 0
 
@@ -474,10 +496,10 @@ async def test_a_move_answers_the_binding_version_after_it() -> None:
     )
     repo, store, _, _ = _repo(move)
     moved = await repo.set_default_profile(
-        _OWNER, _P.account_id, _P.profile_id, expected_binding_version=7
+        _OWNER, *_IDS, expected_binding_version=7, write_ahead=_NO
     )
     assert moved.version == 8 and moved.profile.is_default
-    assert store.calls[0][2] == {"expected_binding_version": 7, "write_ahead": None}
+    assert store.calls[0][2] == {"expected_binding_version": 7, "write_ahead": _NO}
 
 
 def test_a_move_requires_the_binding_version_in_the_domain() -> None:
@@ -512,7 +534,7 @@ async def test_a_binding_out_of_scope_or_missing_is_the_accounts_not_found() -> 
 
 async def test_delete_counts_one_bump_and_returns_the_deleted_profile() -> None:
     repo, _, _, bumps = _repo(dataclasses.replace(_row(version=4), deleted_at=_T))
-    deleted = await repo.delete_profile(_OWNER, _P.account_id, _P.profile_id, expected_version=3)
+    deleted = await repo.delete_profile(_OWNER, *_IDS, expected_version=3, write_ahead=_NO)
     assert deleted.version == 4 and bumps.total == 1
 
 
@@ -536,7 +558,7 @@ async def test_reads_never_invalidate() -> None:
 async def test_without_a_cache_or_metric_the_repository_still_works() -> None:
     repo = ProfilesRepository(_Store(_row(version=4)), cache=None)
     assert (
-        await repo.update_profile(_OWNER, _P.account_id, _P.profile_id, _P, expected_version=None)
+        await repo.update_profile(_OWNER, *_IDS, _P, expected_version=None, write_ahead=_NO)
     ).profile.version == 4
 
 
@@ -618,9 +640,7 @@ async def test_a_move_rings_both_rows_demoted_first_with_the_bindings_new_versio
     move = DefaultMove(profile=new, previous=previous, written=True, version=8)
     repo, bell, events = _belled(move)
     with nullcontext() if readable else pytest.raises(ProfileUnavailableError):
-        await repo.set_default_profile(
-            _OWNER, _P.account_id, _P.profile_id, expected_binding_version=7
-        )
+        await repo.set_default_profile(_OWNER, *_IDS, expected_binding_version=7, write_ahead=_NO)
     named = (new,) if previous is None else (previous, new)
     assert bell.heard == [_change("default_moved", *named, binding=8)]
     assert events == ["store returned", "invalidated", "rang"]
@@ -653,7 +673,7 @@ async def test_a_write_that_changes_nothing_or_is_refused_rings_nothing(
     with structlog.testing.capture_logs() as logs:
         with nullcontext() if raised is None else pytest.raises(raised):
             if write == "mismatch":  # a body naming another account reaches no store
-                await repo.create_profile(_OWNER, uuid4(), _P)
+                await repo.create_profile(_OWNER, uuid4(), _P, write_ahead=_NO)
             else:
                 await _write(repo, write)
     assert bell.heard == [] and "rang" not in events

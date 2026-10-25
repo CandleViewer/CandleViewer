@@ -63,8 +63,8 @@ def _request(
 
 
 def test_the_caps_are_the_contracts_numbers() -> None:
-    """22: 64 KiB for a profile body and 1 KiB for the binding's; B1 Sec.3: the model's first 20
-    entries. Pinned by value, since the tests below read the same constants (R1C-02)."""
+    """22: 64 KiB for a profile body and 1 KiB for the binding's; 22's `ProfileRejected` (#906):
+    the model's first 20 entries. Pinned by value: the tests below read the constants (R1C-02)."""
     caps = (MAX_PROFILE_BODY_BYTES, MAX_BINDING_BODY_BYTES, MODEL_ERRORS_SHOWN)
     assert caps == (65_536, 1_024, 20)
 
@@ -128,8 +128,8 @@ def test_a_body_that_is_not_utf8_json_or_nests_too_deep_is_refused_with_one_entr
 
 
 def test_the_models_entries_are_capped_and_echo_no_value() -> None:
-    """B1 Sec.3: the model's first 20 entries, then B1's own (`native_stop_mandatory`), never
-    cut; no planted value reaches an entry."""
+    """22's `ProfileRejected` (#906): the model's first 20 entries, then B1a's `schema_errors`
+    (`native_stop_mandatory`), never cut; no planted value reaches an entry."""
     raw = {**_VALID, "name": _PLANTED * 4, "leverage": _PLANTED, "margin_mode": _PLANTED,
            "allowed_symbols": [_PLANTED] * 30, "require_native_stop": False}  # fmt: skip
     with pytest.raises(ValidationError) as ei:
@@ -173,6 +173,28 @@ def test_a_member_that_is_not_an_object_is_named_plainly(
         model.model_validate(raw)
     named = [(e.rule, e.message) for e in model_errors(ei.value, prefix=prefix) if e.field == field]
     assert named == [("model_type", "Input should be an object.")]
+
+
+def test_a_string_type_failure_keeps_its_own_message() -> None:
+    """#906 R2-02: the non-object constant is `model_type`'s alone, never every `*_type`'s."""
+    with pytest.raises(ValidationError) as ei:
+        api.AccountProfileInput.model_validate({**_VALID, "name": 5})
+    named = [(e.field, e.rule, e.message) for e in model_errors(ei.value)]
+    assert named == [("name", "string_type", "Input should be a valid string")]
+
+
+@pytest.mark.parametrize("sent", ["Q" * 36, "QQQQ", f"{_PROFILE}Q"], ids=["36", "4", "37"])
+def test_a_uuid_failure_answers_a_constant_that_echoes_no_input_character(sent: str) -> None:
+    """#906 R1S-01 (C-12.6): pydantic's `uuid_parsing` message quotes a character of the input,
+    which `redact_text` keeps, so the entry's message is a constant, as the `Idempotency-Key`'s
+    is: `Q`, which pydantic quotes, is in no answered entry."""
+    with pytest.raises(ValidationError) as ei:
+        api.AccountDefaultBindingInput.model_validate({"profile_id": sent})
+    assert "`Q`" in ei.value.errors()[0]["msg"]  # pydantic's own message quotes it
+    (entry,) = model_errors(ei.value, prefix="body")
+    assert (entry.field, entry.rule) == ("body.profile_id", "uuid_parsing")
+    assert entry.message == "Input should be a valid UUID."
+    assert "Q" not in json.dumps(entry.to_dict())
 
 
 def test_every_model_message_passes_the_redaction_rules() -> None:
@@ -220,6 +242,8 @@ _TAG = f'W/"{_PROFILE}:3"'
         ([], str(_PROFILE), IfMatchMissing),
         ([_TAG], str(_PROFILE), 3),
         ([f"  {_TAG} "], str(_PROFILE), 3),
+        ([f"\t{_TAG}\t"], str(_PROFILE), 3),
+        ([f"{_TAG}\xa0"], str(_PROFILE), IfMatchRefused),
         ([f'W/"{_PROFILE}:{"9" * 19}"'], str(_PROFILE), int("9" * 19)),
         ([f'W/"{_BINDING}:7"'], _BINDING, 7),
         (["*"], str(_PROFILE), IfMatchRefused),
@@ -238,7 +262,8 @@ _TAG = f'W/"{_PROFILE}:3"'
         ([f'W/"{str(_PROFILE).upper()}:3"'], str(_PROFILE), IfMatchRefused),
         ([""], str(_PROFILE), IfMatchRefused),
     ],
-    ids=["missing", "tag", "padded", "19-digits", "binding", "star", "list", "two-headers",
+    ids=["missing", "tag", "padded", "tab-padded", "nbsp-padded", "19-digits", "binding", "star",
+         "list", "two-headers",
          "strong", "lower-w", "another-profile", "binding-tag-to-profile", "profile-tag-to-binding",
          "another-account", "version-0", "leading-zero", "20-digits", "trailing", "upper-hex",
          "empty"],
@@ -247,7 +272,8 @@ def test_if_match_names_one_version_of_this_resource(
     sent: list[str], resource: str, answer: int | type[Exception]
 ) -> None:
     """U1, D1 and B1: 428 without the header; 412 for anything but one weak tag of this resource
-    (`IfMatchRequired`), so a tag never matches another resource's version."""
+    (`IfMatchRequired`), so a tag never matches another resource's version; only RFC 9110's
+    optional whitespace (space and tab) pads it, never a Unicode space such as U+00A0 (R2-05)."""
     request, _ = _request(*(("if-match", value) for value in sent))
     if isinstance(answer, int):
         assert if_match_version(request, resource) == answer
@@ -288,6 +314,14 @@ def test_a_name_holding_a_control_or_format_code_point_is_refused(name: str) -> 
     assert name_errors({**_VALID, "name": "Alice — 0.5R, Zürich"}) == []
 
 
+def test_the_contract_names_the_code_points_a_name_refuses() -> None:
+    """#906 R1C-03 (C-6.1): 22's `AccountProfileInput.name` says what `name_errors` refuses."""
+    said = " ".join(SPEC["components"]["schemas"]["AccountProfileInput"]["properties"]["name"]
+                    ["description"].split())  # fmt: skip
+    cc_cf = "It holds no character of category Cc or Cf either, such as DEL, U+200B, U+202E or"
+    assert f"{cc_cf} U+FEFF (`not_allowed`)." in said
+
+
 @pytest.mark.parametrize(
     ("errors", "limits", "detail"),
     [
@@ -300,7 +334,7 @@ def test_a_name_holding_a_control_or_format_code_point_is_refused(name: str) -> 
 def test_a_refusals_detail_counts_its_distinct_members(
     errors: list[tuple[str, str]], limits: bool, detail: str
 ) -> None:
-    """Sec.3: `detail` counts distinct fields, each phase in its own words."""
+    """22's `ProfileRejected` (#906): `detail` counts distinct fields, each phase in its words."""
     entries = [ProfileFieldError(field, rule, "m") for field, rule in errors]
     assert refused(entries, limits=limits).detail == detail
 

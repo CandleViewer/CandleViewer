@@ -5,6 +5,7 @@ operation declares. The shared tests run over `_WRITES`, which D2-6 extends.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import dataclasses
 import json
@@ -12,6 +13,7 @@ import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -20,6 +22,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
+import candleviewer
 from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profile_caps import PROFILE_CAPS
@@ -786,6 +789,19 @@ def test_a_profile_of_another_account_is_404_on_its_writes(w: Writes, write: Wri
     assert (detail, w.world.audit.records, w.rows.hooks) == ("No such profile.", [], [])
 
 
+def test_a_delete_whose_key_or_profile_id_is_no_uuid_is_an_unaudited_422(w: Writes) -> None:
+    """#4495 R1C-03, R2-04: 22 declares the delete's `422`. A malformed `Idempotency-Key` answers
+    the contract's example, and a `profileId` that is no UUID the same rule at its path; nothing
+    is deleted or recorded."""
+    declared = SPEC["paths"][ITEM]["delete"]["responses"]["422"]["content"]
+    example = declared["application/problem+json"]["examples"]["notAKey"]["value"]
+    keyed, pathed = send(w, DELETE, key="not-a-uuid"), send(w, DELETE, profile="Swing")
+    assert answered(keyed, DELETE)["errors"] == example["errors"]
+    named = [(e["field"], e["rule"]) for e in answered(pathed, DELETE)["errors"]]
+    assert named == [("path.profileId", "uuid_parsing")]
+    assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
+
+
 def _profile_members(node: object, at: str) -> set[str]:
     """Each member a JSON Schema declares, at any depth, whose name holds `profile`."""
     if isinstance(node, list):
@@ -805,3 +821,48 @@ def test_no_rule_names_a_profile_yet() -> None:
     for action in ACTIONS:  # the vocabulary's action params
         named |= _profile_members(action.params_schema, action.type)
     assert named == {"place_order.profile"}, "a rule can name a profile: #951's C-row, ruling B6"
+
+
+#: The order path's own profile id and its resolve (22 `PlaceOrderRequest.profile_id`).
+_ORDER_PATH = {"oms/exits.py", "oms/ports.py", "oms/submit.py"}
+
+
+def _named(node: ast.AST) -> str:
+    for field in ("id", "attr", "arg", "name", "value"):  # a name, a binding, a string key
+        if isinstance(value := getattr(node, field, None), str):
+            return value
+    return ""
+
+
+def _resolvers(root: Path, *packages: str) -> set[str]:
+    """Each module under `packages` of `root` naming a profile id (`profile_id`, as a name, an
+    argument or a string key) or a profile getter (`get_…_profile`, defined, bound or called)."""
+    found = set()
+    for path in (path for package in packages for path in (root / package).rglob("*.py")):
+        named = map(_named, ast.walk(ast.parse(path.read_text(encoding="utf-8"))))
+        if any(n == "profile_id" or (n[:4], n[-8:]) == ("get_", "_profile") for n in named):
+            found.add(path.relative_to(root).as_posix())
+    return found
+
+
+def test_no_rule_or_order_module_gains_a_profile_resolver() -> None:
+    """#4495 R1C-06: the tripwire's source-scan arm, which sees what the vocabulary cannot, a
+    resolver: no module under `rules/` names a profile id or getter, and under `oms/` only the
+    order path's own. A new one owes the delete guard #951's C-row (ruling B6)."""
+    root = Path(candleviewer.__file__).parent
+    assert _resolvers(root, "rules", "oms") == _ORDER_PATH, "#951's C-row, ruling B6"
+
+
+@pytest.mark.parametrize(
+    ("source", "seen"),
+    [("def f(p):\n    return p['profile_id']\n", True), ("x = cache.get_rule_profile\n", True),
+     ("async def get_live_profile():\n    pass\n", True), ("def f(profile_id): ...\n", True),
+     ("ok = 'profile_ids', get_profiles, profile\n", False)],
+    ids=["string-key", "bound-getter", "defined-getter", "argument", "near-misses"],
+)  # fmt: skip
+def test_the_resolver_scan_sees_a_planted_name(tmp_path: Path, source: str, seen: bool) -> None:
+    """The arm's self-test (R1C-06): a planted id or getter under `rules/` is seen; a near miss
+    is not."""
+    (tmp_path / "rules" / "engine").mkdir(parents=True)
+    (tmp_path / "rules" / "engine" / "planted.py").write_text(source, encoding="utf-8")
+    assert _resolvers(tmp_path, "rules", "oms") == ({"rules/engine/planted.py"} if seen else set())
