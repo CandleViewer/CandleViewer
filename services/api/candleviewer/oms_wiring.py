@@ -314,11 +314,14 @@ class TradingSwitchesBinding:
     """`TradingSwitches` (C-2.21; 24 Sec.8.4): the route's step 10 and B1's `SEND` ask it. It reads
     memory only and never awaits, and the first refusal wins:
 
-    1. live trading enabled, for a live account: the `CV_TRADING_LIVE_ENABLED` setting and the
+    1. the environment's lock held (#913 L2, SEC-S3L2-02): once the order lane's watchdog has
+       found it lost (`fenced`), every order is `OmsNotReady`, whatever the rest say, so a submit
+       any caller makes on the lane meets the fence, not only the route's;
+    2. live trading enabled, for a live account: the `CV_TRADING_LIVE_ENABLED` setting and the
        `trading.live_enabled` flag's view, which is off while unread, both on (rulings Q4, Q6);
        either off is `TradingDisabled` without a `reason`;
-    2. the B18 kill switch, `InterimKillSwitch` until E39-S03 (ruling Q5);
-    3. the app's one order-entry gate (24 Sec.8.4.1): its refusal is `OrderEntryRefused`, carrying
+    3. the B18 kill switch, `InterimKillSwitch` until E39-S03 (ruling Q5);
+    4. the app's one order-entry gate (24 Sec.8.4.1): its refusal is `OrderEntryRefused`, carrying
        the gate's `reason`."""
 
     def __init__(
@@ -328,11 +331,16 @@ class TradingSwitchesBinding:
         live_flag: Callable[[], bool],
         kill_switch: KillSwitch,
         gate: OrderEntryCheck,
+        fenced: Callable[[], bool],
     ) -> None:
         self._live_enabled, self._live_flag = live_enabled, live_flag
-        self._kill_switch, self._gate = kill_switch, gate
+        self._kill_switch, self._gate, self._fenced = kill_switch, gate, fenced
 
-    def refusal(self, account_id: AccountId, environment: Environment) -> TradingDisabled | None:
+    def refusal(
+        self, account_id: AccountId, environment: Environment
+    ) -> TradingDisabled | OmsNotReady | None:
+        if self._fenced():  # the lock lost: no new order at all, nothing else asked
+            return OmsNotReady()
         if environment not in _NOT_LIVE and not (self._live_enabled and self._live_flag()):
             return TradingDisabled()
         switched = self._kill_switch.refusal(account_id)
@@ -1317,6 +1325,10 @@ ENVIRONMENT_LOCK_TIMEOUT_S: Final = 5.0
 #: (`ENVIRONMENT_LOCK_TIMEOUT_S`), and within a lane read's own (`HOP_TIMEOUT_S`).
 LANE_TICK_S: Final = 1.0
 LANE_STALE_S: Final = 10.0
+#: SEC-S3L2-01: how long a process that has just taken the environment's lock waits before its
+#: startup sweep, and so before its first admit, in seconds: a tick and the watchdog's bound, by
+#: which a previous holder whose session ended has found its lock lost and fenced itself.
+ENVIRONMENT_FENCE_GRACE_S: Final = LANE_TICK_S + ENVIRONMENT_LOCK_TIMEOUT_S
 
 
 def environment_lock_key(environment: str) -> int:
@@ -1538,6 +1550,8 @@ class _Parts:
     lane: Lane
     cancel_all: CancelAll
     heartbeat: LaneHeartbeat
+    #: When the fencing grace since the lock was taken ends, on the runtime's `monotonic`.
+    admit_after: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -1806,9 +1820,11 @@ class OmsRuntime:
         registry: Registry | None = None,
         lane: Callable[[], Lane] = OrderLane,
         heartbeat: Callable[[EnvironmentLock, Pager], LaneHeartbeat] = LaneHeartbeat,
+        fencing: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
-        self._heartbeat = heartbeat
+        #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries.
+        self._heartbeat, self._fencing = heartbeat, fencing
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._gate, self._standings = gate, standings
@@ -2057,14 +2073,18 @@ class OmsRuntime:
 
     async def _started(self, lane: Lane, serving: Serving) -> None:
         """The startup sweep (20 Sec.6.2): a composition the environment's lock held back first
-        (`_composed_again`), then step 1's waits, then steps 2 to 4, run again after a backoff while
-        the store or the audit fails them (any other error ends it `degraded` after
-        `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A failure met while a stop
-        runs ends it, cancelled, never retried."""
+        (`_composed_again`), then step 1's waits, then what is left of the fencing grace since the
+        lock was taken (`ENVIRONMENT_FENCE_GRACE_S`, SEC-S3L2-01), so a previous holder whose
+        session ended has fenced itself before this one sweeps or admits, then steps 2 to 4, run
+        again after a backoff while the store or the audit fails them (any other error ends it
+        `degraded` after `SWEEP_MAX_FAILURES`, paged), then step 5, `ready`, never early. A
+        failure met while a stop runs ends it, cancelled, never retried."""
         if self._parts is None and not await self._composed_again(lane, serving):
             return
         await self._waited()
         parts, (delay, ceiling) = self._composed(), SWEEP_RETRY_S
+        if (grace := parts.admit_after - self._monotonic()) > 0:  # SEC-S3L2-01, step 1's counted
+            await self._fencing(grace)
         stuck = 0  # the failures no retry can outlast (CR-S3E3-02)
         while True:
             try:
@@ -2204,11 +2224,17 @@ class OmsRuntime:
         announce_interim_port("atr", ATR_FALLBACK, metrics=metrics)  # ruling Q6, until E13's port
         # one bridge for both: the gate refuses at once a credential the rejections report
         standings = ServedStandings(self._standings, serving)
+        heartbeat: LaneHeartbeat | None = None  # built last, its fence joins the switches
+
+        def fenced() -> bool:  # SEC-S3L2-02: read in place, a single assignment's bool
+            return heartbeat is not None and heartbeat.fenced
+
         switches = TradingSwitchesBinding(
             live_enabled=settings.trading_live_enabled,
             live_flag=self._live_enabled,
             kill_switch=InterimKillSwitch(),
             gate=ServedGate(self._gate, serving, standings),
+            fenced=fenced,
         )
         switches.announce(metrics=metrics)
         self._phase = "sink"
@@ -2248,6 +2274,7 @@ class OmsRuntime:
             if not held:
                 raise EnvironmentLocked(f"another process holds the {env} OMS lock")
             closers.append(("environment_lock", lambda: lane.call(stores.lock.release())))  # last
+            admit_after = self._monotonic() + ENVIRONMENT_FENCE_GRACE_S  # SEC-S3L2-01
             self._phase = "audit"
             # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users
             writer = stores.audit(self._audit_alarm)
@@ -2391,7 +2418,7 @@ class OmsRuntime:
             raise
         return _Parts(
             submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
-            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
+            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat, admit_after,
         )  # fmt: skip
 
     def _now_us(self) -> int:
