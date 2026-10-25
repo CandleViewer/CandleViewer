@@ -1,0 +1,144 @@
+[
+  {
+    "id": "V01",
+    "rule": "US-PROF-002 'Risk-based sizing' (11:547-550), E28-T03 AC 1 (Q1); 24 §9.3 steps 3-8, §9.3.1 ticks, §9.3.3",
+    "profile": { "id": "P-RISK", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.416", "notional": "26624.0", "stop": "63880.0" },
+    "also": { "risk_usdt": "49.92", "initial_margin": "5324.8" },
+    "ladder": { "tp_qtys": ["0.208", "0.208"], "tp_prices": ["64120.0", "64240.0"] }
+  },
+  {
+    "id": "V02",
+    "rule": "24 §9.3 step 5, the fee-aware correction (24:2533-2537)",
+    "profile": { "id": "P-RISK", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0.00055", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.262", "notional": "16768.0", "stop": "63880.0" },
+    "also": { "risk_usdt": "31.44", "risk_with_fees_usdt": "49.8848", "initial_margin": "3353.6" },
+    "ladder": { "tp_qtys": ["0.131", "0.131"], "tp_prices": ["64120.0", "64240.0"] }
+  },
+  {
+    "id": "V03",
+    "rule": "US-PROF-002 'Below minimum lot' (11:554-556), its boundary: exactly the minimum; 24 §9.3 step 8",
+    "profile": { "id": "P-RISK", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "30", "available_margin": "30" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.001", "notional": "64.0", "stop": "63880.0" },
+    "also": { "risk_usdt": "0.12", "initial_margin": "12.8" }
+  },
+  {
+    "id": "V04",
+    "rule": "US-PROF-002 'Below minimum lot' (11:554-556), E28-T03 AC 3: one step below; 24 §9.3 step 8",
+    "profile": { "id": "P-RISK", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "20", "available_margin": "20" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "skip", "code": "below_min_notional", "qty": "0.000" },
+    "also": { "min_order_qty": "0.001" }
+  },
+  {
+    "id": "V05",
+    "rule": "US-PROF-002 'Percent-of-equity' (11:551-553), E28-T03 AC 2 (Q5); 24 §9.3 step 4, §9.3.1 atr",
+    "profile": { "id": "P-PCT", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": "400.0", "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.078", "notional": "4992.0", "stop": "63400.0" },
+    "also": { "risk_usdt": "46.8", "initial_margin": "499.2" }
+  },
+  {
+    "id": "V06",
+    "rule": "24 §9.3.1, ATR unavailable: the fallback stop, rounded down for a long; E28-T03 AC 6",
+    "profile": { "id": "P-PCT", "set": {} },
+    "intent": { "symbol": "ETHUSDT", "side": "Buy", "order_type": "limit", "price": "2512.37" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "1.990", "notional": "4999.6163", "stop": "2462.12" },
+    "also": { "stop_fallback": true, "risk_usdt": "99.9975", "initial_margin": "499.96163" }
+  },
+  {
+    "id": "V07",
+    "rule": "24 §9.3 step 4 fixed_qty; §9.3.1 percent, a short's stop rounded up; R-multiple take-profit",
+    "profile": { "id": "P-QTY", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Sell", "order_type": "limit", "price": "64123.4" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.010", "notional": "641.234", "stop": "64764.7" },
+    "also": { "risk_usdt": "6.413", "initial_margin": "64.1234", "tp_prices": ["62840.8"] }
+  },
+  {
+    "id": "V08",
+    "rule": "24 §9.3 step 8, the instrument's min notional (24:2546-2547)",
+    "profile": { "id": "P-QTY", "set": { "allowed_symbols": ["SOLUSDT"] } },
+    "intent": { "symbol": "SOLUSDT", "side": "Buy", "order_type": "limit", "price": "150.000" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "skip", "code": "below_min_notional", "qty": "0.010" },
+    "also": { "notional": "1.5", "min_notional": "5" }
+  },
+  {
+    "id": "V09",
+    "rule": "24 §9.3.3, a ladder summing to exactly 100 %: the last rung takes the rounding remainder",
+    "profile": { "id": "P-RISK", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "9980", "available_margin": "9980" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "0.415", "notional": "26560.0", "stop": "63880.0" },
+    "also": { "risk_usdt": "49.8", "initial_margin": "5312" },
+    "ladder": { "tp_qtys": ["0.207", "0.208"], "tp_prices": ["64120.0", "64240.0"] }
+  },
+  {
+    "id": "V10",
+    "rule": "24 §9.3.2 (24:2558), the remaining room under max_daily_loss clamps fixed_notional",
+    "profile": { "id": "P-NOTIONAL", "set": { "allowed_symbols": ["*USDT"] } },
+    "intent": { "symbol": "SOLUSDT", "side": "Buy", "order_type": "limit", "price": "150.000" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "248" },
+    "expected": { "outcome": "ok", "qty": "4.000", "notional": "600.0", "stop": "149.500" },
+    "also": { "risk_usdt": "2.0", "initial_margin": "300", "binding_cap": "daily_loss" }
+  },
+  {
+    "id": "V11",
+    "rule": "Extreme equity; 24 §9.3.2, the instrument's max_order_qty for a limit order",
+    "profile": { "id": "P-PCT", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "1000000000", "available_margin": "1000000000" },
+    "market": { "atr": "400.0", "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "100.000", "notional": "6400000.0", "stop": "63400.0" },
+    "also": { "risk_usdt": "60000.0", "initial_margin": "640000.0", "binding_cap": "instrument" }
+  },
+  {
+    "id": "V12",
+    "rule": "US-PROF-003 'Empty list allows nothing' (11:575-577); 24 §9.3 step 1 (24:2506-2507), D11",
+    "profile": { "id": "P-NOTIONAL", "set": {} },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "skip", "code": "symbol_not_allowed" }
+  },
+  {
+    "id": "V13",
+    "rule": "24 §9.3.2 max_leverage_cap clamps first, then step 8's margin check fails (24:2548-2549); qty and binding_cap depend on Q2, the outcome does not",
+    "profile": { "id": "P-RISK", "set": { "sl_offset_value": "100" } },
+    "intent": { "symbol": "BTCUSDT", "side": "Buy", "order_type": "limit", "price": "64000.0" },
+    "wallet": { "equity": "4000", "available_margin": "4000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "fail", "code": "insufficient_margin", "qty": "0.625" },
+    "also": { "notional": "40000.0", "margin_limit": "19600", "binding_cap": "leverage" }
+  },
+  {
+    "id": "V14",
+    "rule": "US-PROF-002 (11:544); 24 §9.3 step 4 fixed_notional (24:2525) with no cap binding; §9.3.1 ticks",
+    "profile": { "id": "P-NOTIONAL", "set": { "allowed_symbols": ["*USDT"] } },
+    "intent": { "symbol": "SOLUSDT", "side": "Buy", "order_type": "limit", "price": "150.000" },
+    "wallet": { "equity": "10000", "available_margin": "10000" },
+    "market": { "atr": null, "taker_fee_rate": "0", "daily_loss_used": "0" },
+    "expected": { "outcome": "ok", "qty": "6.666", "notional": "999.9", "stop": "149.500" },
+    "also": { "risk_usdt": "3.333", "initial_margin": "499.95", "binding_cap": "none" }
+  }
+]

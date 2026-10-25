@@ -1,0 +1,4 @@
+{
+  "source": "packages/fixtures/bybit/2026-10-05/rest/instruments_before.json",
+  "patches": { "BTCUSDT": {}, "ETHUSDT": {}, "SOLUSDT": {}, "LUNAUSDT": {} }
+}
