@@ -280,7 +280,9 @@ def test_exit_refusals_keeps_the_catalogues_66_series_then_breaches() -> None:
 def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
     """SEC-S4C2A-01: a claim has no deadline, so the guard's 1,024 / 64 bounds hold only while
     every claim is released at its exit's end, which `run_claimed` does on every path (the tests
-    above). No other module reaches the guard; a new caller is reviewed here first."""
+    above). No other module reaches the guard; a new caller is reviewed here first. The order
+    lane's `OnLaneExits.guard` (`oms_wiring.py`) forwards the guard to `run_claimed` in place, on
+    the serving loop, and never claims or releases it."""
     pkg = Path(candleviewer.__file__).resolve().parent
     reach = re.compile(r"\.guard\.claim\(|\bexits\.guard\b")
     users = {
@@ -288,7 +290,7 @@ def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
         for p in pkg.rglob("*.py")
         if reach.search(p.read_text(encoding="utf-8"))
     }
-    assert users == {"api/order_exits_common.py"}
+    assert users == {"api/order_exits_common.py", "oms_wiring.py"}
 
 
 class _Pager:
