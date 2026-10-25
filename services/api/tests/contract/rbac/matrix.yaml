@@ -1756,8 +1756,10 @@ account_scope:
     step_up: accounts
     step_up_pending: >-
       E27-S04 (#898) gates it in its handler (HANDLER_GATED_ROUTES) with the no-grace class
-      `accounts` on the dangerous branches only, `enabled: false` (any `open_exposure`) and a
-      `position_mode` or `margin_mode` change; a label-only patch stays ungated (F-11, SR-E27-02)
+      `accounts` on each disable or re-enable, `enabled: false` (any `open_exposure`) or `true`;
+      a `position_mode` or `margin_mode` change is an `accounts` branch as well once E27-S05
+      serves it, until then the `422`, decided before the gate; only a label-only patch stays
+      ungated (F-11, SR-E27-02)
     cells:
       owner: {granted: admitted, foreign: admitted, absent: admitted}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}

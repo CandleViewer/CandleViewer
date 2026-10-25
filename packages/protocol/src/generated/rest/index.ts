@@ -2217,8 +2217,9 @@ export interface paths {
      *     set to `accounts`. The handler gates it after RBAC, validation and the `404`, and the
      *     grant binds the method and the raw target with its `open_exposure` query (`authStepUp`),
      *     so a `keys` grant never admits it. The delete is audited as `account.deleted`, written
-     *     ahead (C-2.9), naming the `challenge_id` of the grant it spent; a refusal after the gate
-     *     leaves the grant spent.
+     *     ahead (C-2.9), naming the `challenge_id` of the grant it spent. The `422` is decided
+     *     before the gate and spends no code; the `409 open_exposure` and `409 exposure_unknown`
+     *     refusals are decided after it and leave the grant spent, as restore's do.
      */
     delete: operations["deleteExchangeAccount"];
     options?: never;
@@ -2239,14 +2240,18 @@ export interface paths {
      *     exposure and a failed read are defined once, at `components.parameters.OpenExposure`.
      *     The choice applies only to disabling, never to a mode change.
      *
-     *     **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each disable
-     *     (`enabled: false`, whatever `open_exposure` says) spends a fresh code, and without one
-     *     the route answers `403 step_up_required` with `action_class` set to `accounts`. The
-     *     handler gates it after RBAC, account scope, validation and the `404`, and the grant binds
-     *     the method, the raw target with its query and the validated body (`authStepUp`). A
-     *     label-only patch, and `enabled: true`, are not step-up gated. The disable is audited as
+     *     **Step-up (SR-E27-02).** `accounts` is a no-grace step-up class: each disable or
+     *     re-enable (`enabled: false`, whatever `open_exposure` says, or `enabled: true`) spends a
+     *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
+     *     set to `accounts`. A `position_mode` or `margin_mode` change is an `accounts` branch as
+     *     well once E27-S05 serves it; until then it is the `422` above, decided before the gate.
+     *     Only a label-only patch is not step-up gated. The handler gates it after RBAC, account
+     *     scope, validation and the `404`, and the grant binds the method, the raw target with its
+     *     query and the validated body (`authStepUp`). The disable is audited as
      *     `account.disabled`, written ahead (C-2.9), naming the `challenge_id` of the grant it
-     *     spent; a refusal after the gate leaves the grant spent.
+     *     spent. The `422` is decided before the gate and spends no code; the `409 open_exposure`
+     *     and `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
+     *     restore's do.
      */
     patch: operations["updateExchangeAccount"];
     trace?: never;
@@ -2264,13 +2269,15 @@ export interface paths {
      * Read what revoking, disabling or deleting an account would affect
      * @description The up-front read of `AccountConsequenceSummary` that SCR-129 renders before its confirm
      *     control (SR-E27-07): one server-side aggregate, so no partial picture is shown. It has
-     *     no side effects: it changes nothing, writes no audit record and spends nothing. It holds
+     *     no side effects: it changes nothing, spends nothing and, on success, writes no audit
+     *     record (a `403` is still recorded as `rbac.denied`). It holds
      *     the permission and scope of the disable it precedes (`updateExchangeAccount`); the Owner
      *     holds both. A foreign account and an absent one get the same `404 not_found`, byte for
      *     byte, so the answer is no existence oracle. The exposure is read as
      *     `components.parameters.OpenExposure` defines it: an exposure that cannot be read is
      *     `409 exposure_unknown` with its `remedy`, and a failed read is answered as that
-     *     definition says.
+     *     definition says. The `remedy` speaks for the disable or revoke the read precedes; a
+     *     delete is still refused whatever it carries.
      */
     get: operations["getAccountConsequences"];
     put?: never;
@@ -2487,7 +2494,7 @@ export interface paths {
      *     because a `rotating` key still signs and streams, so the account is not keyless while one
      *     remains.
      *
-     *     When no other `active` key remains and the account holds open positions, working orders
+     *     When no other signable key remains and the account holds open positions, working orders
      *     or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
      *     Without it the answer is `409 open_exposure` with the consequence summary, and nothing
      *     is revoked. The choices, the `leave_positions` stop-loss refusal, unknown exposure and a
@@ -2495,13 +2502,16 @@ export interface paths {
      *     key of the account counts in that definition, a `rotating` key too: while a `rotating`
      *     key is usable the account is not dead, whatever the key being revoked answers.
      *
-     *     **Step-up (SR-E27-02).** A revoke needs a live `keys` step-up. With
-     *     `open_exposure=flatten_first`, which moves money, it needs the no-grace `accounts` class
-     *     instead: each such revoke spends a fresh code, and without one the route answers
-     *     `403 step_up_required` with `action_class` set to `accounts`. The handler gates both
-     *     classes after RBAC, validation and the `404`, so a caller without `keys:manage` gets
-     *     `403 forbidden`, never a challenge, and the `accounts` grant binds the method and the raw
-     *     target with its query (`authStepUp`).
+     *     **Step-up (SR-E27-02).** A revoke needs a live `keys` step-up. Any revoke that carries
+     *     `open_exposure=flatten_first`, which moves money, needs the no-grace `accounts` class
+     *     instead, whatever keys remain and whatever the account holds: each such revoke spends a
+     *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
+     *     set to `accounts`. The handler gates both classes after RBAC, validation and the `404`,
+     *     so a caller without `keys:manage` gets `403 forbidden`, never a challenge, and the
+     *     `accounts` grant binds the method and the raw target with its query (`authStepUp`). The
+     *     `422` is decided before the gate and spends no code; the `409 open_exposure` and
+     *     `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
+     *     restore's do.
      */
     delete: operations["revokeApiKey"];
     options?: never;
@@ -6194,7 +6204,7 @@ export interface components {
        */
       level: "read" | "trade";
     };
-    /** @description What revoking an account's last active key, disabling the account or deleting it would affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is shown. Confidential: served only under the operation's own permission and scope. It is served in the `409 open_exposure` answer and by `getAccountConsequences`, the side-effect-free read SCR-129 fetches before the dialog renders (E27-S04, #898). */
+    /** @description What revoking an account's last signable key, disabling the account or deleting it would affect (SR-E27-07, SCR-129), read in one server-side query so no partial picture is shown. Confidential: served only under the operation's own permission and scope. It is served in the `409 open_exposure` answer and by `getAccountConsequences`, the side-effect-free read SCR-129 fetches before the dialog renders (E27-S04, #898). */
     AccountConsequenceSummary: {
       /** @description Armed rules scoped to the account, listed by name; the action disarms them. */
       armed_rules: {
@@ -11517,7 +11527,7 @@ export interface components {
     MarketCursor: string;
     MethodId: string;
     /**
-     * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+     * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
      *     disabling the account while it holds open positions, working orders or running emulated
      *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
      *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
@@ -14065,7 +14075,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling or deleting an exchange account (`updateExchangeAccount` with `enabled: false`, `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; declared ahead of the service (C-6.1), which E27-S04 (#898) lands.
+           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; declared ahead of the service (C-6.1), which E27-S04 (#898) lands.
            * @enum {string}
            */
           action_class?:
@@ -14780,7 +14790,7 @@ export interface operations {
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["OpenExposureConflict"];
-      /** @description `open_exposure` is not `flatten_first` (`leave_positions` included) and fails its schema (`validation_failed`). Decided before the step-up gate: nothing changes. */
+      /** @description Any `open_exposure` value but `flatten_first`, `leave_positions` included, fails the enum (`validation_failed`). Decided before the step-up gate: nothing changes. */
       422: {
         headers: {
           [name: string]: unknown;
@@ -14797,7 +14807,7 @@ export interface operations {
     parameters: {
       query?: {
         /**
-         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
          *     disabling the account while it holds open positions, working orders or running emulated
          *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
          *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and
@@ -15181,7 +15191,7 @@ export interface operations {
     parameters: {
       query?: {
         /**
-         * @description The explicit choice SR-E27-07 requires before revoking an account's last active key or
+         * @description The explicit choice SR-E27-07 requires before revoking an account's last signable key or
          *     disabling the account while it holds open positions, working orders or running emulated
          *     algos. This is the one definition of the choice, of the stop-loss refusal, of unknown
          *     exposure, of its remedy and of a failed read: `updateExchangeAccount`, `revokeApiKey` and

@@ -68,6 +68,10 @@ _NOT_DANGEROUS: dict[tuple[str, str], str] = {
     # elevates nothing and demands no step-up.
     ("POST", "/auth/refresh"): "authRefresh: rotates the session, carries the penalty, no grant",
     ("GET", "/me"): "getMe: reads the session's own `elevated_until`",
+    # E27-S04 (#898): `accounts:write` is seeded dangerous; the read changes nothing.
+    ("GET", "/exchange-accounts/{accountId}/consequences"): (
+        "getAccountConsequences: a read; no step-up (04 row 45a)"
+    ),
     ("GET", "/users/invites"): "listPendingInvites: a read; the invite writes are gated (`users`)",
     ("GET", "/users/{userId}/mfa/reset-preview"): "previewMfaReset: a read; the reset is gated",
     # E42-T09 (#2649): the contract says listing needs no step-up; revoking one is gated (`users`).
@@ -398,6 +402,17 @@ def test_allow_listed_operations_name_no_step_up_class() -> None:
         assert (method, path) in operations, (method, path)
         assert not _registered_classes(method, path), (method, path)
         assert not _documented_classes(operations[method, path]), (method, path)
+
+
+def test_field_not_class_entries_still_name_the_field_and_no_class() -> None:
+    """A `_FIELD_NOT_CLASS` entry goes stale once its operation drops the field or names the
+    word as its step-up class; either way the exclusion would hide a real class."""
+    for operation_id, fields in _FIELD_NOT_CLASS.items():
+        _, op = _operation(operation_id)
+        text = _text(op)
+        for c in fields:
+            assert f"`{c}`" in text, (operation_id, c)
+            assert f"`action_class` set to `{c}`" not in text, (operation_id, c)
 
 
 def _dangerous_tail(path: str) -> bool:

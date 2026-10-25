@@ -350,7 +350,7 @@ _DESCRIBED = (
     ),
     (
         ("paths", _KEY, "delete"),
-        "When no other `active` key remains and the account holds open positions",
+        "When no other signable key remains and the account holds open positions",
     ),
     (
         ("paths", f"{_KEY}/rotate", "post"),
@@ -360,7 +360,7 @@ _DESCRIBED = (
     (("paths", f"{_KEY}/test", "post"), "request fragment is ever echoed (SR-E27-08)"),
     (
         ("components", "parameters", "OpenExposure"),
-        "The explicit choice SR-E27-07 requires before revoking an account's last active key"
+        "The explicit choice SR-E27-07 requires before revoking an account's last signable key"
         "|close its positions reduce-only), then act; if the account is still not flat, the "
         "action is not carried out"
         "|Without the parameter such a request is `409 open_exposure`"
