@@ -323,7 +323,9 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     # R2: the risk at the stop, both fees, within the net daily-loss headroom and B's budget
     assert f.taker_fee_rate is not None and f.committed_risk is not None
     assert f.realised_loss_today is not None
-    risk = leg.qty * distance + leg.qty * leg.ref_price * 2 * f.taker_fee_rate
+    # the exit fee priced at the further of `ref` and the stop (OPEN-4, ruled 2026-10-25)
+    exit_price = max(leg.ref_price, leg.stop_price)
+    risk = leg.qty * distance + leg.qty * (leg.ref_price + exit_price) * f.taker_fee_rate
     caps = [p.max_daily_loss for p in profiles]
     caps += [None if p.max_daily_loss_pct is None or f.equity is None
              else p.max_daily_loss_pct * f.equity for p in profiles]  # fmt: skip
@@ -332,10 +334,11 @@ def _assert_within_caps(case: dict[str, Any], result: Admitted) -> None:
     assert risk <= daily - f.realised_loss_today - f.committed_risk
     if b.sizing_mode == "risk_based":
         assert risk <= _budget(b, f.equity)
-    # R3: the stop inside the isolated-margin liquidation estimate
+    # R3: the stop strictly inside the isolated-margin liquidation estimate, less both taker fees
+    # on the notional at the stop (OPEN-2, OPEN-3, ruled 2026-10-25)
     assert f.maintenance_margin_rate is not None
     move = leg.ref_price * (1 / leg.leverage - f.maintenance_margin_rate)
-    assert distance <= move
+    assert distance < move - 2 * f.taker_fee_rate * leg.stop_price
     # R4: the stop on the loss side, no further than B's own
     loss_side = (
         leg.stop_price < leg.ref_price if leg.side == "buy" else leg.stop_price > leg.ref_price

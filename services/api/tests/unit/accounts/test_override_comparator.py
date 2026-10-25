@@ -252,6 +252,21 @@ def test_risk_boundary_against_the_net_daily_loss_headroom(committed: str, ok: b
     assert (violation.limit, violation.requested) == (D("71.0510"), D("71.0511000"))
 
 
+@pytest.mark.parametrize(("cap", "ok"), [("71.0863055", True), ("71.0863054", False)])
+def test_a_short_leg_s_exit_fee_is_priced_at_its_stop(cap: str, ok: bool) -> None:
+    """OPEN-4 (ruled 2026-10-25): the exit fee at the further of `ref` and the stop. A short
+    0.1 BTC at 64010 stopped at 64650.1 risks 64.01 + 3.52055 (entry) + 3.5557555 (exit at the
+    stop) = 71.0863055; priced at `ref` the exit fee would be 3.52055 and 71.0863054 would pass."""
+    short = dict(side="sell", stop_price=D("64650.1"), take_profit_price=D("62729.8"))
+    result = judge(leg(**short), baseline=leg(**short), bound=profile(max_daily_loss=cap))
+    if ok:
+        admitted(result)
+        return
+    assert refused(result) == [("max_daily_loss", "R2", "above_limit")]
+    (violation,) = violations(result)
+    assert violation.requested == D("71.0863055")
+
+
 def test_realised_loss_today_reduces_the_headroom() -> None:
     result = judge(figures=figures(realised_loss_today=D("430")))  # 70 left, 71.0511 at risk
     assert refused(result) == [("max_daily_loss", "R2", "above_limit")]
@@ -316,27 +331,49 @@ def test_an_alternate_s_lower_leverage_cap_binds() -> None:
     ]
 
 
-@pytest.mark.parametrize(("leverage", "ok"), [("50", True), ("50.01", False)])
-def test_the_stop_must_lie_inside_the_liquidation_estimate(leverage: str, ok: bool) -> None:
-    """At 50x and a 1 % maintenance rate a long liquidates at 64010 * 0.99 = 63369.9, B's stop."""
+_NO_FEE_1PCT = {"maintenance_margin_rate": D("0.01"), "taker_fee_rate": D("0")}
+
+
+@pytest.mark.parametrize(("leverage", "ok"), [("49.99", True), ("50", False)])
+def test_a_stop_at_the_liquidation_estimate_is_refused(leverage: str, ok: bool) -> None:
+    """OPEN-2 (ruled 2026-10-25): at 50x, a 1 % rate and no fee a long liquidates at
+    64010 * 0.99 = 63369.9, B's stop. A stop there races the liquidation: refused, not admitted."""
     wide = profile(max_leverage_cap="100")
-    rate = figures(maintenance_margin_rate=D("0.01"))
-    result = judge(leg(leverage=D(leverage)), bound=wide, figures=rate)
+    result = judge(leg(leverage=D(leverage)), bound=wide, figures=figures(**_NO_FEE_1PCT))
     if ok:
         admitted(result)
     else:
         assert refused(result) == [("leverage", "R3", "outside_liquidation")]
 
 
-def test_a_short_stop_must_lie_below_its_liquidation_estimate() -> None:
+def test_a_short_stop_at_its_liquidation_estimate_is_refused() -> None:
     short = dict(side="sell", stop_price=D("64650.1"), take_profit_price=D("62729.8"))
     base = leg(**short)
     wide = profile(max_leverage_cap="100")
-    rate = figures(maintenance_margin_rate=D("0.01"))
-    admitted(judge(leg(**short, leverage=D("50")), baseline=base, bound=wide, figures=rate))
+    rate = figures(**_NO_FEE_1PCT)
+    admitted(judge(leg(**short, leverage=D("49.99")), baseline=base, bound=wide, figures=rate))
     assert refused(
-        judge(leg(**short, leverage=D("50.01")), baseline=base, bound=wide, figures=rate)
+        judge(leg(**short, leverage=D("50")), baseline=base, bound=wide, figures=rate)
     ) == [("leverage", "R3", "outside_liquidation")]
+
+
+@pytest.mark.parametrize(("leverage", "ok"), [("47.4", True), ("47.5", False)])
+def test_the_liquidation_estimate_keeps_both_taker_fees_at_the_stop(
+    leverage: str, ok: bool
+) -> None:
+    """OPEN-3 (ruled 2026-10-25): the room before liquidation, 64010 * (1 / leverage - 0.01), less
+    both taker fees on the notional at the stop, 2 * 0.00055 * 63369.9 = 69.70689 per unit. At
+    47.5x the room is 707.48 without them (admitted) and 637.77 with them, under the 640.1 stop."""
+    wide = profile(max_leverage_cap="100")
+    rate = figures(maintenance_margin_rate=D("0.01"))
+    result = judge(leg(leverage=D(leverage)), bound=wide, figures=rate)
+    if ok:
+        admitted(result)
+        return
+    assert refused(result) == [("leverage", "R3", "outside_liquidation")]
+    (violation,) = violations(result)
+    assert violation.limit is not None
+    assert D("63372.2279") < violation.limit < D("63372.2280")  # 64010 - 637.7720...
 
 
 def test_leverage_above_the_instrument_maximum_is_refused() -> None:
@@ -567,7 +604,6 @@ def test_a_caller_stop_size_other_than_the_quantity_is_refused(stop_qty: str) ->
         ("available_margin", ("leverage", "R6", "unknown_input")),
         ("committed_risk", ("max_daily_loss", "R2", "unknown_input")),
         ("realised_loss_today", ("max_daily_loss", "R2", "unknown_input")),
-        ("taker_fee_rate", ("max_daily_loss", "R2", "unknown_input")),
         ("maintenance_margin_rate", ("leverage", "R3", "unknown_input")),
         ("open_positions_after", ("max_open_positions", "R7", "unknown_input")),
         ("open_orders_after", ("max_concurrent_orders", "R7", "unknown_input")),
@@ -579,6 +615,15 @@ def test_an_unknown_input_fails_closed(figure: str, expected: tuple[str, str, st
     assert refused(result) == [expected]
     (violation,) = violations(result)
     assert violation.input == figure
+
+
+def test_an_unknown_fee_rate_fails_the_risk_and_the_liquidation_rules() -> None:
+    result = judge(figures=figures(taker_fee_rate=None))
+    assert refused(result) == [
+        ("max_daily_loss", "R2", "unknown_input"),
+        ("leverage", "R3", "unknown_input"),
+    ]
+    assert {v.input for v in violations(result)} == {"taker_fee_rate"}
 
 
 def test_unknown_equity_fails_every_rule_that_reads_it() -> None:
@@ -685,10 +730,10 @@ _ENTRIES: list[tuple[str, dict[str, Any], dict[str, Any]]] = [
      {"field": "leverage", "reason": "above_limit", "limit": D("25"), "requested": D("30")}),
     ("liquidation_long", {"leg": {"leverage": D("80")}, "bound": _WIDE,
                           "figures": {"maintenance_margin_rate": D("0.01")}},
-     {"field": "leverage", "limit": D("63849.975"), "requested": D("63369.9")}),
+     {"field": "leverage", "limit": D("63919.68189"), "requested": D("63369.9")}),
     ("liquidation_short", {"leg": {**_SHORT, "leverage": D("80")}, "baseline": _SHORT,
                            "bound": _WIDE, "figures": {"maintenance_margin_rate": D("0.01")}},
-     {"field": "leverage", "limit": D("64170.025"), "requested": D("64650.1")}),
+     {"field": "leverage", "limit": D("64098.90989"), "requested": D("64650.1")}),
     ("stop_wrong_side", {"leg": {"stop_price": D("64010")}},
      {"field": "sl_offset_value", "limit": D("64010"), "requested": D("64010")}),
     ("stop_further", {"leg": {"stop_price": D("63369.8")}},
@@ -870,7 +915,7 @@ def test_a_requested_pct_budget_with_unknown_equity_names_the_input() -> None:
     assert ("risk_pct_equity", "equity") in {(v.field, v.input) for v in violations(result)}
 
 
-# --- OPEN-5: the instrument's maximum order quantity ----------------------------------------------
+# --- OPEN-5: the instrument's maximum order quantity, under R7 (ruled 2026-10-25) -------------
 
 _ROOMY: dict[str, Any] = {
     "max_position_notional": "1000000000",
@@ -890,7 +935,7 @@ def test_a_leg_above_the_instrument_maximum_quantity_is_refused(qty: str, ok: bo
     if ok:
         admitted(result)
         return
-    assert refused(result) == [("fixed_qty", "R5", "above_limit")]
+    assert refused(result) == [("fixed_qty", "R7", "above_limit")]
     (violation,) = violations(result)
     assert (violation.limit, violation.requested) == (BTCUSDT.max_order_qty, D(qty))
 
@@ -903,6 +948,6 @@ def test_a_requested_quantity_above_the_instrument_maximum_is_refused(qty: str, 
     if ok:
         admitted(result)
         return
-    assert refused(result) == [("fixed_qty", "R5", "above_limit")]
+    assert refused(result) == [("fixed_qty", "R7", "above_limit")]
     (violation,) = violations(result)
     assert (violation.limit, violation.requested) == (BTCUSDT.max_order_qty, D(qty))
