@@ -109,3 +109,8 @@ def test_liquidation_edge_refuses_an_unknown_side() -> None:
     side: Any = "hold"
     with pytest.raises(ValueError, match="no liquidation edge"):
         sz.liquidation_edge(side, D(100), D(90), D("0.1"))
+
+
+def test_liquidation_estimate_refuses_a_negative_rate() -> None:
+    with pytest.raises(ValueError, match="negative maintenance margin rate"):
+        sz.liquidation_estimate("buy", D(64000), D(10), D("-0.001"))

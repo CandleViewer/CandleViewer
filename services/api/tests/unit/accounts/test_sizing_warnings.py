@@ -113,8 +113,8 @@ def test_a_disabled_profile_is_judged_on_its_figures() -> None:
 @pytest.mark.parametrize(
     ("s", "symbols", "dropped"),
     [
-        (save(), ("ETHUSDT",), [("sizing_below_min_order", "ETHUSDT", "instrument"),
-                                ("stop_beyond_liquidation", "ETHUSDT", "instrument")]),
+        (save(), ("ETHUSDT",), [("sizing_below_min_order", "ETHUSDT", "figures_missing"),
+                                ("stop_beyond_liquidation", "ETHUSDT", "figures_missing")]),
         (save(sz.SizingMarket()), ("BTCUSDT",), [
             ("sizing_below_min_order", "BTCUSDT", "no_reference_price"),
             ("stop_beyond_liquidation", "BTCUSDT", "no_reference_price"),
@@ -126,7 +126,7 @@ def test_a_disabled_profile_is_judged_on_its_figures() -> None:
             ("sizing_below_min_order", "BTCUSDT", "figure_unknown"),
         ]),
     ],
-    ids=["no-instrument", "no-price", "no-rate", "no-equity"],
+    ids=["no-entry", "no-price", "no-rate", "no-equity"],
 )  # fmt: skip
 def test_a_missing_input_drops_the_warning(
     s: pv.SaveFigures, symbols: tuple[str, ...], dropped: list[tuple[str, str, str]]
@@ -136,10 +136,39 @@ def test_a_missing_input_drops_the_warning(
     assert [(d.code, d.symbol, d.reason) for d in got] == dropped
 
 
+def test_a_symbol_entry_without_an_instrument_is_dropped_as_instrument() -> None:
+    one = pv.SymbolFigures(None, _AT_MID, _MMR)
+    _, dropped = warned(profile("P-RISK"), pv.SaveFigures(wallet(), False, {"BTCUSDT": one}))
+    assert {d.reason for d in dropped} == {"instrument"}
+
+
+def test_the_reference_is_the_mid_else_the_last_price() -> None:
+    assert pv._price(sz.SizingMarket(mid=D(4), last_price=D(5))) == 4
+    assert pv._price(sz.SizingMarket(last_price=D(5))) == 5
+
+
+def test_a_leg_the_sizer_cannot_judge_logs_its_reason() -> None:
+    low = instrument("BTCUSDT").model_copy(update={"max_leverage": D(2)})  # under the profile's
+    one = pv.SymbolFigures(low, _AT_MID, _MMR)
+    s = pv.SaveFigures(wallet(), False, {"BTCUSDT": one})
+    p = profile("P-PCT", leverage="50", max_leverage_cap="50")
+    found, dropped = warned(p, s)
+    assert [(d.code, d.reason) for d in dropped] == [
+        ("sizing_below_min_order", "leverage_unavailable")
+    ]
+    assert [f.code for f in found] == ["stop_beyond_liquidation"]  # still judged
+
+
 def test_an_instrument_of_another_symbol_is_dropped() -> None:
     s = pv.SaveFigures(wallet(), False, {"ETHUSDT": save().symbols["BTCUSDT"]})
     _, dropped = warned(profile("P-RISK"), s, ("ETHUSDT",))
     assert {d.reason for d in dropped} == {"instrument"}
+
+
+def test_the_shown_liquidation_price_is_rounded_at_100_digits() -> None:
+    big = D("123456789012345678901234567890.123")  # 33 digits: a 28-digit context would cut it
+    assert pv._on_tick(big, D("0.001"), "ROUND_FLOOR") == big
+    assert pv._on_tick(D("1.0004"), D("0.001"), "ROUND_CEILING") == D("1.001")
 
 
 class Port:
@@ -233,3 +262,15 @@ async def test_a_refused_write_asks_the_port_nothing() -> None:
         p, environment="demo", instruments=Limits(), stored=None, warnings=port
     )
     assert got.errors and port.asked == []
+
+
+async def test_judge_sizing_drops_a_symbol_whose_judgement_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_: Any) -> Any:
+        raise ValueError("programming error")
+
+    monkeypatch.setattr(pv, "sizing_warnings", boom)
+    with capture_logs() as logs:
+        assert await pv.judge_sizing(profile("P-RISK"), Port(save())) == ()
+    assert {(log["reason"]) for log in logs} == {"ValueError"} and len(logs) == 4

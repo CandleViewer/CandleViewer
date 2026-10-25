@@ -344,6 +344,8 @@ def liquidation_estimate(side: Side, entry: Decimal, leverage: Decimal, mmr: Dec
     at 100 digits, so a stop is never judged inside a liquidation it is not inside."""
     if leverage <= 0:  # a programming error: `AccountProfile` refuses it
         raise ValueError("no liquidation estimate at a leverage at or below 0")
+    if mmr < 0:  # a programming error: a rate is read from the venue's tiers, never negative
+        raise ValueError("no liquidation estimate at a negative maintenance margin rate")
     inverse = _FLOOR.divide(Decimal(1), leverage)  # the smaller move: nearer entry
     if side == "buy":
         with localcontext(_CEILING):

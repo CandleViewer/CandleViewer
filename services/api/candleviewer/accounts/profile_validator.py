@@ -56,7 +56,8 @@ _ALL_SYMBOLS: Final = "Allows every listed symbol — consider restricting."
 
 @dataclass(frozen=True, slots=True)
 class ProfileWarning:
-    """One entry of a profile answer's `warnings[]`; its message is fixed for its code."""
+    """One entry of a profile answer's `warnings[]`. T02's messages are fixed for their code; the
+    two sizing messages name the symbol and its figures."""
 
     code: Literal["all_symbols", "no_symbols", "sizing_below_min_order", "stop_beyond_liquidation"]
     message: str
@@ -316,6 +317,7 @@ WARNING_SYMBOLS_MAX: Final = 25
 #: The warnings port's share of the save's 2 s, after the listing's 1.5 s (PF-D04).
 WARNINGS_DEADLINE_S: Final = 0.25
 _SIZING: Final = ("sizing_below_min_order", "stop_beyond_liquidation")
+_EXACT_100: Final = Context(prec=100)
 _SIDES: Final[tuple[Side, Side]] = ("buy", "sell")
 
 
@@ -380,9 +382,16 @@ def sizing_warnings(
     for symbol in symbols:
         got = save.symbols.get(symbol)
         inst = None if got is None else got.instrument
-        ref = None if got is None else got.market.mid or got.market.last_price
-        reason = "instrument" if inst is None or inst.symbol != symbol else "no_reference_price"
-        if got is None or inst is None or ref is None or reason == "instrument":
+        ref = None if got is None else _price(got.market)
+        if got is None:
+            reason = "figures_missing"
+        elif inst is None or inst.symbol != symbol:
+            reason = "instrument"
+        elif ref is None:
+            reason = "no_reference_price"
+        else:
+            reason = ""
+        if reason or got is None or inst is None or ref is None:
             dropped += [DroppedWarning(code, symbol, reason) for code in _SIZING]
             continue
         mmr, last = got.maintenance_margin_rate, got.market.mid is None
@@ -397,11 +406,27 @@ def sizing_warnings(
             found.append(_below_minimum(symbol, missed, estimated=stale))
         elif any(leg.qty is None and leg.reason is FailReason.FIGURE_UNKNOWN for leg in legs):
             dropped.append(DroppedWarning(_SIZING[0], symbol, "figure_unknown"))
+        elif unjudged := next((leg.reason for leg in legs if leg.reason in _UNJUDGED), None):
+            dropped.append(DroppedWarning(_SIZING[0], symbol, unjudged.value))
         if mmr is None:
             dropped.append(DroppedWarning(_SIZING[1], symbol, "maintenance_margin_rate"))
         elif (beyond := _beyond(able, inst, ref, got.market, mmr)) is not None:
             found.append(beyond)
     return tuple(found), tuple(dropped)
+
+
+_UNJUDGED: Final = (FailReason.LEVERAGE_UNAVAILABLE, FailReason.INVALID_STOP_DISTANCE)
+
+
+def _price(market: SizingMarket) -> Decimal | None:
+    """The order path's reference: the mid, else the last price (`SizingMarket` refuses a price
+    at or below 0, so a present mid is never zero)."""
+    return market.mid if market.mid is not None else market.last_price
+
+
+def _on_tick(value: Decimal, tick: Decimal, rounding: str) -> Decimal:
+    """`value` on the tick grid, rounded as asked, at 100 digits (a shown price is never cut)."""
+    return _EXACT_100.multiply(_EXACT_100.divide(value, tick).to_integral_value(rounding), tick)
 
 
 def _below_minimum(symbol: str, leg: LegSizing, *, estimated: bool) -> ProfileWarning:
@@ -423,9 +448,9 @@ def _beyond(
         if beyond_liquidation(side, stop.price, liquidation, entry=ref, tick=tick):
             buy = side == "buy"
             toward, away = (ROUND_CEILING, ROUND_FLOOR) if buy else (ROUND_FLOOR, ROUND_CEILING)
-            shown = (liquidation / tick).to_integral_value(toward) * tick
+            shown = _on_tick(liquidation, tick, toward)
             edge = liquidation_edge(side, ref, liquidation, tick)
-            edge = (edge / tick).to_integral_value(away) * tick
+            edge = _on_tick(edge, tick, away)
             share = _plain(LIQUIDATION_BUFFER_FRACTION * 100)
             message = (
                 f"{inst.symbol}: a {'long' if buy else 'short'}'s stop at "
@@ -461,7 +486,11 @@ async def judge_sizing(
         found: tuple[ProfileWarning, ...] = ()
         dropped = tuple(DroppedWarning(c, s, reason) for s in symbols or (None,) for c in _SIZING)
     else:
-        found, dropped = sizing_warnings(profile, save, symbols)
+        try:
+            found, dropped = sizing_warnings(profile, save, symbols)
+        except Exception as exc:  # advice only: a malformed figure never fails the save
+            found, reason = (), type(exc).__name__
+            dropped = tuple(DroppedWarning(c, s, reason) for s in symbols for c in _SIZING)
     for drop in dropped:
         _log().info("profile_sizing_warning_dropped", code=drop.code, symbol=drop.symbol,
                     reason=drop.reason)  # fmt: skip
