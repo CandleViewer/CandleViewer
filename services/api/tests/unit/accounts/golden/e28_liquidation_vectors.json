@@ -1,7 +1,7 @@
 [
   {
     "id": "L01",
-    "rule": "24 Sec.9.3.6: a long at 10x, BTCUSDT tier 1",
+    "rule": "24 Sec.9.3.6: a long at 10x, a sample mmr",
     "side": "buy",
     "entry": "64000",
     "leverage": "10",

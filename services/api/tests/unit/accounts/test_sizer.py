@@ -60,7 +60,7 @@ def instrument(symbol: str) -> Instrument:
 def wallet(equity: str | None = "10000", taker: str | None = "0", **known: Any) -> AccountFigures:
     known = {"equity": equity, "available_margin": equity, "taker_fee_rate": taker} | known
     known = {"realised_loss_today": "0", "committed_risk": "0"} | known
-    known = {"maintenance_margin_rate": "0.005"} | known  # BTCUSDT's risk-limit tier 1
+    known = {"maintenance_margin_rate": "0.005"} | known  # a sample rate (BTCUSDT lowest: 0.0033)
     return AccountFigures.model_validate(dict.fromkeys(AccountFigures.model_fields) | known)
 
 
