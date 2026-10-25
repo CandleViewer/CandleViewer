@@ -54,6 +54,7 @@ SENDERS = {
     ("ws/gateway.py", "GatewayHub.broadcast_system"),
     ("ws/gateway.py", "GatewayHub.shutdown"),
     ("ws/gateway.py", "GatewayHub.system_sessions"),
+    ("ws/gateway.py", "push_flag_snapshot"),
     ("ws/gateway.py", "run_auth"),
     ("admin/flags/push.py", "_send"),
 }

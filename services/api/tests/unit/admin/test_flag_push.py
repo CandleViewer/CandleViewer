@@ -23,7 +23,8 @@ from candleviewer.admin.flags import (
     default_registry,
 )
 from candleviewer.admin.flags.metrics import flag_push_latency_seconds
-from candleviewer.admin.flags.push import FlagPush, Session
+from candleviewer.admin.flags.push import FlagPush, Session, feature_flags_snapshot
+from candleviewer.admin.flags.registry import FlagRegistry
 from candleviewer.audit.access import AuditPrincipal
 from tests.unit.admin.flag_fakes import T0, Clock, FakeAudit, FakeFlagStore, FakeStepUp, FakeUsers
 
@@ -32,6 +33,7 @@ _MANAGER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0002")
 _VIEWER = UUID("9f1c2b4e-0a1d-4f2b-9e3a-11c0ffee0003")
 _WS = Path(__file__).resolve().parents[5] / "packages/protocol/ws-schemas.json"
 _SYSTEM = json.loads(_WS.read_text(encoding="utf-8"))["schemas"]["cv://ws/v1/system.schema.json"]
+_V = frozenset({"viewer"})
 _ROLES = {_OWNER: "owner", _MANAGER: "manager", _VIEWER: "viewer"}
 
 
@@ -87,11 +89,26 @@ async def test_every_frame_validates_against_the_system_schema() -> None:
 
 @pytest.mark.parametrize("key", ["maintenance.keep_recorder", "killswitch.ingestion"])
 async def test_a_manager_and_a_viewer_never_learn_an_owner_only_key(key: str) -> None:
-    _, push, store, sessions = await _rig()
+    service, push, store, sessions = await _rig()
     before = store.rows[key]
     await push.flag_changed(key, before, replace(before, value=not before.value))
     assert len(sessions.frames[_OWNER]) == 1
     assert sessions.frames[_MANAGER] == sessions.frames[_VIEWER] == []
+    for user, owner in ((_OWNER, True), (_MANAGER, False), (_VIEWER, False)):  # the snapshot too
+        frame = await feature_flags_snapshot(service, user, frozenset({_ROLES[user]}))
+        assert frame is not None
+        jsonschema.Draft202012Validator(_SYSTEM).validate(frame)
+        assert (key in frame["feature_flags"]) is owner
+
+
+async def test_the_snapshot_is_none_for_a_role_that_may_see_no_flag() -> None:
+    store, hidden = (
+        FakeFlagStore(),
+        [s for s in default_registry().values() if not s.visible_to(_V)],
+    )
+    service = FlagService(FlagRegistry(hidden), store, clock=Clock())
+    await store.ensure(service.registry.values())
+    assert await feature_flags_snapshot(service, _VIEWER, _V) is None
 
 
 @pytest.mark.parametrize(

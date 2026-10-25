@@ -35,12 +35,13 @@ from fastapi.testclient import TestClient
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 
+from candleviewer.admin.flags import default_registry
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.ws.backpressure_config import BackpressureConfig
 from candleviewer.ws.binary import BOOK_DELTA, Frame, decode, decode_b64, encode_b64
 from candleviewer.ws.cvwb_vectors import structured, vector_frames
-from candleviewer.ws.gateway import GatewayHub, include_ws_router, make_ws_router
+from candleviewer.ws.gateway import FlagSnapshot, GatewayHub, include_ws_router, make_ws_router
 from candleviewer.ws.permissions import ConnectionRegistry, SubscriptionServices
 from candleviewer.ws.revocation import RevocationHub
 from candleviewer.ws.sequencing import SequencingHub, SnapshotBody
@@ -335,6 +336,7 @@ class World:
         *,
         system_notices: Callable[[], list[dict[str, Any]]] | None = None,
         backpressure: BackpressureConfig | None = None,
+        flag_snapshot: FlagSnapshot | None = None,
     ) -> None:
         self.clock = Clock()
         self.source = Source()
@@ -375,6 +377,9 @@ class World:
                 server_version="1.0.0",
                 git_sha="conformance",
                 system_notices=system_notices,
+                flag_snapshot=flag_snapshot,
+                # as `create_app` wires the pair; flag keys are cut for a Manager by this alone
+                flag_visible=None if flag_snapshot is None else default_registry().visible_to,
                 backpressure=backpressure,
             ),
         )

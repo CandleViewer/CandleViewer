@@ -63,6 +63,7 @@ def _open_and_auth(ws: Any) -> None:
     ws.receive_json()
     ws.send_json({"t": "auth", "id": "a", "p": {"access_token": "tok"}})
     assert ws.receive_json()["t"] == "auth_ok"
+    assert ws.receive_json()["p"]["kind"] == "feature_flags"  # §15.9 (#4517): the snapshot
 
 
 def test_client_notice_is_schema_valid_and_role_neutral() -> None:
@@ -100,6 +101,7 @@ def test_ws_reauth_does_not_repeat_the_notice(client: TestClient) -> None:
         assert ws.receive_json()["p"]["kind"] == "notice"
         ws.send_json({"t": "auth", "id": "b", "p": {"access_token": "tok"}})
         assert ws.receive_json()["t"] == "auth_ok"
+        assert ws.receive_json()["p"]["kind"] == "feature_flags"  # the re-auth's own snapshot
         ws.send_json({"t": "ping", "id": "p"})
         assert ws.receive_json()["t"] == "pong"  # no second notice in between
 

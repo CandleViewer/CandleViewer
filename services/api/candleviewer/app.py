@@ -43,6 +43,7 @@ from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.backups.gate import BackupJobGate
 from candleviewer.admin.flags import default_registry
 from candleviewer.admin.flags.metrics import export_flag_metrics
+from candleviewer.admin.flags.push import feature_flags_snapshot
 from candleviewer.admin.http import AdminAreaRefused, admin_area_refused_handler
 from candleviewer.admin.lifecycle_metrics import export_user_lifecycle_metrics
 from candleviewer.admin.ops.health import AdminHealthService
@@ -1767,6 +1768,11 @@ def create_app(
             # §15.9 (E42-T03): a Manager or Viewer learns a flag key only as the registry's
             # `visibility` admits; a key the registry does not define reaches the Owner alone.
             flag_visible=default_registry().visible_to,
+            # §15.9 (#4517): the snapshot at `auth_ok`, from the flag service built below (read per
+            # call: `start()` may rebuild it), resolved for the user as the REST list resolves it.
+            flag_snapshot=lambda user, roles: feature_flags_snapshot(
+                app.state.feature_flags.service, user, roles
+            ),
             backpressure=ws_backpressure,
             # §9.6 (#3085): an `auth` reads its session's view-as binding through the service
             # built below, read per call as S7's guard reads it, so a missing one fails the
