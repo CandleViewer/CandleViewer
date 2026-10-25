@@ -1,9 +1,10 @@
 # ADR-0040 — Per-trade profile overrides and profile-change propagation to open tickets (E28-K01)
 
 - Status: **proposed** (2026-10-25). The recommended decision and its evidence are below. The owner's and the
-  Architect's sign-off of the decision table is tracked on #2701; E28-K01 (#968) is Done only after it, while this
-  record and its prototype merge without it (the orchestrator's note 1 on #968). Until the sign-off, E28-S05 (#1144)
-  may build against this record but must not ship a route that serves an override.
+  Architect's sign-off of the decision table and of the items under "Owner sign-off items" is tracked on #2701;
+  E28-K01 (#968) is Done only after it, while this record and its prototype merge without it (the orchestrator's note
+  1 on #968). Until the sign-off, E28-S05 (#1144) may build against this record but must not ship a route that serves
+  an override.
 - Date: 2026-10-25
 - Deciders: Owner (`@basiltt`) and Architect, on #2701; the Security engineer through the `security-review` label
   (C-10.2) and E28-X01's model. Author: hpe-worker-2 for main-orchestrator.
@@ -13,7 +14,8 @@
 - Numbering note: the ticket names ADR-0016, which is the statechart runtime (F-26, #2623). ADR-0039 is the last
   record on `main` and 0031 is reserved by E45-K01, so this record takes 0040. `docs/design/E42/E42-D03.md` CG-1
   expected the E42-T06 ADR (#1085) to take "the next free number ADR-0040"; that ADR is not written, so it takes the
-  next free number after this one.
+  next free number after this one. The coordinator confirmed this on 2026-10-25 (00:41Z): ADR-0040 stands, and #1085
+  (E42-T06) takes the next free number when it is written.
 - Related: #968 (E28-K01), #906 (E28-T02), #1144 (E28-S05), #971 (E28-S01), #2635 (F-01), #1110 (E34-S02), E30;
   ADR-0008, ADR-0005. Finding: `docs/plan/spikes/E28-K01.md`. Prototype (throwaway):
   `spikes/e28-override-propagation/`.
@@ -82,17 +84,26 @@ computed in the same request, from the same wallet, instrument and reference pri
 2026-10-25, on #968). A request may raise size up to the bound profile's caps and is refused above them; it never
 gets more than the caps and the risk budget allow. The _effective caps_ are _B_'s, tightened by _A_ (rows 29 to 39
 and 42). The _risk ceiling_ is _B_'s per-trade budget when _B_ sizes `risk_based` (`risk_fixed_amount`, or
-`risk_pct_equity` times equity), and otherwise the remaining headroom under the effective `max_daily_loss` and
-`max_daily_loss_pct` (the sizer's daily-loss clamp, 24 §9.3.2).
+`risk_pct_equity` times equity). Otherwise it is the **net daily-loss headroom**: the remaining headroom under the
+effective `max_daily_loss` and `max_daily_loss_pct` (the sizer's daily-loss clamp, 24 §9.3.2) minus the account's
+committed risk, the risk at the stop of its open positions and of its working position-opening orders. A leg's risk at
+the stop is reserved against that headroom at admission, in the same transaction as the leg insert (the SR-E28-15
+transaction), and released when the order is cancelled, when its stop fills (the realised loss then counts in the
+headroom itself) or when the position closes otherwise. So concurrent legs and tickets on one account together never
+risk more than `max_daily_loss`, where each judged alone against the full headroom could. The preview shows the net
+figure. The netting is a money-semantics decision and is on the owner's sign-off list (Owner sign-off items).
 
 **The resulting-leg comparator R (SR-E28-04).** A leg is admitted only if every one of these holds for _L_:
 
 1. its notional is within the effective position caps (`max_position_notional`, `max_position_pct_equity`) as the
    sizer's clamps compute them (24 §9.3.2);
 2. its risk at the stop (quantity times the resolved stop distance, entry and exit fees included as 24 §9.3 step 5)
-   is within the risk ceiling;
+   is within the risk ceiling (for a non-`risk_based` _B_, the net daily-loss headroom, with the request's other legs
+   on the same account counted as committed);
 3. its leverage is within the effective `max_leverage_cap`, and its resolved stop lies between the entry and the
-   estimated liquidation price at that leverage (RSK-085);
+   estimated liquidation price at that leverage (RSK-085). The estimate is an isolated-margin figure from the
+   symbol's risk-limit tier and its maintenance margin rate, whatever `margin_mode` says; when the tier or its rate is
+   unavailable, the leg fails (fail closed; OPEN-2);
 4. its stop is no further from `ref` than _L_B_'s and is on the loss side of `ref`:
    `abs(ref - L.stop) <= abs(ref - L_B.stop)` (the stop never moves away from entry and never crosses it);
 5. its quantity and notional meet the instrument's minimums and _B_'s `min_leg_notional`; a quantity below them is
@@ -100,7 +111,10 @@ and 42). The _risk ceiling_ is _B_'s per-trade budget when _B_ sizes `risk_based
    one-click minimum above the budget is refused, never rounded up; #904 QA plan (V04));
 6. its initial margin is within the available margin times 0.98 (24 §9.3 step 8), a failure and never a shrink;
 7. every other cap the guard reads (open positions, concurrent orders, order rate, daily loss) and the symbol rows
-   hold.
+   hold;
+8. its native stop covers _L_'s full quantity under either `tpsl_mode`: `Partial` never reduces the stop's size, and a
+   stop that cannot be placed for the full quantity fails the leg, never a smaller stop (C-2.6; E34-S03's invariant
+   that no position is left without a native SL; PF-T20).
 
 Equality is admitted. Comparisons are `Decimal`, in the domain's units (fractions, not the REST percent; 24 §9.2
 "REST projection"), on quantized values only: quantity floored to the lot step, the stop rounded away from entry.
@@ -112,7 +126,7 @@ never silently clamped to the limit, as the sizer's margin check fails a leg rat
 entry per offending leg naming the field, the requested value and the limit (yaml:6297-6301). It is audited before
 the answer, as the refused-widening row the threat model lists beside `tradegroup.row_overridden{field, from, to}`
 (§8; E28-S05 registers its action name), with `cv_override_refused_total{field}`. Only the profile's own sizing, with
-no request value, is clamped and explained (`sizing_explanation`, yaml:6307). The "clamp" reading of a widening
+no request value, is clamped and explained (`sizing_explanation`, yaml:6308-6309). The "clamp" reading of a widening
 override in E28-S05 (#1144) and E28-X03 (#976) is wrong; the comment drafts correct it. The contract's sentence that
 "quantity, notional, leverage, margin and risk at the stop may not rise" (yaml:6296-6299) reads, under this ruling,
 "may not exceed the bound profile's caps and risk budget"; that wording change is a contract follow-up (C-6.1) for
@@ -130,54 +144,55 @@ live profiles — missing, deleted or another account's, granted or not — refu
 `404 not_found`, one title and `detail` for all, decided at validation after the account-scope check and before any
 leg is sized (yaml:6309-6314, SR-E28-03; #2635 owns the route half).
 
-**The table.** Every field of `AccountProfile` (24 §9.2), 42 in all, in the model's order. `never`: no request value
+**The table.** Every field of `AccountProfile` (24 §9.2), 42 in all, in the model's order, except
+`updated_at`, which the model lists last and the table keeps beside `version`. `never`: no request value
 changes the field for this leg. `narrow_only`: a request value may move it only within the ceiling, by the comparator
 in the last column, then R; past the ceiling it is refused.
 
-| #   | Field                     | Class         | Override source       | Comparator (judged on the resulting leg, against _B_ as the ceiling)                                                                           |
-| --- | ------------------------- | ------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | `profile_id`              | `never`       | —                     | identity; an alternate is a selection, recorded on the leg snapshot, not an override of this field                                             |
-| 2   | `account_id`              | `never`       | —                     | identity; an alternate of another account is the `404` above                                                                                   |
-| 3   | `name`                    | `never`       | —                     | display only                                                                                                                                   |
-| 4   | `is_default`              | `never`       | —                     | the ceiling's identity (D7); moved only by `setAccountDefaultProfile`                                                                          |
-| 5   | `enabled`                 | `never`       | —                     | a disabled _A_ is refused; narrowing a leg away is `overrides.skip`, not this field                                                            |
-| 6   | `trading_enabled`         | `never`       | —                     | as `enabled`                                                                                                                                   |
-| 7   | `version`                 | `never`       | —                     | server-set; the leg records it (Decision 4)                                                                                                    |
-| 8   | `updated_at`              | `never`       | —                     | server-set                                                                                                                                     |
-| 9   | `sizing_mode`             | `narrow_only` | `sizing.mode`, _A_    | any mode, admitted only through R (a mode switch is how PF-T04 widens, so R's caps and risk ceiling decide)                                    |
-| 10  | `fixed_qty`               | `narrow_only` | `sizing.qty`, _A_     | may be raised (US-PROF-008) or lowered; the resulting leg within R rules 1, 2 and 5; above the caps refused                                    |
-| 11  | `fixed_notional`          | `narrow_only` | `sizing.notional_usd` | as 10                                                                                                                                          |
-| 12  | `pct_equity`              | `narrow_only` | `sizing.pct`, _A_     | as 10                                                                                                                                          |
-| 13  | `risk_pct_equity`         | `narrow_only` | `sizing.*`, _A_       | `<=` _B_'s when _B_ sets it (the budget is the risk ceiling); then R                                                                           |
-| 14  | `risk_fixed_amount`       | `narrow_only` | `sizing.*`, _A_       | `<=` _B_'s when _B_ sets it; then R (still exactly one of 13 and 14)                                                                           |
-| 15  | `min_leg_notional`        | `never`       | —                     | _B_'s; a leg the trader does not want is `overrides.skip`                                                                                      |
-| 16  | `qty_rounding`            | `never`       | —                     | always `floor`                                                                                                                                 |
-| 17  | `leverage`                | `narrow_only` | `leverage`, _A_       | `<=` the effective `max_leverage_cap`, the stop inside liquidation (R rule 3); then R (OPEN-2)                                                 |
-| 18  | `margin_mode`             | `never`       | —                     | an account-wide exchange setting (PF-T05)                                                                                                      |
-| 19  | `position_mode`           | `never`       | —                     | account-wide; `overrides.position_idx` must match _B_'s mode, else `422 validation_failed`                                                     |
-| 20  | `require_native_sl`       | `never`       | —                     | the floor; always `true` (C-2.6)                                                                                                               |
-| 21  | `sl_offset_value`         | `narrow_only` | `stop_loss`, _A_      | the resolved stop: R rule 4 (no further from entry); then R, so a tighter stop that raises a `risk_based` size passes only within the caps     |
-| 22  | `sl_offset_unit`          | `narrow_only` | `stop_loss.unit`, _A_ | judged only through the resolved stop (as 21); `r_multiple` refused (`stop_defines_r`)                                                         |
-| 23  | `sl_atr_period`           | `narrow_only` | _A_                   | judged only through the resolved stop (as 21)                                                                                                  |
-| 24  | `sl_atr_multiple`         | `narrow_only` | _A_                   | judged only through the resolved stop (as 21)                                                                                                  |
-| 25  | `fallback_sl_offset_pct`  | `never`       | —                     | _B_'s: the ATR-warm-up stop is the profile's (PF-T05)                                                                                          |
-| 26  | `tp_offset_value`         | `narrow_only` | `take_profit`, _A_    | the resolved take-profit on the profit side, no further from entry than _B_'s, or added where _B_ has none                                     |
-| 27  | `tp_offset_unit`          | `narrow_only` | `take_profit.unit`    | judged only through the resolved take-profit (as 26)                                                                                           |
-| 28  | `tp_ladder`               | `never`       | —                     | _B_'s; no override member names it                                                                                                             |
-| 29  | `max_position_notional`   | `narrow_only` | _A_ only              | effective `= min(B, A)`; never from a request value; **floor**                                                                                 |
-| 30  | `max_position_pct_equity` | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                        |
-| 31  | `max_daily_loss`          | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                             |
-| 32  | `max_daily_loss_pct`      | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                        |
-| 33  | `max_open_positions`      | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                             |
-| 34  | `max_concurrent_orders`   | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                        |
-| 35  | `max_leverage_cap`        | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                             |
-| 36  | `max_orders_per_minute`   | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                        |
-| 37  | `all_symbols`             | `narrow_only` | _A_ only              | the symbol must be allowed by _B_ **and** by _A_ (an `all_symbols` _A_ adds nothing); **floor**                                                |
-| 38  | `allowed_symbols`         | `narrow_only` | _A_ only              | effective allow-list `= B ∩ A` by pattern match; an empty list without `all_symbols` allows nothing (D11, US-PROF-003: fail closed); **floor** |
-| 39  | `denied_symbols`          | `narrow_only` | _A_ only              | effective deny-list `= B ∪ A`                                                                                                                  |
-| 40  | `reduce_only_default`     | `narrow_only` | request `reduce_only` | may set `true` where _B_ is `false`; never `false` where _B_ is `true`                                                                         |
-| 41  | `time_in_force_default`   | `narrow_only` | `time_in_force`, _A_  | resting life no longer than _B_'s: `FOK`, `IOC` `<=` `GTC`, `PostOnly`; `GTC` and `PostOnly` are peers                                         |
-| 42  | `slippage_tolerance_bps`  | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                        |
+| #   | Field                     | Class         | Override source       | Comparator (judged on the resulting leg, against _B_ as the ceiling)                                                                                          |
+| --- | ------------------------- | ------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | `profile_id`              | `never`       | —                     | identity; an alternate is a selection, recorded on the leg snapshot, not an override of this field                                                            |
+| 2   | `account_id`              | `never`       | —                     | identity; an alternate of another account is the `404` above                                                                                                  |
+| 3   | `name`                    | `never`       | —                     | display only                                                                                                                                                  |
+| 4   | `is_default`              | `never`       | —                     | the ceiling's identity (D7); moved only by `setAccountDefaultProfile`                                                                                         |
+| 5   | `enabled`                 | `never`       | —                     | a disabled _A_ is refused `403 risk_limit_breached`; narrowing a leg away is `overrides.skip`, not this field                                                 |
+| 6   | `trading_enabled`         | `never`       | —                     | as `enabled`: a not-trading-enabled _A_ is refused `403 risk_limit_breached`                                                                                  |
+| 7   | `version`                 | `never`       | —                     | server-set; the leg records it (Decision 4)                                                                                                                   |
+| 8   | `updated_at`              | `never`       | —                     | server-set                                                                                                                                                    |
+| 9   | `sizing_mode`             | `narrow_only` | `sizing.mode`, _A_    | any mode, admitted only through R (a mode switch is how PF-T04 widens, so R's caps and risk ceiling decide)                                                   |
+| 10  | `fixed_qty`               | `narrow_only` | `sizing.qty`, _A_     | may be raised (US-PROF-008) or lowered; the resulting leg within R rules 1, 2 and 5; above the caps refused                                                   |
+| 11  | `fixed_notional`          | `narrow_only` | `sizing.notional_usd` | as 10                                                                                                                                                         |
+| 12  | `pct_equity`              | `narrow_only` | `sizing.pct`, _A_     | as 10                                                                                                                                                         |
+| 13  | `risk_pct_equity`         | `narrow_only` | `sizing.*`, _A_       | the resolved per-trade budget in USDT (`risk_pct_equity` times equity, or `risk_fixed_amount`) `<=` _B_'s resolved budget when _B_ sizes `risk_based`; then R |
+| 14  | `risk_fixed_amount`       | `narrow_only` | `sizing.*`, _A_       | as 13: one resolved USDT budget, whichever of 13 and 14 sets it; then R (still exactly one of 13 and 14)                                                      |
+| 15  | `min_leg_notional`        | `never`       | —                     | _B_'s; a leg the trader does not want is `overrides.skip`                                                                                                     |
+| 16  | `qty_rounding`            | `never`       | —                     | always `floor`                                                                                                                                                |
+| 17  | `leverage`                | `narrow_only` | `leverage`, _A_       | `<=` the effective `max_leverage_cap`, the stop inside the isolated-margin liquidation estimate (R rule 3, fail closed; OPEN-2); then R                       |
+| 18  | `margin_mode`             | `never`       | —                     | an account-wide exchange setting (PF-T05)                                                                                                                     |
+| 19  | `position_mode`           | `never`       | —                     | account-wide; `overrides.position_idx` must match _B_'s mode, else `422 validation_failed`                                                                    |
+| 20  | `require_native_sl`       | `never`       | —                     | the floor; always `true` (C-2.6)                                                                                                                              |
+| 21  | `sl_offset_value`         | `narrow_only` | `stop_loss`, _A_      | the resolved stop: R rule 4 (no further from entry); then R, so a tighter stop that raises a `risk_based` size passes only within the caps                    |
+| 22  | `sl_offset_unit`          | `narrow_only` | `stop_loss.unit`, _A_ | judged only through the resolved stop (as 21); `r_multiple` refused (`stop_defines_r`)                                                                        |
+| 23  | `sl_atr_period`           | `narrow_only` | _A_                   | judged only through the resolved stop (as 21)                                                                                                                 |
+| 24  | `sl_atr_multiple`         | `narrow_only` | _A_                   | judged only through the resolved stop (as 21)                                                                                                                 |
+| 25  | `fallback_sl_offset_pct`  | `never`       | —                     | _B_'s: the ATR-warm-up stop is the profile's (PF-T05)                                                                                                         |
+| 26  | `tp_offset_value`         | `narrow_only` | `take_profit`, _A_    | the resolved take-profit on the profit side, no further from entry than _B_'s, or added where _B_ has none                                                    |
+| 27  | `tp_offset_unit`          | `narrow_only` | `take_profit.unit`    | judged only through the resolved take-profit (as 26)                                                                                                          |
+| 28  | `tp_ladder`               | `never`       | —                     | _B_'s; no override member names it                                                                                                                            |
+| 29  | `max_position_notional`   | `narrow_only` | _A_ only              | effective `= min(B, A)`; never from a request value; **floor**                                                                                                |
+| 30  | `max_position_pct_equity` | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                                       |
+| 31  | `max_daily_loss`          | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                                            |
+| 32  | `max_daily_loss_pct`      | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                                       |
+| 33  | `max_open_positions`      | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                                            |
+| 34  | `max_concurrent_orders`   | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                                       |
+| 35  | `max_leverage_cap`        | `narrow_only` | _A_ only              | effective `= min(B, A)`; **floor**                                                                                                                            |
+| 36  | `max_orders_per_minute`   | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                                       |
+| 37  | `all_symbols`             | `narrow_only` | _A_ only              | the symbol must be allowed by _B_ **and** by _A_ (an `all_symbols` _A_ adds nothing); **floor**                                                               |
+| 38  | `allowed_symbols`         | `narrow_only` | _A_ only              | effective allow-list `= B ∩ A` by pattern match; an empty list without `all_symbols` allows nothing (D11, US-PROF-003: fail closed); **floor**                |
+| 39  | `denied_symbols`          | `narrow_only` | _A_ only              | effective deny-list `= B ∪ A`                                                                                                                                 |
+| 40  | `reduce_only_default`     | `narrow_only` | request `reduce_only` | may set `true` where _B_ is `false`; never `false` where _B_ is `true`                                                                                        |
+| 41  | `time_in_force_default`   | `narrow_only` | `time_in_force`, _A_  | resting life no longer than _B_'s: `FOK`, `IOC` `<=` `GTC`, `PostOnly`; `GTC` and `PostOnly` are peers                                                        |
+| 42  | `slippage_tolerance_bps`  | `narrow_only` | _A_ only              | effective `= min(B, A)`                                                                                                                                       |
 
 Totals: 15 `never`, 27 `narrow_only`, 0 unclassified. The prototype checks the count against the live model
 (`measure.py`, `decision_table_check`). The six floor fields are never widened: rows 29, 31, 33 and 35 take only a
@@ -185,7 +200,18 @@ stricter alternate's value and no request value; rows 37 and 38 only intersect; 
 
 **Request members that are not profile fields** are outside the table and stay ticket parameters, each still judged
 through R: `price` (it sets `ref`, and _L_B_ is computed at the same `ref`), `trailing_stop` (additional to the native
-stop, never instead of it: C-2.6), `tpsl_mode`, `position_idx` (row 19) and `skip`.
+stop, never instead of it: C-2.6), `tpsl_mode` (R rule 8), `position_idx` (row 19) and `skip`. The `Offset` and
+`Sizing` schemas carry more (yaml:17143-17185):
+
+- `sizing.max_notional_usd` only narrows: the leg's cap is `min(request, effective caps)`.
+- `sizing.round_to_lot` (default `true`): `false` conflicts with row 16 (`qty_rounding` is `never`, always `floor`) and
+  is refused `422 validation_failed`.
+- The sugar modes `pct_position` and `profile` (yaml:16074) are modes like any other: judged through R (row 9).
+- `atr_period`, `atr_bar_type` and `atr_param` on `stop_loss` or `take_profit` are judged only through the resolved
+  stop or take-profit, as rows 22 to 24.
+- A sizing override incomplete for its mode (for example `mode: risk_based` with neither `risk_per_trade_usd` nor
+  `risk_per_trade_pct` while _B_ sizes `fixed_qty`) is refused `422 validation_failed`; a missing member is never
+  taken from a _B_ that sizes another mode.
 
 **Enforcement.** Server-side only (C-2.12); the client greys out what the preview refuses, which is no control.
 E28-S05 (#1144) makes the table an automated test, not a convention: `test_every_profile_field_has_an_override_class`
@@ -260,7 +286,7 @@ code is additive and the golden (`packages/protocol/wire-contract.v1.golden.json
 still say, contract first (C-6.1), is one paragraph in §15.9: `profiles.changed` is an **event**, not an account
 state — §15.9 has a client keep "the latest `reason` per account id, which `oms.account_synced` clears"; a
 `profiles.changed` must not replace an `oms.*` state in that latch. That edit, the new code in the open list and the
-bridge are the follow-up (Consequences), not this PR.
+bridge are #906's late contract-first slice (coordinator ruling, 2026-10-25 00:41Z; Consequences), not this PR.
 
 **Pacing.** As built, `push_system` queues a `system` frame at once (`ws/gateway.py:839-853`); notices are never
 merged (§8.2). The 1 000 ms default that §6.2 lists for `system` is the worst case, and the prototype measures both.
@@ -317,6 +343,10 @@ change that needs only a look.
   `409 profile_changed` when any differs, whole, before any leg is sent. `profile_changed` is not in
   `22-api-openapi.yaml` today (the problem code and the members are a contract follow-up for #906 and #1110), and the
   preview's legs must return the versions they used (`TradeGroupPreview.legs[]` has `account_profile_id` only).
+- The versions are **required** members of `createTradeGroup`, and of `placeOrder` wherever it takes a `profile_id`; a
+  submit without them is refused `422 validation_failed`. The check is a trader-awareness control: the server still
+  sizes every leg from the current profile version (C-2.12), so the safety floor and R never depend on what the client
+  sends.
 
 ```gherkin
 Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E30)
@@ -335,6 +365,7 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
     When the owner raises B's max_position_notional to 80000 (version 8)
     Then the ticket enters "Profile changed — review" with the new preview
     And no size larger than the reviewed one is sent until the trader confirms the review
+    And the ticket keeps the previously reviewed size until the trader confirms the review
 
   Scenario: The bound profile changes because the default moved
     When the owner makes another of B's profiles the default (binding version 4 to 5)
@@ -354,6 +385,10 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
     Then the submit is refused 409 profile_changed before any leg is sent, and the refusal is audited
     And the ticket re-fetches B's profiles and enters "Profile changed — review"
 
+  Scenario: A submit without the previewed versions
+    When a submit names B's leg without the profile versions its preview used
+    Then the submit is refused 422 validation_failed before any leg is sent
+
   Scenario: The profile narrows below an override
     Given the trader overrode B's leverage to 8 while B's max_leverage_cap is 10
     When the owner lowers B's max_leverage_cap to 5 (version 8)
@@ -368,8 +403,8 @@ Feature: A profile changes under an open ticket (ADR-0040 Decision 4; E28-S05, E
 
 ### Observability
 
-`cv_profile_propagation_seconds`, a histogram, is observed by the gateway bridge when it hands a socket its
-`profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event) to that
+`cv_profile_propagation_seconds`, a histogram, is observed by the gateway bridge (#906's late slice) when it hands a
+socket its `profiles.changed` frame, from the commit time `ProfilesChanged` carries (#906 should add it to the event) to that
 hand-off; labels `env` only, never an account id. The client's half (the re-fetch and the preview) is the existing
 HTTP latency series of the two routes; the end-to-end 2 s is asserted by E28-S01's (#971) end-to-end test. A refused
 stale submit counts in `cv_override_refused_total{field="profile_version"}` beside the threat model's
@@ -392,12 +427,15 @@ button's accessible name states why it is disabled. This record designs no contr
   say why, from the refusal's `errors[]`, and the "capped by profile" control limits what can be typed.
 - Bad: the review state adds a step whenever an owner edits a profile under an open ticket; edits are rare.
 - Follow-ups, on existing tickets only (the filing freeze): **#906** E28-T02 — the commit time on `ProfilesChanged`;
-  the `profile_changed` problem code and the versions on the preview legs and the submit (with #1110, which owns the
-  route half of SR-E28-15). **#1144** E28-S05 — the table as code and its four tests, R, the review state's server half.
-  **#971** E28-S01 — the 23 §15.9 paragraph (contract first), the gateway bridge, the client re-fetch, the backstops,
-  `cv_profile_propagation_seconds` and the 2 s end-to-end test (OPEN-4 asks which ticket owns the bridge). **#2635**
-  F-01 — the never-widen rule is this table's R and rows 29 to 38. **E30** — the ticket's override controls, the
-  "capped by profile" text and the review state.
+  and, as a late contract-first slice (coordinator ruling, 2026-10-25 00:41Z; OPEN-4), first the 23 §15.9 paragraph
+  and the `profiles.changed` reason in their own small PR, then the server bridge from `ProfilesChanged` to
+  `account_notice` and its `cv_profile_propagation_seconds` observation. **#906 and #1110** (E34-S02, the route half of
+  SR-E28-15) — the `profile_changed` problem code, the versions on the preview legs, and the previewed versions as
+  required members of the submit (Decision 4). **#1144** E28-S05 — the table as code and its four tests, R (the net
+  risk ceiling and rule 8 included), the review state's server half. **#971** E28-S01 — the client half: the re-fetch
+  on the notice, the backstops, the review state and the 2 s end-to-end test. **#2635** F-01 — the never-widen rule is
+  this table's R and rows 29 to 39 and 42; the contract wording of "may not rise" and rule 8's full-quantity stop.
+  **E30** — the ticket's override controls, the "capped by profile" text and the review state.
 
 ## Why not the alternatives
 
@@ -416,14 +454,28 @@ button's accessible name states why it is disabled. This record designs no contr
   sentence follows (#2635). The owner may still override the ruling on #2701.
 - **OPEN-2 (risk semantics; Security engineer).** By the same ceiling, leverage may rise up to the effective
   `max_leverage_cap` (US-PROF-008's second scenario refuses only "above the profile cap"), guarded by R rule 3's check
-  that the stop lies inside the estimated liquidation price (RSK-085). Recommendation: keep it; the reviewer of the
-  table confirms the liquidation estimate's source (the instrument's risk-limit tier and maintenance margin) or narrows
-  the row to `<= B.leverage`.
+  that the stop lies inside the estimated liquidation price (RSK-085). Recommendation, adopted in rule 3 and row 17:
+  the estimate is an isolated-margin figure from the symbol's risk-limit tier and its maintenance margin rate, whatever
+  `margin_mode` says, and when the tier or its rate is unavailable rule 3 fails the leg (fail closed). With that
+  estimate row 17's "up to the effective cap" stands; without it, row 17 narrows to `<= B.leverage`. The Security
+  engineer confirms the estimate's source.
 - **OPEN-3 (contract).** A leg stores one `profile_version` (24 §9.1); with an alternate, the submit check needs the
   bound profile's version and the binding's too. Recommendation: the leg snapshot records all three, and #906 / #1110
   decide the columns.
-- **OPEN-4 (routing; orchestrator).** The bridge from `ProfilesChanged` to `account_notice` is server code that #906
-  stops short of and E28-S01 (#971) is a UI story. Recommendation: #971 carries it as a contract-first server slice.
+- **OPEN-4 — resolved** by the coordinator's ruling of 2026-10-25 (00:41Z): the bridge from `ProfilesChanged` to
+  `account_notice` (reason `profiles.changed`) and the one-paragraph 23 §15.9 change are a late slice of #906
+  (E28-T02), contract first (the 23 paragraph and the new reason in their own small PR, then the bridge); #971
+  (E28-S01) consumes it in the UI.
+
+## Owner sign-off items (#2701)
+
+The status stays `proposed` until the owner and the Architect sign off, on #2701, on:
+
+1. the decision table and the comparator R (Decision 1);
+2. the net risk ceiling for a non-`risk_based` _B_: the remaining daily-loss headroom minus the committed risk of open
+   positions and working position-opening orders, reserved at admission in the leg-insert transaction, released on
+   cancel, stop fill or close, and shown in the preview (Decision 1; a money-semantics decision);
+3. OPEN-1's ruling (size up to the caps) and OPEN-2's fail-closed isolated-margin liquidation estimate behind row 17.
 
 ## Validation
 
