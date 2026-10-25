@@ -4090,6 +4090,13 @@ T2_POINTER_RE = (
     r"|§6's (?:form|legs|rule|alone)|as §6 states|takes §6's"
 )
 CONTROL_RE = "|".join(re.escape(c) for c in CONTROL_NAMES if c != "Export…")
+# The import's matter on an export frame (fold r3): any form of "import" or an import verb, unless
+# it is one of the export's own mentions of the import (the delay it borrows, the limit line).
+EXPORT_IMPORT_RE = IMPORT_VERB_RE + r"|\bimport\w*"
+EXPORT_IMPORT_OK = ("rules for the import (§3.4)", "an import limit", "the import-limit line")
+# §6's rows and bullets read what is drawn where: an import verb said to stand in a footer, to stay,
+# remain or sit is a presence claim §6 never makes (the verb is drawn on its frames, §3 to §5).
+PRESENCE_RE = r"(?i)\bfooters?\b|\bstay(?:s|ed)?\b|\bremain(?:s|ed)?\b|\bsits?\b|\bis offered\b"
 
 
 def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | None:
@@ -4122,6 +4129,23 @@ def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | No
         return fail(
             "export-gated", f"Export… drawn gated in {where} (a read, never T2): {text[:60]!r}"
         )
+    if ctx.get("export_frame"):
+        found = export_import_problem(body)
+        if found:
+            return fail("export-import", f"{where}: {found} on an export frame: {text[:60]!r}")
+        rest = plain(ctx.get("line", "").replace(text, " ")).lower()
+        for m in re.finditer(FOCUS_CLAIM_RE, body):
+            control = m.group("a") or m.group("b") or m.group("c")
+            if not re.search(r"(?<!\w)" + re.escape(control.lower()) + r"(?!\w)", rest):
+                return fail(
+                    "export-focus", f"{where}: focus on {control!r}, a control it never draws"
+                )
+    if prose and sub in ("6", "6.1"):
+        for m in re.finditer(IMPORT_VERB_RE, body):
+            if not negated(body, m.start()) and re.search(PRESENCE_RE, own_clause(body, m.start())):
+                return fail(
+                    "import-verb", f"{where}: §6 draws an Import verb in place: {text[:60]!r}"
+                )
     refusal = (
         (kind in NOTHING_KINDS | {"unconfirmed"} or bool(re.search(REJECTION_CTX_RE, body)))
         if not prose
@@ -4182,6 +4206,21 @@ def unit_gate(text: str, ctx: dict[str, Any], facts: dict[str, Any]) -> str | No
     if kept and claims(KEEP_RE, work):
         return fail("partial", f"{where}: something of a refused file is kept: {text[:60]!r}")
     return unit_gate_2(text, body, ctx, facts, prose)
+
+
+def export_import_problem(body: str) -> str | None:
+    """An export frame's clause that speaks of the import: an Import verb or any import word
+    beyond the export's own mentions (S5, S6), or a workspace created or kept (S10, S11)."""
+    text = blank(body, EXPORT_IMPORT_OK)
+    for m in re.finditer(EXPORT_IMPORT_RE, text):
+        if not negated(text, m.start()):
+            return f"an import word ({m.group(0)!r})"
+    work = text
+    for name in CONTROL_NAMES:
+        work = work.replace(name, "control")
+    if claims(CREATE_RE, work, post=True) or claims(KEEP_RE, work):
+        return "a workspace created or kept"
+    return None
 
 
 def claims(pattern: str, text: str, post: bool = False) -> bool:
@@ -4355,6 +4394,7 @@ def frame_gate(
         "line": producer + " ; " + shows,
         "known": known,
         "export": name.startswith("SCR-025/") and kind != "availability",
+        "export_frame": name.startswith("SCR-025/"),
         "focus": FOCUS.get(name, FOCUS.get(kind)),
     }
     for clause in [producer] + free:
@@ -6252,7 +6292,13 @@ def mutations() -> list[Mutation]:
             None,
         ),
     ]
-    return m + more_mutations(share, home, closing) + fold_mutations(share) + fold2_mutations()
+    return (
+        m
+        + more_mutations(share, home, closing)
+        + fold_mutations(share)
+        + fold2_mutations()
+        + fold3_mutations()
+    )
 
 
 def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
@@ -7382,6 +7428,118 @@ def fold2_mutations() -> list[Mutation]:
             "X1-moved",
             line_add(report, "Copy report copies the capped values, as the account row does."),
             "[sec-pin]",
+            None,
+        ),
+    ]
+
+
+def fold3_mutations() -> list[Mutation]:
+    """The delta check of fold r2, one mutation per finding form: the delta's words, then another
+    place and another case. E: the import's matter on an export frame, an Import verb or lock (S5,
+    S6), a workspace created or kept (S10, S11) and focus on a control the frame never draws
+    (S20); G: an Import verb said to stand in a footer in §6's prose (MINOR 2)."""
+    ee, eu, eg = (
+        "SCR-025/export-entry",
+        "SCR-025/export-unavailable",
+        "SCR-025/export-preparing",
+    )
+    ev, ef, ed, ec = (
+        "SCR-025/export-preview",
+        "SCR-025/export-failed",
+        "SCR-025/export-done",
+        "SCR-025/export-cancelled",
+    )
+    footer = ", and an Import button stays in the footer."
+    read, rejected = "- **Export…, a read.**", "- **A rejected file.**"
+    exits, legs = "- **The exits.**", "The session's legs decide, never a role's name"
+    return [
+        (
+            "E1-verb",
+            cell_add(ee, 2, "and an Import button stays in the footer"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E1-verb-case",
+            cell_add(ed, 2, "and IMPORT ANYWAY sits beside Close"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E1-verb-producer",
+            cell_add(ef, 1, "and Continue anyway brings in the readable layouts"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E1-lock",
+            cell_add(eu, 2, "and the import verb is locked with a padlock"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E1-lock-case",
+            cell_add(ev, 2, "and IMPORT AS NEW WORKSPACE sits in the footer"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E2-create",
+            cell_add(eg, 2, "and a draft workspace is saved meanwhile"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E2-create-case",
+            cell_add(ec, 2, "and A TEMPORARY WORKSPACE is made"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E2-create-producer",
+            cell_add(ev, 1, "and a workspace already exists for it"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E2-keep",
+            cell_add(ef, 2, "and the layouts that passed stay in your workspaces"),
+            "[export-import]",
+            None,
+        ),
+        (
+            "E2-keep-case",
+            cell_add(ed, 2, "and THE VALID LAYOUTS are kept"),
+            "[export-import]",
+            None,
+        ),
+        ("E3-focus", cell_add(ed, 2, "and focus lands on Cancel"), "[export-focus]", None),
+        ("E3-focus-menu", cell_add(ee, 2, "and focus lands on Try again"), "[export-focus]", None),
+        ("E3-focus-case", cell_add(eu, 2, "AND FOCUS LANDS ON CANCEL"), "[export-focus]", None),
+        (
+            "G1-read",
+            line_sub(read, "no key (`D03:583`).", "no key (`D03:583`)" + footer),
+            "[import-verb]",
+            None,
+        ),
+        (
+            "G1-rejected",
+            line_sub(rejected, "BQ-11 RULED).", "BQ-11 RULED)" + footer),
+            "[import-verb]",
+            None,
+        ),
+        (
+            "G1-exits",
+            line_sub(exits, "included (§7).", "included (§7)" + footer),
+            "[import-verb]",
+            None,
+        ),
+        (
+            "G1-section-case",
+            line_sub(
+                legs, "holds for any target.", "holds for any target, and IMPORT ANYWAY REMAINS."
+            ),
+            "[import-verb]",
             None,
         ),
     ]
