@@ -25,6 +25,7 @@ from httpx import ASGITransport, AsyncClient
 from jsonschema import Draft202012Validator
 from prometheus_client import generate_latest
 
+from candleviewer.api import order_cancel_all
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_cancel_all import CANCEL_ALL_PATH, make_cancel_all_router
@@ -44,7 +45,8 @@ from candleviewer.oms.cancel_all import (
 from candleviewer.oms.errors import AccountScopeDenied, OmsNotReady, StoreUnavailable
 from candleviewer.oms.exits import ExitOutcome, InFlightGuard
 from candleviewer.oms.ports import RequestRecord, SubmitActor
-from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
+from candleviewer.oms.submit import STORE_TIMEOUT_S
+from candleviewer.storage.repositories.accounts import AccountScope, GrantScope, OwnerScope
 from candleviewer.storage.repositories.orders import (
     AccountsOutOfScope,
     OrderRow,
@@ -114,13 +116,22 @@ class Store:
 class Exits:
     """The exit service as cancel-all drives it: the real guard; the scope settled by the store's
     own `settle_accounts` over the accounts the principal may trade (an Owner's: every one, a
-    Manager's: `trades`); each cancel recorded and answered `cancelled` unless `outcomes` says
-    otherwise, after `hold` when one is set."""
+    Manager's: those of its scope its own rows in `grants` may trade, as the store's SQL reads
+    them); each cancel recorded and answered `cancelled` unless `outcomes` says otherwise, after
+    `hold` when one is set."""
 
     guard: InFlightGuard = field(default_factory=InFlightGuard)
     accounts: tuple[UUID, ...] = (ACCOUNT, FOREIGN)
-    trades: dict[UUID, frozenset[UUID]] = field(
-        default_factory=lambda: {MANAGER: frozenset({ACCOUNT})}
+    #: Each user's grant rows as the store holds them. Its predicate is `can_view`, `can_trade`,
+    #: not `frozen` (S4-C's SQL, pinned on Postgres by `store_reads_contract.py`'s view-only and
+    #: frozen cases). FROZEN's row here may trade, so only its own `account_scope`, which drops a
+    #: frozen grant, refuses it; VIEW_ONLY's may not, so the store refuses it.
+    grants: dict[UUID, tuple[AccountGrant, ...]] = field(
+        default_factory=lambda: {
+            MANAGER: (AccountGrant(ACCOUNT, True, True, False),),
+            VIEW_ONLY: (AccountGrant(ACCOUNT, True, False, False),),
+            FROZEN: (AccountGrant(ACCOUNT, True, True, False),),
+        }
     )
     scope_down: bool = False
     outcomes: dict[UUID, ExitOutcome] = field(default_factory=dict)
@@ -136,8 +147,10 @@ class Exits:
             raise StoreUnavailable
         if isinstance(scope, OwnerScope):
             reach = list(self.accounts)
-        else:  # the grants the principal may view, of them the ones it may trade
-            mine = self.trades.get(scope.user_id, frozenset()) & scope.account_ids
+        else:  # the grants the principal may view, of them the ones its rows may trade
+            rows = self.grants.get(scope.user_id, ())
+            trades = {g.exchange_account_id for g in rows if g.can_view and g.can_trade}
+            mine = (trades - {g.exchange_account_id for g in rows if g.frozen}) & scope.account_ids
             reach = [account for account in self.accounts if account in mine]
         try:
             return settle_accounts(reach, requested)
@@ -198,8 +211,8 @@ class _Broken:
 
 def _principals() -> Principals:
     """`test_orders_route`'s principals, and Managers who may write orders but hold no grant, a
-    view-only grant or a frozen one on ACCOUNT, each its own user, as each is its own grant row
-    to the store's scope (the security look's Low 3)."""
+    view-only grant or a frozen one on ACCOUNT, each its own user with its own rows in the store's
+    `Exits.grants` (the security look's Low 3)."""
     principals = Principals()
     trade = frozenset({Permission.ORDERS_WRITE, Permission.ORDERS_READ})
     managers = {
@@ -372,6 +385,27 @@ async def test_a_listed_account_out_of_scope_refuses_the_whole_request(
     assert (denied["actor_user_id"], denied["session_id"]) == (who_id, SESSION)
     assert world.records() == [] and authz_denied() == before + 1
     assert world.refused("account_scope_denied") == 1
+
+
+async def test_a_view_only_grant_is_refused_by_the_stores_trade_predicate() -> None:
+    """Its scope keeps the view-only grant (`account_scope` drops only a frozen one): the store's
+    `can_trade` refuses it. The same request from a row that may trade is admitted."""
+    world = World()
+    answer = await post(world, "view_only_grant", _listed(ACCOUNT))
+    assert answer.status_code == 403
+    assert world.oms.exits.scoped[0][0] == GrantScope(VIEW_ONLY, frozenset({ACCOUNT}))
+    world = World()
+    world.oms.exits.grants[VIEW_ONLY] = (AccountGrant(ACCOUNT, True, True, False),)
+    assert (await post(world, "view_only_grant", _listed(ACCOUNT))).status_code == 200
+
+
+async def test_a_frozen_grant_is_refused_by_the_principals_own_scope() -> None:
+    """The store's row here may trade: the refusal is `account_scope` dropping the frozen grant
+    before the store is asked, so the scope it reads holds no account."""
+    world = World()
+    answer = await post(world, "frozen_grant", _listed(ACCOUNT))
+    assert answer.status_code == 403
+    assert world.oms.exits.scoped == [(GrantScope(FROZEN, frozenset()), (ACCOUNT,))]
 
 
 async def test_the_scope_refusal_stands_when_its_record_cannot_be_written() -> None:
@@ -670,15 +704,16 @@ async def test_the_permission_refusal_record_names_its_request() -> None:
     await post(world, "viewer", {}, KEY, _TRACED)
     [denied] = world.audit.emitted
     assert (denied["request_id"], denied["actor_ip"]) == (TRACE, "127.0.0.1")
+    assert denied["session_id"] == SESSION
 
 
 async def test_each_cancel_carries_its_request_and_its_actor() -> None:
     world = World()
     await post(world, "owner", {}, KEY, _TRACED)
     assert [request_id for *_, request_id in world.oms.exits.cancelled] == [TRACE, TRACE]
-    assert {(actor.role, actor.ip) for _, actor, _, _ in world.oms.exits.cancelled} == {
-        ("owner", "127.0.0.1"),
-    }  # fmt: skip
+    assert {
+        (actor.role, actor.ip, actor.session_id) for _, actor, _, _ in world.oms.exits.cancelled
+    } == {("owner", "127.0.0.1", SESSION)}
 
 
 async def test_a_key_reused_for_another_body_is_409_and_sends_nothing_again() -> None:
@@ -792,3 +827,67 @@ async def test_a_code_the_registry_lacks_gets_the_oms_fixed_text() -> None:
         "message": "The account's selected orders were not all cancelled.",
         "exchange_ret_code": None, "retryable": False,
     }  # fmt: skip
+
+
+class _Bounds:
+    """`asyncio` as the route module sees it, counting the timeouts it opens."""
+
+    def __init__(self) -> None:
+        self.opened: list[float | None] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(asyncio, name)
+
+    def timeout(self, delay: float | None) -> asyncio.Timeout:
+        self.opened.append(delay)
+        return asyncio.timeout(delay)
+
+
+class _HangingAudit(Audit):
+    """An audit writer whose writes never land."""
+
+    async def write(self, record: Any) -> None:
+        await asyncio.Event().wait()
+
+
+async def test_all_of_a_refusals_records_share_one_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One `STORE_TIMEOUT_S` for every account's record, not one each (the code look's Nit 8)."""
+    bounds = _Bounds()
+    monkeypatch.setattr(order_cancel_all, "asyncio", bounds)
+    world = World()
+    answer = await post(world, "owner", {}, None)  # step 7: one record per account in scope
+    assert answer.status_code == 400 and len(world.records()) == 2
+    assert bounds.opened == [STORE_TIMEOUT_S]
+
+
+async def test_a_refusal_whose_record_hangs_is_503_once_its_bound_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The security look's Low 4: a store that never answers holds no request past the bound."""
+    monkeypatch.setattr(order_cancel_all, "STORE_TIMEOUT_S", 0.01)
+    world = World(audit=_HangingAudit())
+    async with asyncio.timeout(5):  # without a bound this fails here, never hangs the suite
+        answer = await post(world, "owner", {}, None)
+    assert (answer.status_code, answer.json()["code"]) == (503, "audit_unavailable")
+    assert (world.oms.exits.cancelled, world.oms.tasks) == ([], [])
+
+
+@pytest.mark.parametrize("fault", ["render", "keep"])
+async def test_a_fault_answering_or_keeping_the_200_is_the_paged_500(
+    fault: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The security look's Low 5: the guard covers the `200`'s rendering and its 24 h record, so a
+    defect there is the paged 500; each cancel already sent stays with B1."""
+
+    def broken(*args: Any) -> Any:
+        raise ValueError("a defect")
+
+    world = World()
+    if fault == "render":
+        monkeypatch.setattr(order_cancel_all, "_result", broken)
+    else:
+        monkeypatch.setattr(world.cache, "put", broken)
+    answer = await post(world, "owner", {})
+    assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
+    assert world.pager.pages == ["orders_cancel_all_failed"]
+    assert len(world.oms.exits.cancelled) == 2
