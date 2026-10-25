@@ -2528,18 +2528,21 @@ def size_leg(intent: SizingIntent, profile: AccountProfile,
     if matches(intent.symbol, profile.denied_symbols):
         return LegSizing.skip("symbol_denied")
 
-    # 2. Reference price
-    ref = intent.price or metrics.mid or metrics.last_price
+    # 2. Reference price (ref_source recorded): a market order's mid, else last; a marketable
+    #    limit (a buy at or above mid, a sell at or below) its expected fill, mid; any other
+    #    limit, or one with no mid, its price. The stop is measured from ref (step 3).
+    ref, ref_source = reference(intent, metrics)
     if ref is None:
         return LegSizing.fail("no_reference_price")
 
     # 3. Stop distance (needed for risk_based and always for the native SL)
     stop = resolve_stop(intent, profile, ref, metrics)      # §9.3.1
     stop_dist = abs(ref - stop)
-    if stop_dist <= 0:
+    if stop <= 0 or stop_dist <= 0:
         return LegSizing.fail("invalid_stop_distance")
 
     # 4. Raw quantity
+    # a figure the mode reads that is unknown (None) fails closed: LegSizing.fail("figure_unknown")
     match profile.sizing_mode:
         case "fixed_qty":       qty = profile.fixed_qty
         case "fixed_notional":  qty = profile.fixed_notional / ref
@@ -2548,7 +2551,6 @@ def size_leg(intent: SizingIntent, profile: AccountProfile,
             risk_amt = (profile.risk_fixed_amount
                         if profile.risk_fixed_amount is not None
                         else wallet.equity * profile.risk_pct_equity)
-    # a figure the mode reads that is unknown (None) fails closed: LegSizing.fail("figure_unknown")
             qty = risk_amt / stop_dist                      # fees added in step 5
 
     # 5. Fee-aware risk correction (risk_based only): the real loss at the stop
@@ -2578,7 +2580,7 @@ def size_leg(intent: SizingIntent, profile: AccountProfile,
 
 **9.3.1 Stop resolution.** `ticks` → `ref ± value*tick_size`; `percent` → `ref * (1 ∓ value)`; `atr` → `ref ∓ atr(period)*multiple`; `r_multiple` is invalid for the stop itself (it _defines_ R) and raises a validation error at profile save time. Sign follows side (long: stop below). The resolved stop is rounded conservatively (further from entry, never closer) so the actual risk never exceeds the budget. If ATR is unavailable (warmup), the resolver falls back to `fallback_sl_offset_pct` and flags `stop_fallback=True` on the leg.
 
-**9.3.2 Clamp order** (deterministic, each recorded): `max_leverage_cap` → `max_position_pct_equity` → `max_position_notional` → remaining headroom under `max_daily_loss` → `inst.max_order_qty`/`max_mkt_order_qty`. `max_leverage_cap` bounds the leg's quantity: `qty ≤ max_leverage_cap × equity / ref`. Available margin × 0.98 is no clamp: it is step 8's failure `insufficient_margin` (ruled on #907, 2026-10-24). Applying clamps in a fixed order makes the resulting size explainable: the UI shows "reduced from 1.2 to 0.8 by max_position_notional".
+**9.3.2 Clamp order** (deterministic, each recorded): `max_leverage_cap` → `max_position_pct_equity` → `max_position_notional` → remaining headroom under `max_daily_loss` → `inst.max_order_qty`/`max_mkt_order_qty`. `max_leverage_cap` bounds the leg's quantity: `qty ≤ max_leverage_cap × equity / ref` (PR2; BQ-10 confirmed on #907, 2026-10-25). Available margin × 0.98 is no clamp: it is step 8's failure `insufficient_margin` (ruled on #907, 2026-10-24). Applying clamps in a fixed order makes the resulting size explainable: the UI shows "reduced from 1.2 to 0.8 by max_position_notional".
 
 **9.3.2a Overrides: the resulting-leg comparator** (ADR-0040 (proposed, #4461) Decision 1; #2635, E28 threat model F-01). A trade-group leg's request values (`defaults`, then `legs[].overrides`, an alternate `overrides.profile_id` included) are later-narrows: the bound profile (the account's default) is the ceiling. The effective caps are the bound profile's, tightened by an alternate's stricter values, and the comparator judges the resulting leg after the steps above and the clamps of §9.3.2 run again: its quantity, notional, leverage, margin and risk at the stop may not exceed the bound profile's caps and risk budget, and its stop may not lie further from entry than the bound profile's own resolved stop for that leg (ADR-0040 (proposed, #4461) Decision 1, rule 4). The ADR proposes the risk ceiling as the net daily-loss headroom (the effective `max_daily_loss` headroom minus the account's committed risk, capped by the per-trade budget for a `risk_based` profile, zero when the committed risk cannot be established); that netting awaits the owner's sign-off (#2701). A request value that breaks the comparator is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg, never clamped (C-12.5, D6); only the profile's own sizing, with no request value, is clamped and explained here (`sizing_explanation`). `22-api-openapi.yaml` `createTradeGroup` is the contract.
 
@@ -2591,7 +2593,7 @@ def size_leg(intent: SizingIntent, profile: AccountProfile,
 | `skip` | `profile_disabled`, `symbol_not_allowed`, `symbol_denied`, `below_min_notional`                                                |
 | `fail` | `no_reference_price`, `invalid_stop_distance`, `insufficient_margin`, `cap_breached`, `figure_unknown`, `leverage_unavailable` |
 
-`below_min_notional` covers the minimum quantity, the instrument's minimum notional and `min_leg_notional`; the leg names which (`minimum`). `cap_breached` is a clamp that bound and left the floored quantity below a minimum; `leverage_unavailable` is a `profile.leverage` above `inst.max_leverage`. The inputs are M13's own, as M13 imports no `exchange.base`, `rules` or `oms`: `SizingIntent` (symbol, side, `order_type` `market` or `limit`, `price`), `SizingMarket` (`mid`, `last_price`, `atr`) with `AtrReading` (`period`, `value`, `None` in warm-up; a reading of another period than `sl_atr_period` falls back too), and the comparator's `AccountFigures` as `wallet` (§9.3.2a), so the sizer and the comparator read one set of figures. `atr` stops use `sl_atr_multiple`. Every quotient is taken at 100 digits rounding down, so no quotient rounds up onto a lot step. A leg reports `risk_usdt` (1R, `stop_distance × qty`, no fees) and `risk_with_fees_usdt` (step 5's).
+`below_min_notional` covers the minimum quantity, the instrument's minimum notional and `min_leg_notional`; the leg names which (`minimum`). `cap_breached` is the failure "a clamp pushed the quantity below the minimum", and the explanation names the cap and the minimum (PR2; BQ-6 ruled on #907, 2026-10-25); `leverage_unavailable` is a `profile.leverage` above `inst.max_leverage`. The inputs are M13's own, as M13 imports no `exchange.base`, `rules` or `oms`: `SizingIntent` (symbol, side, `order_type` `market` or `limit`, `price`), `SizingMarket` (`mid`, `last_price`, `atr`) with a self-describing `AtrReading` (`timeframe`, the caller's bar timeframe as a string; `period`; `value`, `None` in warm-up; `as_of`, tz-aware, which PR2's explanation records; a missing reading, a warm-up or a reading of another period than `sl_atr_period` falls back and flags `stop_fallback`), and the comparator's `AccountFigures` as `wallet` (§9.3.2a), so the sizer and the comparator read one set of figures. `atr` stops use `sl_atr_multiple`. Every quotient is taken at 100 digits rounding down, so no quotient rounds up onto a lot step. A leg reports `risk_usdt` (1R, `stop_distance × qty`, no fees) and `risk_with_fees_usdt` (step 5's). `SizingIntent` refuses a `limit` with no `price` and a `market` with one, so a client price never sizes a market order (threat O3, SR-052). Step 2 records `ref_source` (`limit`, `marketable_limit_mid`, `mid` or `last`) and the intent's `limit_price`: a marketable limit sizes and measures its stop at mid, a limit with no mid at its price, and PR2 judges every notional, leverage and margin cap at the larger of the limit's and mid's notionals (the coordinator's ruling on #907, 2026-10-25). every `Price` is at most 38 digits with 18 places, the profile's `numeric(38,18)`. Step 3 fails `invalid_stop_distance` on a stop at or below 0 or a zero distance. An equity at or below 0 sizes a quantity of 0 (never negative), a grey `below_min_notional` naming `min_order_qty`, not a failure.
 
 ### 9.4 Fan-out algorithm
 
@@ -5956,4 +5958,5 @@ This number follows `main`'s last entry, §19.32; an entry that lands first take
 
 ### 19.36 2026-10-25 — §9.3: the sizer's inputs, fee pricing, outcomes and the margin step (E28-T03, #907)
 
-- §9.3 step 5 prices the exit fee at the further of `ref` and the stop, as the comparator does (ADR-0040 OPEN-4); the fee rate is `AccountFigures.taker_fee_rate`. §9.3.2 drops available margin × 0.98 from the clamps (step 8's failure `insufficient_margin`) and states the `max_leverage_cap` bound. §9.3.4 (new) names the module, the M13 input types and the closed skip and fail reasons. No REST, WS, table or column changes.
+- §9.3 step 5 prices the exit fee at the further of `ref` and the stop, as the comparator does (ADR-0040 OPEN-4); the fee rate is `AccountFigures.taker_fee_rate`. §9.3.2 drops available margin × 0.98 from the clamps (step 8's failure `insufficient_margin`) and states the `max_leverage_cap` bound. §9.3.4 (new) names the module, the M13 input types and the closed skip and fail reasons. Step 2 sizes a marketable limit at mid and records `ref_source`. No REST, WS, table or column changes.
+- Deviation: step 5's pseudo-code fee (`ref * taker * 2`) is replaced by the comparator's pricing in `override_comparator` (ADR-0040 OPEN-4), the exit fee at the further of `ref` and the stop (BQ-5).
