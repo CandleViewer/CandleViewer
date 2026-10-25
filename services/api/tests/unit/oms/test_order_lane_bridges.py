@@ -8,6 +8,7 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable, Sequence
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
+from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.models import AccountRef, Position
 from candleviewer.exchange.base.ports import TradingPort
@@ -33,6 +35,7 @@ from candleviewer.oms_wiring import (
     ServedSink,
     ServedStandings,
 )
+from candleviewer.statechart.plugins.audit import CvAuditPlugin
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.test_oms_runtime import Port
 from tests.unit.oms.test_order_lane import BOUND_S, running
@@ -40,6 +43,13 @@ from tests.unit.oms.test_order_lane import BOUND_S, running
 OTHER = UUID(int=2)
 #: What the serving loop's side of each bridge was called for, and on which thread.
 Calls = list[tuple[str, threading.Thread]]
+#: The sink bridge's page for an append the serving loop did not begin: its class alone.
+DROPPED = {
+    "event": "oms_sink_append_dropped",
+    "cv_page": True,
+    "error": "TimeoutError",
+    "log_level": "critical",
+}
 
 
 class Spy:
@@ -93,6 +103,80 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
             await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
     unanswered = [e["account_id"] for e in logs if e["event"] == "oms_gate_unanswered"]
     assert unanswered == [str(cr.ACCOUNT)] and calls == []
+
+
+async def test_an_unbegun_append_pages_once_in_its_window_and_still_reaches_the_plugin() -> None:
+    """SEC-S3L1CE-01 (24 Sec.17.6, M19): a write-ahead row the stalled serving loop does not begin
+    within 1 s never runs, a hole no chain check sees. The bridge pages it, by its class alone and
+    once in its window, and still raises it to the audit plugin, which counts each; the plugin's
+    hook contains it, so the machine's step runs on, as it will until L2."""
+    calls, done, serving = Calls(), threading.Event(), _serving()
+    spy: Any = Spy(calls)
+    plugin = CvAuditPlugin(
+        machine_kind="order",
+        entity_id=str(OTHER),
+        env="demo",
+        sink=ServedSink(spy, serving, monotonic=lambda: 0.0),  # both appends in one window
+        write_ahead=True,
+    )
+
+    async def steps() -> None:
+        try:
+            for _ in range(2):  # two steps, each with its write-ahead row
+                plugin.on_event_received(None, SimpleNamespace(type="SUBMIT", data={"qty": "1"}))
+                plugin.on_action_execute(None, "send_create")  # contained: never raises
+        finally:
+            done.set()
+
+    with capture_logs() as logs:
+        async with running() as lane:
+            answered = lane.call(steps())
+            assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
+            await answered
+            await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
+    assert [e for e in logs if e.get("cv_page")] == [DROPPED]
+    failed = [e["error"] for e in logs if e["event"] == "statechart_audit_sink_failed"]
+    assert failed == ["TimeoutError"] * 2
+    assert (plugin.sink_failures, plugin.hook_errors, calls) == (2, 2, [])
+
+
+def test_the_drop_pages_each_windows_first_and_a_begun_refusal_is_the_sinks_to_page() -> None:
+    """SEC-S3L1CE-01: the bridge pages the first unbegun append of each window, M19's own
+    (`APPEND_FAILURE_COOLDOWN_S`, in which the sink pages its own failed appends), on the injected
+    clock. A refusal the serving loop's sink answered is raised as it is and paged by the sink
+    (`audit/machine_events.py`), never here."""
+
+    class Hop:
+        """The serving loop's blocking hop, begun or not as the test sets it, never waiting."""
+
+        begun = False
+
+        def block(self, fn: Callable[[], None]) -> None:
+            if not self.begun:
+                raise TimeoutError
+            fn()
+
+    class Refusing:
+        def append(self, row: Any) -> None:
+            raise ValueError("the sink refused the row")
+
+    now, hop = [0.0], Hop()
+    served: Any = hop
+    row: Any = SimpleNamespace()  # never read: the refusing sink raises at once
+    sink = ServedSink(Refusing(), served, monotonic=lambda: now[0])
+    window = APPEND_FAILURE_COOLDOWN_S
+    with capture_logs() as logs:
+        for at, begun, error in (
+            (0.0, False, TimeoutError),
+            (window - 0.001, False, TimeoutError),
+            (window - 0.001, True, ValueError),
+            (window, False, TimeoutError),
+        ):
+            now[0], hop.begun = at, begun
+            with pytest.raises(error):
+                sink.append(row)
+    assert [e for e in logs if e.get("cv_page")] == [DROPPED, DROPPED]
+    assert oms_wiring.SINK_PAGE_COOLDOWN_S == window
 
 
 async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from_the_lane() -> None:
