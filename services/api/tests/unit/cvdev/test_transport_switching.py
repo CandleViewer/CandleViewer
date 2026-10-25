@@ -8,6 +8,7 @@ nothing sleeps.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import string
@@ -25,7 +26,14 @@ from structlog.testing import capture_logs
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment
-from cvdev.account_fixture.control import CLOCK_FILE, KEYS_DIR, FixtureClock, KeyStates
+from cvdev.account_fixture import guards, wiring
+from cvdev.account_fixture.control import (
+    CLOCK_FILE,
+    KEYS_DIR,
+    FixtureClock,
+    KeyStateError,
+    KeyStates,
+)
 from cvdev.account_fixture.guards import FUND_PATH_PREFIX
 from cvdev.account_fixture.pack import OVERLAY
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
@@ -331,6 +339,7 @@ _STATE: Final = {"scenario": STORED, "overlays": [], "started": NOW.isoformat()}
         json.dumps(_STATE | {"scenario": ["compliant"]}).encode(),
         json.dumps(_STATE | {"overlays": ["compliant"]}).encode(),
         json.dumps(_STATE | {"overlays": [["x"]]}).encode(),
+        json.dumps(_STATE | {"overlays": {"working_orders_2": 1}}).encode(),
         json.dumps(_STATE | {"started": "2026-10-16T09:00:00"}).encode(),
         json.dumps(_STATE | {"extra": 1}).encode(),
         json.dumps(_STATE | {"overlays": ["working_orders_2"] * 1000}).encode(),
@@ -345,6 +354,7 @@ _STATE: Final = {"scenario": STORED, "overlays": [], "started": NOW.isoformat()}
         "type",
         "not-an-overlay",
         "overlay-type",
+        "overlay-dict",
         "naive",
         "extra",
         "too-big",
@@ -377,3 +387,174 @@ def test_a_symlinked_keys_directory_is_refused(stack: Stack, tmp_path: Path) -> 
     (tmp_path / "other" / KEYS_DIR).symlink_to(tmp_path)
     with pytest.raises(ValueError, match="symlink"):
         KeyStates(tmp_path / "other", PACK, log=stack.log, clock=stack.clock)
+
+
+_REFUSED: Final = "the account fixture transport refused the request: "
+
+
+@pytest.fixture
+def clocked(tmp_path: Path) -> Iterator[FixtureTransport]:
+    """A stack on the fixture clock, whose file a test then breaks."""
+    clock = FixtureClock(tmp_path, now=Real())
+    with RequestLog(
+        tmp_path, process_env=Environment.DEMO, clock=clock, pack_key_ids=KEY_IDS
+    ) as log:
+        keys = KeyStates(tmp_path, PACK, log=log, clock=clock)
+        yield _transport(log, clock, keys, threading.Event())
+
+
+@pytest.mark.parametrize("broken", ["malformed", "fifo", "symlink"])
+async def test_a_clock_file_off_its_rule_refuses_by_a_fixed_code(
+    clocked: FixtureTransport, tmp_path: Path, broken: str
+) -> None:
+    """Read for the answer (`clock_invalid`) or only for the log line (`request_log_failed`); a
+    refusal stands. No message or event names the path."""
+    path = tmp_path / CLOCK_FILE
+    if broken == "fifo":
+        os.mkfifo(path)
+    elif broken == "symlink":
+        (tmp_path / "elsewhere").write_text("1")
+        path.symlink_to(tmp_path / "elsewhere")
+    else:
+        path.write_text("soon")
+    cases = [
+        (_get(STORED), "clock_invalid"),
+        (_get(STORED, signed_as="compliant_alt"), "request_log_failed"),
+        (_get(STORED, origin="https://api.bybit.com"), "refused_host"),
+    ]
+    with capture_logs() as events:
+        for request, code in cases:
+            with pytest.raises(httpx.ConnectError) as refused:
+                await clocked.handle_async_request(request)
+            assert (str(refused.value), refused.value.__cause__) == (_REFUSED + code, None)
+    assert [e["event"].removeprefix("exchange.account_fixture_") for e in events] == [
+        "clock_invalid",
+        "signature_mismatch",
+        "log_failed",
+        "refused",
+        "log_failed",
+    ]
+    assert str(tmp_path) not in repr(events)
+    assert not (tmp_path / FILE_NAME).read_text()
+
+
+@pytest.mark.parametrize("change", ["symlink", "removed"])
+async def test_a_keys_directory_changed_after_boot_is_refused_never_followed(
+    stack: Stack, change: str
+) -> None:
+    keys, elsewhere = stack.directory / KEYS_DIR, stack.directory / "elsewhere"
+    elsewhere.mkdir()
+    if change == "symlink":
+        keys.rename(stack.directory / "held")
+        keys.symlink_to(elsewhere)
+    else:
+        keys.rmdir()
+    with capture_logs() as events, pytest.raises(httpx.ConnectError) as refused:
+        await stack.transport.handle_async_request(_get(STORED))
+    assert str(refused.value) == _REFUSED + "key_state_invalid"
+    with pytest.raises(KeyStateError, match="held since boot"):
+        stack.keys.switch(_key(STORED), "ws_blip_20s")
+    assert [e["event"] for e in events] == ["exchange.account_fixture_key_state_invalid"]
+    assert os.listdir(elsewhere) == [] and not (stack.directory / FILE_NAME).read_text()
+
+
+async def test_a_key_file_that_cannot_be_linked_is_refused_by_a_fixed_code(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = stack.directory / KEYS_DIR
+
+    def denied(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied", str(keys / _key(STORED)))
+
+    monkeypatch.setattr(os, "link", denied)
+    with capture_logs() as events, pytest.raises(httpx.ConnectError) as refused:
+        await stack.transport.handle_async_request(_get(STORED))
+    assert (str(refused.value), refused.value.__cause__) == (_REFUSED + "key_state_invalid", None)
+    assert [e["event"] for e in events] == ["exchange.account_fixture_key_state_invalid"]
+    assert str(keys) not in repr(events) and os.listdir(keys) == []
+
+
+def test_a_write_that_fails_leaves_nothing_staged(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A rename onto a directory, for a switch and for the clock, and a write that fails."""
+    keys, name = stack.directory / KEYS_DIR, f"{_key(STORED)}.json"
+    (keys / name).mkdir()
+    with pytest.raises(IsADirectoryError):
+        stack.keys.switch(_key(STORED), "ws_blip_20s")
+    (stack.directory / CLOCK_FILE).mkdir()
+    with pytest.raises(IsADirectoryError):
+        FixtureClock(stack.directory, now=Real()).set(NOW)
+    (keys / name).rmdir()
+
+    def full(_fd: int, _data: object) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(os, "write", full)
+    with pytest.raises(OSError, match="No space"):
+        stack.keys.switch(_key(STORED), "ws_blip_20s")
+    monkeypatch.undo()
+    assert os.listdir(keys) == []
+    assert sorted(os.listdir(stack.directory)) == [CLOCK_FILE, KEYS_DIR, FILE_NAME]
+
+
+def test_an_anchor_gives_up_on_a_key_file_that_keeps_changing(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each link meets a file the next read misses: three attempts, then a refusal."""
+    path, reads = stack.directory / KEYS_DIR / f"{_key(STORED)}.json", []
+    path.write_text(json.dumps(_STATE))
+
+    def renamed_away(key_id: str) -> None:
+        reads.append(key_id)
+
+    monkeypatch.setattr(stack.keys, "read", renamed_away)
+    with pytest.raises(KeyStateError, match="kept changing"):
+        stack.keys.anchor(_key(STORED), NOW)
+    assert len(reads) == 3 and os.listdir(path.parent) == [path.name]
+
+
+@pytest.fixture
+def process_latch() -> Iterator[threading.Event]:
+    """The default latch, `guards.LATCH`, for the one test of it; every other test injects its
+    own. Cleared after, so no tripped latch reaches another test (a stack clears it by restart)."""
+    assert not guards.LATCH.is_set()
+    yield guards.LATCH
+    guards.LATCH.clear()
+
+
+async def test_a_transport_built_without_a_latch_shares_the_process_latch(
+    stack: Stack, process_latch: threading.Event
+) -> None:
+    """One built after a trip refuses too; an injected latch stays its own."""
+
+    def default() -> FixtureTransport:
+        gate = ReadOnlyGate()  # each its own: only the latch refuses
+        return FixtureTransport(
+            PACK, log=stack.log, gate=gate, clock=stack.clock, default=STORED, keys=stack.keys
+        )
+
+    first = default()
+    assert wiring.LATCH is process_latch
+    with pytest.raises(httpx.ConnectError, match="refused_key"):
+        await first.handle_async_request(_get(key=NON_FIXTURE_KEY))
+    assert process_latch.is_set() and not stack.latch.is_set()
+    for transport in (first, default()):
+        with pytest.raises(httpx.ConnectError, match="refused_key"):
+            await transport.handle_async_request(_get(STORED))
+    assert not stack.transport.latched
+
+
+async def test_a_request_reads_the_clock_off_the_event_loop(stack: Stack) -> None:
+    """With the key's file, in one thread (`_at`): the clock is a file read on a stack."""
+    loop, seen = threading.get_ident(), []
+
+    def clock() -> datetime:
+        seen.append(threading.get_ident())
+        return NOW
+
+    transport = _transport(stack.log, clock, stack.keys, stack.latch)
+    seen.clear()  # the constructor's boot read
+    for _ in range(2):
+        assert (await transport.handle_async_request(_get(STORED))).status_code == 200
+    assert len(seen) == 2 and loop not in seen

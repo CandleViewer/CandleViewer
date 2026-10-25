@@ -11,9 +11,9 @@
 - A signed request whose key is not a pack key id latches the transport, whichever guard refuses
   it first, and the injected read-only gate with `account_fixture_guard` unless the gate holds a
   latch already, which is kept. The latch is process-wide: every transport (and S12's socket) is
-  built with the process's one guard latch, `wiring.LATCH` (S7 lens MINOR-1), so once one trips,
-  or the gate holds this latch, every transport refuses every request, even one already being
-  read or served. Recovery: revoke the key, then restart (FX-D01).
+  built with the process's one guard latch, `guards.LATCH` (`wiring.LATCH`), by default, so once
+  one trips, or the gate holds this latch, every transport refuses every request, even one
+  already being read or served. Recovery: revoke the key, then restart (FX-D01).
 - A signature mismatch, or a body past `MAX_BODY_BYTES` that is never read whole, answers the
   pack's `_base/error_10004.json`.
 - An unsigned request off the public market allow-list (`guards.is_public_path`) is refused as
@@ -22,17 +22,20 @@
   (`control.KeyStates`): the scenario the key is stored under, from its first signed call, until
   a switch names another, with overlays seeded, from the switch. An unsigned call answers as the
   stack default (`CV_ACCOUNT_FIXTURE`), from boot. A key file off the rules refuses the call as
-  `key_state_invalid`, never answered. The reply follows the pack's lookup rule at the scenario's
-  time and on the injected clock. A call nothing answers gets HTTP 404 with no exchange return
-  code, which the client raises as `UnknownStateError`: not success, not retried, never a verdict
-  on the key. So does a call signed over a body that is not a JSON object, which no `when` can read.
+  `key_state_invalid`, never answered, as is any call while the clock's file is off its rule
+  (`clock_invalid`); neither message names a path or a key. The reply follows the pack's lookup
+  rule at the scenario's time and on the injected clock. A call nothing answers gets HTTP 404 with
+  no exchange return code, which the client raises as `UnknownStateError`: not success, not
+  retried, never a verdict on the key. So does a call signed over a body that is not a JSON
+  object, which no `when` can read.
 
 Each answer and refusal is one line of S6's `RequestLog`, which keeps its own rules (no signature,
 no secret, no character of a non-fixture key), and each refusal or mismatch one structlog event
 whose level is its severity: critical for the P0 refusals (test plan section 0.1), error for a
 refusal without one, warning for a mismatch. A line the log cannot write never lets a refusal
-through, and withholds an answer. Built at boot, as the constructor reads the whole pack; a request
-reads no pack file but a switch's first, and its key's file, both off the event loop. Nothing here
+through, and withholds an answer: a clock that cannot be read fails the line so. Built at boot, as
+the constructor reads the whole pack; a request reads the fixture clock, its key's file and a
+switch's pack files, all in one thread off the event loop (`_at`). Nothing here
 imports `candleviewer.secrets` or `candleviewer.audit`.
 """
 
@@ -144,7 +147,8 @@ class FixtureTransport(httpx.AsyncBaseTransport):
 
     `clock` is the stub's: tz-aware, and the fixture clock (`control.FixtureClock`) on a stack.
     `default` is `CV_ACCOUNT_FIXTURE`, a key scenario of `pack`. `keys` holds each key's scenario
-    on that clock; `latch` is the process's one guard latch (`wiring.LATCH`)."""
+    on that clock; `latch` is the process's one guard latch (`guards.LATCH`), which only a test
+    replaces."""
 
     def __init__(
         self,
@@ -155,7 +159,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         clock: Callable[[], datetime],
         default: str,
         keys: KeyStates,
-        latch: threading.Event,
+        latch: threading.Event = guards.LATCH,
     ) -> None:
         self._pack, self._log, self._gate, self._clock = pack, log, gate, clock
         self._keys, self._latch = keys, latch
@@ -209,14 +213,12 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         body: a stub's status, its headers and its body, anchored on the clock. A call nothing
         answers is unstubbed."""
         call = f"{request.method} {request.url.path}"
-        now = self._clock()
         try:
-            scenario, started = await self._selection(seen.key_id, now)
-        except KeyStateError:
-            logger().error(
-                "exchange.account_fixture_key_state_invalid", **self._fields(request, seen)
-            )
-            raise httpx.ConnectError(_message("key_state_invalid"), request=request) from None
+            now, scenario, started = await asyncio.to_thread(self._at, seen.key_id)
+        except _ClockInvalid:
+            self._invalid(request, seen, "clock_invalid")
+        except (KeyStateError, OSError):  # a key file, or `keys/`, that cannot be read or written
+            self._invalid(request, seen, "key_state_invalid")
         sent: dict[str, object] | None = None
         at_ms = max(0, (now - started) // _MS)  # before its start, a scenario answers as at it
         overlays = tuple(str(overlay["scenario"]) for overlay in scenario.overlays)
@@ -237,12 +239,21 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         unconfirmed, order = reply.code_unconfirmed, _order(call, sent)
         return Answer(response, "served", scenario.name, ret_code, unconfirmed, overlays, order)
 
-    async def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
+    def _at(self, key_id: str | None) -> tuple[datetime, Scenario, datetime]:
+        """The fixture clock, then `_selection` at it. Both read files: off the event loop."""
+        try:
+            now = self._clock()
+        except (ValueError, OSError) as exc:
+            raise _ClockInvalid from exc
+        scenario, started = self._selection(key_id, now)
+        return now, scenario, started
+
+    def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
         """The scenario a call answers as, and its start (ADR-0036 decisions 5 to 7): for a signed
         call its key file's (`_keyed`); for an unsigned call the stack default, from boot."""
         if key_id is None:
             return self._scenarios[self._default], self._booted
-        return await asyncio.to_thread(self._keyed, key_id, now)
+        return self._keyed(key_id, now)
 
     def _keyed(self, key_id: str, now: datetime) -> tuple[Scenario, datetime]:
         """The key's file, anchored at `now` on its first call: its scenario with its overlays,
@@ -250,6 +261,8 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         state = self._keys.anchor(key_id, now)
         uid = self._scenarios[guards.stored_under(key_id)].account_uid
         named = (state.scenario, uid, state.overlays)
+        # Unlocked across threads: two first calls may both load, which is benign, as a load is
+        # idempotent and the dict assignment atomic; the later one's equal scenario stands.
         if named not in self._loaded:
             self._loaded[named] = load(
                 self._pack, state.scenario, now=self._booted, account_uid=uid, overlays=named[2]
@@ -262,6 +275,12 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         )
         response = httpx.Response(200, content=self._error_reply, headers=_JSON)
         return Answer(response, "signature_mismatch", ret_code=SIGNATURE_ERROR)
+
+    def _invalid(self, request: httpx.Request, seen: Admission, code: str) -> NoReturn:
+        """Never answered: the state the call answers from is off its rule. Logged by a fixed
+        code, raised with no cause, so neither names a path or a key."""
+        logger().error(f"exchange.account_fixture_{code}", **self._fields(request, seen))
+        raise httpx.ConnectError(_message(code), request=request) from None
 
     def _trip(self) -> None:
         """Latch every transport in the process, then the gate unless it holds a latch already,
@@ -316,12 +335,16 @@ class FixtureTransport(httpx.AsyncBaseTransport):
                     self._log.write(**(line | dict.fromkeys(nulled)))
                     return True
             self._log.write(**(line | dict.fromkeys(("order", "method", "path"))))
-        except (RequestLogFieldError, RequestLogFileError, OSError) as exc:
+        except (ValueError, RequestLogFileError, OSError) as exc:  # a clock's file off its rule too
             logger().error(
                 "exchange.account_fixture_log_failed", outcome=outcome, error=type(exc).__name__
             )
             return False
         return True
+
+
+class _ClockInvalid(Exception):
+    """The fixture clock could not be read: its file is off its rule."""
 
 
 async def _body(request: httpx.Request) -> bytes | None:

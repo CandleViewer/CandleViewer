@@ -112,8 +112,8 @@ class _Seeded(FixtureTransport):
 
     overlays: tuple[str, ...] = ()
 
-    async def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
-        scenario, started = await super()._selection(key_id, now)
+    def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
+        scenario, started = super()._selection(key_id, now)
         return load(scenario.name, now=started, overlays=self.overlays), started
 
 
@@ -353,8 +353,8 @@ class _Fenced(FixtureTransport):
     """A GET stub with `when`, which the pack checks refuse: guard 4 signs a GET's query, never
     its body, so a body may never steer the answer."""
 
-    async def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
-        scenario, started = await super()._selection(key_id, now)
+    def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
+        scenario, started = super()._selection(key_id, now)
         stub = {"payload": "_base/error_10004.json", "when": {"body": {"reduceOnly": True}}}
         return (
             replace(scenario, chain=({"rest": {"GET /v5/position/list": stub}}, *scenario.chain)),

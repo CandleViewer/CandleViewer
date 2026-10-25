@@ -19,16 +19,22 @@ other than the stack's may set, so they live beside the request log:
 tests, and on a stack through the command line S14 adds, which calls them. A harness may instead
 write a file the same way, to a temporary file and then renamed into place, as #2086's harness
 does; the transport checks each key file it reads and refuses a request whose file breaks the
-rules. The reads and writes block, so the transport makes them off the event loop. Nothing here
-imports `candleviewer.secrets` or `candleviewer.audit`.
+rules. The reads and writes block, so the transport makes them off the event loop.
+
+`KeyStates` holds `keys/` open from boot and reads, links and renames only relative to that
+descriptor, each access first checking that the path still names it: `keys/` replaced after boot,
+by a symlink or anything else, or removed, refuses every key (`KeyStateError`), never followed.
+Each write stages a new 0600 file (`O_EXCL`) and removes it on any failure. Nothing here imports
+`candleviewer.secrets` or `candleviewer.audit`.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import stat
-import tempfile
+import weakref
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -46,9 +52,14 @@ KEYS_DIR: Final = "keys"
 _MAX_OFFSET_S: Final = 10**9
 _MAX_KEY_FILE_BYTES: Final = 4096
 _FILE_RULE: Final = "a key file is a regular file of at most 4 KiB: scenario, overlays, started"
+_DIR_RULE: Final = "the key files' directory must be the one held since boot, not a symlink"
+#: How often a first call's anchor retries a key file that a rename removed meanwhile.
+_ANCHOR_ATTEMPTS: Final = 3
 _US: Final = timedelta(microseconds=1)
 #: A FIFO never blocks the open; a symlink as the last component fails it (as #2728's clock read).
 _OPEN_FLAGS: Final = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+_DIR_FLAGS: Final = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
+_STAGE_FLAGS: Final = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC
 
 
 class KeyStateError(ValueError):
@@ -59,12 +70,32 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
-def _staged(directory: Path, text: str) -> str:
-    """A new file holding `text` in `directory`, mode 0600, to rename or link into place."""
-    fd, staged = tempfile.mkstemp(dir=directory, prefix=".staged-")
-    with os.fdopen(fd, "w", encoding="ascii") as file:
-        file.write(text)
-    return staged
+def _staged(dir_fd: int, text: str) -> str:
+    """The name of a new file holding `text` in the directory `dir_fd`, mode 0600, to rename or
+    link into place; removed again if it cannot be written whole."""
+    name = f".staged-{os.urandom(8).hex()}"
+    fd = os.open(name, _STAGE_FLAGS, 0o600, dir_fd=dir_fd)
+    try:
+        view = memoryview(text.encode("ascii"))
+        while view:
+            view = view[os.write(fd, view) :]
+    except BaseException:
+        os.unlink(name, dir_fd=dir_fd)
+        raise
+    finally:
+        os.close(fd)
+    return name
+
+
+def _replace(dir_fd: int, name: str, text: str) -> None:
+    """`name` in the directory `dir_fd` now holds `text`, renamed into place; nothing staged is
+    left if the rename fails."""
+    staged = _staged(dir_fd, text)
+    try:
+        os.replace(staged, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+    except BaseException:
+        os.unlink(staged, dir_fd=dir_fd)
+        raise
 
 
 class FixtureClock:
@@ -88,7 +119,11 @@ class FixtureClock:
         if seconds >= _MAX_OFFSET_S:
             raise ValueError("the fixture clock's offset must stay under 10**9 seconds")
         text = f"{'-' if micros < 0 else ''}{seconds}.{fraction:06d}"
-        os.replace(_staged(self._path.parent, text), self._path)
+        dir_fd = os.open(self._path.parent, _DIR_FLAGS)
+        try:
+            _replace(dir_fd, CLOCK_FILE, text)
+        finally:
+            os.close(dir_fd)
 
     def advance(self, delta: timedelta) -> None:
         self.set(self() + delta)
@@ -116,9 +151,15 @@ class KeyStates:
         clock: Callable[[], datetime],
     ) -> None:
         self._dir, self._log, self._clock = Path(directory) / KEYS_DIR, log, clock
-        if self._dir.is_symlink():
-            raise KeyStateError("the key files' directory must not be a symlink")
-        self._dir.mkdir(mode=0o700, exist_ok=True)
+        with contextlib.suppress(FileExistsError):
+            self._dir.mkdir(mode=0o700)
+        try:
+            self._dir_fd = os.open(self._dir, _DIR_FLAGS)
+        except OSError as exc:
+            raise KeyStateError(_DIR_RULE) from exc
+        weakref.finalize(self, os.close, self._dir_fd)
+        held = os.fstat(self._dir_fd)
+        self._held = (held.st_dev, held.st_ino)
         self._key_ids = fixture_key_ids(pack)
         self._targets = frozenset(stored_under(key) for key in self._key_ids)
         manifests = {name: manifest(pack, name) for name in scenario_names(pack)}
@@ -129,7 +170,7 @@ class KeyStates:
         """The key's state, None before its first call; `KeyStateError` for a file off the rules
         (not a regular file, a symlink, over 4 KiB, or not exactly the three fields)."""
         try:
-            fd = os.open(self._file(key_id), _OPEN_FLAGS)
+            fd = os.open(self._name(key_id), _OPEN_FLAGS, dir_fd=self._dir_fd)
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -143,8 +184,10 @@ class KeyStates:
             raise KeyStateError(_FILE_RULE)
         try:
             body = json.loads(raw)
-            started = datetime.fromisoformat(body.pop("started"))
-            state = KeyState(body.pop("scenario"), tuple(body.pop("overlays")), started)
+            started, overlays = datetime.fromisoformat(body.pop("started")), body.pop("overlays")
+            if not isinstance(overlays, list):  # a dict or a string would read as its names
+                raise KeyStateError(_FILE_RULE)
+            state = KeyState(body.pop("scenario"), tuple(overlays), started)
         except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as exc:
             raise KeyStateError(_FILE_RULE) from exc
         if body:
@@ -153,18 +196,22 @@ class KeyStates:
 
     def anchor(self, key_id: str, now: datetime) -> KeyState:
         """The key's state, written at its first signed call as the scenario it is stored under,
-        started `now`. Never over a file already there: a switch made meanwhile stands."""
-        if (state := self.read(key_id)) is not None:
+        started `now`. Never over a file already there: a switch made meanwhile stands. A file
+        that appears and is renamed away again on every attempt refuses the call."""
+        for _ in range(_ANCHOR_ATTEMPTS):
+            if (state := self.read(key_id)) is not None:
+                return state
+            state = KeyState(stored_under(key_id), (), now)
+            staged = _staged(self._dir_fd, _text(state))
+            try:
+                name, fd = self._name(key_id), self._dir_fd
+                os.link(staged, name, src_dir_fd=fd, dst_dir_fd=fd, follow_symlinks=False)
+            except FileExistsError:
+                continue
+            finally:
+                os.unlink(staged, dir_fd=self._dir_fd)
             return state
-        state = KeyState(stored_under(key_id), (), now)
-        staged = _staged(self._dir, _text(state))
-        try:
-            os.link(staged, self._file(key_id))
-        except FileExistsError:
-            return self.anchor(key_id, now)
-        finally:
-            os.unlink(staged)
-        return state
+        raise KeyStateError("a key file kept changing during its first call: refused")
 
     def switch(
         self, key_id: str, scenario: str | None = None, *, overlays: Sequence[str] = ()
@@ -173,12 +220,12 @@ class KeyStates:
         scenario's `switch_to`) with `overlays` seeded. Its scenario time restarts now, on the
         fixture clock (pack README, "Scenario time"); its key id, secret and account stay. The
         file is replaced first, then the switch logged: a log that cannot write raises."""
-        path = self._file(key_id)
+        name = self._name(key_id)
         target = scenario or self._switch_to.get(stored_under(key_id))
         if target is None:
             raise KeyStateError("the key's scenario names no switch_to: name the target")
         state = self._checked(KeyState(target, tuple(overlays), self._clock()))
-        os.replace(_staged(self._dir, _text(state)), path)
+        _replace(self._dir_fd, name, _text(state))
         self._log.write(
             outcome="switch",
             signing_key_id=key_id,
@@ -189,10 +236,17 @@ class KeyStates:
         )
         return state
 
-    def _file(self, key_id: str) -> Path:
+    def _name(self, key_id: str) -> str:
+        """The key's file name in the held `keys/`, which its path must still name."""
         if key_id not in self._key_ids:
             raise KeyStateError("only a pack key id has a key file")
-        return self._dir / f"{key_id}.json"
+        try:
+            now = os.stat(self._dir, follow_symlinks=False)
+        except OSError as exc:
+            raise KeyStateError(_DIR_RULE) from exc
+        if (now.st_dev, now.st_ino) != self._held:
+            raise KeyStateError(_DIR_RULE)
+        return f"{key_id}.json"
 
     def _checked(self, state: KeyState) -> KeyState:
         """A key scenario of the pack (never an overlay or a rotation pair), distinct overlays of
