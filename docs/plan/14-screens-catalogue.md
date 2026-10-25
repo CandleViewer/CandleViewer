@@ -622,6 +622,7 @@ Drag preview                Drop zones
 - **Stories:** US-LAY-002, US-LAY-003.
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.10 (Penpot page `E15-D02`, board 17; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] rename, default symbol/interval, environment binding, autosave toggle and sharing (owner) drawn [ ] 'this workspace is pinned to LIVE' warning drawn [ ] unsaved-changes handling [ ] delete-workspace confirmation path
+- **Design (hi-fi):** [E15-D08.md](../design/E15/E15-D08.md) (E15-D08; owner approval pending; text-first, the Penpot boards follow; the settings modal with only its stored fields live: the name, open on startup, the per-device autosave opt-in, Export… and the typed Delete… with its last-workspace T2 reason; the unstored fieldsets as planned insets, each waiting for its contract; no environment control, as a workspace never stores one; the name validation with its error summary, the save states and the discard prompt; Penpot page by name + id in the spec).
 
 ### SCR-026 — Workspace import
 
@@ -669,6 +670,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.7 (Penpot page `E15-D02`, board 13; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] unsaved-changes variant and cross-session conflict variant both drawn [ ] a plain-language summary of what differs [ ] no default destructive button [ ] Esc maps to Cancel, never to Discard
+- **Design (hi-fi):** [E15-D08.md](../design/E15/E15-D08.md) (E15-D08; owner approval pending; text-first, the Penpot boards follow; the dialog as a CMP-043 alertdialog with Cancel first and focused and `Esc` cancelling on every route; the unsaved variant with its plain-language difference summary and the overflow line; the per-layout conflict on the 412 with its side-by-side summary and one consequence line per choice; the entry-point matrix; Penpot page by name + id in the spec).
 
 ---
 
