@@ -36,6 +36,7 @@ from candleviewer.oms_wiring import (
     REFERENCE_DEMAND_NEW,
     REFERENCE_DEMAND_TTL_S,
     REFERENCE_DEMAND_WINDOW_S,
+    SWEEP_MAX_FAILURES,
     SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
@@ -295,6 +296,28 @@ def test_a_new_holder_waits_out_the_fence_and_a_fenced_runtime_admits_nothing_ne
         "**The environment lock's fencing grace (#913 L2, SEC-S3L2-01).**",
         f"A process that takes the lock waits those {ENVIRONMENT_FENCE_GRACE_S:g} s "
         "(`ENVIRONMENT_FENCE_GRACE_S`) before its startup sweep and its first admit",
+    )
+
+
+def test_20_pages_a_lane_with_no_reader_and_an_unanswered_lock_and_closes_a_raced_compose() -> None:
+    """SEC-S3L2-04 to -06 (the Fable lens at 864fa082): 20 says the serving loop reads the lane's
+    state itself, a heartbeat's end pages, the unanswered lock pages once while the asking goes
+    on, and nothing a composition built outlives a stop or a cancelled start that races it."""
+    assert SWEEP_MAX_FAILURES == 5  # "the fifth"
+    assert not _missing(
+        _RUNTIME,
+        "The fifth unanswered ask in a row (`SWEEP_MAX_FAILURES`), the start's own counted, is "
+        "logged CRITICAL and paged once, and the asking goes on (SEC-S3L2-06).",
+        f"The serving loop reads that state itself every {LANE_STALE_S:g} s, so a dead or wedged "
+        "lane pages with nothing else reading it, and a heartbeat that ends on an error is logged "
+        "CRITICAL (`oms_lane_heartbeat_ended`) and paged at once (SEC-S3L2-04).",
+    )
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert (
+        "A composition hands what it built to the runtime under a lock its stop takes too, so a "
+        "stop that begins as one ends either takes it and closes it, or is seen by it, which then "
+        "closes it itself, and a start cancelled once it has ended closes what was handed over: "
+        "nothing composed outlives a stop or a cancelled start (SEC-S3L2-05)." in lane
     )
 
 

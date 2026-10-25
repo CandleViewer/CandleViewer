@@ -360,6 +360,10 @@ class World:
     beats: Beats = field(default_factory=Beats)
     #: Each wait of the fencing grace (SEC-S3L2-01), on the world's clock, apart from `sleep`'s.
     graces: list[float] = field(default_factory=list)
+    #: The serving loop's watch of the lane (SEC-S3L2-04): each wait's length, and its end, one
+    #: more watch a test lets happen (`watches.tick`).
+    watched: list[float] = field(default_factory=list)
+    watches: Beats = field(default_factory=Beats)
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.log
@@ -411,9 +415,13 @@ class World:
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
-            "fencing": self.fencing,
+            "fencing": self.fencing, "watch": self.watch,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
+
+    async def watch(self, seconds: float) -> None:
+        self.watched.append(seconds)
+        await self.watches.wait(seconds)
 
     async def fencing(self, seconds: float) -> None:
         self.graces.append(seconds)
@@ -1003,6 +1011,150 @@ async def test_step_ones_waits_count_toward_the_fencing_grace() -> None:
         await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
     assert world.clock.slept == [STARTUP_POLL_S] * 8
     assert world.graces == [ENVIRONMENT_FENCE_GRACE_S - 8 * STARTUP_POLL_S]
+
+
+async def test_the_serving_loop_reads_the_lanes_state_so_a_stall_pages_with_no_reader() -> None:
+    """SEC-S3L2-04 (the Fable lens at 864fa082): every `LANE_STALE_S` the serving loop reads the
+    runtime's state itself, so a lane alive but unticked past its bound pages with nothing else
+    reading it, once a stall."""
+    world = World()
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await runtime.wait_ready()
+        await settle()  # the heartbeat's first tick
+        world.beats.s += LANE_STALE_S + 0.001  # unticked past its bound; no route, no `/readyz`
+        for _ in range(2):  # two watches of one stall: one page
+            world.watches.tick()
+            await settle()
+        assert world.pager.calls == ["oms_lane_stalled"]
+    assert world.watched and set(world.watched) == {LANE_STALE_S}
+
+
+async def test_the_serving_loops_watch_pages_a_dead_lane_with_no_reader() -> None:
+    """SEC-S3L2-04: the watch reads the state, not the heartbeat alone, so a lane whose loop has
+    died, which ticks no more either, pages as dead, once, with nothing else reading it."""
+    world = World()
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await runtime.wait_ready()
+        world.lanes[-1].dead = True
+        for _ in range(2):
+            world.watches.tick()
+            await settle()
+        assert world.pager.calls == ["oms_lane_died"]
+
+
+async def test_a_heartbeat_that_ends_on_an_error_is_logged_critical_and_paged() -> None:
+    """SEC-S3L2-04: a heartbeat that ends other than by its stop's cancel leaves the lane unticked
+    and its lock unwatched: logged CRITICAL by its error's class and paged at once, before any
+    read finds the lane stalled."""
+    world = World()
+
+    class Broken(Heart):
+        async def run(self) -> None:
+            raise RuntimeError("the heartbeat broke")
+
+    def broken(lock: Any, pager: Any) -> Heart:
+        return Broken(lock, pager, world.beats, world.log)
+
+    with capture_logs() as logs:
+        async with started(world.runtime(heartbeat=broken)):
+            await settle()
+            assert world.pager.calls == ["oms_lane_heartbeat_ended"]
+    ended = [(e["log_level"], e["error"]) for e in logs if e["event"] == "oms_lane_heartbeat_ended"]
+    assert ended == [("critical", "RuntimeError")]
+
+
+async def test_the_fifth_unanswered_ask_of_the_lock_pages_once_and_the_asking_goes_on() -> None:
+    """SEC-S3L2-06 (the Fable lens at 864fa082): Postgres out at the start is no other holder, so
+    the runtime asks the lock again for as long as it takes; the `SWEEP_MAX_FAILURES`-th
+    unanswered ask in a row, the start's own counted, is logged CRITICAL and paged, once, and the
+    asking goes on until the lock is held and the runtime ready."""
+    world = World()
+    world.lock.fails = [StorageTierUnavailable("out") for _ in range(SWEEP_MAX_FAILURES + 1)]
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+    asked = [e["log_level"] for e in logs if e["event"] == "oms_environment_lock_unanswered"]
+    assert asked == ["warning"] * (SWEEP_MAX_FAILURES - 1) + ["critical", "warning"]
+    assert world.pager.calls == ["oms_environment_lock_unanswered"]
+    assert len(world.lock.wired) == SWEEP_MAX_FAILURES + 2  # every ask, the held one last
+
+
+async def test_a_stop_that_begins_as_the_composition_ends_takes_and_closes_what_it_composed(
+) -> None:  # fmt: skip
+    """SEC-S3L2-05 (the Fable lens at 864fa082): a stop that begins as the lock's asked-again
+    composition ends cancels the startup task before it resumes with what was composed; the
+    composition handed it to the runtime under the lock the stop takes, so the stop closes it,
+    never leaves it open."""
+    world, stops = World(), list[asyncio.Task[None]]()
+    world.lock.fails = [StorageTierUnavailable("out")]  # the startup task composes again
+
+    def beat(lock: Any, pager: Any) -> Heart:  # the composition's last step
+        stops.append(asyncio.ensure_future(runtime.stop()))
+        return world.heartbeat(lock, pager)
+
+    runtime = world.runtime(heartbeat=beat)
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    try:
+        await runtime.start()
+        await until(lambda: bool(stops))
+        await asyncio.wait_for(stops[0], 10)  # a bound on the test
+        assert runtime._parts is None and not b01.ports_wired()
+        assert world.log == ["pool.release", *STARTED, *STOPPED]
+    finally:
+        b01._ATTEMPTS = saved
+
+
+async def test_a_composition_that_meets_a_begun_stop_closes_what_it_built_itself() -> None:
+    """SEC-S3L2-05: a stop that began on the serving loop while the lane composed is seen by the
+    composition as it ends: it closes what it built itself and ends cancelled, so the stop has
+    nothing left to close and nothing is closed twice."""
+    world = World()
+    world.lock.fails = [StorageTierUnavailable("out")]
+
+    def beat(lock: Any, pager: Any) -> Heart:  # the stop's first step, from the serving thread
+        runtime._stopping = True
+        return world.heartbeat(lock, pager)
+
+    runtime = world.runtime(heartbeat=beat)
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    try:
+        await runtime.start()
+        startup = runtime._startup
+        assert startup is not None
+        await until(startup.done)
+        assert startup.cancelled() and runtime._parts is None and not b01.ports_wired()
+        assert world.log == ["pool.release", *STARTED, *STOPPED]
+        await runtime.stop()
+        assert world.log == ["pool.release", *STARTED, *STOPPED]
+    finally:
+        b01._ATTEMPTS = saved
+
+
+async def test_a_start_cancelled_as_its_composition_ends_closes_what_was_handed_over() -> None:
+    """SEC-S3L2-05: a start cancelled once its composition has ended, before it resumes, finds
+    what was composed handed to the runtime and closes it before it stops the lane."""
+    world, starts = World(), list[asyncio.Task[None]]()
+
+    def beat(lock: Any, pager: Any) -> Heart:
+        starts[0].cancel()  # as the composition ends
+        return world.heartbeat(lock, pager)
+
+    runtime = world.runtime(heartbeat=beat)
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    try:
+        starts.append(asyncio.ensure_future(runtime.start()))
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(starts[0], 10)  # a bound on the test
+        assert runtime._parts is None and not b01.ports_wired()
+        assert world.log == [*STARTED, *STOPPED] and world.lanes[0].stopped
+    finally:
+        b01._ATTEMPTS = saved
 
 
 def test_the_heartbeats_bounds_fit_a_tick_and_a_probe_and_a_lanes_own_read() -> None:
