@@ -1,12 +1,12 @@
-"""The profile writes' provider world (#906 D2-4): the RBAC pack's real `create_app()` (no network,
-C-13.5) over `WritableRows`, D1c's store fake (which answers the accounts too) with the writes, and
-the writes' router, included here until D2-m mounts it."""
+"""The profile writes' provider world (#906 D2-4, D2-5): the RBAC pack's real `create_app()` (no
+network, C-13.5) over `WritableRows`, D1c's store fake (which answers the accounts too) with the
+writes, and the writes' router, included here until D2-m mounts it."""
 
 from __future__ import annotations
 
 import dataclasses
 import uuid
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
@@ -14,7 +14,7 @@ from typing import Any, cast
 import pytest
 
 import candleviewer.app as appmod
-from candleviewer.accounts.profile_repository import ProfilesRepository
+from candleviewer.accounts.profile_repository import ARMED_SHOWN, ArmedRule, ProfilesRepository
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.api.idempotency import IdempotencyCache
 from candleviewer.api.profile_writes import ProfileWrites, make_profile_writes_router
@@ -30,11 +30,14 @@ from tests.unit.accounts.test_profile_validator import _LISTED
 
 #: When a fake row is written: the database's clock, not the request's.
 WRITTEN = datetime(2026, 10, 24, 9, tzinfo=UTC)
+Row = port.AccountProfileRow
 
 
 class WritableRows(Store):
-    """The create as Postgres answers it: `None` for an account not live, `ux_ap_name` in any
-    case, version 1, the hook under the store's bound, nothing kept when it or the commit fails."""
+    """The writes as Postgres answers them: `None` for an account or profile not live, `ux_ap_name`
+    in any case, a stale version, the default never deleted nor moved, the version bumped, the hook
+    under the store's bound seeing the row before and after, nothing kept when it or the commit
+    fails. `race` is what another session did to the row since the router read it."""
 
     def __init__(self) -> None:
         self.reset()
@@ -44,6 +47,9 @@ class WritableRows(Store):
         self.hooks: list[port.ProfileWriteAhead | None] = []  # what each write was handed
         self.fail_commit, self.timeout_s = False, roles.WRITE_AHEAD_TIMEOUT_S
         self.gone: set[uuid.UUID] = set()  # live when read, gone when written
+        self.race: Callable[[Row], Row] | None = None
+        self.notices: list[port.RelaxedNotice] = []  # SR-E28-01, each committed with its change
+        self.deleted: list[Row] = []  # soft-deleted: gone from every read
 
     async def create_profile(
         self, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID,
@@ -62,6 +68,72 @@ class WritableRows(Store):
             raise StorageTierUnavailable("the commit failed")
         self.rows[account_id] += (row,)
         return row
+
+    async def update_profile(
+        self, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID,
+        values: port.AccountProfileValues, *, expected_version: int | None,
+        write_ahead: port.ProfileWriteAhead | None = None,
+    ) -> Row | None:  # fmt: skip
+        self.hooks.append(write_ahead)
+        return await self._change("update", scope, account_id, profile_id, values, expected_version)
+
+    async def delete_profile(
+        self, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID, *,
+        expected_version: int | None, write_ahead: port.ProfileWriteAhead | None = None,
+    ) -> Row | None:  # fmt: skip
+        self.hooks.append(write_ahead)
+        return await self._change("delete", scope, account_id, profile_id, None, expected_version)
+
+    async def _change(
+        self, kind: str, scope: OwnerScope, account_id: uuid.UUID, profile_id: uuid.UUID,
+        values: port.AccountProfileValues | None, expected: int | None,
+    ) -> Row | None:  # fmt: skip
+        """An update (`values`) or a soft delete (`None`) of a live row, with the last hook."""
+        rows = self.rows[account_id] if self._shown(kind, scope, account_id) else ()
+        live = next((r for r in rows if r.id == profile_id and account_id not in self.gone), None)
+        if live is None:
+            return None
+        live = live if self.race is None else self.race(live)
+        if expected is not None and live.version != expected:
+            raise port.AccountProfileStoreStaleError
+        if values is None and live.values.is_default:
+            raise port.AccountProfileStoreConflictError("default_profile")
+        if values is not None and values.is_default != live.values.is_default:
+            raise port.AccountProfileStoreRuleError(port.DEFAULT_MOVES_ALONE)
+        if values is not None and any(
+            r.id != profile_id and r.values.name.casefold() == values.name.casefold() for r in rows
+        ):
+            raise port.AccountProfileStoreConflictError("ux_ap_name")
+        after = dataclasses.replace(
+            live, version=live.version + 1, updated_by=scope.user_id, updated_at=WRITTEN,
+            values=live.values if values is None else values,
+            deleted_at=WRITTEN if values is None else None,
+        )  # fmt: skip
+        hook, notice = self.hooks[-1], None
+        if hook is not None:
+            notice = await roles.bounded_write_ahead(hook(live, after), self.timeout_s)
+        if self.fail_commit:
+            raise StorageTierUnavailable("the commit failed")
+        put = [after] if values is not None else []  # a soft delete leaves every read
+        self.rows[account_id] = tuple(x for r in rows for x in (put if r.id == profile_id else [r]))
+        self.deleted += [] if values is not None else [after]
+        self.notices += [] if notice is None else [notice]
+        return after
+
+
+@dataclasses.dataclass
+class Rules:
+    """`ArmedRules` (ruling B6) over `armed`, or `fails`; `calls` counts its reads."""
+
+    armed: dict[uuid.UUID, list[ArmedRule]] = dataclasses.field(default_factory=dict)
+    calls: int = 0
+    fails: Exception | None = None
+
+    async def armed_on(self, account_id: uuid.UUID) -> tuple[ArmedRule, ...]:
+        self.calls += 1
+        if self.fails is not None:
+            raise self.fails
+        return tuple(self.armed.get(account_id, [])[: ARMED_SHOWN + 1])  # the store's LIMIT
 
 
 class Limits:
@@ -86,26 +158,37 @@ class Writes:
     limits: Limits
     clock: list[float]
     invalidated: list[uuid.UUID]
+    rules: Rules
+    replays: IdempotencyCache
+    minted: list[uuid.UUID]
 
     def reset(self) -> None:
         self.rows.reset()
         self.limits.calls, self.limits.fails = 0, None
         self.world.audit.records.clear()
         self.invalidated.clear()
+        self.rules.armed, self.rules.calls, self.rules.fails = {}, 0, None
+        self.minted.clear()  # the ids the next creates take (`new_id`)
+        self.clock[0] = 0.0  # and the router's replay cache, renewed in place (D2-4 R1C-05)
+        vars(self.replays).update(vars(IdempotencyCache(clock=lambda: self.clock[0])))
 
 
 def build(mp: pytest.MonkeyPatch) -> Writes:
     """The world; its reads and writes share one facade and its cache (SR-E28-15)."""
     rows, limits, clock, invalidated = WritableRows(), Limits(), [0.0], list[uuid.UUID]()
+    rules, minted = Rules(), list[uuid.UUID]()
     cache = cast(Any, SimpleNamespace(invalidate=invalidated.append))
     repository = ProfilesRepository(cast(Any, rows), cache=cache)
     # `effective` is the order path's cache, which the OMS runtime is handed; no write uses it.
     wiring = SimpleNamespace(repository=repository, effective=None)
     mp.setattr(appmod, "wire_profiles", lambda *_args: wiring)
     world = build_world(mp)
-    writes = ProfileWrites(repository, AccountsRepository(cast(Any, rows)), limits, "demo")
+    writes = ProfileWrites(repository, AccountsRepository(cast(Any, rows)), limits, rules, "demo")
     ctx, replays = world.app.state.app_context, IdempotencyCache(clock=lambda: clock[0])
     audit, auth = appmod._LazyAuditEmitter(ctx.audit), ctx.auth
-    router = make_profile_writes_router(writes, audit, world.resolver, auth=auth, replays=replays)
+    router = make_profile_writes_router(
+        writes, audit, world.resolver, auth=auth, replays=replays,
+        new_id=lambda: minted.pop() if minted else uuid.uuid4(),
+    )  # fmt: skip
     world.app.include_router(router)  # until D2-m mounts it (ruling B12)
-    return Writes(world, rows, limits, clock, invalidated)
+    return Writes(world, rows, limits, clock, invalidated, rules, replays, minted)

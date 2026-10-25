@@ -219,10 +219,11 @@ async def test_a_storage_error_reaches_the_caller_unchanged(read: str, raised: E
     ids=["get", "read", "update", "delete", "set_default", "revision", "create"],
 )
 async def test_every_miss_is_the_same_not_found(call: Any) -> None:
-    repo, _, _, _ = _repo(None)
+    repo, _, _, bumps = _repo(None)
     with pytest.raises(AccountNotFoundError) as ei:
         await call(repo)
     assert ei.value.entity == "profile" and str(ei.value) == "not found"
+    assert bumps.total == 0  # a miss bumped no version (D2-3's combined re-check, R2-01)
 
 
 @pytest.mark.parametrize(

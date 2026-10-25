@@ -9,6 +9,9 @@ Mapping: one `rules` row per `RuleRow`; one immutable `rule_versions` row per `V
 its own: it is stored per version in `rule_versions.backtest_summary`
 (`{"simulated": true, "fires": n, "hours": h}`), so "simulated on this exact ir_hash" is
 provable from the version row. `rules.armed_at/armed_by` satisfy `rule_armed_shape`.
+
+`PostgresArmedRules` binds the accounts port `ArmedRules` (#906 ruling B6): the armed rules that
+block deleting a profile of an account, read through `ix_rules_account`.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from typing import Any
 
 import sqlalchemy as sa
 
+from candleviewer.accounts.profile_repository import ARMED_SHOWN, ArmedRule
 from candleviewer.rules.manager import RuleRow, VersionRow
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -75,6 +79,12 @@ _UPDATE_RULE = sa.text(
     "last_edit_at = CASE WHEN :sess <> '' THEN now() ELSE last_edit_at END, "
     "updated_by = COALESCE(CAST(NULLIF(:editor, '') AS uuid), updated_by), "
     "updated_at = now() WHERE id = CAST(:id AS uuid)"
+)
+
+_ARMED_ON = sa.text(
+    "SELECT id::text AS id, name FROM rules WHERE scope = 'account' "
+    "AND scope_account_id = CAST(:account AS uuid) AND mode = 'armed' AND deleted_at IS NULL "
+    "ORDER BY lower(name), id LIMIT :limit"
 )
 
 
@@ -209,4 +219,18 @@ class PostgresRuleStore:
             await uow.commit()
 
 
-__all__ = ["PostgresRuleStore"]
+class PostgresArmedRules:
+    """`ArmedRules` over the `rules` table: an account's live armed rules, one more than a refused
+    delete names, so it can say that there are more."""
+
+    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
+        self._relational = relational
+
+    async def armed_on(self, account_id: uuid.UUID) -> tuple[ArmedRule, ...]:
+        params = {"account": str(account_id), "limit": ARMED_SHOWN + 1}
+        async with self._relational.unit_of_work() as uow:
+            rows = (await uow.session.execute(_ARMED_ON, params)).all()
+        return tuple(ArmedRule(uuid.UUID(row.id), row.name) for row in rows)
+
+
+__all__ = ["PostgresArmedRules", "PostgresRuleStore"]

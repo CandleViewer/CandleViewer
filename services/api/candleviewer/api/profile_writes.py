@@ -1,4 +1,4 @@
-"""The profile writes (E28-T02, #906 D2-4 to D2-6), `createAccountProfile` first; none is mounted
+"""The profile writes (E28-T02, #906 D2-4 to D2-6): create, replace and delete; none is mounted
 before D2-m (ruling B12). Behind the middleware (the view-as guard refuses a viewing session, the
 path guard asks for the `risk_caps` step-up, SR-E28-02), `admit` answers: no resolver 501; no
 session 401; `accounts:write`, the Owner's alone (C-12.4), before any store read: a 403 audited as
@@ -6,6 +6,9 @@ session 401; `accounts:write`, the Owner's alone (C-12.4), before any store read
 2026-10-22 17:25Z (3)); no store 503; the account in the Owner's scope, a missing, deleted or
 other-environment one the same 404 (C-2.11), the store's live-owner gate a 403. Then the
 `Idempotency-Key`, the body under its cap and the replay of the caller's own `2xx` (SR-E28-17).
+A replace or a delete then needs `If-Match`: 428 without it, 412 for anything but this profile's
+current version, compared before the store is asked; a delete's blockers, the default and the
+armed rules, are named in one 409 (ruling B6).
 `answer` maps every refusal: one `profile.save_refused` per audited rule (`native_stop_mandatory`
 from every path, SR-E28-08), none for shape; a record not written is `503 audit_unavailable`, with
 nothing stored (C-2.9). Logs carry classes and rule names, never a value (C-12.6).
@@ -15,7 +18,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
@@ -31,15 +34,24 @@ from candleviewer.accounts.errors import (
     AccountRuleError,
     AccountScopeDeniedError,
     AccountsError,
+    AccountVersionConflictError,
 )
 from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.profile_input import (
+    DEFAULT_HAS_OWN_OPERATION,
+    NATIVE_STOP_OFF,
     ProfileFieldError,
     check_profile_input,
     map_profile_input,
     schema_errors,
 )
-from candleviewer.accounts.profile_repository import ProfilesRepository
+from candleviewer.accounts.profile_repository import (
+    ARMED_SHOWN,
+    ArmedRule,
+    ArmedRules,
+    ProfilesRepository,
+    StoredProfile,
+)
 from candleviewer.accounts.profile_validator import (
     InstrumentLimitsPort,
     InstrumentLimitsUnavailable,
@@ -67,13 +79,22 @@ from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.observability.redaction import redact_text
 from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteAheadTimeout
+from candleviewer.storage.repositories.account_profiles import DEFAULT_MOVES_ALONE
 from candleviewer.storage.repositories.accounts import OwnerScope
 
 _NO_ACCOUNT: Final = "No such exchange account."
+_NO_PROFILE: Final = "No such profile."
 _NAME_TAKEN: Final = "A profile of this account already uses that name, in any letter case."
-#: The schema phase's own entry, so the store's `ap_native_sl` CHECK answers as the body's does.
-_NATIVE_STOP: Final = schema_errors({"require_native_stop": False}, [])[0]
+_NEEDS_TAG: Final = "This write needs the current ETag; send it as If-Match. Nothing was changed."
+_STALE: Final = "If-Match does not name this profile's current version. Nothing was changed."
+#: The store's rules the passes answer too, each with the pass's own entry (D2-4 R1C-06).
+_ENTRY: Final = {"ap_native_sl": NATIVE_STOP_OFF, DEFAULT_MOVES_ALONE: DEFAULT_HAS_OWN_OPERATION}
+_IS_DEFAULT: Final = (
+    "It is the account's default profile: make another profile the default first"
+    " (setAccountDefaultProfile)."
+)
 
 
 def _log() -> Any:
@@ -88,6 +109,7 @@ class ProfileWrites:
     profiles: ProfilesRepository
     accounts: AccountReads
     limits: InstrumentLimitsPort
+    rules: ArmedRules
     environment: Environment
 
 
@@ -120,6 +142,18 @@ def _schema(raw: object) -> dict[str, Any]:
     except ValidationError as exc:
         raise edge.refused(schema_errors(raw, edge.model_errors(exc))) from None
     return model.model_dump(mode="json", exclude_unset=True)
+
+
+def _blocked(is_default: bool, armed: Sequence[ArmedRule]) -> str:
+    """A refused delete's 409, naming each blocker: at most `ARMED_SHOWN` rules, each by its id
+    and its name, redacted, then cut to 80 characters (ruling B6)."""
+    said = ["The profile was not deleted."] + ([_IS_DEFAULT] if is_default else [])
+    if armed:
+        named = [f'{rule.rule_id} "{redact_text(rule.name)[:80]}"' for rule in armed[:ARMED_SHOWN]]
+        more = ", and more" if len(armed) > ARMED_SHOWN else ""
+        said.append(f"Rules scoped to the account are armed: {', '.join(named)}{more}.")
+        said.append("Disarm them first.")
+    return " ".join(said)
 
 
 def make_profile_writes_router(
@@ -162,12 +196,14 @@ def make_profile_writes_router(
             return await answer(exc, admitted)
         return admitted if held.env is actor.env else problem("not_found", _NO_ACCOUNT)
 
-    async def answer(exc: Exception, got: _Admitted) -> Response:
+    async def answer(
+        exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None
+    ) -> Response:
         """A write that stored nothing: an unwritten record before the `StorageError` a
         `WriteAheadTimeout` is, a stale listing before its `AccountsError`; a defect is raised."""
         if isinstance(exc, edge.Refused):
             try:
-                await got.refusals.audit_refused(exc.errors, profile_id=None)
+                await got.refusals.audit_refused(exc.errors, profile_id=profile_id)
             except ProfileAuditRefused:
                 return _unaudited()
             entries = [entry.to_dict() for entry in exc.errors]
@@ -176,21 +212,29 @@ def make_profile_writes_router(
             return problem("payload_too_large", str(exc))
         if isinstance(exc, IdempotencyKeyReuse):
             return problem("idempotency_key_reuse", "The key was used for another request.")
+        if isinstance(exc, edge.IfMatchMissing):
+            return problem("precondition_required", _NEEDS_TAG)
+        if isinstance(exc, edge.IfMatchRefused):
+            return problem("version_conflict", _STALE)
         if isinstance(exc, ProfileAuditRefused | WriteAheadTimeout):
             return _unaudited()
         if isinstance(exc, InstrumentLimitsUnavailable):
             detail = "The exchange's limits could not be refreshed in time; nothing was saved."
             return problem("instrument_cache_unavailable", detail, retry_s=2)
+        if isinstance(exc, AccountVersionConflictError):  # the router's compare, or the store's
+            return problem("version_conflict", _STALE)
         if isinstance(exc, AccountNotFoundError):
-            return problem("not_found", _NO_ACCOUNT)
+            return problem("not_found", _NO_ACCOUNT if profile_id is None else _NO_PROFILE)
         if isinstance(exc, AccountConflictError) and exc.constraint == "ux_ap_name":
             return problem("conflict", _NAME_TAKEN)
-        if isinstance(exc, AccountRuleError):  # the store's own CHECK, which the passes missed
-            if exc.rule == "ap_native_sl":
-                return await answer(edge.refused([_NATIVE_STOP]), got)
+        if isinstance(exc, AccountConflictError) and exc.constraint == "default_profile":
+            return problem("conflict", _blocked(True, ()))  # a move landed since the read
+        if isinstance(exc, AccountRuleError):  # the store's own rule, which the passes missed
+            if exc.rule in _ENTRY:  # answered as the pass answers it (audited or not alike)
+                return await answer(edge.refused([_ENTRY[exc.rule]]), got, profile_id)
             _log().error("profile_write_refused_by_constraint", rule=exc.rule)
             stored = ProfileFieldError("", exc.rule, "The profile breaks a stored rule.")
-            return await answer(edge.refused([stored]), got)
+            return await answer(edge.refused([stored]), got, profile_id)
         if isinstance(exc, AccountScopeDeniedError):  # the store's live-owner gate (SR-051)
             await not_owner(
                 NamesSession(audit, auth, got.request), got.principal, got.account_id,
@@ -240,6 +284,83 @@ def make_profile_writes_router(
             warnings=second.warnings,
         )  # fmt: skip
         out = JSONResponse(doc, 201, {"ETag": profile_etag(stored.profile)})
+        return remember(cache, str(got.principal.user_id), key, digest, out)
+
+    async def current(got: _Admitted, profile_id: uuid.UUID, version: int) -> StoredProfile:
+        """The profile, at the version `If-Match` names: compared here, never bound by a write."""
+        stored = await got.writes.profiles.read_profile(got.scope, got.account_id, profile_id)
+        if stored.profile.version != version:
+            raise AccountVersionConflictError
+        return stored
+
+    @router.put("/exchange-accounts/{accountId}/profiles/{profileId}")  # nosem: no-raw-account-id reason=owner-only-write-OwnerScope-live-owner-gate-and-account-predicate-in-SQL-SR-051-PF-T01 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def update_account_profile(
+        request: Request,
+        account_id: Annotated[uuid.UUID, Path(alias="accountId")],
+        profile_id: Annotated[uuid.UUID, Path(alias="profileId")],
+    ) -> Response:
+        if isinstance(got := await admit(request, account_id), Response):
+            return got
+        try:
+            key = edge.idempotency(request, "updateAccountProfile")
+            raw = await edge.read_capped(request, edge.MAX_PROFILE_BODY_BYTES)
+            digest = request_fingerprint(request.method, request.url.path, raw)
+            if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
+                return hit
+            version = edge.if_match_version(request, str(profile_id))
+            body = _schema(edge.decode(raw))
+            stored = (await current(got, profile_id, version)).profile
+            held = stored.is_default  # the stored one, never the body's
+            if errors := check_profile_input(body, stored_is_default=held) + edge.name_errors(body):
+                raise edge.refused(errors)
+            profile = map_profile_input(
+                body, profile_id=profile_id, account_id=account_id, version=stored.version,
+                updated_at=stored.updated_at,
+            )  # fmt: skip
+            second = await check_exchange_limits(
+                profile, environment=got.writes.environment, instruments=got.writes.limits,
+                stored=stored,  # Q4: a write that only narrows reads no listing
+            )  # fmt: skip
+            if second.errors:
+                raise edge.refused(second.errors, limits=True)
+            saved = await got.writes.profiles.update_profile(
+                got.scope, account_id, profile_id, profile, expected_version=version,
+                write_ahead=got.records.audit_updated(),
+            )  # fmt: skip
+        except Exception as exc:  # mapped, or raised as a defect
+            return await answer(exc, got, profile_id)
+        doc = profile_document(
+            saved.profile, created_at=saved.created_at, environment=got.actor.env,
+            warnings=second.warnings,
+        )  # fmt: skip
+        out = JSONResponse(doc, 200, {"ETag": profile_etag(saved.profile)})
+        return remember(cache, str(got.principal.user_id), key, digest, out)
+
+    @router.delete("/exchange-accounts/{accountId}/profiles/{profileId}", status_code=204)  # nosem: no-raw-account-id reason=owner-only-write-OwnerScope-live-owner-gate-and-account-predicate-in-SQL-SR-051-PF-T01 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def delete_account_profile(
+        request: Request,
+        account_id: Annotated[uuid.UUID, Path(alias="accountId")],
+        profile_id: Annotated[uuid.UUID, Path(alias="profileId")],
+    ) -> Response:
+        if isinstance(got := await admit(request, account_id), Response):
+            return got
+        try:
+            key = edge.idempotency(request, "deleteAccountProfile")
+            digest = request_fingerprint(request.method, request.url.path, b"")  # reads no body
+            if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
+                return hit
+            version = edge.if_match_version(request, str(profile_id))
+            is_default = (await current(got, profile_id, version)).profile.is_default
+            armed = await got.writes.rules.armed_on(account_id)  # a failure deletes nothing
+            if is_default or armed:
+                return problem("conflict", _blocked(is_default, armed))
+            await got.writes.profiles.delete_profile(
+                got.scope, account_id, profile_id, expected_version=version,
+                write_ahead=got.records.audit_deleted(),
+            )  # fmt: skip
+        except Exception as exc:  # mapped, or raised as a defect
+            return await answer(exc, got, profile_id)
+        out = Response(status_code=204)
         return remember(cache, str(got.principal.user_id), key, digest, out)
 
     return router
