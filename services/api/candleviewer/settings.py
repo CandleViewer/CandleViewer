@@ -475,8 +475,8 @@ class Settings(BaseSettings):
     # beside `audit_wal_path` (`<its directory>/machine_events.wal`): compose's root filesystem is
     # read-only and the audit volume is the writable one. An explicit path's directory is a data
     # directory `CV_BACKUP_ROOT` stays apart from. Capped like the audit WAL, at least 1 MiB. The
-    # order lane's own sink writes it while no persistence bundle's sink holds it, else
-    # `oms_lane.<name>` beside it (#913 L2, `oms_wiring.lane_sink_wal`).
+    # order lane's own sink writes `oms_lane.<name>` beside it, a persistence bundle composed or
+    # not (#913 L2, SEC-S3L2-03, `oms_wiring.lane_sink_wal`).
     machine_event_wal_path: str = ""
     machine_event_wal_max_bytes: int = Field(default=64 * 1024 * 1024, ge=1024 * 1024)
     # ADR-0037 decision 6 (#3009): the audit lane's key files, read once at boot by the composition

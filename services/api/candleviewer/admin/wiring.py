@@ -32,6 +32,7 @@ from candleviewer.audit.machine_events import (
     MachineEventUnavailable,
     MachineEventWalSink,
     SinkMetrics,
+    frames_left,
 )
 from candleviewer.audit.metrics import export_audit_lane_metrics
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
@@ -165,6 +166,7 @@ __all__ = [
     "secrets_audit_sink",
     "secrets_bundle",
     "system_event_redactor",
+    "unclaimed_machine_events",
 ]
 AuditHandle = AuditService
 #: The scheduled verify run's port (#2111), so `app` can type an injected runner.
@@ -416,6 +418,15 @@ def build_machine_event_sink(
         max_bytes=settings.machine_event_wal_max_bytes,
         metrics=metrics,
     )
+
+
+def unclaimed_machine_events(settings: Settings) -> int:
+    """The bytes of frames `CV_MACHINE_EVENT_WAL_PATH` holds that Postgres has not taken, for the
+    OMS runtime, which holds no sink of that file without a persistence bundle (#913 L2,
+    SEC-S3L2-03) and may not import M19 (C-3.3): read under the file's lock, 0 with no file,
+    `MachineEventSinkUnavailable` while another process holds it. Opens the WAL: run it off the
+    loop."""
+    return frames_left(settings.machine_event_wal_path, settings.machine_event_wal_max_bytes)
 
 
 def build_lane_audit_writer(

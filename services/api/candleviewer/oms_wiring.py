@@ -40,6 +40,7 @@ from candleviewer.admin.wiring import (
     build_lane_audit_writer,
     build_machine_event_sink,
     keyed_record_id,
+    unclaimed_machine_events,
 )
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
@@ -48,6 +49,7 @@ from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsError
 from candleviewer.exchange.base.models import AccountRef, RateHeadroom, RateLane, TickerEvent
 from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
+from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.cancel_all import (
@@ -1225,7 +1227,8 @@ class GroupStores(TradeGroupStore, TradeGroupReads, Protocol):
 class OmsStores:
     """The runtime's stores, on one pool of its own that `release` disposes of, and the builders
     of the order lane's own audit writer and `machine_events` sink over it (#913 L2), the writer's
-    with the alarm it is given, the sink's at the WAL path it is given. They take no principal, so
+    with the alarm it is given, the sink's at the WAL path it is given, and the probe of the file a
+    bundle's sink holds (`unclaimed`, SEC-S3L2-03). They take no principal, so
     a route reaches them only through the OMS's own surfaces, after its RBAC check (C-12.4): the
     pipeline, its anchors and `OrderRoute`'s reads, the existence read and a replay's two, the
     order by its account and the group through the principal-scoped `TradeGroupReader`. `sweep` is
@@ -1241,6 +1244,9 @@ class OmsStores:
     sweep: UnfinishedOrders
     audit: Callable[[AuditAlarm], OwnedAudit]
     sink: Callable[[str], OwnedSink]
+    #: The bytes of frames `CV_MACHINE_EVENT_WAL_PATH` holds that Postgres has not taken, read
+    #: under its lock; blocking, so run off the loop (SEC-S3L2-03).
+    unclaimed: Callable[[], int]
     release: Callable[[], Coroutine[Any, Any, None]]
 
 
@@ -1261,12 +1267,12 @@ def lane_audit_wal(settings: Settings) -> str:
     return str(wal.with_name(LANE_WAL_PREFIX + wal.name))
 
 
-def lane_sink_wal(settings: Settings, *, bundled: bool) -> str:
-    """The order lane's own `machine_events` WAL (#913 L2, ruling Q13): `CV_MACHINE_EVENT_WAL_PATH`,
-    which no serving-loop sink holds without a persistence bundle, else `oms_lane.<name>` beside
-    the bundle's sink, which holds that path."""
+def lane_sink_wal(settings: Settings) -> str:
+    """The order lane's own `machine_events` WAL (#913 L2, ruling Q13): `oms_lane.<name>` beside
+    `CV_MACHINE_EVENT_WAL_PATH`, which a persistence bundle's sink holds, a bundle composed or
+    not, so a bundle that comes or goes across a restart never moves it (SEC-S3L2-03)."""
     wal = Path(settings.machine_event_wal_path)
-    return str(wal.with_name(LANE_WAL_PREFIX + wal.name)) if bundled else str(wal)
+    return str(wal.with_name(LANE_WAL_PREFIX + wal.name))
 
 
 def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
@@ -1291,6 +1297,7 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
             SqlAlchemyAuditRepository(pool), audit_wal, on_alarm=alarm
         ),
         sink=lambda wal: build_machine_event_sink(settings, events, metrics=counts, wal_path=wal),
+        unclaimed=lambda: unclaimed_machine_events(settings),
         release=pool.dispose,
     )
 
@@ -1307,6 +1314,13 @@ class StandaloneSink(Interim):
         "the standalone machine_events WAL sink, with no HMAC'd journal; on a live process with "
         "CV_TRADING_LIVE_ENABLED on, none, and the OMS is never ready"
     )
+
+
+class UnclaimedMachineEvents(RuntimeError):
+    """SEC-S3L2-03 (20 Sec.6.2): no persistence bundle is composed, so no sink of this process
+    holds `CV_MACHINE_EVENT_WAL_PATH`, and it holds frames Postgres has not taken: a run before
+    #913 L2's lane wrote B1's rows there, or a bundle's run left them. The start refuses, failing
+    closed, never adopting or skipping them, so no chain forks or loses a row."""
 
 
 class NoMachineEventSink(RuntimeError):
@@ -1959,10 +1973,11 @@ class OmsRuntime:
     async def _compose(self, lane: Lane, serving: Serving) -> _Parts:
         """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
         (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), the trading port
-        and router, then over the pool, made here, the stores, the lane's own audit writer and
-        sink (#913 L2), the command port, the facade, the anchors and the pipeline; what the
-        serving loop holds, through its bridge (`Served*`). A failure once the port exists closes
-        what was built before it goes on, each closer on its own loop."""
+        and router, then over the pool, made here, the stores, without a bundle the probe of the
+        file its sink would hold (SEC-S3L2-03, else `UnclaimedMachineEvents`), the lane's own audit
+        writer and sink (#913 L2), the command port, the facade, the anchors and the pipeline; what
+        the serving loop holds, through its bridge (`Served*`). A failure once the port exists
+        closes what was built before it goes on, each closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -2003,6 +2018,10 @@ class OmsRuntime:
             self._phase = "stores"
             stores = self._stores()
             closers.append(("pool", lambda: lane.call(stores.release())))
+            self._phase = "sink_wal"  # SEC-S3L2-03: before the lane's sink or the facade exists
+            if bundle is None and (left := await run_in_thread(stores.unclaimed)):
+                _log().critical("oms_machine_event_wal_unclaimed", pending_bytes=left)
+                raise UnclaimedMachineEvents(f"{left} bytes of machine_events no sink holds")
             self._phase = "audit"
             # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users
             writer = stores.audit(self._audit_alarm)
@@ -2043,8 +2062,8 @@ class OmsRuntime:
                 clock=self._now,
                 submissions=SubmissionRepository(stores.submissions, timer),
             )
-            # the lane's own, whether or not a bundle holds the serving loop's (ruling Q13)
-            sink = stores.sink(lane_sink_wal(settings, bundled=bundle is not None))
+            # the lane's own, at one path whether or not a bundle holds the serving loop's
+            sink = stores.sink(lane_sink_wal(settings))  # (ruling Q13, SEC-S3L2-03)
             states = OrderStateFeed(self._feed, max_orders=self._max)
             feed = CompositePublisher(ServedFeed(states, serving))
             self._phase = "facade"
