@@ -43,20 +43,27 @@ it (BQ-16 is the scope):
    beside its "verified" time (AD-3); withdrawal never drawn as allowed.
 7. Appendix A: every Old (verbatim) cell occurs exactly once in its ``15`` / ``14`` entry at the
    base - none is a FAIL (gone), more is a FAIL (ambiguous), another line than its cite a WARN
-   (drift); CMP-044 and CMP-178 rows WARN while E42-D03's boards PR is in flight; CMP-034's New
-   text carries no reveal affordance; ``14`` inserts are content-only "Hi-fi (E27-D03)" lines.
+   (drift); CMP-044 and CMP-178 rows WARN while E42-D03's boards PR is in flight; every Old and
+   New cell is read whole by 7c; ``14`` inserts are content-only "Hi-fi (E27-D03)" lines.
 7b. Frame rows (the standing rule A2, main-orchestrator 2026-10-25 00:32Z): every gate below reads
    each of the 78 frame rows on its own, never a sentence elsewhere. K1 no control that shows or
-   copies key material, no key id but ``...`` plus 4; K2 (``reveal``) no reveal prop or state;
-   K3 no withdrawal or transfer right drawn as allowed; K4 / K5 each DESTRUCTIVE frame's Copy keys
+   copies key material, no key id but ``...`` plus 4; K2 (``reveal``) is 7c's; K3 no withdrawal
+   or transfer right drawn as allowed (its dated OFF is 7c's); K4 / K5 each DESTRUCTIVE frame's Copy keys
    name its consequence key and the ask line (both in section 12), section 7's confirms table
    states both, and no other frame draws a destructive confirm; K6-K8 each gated frame names the
-   ``lock`` and a known reason key, ``rbac.view_as`` first; K9 no exit drawn gated (a frame or
+   ``lock`` and a known reason key, ``rbac.view_as`` first, and a frame E27-D02's inventory or
+   its class names as a view-as frame leads its Hi-fi and Copy keys cells with it (G7); K9 no exit drawn gated (a frame or
    section 10.2); K10 is gate 2 (``ac2.*``); K11 the compromise card's steps, keys and deck
    strings in C-12.12's order; K12 each row naming an environment, an account title or an
    "Attention:" strip string keeps its environment badge; K13 the
    number before a marker is its value and every two-decimal value has a marker; K14 / K15 are
    gate 4 (``inv.missing``, ``inv.board``).
+7c. The whole document (the orchestrator's text round 2): every clause of every line of the spec
+   and the hand-off, case-insensitive, no section list - a reveal word or affordance, K1's ids,
+   K2's show / copy / toggle controls, K3's fund rights drawn as allowed or as a control, and a
+   withdrawal OFF without its verified time (frame rows: the reveal words and the OFF only). A hit
+   passes only inside a phrase of SECURITY_ALLOWED, each covering at most its pinned count of
+   occurrences, so a copy of an allowed phrase elsewhere fails; one FAIL per line.
 8. Cites and scans: ``KEY:line`` cites resolve to an existing line (FAIL past the end of the
    file); a cite followed by a quoted fragment WARNs when its line moved and FAILs when the
    fragment is gone or ambiguous (e35_d03's semantics); E27-D02's ``scan()`` (no secret-shaped
@@ -1173,25 +1180,7 @@ REVEAL_AFFORDANCE = re.compile(
     r"|\bAutoHideCountdown\b|\bCopyable\b|icon/eye"
 )
 REVEAL_WORD = re.compile(r"\breveal\w*", re.IGNORECASE)
-REVEAL_NEGATED = re.compile(
-    r"\b(?:no|never|not|without|absent|removed|drops?|dropped|historical|cannot|nothing|none)\b"
-    r"|n't",
-    re.IGNORECASE,
-)
 POINTER_NEW = re.compile(r"^`*- \*\*Hi-fi \(E27-D03[^)]*\):\*\* ")
-
-
-def reveal_problems(text: str) -> list[str]:
-    """A reveal affordance in proposed CMP-034 text (AC4; 11:344): a prop, a story, a name."""
-    bad = [m[0] for m in REVEAL_AFFORDANCE.finditer(text)]
-    for m in REVEAL_WORD.finditer(text):
-        before, after = text[max(0, m.start() - 40) : m.start()], text[m.end() : m.end() + 40]
-        absent = re.match(
-            r"\s*(?:\w+\s+)?(?:is|are)\s+(?:deliberately\s+)?(?:absent|removed|gone)", after
-        )
-        if not (REVEAL_NEGATED.search(before) or absent):
-            bad.append(m[0])
-    return bad
 
 
 def code_span(cell: str) -> tuple[str, str] | None:
@@ -1233,10 +1222,7 @@ def appendix_gate(sec: dict[str, str], base: dict[str, Any], out: Out) -> None:
                     f"{first}: {IN_FLIGHT[key]} proposes edits here — re-read "
                     "and re-base if it lands first (GATE R6)",
                 )
-            span = code_span(new)
-            if key == "CMP-034":
-                for b in reveal_problems(span[0] if span else new):
-                    out.fail("reveal", f"{first}: the New text carries a reveal affordance: {b!r}")
+            span = code_span(new)  # CMP-034's reveal words: the whole-document gate (§7c)
             if doc == "15" and span:
                 for tok in TOKEN_RE.findall(span[0]):
                     if not known_token(tok, base["known"]) and not MARKED_RE.search(raw):
@@ -1281,25 +1267,6 @@ def appendix_gate(sec: dict[str, str], base: dict[str, Any], out: Out) -> None:
     out.n.update({"appendix_15": n["15"], "appendix_14": n["14"]})
 
 
-def reveal_gate(sec: dict[str, str], out: Out) -> None:
-    """CMP-034's proposed text: section 2.3's Proposed / New columns, section 13, every frame."""
-    for head, body in tables(sec.get("2.3", "")):
-        idx = [i for i, h in enumerate(head) if re.search(r"proposed|\bnew\b", h, re.IGNORECASE)]
-        for _raw, r in body:
-            for i in [i for i in idx if i < len(r)]:
-                for b in reveal_problems(r[i]):
-                    out.fail("reveal", f"§2.3 {r[0]!r}: a reveal affordance: {b!r}")
-    for _head, body in tables(sec.get("13", "")):
-        for raw, r in body:
-            if "CMP-034" in raw:
-                for b in reveal_problems(" | ".join(r[1:])):
-                    out.fail("reveal", f"§13 CMP-034 stories: a reveal affordance: {b!r}")
-    for n, fr in sorted(frame_rows(sec).items()):  # K2: no frame row draws a reveal prop or state
-        bad = reveal_problems(fr["raw"])
-        if bad:
-            out.fail("reveal", f"frame {n} {fr['name']!r}: a reveal affordance: {bad[:3]}")
-
-
 # --- 7b. frame-level gates: K1-K15 read the frame rows (standing rule A2, 2026-10-25 00:32Z) -----
 # The destructive confirms (K4, K5): frame -> the copy key of the consequence it states before the
 # press; every one also carries the ask line, `e27.shared.ask`, its step-up (§7's confirms table).
@@ -1324,6 +1291,9 @@ INHERIT = re.compile(r"^(?:As frame (\d+)\b|Frame (\d+)'s dialog\b)")
 ASK_DRAWN = re.compile(r"\bthe (?:stamped |served )?ask\b|\bask line\b|\bits served ask\b")
 TYPED_DRAWN = re.compile(r"\bthe typed label\b")
 PLACEHOLDER_RE = re.compile(r"\{[a-z_0-9]+\}")
+# K8 / G7 (r2o): a gated frame that E27-D02 names, or its class names, as a view-as frame draws
+# `rbac.view_as` as its first leg - every gated frame, read from the inventory, never a list
+VIEWAS_NAMED = re.compile(r"\bview(?:ing)?[- ]as\b", re.IGNORECASE)
 # K8: the row's prose never puts the view-as leg after another
 VIEWAS_LATE = re.compile(
     r"view-as leg\b[^.;|]*?\b(?:after|second|last|later|then)\b", re.IGNORECASE
@@ -1345,7 +1315,7 @@ COMPROMISE = "SCR-128 / mark as compromised: the ordered card"
 STEPS = ("Freeze", "Delete", "Revoke", "Rotate", "Replace")
 STEP_RE = re.compile(r'(?:: |· )([1-9]) "([A-Z][a-z]+)')
 # K1: a control that shows or copies key material, or a key id longer than `...` plus 4
-SHOW_KEY = re.compile(
+SHOW_MATERIAL = re.compile(
     r"\[(?:Show|Hide|Reveal|Unmask)\b[^\]]*\]|\[Copy\b[^\]]*\b(?:key|secret)\b[^\]]*\]"
     r"|\.\.\.[A-Za-z0-9]{4} *\[Copy\]|\b(?:show|reveal|copy|unmask|display)(?:s|ed|ing)? +"
     r"(?:the +)?(?:full +|whole +|plaintext +)?(?:API +)?(?:key|secret)s?\b"
@@ -1353,13 +1323,13 @@ SHOW_KEY = re.compile(
     r"|icon/eye|\bplaintext +(?:key|secret)",
     re.IGNORECASE,
 )
-KEY_ID = re.compile(r"([A-Za-z0-9]?)\.\.\.([A-Za-z0-9{}_]+)")
+MASK_TAIL = re.compile(r"([A-Za-z0-9]?)\.\.\.([A-Za-z0-9{}_]+)")
 # K1: a plaintext-like value - a 16+ character run that is not a word, a snake_case or a camelCase
 # name (two digits, or camel segments under four letters on average, or one 16+ letter segment),
 # and any key / key-id value with a digit or an inner capital that is not `...` plus 4
 LONG_RUN = re.compile(r"(?<![A-Za-z0-9_])[A-Za-z0-9_]{16,}(?![A-Za-z0-9_])")
 CAMEL = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|[0-9]+")
-KEY_VALUE = re.compile(r"\b(?:API key|[Kk]ey(?: id)?)[ :]+`?([A-Za-z0-9][A-Za-z0-9_\-]{5,})")
+ID_VALUE = re.compile(r"\b(?:API key|[Kk]ey(?: id)?)[ :]+`?([A-Za-z0-9][A-Za-z0-9_\-]{5,})")
 # K9: an exit drawn gated
 GATE_WORD = (
     r"(?:in the validity look|T2\b|`?aria-disabled|disabled\b|gated\b|locked\b|led by the `lock`"
@@ -1372,9 +1342,9 @@ EXIT_GATED = re.compile(
     re.IGNORECASE,
 )
 EXIT_CONTROL = re.compile(r"^(?:\[?(?:Cancel|Close|Back)\b|`?Esc`?)", re.IGNORECASE)
-# r1o (the orchestrator's text round 1): the gates read every clause of every cell of a frame row,
-# and the secret-field rows outside the frames (§2.3's proposed cells, §4.1 / §4.4 / §5's key and
-# secret fields). A clause ends at a sentence stop, a semicolon, a cell, a " · " or a " — ".
+# r1o / r2o (the orchestrator's text rounds 1 and 2): the gates read every clause of every cell of
+# a frame row here, and every clause of every line of the spec and the hand-off in §7c. A clause
+# ends at a sentence stop, a semicolon, a cell, a " · " or a " — ".
 CLAUSE = re.compile(r"(?<=[.;!?])\s+|\||\s·\s|\s—\s")
 NEG_BEFORE = re.compile(
     r"(?:\b(?:no|never|not|without|nor|neither)\b|n't)(?:\s+[^\s,;]+){0,2}\s*$", re.IGNORECASE
@@ -1399,7 +1369,7 @@ COPY_CONTROL = re.compile(
     r"|\bcopyable\b|\bcopy-to-clipboard\b",
     re.IGNORECASE,
 )
-KEY_FIELD = re.compile(
+FIELD_CUE = re.compile(
     r"\bAPI (?:key|secret)\b|\bsecrets?\b|\bkey (?:well|field|id)s?\b|\bwrite-only\b|CMP-201"
     r"|CMP-034|\.\.\.[A-Za-z0-9]{4}\b|\bmasked\b|\bfields?\b|\bwells?\b",
     re.IGNORECASE,
@@ -1409,14 +1379,6 @@ IP_WORD = re.compile(
     r"|CMP-033|\bIP\b",
     re.IGNORECASE,
 )
-SECRET_ROW = re.compile(
-    r"\b(?:API key|API secret|[Kk]ey|[Ss]ecret)(?: and (?:key|secret))? (?:fields?|entry)\b"
-    r"|\b[Kk]ey ids?\b"
-)
-SECRET_ROW_SECTIONS = ("2.5", "4.1", "4.4", "5")
-# K1: the sections whose tables draw a key or a secret field outside the frame rows; every cell of
-# every row is read for a bare id or a key id longer than `...` plus 4
-ID_SECTIONS = ("2.3", "2.5", "4.1", "4.4", "5")
 # K3: a withdrawal or transfer right drawn as a control (a toggle, a switch, a checkbox)
 WITHDRAW_CONTROL = re.compile(
     r"\b(?:withdraw\w*|transfer\w*|fund[- ]moving)(?:\s+(?:and|or)\s+transfer\w*)?"
@@ -1425,8 +1387,8 @@ WITHDRAW_CONTROL = re.compile(
     r"(?:withdraw\w*|transfer\w*)",
     re.IGNORECASE,
 )
-# K3: a withdrawal "OFF" drawn in a frame carries its verified time in the same string or item
-OFF_DRAWN = re.compile(r"\bOFF\b|(?i:\bwithdraw\w*(?: and transfer)?:? +off\b)")
+# K3: a withdrawal "OFF" (in any case) carries its verified time in the same string or item
+OFF_DRAWN = re.compile(r"\boff\b", re.IGNORECASE)
 WITHDRAW_NEAR = re.compile(r"\b(?:withdraw\w*|transfer\w*)", re.IGNORECASE)
 VERIFIED_AT = re.compile(r"\bverified\b[^\"|;]{0,24}?(?:\{hh:mm(?::ss)?\}|\d{1,2}:\d{2})")
 # K6: a frame that is not gated draws no lock and no RbacGate (§10.3: "never locked")
@@ -1454,43 +1416,59 @@ def negated(clause: str, m: re.Match[str]) -> bool:
     return bool(NEG_BEFORE.search(clause[: m.start()]) or NEG_IN.search(m[0]))
 
 
-def field_controls(text: str, secret_row: bool = False) -> list[str]:
+def clause_spans(text: str) -> list[tuple[int, int]]:
+    """The (start, end) of every clause of ``text`` (CLAUSE's boundaries)."""
+    spans, at = [], 0
+    for m in CLAUSE.finditer(text):
+        spans.append((at, m.start()))
+        at = m.end()
+    return [*spans, (at, len(text))]
+
+
+def control_spans(text: str, field_row: bool = False, negate: bool = True) -> list[tuple[int, int]]:
     """K1 / K2: show, copy and toggle controls on a key or a secret field, clause by clause."""
-    bad: list[str] = []
-    for clause in CLAUSE.split(text):
-        keyed = secret_row or KEY_FIELD.search(clause) is not None
-        bad += [m[0] for m in SHOW_CONTROL.finditer(clause) if not negated(clause, m)]
-        if keyed:
-            bad += [m[0] for m in TOGGLE_NOUN.finditer(clause) if not negated(clause, m)]
-            bad += [
-                m[0]
-                for m in COPY_CONTROL.finditer(clause)
-                if not negated(clause, m) and copies_a_key(clause, m, secret_row)
+    spans: list[tuple[int, int]] = []
+    for a, b in clause_spans(text):
+        clause = text[a:b]
+        cued = field_row or FIELD_CUE.search(clause) is not None
+        found = list(SHOW_CONTROL.finditer(clause))
+        if cued:
+            found += list(TOGGLE_NOUN.finditer(clause))
+            found += [
+                m for m in COPY_CONTROL.finditer(clause) if copies_a_field(clause, m, field_row)
             ]
-    return bad
+        spans += [
+            (a + m.start(), a + m.end()) for m in found if not (negate and negated(clause, m))
+        ]
+    return spans
 
 
-def copies_a_key(clause: str, m: re.Match[str], secret_row: bool) -> bool:
-    """A copy control belongs to the nearest cue before it (else after it): the IP or a key."""
+def field_controls(text: str, field_row: bool = False) -> list[str]:
+    return [text[a:b] for a, b in control_spans(text, field_row)]
+
+
+def copies_a_field(clause: str, m: re.Match[str], field_row: bool) -> bool:
+    """A copy control belongs to the nearest cue before it (else after it): the IP or a field."""
     before = clause[: m.start()]
     ip = [x.end() for x in IP_WORD.finditer(before)]
-    key = [x.end() for x in KEY_FIELD.finditer(before)]
-    if ip or key:
-        return max(key, default=-1) > max(ip, default=-1)
+    cue = [x.end() for x in FIELD_CUE.finditer(before)]
+    if ip or cue:
+        return max(cue, default=-1) > max(ip, default=-1)
     after = clause[m.end() :]
     ip_a = IP_WORD.search(after)
-    key_a = KEY_FIELD.search(after)
-    if ip_a or key_a:
-        return ip_a is None or (key_a is not None and key_a.start() < ip_a.start())
-    return secret_row
+    cue_a = FIELD_CUE.search(after)
+    if ip_a or cue_a:
+        return ip_a is None or (cue_a is not None and cue_a.start() < ip_a.start())
+    return field_row
 
 
-def undated_off(raw: str) -> list[str]:
-    """K3: a withdrawal OFF drawn without its verified time in its own string or item."""
-    bad: list[str] = []
+def off_spans(raw: str, negate: bool = True) -> list[tuple[int, int]]:
+    """K3: a withdrawal OFF (any case) without its verified time in its own string or item."""
+    spans: list[tuple[int, int]] = []
+    at = 0
     for cell in raw.split("|"):
         for m in OFF_DRAWN.finditer(cell):
-            if NEG_BEFORE.search(cell[max(0, m.start() - 30) : m.start()]):
+            if negate and NEG_BEFORE.search(cell[max(0, m.start() - 30) : m.start()]):
                 continue
             if cell.count('"', 0, m.start()) % 2:  # inside a quoted string: that string
                 start = cell.rfind('"', 0, m.start())
@@ -1501,11 +1479,10 @@ def undated_off(raw: str) -> list[str]:
                 stop = re.search(r"[;|]|\.\s", cell[m.end() :])
                 seg = cell[m.start() : m.end() + (stop.start() if stop else len(cell))]
                 lead = cell[max(0, m.start() - 60) : m.start()]
-            if not WITHDRAW_NEAR.search(lead + seg):
-                continue
-            if not VERIFIED_AT.search(seg):
-                bad.append(" ".join(cell[max(0, m.start() - 30) : m.end() + 10].split()))
-    return bad
+            if WITHDRAW_NEAR.search(lead + seg) and not VERIFIED_AT.search(seg):
+                spans.append((at + m.start(), at + m.end()))
+        at += len(cell) + 1
+    return spans
 
 
 def loading_confirm(text: str) -> list[str]:
@@ -1516,24 +1493,6 @@ def loading_confirm(text: str) -> list[str]:
             continue
         bad += [m[0][:60] for m in CONFIRM_SHOWN.finditer(clause) if not negated(clause, m)]
     return bad
-
-
-def secret_rows(sec: dict[str, str]) -> list[tuple[str, str]]:
-    """The secret-field rows outside the frames: §2.3's proposed cells, the key / secret fields."""
-    out: list[tuple[str, str]] = []
-    for head, body in tables(sec.get("2.3", "")):
-        idx = [
-            i for i, h in enumerate(head) if not re.match(r"(?:field|current)\b", h, re.IGNORECASE)
-        ]
-        for _raw, r in body:
-            text = " | ".join(r[i] for i in idx if i < len(r))
-            out.append((f"§2.3 {r[0] if r else ''!r}", text))
-    for key in SECRET_ROW_SECTIONS:
-        for _head, body in tables(sec.get(key, "")):
-            for _raw, r in body:
-                if r and SECRET_ROW.search(r[0]):
-                    out.append((f"§{key} {r[0]!r}", " | ".join(r[1:])))
-    return out
 
 
 # K13: a standalone number (no id, date, token or rule digit) and a contrast / Delta E value
@@ -1680,18 +1639,19 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
     reasons = reason_keys(sec, base)
     t2_frames = {n for n, r in rows.items() if T2_EXACT in r["cls"]}
     t2_frames |= {f["num"] for f in base["inv"] if f["t2"] and f["num"] in rows}
+    inv_names = {f["num"]: f["name"] for f in base["inv"]}
     for n, r in sorted(rows.items()):
         raw, where = r["raw"], f"frame {n} {r['name']!r}"
-        bad = [h[0] for h in SHOW_KEY.finditer(raw)]
+        bad = [h[0] for h in SHOW_MATERIAL.finditer(raw)]
         bad += [
             k[0]
-            for k in KEY_ID.finditer(raw)
+            for k in MASK_TAIL.finditer(raw)
             if k[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", k[2]) or k[2] == "{last4}")
         ]
         bad += [m[0] for m in LONG_RUN.finditer(raw) if plaintext_like(m[0])]
         bad += [
             m[1]
-            for m in KEY_VALUE.finditer(raw)
+            for m in ID_VALUE.finditer(raw)
             if re.search(r"[0-9]|(?<=.)[A-Z]", m[1]) and not LONG_RUN.fullmatch(m[1])
         ]
         bad += [m[0] for m in BARE_ID.finditer(raw) if m[0] not in bad]
@@ -1710,8 +1670,6 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
             out.fail(
                 "k3.withdraw", f"{where} draws a withdrawal or transfer right allowed: {grants}"
             )
-        if undated := undated_off(raw):
-            out.fail("k3.off", f"{where} draws a withdrawal OFF without its time: {undated[:2]}")
         if shown := loading_confirm(raw):
             out.fail("k4.loading", f"{where} draws the confirm while the summary loads: {shown}")
         if CONFIRM_BUTTON.search(raw) and n not in DESTRUCTIVE:
@@ -1737,7 +1695,15 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
                     f"{where} is gated and names no reason key a §10 / §12 table gives: "
                     f"{sorted({k for k in legs if k not in reasons}) or 'none'}",
                 )
-            if "rbac.view_as" in legs and legs[0] != "rbac.view_as":
+            named = f"{inv_names.get(n, '')} | {r['name']} | {r['cls']}"
+            heads = [LEG_KEY.findall(r[c])[:1] for c in ("hifi", "keys")]
+            if VIEWAS_NAMED.search(named) and any(h != ["rbac.view_as"] for h in heads):
+                out.fail(
+                    "k8.viewas",
+                    f"{where} is a view-as frame (E27-D02 §7 or its class): its Hi-fi and Copy "
+                    f"keys cells do not both lead with `rbac.view_as`: {heads}",
+                )
+            elif "rbac.view_as" in legs and legs[0] != "rbac.view_as":
                 out.fail("k8.viewas", f"{where}: the view-as leg comes after {legs[0]}")
             elif late := VIEWAS_LATE.search(raw):
                 out.fail("k8.viewas", f"{where}: the row puts the view-as leg late: {late[0]!r}")
@@ -1819,23 +1785,6 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
         r = rows[n]
         if not ENV_RE.search(r["raw"]):
             out.fail("k12.env", f"frame {n} {r['name']!r} loses its environment badge")
-    for where, text in secret_rows(sec):
-        bad = [h[0] for h in SHOW_KEY.finditer(text)] + field_controls(text, secret_row=True)
-        if bad:
-            out.fail("k2.field", f"{where}: a show, copy or toggle control on the field: {bad[:3]}")
-    for key in ID_SECTIONS:
-        for _head, body in tables(sec.get(key, "")):
-            for raw, tr in body:
-                ids = [m[0] for m in BARE_ID.finditer(raw)] + [
-                    k[0]
-                    for k in KEY_ID.finditer(raw)
-                    if k[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", k[2]) or k[2] == "{last4}")
-                ]
-                if ids:
-                    out.fail(
-                        "k1.masked",
-                        f"§{key} {(tr[0] if tr else '')[:40]!r}: more than the masked id: {ids[:3]}",
-                    )
     for head, body in tables(sec.get("2.4", "")):
         idx = [i for i, h in enumerate(head) if not re.match(r"current\b", h, re.IGNORECASE)]
         for _raw, tr in body:
@@ -1852,6 +1801,243 @@ def frame_gate(spec: str, sec: dict[str, str], base: dict[str, Any], out: Out) -
             "frames_t2": len(t2_frames),
             "frames_env": len(env_frames),
         }
+    )
+
+
+# --- 7c. the whole-document security gates (r2o, the orchestrator's text round 2) -----------------
+# K1, K2, K3, the dated OFF and the reveal words read every clause of every line of the spec AND the
+# hand-off - every row of every table and every prose sentence, case-insensitive, no section list.
+# The frame rows keep the frame gate's K1 / K3-withdraw (one FAIL per frame) and are read here for
+# the reveal words and the dated OFF; every other line is read here for all five.
+# A hit passes only inside one of the exact phrases pinned below, and each phrase covers at most its
+# pinned count of occurrences (the first ones), so a copy of an allowed phrase elsewhere fails.
+DOC_REVEAL = re.compile(REVEAL_AFFORDANCE.pattern + r"|\breveal\w*|\bunmask\w*", re.IGNORECASE)
+FIELD_NAMED = re.compile(
+    r"\bkeys?\b|\bsecrets?\b|CMP-034|CMP-201|\bmasked\b|MaskedValue|PasswordField", re.IGNORECASE
+)
+# a line's one FAIL takes the most specific code among its uncovered hits (a mutated control can
+# break an allowed reveal phrase beside it; its own code wins)
+DOC_CODES = ("k1.masked", "k2.field", "k3.withdraw", "k3.off", "reveal")
+SECURITY_ALLOWED: tuple[tuple[str, str, int], ...] = (
+    ("spec", "(#4338, `bf130fe52`); its boards", 1),
+    ("spec", "E05-D02's time-limited reveal stay the", 1),
+    ("spec", "and the reveal words read", 1),
+    ("spec", 'a withdrawal "OFF" without its', 1),
+    ("spec", "a show, copy or toggle", 1),
+    ("spec", "control, a withdrawal control, and a", 1),
+    ("spec", "PR base `e8bca4bb7` (every moved", 1),
+    ("spec", 'every withdrawal "OFF" dated (D03-C15),', 1),
+    ("spec", "Appendix A's copy-ready A-rows and", 1),
+    ("spec", "`docs/design/_tools/e27_d03_hifi_audit.py` (`python3 -I", 1),
+    ("spec", 'that tool; "copy re-tested with', 1),
+    ("spec", "the final copy", 1),
+    ("spec", "at `main` `e8bca4bb7`. `D02` =", 1),
+    ("spec", '(`05:131`); no reveal (`11:344` "no', 1),
+    ("spec", '(`11:344` "no reveal control anywhere', 1),
+    ("spec", "(`3a2fc5c29`; CMP-034's reveal rules S1–S7", 1),
+    ("spec", "keys), E30-D02 (`f798a64e6`; the validity", 1),
+    ("spec", "has no reveal", 1),
+    ("spec", "notes — misrepresentation is the", 1),
+    ("spec", "and SCR-128 copy; no real", 1),
+    ("spec", "must be OFF, IP allowlist", 1),
+    ("spec", "verified in copy review", 2),
+    ("spec", "of E05-D02's reveal stay the", 1),
+    ("spec", "to one (verified-off = verified,", 1),
+    ("spec", "no reveal anywhere (AC4;", 1),
+    ("spec", 'annotates "secret reveal" as a', 1),
+    ("spec", "E05-D02's time-limited reveal stays the", 1),
+    ("spec", "draws a reveal meanwhile", 3),
+    ("spec", "`label`, and the toggle, the timer", 1),
+    ("spec", "and the copy affordance are", 1),
+    ("spec", "the only copyable value (binding:", 1),
+    ("spec", "D13 no reveal anywhere (binding)", 1),
+    ("spec", "(`D02:387`), never OFF", 1),
+    ("spec", 'the "Withdrawal: OFF ✓" text;', 1),
+    ("spec", "and a copy-ready A-row to", 2),
+    ("spec", "respec) defines a toggle, a timer", 1),
+    ("spec", "and a copy control that", 1),
+    ("spec", "Proposed (no reveal)", 1),
+    ("spec", '"MaskedValue ("secret reveal")" (`15:371`)', 1),
+    ("spec", 'name "secret reveal": permanently masked,', 2),
+    ("spec", 'masked, no reveal)": the old', 1),
+    ("spec", "display with reveal toggle (admin", 2),
+    ("spec", "key/secret display with reveal toggle (admin key", 2),
+    ("spec", "`label` · `revealed?` · `onToggleReveal`", 1),
+    ("spec", "`revealed?` · `onToggleReveal` · `autoHideMs?`", 1),
+    ("spec", "`onToggleReveal` · `autoHideMs?` · `copyable?`", 1),
+    ("spec", "`autoHideMs?` · `copyable?` (`15:374`)", 1),
+    ("spec", "8-character mask), revealed, expiring, copied", 1),
+    ("spec", 'a "Show {label}" / "Hide', 1),
+    ("spec", '{label}" / "Hide {label}" toggle; a', 1),
+    ("spec", "Masked, Revealed, AutoHideCountdown, Copyable", 2),
+    ("spec", "Masked, Revealed, AutoHideCountdown, Copyable (`15:378`)", 1),
+    ("spec", "Revealed, AutoHideCountdown, Copyable (`15:378`)", 1),
+    ("spec", "**Why the reveal is deliberately", 1),
+    ("spec", 'for "no reveal', 1),
+    ("spec", "(`11:344`). A reveal path is", 1),
+    ("spec", "recorded as `api_key.reveal_attempt` (`ACT:139`) —", 1),
+    ("spec", 'implies a reveal is available"', 1),
+    ("spec", "misrepresentations that cause", 1),
+    ("spec", "a box, a toggle, a timer", 1),
+    ("spec", "or a copy control on", 1),
+    ("spec", "nothing leaks, copy never logs,", 1),
+    ("spec", "with a reveal toggle, caps-lock", 3),
+    ("spec", "input with a reveal toggle, caps-lock warning", 3),
+    ("spec", "Default, Revealed, CapsLockOn, WithError", 3),
+    ("spec", '"copy-to-clipboard affordance (API', 1),
+    ("spec", "screens' one copy control", 3),
+    ("spec", "Copy keys", 10),
+    ("spec", "(`E42-D03:635-641`); the copy keys are §12.1's", 1),
+    ("spec", "Copy keys (§12)", 3),
+    ("spec", 'loading…", never OFF. Error: the', 1),
+    ("spec", 'account and off for sub_002.";', 1),
+    ("spec", "allowed, no reveal control, never", 1),
+    ("spec", "step → Copy → API", 1),
+    ("spec", "no staged reveal of the", 1),
+    ("spec", "secret → Copy → Verify", 1),
+    ("spec", "Content and copy", 7),
+    ("spec", "allowed, no reveal control and", 1),
+    ("spec", "and no copy control; both", 1),
+    ("spec", '"Trade, Withdrawal OFF ✓" with', 1),
+    ("spec", "secret → Copy (the target", 1),
+    ("spec", 'no "reveal", "irreversible", "permanently",', 1),
+    ("spec", 'a withdrawal "OFF" or "off"', 2),
+    ("spec", '"OFF" or "off" only', 2),
+    ("spec", 'account and off for {label}."', 1),
+    ("spec", "resembles a reveal (CMP-034 and", 1),
+    ("spec", "1).** 62 copy-ready A-rows over", 1),
+    ("spec", "S1–S3, the `autoHideMs` cap and", 1),
+    ("spec", "draws a reveal meanwhile (D03-C4).", 1),
+    ("spec", "out any reveal. **Decision (RULED", 1),
+    ("spec", "draws a reveal meanwhile.", 1),
+    ("spec", '"Trade, Withdrawal OFF ✓" (`D02:349`,', 1),
+    ("spec", 'and "Withdrawal: off." (`D02:785`) with', 1),
+    ("spec", "a staged reveal (D18; AD-16),", 1),
+    ("spec", "imply a reveal `(heuristic)`", 1),
+    ("spec", "box, beside a toggle, under a", 1),
+    ("spec", "with a copy control would", 1),
+    ("spec", "and no reveal: CMP-034 is", 1),
+    ("spec", "`copy.banned`, `copy.utc`, `copy.off`, `withdraw`): ids", 1),
+    ("spec", '"OFF" or "off" only beside', 1),
+    ("spec", "A** (`appx.*`, `reveal`): each Old", 1),
+    ("spec", "2026-10-25; `k1.masked`, `reveal`, `k3.withdraw`,", 1),
+    ("spec", "toggle, a `[Copy]` or a", 1),
+    ("spec", "or a copy control whose", 1),
+    ("spec", "K2: no reveal prop or", 1),
+    ("spec", 'every withdrawal "OFF" a', 1),
+    ("spec", "in its Copy keys, both in", 1),
+    ("spec", "round 2; `reveal`, `k1.masked`, `k2.field`,", 1),
+    ("spec", "or a reveal is named,", 1),
+    ("spec", "list: a reveal word or", 1),
+    ("spec", 'form of "reveal" or "unmask",', 1),
+    ("spec", '"reveal" or "unmask",', 1),
+    ("spec", "withdrawal OFF, in any", 1),
+    ("spec", "for the reveal words and", 1),
+    ("spec", "state) with withdrawal-off always visually", 1),
+    ("spec", "alone, and withdrawal-off always confirmed", 1),
+    ("spec", "`- **A11y**: withdrawal-off state is", 1),
+    ("spec", 'affirmative "Withdrawal: OFF ✓" text,', 1),
+    ("spec", 'MaskedValue ("secret reveal")`', 1),
+    ("spec", "masked, no reveal)`", 1),
+    ("spec", "Why no reveal exists: no", 1),
+    ("spec", '(C-12.2); "no reveal control anywhere', 1),
+    ("spec", "itself a misrepresentation (E27-D03 §2.3).``", 1),
+    ("spec", "buttons) · `revealed?: boolean` (never", 1),
+    ("spec", "mount) · `onToggleReveal` · `autoHideMs?:", 1),
+    ("spec", "`onToggleReveal` · `autoHideMs?: number` (default", 1),
+    ("spec", "automatically) · `copyable?: boolean` (default", 1),
+    ("spec", "value's length), revealed (only after", 1),
+    ("spec", "press of the toggle), expiring (the", 1),
+    ("spec", 'with label "Show {label}"/"Hide {label}" ("Show', 1),
+    ("spec", 'label "Show {label}"/"Hide {label}" ("Show secret"/"Hide', 1),
+    ("spec", '{label}"/"Hide {label}" ("Show secret"/"Hide secret" when', 1),
+    ("spec", '{label}" ("Show secret"/"Hide secret" when `label`', 1),
+    ("spec", "the value; copy logs nothing", 1),
+    ("spec", "shown (the copy deck's string);", 1),
+    ("spec", "the box, the toggle and the", 1),
+    ("spec", "**Storybook**: Masked, Revealed, AutoHideCountdown, Copyable.`", 1),
+    ("spec", "Masked, Revealed, AutoHideCountdown, Copyable.`", 1),
+    ("spec", "Revealed, AutoHideCountdown, Copyable.`", 1),
+    ("spec", "step 3) with no toggle at all.``", 1),
+    ("spec", "``- **A11y**: reveal is a", 2),
+    ("spec", "**Storybook**: Default, Revealed, CapsLockOn, WithError.`", 1),
+    ("spec", "**Storybook**: Default, Revealed, CapsLockOn, WithError,", 1),
+    ("spec", "axe, interaction (reveal toggle, paste", 2),
+    ("spec", "· **Purpose**: copy-to-clipboard affordance (API", 1),
+    ("hand-off", "`docs/design/_tools/e27_d03_hifi_audit.py`'s (spec §9).", 1),
+    ("hand-off", "colours; no reveal, timer or", 1),
+    ("hand-off", "timer or copy state exists", 1),
+    ("hand-off", "`packages/ui/tokens` at `e8bca4bb7` (spec §2.3,", 1),
+    ("hand-off", "draws a reveal meanwhile", 1),
+    ("hand-off", "§2.3; no reveal, timer or", 1),
+    ("hand-off", "timer or copy exists", 1),
+)
+
+
+def line_hits(
+    line: str, frame_row: bool, field_heading: bool = False
+) -> list[tuple[int, int, str]]:
+    """Every security hit on one line: (start, end, code). A frame row is read for the reveal
+    words and the dated OFF only; a row whose first cell, or whose heading, names a key or a secret
+    field reads every clause as that field's (K1 / K2)."""
+    hits = [(m.start(), m.end(), "reveal") for m in DOC_REVEAL.finditer(line)]
+    hits += [(x, y, "k3.off") for x, y in off_spans(line, negate=False)]
+    if frame_row:
+        return hits
+    first = cells(line)[0] if line.lstrip().startswith("|") else ""
+    field_row = field_heading or FIELD_NAMED.search(first) is not None
+    for a, b in clause_spans(line):
+        clause = line[a:b]
+        if field_row or FIELD_NAMED.search(clause):
+            ids = [(m.start(), m.end()) for m in BARE_ID.finditer(clause)]
+            ids += [
+                (m.start(), m.end())
+                for m in MASK_TAIL.finditer(clause)
+                if m[1] or not (re.fullmatch(r"[A-Za-z0-9]{4}", m[2]) or m[2] == "{last4}")
+            ]
+            ids += [(m.start(), m.end()) for m in LONG_RUN.finditer(clause) if plaintext_like(m[0])]
+            hits += [(a + x, a + y, "k1.masked") for x, y in ids]
+            shown = [(m.start(), m.end()) for m in SHOW_MATERIAL.finditer(clause)]
+            shown += control_spans(clause, field_row, negate=False)
+            hits += [(a + x, a + y, "k2.field") for x, y in shown]
+        rights = [
+            m for p in (WITHDRAW_ON, WITHDRAW_GRANT, WITHDRAW_CONTROL) for m in p.finditer(clause)
+        ]
+        hits += [(a + m.start(), a + m.end(), "k3.withdraw") for m in rights]
+    return hits
+
+
+def doc_gate(spec: str, handoff: str, sec: dict[str, str], out: Out) -> None:
+    """§7c: the K1 / K2 / K3 / dated-OFF / reveal gates over the whole spec and the hand-off."""
+    frames = {r["raw"] for r in frame_rows(sec).values()}
+    n_hits, n_allowed = 0, 0
+    for name, text in (("spec", spec), ("hand-off", handoff)):
+        covered = bytearray(len(text))
+        for doc, phrase, want in SECURITY_ALLOWED:
+            if doc != name:
+                continue
+            at = [m.start() for m in re.finditer(re.escape(phrase), text)][:want]
+            for x in at:
+                covered[x : x + len(phrase)] = b"\1" * len(phrase)
+        start, heading = 0, ""
+        for num, line in enumerate(text.split("\n"), 1):
+            heading = line if line.startswith("#") else heading
+            field_heading = FIELD_NAMED.search(heading) is not None
+            hits = line_hits(line, line in frames and name == "spec", field_heading)
+            n_hits += len(hits)
+            bad = [(x, y, c) for x, y, c in hits if not all(covered[start + x : start + y])]
+            n_allowed += len(hits) - len(bad)
+            if bad:
+                code = min((c for _x, _y, c in bad), key=DOC_CODES.index)
+                words = sorted({line[x:y] for x, y, _c in bad})[:3]
+                out.fail(
+                    code,
+                    f"{name} line {num}: a key, a secret field, a fund right or a reveal outside "
+                    f"the pinned allow-list (§7c): {words}",
+                )
+            start += len(line) + 1
+    out.n.update(
+        {"doc_hits": n_hits, "doc_allowed": n_allowed, "doc_phrases": len(SECURITY_ALLOWED)}
     )
 
 
@@ -2092,12 +2278,14 @@ def gates(
     t2_gate(spec, sec, base, out)
     deck_gate(sec, base, out)
     appendix_gate(sec, base, out)
-    reveal_gate(sec, out)
     frame_gate(spec, sec, base, out)
+    doc_gate(spec, base["handoff"], sec, out)
     cite_gate(spec, out)
     misc_gate(spec, sec, base, out)
     bq_gate(sec, out)
-    out.n.update({"mutations": len(MUTATIONS), "k_mutations": len(K_MUTATIONS)})
+    out.n.update(
+        {"mutations": len(MUTATIONS), "k_mutations": len(K_MUTATIONS) + len(HAND_MUTATIONS)}
+    )
     if check_markers:
         marker_gate(spec, flat_data(base, out), out)
     out.n["markers"] = len(MARKER.findall(spec))
@@ -2177,7 +2365,7 @@ Fixture values only: `...a1b2`, `203.0.113.10`, UID 1234567, C-2.8, US-ACCT-002,
 
 | Field | Current | Proposed (no reveal) |
 | --- | --- | --- |
-| Props | `revealed?` · `onToggleReveal` | `maskedId` · `label`; no reveal exists |
+| Props | `label` · `revealed?` · `onToggleReveal` · `autoHideMs?` · `copyable?` | `maskedId` · `label` |
 
 ## 3. The hi-fi rows
 
@@ -2269,8 +2457,9 @@ def fixture_frame(num: int, frame: dict[str, Any]) -> tuple[str, str]:
     """The fixture's Hi-fi and Copy keys cells: each element its frame-level gate requires."""
     hifi, keys = ["x"], []
     if frame["t2"]:
-        hifi.append("the `lock` leads it inside CMP-079")
-        keys.append("`keys.kek_unavailable`")
+        view_as = VIEWAS_NAMED.search(frame["name"]) is not None
+        hifi.append("T2 `rbac.view_as`, " * view_as + "the `lock` leads it inside CMP-079")
+        keys.append("`rbac.view_as`" if view_as else "`keys.kek_unavailable`")
     if num in DESTRUCTIVE:
         keys += [f"`{DESTRUCTIVE[num]}`", f"`{STEP_UP_KEY}`"]
         hifi += [f'"{FIXTURE_CONSEQUENCE}"', "the ask line"]
@@ -2707,6 +2896,19 @@ def swap_steps(spec: str) -> str | None:
     return frame_sub(46, '· 3 "Revoke', '· 2 "Revoke')(first) if first else None
 
 
+def sec_sub(key: str, old: str, new: str) -> Mutation:
+    """Replace ``old`` (exact text) at its first occurrence in section ``key``."""
+    return first_sub(re.escape(old), new, key)
+
+
+def viewas_swapped(spec: str) -> str | None:
+    """G7: frame 69's view-as leg swapped for the role leg, in its prose and its keys."""
+    first = frame_sub(69, "`rbac.view_as`", "`rbac.owner_only`", every=True)(spec)
+    return (
+        frame_sub(69, "the view-as leg checked", "the role leg checked")(first) if first else None
+    )
+
+
 def is_expiring(variant: str, _cls: str) -> bool:
     return variant.startswith("expiring")
 
@@ -2714,7 +2916,18 @@ def is_expiring(variant: str, _cls: str) -> bool:
 ROUTE = "not drawn — the text is binding; drawn on request"
 # K1b-K1d's tokens are built at run time from harmless parts, so no line of this file (or of any
 # commit) matches a secret scanner's rule for a vendor key; each keeps its mutation's effect
-PREFIXED_TOKEN = "_".join(("s" + "k", "li" + "ve", "Zx81" + "QwEr" + "Ty99" + "AbCd"))
+PREFIXED_RUN = "_".join(("s" + "k", "li" + "ve", "Zx81" + "QwEr" + "Ty99" + "AbCd"))
+# --self-test prints each mutation's FAIL; a vendor-shaped run (two letters, a live / test mode, a
+# body) is masked to its first three characters, so no output or pasted evidence carries one
+VENDOR_SHAPE = re.compile(
+    r"(?<![A-Za-z0-9])[a-z]{2}_(?:" + "li" + "ve|" + "te" + r"st)_[A-Za-z0-9]+(?![A-Za-z0-9])"
+)
+
+
+def mask_vendor(line: str) -> str:
+    return VENDOR_SHAPE.sub(lambda m: m[0][:3] + "\u2026", line)
+
+
 MIXED_16 = "xQ7m" + "K2pL" + "9vRt" + "4wZn"
 MIXED_20 = "AbCd" + "EfGh" + "IjKl" + "MnOp" + "QrSt"
 BARE_12 = "7Hq2" + "Lm9X" + "c4Rv"
@@ -2739,7 +2952,7 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
         "K1b",
         "a key row shows a prefixed plaintext-like key",
         "k1.masked",
-        frame_sub(31, "...e5f6", PREFIXED_TOKEN),
+        frame_sub(31, "...e5f6", PREFIXED_RUN),
     ),
     (
         "K1c",
@@ -3034,6 +3247,209 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
     ),
     ("K14", "a frame missing its hi-fi row", "inv.missing", frame_drop(43)),
     (
+        "R1",
+        "reveal on press, §4.1 block H",
+        "reveal",
+        sec_sub("4.1", 'as G; label "API secret"', 'as G with reveal on press; label "API secret"'),
+    ),
+    (
+        "R1b",
+        "Reveal on press, §5 key fields",
+        "reveal",
+        sec_sub(
+            "5",
+            '"New API secret" with CP-1\'s sentence',
+            '"New API secret" with CP-1\'s sentence, Reveal on press',
+        ),
+    ),
+    (
+        "R2",
+        "a reveal button, §4.1 block H",
+        "reveal",
+        sec_sub("4.1", 'as G; label "API secret"', 'as G with a reveal button; label "API secret"'),
+    ),
+    (
+        "R2b",
+        "A Reveal button, §2.5 secret entry",
+        "reveal",
+        sec_sub("2.5", "no toggle, autocomplete off", "A Reveal button, autocomplete off"),
+    ),
+    (
+        "R3",
+        "revealed on hover, §2.5 CMP-034 row",
+        "reveal",
+        sec_sub("2.5", "text only, `...{last4}`", "text only, `...{last4}`, revealed on hover"),
+    ),
+    (
+        "R3b",
+        "Revealed on hover, §6 Key cell",
+        "reveal",
+        sec_sub(
+            "6",
+            "CMP-034, the masked id `...{last4}` and nothing more",
+            "CMP-034, the masked id `...{last4}`, Revealed on hover",
+        ),
+    ),
+    (
+        "R4",
+        "`revealed` in §5 masked id title",
+        "reveal",
+        sec_sub(
+            "5",
+            "Rotate the key of sub_002 (...e5f6) · LIVE",
+            "Rotate the key of sub_002 (...e5f6, `revealed`) · LIVE",
+        ),
+    ),
+    (
+        "R5",
+        "`revealed` in §6 Key cell",
+        "reveal",
+        sec_sub(
+            "6",
+            "the masked id `...{last4}` and nothing more",
+            "the masked id `...{last4}` and `revealed`",
+        ),
+    ),
+    (
+        "W1",
+        "withdraw: on, §8 drawer key row",
+        "k3.withdraw",
+        sec_sub("8", '"Trade: yes."', '"Trade: yes." "withdraw: on."'),
+    ),
+    (
+        "W1b",
+        "Withdraw: ON, §6 Rights row",
+        "k3.withdraw",
+        sec_sub("6", '"Trade · Withdrawal OFF ✓ · verified 14:02 UTC"', '"Trade · Withdraw: ON"'),
+    ),
+    (
+        "W2",
+        "transfer enabled, §8 drawer key row",
+        "k3.withdraw",
+        sec_sub("8", '"Trade: yes."', '"Trade: yes." "transfer enabled."'),
+    ),
+    (
+        "W2b",
+        "Transfer Enabled, §2.5",
+        "k3.withdraw",
+        sec_sub(
+            "2.5",
+            "eight served forms; never dismissible",
+            "eight served forms, Transfer Enabled; never dismissible",
+        ),
+    ),
+    (
+        "W3",
+        "a withdrawal switch, §8 drawer key row",
+        "k3.withdraw",
+        sec_sub("8", '"Trade: yes."', '"Trade: yes." with a withdrawal switch'),
+    ),
+    (
+        "W3b",
+        "A Withdrawal Switch, §4.4",
+        "k3.withdraw",
+        sec_sub(
+            "4.4",
+            "a row the server fills after a pass",
+            "a row the server fills after a pass, A Withdrawal Switch beside it",
+        ),
+    ),
+    (
+        "O1",
+        "undated OFF, §4.4 block D",
+        "k3.off",
+        sec_sub("4.4", "OFF ✓ — verified 14:02 UTC", "OFF ✓"),
+    ),
+    (
+        "O1b",
+        "undated off (lowercase), §4.4 block D",
+        "k3.off",
+        sec_sub("4.4", "OFF ✓ — verified 14:02 UTC", "off ✓"),
+    ),
+    (
+        "O2",
+        'lowercase "off ✓", frame 36',
+        "k3.off",
+        sec_sub("5", '"OFF ✓ · verified 10:39 UTC"', '"off ✓"'),
+    ),
+    (
+        "O3",
+        "undated OFF, §6 Rights row",
+        "k3.off",
+        sec_sub(
+            "6", '"Trade · Withdrawal OFF ✓ · verified 14:02 UTC"', '"Trade · Withdrawal OFF ✓"'
+        ),
+    ),
+    (
+        "O3b",
+        "undated off (lowercase), §6 Rights row",
+        "k3.off",
+        sec_sub(
+            "6", '"Trade · Withdrawal OFF ✓ · verified 14:02 UTC"', '"Trade · Withdrawal off ✓"'
+        ),
+    ),
+    (
+        "O4",
+        'undated "Withdrawal: off.", §8 statement',
+        "k3.off",
+        sec_sub("8", '"Withdrawal: off — verified 14:02 UTC."', '"Withdrawal: off."'),
+    ),
+    (
+        "O4b",
+        'undated "Withdrawal: OFF.", §8 statement',
+        "k3.off",
+        sec_sub("8", '"Withdrawal: off — verified 14:02 UTC."', '"Withdrawal: OFF."'),
+    ),
+    (
+        "I1",
+        "bare 12-character id, §6 Key cell",
+        "k1.masked",
+        sec_sub(
+            "6",
+            "the masked id `...{last4}` and nothing more",
+            f"the masked id `{BARE_12}` and nothing more",
+        ),
+    ),
+    (
+        "I1b",
+        "bare 12-hex id, §8 drawer key line",
+        "k1.masked",
+        sec_sub("8", '"API key {key_id_masked} ·', f'"API key {HEX_12} ·'),
+    ),
+    (
+        "I2",
+        "[Show] in §6 Key cell",
+        "k2.field",
+        sec_sub(
+            "6", "the masked id `...{last4}` and nothing more", "the masked id `...{last4}` [Show]"
+        ),
+    ),
+    (
+        "I2b",
+        "[Show] in §8 drawer key line",
+        "k2.field",
+        sec_sub("8", '"API key {key_id_masked} ·', '"API key {key_id_masked} [Show] ·'),
+    ),
+    (
+        "R6",
+        "`revealed` in Appendix A States New cell",
+        "reveal",
+        sec_sub("A", "masked — its only state;", "masked — its only state, `revealed`;"),
+    ),
+    (
+        "A1",
+        "an allowed phrase copied to a new place",
+        "reveal",
+        sec_sub("8", '"Trade: yes."', '"Trade: yes." It has no reveal.'),
+    ),
+    (
+        "G7a",
+        "frame 69 Hi-fi loses its view-as leg (prose only)",
+        "k8.viewas",
+        frame_sub(69, "both mode controls T2 `rbac.view_as`, each", "both mode controls T2, each"),
+    ),
+    ("G7b", "frame 69 view-as leg swapped for the role leg", "k8.viewas", viewas_swapped),
+    (
         "K15",
         "an undrawn frame not named 'not drawn'",
         "inv.board",
@@ -3063,6 +3479,32 @@ K_MUTATIONS: tuple[tuple[str, str, str, Mutation], ...] = (
 )
 
 
+# r2o: the whole-document gate reads the hand-off too; each of these edits the hand-off in memory
+HAND_MUTATIONS: tuple[tuple[str, str, str, str, str], ...] = (
+    (
+        "H1",
+        "hand-off: a reveal on CMP-034",
+        "reveal",
+        "no reveal, timer or copy state exists",
+        "a reveal on press exists",
+    ),
+    (
+        "H2",
+        "hand-off: [Copy] on the masked id",
+        "k2.field",
+        "no reveal, timer or copy exists",
+        "its masked id with [Copy]",
+    ),
+    (
+        "H3",
+        "hand-off: withdrawal on",
+        "k3.withdraw",
+        "no reveal, timer or copy exists",
+        "Withdrawal: on",
+    ),
+)
+
+
 def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
     """Every K mutation on the spec on disk: rc 1 with exactly one distinct FAIL, its own code."""
     before = gates(spec, base)
@@ -3076,6 +3518,17 @@ def k_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
             lines.append(f"{k} {name}: n/a (the spec lacks its target)")
             continue
         new = sorted(set(gates(mutated, base).fails) - set(before.fails))
+        hit = len(new) == 1 and new[0][0] == code
+        ok = ok and hit
+        got = "; ".join(f"{c}: {m}" for c, m in new) or "none"
+        lines.append(f"{k} {name}: rc {1 if new else 0}, {'ok' if hit else 'WRONG'} — {got}")
+    for k, name, code, old, repl in HAND_MUTATIONS:
+        if old not in base["handoff"]:
+            ok = False
+            lines.append(f"{k} {name}: n/a (the hand-off lacks its target)")
+            continue
+        edited = {**base, "handoff": base["handoff"].replace(old, repl, 1)}
+        new = sorted(set(gates(spec, edited).fails) - set(before.fails))
         hit = len(new) == 1 and new[0][0] == code
         ok = ok and hit
         got = "; ".join(f"{c}: {m}" for c, m in new) or "none"
@@ -3142,9 +3595,10 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
     lines.append(
         f"--self-test: {'ok' if ok else 'FAIL'} — {len(MUTATIONS)} mutations in memory, on "
         f"{where}; "
-        f"{len(K_MUTATIONS)} K mutations on the spec, each one FAIL of its own"
+        f"{len(K_MUTATIONS)} K mutations on the spec and {len(HAND_MUTATIONS)} on the hand-off, "
+        "each one FAIL of its own"
     )
-    return ok, lines
+    return ok, [mask_vendor(x) for x in lines]
 
 
 # --- the report ----------------------------------------------------------------------------------
