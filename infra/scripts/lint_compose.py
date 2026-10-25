@@ -83,7 +83,7 @@ import re
 import sys
 from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -119,10 +119,11 @@ _KEK_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
 _KEY_MATERIAL = re.compile(r"[0-9A-Fa-f]{32,}|[A-Za-z0-9+/_-]{43,}")
 #: Rule 5: where a service reads its KEK, `/run/secrets/<target>`: a handle's, else Settings'.
 _KEK_HANDLES = ("CV_KEK_HANDLE", "CV_KEK_PREV_HANDLE")
-_SECRETS_DIR = "/run/secrets/"
+#: Where compose mounts a secret by default, and where Settings reads a KEK handle.
+_HANDLE_DIR = "/run/secrets/"
 _DEFAULT_KEK_TARGET = "cv_kek"
 #: Rule 5 (D-2): where compose mounts a secret or a config whose target is missing or relative.
-_MOUNT_DIRS = {"secret": _SECRETS_DIR, "config": "/"}
+_MOUNT_DIRS = {"secret": _HANDLE_DIR, "config": "/"}
 #: A variable a config's `content:` interpolates, `${NAME...}` or `$NAME`.
 _VARIABLE = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)")
 _OWNER_DSN_NAME = "CV_PG_OWNER_DSN"
@@ -166,12 +167,12 @@ _SOURCES = {("migrate", "CV_PG_DSN"): "CV_PG_OWNER_DSN"}
 #: The one name that may default to empty: no browser origin (fail closed).
 _MAY_BE_EMPTY = frozenset({"CV_ALLOWED_ORIGINS"})
 _OWNER_DSN = re.compile(r"\$\{CV_PG_OWNER_DSN:\?[^}]*\}")
-#: The overlay's secrets, each the host file its variable names, with no default.
-_DEMO_SECRETS = {"cv_kek": "CV_KEK_FILE", "cv_audit_lane_key": "CV_AUDIT_LANE_MAC_SOURCE"}
+#: The overlay's two file secrets, each the host file its variable names, with no default.
+_DEMO_FILES = {"cv_kek": "CV_KEK_FILE", "cv_audit_lane_key": "CV_AUDIT_LANE_MAC_SOURCE"}
 #: The api's secret mounts: this file's `cv_kek` and the base file's audit lane key.
 _API_MOUNTS: dict[str, dict[str, object]] = {
     name: {"source": name, "target": name, "uid": _RUNTIME_ID, "gid": _RUNTIME_ID, "mode": 0o400}
-    for name in _DEMO_SECRETS
+    for name in _DEMO_FILES
 }
 #: `lint_compose.py <file>`: an overlay's own rule, by its file name (N1).
 _RULES_BY_NAME = {
@@ -212,14 +213,6 @@ def _extension_pairs(node: Any, name: str) -> list[tuple[str, str]]:
         return []
     key, sep, value = str(node).partition("=")
     return [(key, value)] if sep and _NAME.fullmatch(key) else [(name, str(node))]
-
-
-def _secret_ends(entry: Any) -> tuple[str, str]:
-    """A service's `secrets:` entry, short or long form, as (source, target in /run/secrets)."""
-    if not isinstance(entry, dict):
-        return str(entry), str(entry)
-    source = str(entry.get("source", ""))
-    return source, str(entry.get("target") or source).removeprefix(_SECRETS_DIR)
 
 
 def _mount(entry: Any) -> tuple[str, str, str]:
@@ -310,7 +303,7 @@ def check_no_kek_in_environment(compose: dict[str, Any]) -> list[str]:
             errors += _kek_value_problems(f"{where} {key}", _extension_pairs(service[key], key))
     for key in [key for key in compose if str(key).startswith("x-")]:
         errors += _kek_value_problems(f"top-level {key}:", _extension_pairs(compose[key], key))
-    errors += _kek_secret_sources(compose)
+    errors += _kek_sources(compose)
     return errors + _env_file_problems(compose) + _owner_dsn_reach(compose)
 
 
@@ -332,11 +325,11 @@ def _kek_value_problems(where: str, pairs: Iterable[tuple[str, str]]) -> list[st
     return errors
 
 
-def _kek_secret_sources(compose: dict[str, Any]) -> list[str]:
+def _kek_sources(compose: dict[str, Any]) -> list[str]:
     """Rule 5's secrets and configs: a KEK from a host file this file declares, never from the
     environment or a config's content (M1, D-2: that puts the key back in `.env` or the
     repository); the owner DSN never from either."""
-    declared = {kind: compose.get(f"{kind}s") or {} for kind in _MOUNT_DIRS}
+    declared = {kind: _section(compose, kind) or {} for kind in _MOUNT_DIRS}
     errors = [
         error
         for kind, entries in declared.items()
@@ -347,12 +340,12 @@ def _kek_secret_sources(compose: dict[str, Any]) -> list[str]:
         service = service or {}
         env = _environment(service)
         handles = {
-            key: env[key] for key in _KEK_HANDLES if env.get(key, "").startswith(_SECRETS_DIR)
+            key: env[key] for key in _KEK_HANDLES if env.get(key, "").startswith(_HANDLE_DIR)
         }
         mounts = [
             (kind, *_mount_path(entry, base))
             for kind, base in _MOUNT_DIRS.items()
-            for entry in service.get(f"{kind}s") or []
+            for entry in _section(service, kind) or []
         ]
         errors += [
             f"service '{name}': {key} names a /run/secrets/ file this file does not mount on it "
@@ -360,7 +353,7 @@ def _kek_secret_sources(compose: dict[str, Any]) -> list[str]:
             for key, path in handles.items()
             if path not in {mounted for _, _, mounted in mounts}
         ]
-        reads = {*handles.values(), _SECRETS_DIR + _DEFAULT_KEK_TARGET}
+        reads = {*handles.values(), _HANDLE_DIR + _DEFAULT_KEK_TARGET}
         for kind, source, path in mounts:
             kek = path in reads or "KEK" in f"{source} {path}".upper()
             if kek and not _from_a_file(declared[kind].get(source)):
@@ -395,9 +388,15 @@ def _declared_problems(kind: str, name: str, entry: Any) -> list[str]:
     return errors
 
 
-def _from_a_file(entry: Any) -> bool:
+def _from_a_file(entry: Any) -> TypeGuard[dict[str, Any]]:
     """A top-level secret or config whose one source is a host file: `file:` alone."""
     return isinstance(entry, dict) and set(entry) == {"file"}
+
+
+def _section(node: dict[str, Any], kind: str) -> Any:
+    """A compose node's `secrets:` or `configs:`, by kind: the declarations at the top level, a
+    service's mounts. The lint reads names and sources there, never a secret's value."""
+    return node.get(f"{kind}s")
 
 
 def _mount_path(entry: Any, base: str) -> tuple[str, str]:
@@ -489,7 +488,7 @@ def check_demo_host_overlay(compose: dict[str, Any]) -> list[str]:
         errors += _environment_problems(name, _environment(service or {}))
     errors += check_port_bindings(compose)
     api = services.get("api") or {}
-    errors += _kek_secret_problems(compose, api)
+    errors += _kek_mount_problems(compose, api)
     core = (api.get("ulimits") or {}).get("core")
     if core != 0 and core != {"soft": 0, "hard": 0}:
         errors.append(f"service 'api': ulimits.core is {core!r}, not 0 (SR-009: no core dumps)")
@@ -526,7 +525,7 @@ def _environment_problems(name: str, env: dict[str, str]) -> list[str]:
     return errors
 
 
-def _secret_mount(entry: Any) -> dict[str, object]:
+def _long_form(entry: Any) -> dict[str, object]:
     """A `secrets:` entry in the api's long form; a bare name keeps compose's defaults."""
     if not isinstance(entry, dict):
         return {"source": str(entry)}
@@ -549,7 +548,8 @@ def _bootstrap_owner_problems(service: dict[str, Any]) -> list[str]:
         errors.append(f"{name}: entrypoint is not {' '.join(_BOOTSTRAP_CLI)}")
     if service.get("build") != _API_BUILD or service.get("pull_policy") != "build":
         errors.append(f"{name}: does not build the api's image from this checkout")
-    if [_secret_mount(entry) for entry in service.get("secrets") or []] != [_API_MOUNTS["cv_kek"]]:
+    mounts = [_long_form(entry) for entry in _section(service, "secret") or []]
+    if mounts != [_API_MOUNTS["cv_kek"]]:
         errors.append(
             f"{name}: mounts a secret that is not cv_kek as the api mounts it, or none: the CLI "
             "reads the KEK alone (no lane key)"
@@ -575,29 +575,30 @@ def _bootstrap_owner_problems(service: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _kek_secret_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
+def _kek_mount_problems(compose: dict[str, Any], api: dict[str, Any]) -> list[str]:
     """The overlay's two file secrets, and api's mounts: `cv_kek` once, at most the lane key."""
-    declared = compose.get("secrets") or {}
+    declared = _section(compose, "secret") or {}
     errors = [
         f"secret '{extra}': the demo-host overlay declares only cv_kek and cv_audit_lane_key, "
         "each a file secret"
-        for extra in sorted(set(declared) - set(_DEMO_SECRETS))
+        for extra in sorted(set(declared) - set(_DEMO_FILES))
     ]
-    for name, variable in _DEMO_SECRETS.items():
-        secret = declared.get(name)
-        source = str(secret["file"]) if isinstance(secret, dict) and set(secret) == {"file"} else ""
+    for name, variable in _DEMO_FILES.items():
+        entry = declared.get(name)
+        source = str(entry["file"]) if _from_a_file(entry) else ""
         if not re.fullmatch(rf"\$\{{{variable}:\?[^}}]*\}}", source):
             errors.append(
                 f"secret '{name}' is not file: ${{{variable}:?...}} (the host file the "
                 "operator's env file names, with no default, so an unset name fails loudly)"
             )
-    mounts = [_secret_mount(entry) for entry in api.get("secrets") or []]
+    mounted = _section(api, "secret") or []
+    mounts = [_long_form(entry) for entry in mounted]
     if [m for m in mounts if m["source"] == "cv_kek"] != [_API_MOUNTS["cv_kek"]]:
         errors.append(
             f"service 'api': does not mount cv_kek once at {KEK_HANDLE}, uid and gid "
             f"{_RUNTIME_ID}, mode 0400"
         )
-    targets = [_secret_ends(entry)[1] for entry in api.get("secrets") or []]
+    targets = [_mount_path(entry, _HANDLE_DIR)[1] for entry in mounted]
     foreign = [m for m in mounts if _API_MOUNTS.get(str(m["source"])) != m]
     if foreign or len(set(targets)) < len(targets):
         errors.append(
