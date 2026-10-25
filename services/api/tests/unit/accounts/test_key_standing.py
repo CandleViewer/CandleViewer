@@ -8,7 +8,11 @@ no I/O."""
 
 from __future__ import annotations
 
+import ast
 import copy
+import inspect
+from collections import Counter
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from types import SimpleNamespace
@@ -18,6 +22,7 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.accounts import selfcheck
 from candleviewer.accounts.health import AccountHealthMonitor
 from candleviewer.accounts.key_standing import REACTIONS, KeyStandings
 from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason, KeyStanding
@@ -315,14 +320,19 @@ def _ports_aside(standings: KeyStandings) -> dict[str, object]:
 
 def test_a_standing_read_writes_nothing_not_even_a_rejection_a_later_pass_cleared() -> None:
     """#913 slice 3 L4: the order lane reads the standing while the serving loop writes it, so a
-    read never writes. It answers a rejection a later pass has cleared as cleared, and keeps it."""
+    read never writes, not even what it found (CR-S3L4-06: a write back of an equal snapshot would
+    undo one the serving loop published meanwhile). It answers a rejection a later pass has cleared
+    as cleared, and keeps it."""
     standings, job, clock = _world()
     standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
     clock.advance(1)
     job.results[KEY] = _check("passed", last_pass=clock.now())
-    held = copy.deepcopy(_ports_aside(standings))
+    held = _ports_aside(standings)
+    copied = copy.deepcopy(held)
     assert (standings.standing(ACC), standings.standing(ACC_B)) == (ACTIVE, None)
-    assert _ports_aside(standings) == held
+    after = _ports_aside(standings)
+    assert [name for name in after if after[name] is not held.get(name)] == []  # none rebound
+    assert held == copied  # nor changed in place
 
 
 def test_each_write_publishes_anew_never_changing_what_a_read_in_flight_holds() -> None:
@@ -330,15 +340,122 @@ def test_each_write_publishes_anew_never_changing_what_a_read_in_flight_holds() 
     each write on the serving loop publishes anew rather than change it in place, so the read meets
     the write whole or not at all."""
     standings, _, clock = _world(key_row(ACC), key_row(ACC_B))
-    for write in (
+    writes: tuple[Callable[[], None], ...] = (
         lambda: standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY),
         lambda: standings.observe([key_row(ACC)]),
-    ):
+    )
+    for write in writes:
         held = _ports_aside(standings)  # each reference a read in flight holds
         copied = copy.deepcopy(held)
         clock.advance(1)
         write()
         assert held == copied  # each object held before the write is as it was
+
+
+class _Hooked(FakeClock):
+    """A clock that runs one hook inside its next `monotonic()`: a write that lands while a read
+    is under way, after the read has taken the standing's snapshot."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hook: Callable[[], None] | None = None
+
+    def monotonic(self) -> float:
+        hook, self.hook = self.hook, None
+        if hook is not None:
+            hook()
+        return super().monotonic()
+
+
+def test_a_read_answers_from_the_one_snapshot_it_took_though_a_write_lands_inside_it() -> None:
+    """#913 slice 3 L4 (CR-S3L4-01): a read takes the standing's snapshot once, so a tracking read
+    that lands while it reads, fresh and listing no account, never lends its age to the stale
+    snapshot's accounts: no torn pair admits an account the new read dropped."""
+    clock = _Hooked()
+    standings = KeyStandings(_Job(), interval_s=HOUR, stale_after_s=STALE_S, clock=clock)
+    standings.observe([key_row(ACC)])
+    clock.mono += STALE_S + 1  # the snapshot the read takes is stale
+    clock.hook = lambda: standings.observe([])  # it lands inside the read: fresh, listing none
+    assert standings.standing(ACC) is None
+    assert clock.hook is None  # it did land inside the read
+
+
+def test_a_rejection_never_refreshes_the_age_of_the_last_good_read() -> None:
+    """C-2.21 (CR-S3L4-01): a rejection publishes the standing anew with the last good read's own
+    age, so while the tracking reads keep failing the frozen list still ages out."""
+    standings, _, clock = _world(key_row(ACC), key_row(ACC_B))
+    clock.mono += STALE_S + 1
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    assert standings.standing(ACC_B) is None  # as stale as it was
+
+
+class _ByKey(Mapping[UUID, KeyCheck]):
+    """The job's results as the lane may read them: a key at a time, never iterated or sized."""
+
+    def __init__(self, held: Mapping[UUID, KeyCheck]) -> None:
+        self._held = dict(held)
+
+    def __getitem__(self, key: UUID) -> KeyCheck:
+        return self._held[key]
+
+    def __iter__(self) -> Iterator[UUID]:
+        raise AssertionError("the job's results were iterated")
+
+    def __len__(self) -> int:
+        raise AssertionError("the job's results were sized")
+
+
+@dataclass
+class _ByKeyJob:
+    results: Mapping[UUID, KeyCheck]
+
+
+def test_a_read_takes_the_jobs_results_a_key_at_a_time_and_never_iterates_them() -> None:
+    """#913 slice 3 L4 (CR-S3L4-01): the job stores a key's result in its mapping on the serving
+    loop while the lane reads it, so a standing read takes one `get` a key and never iterates the
+    mapping, which a store landing meanwhile would break."""
+    clock, job = FakeClock(), _ByKeyJob({})
+    standings = KeyStandings(job, interval_s=HOUR, stale_after_s=STALE_S, clock=clock)
+    standings.observe([key_row(ACC), key_row(ACC, key=NEW_KEY)])
+    standings.credential_rejected(ACC, Refusal.UNKNOWN_KEY)
+    clock.advance(1)
+    job.results = _ByKey({NEW_KEY: _check("passed", key=NEW_KEY, last_pass=clock.now())})
+    assert standings.standing(ACC) == ACTIVE  # NEW_KEY's pass, found by its key, clears it
+
+
+#: How `selfcheck` may read its results from the serving loop, never the lane: by key or iterated.
+_READS = frozenset({"get", "values", "items", "keys"})
+
+
+def _results_use(node: ast.Attribute, parent: ast.AST) -> str:
+    """How `selfcheck` uses `.results` at `node`: replaced whole, one key stored, read, or else the
+    line, for the test to name."""
+    if isinstance(parent, ast.Assign) and node in parent.targets:
+        return "replaced"
+    if isinstance(parent, ast.AnnAssign) and parent.target is node:
+        return "replaced"
+    if isinstance(parent, ast.Subscript) and parent.value is node:
+        if isinstance(parent.ctx, ast.Store | ast.Load):
+            return "stored" if isinstance(parent.ctx, ast.Store) else "read"
+    if isinstance(parent, ast.Attribute) and parent.attr in _READS:
+        return "read"
+    return f"line {node.lineno}"
+
+
+def test_the_job_replaces_its_results_whole_or_stores_one_key_never_clearing_or_popping() -> None:
+    """#913 slice 3 L4 (CR-S3L4-02): the lane's read of the job's results is safe only while the
+    job, on the serving loop, replaces the mapping whole or stores one key's result in it (module
+    docstring): never a clear, pop, delete, update or alias, which could leave a read without a
+    failed key's result."""
+    tree = ast.parse(inspect.getsource(selfcheck))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    uses = Counter(
+        _results_use(node, parents[node])
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and node.attr == "results"
+    )
+    assert set(uses) <= {"replaced", "stored", "read"}, uses
+    assert uses["replaced"] >= 2 and uses["stored"] >= 1  # the init and each pass; each key
 
 
 def test_a_cleared_rejection_is_in_force_again_if_its_pass_leaves_before_the_next_read() -> None:

@@ -14,8 +14,11 @@ from pydantic import SecretStr
 
 import candleviewer.account_health_wiring as wiring
 import candleviewer.app as appmod
-from candleviewer.accounts.order_gate import DisabledReason, KeyStanding
-from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck
+from candleviewer.accounts.health import AccountHealthMonitor
+from candleviewer.accounts.key_standing import KeyStandings
+from candleviewer.accounts.order_gate import AccountHealthCheck, DisabledReason, KeyStanding
+from candleviewer.accounts.selfcheck import FRESHNESS_GRACE, KeyCheck, KeySelfCheck
+from candleviewer.admin.flags.maintenance import MaintenanceGate
 from candleviewer.domain.order_entry import GlobalOrderEntryCheck, OrderEntryCheck, OrderEntryGate
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.accounts import SelfCheckTargetRow
@@ -81,6 +84,21 @@ def test_create_app_serves_one_gate_the_maintenance_check_then_the_account_check
     gate: OrderEntryGate = world.app.state.order_entry_gate
     assert gate is world.app.state.feature_flags.order_entry_gate  # no gate without the account
     assert gate.checks == (world.maintenance, world.runtime.order_entry_check)
+
+
+def test_the_gate_the_order_lane_reads_in_place_is_over_the_sources_20_argues_alone(
+    world: SimpleNamespace,
+) -> None:
+    """#913 slice 3 L4 (CR-S3L4-02): the order lane reads this gate in place, safe only over the
+    sources 20 Sec.6.2's inventory argues: the maintenance check's boolean, then the account check
+    over the key standing, the self-check's results and the account health. A check or a source
+    added here joins that inventory, with its argument, first."""
+    gate: OrderEntryGate = world.app.state.order_entry_gate
+    maintenance, account = gate.checks
+    assert type(maintenance) is MaintenanceGate and type(account) is AccountHealthCheck
+    assert (type(account._keys), type(account._health)) == (KeyStandings, AccountHealthMonitor)
+    assert type(world.runtime.standings._selfcheck) is KeySelfCheck
+    assert world.runtime.standings is account._keys and world.app.state.oms_runtime._gate is gate
 
 
 def test_create_app_builds_no_order_entry_gate_but_the_one_it_serves(

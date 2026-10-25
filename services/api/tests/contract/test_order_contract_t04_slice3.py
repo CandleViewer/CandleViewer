@@ -13,6 +13,8 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from candleviewer import oms_wiring
+from candleviewer.account_health_wiring import TRACKING_FAULT_AFTER_S
 from candleviewer.accounts.verification import Refusal
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
@@ -51,6 +53,7 @@ from candleviewer.oms_wiring import (
     environment_lock_key,
 )
 from candleviewer.settings import (
+    ACCOUNT_DOWN_MAX_S,
     OMS_AFTER_ANCHOR_S,
     OMS_STOP_RESERVE_S,
     TEARDOWN_BUDGET_S,
@@ -757,12 +760,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "Since L2 the lane records through its own `AuditWriter` and `machine_events` WAL sink, on "
         "its own loop, one hash chain with the serving loop's under `pg_advisory_xact_lock`",
     )
-    assert not _missing(
-        rows["OM-D11"],
+    assert (
         "as a persistence bundle's `machine_events` appends did until #913's L2 gave the lane its "
-        "own sink",
-        f"A read not begun within {BLOCK_TIMEOUT_S:g} s answers `oms_not_ready`, refused, never "
-        "open",
+        "own sink" in rows["OM-D11"]
     )
     assert not [row for row in (rows["OM-D10"], rows["OM-D11"]) if "until L2" in row]
     assert not _missing(
@@ -855,3 +855,61 @@ def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> N
         "the machine-event WAL (`machine_events.wal`, its cursor and its `.lock`)",
         "(`oms_lane.machine_events.wal`, the same three;",
     )
+
+
+def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -> None:
+    """#913 slice 3 L4's fold (CR-S3L4-04, CR-S3L4-08; the orchestrator's rulings of 2026-10-25
+    18:27Z (2) and 19:19Z): 20 Sec.6.2 and 24 Sec.8.4 state the stall fence on new submits with its
+    numbers, from the code's own constants, and its outer bounds; the E29 model's OM-D11, F-20 and
+    Sec.11's order-lane row carry L4's gate halves on L2's wording, logged as revision 21; and
+    20 says the stall fence and the lost lock's compose, either refusing alone."""
+    tick, stale = oms_wiring.SERVING_TICK_S, oms_wiring.SERVING_STALE_S
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert not _missing(
+        lane,
+        f"where before L4 a gate read it had not begun within {BLOCK_TIMEOUT_S:g} s was "
+        "`oms_not_ready`",
+        f"So the OMS ticks on the serving loop every {tick:g} s (`SERVING_TICK_S`), a stamp the "
+        f"lane reads in place, and once the last tick is over {stale:g} s old, twice that "
+        "(`SERVING_STALE_S`), every new submit is refused `oms_not_ready` (`FencedSwitches`: the "
+        "route's step 10, the pipeline's switches and a re-send), until the serving loop ticks "
+        "again, never as time passes.",
+        "The fence never holds the exit service's checks, a cancel, cancel-all, a stop attach or a "
+        "KILL (C-2.6).",
+        f"The account's health decaying to `down` (at most {ACCOUNT_DOWN_MAX_S:g} s after its last "
+        f"WS or REST success) and the last tracking read ageing out ({TRACKING_FAULT_AFTER_S:g} "
+        "s), each judged at read time, stay the outer bounds, and the only bounds of a "
+        "risk-increasing amend's gate read.",
+        "`FencedSwitches` wraps the binding whose first refusal is the environment lock's fence "
+        "(above), so the two compose: either refuses on its own, the stall fence read first.",
+    )
+    assert "which no longer holds a gate read" not in lane
+    assert (
+        "A new submit's reads of it, the route's, the pipeline's and a re-send's, are fenced: "
+        f"`oms_not_ready` while the serving loop has not ticked within {stale:g} s, the exit "
+        "service's never (`20-architecture.md` §6.2, #913 L4)."
+    ) in _words(_INTERNAL_DOC)
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    lines = threat.read_text(encoding="utf-8").splitlines()
+    [d11] = [_words(line) for line in lines if line.startswith("| OM-D11 |")]
+    [f20] = [_words(line) for line in lines if line.startswith("| F-20 |")]
+    [row] = [_words(line) for line in lines if line.startswith("| E29-T04, the order lane (slice")]
+    [log] = [_words(line) for line in lines if "| Revision 21, #913 slice 3's L4" in line]
+    assert not _missing(
+        d11,
+        "Since L4 the order-entry gate's reads take no hop (`ServedGate` reads it in place)",
+        f"the lane refuses new submits once its {tick:g} s tick is over {stale:g} s old, until it "
+        "ticks again",
+        "L4 reads the gate in place, twice, and fences new submits on a stalled serving loop, "
+        "never an exit or a KILL",
+    )
+    assert "A read not begun within 1 s answers `oms_not_ready`" not in d11
+    assert "a stalled serving loop fencing new submits within 1 s instead" in f20
+    assert "block the lane until L4" not in f20 and "| With #913's L1d |" in f20
+    assert not _missing(
+        row,
+        "and L4's order-entry gate read in place, twice, with no hop, and its fence on new submits "
+        "while the serving loop stalls, shipped with their tests",
+        "L2 closed OM-D11's sink half and L4 its gate half",
+    )
+    assert "CR-S3L4-04" in log and "19:19Z" in log

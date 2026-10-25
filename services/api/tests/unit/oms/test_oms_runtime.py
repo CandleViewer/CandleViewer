@@ -2002,6 +2002,69 @@ async def test_native_sl_the_runtimes_kill_cancels_at_the_venue_and_spares_a_rec
     assert [r for _, r in world.writer.actions if str(r).startswith("kill_cancel")] == []
 
 
+async def test_a_stalled_serving_loop_fences_every_new_submit_never_an_exit_or_a_kill() -> None:
+    """#913 L4 (the orchestrator's CR-04 ruling of 2026-10-25 19:19Z): while the serving loop has
+    not ticked within twice its interval, the switches of every new submit, the route's step 10,
+    the pipeline's step and a re-send's, refuse `oms_not_ready`, logged, until it ticks again; the
+    exit service's switches never (a cancel, cancel-all and a stop attach read none), and a KILL
+    still cancels at the venue (C-2.6, C-2.21)."""
+
+    class Stalled(oms_wiring.ServingTick):
+        """The serving loop's tick, stale while the test says so, whatever the time."""
+
+        stalled = False
+
+        def stale(self) -> bool:
+            return self.stalled
+
+    world, tick = World(), Stalled()
+    await crashed(world)
+    async with started(world.runtime(serving_tick=lambda: tick)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        parts, account = runtime._composed(), AccountId(UUID(int=1))
+        commands = parts.submission._commands
+        submits = (runtime.route.switches, parts.submission._deps.switches, commands._switches)
+        tick.stalled = True
+        with capture_logs() as logs:
+            for switches in submits:
+                with pytest.raises(OmsNotReady):
+                    switches.refusal(account, "demo")
+        assert [e["event"] for e in logs] == ["oms_submit_fenced"] * len(submits)
+        assert parts.exits._d.switches.refusal(account, "demo") is None
+        assert await parts.machines.kill("kill switch") == ()
+        tick.stalled = False
+        assert [switches.refusal(account, "demo") for switches in submits] == [None] * 3
+    [port] = world.venue.ports
+    assert [call.lane for call in port.calls if call.method == "cancel_order"] == ["critical"]
+
+
+async def test_the_serving_tick_beats_on_the_serving_loop_from_start_until_stop() -> None:
+    """#913 L4 (CR-04, 19:19Z): `start()` spawns the tick on the serving loop, the loop that started
+    the runtime, where it beats every `SERVING_TICK_S`; `stop()` ends it."""
+    beats, waits = list[asyncio.AbstractEventLoop](), list[float]()
+
+    class Noted(oms_wiring.ServingTick):
+        def beat(self) -> None:
+            beats.append(asyncio.get_running_loop())
+            super().beat()
+
+    async def wait(seconds: float) -> None:
+        waits.append(seconds)
+        await asyncio.sleep(0)
+
+    async with started(World().runtime(serving_tick=lambda: Noted(wait=wait))):
+        await until(lambda: len(beats) >= 3)
+    assert set(beats) == {asyncio.get_running_loop()}
+    assert set(waits) == {oms_wiring.SERVING_TICK_S}
+    after = len(beats)
+    await settle()
+    assert len(beats) == after  # it ended with the stop
+    assert [t for t in asyncio.all_tasks() if t.get_name() == "oms-serving-tick"] == []
+
+
 async def test_a_failing_store_leaves_it_not_ready_and_the_sweep_retries_with_backoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

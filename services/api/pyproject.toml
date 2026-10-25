@@ -157,6 +157,7 @@ markers = [
   "integration_db: integration test needing the CI Postgres/QuestDB service containers (E03-T03, SR-131)",
   "exchange_smoke: manual-only smoke test against a real exchange host — deselected in CI (E03-T03, SR-140)",
   "flaky: quarantined per Constitution C-9.3 — must link a P1 ticket",
+  "serial: changes process-wide interpreter state while it runs (sys.setswitchinterval, restored after it) — never run it alongside another test in the same process (#913 L4)",
   "sync_parity: informational SyncInterpreter parity (29 §1.7) — never gates; deselected from the xstate-contract gate",
   "chaos: nightly storage chaos scenarios (E07-Q04, C-13.6) - docker-dependent ones skip without the stack",
   "roundtrip: E35-Q02 10 000-document rule IR property run - executed by the rule-roundtrip lane, deselected from the py lane",
