@@ -37,17 +37,18 @@ class _Exits:
 
 @dataclass
 class _Runtime:
-    """`OmsRuntime.run` as the routes see it: a tracked task, or `OmsNotReady` (the coroutine
-    closed) once its stop has begun."""
+    """`OmsRuntime.run` as the routes see it: a tracked task, or, the coroutine closed, what it
+    raises instead (`refuse`): `OmsNotReady` once its stop has begun, a `RuntimeError` on another
+    loop than the one that started it (CR-S3C2-01)."""
 
     exits: _Exits = field(default_factory=_Exits)
-    stopping: bool = False
+    refuse: BaseException | None = None
     tasks: list[asyncio.Task[Response]] = field(default_factory=list)
 
     def run(self, coro: Coroutine[Any, Any, Response]) -> asyncio.Task[Response]:
-        if self.stopping:
+        if self.refuse is not None:
             coro.close()
-            raise OmsNotReady
+            raise self.refuse
         task = asyncio.get_running_loop().create_task(coro)
         self.tasks.append(task)
         return task
@@ -125,15 +126,57 @@ async def test_a_cancelled_caller_leaves_the_exit_running_and_its_claim_held_unt
     assert not _held(oms)
 
 
-async def test_a_runtime_that_refuses_the_run_releases_the_claim_and_raises() -> None:
-    oms = _Runtime(stopping=True)
+@pytest.mark.parametrize(
+    "refusal",
+    [OmsNotReady(), RuntimeError("the OMS runs on the event loop that started it (CR-S3C2-01)")],
+    ids=["stopping", "another_loop"],
+)
+async def test_a_runtime_that_refuses_the_run_releases_the_claim_and_raises(
+    refusal: BaseException,
+) -> None:
+    """`OmsRuntime.run` refuses with `OmsNotReady` once its stop has begun and with a
+    `RuntimeError` on another loop: whatever it raises, the claim is released, nothing run, and
+    the error goes on to the route."""
+    oms = _Runtime(refuse=refusal)
 
     async def exit_() -> Response:
         raise AssertionError("never run")
 
-    with pytest.raises(OmsNotReady):
+    with pytest.raises(type(refusal)):
         await run_claimed(oms, USER, "cancel", KEY, exit_, refused=_never)
-    assert not _held(oms)
+    assert not _held(oms) and oms.tasks == []
+
+
+async def test_an_exit_that_raises_releases_its_claim_as_its_task_ends() -> None:
+    """A fault the exit's task does not answer ends that task all the same: its claim is released
+    with it, and the fault goes on to the route."""
+    oms = _Runtime()
+
+    async def exit_() -> Response:
+        raise RuntimeError("a fault the exit did not answer")
+
+    with pytest.raises(RuntimeError, match="did not answer"):
+        await run_claimed(oms, USER, "cancel", KEY, exit_, refused=_never)
+    [task] = oms.tasks
+    assert task.done() and not _held(oms)
+
+
+async def test_an_exit_the_runtimes_stop_cancels_releases_its_claim() -> None:
+    """`OmsRuntime.stop()` cancels the exits its drain left running: each claim is released as its
+    task ends, so a stopped runtime's guard holds no key."""
+    oms, gate = _Runtime(), asyncio.Event()
+
+    async def exit_() -> Response:
+        await gate.wait()
+        return JSONResponse({"ok": True}, 202)
+
+    answer = asyncio.create_task(run_claimed(oms, USER, "cancel", KEY, exit_, refused=_never))
+    await asyncio.sleep(0)
+    [task] = oms.tasks
+    task.cancel()  # as `stop()` cancels what its drain left
+    with pytest.raises(asyncio.CancelledError):
+        await answer
+    assert task.cancelled() and not _held(oms)
 
 
 @pytest.mark.parametrize("owner", [True, False], ids=["owner", "manager"])
@@ -159,6 +202,18 @@ def test_exit_refusals_is_the_catalogues_counter_one_for_every_router() -> None:
     first.labels("cancel", "conflict").inc()
     labels = {"env": "demo", "operation": "cancel", "code": "conflict"}
     assert metrics.registry.get_sample_value("oms_exit_refused_total", labels) == 1
+
+
+def test_exit_refusals_keeps_the_catalogues_66_series_then_breaches() -> None:
+    """The counter takes the catalogue's `max_series`, 66 (`operation` by `code`): every series up
+    to it is kept, so no exit's refusal is dropped early, and the next one is the cardinality
+    guard's breach, a no-op, never a raise."""
+    counter = exit_refusals(Metrics("demo"))
+    for n in range(66):
+        counter.labels(("amend", "cancel", "cancel_all")[n % 3], f"code_{n}").inc()
+    assert (counter.series_count, counter.breached) == (66, False)
+    counter.labels("cancel", "one_more").inc()
+    assert (counter.series_count, counter.breached) == (66, True)
 
 
 def test_run_claimed_is_the_in_flight_guards_one_claimer() -> None:
