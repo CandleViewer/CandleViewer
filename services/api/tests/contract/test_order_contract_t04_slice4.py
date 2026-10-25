@@ -841,7 +841,9 @@ def test_a_step_11_class_refusal_is_audited_naming_its_step_and_its_reason() -> 
 def test_a_stopped_lane_after_step_3_is_a_counted_unaudited_503() -> None:
     """L1b's handoff for D2b (2026-10-25): an `OmsNotReady` met through the order lane at step 4's
     scope read, step 9's run or step 11's exit service is answered as step 3's is: counted, never
-    audited through the stalled lane, with no `ETag`, no 24 h record and its key freed."""
+    audited through the stalled lane, with no `ETag`, no 24 h record and its key freed; and so is
+    one met at the record of a refusal the route makes from step 5 on, in that refusal's place,
+    which 15.5 says beside the steps a refusal's record names (the delta's F3 at e677aa89)."""
     assert not _missing(
         _EXITS,
         "A `503 oms_not_ready` met after step 3, a stop begun meanwhile or the order lane stopped "
@@ -853,13 +855,23 @@ def test_a_stopped_lane_after_step_3_is_a_counted_unaudited_503() -> None:
         "backpressure, its inbox full or its admission refused, is no such stop: that `503 "
         "oms_not_ready` is the exit service's own refusal, recorded `denied` beside the intent as "
         "every step-11 refusal is.",
+        "A refusal the route makes from step 5 on (an amend's steps 5 to 9, a cancel's 7 to 9) is "
+        "recorded through the order lane too (`deny`): one whose record's hop meets the lane "
+        "stopped is answered `503 oms_not_ready` in the refusal's place, as step 3's is, unaudited "
+        "and unpaged, and counted under its own operation.",
+    )
+    assert not _missing(
+        _RECORDS,
+        "A route refusal whose record meets the stopped order lane is not recorded: the route "
+        "answers `503 oms_not_ready` in its place (§8.4).",
     )
 
 
 def test_the_change_log_records_the_amend_routes_steps_and_a_stopped_lane() -> None:
     """D2a's CR-S4D2A-04 for S4-D2b: 19 is the contract change log, so S4-D2b's changes to 8.4
-    (a stopped order lane's unaudited `503`, the gateway's backpressure told apart) and 15.5 (the
-    amend route's `body` and `arm` steps) have an entry of their own."""
+    (a stopped order lane's unaudited `503`, at a refusal's record too, the gateway's backpressure
+    told apart) and 15.5 (the amend route's `body` and `arm` steps, and a refusal's record that
+    meets the stopped lane) have an entry of their own."""
     entry = _words(_INTERNAL_DOC.split("\n### 19.37 2026-10-25 — §8.4, §15.5: ", 1)[1])
     assert not _missing(
         entry,
@@ -870,6 +882,11 @@ def test_the_change_log_records_the_amend_routes_steps_and_a_stopped_lane() -> N
         "own refusal, recorded `denied` beside the intent.",
         "§15.5: a refusal's `step` names the amend route's `body` and `arm` too, its steps 5 "
         "and 6.",
+        "A refusal the route makes from step 5 on whose record's hop meets the stopped lane is "
+        "answered `503 oms_not_ready` in its place, unrecorded and counted under its own "
+        "operation.",
+        "A route refusal whose record meets the stopped order lane is not recorded but answered "
+        "`503 oms_not_ready` in its place.",
     )
 
 

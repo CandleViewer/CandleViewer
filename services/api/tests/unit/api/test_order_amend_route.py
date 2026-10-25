@@ -33,7 +33,7 @@ from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
-from candleviewer.oms.errors import OMS_NOT_READY_RETRY_AFTER_S
+from candleviewer.oms.errors import OMS_NOT_READY_RETRY_AFTER_S, OmsNotReady, StoreUnavailable
 from candleviewer.oms.ports import ArmToken, RequestRecord, StopOffset
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import (
@@ -831,6 +831,84 @@ async def test_an_amend_that_meets_a_stopped_lane_is_the_counted_503_unaudited_a
     assert (refused(world, "oms_not_ready"), world.refused("oms_not_ready")) == (1, 0)
     assert callable(world.oms.service.guard.claim(OWNER, "amend", KEY))
     assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
+
+
+#: A refusal the route makes from step 5 on, each recorded through `deny` before it is answered
+#: (24 Sec.8.4): (the step its record names, the change, the body and the key that refuse there,
+#: the code it is answered with while its record lands).
+_OWN: list[tuple[str, Any, Any, UUID | None, str]] = [
+    ("body", None, {"qty": "lots"}, KEY, "validation_failed"),
+    ("arm", _live, _RAISE, KEY, "session_not_armed"),
+    ("key", None, _CUT, None, "validation_failed"),
+    ("replay", _recorded_elsewhere, _CUT, KEY, "idempotency_key_reuse"),
+    ("guard", None, _CUT, KEY, "idempotency_in_flight"),
+]  # fmt: skip
+
+
+@pytest.mark.parametrize("case", _OWN, ids=["step-5", "step-6", "step-7", "step-8", "step-9"])
+async def test_a_refusal_whose_record_meets_a_stopped_lane_is_the_counted_503_unaudited(
+    case: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """24 Sec.8.4's binding at the route's own refusals (the delta's F3 at e677aa89): a refusal from
+    step 5 on is recorded through `deny`, a hop to the order lane, before it is answered, and a lane
+    that stopped after step 4 makes that hop `OmsNotReady`. It is step 3's answer, as at steps 4, 9
+    and 11: `503 oms_not_ready` with its `Retry-After` in the refusal's place, counted once under
+    `{amend, oms_not_ready}`, never the cancel's nor under the refusal's own code, unaudited, with
+    no `ETag`, no 24 h record, no page, nothing sent and nothing logged at warning or above; the
+    key is free. Step 9's guard refusal gets it too, as it did through `run_claimed` before."""
+    step, change, body, key, own = case
+    world, machines, row, _ = await er.scripted_world("submitted")
+    routed(world)
+    if change is not None:
+        change(world)
+    guard = world.oms.service.guard
+    held = guard.claim(OWNER, "amend", KEY) if step == "guard" else None  # in flight
+    kept = world.cache.get(str(OWNER), f"amendOrder:{KEY}")
+    met: list[object] = []
+
+    async def stopped(*_args: Any, **kwargs: Any) -> ex.ExitOutcome:
+        met.append(kwargs.get("step"))
+        raise OmsNotReady
+
+    monkeypatch.setattr(world.oms.service, "deny", stopped)
+    with capture_logs() as logs:
+        answer = await patch(world, row.id, body, key=key)
+    problem = answer.json()
+    er._PROBLEM.validate(problem)
+    assert (answer.status_code, problem["code"], met) == (503, "oms_not_ready", [step])
+    assert answer.headers.get("retry-after") == str(OMS_NOT_READY_RETRY_AFTER_S)
+    assert "etag" not in answer.headers and world.pages == []
+    assert (world.actions(), machines.sent, world.oms.tasks) == ([], [], [])
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") == kept
+    counted = (refused(world, "oms_not_ready"), world.refused("oms_not_ready"), refused(world, own))
+    assert counted == (1, 0, 0)
+    assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
+    if callable(held):  # the test's own claim
+        held()
+    assert callable(guard.claim(OWNER, "amend", KEY))
+
+
+@pytest.mark.parametrize(
+    "error",
+    [StoreUnavailable(), RuntimeError("a defect in the record's hop")],
+    ids=["oms-error", "no-oms-error"],
+)
+async def test_a_refusals_record_that_fails_otherwise_is_no_stopped_lane(
+    error: Exception, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The binding takes `OmsNotReady` alone: any other error out of a refusal's record, another
+    `OmsError` too, takes the route's path as before, out of the route to the app's own `500`,
+    never answered or counted as `oms_not_ready`."""
+    world, machines, row, _ = await er.scripted_world("submitted")
+    routed(world)
+
+    async def fails(*_args: Any, **_kwargs: Any) -> ex.ExitOutcome:
+        raise error
+
+    monkeypatch.setattr(world.oms.service, "deny", fails)
+    with pytest.raises(type(error)):
+        await patch(world, row.id, key=None)  # step 7's refusal, recorded through `deny`
+    assert (refused(world, "oms_not_ready"), machines.sent, world.oms.tasks) == (0, [], [])
 
 
 @pytest.mark.parametrize(

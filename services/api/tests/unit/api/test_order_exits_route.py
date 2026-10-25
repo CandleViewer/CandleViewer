@@ -641,6 +641,53 @@ async def test_a_cancel_that_meets_a_stopped_lane_is_the_counted_503_never_an_es
     assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
 
 
+@pytest.mark.parametrize(
+    ("step", "change", "key", "own"),
+    [("key", None, None, "validation_failed"),
+     ("replay", _recorded_elsewhere, KEY, "idempotency_key_reuse"),
+     ("guard", None, KEY, "idempotency_in_flight")],
+    ids=["step-7", "step-8", "step-9"],
+)  # fmt: skip
+async def test_a_refusal_whose_record_meets_a_stopped_lane_is_the_counted_503_unaudited(
+    monkeypatch: pytest.MonkeyPatch, step: str, change: Any, key: UUID | None, own: str
+) -> None:
+    """24 Sec.8.4's binding at the cancel's own refusals (the delta's F3 at e677aa89, which settles
+    #4525's carry for this route): a refusal of steps 7 to 9 is recorded through `deny`, a hop to
+    the order lane, and a lane that stopped after step 4 makes that hop `OmsNotReady`. It is step
+    3's answer: `503 oms_not_ready` with its `Retry-After` in the refusal's place, counted once
+    under `{cancel, oms_not_ready}`, never the amend's nor under the refusal's own code,
+    unaudited, unpaged, nothing kept or sent and nothing logged at warning or above; the key is
+    free. Step 9's guard refusal gets it too, as it did through `run_claimed` before."""
+    world, machines, row, _ = await scripted_world()
+    if change is not None:
+        change(world)
+    guard = world.oms.service.guard
+    held = guard.claim(OWNER, "cancel", KEY) if step == "guard" else None  # in flight
+    kept = world.cache.get(str(OWNER), f"cancelOrder:{KEY}")
+    met: list[object] = []
+
+    async def stopped(*_args: Any, **kwargs: Any) -> ex.ExitOutcome:
+        met.append(kwargs.get("step"))
+        raise OmsNotReady
+
+    monkeypatch.setattr(world.oms.service, "deny", stopped)
+    with capture_logs() as logs:
+        answer = await delete(world, row.id, key=key)
+    body = answer.json()
+    _PROBLEM.validate(body)
+    assert (answer.status_code, body["code"], met) == (503, "oms_not_ready", [step])
+    assert answer.headers["retry-after"] == str(OMS_NOT_READY_RETRY_AFTER_S)
+    assert (world.actions(), world.pages, machines.sent, world.oms.tasks) == ([], [], [], [])
+    assert world.cache.get(str(OWNER), f"cancelOrder:{KEY}") == kept
+    amend = {"env": "demo", "operation": "amend", "code": "oms_not_ready"}
+    other = world.metrics.registry.get_sample_value("oms_exit_refused_total", amend) or 0.0
+    assert (world.refused("oms_not_ready"), other, world.refused(own)) == (1, 0, 0)
+    assert [line for line in logs if line["log_level"] in ("warning", "error", "critical")] == []
+    if callable(held):  # the test's own claim
+        held()
+    assert callable(guard.claim(OWNER, "cancel", KEY))
+
+
 @pytest.mark.parametrize("fault", tx.GATEWAY_FAULTS)
 async def test_a_gateway_refusal_that_is_no_backpressure_is_a_paged_500_with_its_failure(
     fault: type[GatewayError],
