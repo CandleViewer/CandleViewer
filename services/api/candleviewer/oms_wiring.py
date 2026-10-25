@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import hashlib
 import math
 import re
@@ -1698,11 +1699,13 @@ async def _cancelled(task: asyncio.Task[Any]) -> None:
     await asyncio.wait({task})
 
 
-def _heartbeat_ended(task: asyncio.Task[None]) -> None:
-    """A heartbeat that ended other than by its stop's cancel leaves the lane unticked, which
-    reads `degraded` and pages (`LaneHeartbeat.stale`): logged by its error's class."""
+def _heartbeat_ended(pager: Pager, task: asyncio.Task[None]) -> None:
+    """A heartbeat that ended other than by its stop's cancel leaves the lane unticked and its
+    lock unwatched: logged CRITICAL by its error's class and paged at once (SEC-S3L2-04), before a
+    read finds the lane stalled."""
     if not task.cancelled() and (error := task.exception()) is not None:
         _log().critical("oms_lane_heartbeat_ended", error=type(error).__name__)
+        _page(pager, "oms_lane_heartbeat_ended")
 
 
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
@@ -1821,10 +1824,12 @@ class OmsRuntime:
         lane: Callable[[], Lane] = OrderLane,
         heartbeat: Callable[[EnvironmentLock, Pager], LaneHeartbeat] = LaneHeartbeat,
         fencing: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        watch: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._settings, self._metrics, self._lanes = settings, metrics, lane
-        #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries.
-        self._heartbeat, self._fencing = heartbeat, fencing
+        #: The wait of the fencing grace (SEC-S3L2-01), apart from `sleep`'s retries, and the
+        #: serving loop's between its watch's reads of the lane's state (SEC-S3L2-04).
+        self._heartbeat, self._fencing, self._watch = heartbeat, fencing, watch
         self._env: Environment = settings.environment.value
         self._venue, self._ingestion, self._read_only = venue, ingestion, read_only
         self._gate, self._standings = gate, standings
@@ -1853,6 +1858,12 @@ class OmsRuntime:
         self._audit_paged: dict[str, float] = {}
         #: Taken, never released, by the first read that finds this start's lane dead: it pages.
         self._lane_paged = threading.Lock()
+        #: SEC-S3L2-05: the composition hands its parts over under it, and the stop sets
+        #: `_stopping` and takes them under it, so either the stop takes them or the composition,
+        #: seeing the stop, closes them itself.
+        self._handoff = threading.Lock()
+        #: The serving loop's watch of the lane (SEC-S3L2-04) while the runtime runs.
+        self._watching: asyncio.Task[None] | None = None
 
     @property
     def started(self) -> bool:
@@ -1967,6 +1978,21 @@ class OmsRuntime:
             self._audit_paged[cause] = now
             _page(self._pager, f"oms_lane_audit_alarm: {cause}")
 
+    async def _watched(self) -> None:
+        """SEC-S3L2-04: every `LANE_STALE_S` the serving loop reads the runtime's state itself,
+        whose reads page a dead lane once a death and a wedged one once a stall, so neither waits
+        for a route or `/readyz` to read it; until the stop cancels it."""
+        while True:
+            await self._watch(LANE_STALE_S)
+            _ = self.state
+
+    def _watch_ended(self, task: asyncio.Task[None]) -> None:
+        """A watch that ended other than by the stop's cancel: logged CRITICAL and paged, as the
+        lane's stalls would page only on a reader's read again."""
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _log().critical("oms_lane_watch_ended", error=type(error).__name__)
+            _page(self._pager, "oms_lane_watch_ended")
+
     def _startup_ended(self, task: asyncio.Task[None]) -> None:
         """An error out of the startup task (a flag view or the guard raising) leaves the state
         `degraded` and never ready: logged, not left for asyncio's "never retrieved" at GC."""
@@ -1978,7 +2004,10 @@ class OmsRuntime:
         Sec.6.2). A second call does nothing until `stop()`. What cannot be composed, the lane
         included, fails the runtime closed, the lane stopped again; but an environment lock that
         was not answered (Postgres unreachable) is asked again by the startup task, the runtime
-        `starting` meanwhile (CR-S3L2-01/02)."""
+        `starting` meanwhile (CR-S3L2-01/02). The composition hands its parts to the runtime
+        itself, so a start cancelled once it has ended closes them before it stops the lane
+        (SEC-S3L2-05); the serving loop's watch of the lane runs from here to the stop
+        (SEC-S3L2-04)."""
         if self._loop is not None and not self._stopping:
             return
         self._loop, self._stopping, self._failed = asyncio.get_running_loop(), False, False
@@ -1988,7 +2017,7 @@ class OmsRuntime:
         try:
             self._phase = "lane"
             await lane.start()
-            self._parts = await lane.call(self._compose(lane, serving))
+            await lane.call(self._compose(lane, serving))  # it hands its parts over itself
         except EnvironmentLockUnanswered:  # no other holder: the startup task asks again
             _log().warning("oms_environment_lock_unanswered", retry_s=SWEEP_RETRY_S[0])
         except Exception as exc:  # fail closed (C-2.21): never ready, no order admitted
@@ -1996,15 +2025,24 @@ class OmsRuntime:
             return
         except BaseException:  # cancelled: the compose closes what it built on the lane first
             try:  # its wait there, then the join, within the stop reserve (20 Sec.6.2)
+                deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S - LANE_JOIN_S
                 with contextlib.suppress(LaneStopped, TimeoutError):
-                    async with asyncio.timeout(OMS_STOP_RESERVE_S - LANE_JOIN_S):
+                    async with asyncio.timeout_at(deadline):
                         await lane.idle()
+                with self._handoff:  # handed over as the cancel came (SEC-S3L2-05): closed here
+                    parts, self._parts = self._parts, None
+                if parts is not None:
+                    await _closed(parts.closers, deadline)
             finally:  # cancelled again meanwhile or not (SEC-S3L1C-01)
                 self._lane = None
                 await lane.stop()
             raise
+        if self._stopping:  # a stop began meanwhile and took what was composed (SEC-S3L2-05)
+            return
         self._startup = spawn(self._started(lane, serving), name="oms-startup")
         self._startup.add_done_callback(self._startup_ended)
+        self._watching = spawn(self._watched(), name="oms-lane-watch")
+        self._watching.add_done_callback(self._watch_ended)
 
     async def _fail_closed(self, lane: Lane, error: Exception) -> None:
         """A start that cannot compose fails the runtime closed (C-2.21): its lane stopped, logged
@@ -2020,16 +2058,24 @@ class OmsRuntime:
         other holder, so this asks again, the whole composition with it, after the sweep's backoff
         on the runtime's sleep (`SWEEP_RETRY_S`), each failure logged, never ready meanwhile.
         True once composed; another holder (`EnvironmentLocked`), or any other failure, fails the
-        runtime closed as a failed start does, paged. A failure met while a stop runs ends it,
-        cancelled, never paged."""
+        runtime closed as a failed start does, paged. The `SWEEP_MAX_FAILURES`-th unanswered ask
+        in a row, the start's own counted, is logged CRITICAL and paged once, and the asking goes
+        on (SEC-S3L2-06). A failure met while a stop runs ends it, cancelled, never paged; the
+        composition hands its parts over itself (SEC-S3L2-05)."""
         delay, ceiling = SWEEP_RETRY_S
+        unanswered = 1  # the start's own ask
         while True:
             await self._sleep(delay)
             delay = min(2 * delay, ceiling)
             try:
-                self._parts = await lane.call(self._compose(lane, serving))
+                await lane.call(self._compose(lane, serving))
             except EnvironmentLockUnanswered:
-                _log().warning("oms_environment_lock_unanswered", retry_s=delay)
+                unanswered += 1
+                paged = unanswered == SWEEP_MAX_FAILURES
+                log = _log().critical if paged else _log().warning
+                log("oms_environment_lock_unanswered", retry_s=delay, unanswered=unanswered)
+                if paged:  # once: the asking goes on
+                    _page(self._pager, "oms_environment_lock_unanswered")
                 continue
             except Exception as exc:
                 if self._stopping:  # the stop's cancel or its stopped lane, never a failure
@@ -2047,18 +2093,23 @@ class OmsRuntime:
         share of what is left, and last the environment's lock (SEC-S3N-01); then stop the lane,
         one still asking the lock included, and join its thread. All of it ends by
         `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the OMS
-        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close."""
+        module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close. What a
+        composition handed over before the stop began is closed here; one that ends after it
+        closes what it built itself (SEC-S3L2-05). The serving loop's watch ends with the startup
+        task."""
         self._ready.clear()
-        self._stopping = True
+        with self._handoff:
+            self._stopping = True
         pending = await _drained(set(self._running), self._settings.oms_drain_s)
         startup, self._startup = self._startup, None
-        if startup is not None:
-            pending.add(startup)
+        watching, self._watching = self._watching, None
+        pending |= {task for task in (startup, watching) if task is not None}
         for task in pending:
             task.cancel()
         deadline = asyncio.get_running_loop().time() + OMS_STOP_RESERVE_S - LANE_JOIN_S
         lane, self._lane = self._lane, None
-        parts, self._parts = self._parts, None
+        with self._handoff:
+            parts, self._parts = self._parts, None
         closers: list[_Closer] = [("cancelled", lambda: asyncio.wait(pending))] if pending else []
         if lane is not None:  # its work cancelled above, a composition asked again among it
             closers.append(("lane", lane.idle))
@@ -2409,17 +2460,25 @@ class OmsRuntime:
             self._phase = "heartbeat"  # rulings 2 and 3: the lane's tick and the lock's watchdog
             heartbeat = self._heartbeat(stores.lock, self._pager)
             beating = spawn(heartbeat.run(), name="oms-lane-heartbeat")
-            beating.add_done_callback(_heartbeat_ended)
+            beating.add_done_callback(functools.partial(_heartbeat_ended, self._pager))
             # it watches the lock until the lock's own closer, the last, releases it
             closers.insert(len(closers) - 1, ("heartbeat", lambda: lane.call(_cancelled(beating))))
+            parts = _Parts(
+                submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
+                gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
+                admit_after,
+            )  # fmt: skip
+            with self._handoff:  # SEC-S3L2-05: the runtime's now, unless a stop began meanwhile
+                stopping = self._stopping
+                if not stopping:
+                    self._parts = parts
+            if stopping:  # closed below, as a cancelled composition is: none outlives the stop
+                raise asyncio.CancelledError
         except BaseException:  # within the reserve less the join, as a cancelled start waits
             reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S  # (ruling 6, SEC-S3L1CG-01)
             await _closed(closers, asyncio.get_running_loop().time() + reserve)
             raise
-        return _Parts(
-            submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route, gate,
-            exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat, admit_after,
-        )  # fmt: skip
+        return parts
 
     def _now_us(self) -> int:
         return (self._now() - _EPOCH) // _US
