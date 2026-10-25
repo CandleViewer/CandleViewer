@@ -1,7 +1,8 @@
 """Integration: the complete read's writes to the recorded stops on Postgres 16 (E29-T04 #913,
 S3-H; 21 Sec.3.3.11). `tests/unit/oms/recorded_stop_contract.py` runs here as `cv_app` on the
 submission contract's database: `trg_rs_guard` (`ENABLE ALWAYS`, pinned by the 0043 suites) admits
-each move it makes, replace-then-set holds under `ux_rs_in_force` with two reads racing on one key,
+each move it makes, two reads racing on one key leave one row in force (one put wins, the other is
+stale and writes nothing, SEC-S2D-03),
 a lost compare-and-set writes nothing, and a failed hook leaves every column of every row; and H3's
 gate end to end (`StopGateContract`): a waiting entry's rows put in force, a void audited ahead.
 And the lock order (the 06:38Z ruling): an order step settling an entry's rows and a read writing
@@ -27,6 +28,7 @@ from tests.unit.oms.recorded_stop_contract import (
     RecordedStopContract,
     StopGateContract,
     now_of,
+    read_in_force,
     repo,
     request,
 )
@@ -60,10 +62,11 @@ async def test_an_order_step_and_a_read_racing_on_an_entrys_rows_never_deadlock(
         rows = await request(h, account, profile, moves=(sc.SEND,))  # in flight, its entry sent
         order = cast(Any, SimpleNamespace(exchange_account_id=account, id=rows[0].order_id))
         settle = (sc.ACK, sc.REFUSED)[n % 2]  # entry_stops "answered", then "void"
+        seen = await read_in_force(h, account)  # the read's rows in force: none (SEC-S2D-03)
         read = (
             repo(h).resolve(account, rows, "in_flight_resolved", at=AT, write_ahead=AUDITED)
             if n // 2 % 2 == 0
-            else repo(h).put_in_force(account, rows, at=AT)
+            else repo(h).put_in_force(account, rows, in_force=seen, at=AT)
         )
         done = await asyncio.gather(settle(h, order), read, return_exceptions=True)
         failed = [e for e in done if isinstance(e, BaseException)]

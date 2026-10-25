@@ -1,7 +1,8 @@
 """What slice 3's complete read writes to the recorded stops (E29-T04 #913, S3-H; 21 Sec.3.3.11),
 through `RecordedStopRepository`, on the fakes (`test_submission_fake.py`) and on Postgres
-(`test_recorded_stop_resolution_pg.py`): `h` is the submission contract's harness. H3's gate end to
-end there too (`StopGateContract`): a row waiting through its entry put in force, and a void
+(`test_recorded_stop_resolution_pg.py`): `h` is the submission contract's harness. Every put
+passes the key's rows in force as its read saw them (`read_in_force`, SEC-S2D-03). H3's gate end
+to end there too (`StopGateContract`): a row waiting through its entry put in force, and a void
 audited ahead of its commit."""
 
 from __future__ import annotations
@@ -85,6 +86,13 @@ async def now_of(h: Harness, rows: tuple[RecordedStopRow, ...]) -> tuple[Recorde
     return tuple(held[row.id] for row in rows)
 
 
+async def read_in_force(
+    h: Harness, account: UUID, symbol: str = "BTCUSDT", position_idx: int = 0
+) -> tuple[RecordedStopRow, ...]:
+    """The key's rows in force as a read sees them: what a put compares (SEC-S2D-03)."""
+    return await repo(h).in_force_for_key(account, symbol, position_idx)
+
+
 def shape(rows: tuple[RecordedStopRow, ...]) -> list[tuple[Any, ...]]:
     return [(r.status, r.answered_at, r.in_force_at, r.closed_at) for r in rows]
 
@@ -98,9 +106,11 @@ class RecordedStopContract:
         and the other kind's rows stay."""
         account, profile = h.new_account()
         old = await request(h, account, profile, answered=False)
-        await repo(h).put_in_force(account, old, at=AT)
+        await repo(h).put_in_force(account, old, in_force=await read_in_force(h, account), at=AT)
         mid, new, young = [await request(h, account, profile) for _ in range(3)]
-        done = await repo(h).put_in_force(account, new[:1], at=LATER, write_ahead=sc.audited)
+        read = await read_in_force(h, account)  # old's two rows
+        done = await repo(h).put_in_force(account, new[:1], in_force=read, at=LATER,
+                                          write_ahead=sc.audited)  # fmt: skip
         assert {r.id for r in done.replaced} == {old[0].id, mid[0].id}
         shown = await repo(h).in_force_for_key(account, "BTCUSDT", 0)  # by kind, of the account
         assert [r.id for r in shown] == [new[0].id, old[1].id]
@@ -112,15 +122,58 @@ class RecordedStopContract:
         ]  # fmt: skip
 
     async def test_two_reads_racing_on_one_key_leave_one_row_in_force(self, h: Harness) -> None:
-        """The key lock (id order) serialises them: the second replaces the first's row or finds
-        its own replaced (`StaleRecordedStop`); `ux_rs_in_force` is never met."""
+        """The key lock (id order) serialises them, whichever takes it first: the winner puts its
+        row in force (and, if the newer request wins, replaces the older answered row of its
+        kind), and the loser, whose read saw nothing in force, finds a row put in force since its
+        read (`StaleRecordedStop`, SEC-S2D-03) and writes nothing; `ux_rs_in_force` is never met."""
         account, profile = h.new_account()
         older, newer = await request(h, account, profile), await request(h, account, profile)
-        calls = (repo(h).put_in_force(account, rows[:1], at=AT) for rows in (older, newer))
+        read = await read_in_force(h, account)  # both reads see the key with nothing in force
+        calls = (repo(h).put_in_force(account, rows[:1], in_force=read, at=AT)
+                 for rows in (older, newer))  # fmt: skip
         got = await asyncio.gather(*calls, return_exceptions=True)
-        assert all(not isinstance(r, Exception) or isinstance(r, StaleRecordedStop) for r in got)
+        assert [type(r) for r in got if isinstance(r, BaseException)] == [StaleRecordedStop]
         statuses = sorted(r.status for r in await now_of(h, (older[0], newer[0])))
-        assert statuses == ["in_force", "replaced"]
+        assert statuses in (["in_force", "pending"], ["in_force", "replaced"])  # either may win
+        assert [r.kind for r in await read_in_force(h, account)] == ["stop_loss"]
+
+    async def test_a_put_whose_read_of_the_rows_in_force_moved_since_writes_nothing(
+        self, h: Harness
+    ) -> None:
+        """SEC-S2D-03 (option b): the key's rows in force are compared, by id and kind, with the
+        caller's read of them. A read that misses a row put in force since, or names one ended
+        (as E29-T05's end ends it) or replaced since, is `StaleRecordedStop` with nothing
+        written; the read as the key stands puts in force and replaces as before."""
+        account, profile = h.new_account()
+        first, second, third = [await request(h, account, profile) for _ in range(3)]
+        rows = (*first, *second, *third)
+
+        async def stale(read: tuple[RecordedStopRow, ...]) -> None:
+            before, hooked = await now_of(h, rows), list[object]()
+
+            def hook(written: tuple[RecordedStopRow, ...]) -> Awaitable[None]:
+                hooked.append(written)  # never called on a stale put: nothing to audit
+                return asyncio.sleep(0)
+
+            with pytest.raises(StaleRecordedStop):
+                await repo(h).put_in_force(
+                    account, third[:1], in_force=read, at=LATER, write_ahead=hook
+                )
+            assert await now_of(h, rows) == before and hooked == []
+
+        flat = await read_in_force(h, account)  # nothing in force yet
+        await repo(h).put_in_force(account, first, in_force=flat, at=AT)
+        await stale(flat)  # misses first's two rows, put in force since
+        both = await read_in_force(h, account)
+        h.move_stop(first[1].id, "ended")  # an end since that read: first's take-profit
+        await stale(both)  # names a row ended since
+        left = await read_in_force(h, account)  # first's stop-loss alone
+        await repo(h).put_in_force(account, second[:1], in_force=left, at=AT)
+        await stale(left)  # names first's stop-loss, replaced since by second's
+        read = await read_in_force(h, account)
+        done = await repo(h).put_in_force(account, third[:1], in_force=read, at=LATER)
+        assert [r.id for r in done.replaced] == [second[0].id]
+        assert [r.id for r in await read_in_force(h, account)] == [third[0].id]
 
     async def test_a_lost_compare_and_set_writes_nothing(self, h: Harness) -> None:
         """SEC-BND-02: a late answer (`settle`) and a resolution never both win: a row answered or
@@ -130,13 +183,13 @@ class RecordedStopContract:
         await h.stops.settle(account, [rows[0].id], "answered", at=AT)
         before = await now_of(h, rows)
         with pytest.raises(StaleRecordedStop):
-            await repo(h).put_in_force(account, rows[:1], at=LATER)
+            await repo(h).put_in_force(account, rows[:1], in_force=(), at=LATER)
         for writer in (account, uuid4()):
             with pytest.raises(StaleRecordedStop):
                 await repo(h).resolve(writer, rows, "in_flight_resolved", at=LATER,
                                       write_ahead=AUDITED)  # fmt: skip
         assert await now_of(h, rows) == before
-        await repo(h).put_in_force(account, before[1:], at=LATER)
+        await repo(h).put_in_force(account, before[1:], in_force=(), at=LATER)
         with pytest.raises(StaleRecordedStop):
             await h.stops.settle(account, [rows[1].id], "answered", at=LATER)
 
@@ -147,11 +200,13 @@ class RecordedStopContract:
         """`AuditNotDurable` past the bound: nothing is put in force, replaced or voided."""
         account, profile = h.new_account()
         prior = await request(h, account, profile)
-        await repo(h).put_in_force(account, prior, at=AT)
+        await repo(h).put_in_force(account, prior, in_force=(), at=AT)
         rows = await request(h, account, profile, answered=False)
         before, (audit, raised) = await now_of(h, (*prior, *rows)), FAILING[hook]
+        read = await read_in_force(h, account)  # prior's two rows: the hook alone fails
         with pytest.raises(raised):
-            await repo(h, 0.05).put_in_force(account, rows, at=LATER, write_ahead=audit)
+            await repo(h, 0.05).put_in_force(account, rows, in_force=read, at=LATER,
+                                             write_ahead=audit)  # fmt: skip
         with pytest.raises(raised):
             await repo(h, 0.05).resolve(account, rows, "in_flight_resolved", at=LATER,
                                         write_ahead=resolving(audit))  # fmt: skip
@@ -201,8 +256,9 @@ class RecordedStopContract:
         before = await now_of(h, rows)
         for moved in ({"symbol": "ETHUSDT"}, {"position_idx": 1}):
             other = tuple(replace(r, **moved) for r in rows)
+            read = await read_in_force(h, account, other[0].symbol, other[0].position_idx)
             with pytest.raises(StaleRecordedStop):
-                await repo(h).put_in_force(account, other[:1], at=AT)
+                await repo(h).put_in_force(account, other[:1], in_force=read, at=AT)
             with pytest.raises(StaleRecordedStop):
                 await repo(h).resolve(account, other, "in_flight_resolved", at=AT,
                                       write_ahead=AUDITED)  # fmt: skip
@@ -242,11 +298,12 @@ class RecordedStopContract:
         if ends[0] == "replaced":
             [later] = await h.stops.insert([sc.trading_stop(account)])
             [later] = await repo(h).resolve(account, [later], "answered", at=AT)
-            done = await repo(h).put_in_force(account, [later], at=LATER)
+            done = await repo(h).put_in_force(account, [later], in_force=(), at=LATER)
             assert [r.id for r in done.replaced] == [held[0].id]
         for side, end in zip(held, ends, strict=True):
             if end == "in_force":
-                await repo(h).put_in_force(account, [side], at=AT)
+                read = await read_in_force(h, account)
+                await repo(h).put_in_force(account, [side], in_force=read, at=AT)
             elif end == ABSENT:
                 await repo(h).resolve(account, [side], ABSENT, at=AT, position_state="open",
                                       write_ahead=AUDITED)  # fmt: skip

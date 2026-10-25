@@ -47,7 +47,7 @@ class StopEndContract:
             [sc.trading_stop(account), sc.trading_stop(account, kind="take_profit")]
         )
         sl, tp = await h.stops.settle(account, [sl.id, tp.id], "answered", at=T0)
-        await repo(h).put_in_force(account, [sl], at=AT)
+        await repo(h).put_in_force(account, [sl], in_force=(), at=AT)
         h.bind_stop(sl.id, "x-sl")
         h.bind_stop(tp.id, "x-tp")
         [flight] = await h.stops.insert([sc.trading_stop(account)])  # unanswered: never named
@@ -75,7 +75,7 @@ class StopEndContract:
         it pending), a row closed as read, rows of two keys, another account's, a naive `at`."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, moves=FILLED)
-        await repo(h).put_in_force(account, rows[:1], at=AT)
+        await repo(h).put_in_force(account, rows[:1], in_force=(), at=AT)
         sl, tp = await now_of(h, rows)
         [flight] = await h.stops.insert([sc.trading_stop(account)])
         before = (await now_of(h, rows), await h.stops.live_for_key(account, *KEY))
@@ -106,14 +106,14 @@ class StopEndContract:
         still as read, is not ended either. A put in force never revives a row an end closed."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, moves=FILLED)
-        await repo(h).put_in_force(account, rows[:1], at=AT)
+        read = (await repo(h).put_in_force(account, rows[:1], in_force=(), at=AT)).in_force
         live = await h.stops.live_for_key(account, *KEY)  # the stop-loss in force, the take-profit
         who, named = account, live
         if moved == "replaced":  # a later request's stop-loss took its place
             later = await request(h, account, profile)
-            await repo(h).put_in_force(account, later[:1], at=AT)
+            await repo(h).put_in_force(account, later[:1], in_force=read, at=AT)
         elif moved == "in_force":
-            await repo(h).put_in_force(account, rows[1:], at=AT)
+            await repo(h).put_in_force(account, rows[1:], in_force=read, at=AT)
         elif moved == "void":
             await repo(h).resolve(account, rows[1:], "in_flight_resolved", at=AT,
                                   write_ahead=AUDITED)  # fmt: skip
@@ -132,8 +132,9 @@ class StopEndContract:
             await repo(h).end(who, named, at=LATER)
         assert (await now_of(h, rows), await h.stops.live_for_key(account, *KEY)) == before
         if moved == "ended":
+            # the end took the key's rows out of force: the row it closed is what makes this stale
             with pytest.raises(StaleRecordedStop):
-                await repo(h).put_in_force(account, rows[1:], at=LATER)
+                await repo(h).put_in_force(account, rows[1:], in_force=(), at=LATER)
 
     @pytest.mark.parametrize("hook", sorted(FAILING))
     async def test_end_whose_hook_fails_or_is_late_leaves_every_row_as_it_was(
@@ -142,7 +143,7 @@ class StopEndContract:
         """`AuditNotDurable` past the bound: both rows keep the status they were read with."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, moves=FILLED)
-        await repo(h).put_in_force(account, rows[:1], at=AT)
+        await repo(h).put_in_force(account, rows[:1], in_force=(), at=AT)
         before, (audit, raised) = await now_of(h, rows), FAILING[hook]
         with pytest.raises(raised):
             await repo(h, 0.05).end(account, before, at=LATER, write_ahead=audit)

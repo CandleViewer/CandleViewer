@@ -26,6 +26,7 @@ from candleviewer.oms.fakes import InMemoryOrderStore, InMemoryRecordedStopStore
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms.stop_resolution import (
     ENTRY_HELD,
+    RESTORE_HELD,
     SPAN_HELD,
     TRAIL_HELD,
     UNSEEN_PAGE,
@@ -38,7 +39,7 @@ from candleviewer.oms.stop_resolution import (
 from candleviewer.storage.repositories import recorded_stops
 from candleviewer.storage.repositories.orders import ORDER_STATE_OF, NewOrderEvent, OrderRow
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow, StaleRecordedStop
 from tests.unit.oms import submission_contract as sc
 from tests.unit.oms.command_rig import (
     ACCOUNT,
@@ -64,6 +65,7 @@ from tests.unit.oms.test_stop_decision import (
 )
 
 NOW = T0 + timedelta(seconds=30)
+SPAN = timedelta(hours=1)
 NOW_US = T0_US + 30 * SECOND_US
 DAY_US = 86_400 * SECOND_US
 ADAPTER_WINDOWS = 106  # `exchange.bybit.trading._MAX_WINDOWS`
@@ -73,13 +75,14 @@ UID = "100001"
 @dataclass
 class Store:
     """A recording `ResolutionStore`: `rows` is what `waiting_for_key` lists, `in_force` what
-    `in_force_for_key` does."""
+    `in_force_for_key` does; `views` is each put's read of the rows in force, by id (SEC-S2D-03)."""
 
     rows: list[RecordedStopRow] = field(default_factory=list)
     in_force: list[RecordedStopRow] = field(default_factory=list)
     calls: list[tuple[str, tuple[UUID, ...], str, PositionState | None]] = field(
         default_factory=list
     )
+    views: list[tuple[UUID, ...]] = field(default_factory=list)
 
     async def waiting_for_key(
         self, account_id: UUID, symbol: str, position_idx: int, *, now: datetime,
@@ -92,8 +95,11 @@ class Store:
     ) -> list[RecordedStopRow]:
         return list(self.in_force)
 
-    async def put_in_force(self, account_id: UUID, rows: Any, *, at: datetime) -> object:
+    async def put_in_force(
+        self, account_id: UUID, rows: Any, *, in_force: Any, at: datetime
+    ) -> object:
         self.calls.append(("put_in_force", tuple(r.id for r in rows), "in_force", None))
+        self.views.append(tuple(r.id for r in in_force))
         return tuple(rows)
 
     async def resolve(
@@ -211,11 +217,34 @@ async def test_an_account_other_than_the_keys_is_refused_before_any_read() -> No
     assert rig.port.calls == []
 
 
-async def test_a_restore_request_reads_nothing_and_writes_nothing() -> None:
+async def test_a_restore_request_reads_no_venue_and_writes_nothing() -> None:
     rig = build()
     rig.store.rows = [stop_row(source="restore")]
     (decision,) = await rig.resolve()
     assert decision.outcome == "held_for_reconciliation"
+    assert rig.port.calls == [] and rig.store.calls == []
+
+
+async def test_a_restore_only_resolution_writes_on_the_stored_rows_in_force_never_on_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S2D-03: with no venue read, a restore request's resolution still reads the key's rows
+    in force from the store for its writes, never an empty view on a key that holds one; it is
+    held (E29-T06's), so it puts nothing in force."""
+    rig = build()
+    rig.store.rows = [stop_row(source="restore")]
+    shown = stop_row(status="in_force", trigger_price=Decimal("59000"), created_at=T0 - SPAN)
+    rig.store.in_force = [shown]
+    given: list[tuple[UUID, ...]] = []
+    write = rig.resolver._write
+
+    async def spy(key: Any, decisions: Any, in_force: Any, *rest: Any) -> None:
+        given.append(tuple(r.id for r in in_force))
+        await write(key, decisions, in_force, *rest)
+
+    monkeypatch.setattr(rig.resolver, "_write", spy)
+    (decision,) = await rig.resolve()
+    assert decision.held == RESTORE_HELD and given == [(shown.id,)]
     assert rig.port.calls == [] and rig.store.calls == []
 
 
@@ -400,6 +429,27 @@ async def test_a_later_request_in_the_same_read_replaces_the_older_one_before_it
         ("put_in_force", (new_sl.id,), "in_force", None),
         ("resolve", (old_sl.id,), "replaced", None),  # unanswered: the put never replaces it
     ]
+
+
+async def test_each_put_compares_the_reads_rows_in_force_as_the_puts_before_it_left_them() -> None:
+    """SEC-S2D-03: a read that puts rows in force for two requests gives the second put the read's
+    view of the rows in force as the first put left it (its kind's row replaced by the first
+    put's), so the read's own writes never make it stale."""
+    rig = build()
+    prior = stop_row(kind="take_profit", trigger_price=Decimal("63000"), status="in_force",
+                     created_at=T0 - SPAN)  # fmt: skip
+    old_sl, old_tp = request_rows()
+    new_sl, new_tp = request_rows(trigger_price=Decimal("59000"), created_at=NOW)
+    rig.store.rows, rig.store.in_force = [old_sl, old_tp, new_sl, new_tp], [prior]
+    rig.port.seed_position(position(stop_loss=Decimal("59000"), take_profit=TP))
+    await rig.resolve()
+    assert rig.store.calls == [
+        ("resolve", (new_tp.id,), "answered", None),
+        ("put_in_force", (old_tp.id,), "in_force", None),
+        ("put_in_force", (new_sl.id,), "in_force", None),
+        ("resolve", (old_sl.id,), "replaced", None),
+    ]
+    assert rig.store.views == [(prior.id,), (old_tp.id,)]
 
 
 async def test_an_answered_row_the_put_replaces_gets_no_replace_of_its_own() -> None:
@@ -632,7 +682,7 @@ async def test_the_resolver_runs_over_the_recorded_stops_facade_and_its_in_memor
                 sc.trading_stop(ACCOUNT, kind="take_profit", trigger_price=TP, **over)]  # fmt: skip
 
     first = await stops.record(pair(), write_ahead=sc.audited)
-    await stops.put_in_force(ACCOUNT, first, at=T0)
+    await stops.put_in_force(ACCOUNT, first, in_force=(), at=T0)
     second = await stops.record(pair(position_marker="m2"), write_ahead=sc.audited)
     port.seed_position(position(stop_loss=STOP, take_profit=TP))
     (decision,) = await resolved(resolver, port)
@@ -646,6 +696,95 @@ async def test_the_resolver_runs_over_the_recorded_stops_facade_and_its_in_memor
     assert decision.outcome == "in_flight_resolved"
     assert audit.hooks == [("in_flight_resolved", None, tuple(r.id for r in third))]
     assert await stops.waiting_for_key(ACCOUNT, SYMBOL, 0, now=NOW, bound_s=10.0) == ()
+
+
+@pytest.mark.parametrize("after", ["flat", "shown"])
+async def test_an_end_between_the_read_and_its_put_loses_the_put_and_the_next_ask_reads_again(
+    after: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-S2D-03 (option b): an end (E29-T05's, simulated) lands on the key's row in force after
+    the read listed it and before the put. The put compares the rows in force with the read's view
+    and loses (`StaleRecordedStop`) with nothing written, so no row is left in force on a key the
+    end showed flat. The next resolution reads the key again and decides on what it shows then:
+    flat, the request is voided; its stop still shown, it is put in force on the new view."""
+    db = InMemoryOrderStore(clock=lambda: T0)
+    stops = RecordedStopRepository(InMemoryRecordedStopStore(db))
+    resolver = StopResolver(stops, CompleteRead(db), Audit(), now=lambda: NOW)
+    port = FakeTradingPort(now_us=lambda: NOW_US)
+    [old] = await stops.record([sc.trading_stop(ACCOUNT, trigger_price=Decimal("59000"))],
+                               write_ahead=sc.audited)  # fmt: skip
+    await stops.put_in_force(ACCOUNT, [old], in_force=(), at=T0)
+    [new] = await stops.record([sc.trading_stop(ACCOUNT, trigger_price=STOP, position_marker="m2")],
+                               write_ahead=sc.audited)  # fmt: skip
+    port.seed_position(position(stop_loss=STOP))
+    read = stops.in_force_for_key
+
+    async def ended_after_the_read(account_id: UUID, symbol: str, position_idx: int) -> Any:
+        rows = await read(account_id, symbol, position_idx)
+        db._stops[old.id] = replace(db._stops[old.id], status="ended", closed_at=T0)
+        return rows
+
+    monkeypatch.setattr(stops, "in_force_for_key", ended_after_the_read)
+    with pytest.raises(StaleRecordedStop):
+        await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    monkeypatch.undo()
+    assert await stops.in_force_for_key(ACCOUNT, SYMBOL, 0) == ()
+    assert db._stops[new.id] == new  # nothing written: pending, unanswered
+    if after == "flat":
+        port.seed_position(flat())
+    (decision,) = await resolved(resolver, port)
+    held = [r.id for r in await stops.in_force_for_key(ACCOUNT, SYMBOL, 0)]
+    voided = ("in_flight_resolved", [], "void")
+    expected = voided if after == "flat" else ("in_force", [new.id], "in_force")
+    assert (decision.outcome, held, db._stops[new.id].status) == expected
+
+
+async def test_an_end_inside_the_venue_read_loses_the_put_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S2DC-01: an end (E29-T05's, simulated) commits on the key's row in force inside the
+    venue read, once the venue answered the position open with the entry's stop-loss shown. The
+    view each put compares was read before that read and still names the row the end took out of
+    force, so the put loses (`StaleRecordedStop`) and nothing is written: no row put in force on a
+    key the end showed flat, no void and no write-ahead hook. A view read after the venue read
+    held the end already: the put committed, and the fill void of the take-profit followed it."""
+    db = InMemoryOrderStore(clock=lambda: T0)
+    stops = RecordedStopRepository(InMemoryRecordedStopStore(db))
+    audit = Audit()
+    resolver = StopResolver(stops, CompleteRead(db), audit, now=lambda: NOW)
+    port = FakeTradingPort(now_us=lambda: NOW_US)
+    [old] = await stops.record([sc.trading_stop(ACCOUNT, trigger_price=Decimal("59000"))],
+                               write_ahead=sc.audited)  # fmt: skip
+    [held] = (await stops.put_in_force(ACCOUNT, [old], in_force=(), at=T0)).in_force
+    submitting: dict[str, Any] = {
+        "state": ORDER_STATE_OF["submitting"], "lifecycle_state": "submitting"
+    }  # fmt: skip
+    event = NewOrderEvent(kind="submit_attempt", source="local", event_ts=T0)
+    entry = await db.create(new_order(**submitting), event)
+    port.seed_order(exchange_order(new_order(), state="filled", filled_qty=Decimal("0.010")),
+                    uid=UID)  # fmt: skip
+    attach: dict[str, Any] = {"source": "entry_attach", "order_id": entry.id,
+                              "position_marker": None}  # fmt: skip
+    sl, tp = await stops.record(
+        [sc.trading_stop(ACCOUNT, trigger_price=STOP, **attach),
+         sc.trading_stop(ACCOUNT, kind="take_profit", trigger_price=TP, **attach)],
+        write_ahead=sc.audited,
+    )  # fmt: skip
+    port.seed_position(position(stop_loss=STOP))  # its stop-loss shown, its take-profit absent
+    read = port.positions
+
+    async def ends_inside_the_read(account: AccountRef) -> Any:
+        answered = await read(account)
+        await stops.end(ACCOUNT, [held], at=T0)  # commits before the venue read returns
+        return answered
+
+    monkeypatch.setattr(port, "positions", ends_inside_the_read)
+    with pytest.raises(StaleRecordedStop):
+        await resolver.resolve_key(port, ref(), KEY, bound_s=10.0)
+    assert db._stops[old.id].status == "ended"  # the end landed inside the read
+    assert await stops.in_force_for_key(ACCOUNT, SYMBOL, 0) == ()  # no put
+    assert (db._stops[sl.id], db._stops[tp.id]) == (sl, tp)  # pending, unanswered, not voided
+    assert audit.hooks == []  # no void, so no write-ahead hook
 
 
 # --- failures ----------------------------------------------------------------------------------

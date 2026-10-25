@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError, fields, replace
 from datetime import UTC, datetime, timedelta
@@ -816,8 +816,40 @@ def test_the_complete_reads_statements_lock_in_id_order_and_keep_answered_at_onc
                          "recorded_stops.position_idx")  # fmt: skip
 
 
+_NO_ROW = re.compile(
+    r"recorded_stops\.exchange_account_id = \$\d+::UUID AND recorded_stops\.status = \$\d+::VARCHAR"
+    r" AND false"
+)
+
+
+@pytest.mark.filterwarnings("error::DeprecationWarning")  # SQLAlchemy deprecates an empty `or_`
+@pytest.mark.parametrize(
+    "outcome",
+    ["in_force", "answered", "replaced", "in_flight_resolved", "entry_filled_stop_absent"],
+)
+def test_an_empty_read_updates_no_row_never_every_pending_row_of_the_account(outcome: Any) -> None:
+    """SEC-S2D-01: given no rows, the in-force and resolve UPDATEs match none (`false`), never
+    every pending row of the account, as an empty `or_` would, dropping out of the WHERE; a read's
+    rows render as before, with no `false` beside them."""
+    if outcome == "in_force":
+        stmt = mod.in_force_statement(_ACCOUNT, [], _T)
+    else:
+        stmt = mod.resolve_statement(_ACCOUNT, [], outcome, _T)
+    assert _NO_ROW.fullmatch(_sql(stmt).split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0])
+    rows = _rows(_row(_SL))
+    for read in (mod.in_force_statement(_ACCOUNT, rows, _T),
+                 mod.resolve_statement(_ACCOUNT, rows, "answered", _T)):  # fmt: skip
+        assert " false" not in _sql(read)
+
+
 def _live(i: uuid.UUID, kind: str, status: str, answered: Any, born: datetime = _T) -> Any:
     return {"id": i, "kind": kind, "status": status, "answered_at": answered, "created_at": born}
+
+
+def _in_force(*held: tuple[uuid.UUID, str]) -> list[RecordedStopRow]:
+    """The key's rows in force as a read saw them (`in_force_for_key`), by id and kind."""
+    return _rows(*(_row(i, kind=kind, status="in_force", answered_at=_T, in_force_at=_T)
+                   for i, kind in held))  # fmt: skip
 
 
 async def test_a_put_in_force_refuses_a_malformed_call_before_any_statement() -> None:
@@ -826,13 +858,14 @@ async def test_a_put_in_force_refuses_a_malformed_call_before_any_statement() ->
                              "per key and kind"), ([_row(_SL), tp], _T, "of one key"),
                              ([_row(_SL)], _T.replace(tzinfo=None), "timezone-aware")):  # fmt: skip
         with pytest.raises(ValueError, match=reason):
-            await _store(rel).put_in_force(_ACCOUNT, _rows(*rows), at=at)
+            await _store(rel).put_in_force(_ACCOUNT, _rows(*rows), in_force=(), at=at)
     assert rel.statements == []
 
 
 async def test_a_put_in_force_locks_replaces_first_then_sets_audited_before_its_commit() -> None:
     """21 Sec.3.3.11: it replaces the row in force of its kind and its older answered rows; never
-    a younger row, an unanswered one or one of another kind."""
+    a younger row, an unanswered one or one of another kind. The caller's read of the rows in
+    force is the key's as locked (SEC-S2D-03)."""
     gone, shown = {"status": "replaced"}, {"status": "in_force"}
     older, unanswered = uuid.UUID(int=0x6004), uuid.UUID(int=0x6005)
     locked = [_live(_OLD, "stop_loss", "in_force", _T), _live(_SL, "stop_loss", "pending", None,
@@ -845,15 +878,57 @@ async def test_a_put_in_force_locks_replaces_first_then_sets_audited_before_its_
     async def audit(rows: tuple[RecordedStopRow, ...]) -> None:
         seen.append(([row.id for row in rows], rel.commits))
 
-    done = await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T, write_ahead=audit)
+    read = _in_force((_TP, "take_profit"), (_OLD, "stop_loss"))  # in any order
+    done = await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), in_force=read, at=_T,
+                                          write_ahead=audit)  # fmt: skip
     assert [r.id for r in done.replaced] == [_OLD, older] and [r.id for r in done.in_force] == [_SL]
     assert seen == [([_OLD, older, _SL], 0)] and rel.commits == 1
     assert [s.compile().params.get("status") for s in rel.statements] == [
         None, "replaced", "in_force"
     ]  # fmt: skip
     alone = _Rel([_live(_SL, "stop_loss", "pending", None)], [_row(_SL, **shown)])
-    assert (await _store(alone).put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T)).replaced == ()
-    assert len(alone.statements) == 2 and alone.commits == 1
+    done = await _store(alone).put_in_force(_ACCOUNT, _rows(_row(_SL)), in_force=(), at=_T)
+    assert done.replaced == () and len(alone.statements) == 2 and alone.commits == 1
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        (),
+        ((_OLD, "stop_loss"), (_TP, "take_profit")),
+        ((_NEW, "stop_loss"),),
+        ((_OLD, "take_profit"),),
+        ((_OLD, "stop_loss"), (_OLD, "stop_loss")),
+    ],
+    ids=[
+        "misses_a_row_put_in_force_since",
+        "names_a_row_ended_since",
+        "names_a_row_replaced_since",
+        "reads_its_kind_otherwise",
+        "names_a_row_twice",
+    ],
+)
+async def test_a_put_in_force_whose_read_of_the_rows_in_force_moved_writes_nothing(
+    read: tuple[tuple[uuid.UUID, str], ...],
+) -> None:
+    """SEC-S2D-03 (option b): under the key's lock the rows in force are compared, by id and kind,
+    each once, with the caller's read of them; a row ended, replaced or put in force since is
+    `StaleRecordedStop` after the lock alone, nothing written and no write-ahead hook called, so a
+    put never commits over an end that took a row of its read's rows in force out of force. The
+    read as locked puts in force (the test above)."""
+    locked = [_live(_OLD, "stop_loss", "in_force", _T),
+              _live(_SL, "stop_loss", "pending", None, _LATER)]  # fmt: skip
+    rel = _Rel(locked, [_row(_OLD, status="replaced")], [_row(_SL, status="in_force")])
+    hooked = list[object]()
+
+    def hook(written: tuple[RecordedStopRow, ...]) -> Awaitable[None]:
+        hooked.append(written)
+        return asyncio.sleep(0)
+
+    with pytest.raises(StaleRecordedStop):
+        await _store(rel).put_in_force(_ACCOUNT, _rows(_row(_SL)), in_force=_in_force(*read),
+                                       at=_T, write_ahead=hook)  # fmt: skip
+    assert len(rel.statements) == 1 and rel.commits == 0 and hooked == []
 
 
 @pytest.mark.parametrize("script", ["lost_at_the_lock", "short_update", "late_audit"])
@@ -867,7 +942,7 @@ async def test_a_put_in_force_that_loses_its_race_or_its_audit_writes_nothing(sc
     store = mod.SqlAlchemyRecordedStopStore(cast(Any, rel), audit_timeout_s=0.01)
     raised = WriteAheadTimeout if script == "late_audit" else StaleRecordedStop
     with pytest.raises(raised):
-        await store.put_in_force(_ACCOUNT, _rows(_row(_SL)), at=_T, write_ahead=hangs)
+        await store.put_in_force(_ACCOUNT, _rows(_row(_SL)), in_force=(), at=_T, write_ahead=hangs)
     assert rel.commits == 0
 
 

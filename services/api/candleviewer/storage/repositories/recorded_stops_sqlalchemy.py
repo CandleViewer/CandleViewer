@@ -23,14 +23,15 @@ unanswered ones past their request's bound (`request_cutoff`; every unanswered o
 is missing or unusable), and an entry's pending rows whose order of the row's account
 `WAITING_ENTRY` holds.
 
-Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id order, compares,
-then replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
-and compares-and-sets in its UPDATE (each row's key and `answered_at` as read);
-`waiting_keys_statement` shares `_waits` with the key's read. An order step that settles its
-entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`) locks them first in id order, as
-these writes do (`orders_sqlalchemy.lock_entry_stops_statement`, H3), after its order row, which
-none of these writes locks: a step and a read meeting on an entry's rows never deadlock (40P01),
-as a race test on Postgres pins.
+Slice 3's complete read (S3-H): `put_in_force` locks the key's live rows in id order, compares
+its rows as read and the key's rows in force as the caller's read saw them (SEC-S2D-03), then
+replaces before it sets, so `ux_rs_in_force` never holds two; `resolve` locks as `settle` does
+and compares-and-sets in its UPDATE (each row's key and `answered_at` as read; given no row, it
+matches none, SEC-S2D-01); `waiting_keys_statement` shares `_waits` with the key's read. An
+order step that settles its entry's rows (`orders_sqlalchemy.settle_entry_stops_statement`)
+locks them first in id order, as these writes do (`orders_sqlalchemy.lock_entry_stops_statement`,
+H3), after its order row, which none of these writes locks: a step and a read meeting on an
+entry's rows never deadlock (40P01), as a race test on Postgres pins.
 
 `release_and_bind` locks its pair `FOR UPDATE` in id order first, as `settle` and `put_in_force`
 lock theirs, so none of them deadlock; it then releases and binds in one unit of work and awaits
@@ -107,6 +108,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     check_in_force,
     check_request,
     check_resolve,
+    in_force_as_read,
     request_cutoff,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -312,13 +314,19 @@ def in_force_for_key_statement(account_id: UUID, symbol: str, position_idx: int)
 
 
 def to_replace(
-    locked: Sequence[Mapping[Any, Any]], rows: Sequence[RecordedStopRow]
+    locked: Sequence[Mapping[Any, Any]],
+    rows: Sequence[RecordedStopRow],
+    in_force: Sequence[RecordedStopRow],
 ) -> tuple[UUID, ...] | None:
-    """Per kind, the row in force and older answered rows; None if a row is not locked as read."""
+    """Per kind, the row in force and older answered rows; None if a row is not locked as read,
+    or the key's rows in force are not those the caller's read saw (`in_force`, SEC-S2D-03)."""
     by_id = {UUID(str(m["id"])): m for m in locked}
     read = {row.id: (row.kind, "pending", row.answered_at) for row in rows}
     held = {i: (m["kind"], m["status"], m["answered_at"]) for i, m in by_id.items()}
     if any(held.get(i) != as_read for i, as_read in read.items()):
+        return None
+    shown = ((i, m["kind"]) for i, m in by_id.items() if m["status"] == "in_force")
+    if not in_force_as_read(shown, in_force):
         return None
     born = {row.kind: by_id[row.id]["created_at"] for row in rows}
 
@@ -375,8 +383,11 @@ def end_statement(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetim
 
 
 def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
-    """SEC-BND-02: each of `rows` only on the key and with the `answered_at` it was read with."""
+    """SEC-BND-02: each of `rows` only on the key and with the `answered_at` it was read with.
+    SEC-S2D-01: `false` for no rows, so an empty read matches none and never widens to every
+    pending row of the account, as an empty `or_` would by dropping out of the WHERE."""
     return sa.or_(
+        sa.false(),
         *(
             sa.and_(
                 _S.id == r.id,
@@ -385,7 +396,7 @@ def _as_read(rows: Sequence[RecordedStopRow]) -> sa.ColumnElement[bool]:
                 _S.answered_at.is_not_distinct_from(r.answered_at),
             )
             for r in rows
-        )
+        ),
     )
 
 
@@ -621,6 +632,7 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         account_id: UUID,
         rows: Sequence[RecordedStopRow],
         *,
+        in_force: Sequence[RecordedStopRow],
         at: datetime,
         write_ahead: InForceWriteAhead | None = None,
     ) -> InForce:
@@ -629,7 +641,8 @@ class SqlAlchemyRecordedStopStore(CappedStore):
         ids = [row.id for row in rows]
         async with self._unit_of_work() as uow:
             lock = lock_key_statement(account_id, rows[0].symbol, rows[0].position_idx)
-            old = to_replace(list((await uow.session.execute(lock)).mappings()), rows)
+            locked = list((await uow.session.execute(lock)).mappings())
+            old = to_replace(locked, rows, in_force)  # SEC-S2D-03: the rows in force as read
             if old is None:
                 raise StaleRecordedStop
             replaced: tuple[RecordedStopRow, ...] = ()

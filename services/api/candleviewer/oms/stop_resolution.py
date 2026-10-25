@@ -71,8 +71,15 @@ cap, its cooldown, its metric and its pages) is slice H3's.
    was already in force), then the voids, each audited write-ahead (C-2.9), the store giving the
    hook its `position_state` (a fill void's, and a paged unseen entry's, the 06:38Z ruling); the
    caller is told of each decision whose voids committed as they commit (`committed`), so its page
-   outlives a later write's failure. A write that fails or loses its compare-and-set raises; the
-   key is read again on the next request.
+   outlives a later write's failure. Each put compares the key's rows in force with the read's
+   view of them (`in_force_for_key`, read before the venue read, so an end that commits inside
+   that read comes after the view (SEC-S2DC-01), and read too for a restore-only key, which has
+   no venue read), as the read's own earlier puts left it (SEC-S2D-03): a row an end or another
+   writer moved since loses the put, nothing written, so no put commits over an end that took a
+   row of the read's rows in force out of force (a key with nothing in force at the read still
+   passes, and the next position read ends it). A write that fails or loses its
+   compare-and-set raises; the key is read again on the next request (the gate logs a lost
+   compare-and-set as a `stale_read`).
 
 Nothing here ends a row, materialises one, binds or releases an `exchange_order_id` or tells B1 a
 stop was seen or lost (INV-B1-f).
@@ -537,7 +544,8 @@ def _decision(
 
 class ResolutionStore(Protocol):
     """The recorded stops' calls the resolution makes, as H1 names them, each scoped by the
-    account it is given (C-12.4)."""
+    account it is given (C-12.4); `put_in_force` takes the key's rows in force as the read saw
+    them, for its compare-and-set (SEC-S2D-03)."""
 
     async def waiting_for_key(
         self,
@@ -554,7 +562,12 @@ class ResolutionStore(Protocol):
     ) -> Sequence[RecordedStopRow]: ...
 
     async def put_in_force(
-        self, account_id: UUID, rows: Sequence[RecordedStopRow], *, at: datetime
+        self,
+        account_id: UUID,
+        rows: Sequence[RecordedStopRow],
+        *,
+        in_force: Sequence[RecordedStopRow],
+        at: datetime,
     ) -> object: ...
 
     async def resolve(
@@ -791,7 +804,8 @@ class StopResolver:
         A store read or write that fails raises, with what was written before it kept: a void
         audit past its bound as `AuditNotDurable` (through `RecordedStopRepository`, the store H3
         wires; a bare store raises `WriteAheadTimeout`), a store call past `STORE_TIMEOUT_S` as
-        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop`. `now`, the listing's, is the
+        `TimeoutError`, a lost compare-and-set as `StaleRecordedStop` (a row, or the key's rows in
+        force, moved since the read: SEC-BND-02, SEC-S2D-03). `now`, the listing's, is the
         one the caller's `bound_s` was worked out against (H3's startup floor); by default the
         clock's. `committed` is told each decision whose voids committed, as they do, so a later
         write's failure loses no page (H3's gate). The gate logs a hold once per key
@@ -807,18 +821,23 @@ class StopResolver:
         requests = group_requests(key, listed)
         if not requests:
             return ()
+        # before the venue read, whose first call is the position read: the one view the
+        # decision takes and each put compares (SEC-S2D-03), so a put loses to an end that took a
+        # row of it out of force inside the venue read (SEC-S2DC-01); a restore-only key's read
+        # too, never an empty one in its place
+        stored = await self._bounded(
+            self._store.in_force_for_key(key.account_id, key.symbol, key.position_idx)
+        )
         live = [r for r in requests if r.source != "restore"]
         reading = Reading(None, {})
         if live:
             read = await self._read.read(port, account, key, live, now=now)
             if read is None:
                 return None
-            stored = await self._bounded(
-                self._store.in_force_for_key(key.account_id, key.symbol, key.position_idx)
-            )
-            reading = replace(read, in_force=tuple(stored))
+            reading = read
+        reading = replace(reading, in_force=tuple(stored))
         decisions = decide(requests, reading)
-        await self._write(key, decisions, committed)
+        await self._write(key, decisions, reading.in_force, committed)
         for d in decisions:
             _log().info(
                 "oms_stop_request_resolved",
@@ -834,21 +853,27 @@ class StopResolver:
         self,
         key: PositionKey,
         decisions: Sequence[RequestDecision],
+        in_force: Sequence[RecordedStopRow],
         committed: Callable[[RequestDecision], None] | None = None,
     ) -> None:
         """Answers, rows in force (replacing the older answered rows of their kind), the read's
         own `replaced` rows, then voids, each audited write-ahead, `committed` told of each
-        decision whose voids committed. Never an end, a bind or a release."""
+        decision whose voids committed. Each put is given the read's rows in force (`in_force`)
+        as the puts before it left them, for its compare-and-set (SEC-S2D-03). Never an end, a
+        bind or a release."""
         at, account_id = self._now(), key.account_id
         put = {r.kind: r.created_at for d in decisions for r, m in d.moves if m == "in_force"}
         for d in decisions:
             rows = [r for r, m in d.moves if m == "answered" and r.answered_at is None]
             if rows:
                 await self._bounded(self._store.resolve(account_id, rows, "answered", at=at))
+        seen = tuple(in_force)
         for d in decisions:
             shown = [r for r, m in d.moves if m == "in_force"]
             if shown:
-                await self._bounded(self._store.put_in_force(account_id, shown, at=at))
+                call = self._store.put_in_force(account_id, shown, in_force=seen, at=at)
+                await self._bounded(call)
+                seen = _in_force_after(seen, shown)
         for d in decisions:  # the put's transaction replaced an older answered row of its kind
             rows = [r for r, m in d.moves if m == "replaced" and not _put_replaced(r, put)]
             if rows:
@@ -875,6 +900,15 @@ class StopResolver:
     async def _bounded[T](self, call: Awaitable[T]) -> T:
         async with asyncio.timeout(self._store_timeout_s):
             return await call
+
+
+def _in_force_after(
+    seen: Sequence[RecordedStopRow], shown: Sequence[RecordedStopRow]
+) -> tuple[RecordedStopRow, ...]:
+    """The key's rows in force once a put of `shown` committed: it replaced the row in force of
+    each of their kinds (`put_in_force`), and put `shown` in force."""
+    kinds = {row.kind for row in shown}
+    return (*(row for row in seen if row.kind not in kinds), *shown)
 
 
 def _put_replaced(row: RecordedStopRow, put: Mapping[StopKind, datetime]) -> bool:

@@ -519,7 +519,7 @@ async def test_an_end_and_a_put_in_force_racing_on_one_key_one_commits_and_the_o
         b = SqlAlchemyRecordedStopStore(rel_b, statement_timeout_ms=15_000)
         [old] = await a.insert([trading_stop(account)])
         [old] = await a.settle(account, [old.id], "answered", at=_T0)
-        [old] = (await a.put_in_force(account, [old], at=_T0)).in_force
+        [old] = (await a.put_in_force(account, [old], in_force=(), at=_T0)).in_force
         [new] = await a.insert([trading_stop(account)])
         [new] = await a.settle(account, [new.id], "answered", at=_T0)
 
@@ -528,7 +528,7 @@ async def test_an_end_and_a_put_in_force_racing_on_one_key_one_commits_and_the_o
         ) -> Awaitable[object]:
             if op == "end":
                 return store.end(account, [old, new], at=at, write_ahead=hook)
-            return store.put_in_force(account, [new], at=at, write_ahead=hook)
+            return store.put_in_force(account, [new], in_force=[old], at=at, write_ahead=hook)
 
         task_a = asyncio.ensure_future(write(a, first, at_a, hold))
         try:

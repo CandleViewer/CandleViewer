@@ -24,7 +24,11 @@ counted and paged as its void commits, so a later write's failure loses neither.
 decision of it was, Q3), and pages once per hold for a `restore` request (E29-T06's) or a hold
 through `WAITING_ENTRY` whose read shows the position open with no stop at all (a C-2.6 exposure
 only E29-T06's pass clears); a hold ends once its key is found clear or held no more. Pages name
-ids only; a gate task's unexpected error is logged by its type.
+ids only; a gate task's unexpected error is logged by its type. A resolution whose write lost its
+compare-and-set (`StaleRecordedStop`: a row, or the key's rows in force, moved since its read,
+SEC-S2D-03) wrote nothing in that write: it is a failed resolution like any other, logged
+`oms_stop_resolution_failed` with `reason="stale_read"` (the one failure that names a reason),
+counted `read_failed`, its key cooled, and its next ask reads the key again.
 
 The startup floor (Q7): every unanswered row created before the runtime started waits whatever its
 age. `start_floor()` reads the start once from the database's clock before the runtime writes any
@@ -59,7 +63,11 @@ from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.orders import OrderStoreError
-from candleviewer.storage.repositories.recorded_stops import FillPosition, RecordedStopRow
+from candleviewer.storage.repositories.recorded_stops import (
+    FillPosition,
+    RecordedStopRow,
+    StaleRecordedStop,
+)
 
 from .errors import StopRequestPending, StoreUnavailable
 from .ports import (
@@ -311,7 +319,10 @@ class ResolvingStopGate:
                 )
         except Exception as exc:  # the task's own end, logged and counted; a cancel goes through
             failure = type(exc).__name__
-            _log().warning("oms_stop_resolution_failed", symbol=key.symbol, failure=failure)
+            named = {"reason": "stale_read"} if isinstance(exc, StaleRecordedStop) else {}
+            _log().warning(
+                "oms_stop_resolution_failed", symbol=key.symbol, failure=failure, **named
+            )
         if decisions is None:
             self._outcomes.labels("read_failed").inc()
         else:
