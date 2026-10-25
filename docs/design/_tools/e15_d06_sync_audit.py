@@ -53,10 +53,13 @@ formula is re-implemented here. Nine sections, each row labelled with its source
     (lock, full label, reason, key, ``aria-disabled``) on its three frames and the T2 form on no
     other row (A1); PROPOSED after every drawn chord that ``keymap.json`` lacks; the disarm on
     every symbol-switch frame, with no armed state surviving (BQ-16) -- neither a "stays armed"
-    phrase nor the `ARMED` arm-state tag, bare or backticked, the hold inset's "held: armed" the
-    one form allowed; a needle counts only un-negated ("no lock glyph" is not the lock glyph), and
-    PROPOSED qualifies a chord only with no other control or "or" between; each frame's exits in the
-    inventory's Exits column, all T1 and never paired with a gate (A3).
+    phrase nor the arm-state tag (`ARMED` bare, ``Armed`` bare, backticked in any case, or "reads /
+    is / held: armed"), the one form allowed being the hold inset's own "BTCUSDT · held: armed ("
+    line, exactly and only on the hold frame; the Gate-class cell scanned for every T2 form
+    except the ``T2`` word itself (the t2-frames check's); a needle counts only un-negated ("no
+    lock glyph" is not the lock glyph), and PROPOSED qualifies a chord only with no other control
+    or "or" between; each frame's exits in the inventory's Exits column, all T1 and never paired
+    with a gate (A3).
 11. Numbers (8c): the ``audit:`` block at the end of the spec equals ``--json``'s markers; the
     registered prose contexts, the section 4.1 and section 12 tables and the CVD paragraph are
     re-derived; every two-decimal ratio and ratio triple in the spec and the hand-off is one
@@ -1100,9 +1103,13 @@ ARMED_SURVIVES = re.compile(
 )
 # M-1 (text round 1, BQ-16): the spec family's arm-state tag (`ARMED` / `LOCKED`, E15-D02 :186;
 # the board script's arm: "ARMED") on a symbol-switch frame is an armed state surviving the sync
-# change, bare or backticked; the hold inset's "held: armed" is the one form allowed.
-ARMED_TAG = re.compile(r"`(?:ARMED|armed)`|\bARMED\b")
-HELD_OK = re.compile(r"held: `?armed`?", re.IGNORECASE)
+# change: bare `ARMED` or `Armed`, backticked in any case, or a short phrase ("reads armed", "is
+# armed", "held: armed"; m-6). M-1r: the one form allowed is the hold inset's own old-symbol line,
+# exact and case-sensitive, once, on the hold frame only.
+ARMED_TAG = re.compile(
+    r"(?i:`armed`)|\bARMED\b|\bArmed\b|(?i:\b(?:reads?|is|are|shows?|now|held:)\s+`?armed\b)"
+)
+HOLD_INSET = ("SCR-023/symbol-switch-hold", "BTCUSDT · held: armed (")
 # m-2: a gate needle counts only where it is not negated ("no lock glyph" is not the lock glyph)
 NEGATED = re.compile(r"(?:\bno|\bnot|\bwithout|\bnever)\W+(?:\w+\W+)?$", re.IGNORECASE)
 
@@ -1278,9 +1285,10 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
             elif seen_ == "negated":
                 fails.append(f"t2-anatomy: frame {name} negates {label} ('{needle}')")
         if name not in T2_ANATOMY:
-            # the Gate-class cell is gated exactly by the t2-frames check, and a lock glyph or
-            # CMP-079 by the over-conversion check: neither is reported twice here
-            body = " | ".join(c for i, c in enumerate(r) if i != 3)
+            # the Gate-class cell's `T2` word is gated exactly by the t2-frames check, and a lock
+            # glyph or CMP-079 by the over-conversion check: neither is reported twice here; every
+            # other T2 form in the Gate-class cell is (m-5)
+            body = " | ".join(re.sub(r"\bT2\b", "", c) if i == 3 else c for i, c in enumerate(r))
             for ok in T2_FORM_ALLOWED:
                 body = body.replace(ok, "")
             for m in T2_FORM.finditer(body):
@@ -1301,13 +1309,14 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
         )
         if "symbol-switch" in name and name not in DISARM:
             fails.append(f"disarm: frame {name} is a symbol-switch frame the tool does not key")
-        tag = ARMED_TAG.search(HELD_OK.sub("", text)) if surviving else None
+        scan = text.replace(HOLD_INSET[1], "", 1) if name == HOLD_INSET[0] else text
+        tag = ARMED_TAG.search(scan) if surviving else None
         if tag:
-            snip = clause_at(HELD_OK.sub("", text), tag.start())
+            snip = clause_at(scan, tag.start())
             fails.append(
                 f"armed-tag: frame {name} draws an armed tag after the sync change ('{snip}')"
             )
-        elif surviving and ARMED_SURVIVES.search(text):
+        elif surviving and ARMED_SURVIVES.search(scan):
             fails.append(f"armed: frame {name} draws an armed state surviving the sync change")
         for label, needle in DIALOG_CARRIERS.get(name, ()):
             if needle not in text:
@@ -2742,6 +2751,61 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
        "`Ctrl+Shift+1` or SCR-043's SCALE group with"),)),
     ("M65", "badge: the hand-off's Density table lacks the CMP-082 comfortable row",
      (("hand:| CMP-082   | comfortable", "| comfortable |", "| roomy       |"),)),
+    # fold delta, M-1r: the held: exemption scoped to the hold inset (the backticked form off the
+    # hold frame; a ticket line outside the inset)
+    ("M66", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('a second DOM in A reads \"ETHUSDT · symbol set by sync group A\", "
+            "held: `ARMED`')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       ('`LOCKED` too; a second DOM in A reads "ETHUSDT · symbol set by sync group A", '
+        "held: `ARMED`")),)),
+    ("M67", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket reads \"ETHUSDT · symbol set by sync group A\", held: ARMED')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       ('which disarms and follows; the ticket reads "ETHUSDT · symbol set by sync group A", '
+        "held: ARMED")),)),
+    # fold delta, m-6: the case and prose variants, each class on a symbol-switch frame
+    ("M68", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the order ticket on ETHUSDT reads `Armed`')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; the order ticket on ETHUSDT reads `Armed`"),)),
+    ("M69", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket on ETHUSDT: Armed')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the ticket on ETHUSDT: Armed"),)),
+    ("M70", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the ticket reads armed')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; the ticket reads armed"),)),
+    ("M71", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket is armed on ETHUSDT')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the ticket is armed on ETHUSDT"),)),
+    ("M72", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the ticket on ETHUSDT, held: armed')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       "`LOCKED` too",
+       "`LOCKED` too; the ticket on ETHUSDT, held: armed"),)),
+    ("M73", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket is ETHUSDT, held: armed')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the ticket is ETHUSDT, held: armed"),)),
+    # fold delta, m-5: a T2 form in a non-T2 frame's Gate-class cell (the T2 word aside)
+    ("M74", "t2-form: frame SCR-023/popover-1920 draws '`lock`'",
+     (("frame:SCR-023/popover-1920", "| T1 ", "| T1 (`lock`) "),)),
+    ("M75", "t2-form: frame SCR-023/popover-1280 draws 'disabledReason'",
+     (("frame:SCR-023/popover-1280", "| T1 ", "| T1 (`disabledReason`) "),)),
+    ("M76", "t2-form: frame SCR-023/leave-after draws 'rbac.view_as'",
+     (("frame:SCR-023/leave-after", "| T1 ", "| T1 (`rbac.view_as`) "),)),
+    ("M77", "t2-form: frame SCR-043/axis-independent draws 'padlock'",
+     (("frame:SCR-043/axis-independent", "| T1 ", "| T1 (a padlock) "),)),
 )
 # fmt: on
 
