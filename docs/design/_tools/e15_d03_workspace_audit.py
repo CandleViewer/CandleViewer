@@ -62,6 +62,8 @@ from __future__ import annotations
 
 import argparse
 import functools
+import io
+import itertools
 import json
 import math
 import re
@@ -425,7 +427,8 @@ FIT_FRAMES: dict[tuple[str, str, str], str] = {
     ("scalping", "1920", "comfortable"): "`populated-owner · comfortable · dark · 1920`",
     ("dense", "1280", "compact"): "`populated-owner-dense · compact · dark · 1280`",
 }
-DENSE_REFIT = {("1280", "compact")}  # ruling (3): the drawn dense frame at the default density
+# ruling (3): the drawn dense frame at the default density; comfortable 1280 is stated (c-4)
+DENSE_REFIT = {("1280", "compact"), ("1280", "comfortable")}
 STEPS: dict[str, tuple[int, ...]] = {  # the §3.6 steps each kind has (0 = full row)
     "chart": (0, 1, 3, 4, 5, 6),  # step 6: the letter-only badge (ruling (2), #319)
     "dom": (0, 1, 2, 3, 4, 5, 6),
@@ -732,6 +735,10 @@ def budget(
     extra["hdr.chart.min.framed"] = mins["compact"]["chart"] + 2 * frame_focused
     for kind in STEPS:
         extra[f"hdr.{kind}.min.comfortable.framed"] = mins["comfortable"][kind] + 2 * frame_focused
+    for kind in ("dom", "tape"):  # c-4: §3.3 states the comfortable 1280 split from these
+        v[f"BUDGET:hdr.{kind}.min.comfortable.framed"] = str(
+            mins["comfortable"][kind] + 2 * frame_focused
+        )
     for vp, (vw, vh) in VIEWPORTS.items():
         cw = vw - int(f["navrail"]) - int(f["rightrail"])
         ch = vh - topbar - statusbar
@@ -771,34 +778,38 @@ def budget(
             avail3 = dw - 2 * gutter
             a, b = round(avail3 * f["dense.0"]), round(avail3 * f["dense.1"])
             extra[f"dense.split.{vp}.{d}.parent"] = f"{a} / {b} / {avail3 - a - b}"
-            need = mins[d]["dom"] + 2 * frame_focused
-            if (vp, d) in DENSE_REFIT and b < need:
-                # ruling (3), #319: the DOM column takes its framed minimum from the chart column,
-                # never taking the chart below its own framed minimum (D-14)
-                floor = mins[d]["chart"] + 2 * frame_focused
-                move = min(need - b, max(0, a - floor))
-                a, b = a - move, b + move
-                extra[f"dense.split.{vp}.{d}.moved"] = move
+            if (vp, d) in DENSE_REFIT:
+                # ruling (3), #319: the DOM column, then the tape's, takes its framed minimum
+                # from the chart column, never taking the chart below its own framed minimum
+                # (D-14); c-4: comfortable 1280 needs it for both
+                room = max(0, a - (mins[d]["chart"] + 2 * frame_focused))
+                move_b = min(max(0, mins[d]["dom"] + 2 * frame_focused - b), room)
+                c_need = mins[d]["tape"] + 2 * frame_focused - (avail3 - a - b)
+                move_c = min(max(0, c_need), room - move_b)
+                a, b = a - move_b - move_c, b + move_b
+                if move_b + move_c:
+                    extra[f"dense.split.{vp}.{d}.moved"] = move_b + move_c
             v[f"BUDGET:dense.split.{vp}.{d}"] = f"{a} / {b} / {avail3 - a - b}"
             # the fit gate (ruling (1)): every header minimum + 2 × the frame within its column
             cols = {"dense": {"chart": a, "dom": b, "tape": avail3 - a - b, "positions": dw}}
             cols["scalping"] = {"chart": chart_w, "dom": avail - chart_w}
             for layout, colmap in cols.items():
-                if (layout, vp, d) not in FIT_FRAMES:
-                    continue
+                drawn = (layout, vp, d) in FIT_FRAMES
+                label = FIT_FRAMES.get((layout, vp, d), f"§3.3 {layout} {vp} {d}, not drawn")
                 for kind, col in colmap.items():
                     # the step the frame draws: the first whose width fits inside the frame (§3.6)
                     inside = col - 2 * frame_focused
                     shown = [st for st, w in step_w[d][kind].items() if w <= inside]
-                    v[f"BUDGET:step.{layout}.{vp}.{d}.{kind}"] = (
-                        str(shown[0]) if shown else "compact view"
-                    )
+                    if drawn:
+                        v[f"BUDGET:step.{layout}.{vp}.{d}.{kind}"] = (
+                            str(shown[0]) if shown else "compact view"
+                        )
                     got = mins[d][kind] + 2 * frame_focused
                     extra[f"fit.{layout}.{vp}.{d}.{kind}"] = f"{got} ≤ {col}"
-                    if got > col:
+                    if got > col:  # c-4: every split the spec states, drawn or not
                         bad.append(
                             f"fit: hdr.{kind}.min + 2 × frame = {got} px > the {layout} {kind} "
-                            f"column {col} px ({FIT_FRAMES[(layout, vp, d)]})"
+                            f"column {col} px ({label})"
                         )
             dom_w, dom_h = avail - chart_w, round((dh - gutter) * f["scalping.col"])
             boxes = {"chart": (chart_w, dh, chart_rows), "dom": (dom_w, dom_h, r["header"])}
@@ -1083,7 +1094,8 @@ def names_ok(cell: str) -> list[str]:
 
 def anchored_ints(spec: str, key: str) -> list[int] | None:
     """The integers of the first value anchored as `key` in the spec ("522 / 383 / 255", "2 px")."""
-    m = re.search(rf"([\d /]+?)(?: px)?<!--={re.escape(key)}-->", spec)
+    at = spec.find(f"<!--={key}-->")  # find the anchor, then read back (a lazy scan was ~0.6 s)
+    m = re.search(r"([\d /]+?)(?: px)?$", spec[max(0, at - 80) : at]) if at >= 0 else None
     parts = [x.strip() for x in m[1].split("/")] if m else []
     return [int(x) for x in parts] if parts and all(x.isdigit() for x in parts) else None
 
@@ -1097,8 +1109,9 @@ def fit_gates(spec: str) -> list[str]:
     frame = anchored_ints(spec, "BUDGET:focus.frame-px")
     if not frame:
         return ["fit: the focus.frame-px anchor is missing"]
-    for (layout, vp, d), label in FIT_FRAMES.items():
-        if f"| {label}" not in register:
+    for layout, vp, d in itertools.product(("scalping", "dense"), VIEWPORTS, DENSITIES):
+        label = FIT_FRAMES.get((layout, vp, d), f"§3.3's {layout} split ({vp}, {d}; not drawn)")
+        if (layout, vp, d) in FIT_FRAMES and f"| {label}" not in register:
             bad.append(f"fit: {label} is not a §6.2 frame row")
         suffix = "" if d == "compact" else f".{d}"  # comfortable: its own minimums (§3.6)
         cols = anchored_ints(spec, f"BUDGET:{layout}.split.{vp}.{d}")
@@ -1115,6 +1128,13 @@ def fit_gates(spec: str) -> list[str]:
                     f"{col} px "
                     f"of {label}"
                 )
+    d3 = next((r for r in table_rows(section(spec, "2. Decisions")) if r[0] == "D-3"), [])
+    if not d3 or re.search(
+        r"(?:letter|badge) with its count|count[^.;|]{0,40}never collapse", d3[1]
+    ):
+        bad.append("D-3: the sync count is said never to collapse while step 6 drops it (c-3)")
+    if not d3 or not all(c in d3[1] for c in ("`D02`:121", "`D02`:177")):
+        bad.append("D-3: the step-6 count drop does not cite `D02`:121 and `D02`:177 (c-3)")
     rows = table_rows(section(spec, "4.2.3 The collapse strip"))
     step6 = [r for r in rows if r and r[0].startswith("6 = minimum")]
     if not step6 or "· A · LIVE" not in step6[0][1] or "A · 1" in step6[0][1]:
@@ -1260,6 +1280,8 @@ def frame_gates(spec: str) -> list[str]:
             bad.append(f"§8.1 {row[0]}: no form (M-4)")
         if re.search(r"color\.text\.disabled|opacity\.disabled", line):
             bad.append(f"§8.1 {row[0]}: a disabled token on a T2 row (M-4)")
+        if close_glyph(row[1]) or EXIT_WORD.search(row[1]):  # c-2: an exit is never a T2 row
+            bad.append(f"§8.1 {row[0]}: an exit ({row[1][:40]}) listed as a T2 row (M-8, §1.5)")
     s14 = section(spec, "1.4 The T2 rule")
     if "CMP-019 `lock` glyph" not in s14 or "**leads**" not in s14:
         bad.append("§1.4: the lock glyph leading the label is not stated (M-4)")
@@ -1276,6 +1298,20 @@ def frame_gates(spec: str) -> list[str]:
     return bad
 
 
+def close_glyph(text: str) -> bool:
+    """True when `text` names the close glyph ×, not a multiplication (1280×800, `a` × `b`,
+    "7 states × 3 densities", W × H): an operand on both sides, or a digit before it."""
+    for m in re.finditer("×", text):
+        before, after = text[: m.start()].rstrip(" "), text[m.end() :].lstrip(" ")
+        word = before.rsplit(" ", 1)[-1].lower()
+        operands = bool(re.search(r"[\w`)>]$", before)) and bool(re.match(r"[\w`(]", after))
+        if re.search(r"\d$", text[: m.start()]):
+            continue
+        if not operands or word in ("a", "an", "the"):
+            return True
+    return False
+
+
 def text_gates(name: str, text: str) -> list[str]:
     """Whole-text gates: no lock on a splitter or ×, no gated Esc, E15-D04 never pinned or quoted,
     the ruling cited as the ruling, the #2701 marker on every BQ-3 / BQ-4 line (MJ-1..MJ-3)."""
@@ -1287,13 +1323,23 @@ def text_gates(name: str, text: str) -> list[str]:
         tag = f"{name}:{n}"
         if line.startswith("| M-"):  # §6.3 describes the mutations themselves
             continue
-        if CLOSE_LOCK.search(line):
-            bad.append(f"{tag}: a lock or T2 drawn on × (M-8)")
+        # MJ-1r: the whole of every table row that names × or Close carries no lock or T2
+        names_close = close_glyph(line) or re.search(r"\bClose\b", line)
+        if line.startswith("|") and names_close and LOCKISH.search(line):
+            bad.append(f"{tag}: a lock or T2 on a row that names × or Close (M-8)")
+        # c-2: no clause that names an exit gates it, unless the clause negates
+        for clause in re.split(r"[;|]|\.(?:\s|$)", line):
+            exit_named = close_glyph(clause) or EXIT_WORD.search(clause)
+            if exit_named and LOCKISH.search(clause) and not NEGATED.search(clause):
+                bad.append(f"{tag}: an exit drawn with a lock, T2 or a key (M-8, §1.5)")
+                break
         if ESC_GATED.search(line):
             bad.append(f"{tag}: Esc drawn as gated (M-8)")
         for m in re.finditer(r"E15-D04[^.|]{0,80}", line):
-            if re.search(r"\b[0-9a-f]{7,40}\b", m[0]) or re.search('["“]', m[0]):
-                bad.append(f"{tag}: E15-D04 pinned by a sha or quoted (PENDING, never pinned; A4)")
+            if re.search(r"\b[0-9a-f]{7,40}\b", m[0]):
+                bad.append(f"{tag}: E15-D04 pinned by a sha (PENDING, never pinned; A4)")
+        if D04_QUOTE.search(line):  # MJ-1r: a quote on either side of "E15-D04"
+            bad.append(f"{tag}: a sentence quoted as E15-D04's (PENDING, never quoted; A4)")
         if BQ_LIST in line and "the BQ list" not in line:
             bad.append(f"{tag}: issuecomment-{BQ_LIST} is the BQ list, not the ruling (A4)")
         if re.search(r"\bBQ-[34]\b", line) and OWNER_MARK not in line.lower():
@@ -1306,13 +1352,45 @@ def text_gates(name: str, text: str) -> list[str]:
     return bad
 
 
-def keymap_gates(name: str, rows: list[list[str]], key_col: int, keymap: str | None) -> list[str]:
-    """MJ-4: every key row carries its `keymap.json` status; a chord already bound is named."""
+# c-1: each chord's own status: the shipped ids that bind it, or None for PROPOSED-PENDING
+CHORD_STATUS: dict[str, tuple[str, ...] | None] = {
+    "Ctrl+Alt+←": ("workspace.panel_prev", "workspace.panel_next"),
+    "Ctrl+S": ("workspace.save", "workspace.save_as"),
+    "Ctrl+1..9": ("workspace.preset",),
+    "F11": ("workspace.fullscreen_panel",),
+    "Ctrl+\\": None,
+    "Shift+F10": None,
+    "F2": None,
+}
+
+
+def keymap_gates(
+    name: str, rows: list[list[str]], key_col: int, keymap: str | None, reserved: str | None = None
+) -> list[str]:
+    """MJ-4: every key row carries its `keymap.json` status; a chord already bound is named.
+    c-1: each chord in CHORD_STATUS carries its own ids (shipped) or the PROPOSED mark (pending);
+    c-5: a row citing `reserved-keys.json` names only keys that file reserves."""
     if keymap is None:
         return [f"{name}: keymap.json unreadable at {BASE}"]
     cmds = json.loads(keymap)["commands"]
     ids = {c["id"] for c in cmds}
+    reserved_keys = set(json.loads(reserved)) if reserved else set()
     bad: list[str] = []
+    for row in rows:
+        keys, status = re.findall(r"`([^`]+)`", row[key_col]), row[-1]
+        own = CHORD_STATUS.get(keys[0], ()) if keys else ()
+        tag = f"{name} {row[key_col][:40]}"
+        if own is None and (PENDING_KEY not in status or not status.startswith("none")):
+            bad.append(f"{tag}: a pending chord lost 'none: {PENDING_KEY}' (c-1)")
+        if own is None and re.search(r"\(shipped|shipped\)", status):
+            bad.append(f"{tag}: a pending chord written as shipped (c-1)")
+        for cid in own or ():
+            if f"`{cid}`" not in status or PENDING_KEY in status:
+                bad.append(f"{tag}: its own id `{cid}` (shipped) is not its status (c-1)")
+        if "reserved-keys.json" in status and "not in `reserved-keys.json`" not in status:
+            for k in keys:
+                if reserved is None or k not in reserved_keys:
+                    bad.append(f"{tag}: `{k}` is cited as reserved; reserved-keys.json lacks it")
     if not rows:
         bad.append(f"{name}: no key rows")
     for row in rows:
@@ -1441,12 +1519,14 @@ def audit(
         fails, warns, n_cites = fails + f_, warns + w_, n_cites + n
     fails += frame_gates(spec)
     keymap = fetch(BASE, "apps/web/src/keymap/keymap.json")
-    fails += keymap_gates("spec §12.1", table_rows(section(spec, "12.1 Keys")), 0, keymap)
+    reserved = fetch(BASE, "apps/web/src/keymap/reserved-keys.json")
+    rows_12 = table_rows(section(spec, "12.1 Keys"))
+    fails += keymap_gates("spec §12.1", rows_12, 0, keymap, reserved)
     for name, text in (("spec", spec), ("hand-off", hand)):
         fails += text_gates(name, text) if text else []
     if hand:
         rows_k = table_rows(section(hand, "Table K"))
-        fails += keymap_gates("hand-off Table K", rows_k, 1, keymap)
+        fails += keymap_gates("hand-off Table K", rows_k, 1, keymap, reserved)
     fails += fit_gates(spec)
     d02_base = fetch(BASE, "docs/design/E15/E15-D02.md")
     fails += string_gates("spec", spec, d02_base, True)
@@ -1493,10 +1573,12 @@ GATED_FRAMES: dict[str, set[str]] = {
 NO_PANEL_FRAMES = ("`tab-strip/states", "`empty")  # the only frames whose Focus may be "n/a"
 TWIN_ROW = re.compile(r"board (\d{2}) \(light twin of (\d{2})\)")
 HEADER_TEXT = re.compile(r'"(⠿[^"]*)"')
-LOCKISH = re.compile(r"\block\b|\bT2\b|`rbac\.|`layout\.limit|aria-disabled")
-CLOSE_LOCK = re.compile(
-    r"(?<!\d)×(?!\d)[^|]{0,40}\b(?:lock|T2)\b|\b(?:lock|T2)\b[^|]{0,40}(?<!\d)×(?!\d)"
-)
+# MJ-1r: the lock in every form (lock, locked, locks), T2 and a gating key; case-sensitive, so the
+# DOM's "LOCKED" arm state and a "lockout" never match
+LOCKISH = re.compile(r"\block(?:ed|s)?\b|\bT2\b|`rbac\.|`layout\.limit|aria-disabled")
+EXIT_WORD = re.compile(r"\b(?:Close|Move|Discard|Dismiss)\b|Revert to saved|`Esc`")
+NEGATED = re.compile(r"\b(?:never|no|not|without)\b|n't\b")
+D04_QUOTE = re.compile(r"[\"“”][^.|;]{0,80}\bE15-D04|\bE15-D04\b[^.|]{0,80}[\"“”]")
 ESC_GATED = re.compile(r"`?Esc`?\b(?:(?!never|not\b|\|)[^.;|]){0,40}\bgated\b", re.IGNORECASE)
 RULING, BQ_LIST = "6391960363", "6391925285"  # the orchestrator's ruling; the lane's BQ list
 OWNER_MARK = "owner approval pending (#2701)"
@@ -1521,6 +1603,15 @@ def comfortable_min_over_column(text: str) -> str:
         return text
     over = cols[1] - 2 * frame[0] + 1
     return re.sub(r"\d+(<!--=BUDGET:hdr\.dom\.min\.comfortable-->)", rf"{over}\1", text)
+
+
+def comfortable_parent_split(text: str) -> str:
+    """c-4: the comfortable 1280 four-panel split written at the parent's (compact) ratios."""
+    m = re.search(r"([\d /]+)<!--=BUDGET:dense\.split\.1280\.compact-->", text)
+    if not m:
+        return text
+    key = r"[\d /]+(<!--=BUDGET:dense\.split\.1280\.comfortable-->)"
+    return re.sub(key, lambda k: f" {m[1].strip()}{k[1]}", text)
 
 
 MUTATIONS: tuple[tuple[str, str, Callable[[str], str], str], ...] = (
@@ -1814,6 +1905,103 @@ MUTATIONS: tuple[tuple[str, str, Callable[[str], str], str], ...] = (
     ),
     (
         "4 strings",
+        "MJ-1r a quote written before E15-D04",
+        re_sub(r"^(## 23\. .*)$", r'\1\n\n"The ghost follows the pointer." (E15-D04)'),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "MJ-1r 'locked for a viewer' on a §4.3 splitter row",
+        line_sub(
+            "| hover ", "(§11.2 `splitter-line`;", "(locked for a viewer; §11.2 `splitter-line`;"
+        ),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "MJ-1r 'an × (locked for a viewer)' in §4.4's close row",
+        line_sub(
+            "| close ", "an × on the active tab", "an × (locked for a viewer) on the active tab"
+        ),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "MJ-1r '× locked' in the viewer register row",
+        re_sub(r"^(\| `populated-viewer .*?R-7)( +\|)", r"\1; × locked\2"),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "MJ-1r T2 and the lock in the next cell of §4.2.1 row 12",
+        re_sub(r'^(\| 12 +\| × "Close \{Kind\}, \{symbol\}" +\| CMP-002)', r"\1; T2, a lock"),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "MJ-1r 'T2 for a viewer' replacing 'never gated' in §4.4's close row",
+        line_sub("| close ", "never gated (§1.5)", "T2 for a viewer (§1.5)"),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "c-2 Close listed as a §8.1 T2 row",
+        line_sub(
+            "| R-9 ", "a manager's DOM arm toggle", "Close a panel and a manager's DOM arm toggle"
+        ),
+        "FAIL",
+    ),
+    (
+        "3 frames",
+        "c-2 §4.7's Close / Move written as T2",
+        line_sub("The menu is D02 D-20's union", "themselves are never gated", "themselves are T2"),
+        "FAIL",
+    ),
+    (
+        "4 strings",
+        "c-1 F2 written as `rules.rename` (shipped)",
+        line_sub(
+            "| `F2`",
+            "none: PROPOSED-PENDING via CMP-022; collides with `rules.rename` (`F2`, context Rules)",
+            "`rules.rename` (shipped)",
+        ),
+        "FAIL",
+    ),
+    (
+        "4 strings",
+        "c-1 Ctrl+S given another chord's id",
+        line_sub(
+            "| `Ctrl+S`",
+            "`workspace.save` / `workspace.save_as` (shipped)",
+            "`workspace.preset` (shipped)",
+        ),
+        "FAIL",
+    ),
+    (
+        "4 strings",
+        "c-3 D-3 says the sync count never collapses",
+        line_sub("| D-3 ", "sync letter, env badge", "sync letter with its count, env badge"),
+        "FAIL",
+    ),
+    (
+        "fit",
+        "c-4 the comfortable 1280 split back at the parent's ratios",
+        comfortable_parent_split,
+        "FAIL",
+    ),
+    (
+        "4 strings",
+        "c-5 the Esc row cites reserved-keys.json again",
+        line_sub(
+            "| `Esc`",
+            "component key (APG menus, listboxes and dialogs), not a `keymap.json` row and not in "
+            "`reserved-keys.json`",
+            "reserved (`reserved-keys.json`), not a command row",
+        ),
+        "FAIL",
+    ),
+    (
+        "4 strings",
         "MJ-2 the RULED heading cites the BQ list",
         re_sub(r"(RULED \(orchestrator, issuecomment-)6391960363", r"\g<1>6391925285"),
         "FAIL",
@@ -1910,6 +2098,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--fill", action="store_true", help="replace placeholders, then check")
     ap.add_argument("--selftest", action="store_true", help="mutation-test every gate class")
     args = ap.parse_args(argv)
+    if isinstance(sys.stdout, io.TextIOWrapper):  # c-8: "≤" and "×" on a cp1252 console
+        sys.stdout.reconfigure(encoding="utf-8")
     spec_path = Path(args.check) if args.check else SPEC
     hand_path = (
         Path(args.handoff) if args.handoff else spec_path.with_name(spec_path.stem + "-handoff.md")
