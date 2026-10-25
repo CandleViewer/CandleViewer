@@ -105,7 +105,7 @@ async def _exit_status(
     """The run's exit status. A cancelled run's too: `RunCancelled` must not escape
     `asyncio.run`, which turns it into `KeyboardInterrupt` and loses its status."""
     try:
-        status = await run(
+        status: int = await run(
             settings, args.owner, live_flag=args.live, recovery_code_key=key, terminal=terminal
         )
     except RunCancelled as cut:

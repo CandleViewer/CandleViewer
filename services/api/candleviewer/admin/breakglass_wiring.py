@@ -20,7 +20,7 @@ from io import FileIO
 from pathlib import Path
 from typing import Any, Protocol
 
-from candleviewer.admin.audited import audit_exempt, audited
+from candleviewer.admin.audited import audit_exempt, audited, declaration
 from candleviewer.admin.breakglass import (
     ATTEMPT,
     REFUSED,
@@ -102,9 +102,14 @@ def build_break_glass_ports(
     )
 
 
-async def _open_journal(audit_wal_path: str, audit_log: AuditRepository) -> AuditTrail:
+async def _open_journal(
+    audit_wal_path: str, audit_log: AuditRepository, admitted: frozenset[str] = BREAK_GLASS_ACTIONS
+) -> AuditTrail:
     """The host journal under the run lock, or `BreakGlassUnavailable`: `api_running` while
-    cv-api (or another run) holds the lock, `host_fs_unavailable` for any other failure."""
+    cv-api (or another run) holds the lock, `host_fs_unavailable` for any other failure. Its
+    trail takes only `admitted`, the running CLI's own actions; a set its `emit` does not declare
+    is refused before the journal or its lock is touched."""
+    _declared(_JournalTrail, admitted)
     try:
         directory = anchored_journal_dir(audit_wal_path)
         lock = hold_run_lock(directory, exclusive=True)
@@ -121,24 +126,43 @@ async def _open_journal(audit_wal_path: str, audit_log: AuditRepository) -> Audi
         if isinstance(exc, AuditError | OSError):  # an unwritable or a corrupt journal
             raise BreakGlassUnavailable("host_fs_unavailable") from None
         raise
-    return _JournalTrail(writer, lock, journal)
+    return _JournalTrail(writer, lock, journal, admitted)
 
 
-def _admit(action: str) -> None:
+def _admit(action: str, admitted: frozenset[str]) -> None:
     """Only the CLI's own records: the boot fold-in refuses a journal that holds any other."""
-    if action not in BREAK_GLASS_ACTIONS:
+    if action not in admitted:
         raise UnknownAuditAction(action)
+
+
+def _declared(
+    trail: type[_JournalTrail | _DirectTrail], admitted: frozenset[str]
+) -> frozenset[str]:
+    """`admitted` if `trail.emit` declares each action in it (`@audited`), so that a trail takes
+    only what its declaration says it writes (C-2.9, E42-X03); a wider set raises `ValueError`."""
+    found = declaration(trail.emit)
+    wider = admitted - frozenset(() if found is None else found.actions)
+    if wider:
+        raise ValueError(f"{trail.__name__}.emit declares no {sorted(wider)}")
+    return admitted
 
 
 class _JournalTrail:
     """`AuditTrail` over the host journal: durable in `journal.wal` once `emit` returns."""
 
-    def __init__(self, writer: AuditWriter, lock: FileIO, journal: Path) -> None:
+    def __init__(
+        self,
+        writer: AuditWriter,
+        lock: FileIO,
+        journal: Path,
+        admitted: frozenset[str] = BREAK_GLASS_ACTIONS,
+    ) -> None:
         self._writer, self._lock, self._journal = writer, lock, journal
+        self._admitted = _declared(type(self), admitted)
 
     @audited(ATTEMPT, REFUSED, RESET)
     async def emit(self, action: str, **fields: Any) -> None:
-        _admit(action)
+        _admit(action, self._admitted)
         await self._writer.emit(action, **fields)
 
     @audit_exempt("lifecycle")
@@ -161,12 +185,14 @@ class _DirectTrail:
     built as `AuditWriter.build` builds one (registered action, redacted states, a new
     `record_id`, `event_ts` read once) and is committed before `emit` returns."""
 
-    def __init__(self, audit_log: AuditRepository) -> None:
-        self._audit_log = audit_log
+    def __init__(
+        self, audit_log: AuditRepository, admitted: frozenset[str] = BREAK_GLASS_ACTIONS
+    ) -> None:
+        self._audit_log, self._admitted = audit_log, _declared(type(self), admitted)
 
     @audited(ATTEMPT, REFUSED, RESET)
     async def emit(self, action: str, **fields: Any) -> None:
-        _admit(action)
+        _admit(action, self._admitted)
         states = {key: redact(fields.get(key)) for key in ("before_state", "after_state")}
         emission = AuditEmission(
             record_id=uuid.uuid4(), action=action, event_ts=datetime.now(UTC), **(fields | states)
