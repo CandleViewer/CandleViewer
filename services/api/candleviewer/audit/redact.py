@@ -128,6 +128,13 @@ _ENUM_PASS_THROUGH: Mapping[str, frozenset[str]] = MappingProxyType(
     {"bearer": frozenset({"matched", "absent"})}  # `downloadBackup` after_state.bearer
 )
 
+#: Secret-fragment names (normalised, exact) that hold reviewed metadata, never key material
+#: (#4535): `kek_version` names which KEK enrolled, loaded or re-wrapped, and is kept only when
+#: it is a version number (a positive int, or its decimal string). Any other value under the
+#: name is still replaced. Adding an entry is a security-reviewed edit (C-10.2).
+_METADATA_VERSION_NAMES: frozenset[str] = frozenset({"kekversion"})
+_VERSION_RE = re.compile(r"[1-9][0-9]{0,8}")
+
 #: snake_case suffixes (after camelCase/kebab-case are folded to snake_case)
 #: that mark a field as SECRET: `secret_key`, `webhookSecret`, `csrf-token`.
 _SECRET_SUFFIXES: tuple[str, ...] = ("_key", "_secret", "_token", "_password")
@@ -208,6 +215,15 @@ def _has_otp_sibling(mapping: dict[str, Any]) -> bool:
     return False
 
 
+def _is_version_metadata(key: str, value: Any) -> bool:
+    """A reviewed metadata name (`_METADATA_VERSION_NAMES`) holding a version number only."""
+    if _normalise(key) not in _METADATA_VERSION_NAMES:
+        return False
+    if type(value) is int:
+        return 0 < value < 10**9
+    return type(value) is str and _VERSION_RE.fullmatch(value) is not None
+
+
 def _redact_mapping(mapping: dict[str, Any], depth: int) -> dict[str, Any]:
     out: dict[str, Any] = {}
     otp_context = _has_otp_sibling(mapping)
@@ -215,7 +231,9 @@ def _redact_mapping(mapping: dict[str, Any], depth: int) -> dict[str, Any]:
         classification = _classify(key)
         if classification is None and otp_context and _normalise(key) == "code":
             classification = "secret"
-        if classification == "secret":
+        if classification == "secret" and _is_version_metadata(key, value):
+            out[key] = value
+        elif classification == "secret":
             words = _ENUM_PASS_THROUGH.get(_normalise(key), frozenset())
             out[key] = value if type(value) is str and value in words else REDACTION_MARKER
         elif classification == "pii":
