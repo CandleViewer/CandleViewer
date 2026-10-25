@@ -206,7 +206,7 @@ ask_code() { # ask_code PROMPT: CODE, six digits from the authenticator
 chars_within() { # chars_within MIN MAX: is PASSWORD MIN to MAX characters long? LC_ALL=C counts
   local bare=${PASSWORD//[$'\x80'-$'\xbf']/} n # bytes, so drop UTF-8's continuation bytes first
   n=${#bare} bare=""
-  ((n >= $1 && n <= $2))
+  [[ $n -ge $1 && $n -le $2 ]]
 }
 
 encode() { # encode NAME:TYPE VALUE...: BODY becomes that JSON object
@@ -480,7 +480,7 @@ create_account() {
 }
 
 step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
-  local try
+  local try again
   for try in 1 2; do
     ask_code "A new code for the keys step-up: "
     if [[ -n ${1-} ]]; then
@@ -497,8 +497,9 @@ step_up() { # step_up [CHALLENGE_ID]: elevate the session for the keys class
     200) ;;
     000) unreachable ;;
     401)
-      die "the step-up was refused twice: wait 5 minutes, then run again" \
-        "with --skip-invite${ACCOUNT_ID:+ --account-id <the account id>}"
+      again="--skip-invite"
+      if [[ -n $ACCOUNT_ID ]]; then again+=" --account-id <the account id>"; fi
+      die "the step-up was refused twice: wait 5 minutes, then run again with $again"
       ;;
     *) refused "the step-up" ;;
   esac
@@ -537,7 +538,8 @@ import_key() {
     read_only:b "$READ_ONLY" expected_uid:s "$EXCHANGE_UID"
   held=$BODY API_KEY="" API_SECRET=""
   elevated "/exchange-accounts/$ACCOUNT_ID/keys" "$held" "$key" 120 # it signs against Bybit
-  held="" BODY=""
+  held=""
+  BODY=""
   case $STATUS in
     201)
       forget_shown
