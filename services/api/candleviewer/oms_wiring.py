@@ -72,6 +72,7 @@ from candleviewer.oms.exits import (
     ExitDeps,
     ExitOperation,
     ExitOutcome,
+    ExitStep,
     InFlightGuard,
     OrderExits,
 )
@@ -1343,7 +1344,8 @@ class OnLaneExits:
     """`OmsRuntime.exits` from the serving loop (20 Sec.6.2, CV-C13; E29-T04 slice 4): the exit
     service's scope and account reads, each awaited on the order lane within `HOP_TIMEOUT_S`, and
     its refusal records, per-order cancels and amends, which wait out the service's own bounds, as
-    the submit does. The service, its store and B1's facade run on the lane. `guard`, the routes'
+    the submit does; a refusal's record carries the route's `step` and `reason` as the route named
+    them (24 Sec.15.5). The service, its store and B1's facade run on the lane. `guard`, the routes'
     in-flight guard, is read in place: only the serving loop's `run_claimed` claims and releases
     it, and the service never touches it after building it."""
 
@@ -1369,8 +1371,12 @@ class OnLaneExits:
         *,
         actor: SubmitActor,
         request_id: UUID | None,
+        step: ExitStep | None = None,
+        reason: str | None = None,
     ) -> ExitOutcome:
-        record = self.parts.exits.deny(row, operation, outcome, actor=actor, request_id=request_id)
+        record = self.parts.exits.deny(
+            row, operation, outcome, actor=actor, request_id=request_id, step=step, reason=reason
+        )
         return await _on_lane(self.parts, record, None)
 
     async def cancel_admitted(
