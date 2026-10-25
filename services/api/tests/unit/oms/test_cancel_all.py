@@ -509,14 +509,19 @@ _FOLD_REF = AccountRef(
 )
 
 
-def _link(n: int) -> str:
-    """A link id the OMS's generator could have made (24 Sec.8.3)."""
-    return f"cvd-0{n:021d}-{account_tag(_FOLD_ACCOUNT)}-00en"
+_B_REF = AccountRef(
+    account_id=AccountId(_B), uid="100002", environment="demo", key_ref=str(UUID(int=2))
+)
 
 
-def _venue_order(n: int, symbol: str = "BTCUSDT", kind: Any = "order") -> Order:
+def _link(n: int, account: UUID = _A) -> str:
+    """A link id the OMS's generator could have made for `account` (24 Sec.8.3)."""
+    return f"cvd-0{n:021d}-{account_tag(AccountId(account))}-00en"
+
+
+def _venue_order(n: int, symbol: str = "BTCUSDT", kind: Any = "order", account: UUID = _A) -> Order:
     return Order(
-        order_link_id=_link(n), exchange_order_id=f"x-{n}", account_id=_FOLD_ACCOUNT,
+        order_link_id=_link(n, account), exchange_order_id=f"x-{n}", account_id=AccountId(account),
         symbol=symbol, side="buy", order_type="limit", qty=Decimal("0.010"),
         price=Decimal("60000"), state="new", filled_qty=Decimal("0"),
         leaves_qty=Decimal("0.010"), avg_fill_price=None, created_at=1_790_000_000_000_000,
@@ -545,10 +550,18 @@ class _Venue(FakeTradingPort):
 class _PortExits:
     """The exit service as B1's command port reaches the venue: each order's write-ahead, then its
     `cancel_order` through the fold port, its ack read as the outcome. `refuse` names orders
-    refused before their send (no write-ahead, no venue call)."""
+    refused before their send (no write-ahead, no venue call); `refs` holds each account's ref
+    other than account A's."""
 
-    def __init__(self, port: CancelAllCoalescer, log: _Log, refuse: Collection[UUID] = ()):
+    def __init__(
+        self,
+        port: CancelAllCoalescer,
+        log: _Log,
+        refuse: Collection[UUID] = (),
+        refs: Mapping[UUID, AccountRef] | None = None,
+    ):
         self.port, self.log, self.refuse = port, log, set(refuse)
+        self.refs = dict(refs or {})
 
     async def accounts_in_scope(
         self, scope: object, requested: Collection[UUID]
@@ -561,24 +574,31 @@ class _PortExits:
         if row.id in self.refuse:
             return _refused("conflict")
         self.log.append(("ahead", row.order_link_id))
+        account = self.refs.get(row.exchange_account_id, _FOLD_REF)
         request = CancelOrderRequest(
-            account=_FOLD_REF, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
+            account=account, symbol=Symbol(row.symbol), order_link_id=row.order_link_id
         )
         ack = await self.port.cancel_order(request)
         return _CANCELLED if ack.ok else _refused("exchange_error", status=502)
 
 
 class _Accounts:
-    """The fold port's account read: `ref`, or a store fault with `fail`."""
+    """The fold port's account read: an account's ref in `refs`, else `ref`; a store fault with
+    `fail`."""
 
-    def __init__(self, fail: bool = False, ref: AccountRef = _FOLD_REF) -> None:
-        self.fail, self.ref, self.asked = fail, ref, 0
+    def __init__(
+        self,
+        fail: bool = False,
+        ref: AccountRef = _FOLD_REF,
+        refs: Mapping[UUID, AccountRef] | None = None,
+    ) -> None:
+        self.fail, self.ref, self.refs, self.asked = fail, ref, dict(refs or {}), 0
 
     async def trading_account(self, account_id: AccountId) -> AccountRef:
         self.asked += 1
         if self.fail:
             raise StorageTierUnavailable("postgres unreachable (OSError)")
-        return self.ref
+        return self.refs.get(account_id, self.ref)
 
 
 class _Fold:
@@ -586,18 +606,18 @@ class _Fold:
 
     def __init__(
         self, rows: Sequence[OrderRow], resting: Sequence[Order], *, refuse: Collection[UUID] = (),
-        accounts: _Accounts | None = None,
+        accounts: _Accounts | None = None, refs: Mapping[UUID, AccountRef] | None = None,
     ) -> None:  # fmt: skip
-        self.log, self.accounts = _Log(), accounts or _Accounts()
+        self.log, self.accounts = _Log(), accounts or _Accounts(refs=refs)
         self.venue = _Venue(self.log)
         for order in resting:
             self.venue.seed_order(order, uid=_FOLD_REF.uid)
         clock = _Clock()
+        self.spacer = CancelAllSpacer(monotonic=clock, sleep=_never)
         self.port = CancelAllCoalescer(
-            self.venue, spacer=CancelAllSpacer(monotonic=clock, sleep=_never), monotonic=clock,
-            sleep=_never,
-        )  # fmt: skip
-        self.exits = _PortExits(self.port, self.log, refuse)
+            self.venue, spacer=self.spacer, monotonic=clock, sleep=_never
+        )
+        self.exits = _PortExits(self.port, self.log, refuse, refs)
         self.service = CancelAll(_Reads(rows), self.exits, folds=(self.port, self.accounts))
 
     async def run(self, **request: Any) -> Any:
@@ -620,8 +640,8 @@ async def _never(seconds: float) -> None:
     await asyncio.Event().wait()
 
 
-def _fold_row(n: int, **over: Any) -> OrderRow:
-    return _row(n, order_link_id=_link(n), **over)
+def _fold_row(n: int, account: UUID = _A, **over: Any) -> OrderRow:
+    return _row(n, account, order_link_id=_link(n, account), **over)
 
 
 async def test_an_unrestricted_request_folds_a_covered_symbol_into_one_venue_call() -> None:
@@ -701,6 +721,27 @@ async def test_an_account_read_that_answers_another_account_never_folds() -> Non
     assert not [
         v for v in warned.values() for a in (_A, _B, "100001", "100002") if str(a) in str(v)
     ]
+
+
+async def test_two_overlapping_unrestricted_requests_on_one_symbol_both_finish() -> None:
+    """CR-S4F-02 (vw2's code look): a second request meets orders already in the first's open
+    fold. Its fold is refused, so that account falls back to per-order cancels, with no
+    ExceptionGroup and no page, and its sibling account finishes as it would alone."""
+    rows = [_fold_row(1), _fold_row(2), _fold_row(3, account=_B)]
+    resting = [_venue_order(1), _venue_order(2), _venue_order(3, account=_B)]
+    fold = _Fold(rows, resting, refs={_B: _B_REF})
+    assert await fold.spacer.turn(_FOLD_REF.uid, deadline=100.0)  # the first's call then waits
+    first = asyncio.create_task(fold.run())  # account A: its fold opens, its call held
+    try:
+        await _settle()
+        assert ("venue", "cancel_all") not in fold.log and len(fold.log) == 2  # both arrived
+        got = await fold.run(exchange_account_ids=(_A, _B), exclude_reduce_only=False)
+        assert got.accounts == (
+            AccountCancels(_A, affected=2, error=None), AccountCancels(_B, affected=1, error=None),
+        )  # fmt: skip
+    finally:
+        first.cancel()
+        await asyncio.wait([first])
 
 
 async def test_each_symbol_folds_or_not_on_its_own_coverage() -> None:
