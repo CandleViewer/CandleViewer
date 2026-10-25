@@ -7,9 +7,9 @@ socket receives up to the `pong` of a later `ping` (the reply among them: code, 
 made. So does each other form of an out-of-scope request. Neither `sub` reads the principal
 loader, the account store or the snapshot source: the principal is read once per socket, at
 `auth`, by production's `StorePrincipalLoader` over an account store read by owner, and both
-requests are checked against it alike. The timing leg is opt-in, as E09-X02's AC-ENUM-03 is, and
-uses its method and threshold through the gateway in process. Both subprotocols; a fake clock
-wherever time is not the measurement.
+requests are checked against it alike. The timing leg is a `perf` test, run by the `py-perf` lane as
+E09-X02's AC-ENUM-03 is (#4521), and uses its method and threshold through the gateway in
+process. Both subprotocols; a fake clock wherever time is not the measurement.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from __future__ import annotations
 import gc
 import json
 import math
-import os
 import random
 import signal
 import time
@@ -362,10 +361,6 @@ def _no_reply(*_: object) -> NoReturn:
 
 
 @pytest.mark.perf
-@pytest.mark.skipif(
-    os.environ.get("CV_RUN_PERF") != "1",
-    reason="wall-clock statistical test: opt in with CV_RUN_PERF=1, as AC-ENUM-03",
-)
 def test_x02_ac_05_the_two_refusals_take_the_same_time(
     world: RawWorld, spies: Spies, tmp_path: Path
 ) -> None:
