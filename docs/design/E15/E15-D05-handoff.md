@@ -1,6 +1,6 @@
 # E15-D05 — Per-component handoff checklist (`16` §11.4; the contracts of CMP-217 and CMP-073 change)
 
-Two blocks (CMP-217 LayoutPresetMenu, CMP-073 WorkspaceSwitcher — every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table once each with a leading `Component` column, then §A the `16` §12 design-QA checklist and §B the `05` §10 template for SCR-022 and SCR-011. Boards are PENDING (text-first PR; the boards PR completes #321): the spec `docs/design/E15/E15-D05.md` names 48 named frames in its §3.2 and every number here is its tool's (`docs/design/_tools/e15_d05_presets_audit.py --json`). Story names are PROPOSED until engineering agrees (the ticket's "agreed with FE").
+Two blocks (CMP-217 LayoutPresetMenu, CMP-073 WorkspaceSwitcher — every line of the `16` §11.4 block kept), then Tables 1–5, the Density table and the Essential-exceptions table once each with a leading `Component` column, then §A the `16` §12 design-QA checklist and §B the `05` §10 template for SCR-022 and SCR-011. Boards are PENDING (the text merged first, #4507; this boards PR draws them and completes #321): the spec `docs/design/E15/E15-D05.md` names 48 named frames in its §3.2 and every number here is its tool's (`docs/design/_tools/e15_d05_presets_audit.py --json`). Story names are PROPOSED until engineering agrees (the ticket's "agreed with FE").
 
 ## Handoff checklist — CMP-217 LayoutPresetMenu (E15-D05, #321)
 

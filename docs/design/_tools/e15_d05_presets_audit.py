@@ -64,6 +64,9 @@ deficiency matrices and dE76), so no formula is re-implemented here. Sections, e
     account or environment control, a preset never a saved workspace, no bare F-key, every chord bound or
     PROPOSED); the load error on board 08's row, section 12 and the hand-off's section A; C-16's frame count and
     OQ-6 closed; the SCR-029 route's Tab order, focus return and D08-A22 as merged E15-D08 states them.
+    The boards-PR fold closes the gate vocabulary: a sentence opening on "It" / "This" takes the previous
+    sentence's subject; "not available", "no longer available" and "can't be used" are lock words; click,
+    choose and select are switch verbs; a hand-off row's Variant / Element cell sets the row's subject.
 11. Numbers: the ``audit:`` block at the end of the spec equals ``--json``'s markers; every counted number the prose
     types sits in a registered context bound to a marker, a token size or a carried literal of ``CONSTS`` (printed
     under ``constants``); every W x H and two-decimal ratio in the spec and the hand-off is one the tool derives;
@@ -1528,7 +1531,8 @@ T2_FORM_ALLOWED = (
 )
 EXIT_GATED = re.compile(
     r"lock|aria-disabled|\bT2\b|CMP-079|rbac\.|disabledReason|\bblocked\b|\bdisabled\b|(?<!never )\bgated\b"
-    r"|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)|\bunavailable\b|\bgr[ae]yed\b",
+    r"|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)|\bunavailable\b|\bgr[ae]yed\b"
+    r"|\b(?:not|no longer) available\b",
     re.IGNORECASE,
 )
 # the lock tokens an availability clause or a sentence-form row must not carry un-negated (per clause, any wording)
@@ -1739,7 +1743,7 @@ SWITCH_PROSE_WORD = re.compile(
 LOCK_WORD = re.compile(
     r"\block(?:ed|s)?\b|\bpadlock\b|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)"
     r"|\bdisabled\b|\bgr[ae]yed(?: out)?\b|\bunavailable\b|\bblocked\b|\bgated\b|aria-disabled|\bT2\b"
-    r"|CMP-079|disabledReason|rbac\.[a-z_]+",
+    r"|CMP-079|disabledReason|rbac\.[a-z_]+|\b(?:not|no longer) available\b",
     re.IGNORECASE,
 )
 LOCK_SKIP = ("`opacity.disabled`", "`color.text.disabled`")  # token names, not states
@@ -2566,7 +2570,8 @@ SPINE_PRESET_AS_WS = re.compile(
 DOC_CARD_WORD = re.compile(r"(?<![.\w`-])(?:cards?|presets?|thumbnails?|options?)\b", re.IGNORECASE)
 DOC_LOCK_WORD = re.compile(
     r"\block(?:ed|s)?\b|\bpadlock\b|\binert\b|can(?:'|’|no)t be (?:pressed|used|clicked|chosen|activated)"
-    r"|\bdisabled\b(?! attribute)|\bgr[ae]yed(?: out)?\b|\bunavailable\b|\bblocked\b|\bgated\b",
+    r"|\bdisabled\b(?! attribute)|\bgr[ae]yed(?: out)?\b|\bunavailable\b|\bblocked\b|\bgated\b"
+    r"|\b(?:not|no longer) available\b",  # boards-PR carry (b): "not available" and kin are lock words
     re.IGNORECASE,
 )
 DOC_T1 = re.compile(
@@ -2654,13 +2659,14 @@ WS_SUBJECT = re.compile(
     + r"|(?<!New )\b(?:the next|the|a|another)\s+workspace\b(?!\s+(?:name|dialog|list|delete)\b)",
     re.IGNORECASE,
 )
-WS_VERB = re.compile(
-    r"\bopen(?:s|ed|ing)?\b|\bselect(?:s|ed|ing)?\b|\bpick(?:s|ed|ing)?\b|\b(?:go(?:es)?|going|went)\s+to\b"
-    r"|\bjump(?:s|ed|ing)?\s+to\b",
+WS_VERB = re.compile(  # boards-PR carry (c): click, choose and select are switch verbs too
+    r"\bopen(?:s|ed|ing)?\b|\bselect(?:s|ed|ing|ion)?\b|\bpick(?:s|ed|ing)?\b|\b(?:go(?:es)?|going|went)\s+to\b"
+    r"|\bjump(?:s|ed|ing)?\s+to\b|\bclick(?:s|ed|ing)?(?:\s+on)?\b|\bchoos(?:e|es|ing)\b|\bchos(?:e|en)\b",
     re.IGNORECASE,
 )
 
 WS_OBJECT_GAP = re.compile(r"[\s,]*(?:the\s+)?")
+WS_BARE_GAP = re.compile(r"[\s,]*")
 
 
 def ws_switch(text: str) -> bool:
@@ -2668,7 +2674,9 @@ def ws_switch(text: str) -> bool:
     or its object (right after it, across a comma and an article)."""
     for m in WS_VERB.finditer(text):
         gap = WS_OBJECT_GAP.match(text, m.end())
-        if WS_SUBJECT.match(text, gap.end() if gap else m.end()):
+        # "the next workspace": the article stays with the subject (boards-PR carry (c))
+        bare = WS_BARE_GAP.match(text, m.end())
+        if any(WS_SUBJECT.match(text, g.end() if g else m.end()) for g in (gap, bare)):
             return True
         if any(w.end() >= m.start() - 40 for w in WS_SUBJECT.finditer(text, 0, m.start())):
             return True
@@ -2694,6 +2702,42 @@ DIRTY_AWAY = re.compile(
 
 KEY_AWAY = re.compile(r"[^|;]{0,16}?(?:" + KEY_ELSEWHERE.pattern + ")", re.IGNORECASE)
 
+# boards-PR carry (a): a unit's subject is the first control or surface it names; a sentence that opens on
+# "It" / "This" / "That" / "They" / "Its" speaks of the previous sentence's subject, put in the pronoun's place
+SUBJECT_ANY: tuple[re.Pattern[str], ...] = (
+    TRIGGER_SUBJECT,
+    TRIGGER_OTHER,
+    CARD_SUBJECT,
+    KEY_HOME,
+    LOCK_T1,
+    LOCK_OTHER,
+    SWITCH_SUBJECT,
+    WS_SUBJECT,
+    PROMPT_HOME,
+)
+SUBJECT_PRONOUN = re.compile(r"(It|Its|This|That|They)\b\s*")
+
+
+def unit_subject(text: str) -> str:
+    """The first control or surface the unit names (the longest at a tie), else ''."""
+    bare = strip_quotes(text)
+    best: re.Match[str] | None = None
+    for pat in SUBJECT_ANY:
+        m = pat.search(bare)
+        if m and (
+            best is None or (m.start(), -len(m.group(0))) < (best.start(), -len(best.group(0)))
+        ):
+            best = m
+    return best.group(0) if best else ""
+
+
+def with_subject(text: str, carried: str) -> str:
+    """A pronoun-led sentence with the carried subject in the pronoun's place (unless a subject follows it)."""
+    pm = SUBJECT_PRONOUN.match(text)
+    if not (pm and carried) or any(p.match(text, pm.end()) for p in SUBJECT_ANY):
+        return text
+    return carried + ("'s " if pm.group(1) == "Its" else " ") + text[pm.end() :]
+
 
 def subject_before(
     text: str, i: int, kinds: dict[str, re.Pattern[str]], window: int = 10**6
@@ -2714,10 +2758,15 @@ def _neg_before(text: str, i: int) -> bool:
 
 
 def unit_key_on(
-    text: str, kinds: dict[str, re.Pattern[str]], keys: re.Pattern[str], want: str, window: int = 80
+    text: str,
+    kinds: dict[str, re.Pattern[str]],
+    keys: re.Pattern[str],
+    want: str,
+    window: int = 80,
+    default: str = "",
 ) -> str:
     """The first un-negated key word whose subject (the nearest named within `window` before it, across any
-    punctuation, or the one it is put on) is `want`, else ''."""
+    punctuation, else the row's `default`, or the one it is put on) is `want`, else ''."""
     bare = TOKEN_USE.sub(lambda t: " " * len(t.group(0)), strip_quotes(text))
     for m in keys.finditer(bare):
         if _neg_before(bare, m.start()) or KEY_AWAY.match(bare, m.end()):
@@ -2730,7 +2779,7 @@ def unit_key_on(
         if tail:
             j = m.end() + tail.end()
             after = next((k for k, pat in kinds.items() if pat.match(bare, j)), "")
-        if want in (subject_before(bare, m.start(), kinds, window), after):
+        if want in (subject_before(bare, m.start(), kinds, window) or default, after):
             return bare[max(0, m.start() - 40) : m.end() + 20].strip()
     return ""
 
@@ -2880,11 +2929,17 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
 
     low = {b.lower() for b in bindings} | {k.lower() for k in COMPONENT_KEYS}
     unit_before = ("", "", "")
+    carried = ""
     for doc, where, text in doc_units(spec, handoff):
-        # a prose sentence that opens on a pronoun speaks of the previous sentence's subject (re-check M-1)
+        # a prose sentence that opens on a pronoun speaks of the previous sentence's subject (re-check M-1),
+        # which takes the pronoun's place (boards-PR carry (a))
         last, unit_before = unit_before, (doc, where, text)
-        if last[:2] == (doc, where) and "prose" in where and PRONOUN_LEAD.match(text):
-            text = last[2] + " " + text
+        same = last[:2] == (doc, where) and "prose" in where
+        led = same and bool(PRONOUN_LEAD.match(text))
+        own = with_subject(text, carried) if led else text
+        carried = unit_subject(own) or (carried if led else "")
+        if led:
+            text = last[2] + " " + own
         sec0 = where.split(" ")[0]
         major = re.match(r"§(\d+)", sec0)
         keyed_already = doc == "spec" and (
@@ -2915,6 +2970,13 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
         sec = where.split(" ")[0]
         prose = "prose" in where
         cells = text.split(" | ")
+        # boards-PR carry (d): a hand-off row's Variant / Element cell sets the row's subject
+        row_kinds = {"trigger": TRIGGER_SUBJECT, "other": TRIGGER_OTHER}
+        row_subject = (
+            subject_before(cells[1], len(cells[1]), row_kinds)
+            if doc == "hand-off" and not prose and len(cells) > 1
+            else ""
+        )
         # merged E15-D03 D-9: the trigger never carries a key chip inline
         for clause in doc_clauses(strip_quotes(text)):
             sub_hit = next(
@@ -2941,6 +3003,7 @@ def document_gates(spec: str, handoff: str, bindings: set[str]) -> list[str]:
                 TRIGGER_KEY,
                 "trigger",
                 10**6,
+                row_subject,
             )
             if tk:
                 add(
@@ -4694,6 +4757,44 @@ RECHECK_MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("E38", "switch: hand-off CMP-073 block prose prompts in the row or sentence of a switch ('confirm')",
      (("hand:- [x] **Live data** — none streams: `listWorkspaces`", "— none streams", "— selecting Fanout review shows a confirm; none streams"),)),
 )
+# fmt: on
+# Boards-PR fold (the approval record's four binding carries on #4507): (a) F01–F03 a pronoun-led sentence
+# takes the previous sentence's subject; (b) F04–F07 "not available", "no longer available" and "can't be used"
+# are lock words; (c) F08–F11 click, choose and select are switch verbs; (d) F12–F14 a hand-off row's Variant /
+# Element cell sets the row's subject. Each FAIL alone; V8–V11 are their valid twins.
+# fmt: off
+BOARDS_MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
+    ('F01', "trigger: §7 prose puts the key on the trigger ('or only (RULED Q-12). trigger shows the key beside the name.'; merged E15-D03 D-9)",
+     (('line:**The trigger** (', '(RULED Q-12). It reads', '(RULED Q-12). It shows the key beside the name. It reads'),)),
+    ('F02', "trigger: §7 prose puts the key on the trigger ('hrough E15-S01 (C-7). trigger shows the key beside the name.'; merged E15-D03 D-9)",
+     (('line:**The trigger** (', 'follows through E15-S01 (C-7).', 'follows through E15-S01 (C-7). It shows the key beside the name.'),)),
+    ('F03', "trigger: §7 prose draws a key chip inline on the trigger ('Ctrl+'; merged E15-D03 D-9)",
+     (('line:**The trigger** (', 'follows through E15-S01 (C-7).', 'follows through E15-S01 (C-7). This carries the `Ctrl+1` chip.'),)),
+    ('F04', "lock: hand-off Table 2 row 'CMP-217 gallery `Tab` order' locks Apply ('not available')",
+     (('hand:| CMP-217   | gallery `Tab` order', 'initial focus the first card', 'initial focus the first card; Apply — not available until a card is chosen'),)),
+    ('F05', "lock: §5.3 prose locks Apply ('not available')",
+     (('line:Row 1: ', 'with [Apply] (CMP-001 `primary`)', 'with [Apply] (CMP-001 `primary` — not available until a card is chosen)'),)),
+    ('F06', "lock: §5.3 prose locks Apply ('no longer available')",
+     (('line:Row 1: ', 'view-as included (E15-D02 §8.1 :640; §12).', 'view-as included (E15-D02 §8.1 :640; §12). Apply is no longer available while presets load.'),)),
+    ('F07', "lock: §5.3 prose locks Cancel ('can't be used')",
+     (('line:Row 1: ', 'view-as included (E15-D02 §8.1 :640; §12).', "view-as included (E15-D02 §8.1 :640; §12). Cancel can't be used while presets load."),)),
+    ('F08', "switch: §10.1 prose prompts in the row or sentence of a switch ('dialog')",
+     (('line:The expanded rail is 240 px', 'remounts no panel (`14` :329).', 'remounts no panel (`14` :329). Clicking Fanout review in the rail shows a save dialog first.'),)),
+    ('F09', "switch: §10.1 prose prompts in the row or sentence of a switch ('sheet')",
+     (('line:The expanded rail is 240 px', 'remounts no panel (`14` :329).', 'remounts no panel (`14` :329). Choosing Fanout review in the rail shows a sheet first.'),)),
+    ('F10', "switch: §10.1 prose prompts in the row or sentence of a switch ('toast')",
+     (('line:The expanded rail is 240 px', 'remounts no panel (`14` :329).', 'remounts no panel (`14` :329). Clicking a workspace in the rail shows a toast first.'),)),
+    ('F11', "switch: §10.1 prose prompts in the row or sentence of a switch ('popover')",
+     (('line:The expanded rail is 240 px', 'remounts no panel (`14` :329).', 'remounts no panel (`14` :329). Selecting the next workspace shows a popover.'),)),
+    ('F12', "trigger: hand-off Table 1 row 'CMP-217 trigger' puts the key on the trigger ('*`,                  ) · keyed (a `Ctrl+1` chip) | `CMP-217/'; merged E15-D03 D-9)",
+     (('hand:| CMP-217   | trigger ', 'clean · dirty (`*`, "unsaved changes")', 'clean · dirty (`*`, "unsaved changes") · keyed (a `Ctrl+1` chip)'),)),
+    ('F13', "trigger: hand-off Table 1 row 'CMP-217 trigger' puts the key on the trigger ('`*`,                  ) (it shows `Ctrl+1`) | `CMP-217/trigg'; merged E15-D03 D-9)",
+     (('hand:| CMP-217   | trigger ', 'clean · dirty (`*`, "unsaved changes")', 'clean · dirty (`*`, "unsaved changes") (it shows `Ctrl+1`)'),)),
+    ('F14', "trigger: hand-off Table 1 row 'CMP-217 trigger' puts the key on the trigger (' (`*`,                  ) (shows the key) | `CMP-217/trigger'; merged E15-D03 D-9)",
+     (('hand:| CMP-217   | trigger ', 'clean · dirty (`*`, "unsaved changes")', 'clean · dirty (`*`, "unsaved changes") (shows the key)'),)),
+)
+# fmt: on
+# fmt: off
 VALID_TWINS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ('V1', 'no key chip on any preset card',
      (('line:**Three nouns, one each', '"Two by two, four panels". A **saved', '"Two by two, four panels". There is no key chip on any preset card. A **saved'),)),
@@ -4709,6 +4810,14 @@ VALID_TWINS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (('line:**Create** = ', '(E30-D02 D3; no lock).', '(E30-D02 D3; no lock). Opening Swing 4H never prompts, and selecting another workspace shows no dialog.'),)),
     ('V7', 'the New workspace dialog is a create',
      (('line:**Create** = ', '(E30-D02 D3; no lock).', '(E30-D02 D3; no lock). Creating a workspace opens the New workspace dialog; it never opens a workspace before Create workspace.'),)),
+    ('V8', 'the trigger never shows a key chip',
+     (('line:**The trigger** (', 'follows through E15-S01 (C-7).', 'follows through E15-S01 (C-7). It never shows a key chip.'),)),
+    ('V9', 'Save layout is not available to a viewer (T2, C-16)',
+     (('line:Row 1: ', 'view-as included (E15-D02 §8.1 :640; §12).', 'view-as included (E15-D02 §8.1 :640; §12). Save layout is not available to a viewer.'),)),
+    ('V10', 'selecting a preset card and Apply is no workspace switch',
+     (('line:Row 1: ', 'view-as included (E15-D02 §8.1 :640; §12).', 'view-as included (E15-D02 §8.1 :640; §12). Select a preset card and Apply; on a dirty copy SCR-029 asks to save first.'),)),
+    ('V11', 'the trigger row never draws a key chip',
+     (('hand:| CMP-217   | trigger ', 'clean · dirty (`*`, "unsaved changes")', 'clean · dirty (`*`, "unsaved changes") · never a `Ctrl+1` chip'),)),
 )
 # fmt: on
 
@@ -4743,6 +4852,9 @@ def apply_mutation(
     return "\n".join(docs["spec"]), "\n".join(docs["hand"]), "\n".join(docs["cat"])
 
 
+ALL_MUTATIONS = (
+    MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS + RECHECK_MUTATIONS + BOARDS_MUTATIONS
+)
 SELF_TEST_RUNS: dict[str, int] = {"inline": 0, "table": 0, "one_fail": 0, "valid": 0}
 
 
@@ -4856,9 +4968,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         ),
         "pairs: the §6.2 pair table",
     )
-    expects = [
-        e for _m, e, _ed in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS + RECHECK_MUTATIONS
-    ]
+    expects = [e for _m, e, _ed in ALL_MUTATIONS]
     if len(set(expects)) != len(expects):
         problems.append("self-test: two mutations share a FAIL message")
     # the fit gate is computed, not read from the spec: probe it with a card one pixel taller than its viewport
@@ -4871,7 +4981,7 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str], catalogue:
         problems.append(
             "self-test: a card taller than its scroll viewport did not trip the fit gate once"
         )
-    for mid, want, edits in MUTATIONS + RECORD_MUTATIONS + DELTA_MUTATIONS + RECHECK_MUTATIONS:
+    for mid, want, edits in ALL_MUTATIONS:
         try:
             s2, h2, c2 = apply_mutation(spec, handoff, edits, catalogue)
         except ValueError as exc:
