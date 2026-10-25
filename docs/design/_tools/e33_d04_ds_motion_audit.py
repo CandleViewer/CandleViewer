@@ -51,19 +51,42 @@ and `16` (which must equal the base).
    baseline and of the spec, hand-off, `15` and `16` re-read from disk); a mutation of the tool's
    own state (the CVD port, M-62) is undone and re-checked. G-Q3, G-C15 and G-DR14 gate the
    orchestrator's 14:42Z decisions through M-99, M-100 and M-101 (each marked "RULED
-   (6401561066)"; "RULED" cites comment 6397030902 or 6401561066, never a lane thread); M-102 to M-117 are the round-1 record's forms,
-   M-118 to M-124 the round-2 classes (motion vocabulary, sample nouns, the carried subject, a
-   negation chain, a rate in words or fps, a cite's own sub-clause, the tag suppressed).
+   (6401561066)"). "RULED" cites the allow-list only, 6397030902, 6401561066 and the BQ list
+   6396755099, in every form ("comment N", "RULED (N)", "RULED by", a bare id; M-136), never a
+   lane thread, and the Conditions line names all three. M-102 to M-117 are the round-1 record's
+   forms, M-118 to M-124 the round-2 classes (motion vocabulary, sample nouns, the carried
+   subject, a negation chain, a rate in words or fps, a cite's own sub-clause, the tag
+   suppressed), M-125 to M-135 the round-3 residuals (a falsity frame, the following sample, the
+   countdown renamed, every bar by place, a never-animates item); a lexicon mutation must trip
+   its gate on its own (G-RULED-PIN's line is set aside for it), a pin mutation G-RULED-PIN only.
+5. **Pins (G-RULED-PIN; the orchestrator's rulings on the delta record at `4e4da2d4` and on the
+   out-of-span residuals).** The lexicon gates are the first line; the backstop is a default-deny
+   pin set in RULED_PIN_TXT (`e33_d04_ruled_pins.txt`, committed) over EVERY unit of both docs
+   (spec and hand-off): each heading, table row, rule line, bullet and sentence, by doc, region
+   (heading path plus occurrence `#n`), location (`row <id>`, `s<k>` for the k-th sentence,
+   `rule <k>`, `heading`, `shape`) and exact text (NFKC, whitespace collapsed; an anchored value is
+   cut to its anchor, which G-ANCHOR re-derives). Each region also pins its line shape, blank lines
+   included, so squeezing blank lines to make room under G-BUDGET changes a pin. `--repin-ruled`
+   writes it, deliberately and only with every value filled; `--check` never re-pins. A unit
+   changed, moved, duplicated, deleted or added FAILs by its location; a repeated heading is a
+   duplicated region and a repeated location FAILs (the first copy is kept, never overwritten), so
+   a shadow copy cannot mask an edit. PIN_ALLOW is empty. Pin classes, one `--selftest` mutation
+   each (M-137 to M-150): a motion row, its reduce twin, a state row, an affordance row, the
+   never-animates list, a countdown row, a drift row, a T2 / exit cell, a ruled sentence, a new
+   heading, a new unit outside the old spans, a duplicated section, a shadow copy, squeezed blank
+   lines.
 
 Usage (from the repo root):
   uv run --no-project python docs/design/_tools/e33_d04_ds_motion_audit.py --check [--fill] [--json]
   uv run --no-project python docs/design/_tools/e33_d04_ds_motion_audit.py --selftest
+  uv run --no-project python docs/design/_tools/e33_d04_ds_motion_audit.py --repin-ruled
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
 from __future__ import annotations
 
 import argparse
+import difflib
 import functools
 import hashlib
 import json
@@ -116,6 +139,7 @@ RULING_ID = "6397030902"
 BQ_LIST_ID = "6396755099"
 RULING_1442_ID = "6401561066"  # the 14:42Z decisions: D04-Q3, D04-C15 / CR-T1, DR-14
 RULED_1442 = f"RULED ({RULING_1442_ID})"
+RULED_IDS = (RULING_ID, RULING_1442_ID, BQ_LIST_ID)  # the allow-list: every comment id cited
 OWNER_MARK = "owner approval pending (#2701)"
 OWNER_BQS = ("BQ-2", "BQ-11", "BQ-17")
 # sha → (PR, a path the merge touched): the merged inputs the spec cites (its Start / Inputs lines)
@@ -304,8 +328,14 @@ def at_base(rel: str) -> str:
     return text
 
 
+@functools.lru_cache(maxsize=1)
+def plan_listing() -> str:
+    """`docs/plan/` at the base, listed once per run (`git ls-tree`)."""
+    return git_out("ls-tree", "--name-only", BASE, "docs/plan/")
+
+
 def plan_rel(nn: str) -> str | None:
-    listing = git_out("ls-tree", "--name-only", BASE, "docs/plan/")
+    listing = plan_listing()
     names = [n for n in listing.split("\n") if n.startswith(f"docs/plan/{nn}-")]
     return min(names) if names else None
 
@@ -438,11 +468,23 @@ DOUBLE_NEG = re.compile(
 )
 
 
-# a flip negates everything after it: "it is not true that the bar never eases" asserts the easing
-# and "it is false that the bar eases" denies it (record r3)
+# a falsity frame flips the claim it frames, wherever it sits: "it is not true that the bar never
+# eases" and "it would be wrong to say the countdown never slides" assert the motion, "that the bar
+# never glides is false" too, and "it is false that the bar eases" denies it (records r3, r4)
+FALSITY = (
+    r"(?:false|untrue|wrong|incorrect|inaccurate|mistaken|a myth|a fiction"
+    r"|not (?:true|the case|correct|accurate|so|right))"
+)
+_NOT_TRUE = r"(?:isn['’]t|wasn['’]t|aren['’]t|ain['’]t) (?:true|the case|correct|accurate|so|right)"
+_SAYING = r"(?:that|to (?:say|claim|state|suggest|think|write|read)(?: that)?)"
 FLIP = re.compile(
-    r"\b(?:it|this)(?:(?: is| was|['’]s) (?:not (?:true|the case)|false|untrue|wrong)"
-    r"| (?:isn['’]t|wasn['’]t) (?:true|the case)) (?:that|to say that)\b"
+    rf"\b(?:it|this)(?: \w+){{0,2}}? (?:(?:is|was|be|['’]s) (?:\w+ )?{FALSITY}|{_NOT_TRUE})"
+    rf" {_SAYING}\b"
+)
+# the falsity frame at the end: "that <claim> is false", "the claim that <claim> is wrong"
+FLIP_AFTER = re.compile(
+    rf"^\W*(?:(?:and|but|so|yet)\s+)?(?:the (?:claim|idea|notion|reading) )?that (.+?)"
+    rf" (?:(?:is|was|would be|remains) (?:\w+ )?{FALSITY}|{_NOT_TRUE})\W*$"
 )
 
 
@@ -452,6 +494,10 @@ def live(clause: str, term: str, keep_quotes: bool = False) -> bool:
     double negation or a negation chain asserts its term; a flip ("it is not true that …", "it is
     false that …") inverts what follows it."""
     t = norm_text(clause) if keep_quotes else norm_text(unquote(clause))
+    after = FLIP_AFTER.match(t)
+    if after:
+        rest = after[1]
+        return re.search(term, rest) is not None and not live(rest, term, True)
     f = FLIP.search(t)
     if f:
         rest = t[f.end() :]
@@ -473,8 +519,7 @@ _SEP = re.compile(r"(;\s|(?<=[.!?])\s+|\s—\s)")
 # a clause that opens on a pronoun ("; it eases", "; no, it is drawn as shipped") reads with the
 # previous clause's subject in its place (record r2: the subject carried across "; " and " — ")
 PRONOUN = re.compile(
-    r"^\W*(?:(?:no|yes|and|but|so|then|instead|rather),?\s+)?(?:it|they|this|these|those)\b"
-    r"(?!\s+(?:is|was)\s+(?:not\s+)?(?:true|false|untrue|wrong|the case)\b)",  # a flip (r3)
+    r"^\W*(?:(?:no|yes|and|but|so|then|instead|rather),?\s+)?(?:it|they|this|these|those)\b",
     re.IGNORECASE,
 )
 SUBJECT_END = re.compile(
@@ -532,7 +577,7 @@ def sentences(text: str) -> list[str]:
         if sep and sep.strip() not in (";", "—"):
             prev, subj = "", ""
         m = PRONOUN.match(c)
-        if m and subj:
+        if m and subj and not FLIP.match(norm_text(c)):  # a falsity frame is no pronoun (r3, r4)
             c = subj + c[m.end() :]
         elif sep.strip() == "—" and APPOSED.match(prev) and not SUBJECT_END.search(prev):
             c = f"{prev.strip()} is {c}"
@@ -1403,7 +1448,10 @@ MOTION_VOCAB = (
     r"|\bblend\w*|\bzoom\w*|\bgr[eo]w(?:s|n|ing)?\b"
     r"|\broll(?:s|ed|ing)?\b|\bodometer\w*"  # record r3
 )
-SAMPLE_NOUN = r"(?:samples?|readings?|ticks?|updates?|values?)"  # what a sample is called (r2)
+SAMPLE_NOUN = (  # what a sample is called (r2), and where it comes from (record r4)
+    r"(?:samples?|readings?|ticks?|updates?|values?|push(?:es)?|messages?|events?|data|points?"
+    r"|snapshots?|polls?|refresh(?:es)?|records?|renders?|arrivals?|deltas?|frames?|prints?)"
+)
 REDUCED = (
     r"\bunder (?:the )?(?:reduced? motion|reduce|prefers reduced motion|the twin)\b"
     r"|\b(?:with|in) reduced motion\b|\bin (?:the )?reduced (?:twin|mode|reading)\b"
@@ -1546,7 +1594,8 @@ GATED = (
     r"|algo\.manage|\bblock(?:s|ed)\b|\bunavailable\b|\bpermission\w*"
     r"|\bgr[ae]yed\b|\bdimmed\b|\binert\b|\bheld back\b|\bhold(?:s|ing)? back\b|\bwithh[eo]ld\w*"
     r"|\bsuppress\w*|\bdeferred\b|\buntil the run (?:settles|ends|stops|finishes)\b"  # record r2
-    r"|\bignor(?:e|es|ed|ing)\b|\bswallow\w*|\bdisabl(?:e|es|ing)\b|\bno ?ops?\b|\bdoes nothing\b"  # r3
+    # record r3
+    r"|\bignor(?:e|es|ed|ing)\b|\bswallow\w*|\bdisabl(?:e|es|ing)\b|\bno ?ops?\b|\bdoes nothing\b"
 )
 NOT_EXITS = (
     r"\bcloses #\d+|\bclos(?:e|es|ing) (?:all )?(?:open )?positions?\b"  # an issue, a position
@@ -2044,8 +2093,8 @@ TWEEN = (
 
 _NEXT = r"(?:next|new|following|subsequent|later)"
 BETWEEN_SAMPLES = (
-    rf"\bbetween (?:two |the |each |successive |consecutive )?{SAMPLE_NOUN}"
-    rf"|\b(?:toward\w*|until|for) (?:the |each )?{_NEXT} {SAMPLE_NOUN}"
+    rf"\bbetween (?:two |the |each |successive |consecutive )?(?:\w+ )?{SAMPLE_NOUN}"
+    rf"|\b(?:toward\w*|until|till|for) (?:the |each |a )?{_NEXT} (?:\w+ )?{SAMPLE_NOUN}"
     rf"|\bfrom (?:one|each|a|the|this) (?:\w+ )?{SAMPLE_NOUN} to (?:the |a )?{_NEXT}\b"
     # "to the following one", "across successive readings" (record r3)
     rf"|\bto the (?:following|subsequent) (?:one|{SAMPLE_NOUN})\b"
@@ -2669,26 +2718,273 @@ LANE_ID = re.compile(r"\bLANE-[A-Za-z0-9-]+")
 
 
 def g_ruled(t: Texts) -> list[str]:
-    """Condition: "RULED" cites comment 6397030902 or 6401561066; the twenty rows are there."""
+    """Condition: "RULED" cites the allow-list RULED_IDS only, in any form ("comment N", "RULED
+    (N)", "RULED by"); the Conditions line names the three ids; the twenty rows are there."""
     bad: list[str] = []
     head = next((ln for ln in t.spec.split("\n") if ln.startswith("## The twenty questions")), "")
     if f"RULED (orchestrator, comment {RULING_ID}, on the BQ list {BQ_LIST_ID})" not in head:
         bad.append("the RULED heading does not cite the ruling comment")
     if f"comment {RULING_ID}" not in t.hand:
         bad.append("the hand-off does not cite the ruling comment")
+    cond = next((ln for ln in t.spec.split("\n") if ln.startswith("**Conditions")), "")
+    bad += [f"the Conditions line does not name {i}" for i in RULED_IDS if i not in cond]
     for text in (t.spec, t.hand):
-        for cid in re.findall(r"comment (\d{9,})", text):
-            if cid not in (RULING_ID, RULING_1442_ID, BQ_LIST_ID):
-                bad.append(f"comment {cid} is not the ruling")
+        # any comment id, however written ("comment N", "RULED (N)", bare): the allow-list only
+        for cid in re.findall(r"(?<![\w-])(\d{8,})(?![\w-])", text):
+            if cid not in RULED_IDS:
+                bad.append(f"{cid} is not a ruling comment ({', '.join(RULED_IDS)})")
+        # "RULED (…)" names an allowed id (record delta: "RULED (6400168737)" passed)
+        for m in re.finditer(r"\bRULED \(([^)]*\d[^)]*)\)", text):
+            ids = re.findall(r"\d{8,}", m[1])
+            if not re.search(r"\bBQ-\d", m[1]) and (not ids or set(ids) - set(RULED_IDS)):
+                bad.append(f"RULED ({m[1][:30]}) does not cite a ruling comment")
         # "RULED" cites the comment, never a lane thread (record r1)
         bad += [f"{m[0]} is a lane thread, not a #988 comment" for m in LANE_ID.finditer(text)]
         for m in re.finditer(r"\bRULED by ([^.;:]{0,80})", text):
-            if RULING_ID not in m[1] and RULING_1442_ID not in m[1]:
+            if not any(i in m[1] for i in RULED_IDS):
                 bad.append(f"RULED by {m[1][:40]!r} does not cite a ruling comment")
     bq = list(rows_by(section(t.spec, "The twenty questions"), r"BQ-\d+"))
     if bq != [f"BQ-{i}" for i in range(1, 21)]:
         bad.append("the BQ table is not BQ-1…BQ-20")
     return one("G-RULED", bad)
+
+
+# ---- the default-deny pin set (the orchestrator's rulings on the delta record at `4e4da2d4` and
+# on the out-of-span residuals): the lexicon gates are the first line; EVERY unit of both E33-D04
+# docs is also pinned, by its location and its exact normalised text, in RULED_PIN_TXT. Regions
+# are keyed by heading path plus occurrence index (`#n`), so a repeated heading is a new region and
+# a repeated location FAILs instead of overwriting; each region pins its line shape (blank lines
+# included), so squeezing blank lines changes a pinned unit. `--repin-ruled` writes the file;
+# `--check` never re-pins. Anchored values are pinned as their anchor (`<!--=KIND:key-->`, the
+# value cut), since `--check` re-derives them (G-ANCHOR); a `{{KIND:key}}` pins the same way.
+RULED_PIN_TXT = "docs/design/_tools/e33_d04_ruled_pins.txt"
+PIN_DOCS: tuple[str, ...] = ("spec", "hand")  # every unit of both docs; no span is exempt
+PIN_ALLOW: tuple[tuple[str, str], ...] = ()  # (region prefix, a unit regex) allowed unpinned
+HEADING = re.compile(r"^(#+) (.*)$")
+PIN_SENT = re.compile(r"s\d+")
+Unit = tuple[str, str, str, str]  # (doc, region, loc, text)
+
+
+def pin_norm(text: str) -> str:
+    """The exact text, NFKC with whitespace collapsed (Prettier's table padding is not a change)."""
+    return " ".join(unicodedata.normalize("NFKC", text).split())
+
+
+def unvalued(line: str, values: Values) -> str:
+    """The line with every anchored value cut to its anchor and every placeholder written as one
+    (outside code spans), so `--fill` never moves a pin and a value is gated by G-ANCHOR."""
+
+    def part(seg: str) -> str:
+        seg = PLACEHOLDER.sub(lambda m: f"<!--={m[1]}-->", seg)
+        out, pos = [], 0
+        for m in ANCHOR.finditer(seg):
+            pre, want = seg[pos : m.start()], values.get(m[1], "")
+            out += [pre[: len(pre) - len(want)] if want and pre.endswith(want) else pre, m[0]]
+            pos = m.end()
+        return "".join(out) + seg[pos:]
+
+    parts, pos = [], 0
+    for c in CODE.finditer(line):
+        parts += [part(line[pos : c.start()]), c[0]]
+        pos = c.end()
+    return "".join(parts) + part(line[pos:])
+
+
+def region_label(region: str) -> str:
+    return region if len(region) <= 60 else "…" + region[-59:]
+
+
+def doc_units(doc: str, text: str, values: Values) -> list[Unit]:
+    """Every unit of the doc: per region (heading path `a › b`, `#n` its occurrence), the heading,
+    the line shape (`.` blank, `h` heading, `t` row, `r` rule, `p` prose), each rule line by its
+    ordinal (`rule <k>`), each table row keyed by its id (`row <id>`, `#n` on a repeat) and each
+    prose sentence by its ordinal (`s<k>`)."""
+    lines = text.split("\n")
+    fence = fenced(lines)
+    out: list[Unit] = []
+    path: list[tuple[int, str]] = []
+    count: dict[str, int] = {}
+    region, k, shape = "(top)#1", 0, ""
+    seen: dict[str, int] = {}
+
+    def close() -> None:
+        out.append((doc, region, "shape", shape))
+
+    for i, raw in enumerate(lines):
+        ln = unvalued(raw, values)
+        m = HEADING.match(ln) if not fence[i] else None
+        if m:
+            close()
+            level = len(m[1])
+            path = [p for p in path if p[0] < level] + [(level, pin_norm(m[2]))]
+            key = " › ".join(p[1] for p in path)
+            count[key] = count.get(key, 0) + 1
+            region, k, seen, shape = f"{key}#{count[key]}", 0, {}, "h"
+            out.append((doc, region, "heading", pin_norm(ln)))
+            continue
+        if not ln.strip():
+            shape += "."
+        elif not fence[i] and is_rule(ln):
+            shape += "r"
+            rule = pin_norm(re.sub(r"-+", "-", ln))  # the columns and alignment, not the width
+            out.append((doc, region, f"rule {shape.count('r')}", rule))
+        elif not fence[i] and re.match(r"^ {0,3}\|", ln):
+            shape += "t"
+            rid = row_key(split_row(ln)[0]) or "(blank)"
+            seen[rid] = seen.get(rid, 0) + 1
+            loc = f"row {rid}" + (f"#{seen[rid]}" if seen[rid] > 1 else "")
+            out.append((doc, region, loc, " | ".join(pin_norm(c) for c in split_row(ln))))
+        else:
+            shape += "p"
+            for s in FULL_STOP.split(ln.strip()):
+                if s.strip():
+                    k += 1
+                    out.append((doc, region, f"s{k}", pin_norm(s)))
+    close()
+    return out
+
+
+def ruled_units(spec: str, hand: str, values: Values) -> list[Unit]:
+    docs = {"spec": spec, "hand": hand}
+    return [u for d in PIN_DOCS for u in doc_units(d, docs[d], values)]
+
+
+def write_pins(units: list[Unit]) -> str:
+    head = (
+        "# E33-D04 pins (every unit of both docs): doc, region (heading path #occurrence), "
+        f"location, the exact normalised text; {len(units)} units.\n# Written by `--repin-ruled` "
+        "only; `--check` reads it (never hand-edit; see the tool's G-RULED-PIN).\n"
+    )
+    return head + "".join("\t".join(u) + "\n" for u in units)
+
+
+@functools.lru_cache(maxsize=1)
+def read_pins() -> tuple[Unit, ...] | None:
+    path = ROOT / RULED_PIN_TXT
+    if not path.exists():
+        return None
+    out: list[Unit] = []
+    for ln in path.read_text(encoding="utf-8").split("\n"):
+        parts = ln.split("\t")
+        if ln and not ln.startswith("#") and len(parts) == 4:
+            out.append((parts[0], parts[1], parts[2], parts[3]))
+    return tuple(out)
+
+
+def allowed(region: str, text: str) -> bool:
+    return any(region.startswith(r) and re.search(p, text) for r, p in PIN_ALLOW)
+
+
+def prose_problems(where: str, region: str, was: list[str], now: list[str]) -> list[str]:
+    """A region's sentences in order: a replaced one is changed, an inserted one is unpinned (or
+    moved / duplicated when its text is pinned), a dropped one deleted."""
+    bad: list[str] = []
+    ops = difflib.SequenceMatcher(None, was, now, autojunk=False).get_opcodes()
+    for op, i1, i2, j1, j2 in ops:
+        if op == "equal":
+            continue
+        if op == "replace":
+            for j in range(j1, j1 + min(i2 - i1, j2 - j1)):
+                bad.append(f"{where} s{j + 1} changed: {now[j][:60]!r}")
+            i1, j1 = i1 + min(i2 - i1, j2 - j1), j1 + min(i2 - i1, j2 - j1)
+        for j in range(j1, j2) if op != "delete" else ():
+            txt = now[j]
+            if txt in was:
+                kind = "duplicated" if now.count(txt) > was.count(txt) else "moved"
+                bad.append(f"{where} s{j + 1} {kind}: {txt[:60]!r}")
+            elif not allowed(region, txt):
+                bad.append(f"{where} s{j + 1} is unpinned (new): {txt[:60]!r}")
+        for i in range(i1, i2) if op != "insert" else ():
+            if was[i] not in now:
+                bad.append(f"{where} s{i + 1} deleted: {was[i][:60]!r}")
+    return bad
+
+
+def loc_map(where: str, units: list[Unit], bad: list[str]) -> dict[str, str]:
+    """{location: text}; a repeated location FAILs (the first copy is kept, never overwritten)."""
+    out: dict[str, str] = {}
+    for u in units:
+        if u[2] in out:
+            bad.append(f"{where} {u[2]} repeated (a duplicated location): {u[3][:60]!r}")
+        else:
+            out[u[2]] = u[3]
+    return out
+
+
+def row_problems(where: str, region: str, was: list[Unit], now: list[Unit]) -> list[str]:
+    """A region's heading, shape, rules and rows by location: changed, deleted, duplicated, moved,
+    unpinned."""
+    bad: list[str] = []
+    old_t, new_t = loc_map(where, was, bad), loc_map(where, now, bad)
+    for loc, txt in new_t.items():
+        if loc not in old_t:
+            if txt in old_t.values():
+                bad.append(f"{where} {loc} duplicated: {txt[:60]!r}")
+            elif not allowed(region, txt):
+                bad.append(f"{where} {loc} is unpinned (new): {txt[:60]!r}")
+        elif old_t[loc] != txt and loc != "shape":
+            bad.append(f"{where} {loc} changed: {txt[:60]!r}")
+    bad += [
+        f"{where} {loc} deleted: {txt[:60]!r}" for loc, txt in old_t.items() if loc not in new_t
+    ]
+    kept = [loc for loc in new_t if loc in old_t]
+    if kept != [loc for loc in old_t if loc in new_t]:
+        moved = next(
+            a for a, b in zip(kept, [x for x in old_t if x in new_t], strict=True) if a != b
+        )
+        bad.append(f"{where} {moved} moved (the row order changed)")
+    return bad
+
+
+def pin_problems(pinned: tuple[Unit, ...], current: list[Unit]) -> list[str]:
+    """Compare per region, then the regions themselves (a new heading is an unpinned region, a
+    repeated one a duplicated region)."""
+    bad: list[str] = []
+    old_r = list(dict.fromkeys((u[0], u[1]) for u in pinned))
+    new_r = list(dict.fromkeys((u[0], u[1]) for u in current))
+    runs = [(u[0], u[1]) for n, u in enumerate(current) if n == 0 or current[n - 1][:2] != u[:2]]
+    bad += [f"{d} region '{region_label(r)}' repeated" for d, r in new_r if runs.count((d, r)) > 1]
+    bad += [
+        f"{d} region '{region_label(r)}' deleted or renamed"
+        for d, r in old_r
+        if (d, r) not in new_r
+    ]
+    for d, r in new_r:
+        if (d, r) not in old_r:
+            dup = not r.endswith("#1") and (d, r.rsplit("#", 1)[0] + "#1") in old_r
+            kind = "duplicated (a repeated heading)" if dup else "unpinned (new)"
+            bad.append(f"{d} region '{region_label(r)}' is {kind}")
+    common = [x for x in new_r if x in old_r]
+    if common != [x for x in old_r if x in new_r]:
+        bad.append("a pinned region moved (the heading order changed)")
+    for d, r in common:
+        where = f"{d} '{region_label(r)}'"
+        was = [u for u in pinned if (u[0], u[1]) == (d, r)]
+        now = [u for u in current if (u[0], u[1]) == (d, r)]
+        bad += row_problems(
+            where,
+            r,
+            [u for u in was if not PIN_SENT.fullmatch(u[2])],
+            [u for u in now if not PIN_SENT.fullmatch(u[2])],
+        )
+        bad += prose_problems(
+            where,
+            r,
+            [u[3] for u in was if PIN_SENT.fullmatch(u[2])],
+            [u[3] for u in now if PIN_SENT.fullmatch(u[2])],
+        )
+        shape = [[u[3] for u in x if u[2] == "shape"] for x in (was, now)]
+        if shape[0] != shape[1]:  # last, so a unit-level finding leads the line
+            bad.append(f"{where} shape changed (the line structure, blank lines included)")
+    return bad
+
+
+def g_ruled_pin(t: Texts) -> list[str]:
+    """The backstop: every unit of both docs equals its pin, at its location; nothing is new."""
+    pinned = read_pins()
+    if pinned is None:
+        return one("G-RULED-PIN", [f"no {RULED_PIN_TXT}; run --repin-ruled deliberately"])
+    return one("G-RULED-PIN", pin_problems(pinned, ruled_units(t.spec, t.hand, t.values)))
 
 
 def g_ac(t: Texts) -> list[str]:
@@ -2997,6 +3293,7 @@ GATES: tuple[Callable[[Texts], list[str]], ...] = (
     g_budget,
     g_drift, g_drift_scope, g_pin, g_ruled, g_ac, g_crow, g_owner, g_stories, g_handoff,
     g_cmp118, g_a11y, g_token, g_contrast, g_cvd_port, g_q3, g_c15, g_dr14, g_mutlist,
+    g_ruled_pin,
 )  # fmt: skip
 
 
@@ -3145,8 +3442,65 @@ def add_row_after(head: str, first: str, row: str) -> Edit:
     return run
 
 
+def in_lines(head: str, fn: Callable[[list[str]], list[str]]) -> Edit:
+    """Rewrite the line list of the section `head` (the pin mutations: move, duplicate, drop)."""
+
+    def run(text: str, _v: Values) -> str:
+        block = section(text, head)
+        return text.replace(block, "\n".join(fn(block.split("\n"))), 1) if block else text
+
+    return run
+
+
+def swap_rows(a: str, b: str) -> Callable[[list[str]], list[str]]:
+    def run(lines: list[str]) -> list[str]:
+        ids = [split_row(ln)[0] if ln.startswith("|") else "" for ln in lines]
+        if a in ids and b in ids:
+            i, j = ids.index(a), ids.index(b)
+            lines[i], lines[j] = lines[j], lines[i]
+        return lines
+
+    return run
+
+
+def dup_line(prefix: str) -> Callable[[list[str]], list[str]]:
+    def run(lines: list[str]) -> list[str]:
+        i = next((n for n, ln in enumerate(lines) if ln.startswith(prefix)), None)
+        return lines if i is None else [*lines[: i + 1], "", lines[i], *lines[i + 1 :]]
+
+    return run
+
+
+def drop_line(prefix: str) -> Callable[[list[str]], list[str]]:
+    return lambda lines: [ln for ln in lines if not ln.startswith(prefix)]
+
+
 def crlf(text: str) -> str:
     return text.replace("\n", "\r\n")
+
+
+def squeezed(edit: Edit | None, n: int) -> Edit:
+    """`edit`, then drop the blank line under the last `n` headings (room kept under G-BUDGET)."""
+
+    def run(text: str, v: Values) -> str:
+        lines = (edit(text, v) if edit else text).split("\n")
+        under = [i + 1 for i, ln in enumerate(lines[:-1]) if HEADING.match(ln) and not lines[i + 1]]
+        drop = set(under[-n:])
+        return "\n".join(ln for i, ln in enumerate(lines) if i not in drop)
+
+    return run
+
+
+def shadow(head: str, fn: Callable[[str], str] | None = None) -> Edit:
+    """Repeat the section `head` (its heading and table) right after itself; `fn` edits the first
+    copy, so the repeat is the pristine shadow."""
+
+    def run(text: str, _v: Values) -> str:
+        block = section(text, head).rstrip("\n")
+        first = fn(block) if fn else block
+        return text.replace(block, first + "\n\n" + block, 1) if block else text
+
+    return run
 
 
 def nudge_projection() -> Callable[[], None]:
@@ -4004,6 +4358,109 @@ MUTATIONS: tuple[Mutation, ...] = (
         "§7.3 (a never-animates item)",
         spec=prose_at("7.3 Never animates", "DEMO ↔ LIVE cross-fades; the theme switch slides."),
     ),
+    Mutation(
+        "M-136",
+        "G-RULED",
+        "RULED cites the allow-list (record delta carry)",
+        spec=prose_at("7.3 Never animates", "D04-Q2 is RULED (6400168737)."),
+    ),
+    # the default-deny pin set, one mutation per pin class; each trips G-RULED-PIN alone
+    Mutation(
+        "M-137",
+        "G-RULED-PIN",
+        "a motion row changed",
+        spec=mo("Mo-2", "Element", appended(" (SCR-063)")),
+    ),
+    Mutation(
+        "M-138",
+        "G-RULED-PIN",
+        "a reduce twin changed",
+        spec=mo("Mo-3", "Twin", appended("; nothing else")),
+    ),
+    Mutation(
+        "M-139",
+        "G-RULED-PIN",
+        "a state row moved",
+        spec=in_lines(
+            "9.2 The frame register",
+            swap_rows("`CMP-246/running · dark`", "`CMP-246/completing · dark`"),
+        ),
+    ),
+    Mutation(
+        "M-140",
+        "G-RULED-PIN",
+        "an affordance row with a new sentence",
+        spec=line_edit(
+            "3. **The CMP-158", "on every builder frame.", "on every builder frame. Ok."
+        ),
+    ),
+    Mutation(
+        "M-141",
+        "G-RULED-PIN",
+        "the never-animates list duplicated",
+        spec=in_lines("7.3 Never animates", dup_line("Every CMP-246 state flip")),
+    ),
+    Mutation(
+        "M-142",
+        "G-RULED-PIN",
+        "a countdown row changed",
+        hand=row_edit("C.8 The `16`", "Countdowns", 1, appended(" (one ticker)")),
+    ),
+    Mutation(
+        "M-143",
+        "G-RULED-PIN",
+        "a drift-ledger row changed",
+        hand=row_edit("§E Drift ledger", "DR-6", 1, appended(" (cited)")),
+    ),
+    Mutation(
+        "M-144",
+        "G-RULED-PIN",
+        "a T2 / exit row changed",
+        spec=reg("CMP-246/failed · dark", "Exits", appended(", `Esc`")),
+    ),
+    Mutation(
+        "M-145",
+        "G-RULED-PIN",
+        "a ruled sentence deleted",
+        spec=in_lines("1.5 Rules stated once", drop_line("- **R-6 Reduced motion")),
+    ),
+    Mutation(
+        "M-146",
+        "G-RULED-PIN",
+        "a new heading inside a pinned span",
+        spec=prose_at("7.6 Flash", "### 7.7 Notes\n\nSee §7.1."),
+    ),
+    # every unit of both docs is pinned (the out-of-span residuals): one mutation per new class
+    Mutation(
+        "M-147",
+        "G-RULED-PIN",
+        "a new unit outside the old spans (a §13.2 bullet)",
+        spec=prose_at("13.2 Contract gaps", "- See §7.1."),
+    ),
+    Mutation(
+        "M-148",
+        "G-RULED-PIN",
+        "a duplicated section (a heading and its table repeated)",
+        spec=squeezed(shadow("1.4 Input ledger"), 20),
+    ),
+    Mutation(
+        "M-149",
+        "G-RULED-PIN",
+        "a shadow copy (a row edited, the pristine table repeated after it)",
+        spec=squeezed(
+            shadow(
+                "1.4 Input ledger",
+                lambda b: b.replace("| CMP-123 sentence ", "| CMP-123 sentence (cited) ", 1),
+            ),
+            20,
+        ),
+    ),
+    Mutation(
+        "M-150",
+        "G-RULED-PIN",
+        "blank lines squeezed (room made under G-BUDGET)",
+        spec=squeezed(None, 3),
+    ),
 )
 
 
@@ -4053,6 +4510,8 @@ def selftest(
             if undo:
                 undo()
         new = [x for x in fails if x not in base_fails]
+        if mu.gate != "G-RULED-PIN":  # a lexicon gate must trip on its own; the pins back it up
+            new = [x for x in new if not x.startswith("[G-RULED-PIN]")]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
         hit = bool(named) and len(new) == 1
         restored = digest_texts(spec_f, hand_f, p15, p16) == pristine and digest(paths) == on_disk
@@ -4086,12 +4545,24 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--json", action="store_true", help="print every computed value as JSON")
     ap.add_argument("--fill", action="store_true", help="replace placeholders, then check")
     ap.add_argument("--selftest", action="store_true", help="apply every mutation in memory")
+    ap.add_argument(
+        "--repin-ruled", action="store_true", help=f"deliberately rewrite {RULED_PIN_TXT}"
+    )
     args = ap.parse_args(argv)
     spec_path, hand_path = ROOT / SPEC_REL, ROOT / HAND_REL
     p15_path, p16_path = ROOT / P15_REL, ROOT / P16_REL
     spec, hand = spec_path.read_text(encoding="utf-8"), hand_path.read_text(encoding="utf-8")
     # `15` / `16` as bytes, so a line-ending change is a change (G-UNTOUCHED)
     p15, p16 = p15_path.read_bytes().decode("utf-8"), p16_path.read_bytes().decode("utf-8")
+    if args.repin_ruled:
+        left = PLACEHOLDER.findall(CODE.sub("", spec + hand))
+        if left:
+            print(f"FAIL --repin-ruled: {len(left)} unfilled placeholders; run --fill first")
+            return 1
+        units = ruled_units(spec, hand, compute(spec, hand)[0])
+        (ROOT / RULED_PIN_TXT).write_text(write_pins(units), encoding="utf-8")
+        print(f"--repin-ruled: {len(units)} units pinned in {RULED_PIN_TXT}")
+        return 0
     if args.selftest:
         ok, lines = selftest(spec, hand, p15, p16, (spec_path, hand_path, p15_path, p16_path))
         print("\n".join(lines))
