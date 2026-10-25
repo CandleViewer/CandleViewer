@@ -1,43 +1,59 @@
 #!/usr/bin/env python3
 """E33-D04 (#988) audit: the emulated-algo design-system contributions and the motion spec.
 
-Standalone, offline, stdlib only; it executes no repo code. It reads, AS TEXT at the pinned base
-`965cf14090` (`git show`): the token JSON (`themes.json` layering: dark = primitives + semantic-dark,
-light = + semantic-light, hc = + semantic-hc), `theme.css`, `tools/contrast/pairs.mjs` and
-`encodings.json`, the plan texts `05`, `14`, `15`, `16`, `23`, `24`, `28`, the ticket JSON, the merged
-E33-D02 / E33-D03 / H03 / E05-D02 slice 4 / E09-D08 / E30-D04 / E32-D02 texts, the CVD port's source
-`docs/research/_tools/cvd_simulate.py` and the E11-D05 tool's JND floor; then this ticket's spec and
-hand-off from the working tree, and the working-tree `15` and `16` (which must equal the base).
+Standalone, offline, stdlib only; it executes no repo code. It reads, AS TEXT at the pinned
+base `965cf14090` (`git show`): the token JSON (`themes.json` layering: dark = primitives +
+semantic-dark, light = + semantic-light, hc = + semantic-hc), `theme.css`,
+`tools/contrast/pairs.mjs` and `encodings.json`, the plan texts `05`, `14`, `15`, `16`, `23`, `24`,
+`28`, the ticket JSON, the merged E33-D02 / E33-D03 / H03 / E05-D02 slice 4 / E09-D08 / E30-D04 /
+E32-D02 texts, the CVD port's source `docs/research/_tools/cvd_simulate.py` and the E11-D05 tool's
+JND floor; then this ticket's spec and hand-off from the working tree, and the working-tree `15`
+and `16` (which must equal the base).
 
-1. **Values.** Every `{{KIND:key}}` outside a code span is COMPUTED (MOTION, BUDGET, CONTRAST, DIST,
-   COUNT): durations and easings from the primitives, the cadence, flash, loop and skeleton constants
-   parsed from the cited texts, contrast by the WCAG 2.x formula per theme, CVD as CIE76 ΔE after the
-   Brettel / Viénot projection of `cvd_simulate.py` (ported verbatim; G-CVD-PORT re-reads its
-   constants) for every two state fills and every two glyph colours per simulation and theme
-   (`--json` `cvd`), greyscale as the CIELAB L* gap, and the counts from the spec's own tables. `--fill`
-   writes `VALUE<!--=KIND:key-->`; `--check` re-derives every anchored value and FAILs on a
-   difference, a missing anchor, a `{{` left outside a code span, or a hand-typed figure with a unit.
+1. **Values.** Every `{{KIND:key}}` outside a code span is COMPUTED (MOTION, BUDGET, CONTRAST,
+   DIST, COUNT): durations and easings from the primitives, the cadence, flash, loop and skeleton
+   constants parsed from the cited texts, contrast by the WCAG 2.x formula per theme, CVD as CIE76
+   ΔE after the Brettel / Viénot projection of `cvd_simulate.py` (ported verbatim; G-CVD-PORT
+   re-reads its constants) for every two state fills and every two glyph colours per simulation
+   and theme (`--json` `cvd`), greyscale as the CIELAB L* gap, and the counts from the spec's own
+   tables. `--fill` writes `VALUE<!--=KIND:key-->`; `--check` re-derives every anchored value and
+   FAILs on a difference, a missing anchor, a `{{` left outside a code span, or a hand-typed
+   figure with a unit.
 2. **Cites.** Every `NN`:line, `D02`/`D03`/`H03`/`FO`/`PRIM`/`SL`/`SD`:line, `Exx-Dyy`:line and
-   `path`:line cite is read at the base (FAIL when the line is gone or blank; WARN when it drifted at
-   `origin/main`), and a table of load-bearing fragments must sit on the cited line exactly. The
-   merged-sha pins are ancestors of the base, carry their PR numbers and touch the cited files.
-3. **Gates (RULED comment 6397030902).** Every table row AND the prose, bullets and headings are read
-   after normalising (HTML comments, soft hyphens and zero-width characters dropped, NFKC, `*`,
-   backticks and `_emphasis_` stripped, whitespace collapsed, dashes to spaces, lower case; quoted
-   copy removed where a gate reads claims). A claim is read per sentence (split at "; ", " — " and
-   a sentence end, never at a comma); a table row is read cell by cell with its lead cell as the
-   subject. Terms match their inflections and synonyms, a negation covers only its own term
-   (within three words), and a double negation or a negation chain ("never without", "never fails
-   to", "never un-gated", "no other … than") counts as a claim. A null cell ("none", "n/a", "-",
-   "(none)") is no value; a row id in markup (`**Mo-11**`, `DR 16`) is read and reported. The
-   sweeps skip §9.3, whose rows describe the violations they plant. Each gate reports at most one
-   FAIL line.
+   `path`:line cite is read at the base (FAIL when the line is gone or blank; WARN when it
+   drifted at `origin/main`), and a table of load-bearing fragments must sit on the cited line
+   exactly. The merged-sha pins are ancestors of the base, carry their PR numbers and touch the
+   cited files.
+3. **Gates (RULED comment 6397030902).** Every table row AND the prose, bullets and headings are
+   read after normalising (HTML comments, soft hyphens and zero-width characters dropped, NFKC,
+   `*`, backticks and `_emphasis_` stripped, whitespace collapsed, dashes to spaces, lower case;
+   quoted copy removed where a gate reads claims, except the gates where quoted copy is itself a
+   claim: G-AFFORD, G-INSTANT, G-NOFADE, G-TAGNAME). A claim is read per sentence (split at "; ",
+   " — " and a sentence end, never at a comma); a table row is read cell by cell with its lead
+   cell as the subject; where a gate carries the subject (the #4507 design), the subject is read
+   in the clause's whole sentence, across "; ", parentheses and quotes; a clause opening on a
+   pronoun ("; it eases") takes the previous clause's subject, and "<noun phrase> — <clause>"
+   reads as "<noun phrase> is <clause>". Terms match their inflections and synonyms (one motion
+   vocabulary: ease, interpolate, tween, cross-fade, glide, animate, transition, morph, smooth,
+   slide, fade, settle, fill continuously, tick up, pulse, bounce, dissolve, blend, zoom, grow;
+   the sample nouns sample, reading, tick, update, value; a rate in words, fps, hertz or "/s"),
+   a negation covers its own term (within three words) and a list coordinated after it, and a
+   double negation or a negation chain ("never without", "never fails to", "never stops", "never
+   un-gated", "no other … than") counts as a claim. A cite exempts only what it cites: T Scope
+   exempts a quote the ticket itself holds, never a paraphrase and never the rest of the clause;
+   "per CMP-043 as ruled" exempts its own sub-clause, never a later "…, and also fade". A null cell
+   ("none", "n/a", "-", "(none)") is no value; a row id in markup (`**Mo-11**`, `DR 16`) is read and
+   reported. The sweeps skip §9.3, whose rows describe the violations they plant. Each gate reports
+   at most one FAIL line.
 4. **--selftest** applies every §9.3 mutation M-n in memory to the filled texts, with the values
-   frozen at the baseline (so only the semantic gate can trip); each must add exactly one FAIL, from
-   the gate it names, and every text is restored byte-identically (sha256 of the in-memory baseline
-   and of the spec, hand-off, `15` and `16` re-read from disk); a mutation of the tool's own state
-   (the CVD port, M-62) is undone and re-checked. G-Q3, G-C15 and G-DR14 gate the orchestrator's
-   ruling of 2026-10-25 14:42Z (LANE-hcl1-98) through M-99, M-100 and M-101.
+   frozen at the baseline (so only the semantic gate can trip); each must add exactly one FAIL,
+   from the gate it names, and every text is restored byte-identically (sha256 of the in-memory
+   baseline and of the spec, hand-off, `15` and `16` re-read from disk); a mutation of the tool's
+   own state (the CVD port, M-62) is undone and re-checked. G-Q3, G-C15 and G-DR14 gate the
+   orchestrator's decision of 2026-10-25 14:42Z through M-99, M-100 and M-101 (DECIDED, never
+   RULED: "RULED" cites comment 6397030902 only); M-102 to M-117 are the round-1 record's forms,
+   M-118 to M-124 the round-2 classes (motion vocabulary, sample nouns, the carried subject, a
+   negation chain, a rate in words or fps, a cite's own sub-clause, the tag suppressed).
 
 Usage (from the repo root):
   uv run --no-project python docs/design/_tools/e33_d04_ds_motion_audit.py --check [--fill] [--json]
@@ -411,25 +427,92 @@ def unquote(text: str) -> str:
 SENTENCE = re.compile(r";\s|(?<=[.!?])\s+|\s—\s")
 NEG_WORD = r"(?:no|never|not|nor|without|nothing|none|cannot)"
 DOUBLE_NEG = re.compile(
-    r"\b(?:never|not|no) without\b|\bnever not\b|\bnot never\b|\bnot (?:only|just)\b"
-    # a negation chain asserts its term: "never fails to", "never un-gated", "no other … than"
+    r"\b(?:never|not|no)\s+(?:\S+\s+){0,2}?without\b|\bnever not\b|\bnot never\b"
+    r"|\bnot (?:only|just)\b"
+    # a negation chain asserts its term: "never fails to", "never un-gated", "no other … than",
+    # "never stops", "does not stop" (record r2)
     r"|\b(?:never|not|no|cannot|nothing)\s+(?:\S+\s+){0,2}?"
-    r"(?:fail(?:s|ed|ing)?|lack(?:s|ed|ing)?|omit\w*|un|other|ceas\w*)\b"
+    r"(?:fail(?:s|ed|ing)?|lack(?:s|ed|ing)?|omit\w*|un|other|ceas\w*|stop(?:s|ped|ping)?)\b"
 )
 
 
 def live(clause: str, term: str, keep_quotes: bool = False) -> bool:
     """`term` asserted in `clause` once every negated mention is removed. A negation covers only
-    its own term (at most three words before it); a double negation or a negation chain asserts
-    its term."""
+    its own term (at most three words before it) and a list of its terms coordinated after it; a
+    double negation or a negation chain asserts its term."""
     t = norm_text(clause) if keep_quotes else norm_text(unquote(clause))
     t = DOUBLE_NEG.sub(" ", t)
-    t = re.sub(rf"\b{NEG_WORD}\b(?:\s+\S+){{0,3}}?\s+\W?(?:[\w-]+\.)*(?:{term})", " ", t)
+    # a negation covers a coordinated list of its terms too ("nothing loops, pulses or drifts")
+    listed = rf"(?:(?:,\s*(?:or\s+|nor\s+|and\s+)?|\s+(?:or|nor|and)\s+)(?:{term})\w*)*"
+    t = re.sub(rf"\b{NEG_WORD}\b(?:\s+\S+){{0,3}}?\s+\W?(?:[\w-]+\.)*(?:{term}){listed}", " ", t)
     return re.search(term, t) is not None
 
 
+_SEP = re.compile(r"(;\s|(?<=[.!?])\s+|\s—\s)")
+# a clause that opens on a pronoun ("; it eases", "; no, it is drawn as shipped") reads with the
+# previous clause's subject in its place (record r2: the subject carried across "; " and " — ")
+PRONOUN = re.compile(
+    r"^\W*(?:(?:no|yes|and|but|so|then|instead|rather),?\s+)?(?:it|they|this|these|those)\b",
+    re.IGNORECASE,
+)
+SUBJECT_END = re.compile(
+    r"\s(?:is|are|was|were|be|does|do|did|has|have|had|can|cannot|may|might|must|will|would"
+    r"|shall|should|never|not|no|always|only|sits?|stays?|keeps?|carries|carry|reads?|becomes?"
+    r"|gets?|takes?|shows?|uses?|reuses?|serves?|wears?)\b",
+    re.IGNORECASE,
+)
+
+APPOSED = re.compile(r"^\W*(?:the|a|an|its|each|every)\s+(?:\S+\s+){0,3}?\S+\W*$", re.IGNORECASE)
+
+
+SUBCLAUSE = re.compile(
+    r",\s+(?=(?:and|but|plus|then|while|yet|also)\b)|\s+(?=(?:and also|and then|but also|plus)\b)"
+)
+
+
+def cited_rest(clause: str, term: str, near: str, unless: str, keep_quotes: bool) -> bool:
+    """A sub-clause the cite (`unless`) does not cover asserts `term`, its subject (`near`) named
+    in it or in a sub-clause before it."""
+    seen = False
+    for x in SUBCLAUSE.split(clause):
+        n = norm_text(x if keep_quotes else unquote(x))
+        seen = seen or not near or re.search(near, n) is not None
+        if seen and not re.search(unless, norm_text(x)) and live(x, term, keep_quotes):
+            return True
+    return False
+
+
+def negated_after(clause: str, term: str) -> bool:
+    """`clause` negates its predicate on `term`: a negation follows the term's first mention."""
+    t = DOUBLE_NEG.sub(" ", norm_text(unquote(clause)))
+    m = re.search(term, t)
+    return m is not None and re.search(rf"\b{NEG_WORD}\b", t[m.end() :]) is not None
+
+
 def sentences(text: str) -> list[str]:
-    return [c for c in SENTENCE.split(text) if c.strip()]
+    """The clauses of `text` (split at "; ", " — " and a sentence end). A clause that opens on a
+    pronoun takes the previous clause's subject (its words before the first verb), and a clause
+    after " — " whose previous clause is a bare noun phrase (an article and at most four words, no
+    verb) reads as "<previous> is <clause>" (an
+    apposition: "The status label — T2 …"). A sentence end resets the subject."""
+    parts = _SEP.split(text)
+    out: list[str] = []
+    prev, subj = "", ""
+    for i in range(0, len(parts), 2):
+        c, sep = parts[i], parts[i - 1] if i else ""
+        if not c.strip():
+            continue
+        if sep and sep.strip() not in (";", "—"):
+            prev, subj = "", ""
+        m = PRONOUN.match(c)
+        if m and subj:
+            c = subj + c[m.end() :]
+        elif sep.strip() == "—" and APPOSED.match(prev) and not SUBJECT_END.search(prev):
+            c = f"{prev.strip()} is {c}"
+        v = SUBJECT_END.search(c)
+        prev, subj = c, (c[: v.start()] if v else "")
+        out.append(c)
+    return out
 
 
 def clauses(text: str) -> list[str]:
@@ -446,6 +529,26 @@ def clauses(text: str) -> list[str]:
     lead = " | ".join([*head[:-1], (sentences(head[-1]) or [""])[-1]])
     for c in cells[len(head) :]:
         out += [f"{lead} | {x}" for x in sentences(c)]
+    return out
+
+
+FULL_STOP = re.compile(r"(?<=[.!?])\s+")
+
+
+def scoped_clauses(text: str) -> list[tuple[str, str]]:
+    """(clause, scope) for every clause of `clauses`: the scope is the whole sentence the clause
+    sits in (split at a sentence end only), so a subject named before a "; ", a " — ", an opening
+    parenthesis or a quote carries into the clauses after it (the #4507 whole-unit reading); in a
+    table row the scope is the row's lead plus the whole cell."""
+    if " | " not in text:
+        return [(c, s) for s in FULL_STOP.split(text) if s.strip() for c in sentences(s)]
+    cells = text.split(" | ")
+    idish = re.match(r"^[`*_]*[A-Za-z]+[- ]?\d", cells[0]) is not None
+    head = cells[:2] if idish and len(cells) > 1 else cells[:1]
+    out = [(x, c) for c in head for x in sentences(c)]
+    lead = " | ".join([*head[:-1], (sentences(head[-1]) or [""])[-1]])
+    for c in cells[len(head) :]:
+        out += [(f"{lead} | {x}", f"{lead} | {c}") for x in sentences(c)]
     return out
 
 
@@ -486,20 +589,33 @@ def claims(
     keep_quotes: bool = False,
     unless: str = "",
     near_live: bool = False,
+    carry: bool = False,
+    affirmed: bool = False,
 ) -> list[str]:
     """Every sentence of every unit asserting `term` (and naming `near`, when given — asserting
     it too when `near_live`; never one naming `unless`, the cited or recorded forms a gate
-    allows)."""
+    allows). With `carry` (the #4507 design) the subject `near` is read in the clause's whole
+    sentence (`scoped_clauses`), so a subject named before a "; ", a parenthesis or a quote still
+    binds the clause after it; the `unless` exemption stays scoped to the one clause that cites
+    it. With `affirmed`, a clause that negates what follows `term` ("CMP-227 never the badge") is
+    no claim; a double negation there ("never not") still is."""
     hits: list[str] = []
     for text in texts:
         for u in units(text):
-            for c in clauses(u):
-                n = norm_text(c if keep_quotes else unquote(c))
-                if near and not re.search(near, n):
+            for c, whole in scoped_clauses(u):
+                raw = whole if carry else c
+                scope = norm_text(raw if keep_quotes else unquote(raw))
+                if near and not re.search(near, scope):
                     continue
-                if near and near_live and not live(c, near, keep_quotes):
+                if near and near_live and not live(raw, near, keep_quotes):
                     continue
                 if unless and re.search(unless, norm_text(c)):
+                    # the cite exempts its own sub-clause only ("…, and also fade"; record r2); the
+                    # subject carries forward into a later sub-clause, never back
+                    if cited_rest(c, term, near, unless, keep_quotes):
+                        hits.append(norm_text(c)[:70])
+                    continue
+                if affirmed and negated_after(c, term):
                     continue
                 if live(c, term, keep_quotes):
                     hits.append(norm_text(c)[:70])
@@ -1234,8 +1350,8 @@ TWIN_NULL = (
 )
 TWIN_OK = (
     r"\bframe 0\b|\bsteps?\b|\binstant\w*|\bstatic\b|\bno flash\b|\bno loop\b|\bcut\b|\bswaps?\b"
-    r"|\bper cmp 043\b"
 )
+DIALOG_TWIN = r"\bper cmp 043\b"  # the dialog's twin, cited: accepted on Mo-8 only (record r1)
 TWIN_MISSING = (
     r"\b(?:no|without|lacks?|lacking|missing)\s+(?:a |an |its |any )?"
     r"(?:reduced(?: motion)? |prefers reduced motion |motion reduce )?(?:variant|twin|reading)\b"
@@ -1248,6 +1364,18 @@ MOVE_VERBS = (
     r"|\broll(?:s|ed|ing)? (?:in|down|out)\b|\bdescend\w*|\bflies in\b|\bfly in\b"
 )
 MOVE = MOVE_VERBS + r"|\bover\b|\btransform\b"
+# the motion vocabulary every motion sweep shares (records r1 M-a, M-b and r2): ease, interpolate,
+# tween, cross-fade, glide, animate, transition, morph, smooth, slide, fade, settle, fill
+# continuously, tick up, pulse, bounce, scale, dissolve, blend, zoom and grow, in every inflection
+MOTION_VOCAB = (
+    r"\beas(?:e|es|ed|ing)\b|interpolat\w*|\btween\w*|cross ?fad\w*|crossfad\w*|glid\w*"
+    r"|animat\w*|\btransition\w*|\bmorph\w*|\bsmooth\w*|\bslid(?:e|es|ing)\b"
+    r"|\bfad(?:e|es|ed|ing)\b|\bsettl\w*|\bfill(?:s|ed|ing)? continuous\w*|\bcontinuous\w* fill"
+    r"|\btick(?:s|ed|ing)? up\b|\bpuls\w*|\bbounc\w*|\bscal(?:e|es|ed|ing) (?:up|down|in|out)\b"
+    r"|\bdissolv\w*"
+    r"|\bblend\w*|\bzoom\w*|\bgr[eo]w(?:s|n|ing)?\b"
+)
+SAMPLE_NOUN = r"(?:samples?|readings?|ticks?|updates?|values?)"  # what a sample is called (r2)
 REDUCED = (
     r"\bunder (?:the )?(?:reduced? motion|reduce|prefers reduced motion|the twin)\b"
     r"|\b(?:with|in) reduced motion\b|\bin (?:the )?reduced (?:twin|mode|reading)\b"
@@ -1258,18 +1386,70 @@ TIMED = (
     r"|motion\.duration\.(?:fast|normal|slow)|\beas(?:e|es|ed|ing)\b|\bbezier\b|motion\.easing"
     r"|\blinear\b|\bover (?:the )?(?:motion\.duration\.)?(?:fast|normal|slow)\b"
     r"|\b(?:fast|normal|slow) / standard\b|\bsettl\w*|\bgradual\w*|\bsmooth\w*"
+    # a duration in words or in seconds, and "not instant" (record r2)
+    r"|\b(?:a|an|one|1) (?:tenth|fifth|eighth|quarter|third|sixth|hundredth|twentieth)"
+    r" of a second\b|\bhalf a second\b|\b(?:split|fraction of a) second\b"
+    r"|\b0?[.,]\d*[1-9]\d* ?s(?:ec(?:onds?)?)?\b"
+    r"|\b(?:not|never|no longer|isn't|aren't) (?:\w+ )?instant\w*"
 )
 STATE_WORDS = r"(?:running|paused|completing|completed|cancelled|halted|failed|degraded|orphaned)"
 STATE_CHANGE = (
     r"\bstate (?:transitions?|changes?|swaps?|flips?)\b|\b(?:transitions?|changes?|swaps?) "
     r"(?:between|across|of) (?:two )?(?:algo |run )?states\b"
-    rf"|\b{STATE_WORDS}\b ?(?:→|->|to|into) ?\b{STATE_WORDS}\b"
+    rf"|\b{STATE_WORDS}\b ?(?:→|->|to|into|becomes?|turns? into|goes to) ?\b{STATE_WORDS}\b"
     r"|\b(?:t2|enabled|disabled) ?(?:↔|→|->|to) ?(?:t2|enabled|disabled)\b"
+    r"|\bstatus (?:changes?|flips?|swaps?|transitions?)\b"  # record r2
 )
-TICKET_ASK = r"\bd04 c3\b"  # the C-row that records the ticket's (quoted) ask
+# the ticket's ask, quoted after "T Scope" (§7.4, D04-C3): the cite exempts that quote only, never
+# the rest of its clause and never a sentence that merely names D04-C3 (record r1 M-g); and only a
+# quote the ticket itself holds, three words or more (an elision "…" read piece by piece in
+# order), never a paraphrase in quotes (record r2)
+TICKET_ASK = re.compile(r'(\bT Scope\b[^"\n|;]{0,60}?)"([^"\n]*)"')
+
+
+@functools.lru_cache(maxsize=1)
+def ticket_text() -> str:
+    ticket = next(t for t in json.loads(at_base(TICKETS_REL)) if t.get("key") == "E33-D04")
+    out: list[str] = []
+
+    def walk(x: object) -> None:
+        if isinstance(x, str):
+            out.append(x)
+        elif isinstance(x, dict):
+            for y in x.values():
+                walk(y)
+        elif isinstance(x, list):
+            for y in x:
+                walk(y)
+
+    walk(ticket)
+    return norm_text("\n".join(out))
+
+
+def the_ask(quote: str) -> bool:
+    """`quote` is the ticket's own text: every piece between elisions, in order."""
+    pieces = [norm_text(p) for p in re.split(r"…|\.\.\.", quote)]
+    if any(not p for p in pieces) or sum(len(p.split()) for p in pieces) < 3:
+        return False
+    text, at = ticket_text(), 0
+    for p in pieces:
+        at = text.find(p, at)
+        if at < 0:
+            return False
+        at += len(p)
+    return True
+
+
+def uncite_ask(text: str) -> str:
+    """The text with the ticket's quoted ask blanked (what it cites), everything else kept."""
+    return TICKET_ASK.sub(lambda m: m[1] + '" "' if the_ask(m[2]) else m[0], text)
+
+
 FADE = r"cross ?fad\w*|\bfad(?:e|es|ing|ed)\b|dissolv\w*|\bblend\w*"
 STATEISH = (
     r"\bstates?\b|\bt2\b|\bcontrols?\b|\benabled\b|\bdenied\b|\bauthori[sz]ed\b"
+    r"|\bwords?,? (?:and )?glyphs?\b|\bglyphs?,? (?:and )?fills?\b|\bcmp 246\b|\bstatus labels?\b"
+    rf"|\b(?:{STATE_WORDS}|status) (?:words?|labels?|glyphs?|fills?|badges?|chips?)\b"  # record r2
     rf"|\b{STATE_WORDS}\b ?(?:→|->|to|into|and) ?\b{STATE_WORDS}\b"
 )
 NUMBER_WORDS = {
@@ -1279,9 +1459,18 @@ NUMBER_WORDS = {
 }  # fmt: skip
 _NUM = r"(\d+|" + "|".join(NUMBER_WORDS) + r")"
 RATE = re.compile(
-    rf"\b(?:a\s+)?{_NUM}\s+(?:(?:times?|updates?|frames?|samples?|flash\w*|moves?|ticks?|steps?|pulses?)\s+)?"
-    r"(?:a|per|each|every)\s+second\b|\b(\d+)\s?hz\b"
+    rf"\b(?:a\s+)?{_NUM}\s+"
+    r"(?:(?:times?|updates?|frames?|samples?|flash\w*|moves?|ticks?|steps?|pulses?)\s+)?"
+    r"(?:a|per|each|every|in a|in one)\s+(?:second|sec)\b|\b(\d+)\s?hz\b"
 )
+# a rate in fps, hertz or "/s", a period as a fraction of a second or in seconds (record r2)
+PER_S = re.compile(rf"\b{_NUM}\s?(?:fps|hz|hertz|/\s?s(?:ec(?:ond)?)?)(?!\w)")
+FRACTION = {
+    "half": 2, "third": 3, "quarter": 4, "fifth": 5, "sixth": 6, "eighth": 8, "tenth": 10,
+    "twentieth": 20, "hundredth": 100,
+}  # fmt: skip
+EVERY_FRACTION = re.compile(rf"\bevery (?:a |one )?({'|'.join(FRACTION)})(?: of a)? second\b")
+EVERY_S = re.compile(r"\bevery (\d*[.,]?\d+) ?s(?:ec(?:onds?)?)?\b")
 FRAME_RATE = re.compile(
     r"\b(?:every|each|per)\s+(?:animation\s+|rendered\s+|display\s+|paint(?:ed)?\s+)?frames?\b"
     r"(?!\s*0)|\brequestanimationframe\b"
@@ -1299,20 +1488,33 @@ ROWWISE = r"\b(?:every|each|all|per) rows?\b"
 MOTIONISH = r"animat\w*|flash\w*|transition\w*|\bmov(?:e|es|ed|ing)\b|\bpuls\w*|shimmer\w*"
 COUNTDOWN_MOVE = (
     r"\banimat\w*|\bsmooth\w*|\btween\w*|\binterpolat\w*|\bmov(?:e|es|ed|ing)\b|\bslid\w*|\bfad\w*"
-    r"|\broll\w*|\bsub ?second\b|\bglid\w*|\bscroll\w*"
+    r"|\broll\w*|\bsub ?second\b|\bglid\w*|\bscroll\w*|" + MOTION_VOCAB + "|" + MOVE_VERBS
 )
 DIALOGS = r"\bdialogs?\b|\bmodals?\b|\bcmp 043\b"
-DIALOG_MOVE = r"\bscal(?:e|es|ed|ing)\b|\bfad\w*|slid\w*|\bzoom\w*|animat\w*|\bpop(?:s|ping)? in\b"
+DIALOG_MOVE = (
+    r"\bscal(?:e|es|ed|ing)\b|\bfad\w*|slid\w*|\bzoom\w*|animat\w*"
+    r"|\bpop(?:s|ped|ping)? (?:in|up|open|out)\b|\bgr[eo]w(?:s|n|ing|th)?\b|\bmorph\w*|\bglid\w*"
+    r"|\bbounc\w*|\bdissolv\w*|\bblend\w*"  # record r2
+)
 DIALOG_CITED = r"per cmp 043|\b16:178\b|\bh21\b|\bh03:111\b|\bd02:415\b"
+# the tag or the prop switched off, in any phrasing, on any row type or density (record r2)
 EMU_OFF = (
     r"\bfalse\b|\bhid(?:e|es|den|ing)\b|\boptional\b|\bomit\w*|\btoggl\w*|\bdisabl\w*"
-    r"|\b(?:switch|turn)(?:s|ed|ing)? (?:it )?off\b"
+    r"|\b(?:switch|turn)(?:s|ed|ing)? (?:it )?off\b|\bsuppress\w*|\bremov(?:e|es|ed|ing|al)\b"
+    r"|\bdrop(?:s|ped|ping)?\b|\belid\w*|\bset (?:it )?to (?:no|false|off|0|null|undefined)\b"
+    r"|\b(?:is|are) not (?:shown|rendered|displayed)\b"
 )
 EMU_ALLOWED = r"does not compile|\bfails\b|type error|\bthe row variant\b|\bhost whose caption\b"
-ESTIMATED = r"\bcmp ?227\b|\bestimated ?badges?\b"
+# CMP-227 under any name: its id, its component name, the slippage-estimate chip it is (record r2)
+ESTIMATED = (
+    r"\bcmp ?227\b|\bestimated ?badges?\b|\b(?:slippage )?estimated? (?:chips?|badges?|pills?)\b"
+    r"|\bslippage estimate\b"
+)
 GATED = (
     r"\bt2\b|\block\w*|\bgat(?:e|ed|es|ing)\b|\bdisabled\b|\bgr[ae]y(?:ed)? out\b|\brequir\w*"
     r"|algo\.manage|\bblock(?:s|ed)\b|\bunavailable\b|\bpermission\w*"
+    r"|\bgr[ae]yed\b|\bdimmed\b|\binert\b|\bheld back\b|\bhold(?:s|ing)? back\b|\bwithh[eo]ld\w*"
+    r"|\bsuppress\w*|\bdeferred\b|\buntil the run (?:settles|ends|stops|finishes)\b"  # record r2
 )
 NOT_EXITS = (
     r"\bcloses #\d+|\bclos(?:e|es|ing) (?:all )?(?:open )?positions?\b"  # an issue, a position
@@ -1416,14 +1618,16 @@ def twin_body(cell: str) -> str | None:
     return m[1] if m else None
 
 
-def twin_ok(cell: str, safe: str = "") -> bool:
+def twin_ok(cell: str, safe: str = "", dialog: bool = False) -> bool:
     """A twin states its reduced reading: not null, and it names the cut, the step, the swap, the
     static state or the dropped effect; "the same" / "same as motion-safe" is a twin only when
-    the motion-safe reading (`safe`) is itself instant."""
+    the motion-safe reading (`safe`) is itself instant; "per CMP-043" only on the dialog row."""
     body = twin_body(cell)
     if body is None or nullish(body):
         return False
     n = norm_text(unquote(body))
+    if dialog and re.search(DIALOG_TWIN, n):
+        return True
     if live(body, MOVE):
         return True  # a twin that moves is G-REDUCE-INSTANT's
     if re.match(r"(?:the )?same\b", n) or re.search(r"\bsame as\b", n):
@@ -1435,11 +1639,11 @@ def twin_ok(cell: str, safe: str = "") -> bool:
 
 def g_twin(t: Texts) -> list[str]:
     bad = [f"{k}: no `prefers-reduced-motion` twin" for k, r in mo_rows(t.spec).items()
-           if not twin_ok(r.get("Twin", ""), r.get("Safe", ""))]  # fmt: skip
+           if not twin_ok(r.get("Twin", ""), r.get("Safe", ""), k == "Mo-8")]  # fmt: skip
     bad += [
         f"{frame_id(r['Frame'])}: no Reduce twin"
         for r in register(t.spec)
-        if not twin_ok(r.get("Reduce", ""))
+        if not twin_ok(r.get("Reduce", ""), dialog=r.get("Motion", "").strip() == "Mo-8")
     ]
     if len(mo_rows(t.spec)) < 1:
         bad.append("§7.2 has no motion rows")
@@ -1515,13 +1719,13 @@ def g_instant(t: Texts) -> list[str]:
         if names != {"motion.duration.instant"}:
             bad.append(f"{k} Tokens bind {sorted(names)}, not `motion.duration.instant` alone")
         for col in ("Property", "Tokens", "Safe"):
-            if live(plain(r.get(col, ""), t.values), TIMED):
+            if live(plain(r.get(col, ""), t.values), TIMED, keep_quotes=True):
                 bad.append(f"{k} {col} carries a non-instant duration or an easing")
     m6 = norm_text(mos.get("Mo-6", {}).get("Safe", ""))
     if "frame 0" not in m6 or "no easing" not in m6:
         bad.append("Mo-6 does not read frame 0, no easing")
-    texts = [plain(x, t.values) for x in swept(t)]
-    bad += [f"claim: {c!r}" for c in claims(texts, TIMED, near=STATE_CHANGE, unless=TICKET_ASK)]
+    texts = [uncite_ask(plain(x, t.values)) for x in swept(t)]
+    bad += [f"claim: {c!r}" for c in claims(texts, TIMED, near=STATE_CHANGE, keep_quotes=True)]
     r2 = norm_text(bullet(section(t.spec, "1.5 Rules stated once"), "R-2"))
     s74 = norm_text(section(t.spec, "7.4 State transitions"))
     if "frame 0" not in r2 or "no easing" not in r2 or "no easing" not in s74:
@@ -1536,9 +1740,10 @@ def g_nofade(t: Texts) -> list[str]:
         f"{k} {col} fades"
         for k in ("Mo-5", *CUT_ROWS)
         for col in ("Property", "Safe", "Twin")
-        if live(mos.get(k, {}).get(col, ""), FADE)
+        if live(mos.get(k, {}).get(col, ""), FADE, keep_quotes=True)
     ]
-    bad += [f"claim: {c!r}" for c in claims(swept(t), FADE, near=STATEISH, unless=TICKET_ASK)]
+    asks = [uncite_ask(x) for x in swept(t)]  # quoted copy is a claim; only the ask is a cite
+    bad += [f"claim: {c!r}" for c in claims(asks, FADE, near=STATEISH, keep_quotes=True)]
     return one("G-NOFADE", bad)
 
 
@@ -1557,7 +1762,7 @@ def g_banner(t: Texts) -> list[str]:
         if len(row) > 4 and "frame 0, both modes" not in row[4]:
             bad.append(f"§3.2 '{row[0][:20]}' Motion is not frame 0 in both modes")
     near = r"\bbanners?\b|\bcarriers?\b"
-    bad += [f"claim: {c!r}" for c in claims(swept(t), MOVE_VERBS, near=near, unless=TICKET_ASK)]
+    bad += [f"claim: {c!r}" for c in claims(swept(t), MOVE_VERBS, near=near)]
     c8 = [r for r in c8_rows(t.hand) if r[0].startswith("Degraded")]
     if not c8 or "frame 0 in both modes" not in c8[0][1]:
         bad.append("C.8 carriers row is not frame 0 in both modes")
@@ -1574,7 +1779,12 @@ def g_step(t: Texts) -> list[str]:
     if "step" not in r.get("Twin", ""):
         bad.append("Mo-1's twin is not the same step")
     moving = MOVE_VERBS + r"|\btransition\w*|\bover\b"
-    near = r"\bgrid (?:row )?bars?\b|\bbars? in (?:a )?grid|\bin a grid row\b"
+    # the grid's bar under any name: "the row's bar", "bars inside the grid's rows" (record r2)
+    near = (
+        r"\bgrid(?:'s)? (?:row(?:'s)? )?bars?\b|\bbars? (?:in|inside|within) (?:a |the )?grid"
+        r"|\bbars? (?:in|inside|within|on) (?:a |the )?(?:grid(?:'s)? )?rows?\b|\bin a grid row\b"
+        r"|\brow's bars?\b"  # possessive only: the hand-off's "(row bar: a step)" names Mo-1
+    )
     bad += [f"claim: {c!r}" for c in claims(swept(t), moving, near=near)]
     grid = [x for x in c8_rows(t.hand) if x[0].startswith("Bars in grid rows")]
     if not grid or "no transition" not in grid[0][1]:
@@ -1605,12 +1815,17 @@ def interval_ms(text: str) -> int | None:
 
 def rates_hz(text: str) -> list[float]:
     """Every rate a text states, in Hz: "N per second", "N times a second", "N Hz", "every
-    frame" (60), "≥ N ms between starts", "every N ms"."""
+    frame" (60), "≥ N ms between starts", "every N ms"; and "N fps", "N hertz", "N/s", "N times
+    per sec", "every quarter second", "every 0.1 s" (record r2)."""
     n = norm_text(text)
     out: list[float] = []
-    for m in RATE.finditer(n):
+    for m in [*RATE.finditer(n), *PER_S.finditer(n)]:
         word = m[1] or m[2]
         out.append(float(word) if word.isdigit() else float(NUMBER_WORDS[word]))
+    out += [float(FRACTION[m[1]]) for m in EVERY_FRACTION.finditer(n)]
+    for m in EVERY_S.finditer(n):
+        secs = float(m[1].replace(",", "."))
+        out.append(1.0 / secs if secs else 60.0)
     out += [60.0 for _ in FRAME_RATE.finditer(n)]
     for m in GAP.finditer(n):
         ms = int((m[1] or m[2]).replace(",", ""))
@@ -1747,6 +1962,14 @@ def g_focused(t: Texts) -> list[str]:
     return one("G-FOCUSED", sorted(set(bad)))
 
 
+# the countdown under any name: "count-down" (normalised to "count down"), the remaining time, a
+# slice timer (record r2)
+COUNTDOWNS = (
+    r"\bcount ?downs?\b|\bnext slice in\b|\bremaining time\b|\btime (?:remaining|left)\b"
+    r"|\b(?:slice |next slice |run )?timers?\b"
+)
+
+
 def g_countdown(t: Texts) -> list[str]:
     """BQ-13: countdowns are a text swap on one shared ticker, `aria-live="off"`, never animate."""
     bad: list[str] = []
@@ -1762,8 +1985,7 @@ def g_countdown(t: Texts) -> list[str]:
     c8 = [x for x in c8_rows(t.hand) if x[0].startswith("Countdowns")]
     if not c8 or 'aria-live="off"' not in c8[0][1] or "never animates" not in c8[0][1]:
         bad.append("C.8 countdowns row is not off and still")
-    near = r"\bcountdowns?\b|\bnext slice in\b"
-    bad += [f"claim: {c!r}" for c in claims(swept(t), COUNTDOWN_MOVE, near=near)]
+    bad += [f"claim: {c!r}" for c in claims(swept(t), COUNTDOWN_MOVE, near=COUNTDOWNS)]
     return one("G-COUNTDOWN", bad)
 
 
@@ -1771,12 +1993,29 @@ NUMBERISH = (
     r"\b(?:digits?|numbers?|prices?|sizes?|countdowns?|figures?|percent\w*|quantit\w*|qty)\b"
     r"|\bprogress (?:text|strings?)\b|\bvalue ?text\b|\bvaluetext\b"
 )
-TWEEN = r"count(?:s|ing|ed)? (?:up|down)|\btween\w*|interpolat\w*|roll(?:s|ing)? (?:up|over)|odometer\w*"
+TWEEN = (
+    r"count(?:s|ing|ed)? (?:up|down)|\btween\w*|interpolat\w*|roll(?:s|ing)? (?:up|over)"
+    r"|odometer\w*|" + MOTION_VOCAB
+)
+
+
+BETWEEN_SAMPLES = (
+    rf"\bbetween (?:two |the |each |successive )?{SAMPLE_NOUN}"
+    rf"|\b(?:toward\w*|until|for) (?:the |each )?(?:next|new) {SAMPLE_NOUN}"
+    rf"|\bfrom (?:one|each|a) {SAMPLE_NOUN} to the next\b"
+)
 
 
 def g_tween(t: Texts) -> list[str]:
-    """BQ-10 rule 2: no tweened numbers."""
-    bad = [f"claim: {c!r}" for c in claims(swept(t), TWEEN, near=NUMBERISH)]
+    """BQ-10 rules 2 and 3: no tweened numbers, and nothing (a bar included) eases, interpolates
+    or glides between samples: a single-run bar moves once per sample and ends before the next."""
+    # a countdown's motion is G-COUNTDOWN's (one FAIL per form); its digits stay numbers here
+    numbers = NUMBERISH.replace(r"countdowns?|", "")
+    bad = [f"claim: {c!r}" for c in claims(swept(t), TWEEN, near=numbers)]
+    moving = MOTION_VOCAB + "|" + MOVE_VERBS
+    bad += [
+        f"claim: {c!r}" for c in claims(swept(t), moving, near=BETWEEN_SAMPLES, unless=COUNTDOWNS)
+    ]  # a countdown "between ticks" is G-COUNTDOWN's, one FAIL per form
     if "no tweened numbers" not in norm_text(section(t.spec, "7.1 Cadence")):
         bad.append("§7.1 rule 2 is gone")
     return one("G-TWEEN", bad)
@@ -1933,6 +2172,20 @@ def g_resume(t: Texts) -> list[str]:
     return one("G-RESUME", bad)
 
 
+# `halted` drawn as shipped, in any phrasing: "as released", "is final", "no longer PROPOSED", "not
+# PROPOSED", "no PROPOSED badge", "unstamped" (record r2); "not unmarked" is a double negation
+_DONE = r"(?:shipped|merged|final|live|released|stable|standard|done)"
+SHIPPED = (
+    rf"\b(?:drawn|shown|rendered|treated|marked|specified) as {_DONE}\b|\bas (?:shipped|released)\b"
+    r"|\b(?:is|are|now) (?:now )?(?:shipped|merged|final|released|stable)\b"  # not "is live"
+    r"|\b(?:no|without|drops?|dropped|removes?|removed|loses?|lost) (?:the |a |its |any )?"
+    r"proposed (?:stamps?|mark\w*|badges?|labels?|tags?|chips?)\b"
+    r"|\bproposed (?:stamp|mark|badge|label|tag) (?:is )?(?:dropped|removed|gone)\b"
+    r"|\b(?:not|never|no longer|isn't|aren't) (?:\w+ )?proposed\b"
+    r"|(?<!not )(?<!never )\bun(?:stamped|marked|flagged)\b"
+)
+
+
 def g_halted(t: Texts) -> list[str]:
     """BQ-9: halted is PROPOSED until the wire carries it, with its fallback."""
     bad: list[str] = []
@@ -1943,6 +2196,27 @@ def g_halted(t: Texts) -> list[str]:
         bad.append("A-2 Variants drop the PROPOSED mark")
     if "`halted` PROPOSED" not in bullet(section(t.hand, "C.3 A-3"), "Props"):
         bad.append("A-3 Props drop the PROPOSED mark")
+    # every other carrier of `halted` keeps the mark (record r1 M-f)
+    s41 = section(t.spec, "4.1 Props")
+    s92 = section(t.spec, "9.2 The frame register")
+    note = next((x for x in FULL_STOP.split(s92) if "`CMP-246/halted-*`" in x), "")
+    locked = table_rows(section(t.spec, "1.3 Locked inputs"))
+    li = next((r for r in locked if "`halted`" in r[0]), [])
+    card_f = rows_by(section(t.hand, "§F Storybook"), r"CMP-[0-9]+ \w+").get("CMP-118 card", [])
+    carriers = (
+        ("§4.1 status", "`halted` PROPOSED" in s41),
+        ("§9.2 note", "PROPOSED stamp of §3.3" in note),
+        ("§1.3 row", "PROPOSED" in " ".join(li[:1])),
+        ("A-3 Storybook", "Halted (PROPOSED)" in bullet(section(t.hand, "C.3 A-3"), "Storybook")),
+        ("§F card list", "Halted (PROPOSED)" in " ".join(card_f)),
+    )
+    bad += [f"{k} drops the PROPOSED mark" for k, ok in carriers if not ok]
+    for text in swept(t):
+        for u in units(text):
+            for c in clauses(u):
+                n = norm_text(c)
+                if re.search(r"\bhalt\w*", n) and re.search(SHIPPED, n):
+                    bad.append(f"claim: {n[:60]!r} draws `halted` as shipped")
     return one("G-HALTED", bad)
 
 
@@ -1951,6 +2225,19 @@ def merged_keys() -> frozenset[str]:
     text = at_base("docs/design/E09/E09-D09.md") + at_base("docs/design/E30/E30-D02.md")
     text += at_base(CITE_FILES["D03"])  # D03's merged T2 reasons (case 1's `algo.reconnecting`)
     return frozenset(re.findall(r"`((?:rbac|algo|recon|stop|sl)\.[a-z_.]+)`", text))
+
+
+# a status label under any name: a state's or the status's label, word, badge, chip or pill, the
+# possessive "halted state's label" included (record r2)
+STATUS_LABEL = (
+    rf"\b(?:{STATE_WORDS}|status|state|algo state|waiting|stopped)(?:'s)? (?:state(?:'s)? )?"
+    r"(?:labels?|words?|badges?|chips?|pills?)\b|\bcmp 246\b|\balgostatelabel\b"
+)
+# the lock or the gate: T2, a lock or padlock, gated, disabled, a permission or `algo.manage`
+LABEL_GATE = (
+    r"\bt2\b|\b(?:pad)?lock(?:s|ed)?\b|\bgat(?:e|ed|es|ing)\b|\bdisabled\b|\bpermission\w*"
+    r"|algo\.manage"
+)
 
 
 def g_t2(t: Texts) -> list[str]:
@@ -1974,6 +2261,13 @@ def g_t2(t: Texts) -> list[str]:
                 bad += [f"claim: `{k}` is not a merged key" for k in keys if k not in merged_keys()]
                 if live(c, r"\bnew (?:t2 )?(?:keys?|t2|states?|gates?)\b"):
                     bad.append(f"claim: {norm_text(c)[:60]!r} adds a T2")
+    # R-5 / BQ-9: a status label is never locked and never T2 (lock and T2 belong to controls);
+    # a " · " list item is its own clause
+    items = [x.replace(" · ", "; ") for x in swept(t)]
+    bad += [
+        f"claim: {c!r} puts a lock or T2 on a status label"
+        for c in claims(items, LABEL_GATE, near=STATUS_LABEL)
+    ]
     return one("G-T2", bad)
 
 
@@ -1991,6 +2285,10 @@ def g_exits(t: Texts) -> list[str]:
             if not EXIT_ITEM.match(item.strip()):
                 bad.append(f"{frame_id(r['Frame'])}: exit {item!r} is not T1")
     bad += [f"claim: {c!r}" for c in claims(swept(t), GATED, near=EXITS, unless=NOT_EXITS)]
+    # A-1 copies D02's "finishing T2 … both exits": those are D02's run exits, not R-4's
+    a1 = bullet(section(t.hand, "C.1 A-1"), "States")
+    if "Cancel and Cancel and flatten, never R-4's dialog exits, which stay T1" not in a1:
+        bad.append("A-1 States do not gloss D02's two exits against R-4")
     return one("G-EXITS", bad)
 
 
@@ -2036,11 +2334,72 @@ def g_emulated(t: Texts) -> list[str]:
     return one("G-EMULATED", bad)
 
 
+TAG_KEY_LINE = 363  # D03:363, the copy key `tag.emulated`: the word and the accessible name
+# a name stated for the tag: after "name", "aria-label", "named", "labelled", "announced as" or
+# "read as", joined by "is", "reads", "=" or ":", in double, single or curly quotes, a code span or
+# bare (record r2); the name itself is case-sensitive, so the prop `emulated` is no name
+NAME_OF_TAG = re.compile(
+    r"(?:accessible name|aria-label|\bnamed|\blabell?ed|tag's name|\bname|\bannounced as"
+    r"|\bread (?:out )?as)\s*(?:\bis\b|\breads\b|=|:)?\s*(?:\bas\b\s*)?"
+    r"(?:[\"“'‘`]((?-i:Emulated)[^\"”'’`\n]*)[\"”'’`]|((?-i:Emulated)\b[^.;|\n\"“`]*))",
+    re.IGNORECASE,
+)
+
+
+@functools.lru_cache(maxsize=1)
+def tag_name() -> str:
+    """The tag's accessible name as D03:363 (`tag.emulated`) states it at the base."""
+    line = at_base(CITE_FILES["D03"]).split("\n")[TAG_KEY_LINE - 1]
+    m = re.search(r'`tag\.emulated`.*?name "([^"]+)"', line)
+    return m[1] if m else ""
+
+
+def g_tagname(t: Texts) -> list[str]:
+    """BQ-4 part 1 / D03:363: the tag's accessible name is never shortened. Every name stated for
+    the tag equals D03's, and the three carriers (§2 part 1, A-1 A11y, A-5.1 New) state it."""
+    want = tag_name()
+    bad: list[str] = [] if want else ["D03:363 no longer carries `tag.emulated`'s name"]
+    for text in swept(t):
+        for m in NAME_OF_TAG.finditer(text):
+            name = m[1] if m[1] is not None else m[2].strip()
+            if name != want and not (m[1] is None and name.startswith(want)):
+                bad.append(f"name {name!r} ≠ D03:363")
+    a51 = next((r for r in table_rows(section(t.hand, "Table A")) if r[0] == "A-5.1"), [])
+    s2 = next((ln for ln in section(t.spec, "2. The emulated").split("\n") if "1. **" in ln), "")
+    carriers = (
+        ("§2 part 1", s2),
+        ("A-1 A11y", bullet(section(t.hand, "C.1 A-1"), "A11y")),
+        ("A-5.1 New", " ".join(a51[4:])),
+    )
+    bad += [f"{k} does not state the tag's name" for k, c in carriers if f'"{want}"' not in c]
+    return one("G-TAGNAME", bad)
+
+
+_UNNEG = r"(?:(?!\b(?:no|never|not|nor|without)\b)[^.;|])"
+# CMP-227 (or its visible word "(estimated)") put to work as a badge, a tag or a marker; a negation
+# between the subject and the role breaks the claim (record r1 M-c, M-h)
+AS_BADGE = (
+    rf"(?:{ESTIMATED}|\(estimated\)(?: badges?)?){_UNNEG}{{0,40}}?\b(?:as|is|for|becomes?)\b"
+    rf"{_UNNEG}{{0,20}}?\b(?:badges?|tags?|markers?|affordance)\b"
+    r"|\b(?:marked|tagged|labell?ed|flagged|badged|shown|carr(?:y|ies|ied)|wears?|bears?|shows?"
+    r"|displays?|gets?|uses?|reuses?|has|have)\s+(?:(?:with|by|as)\s+)?(?:the\s+|an?\s+|its\s+)?"
+    rf"\W*(?:{ESTIMATED}|estimated\b)"
+)
+
+
 def g_afford(t: Texts) -> list[str]:
-    """BQ-4: CMP-227 EstimatedBadge is never the emulation badge."""
+    """BQ-4: CMP-227 EstimatedBadge is never the emulation badge: read with the subject carried
+    across "; ", parentheses and quotes, and quoted copy ("(estimated)") is a claim too."""
+    near = r"emulat\w*|\btag\b"
+    # the subject carried across "; " and " — " (record r2); a clause that negates what it says
+    # of CMP-227 ("CMP-227 never the badge", §1.3) states the rule, not a claim
     bad = [
         f"claim: {c!r}"
-        for c in claims(swept(t), ESTIMATED, near=r"emulat\w*|\btag\b", near_live=True)
+        for c in claims(swept(t), ESTIMATED, near=near, near_live=True, carry=True, affirmed=True)
+    ]
+    bad += [
+        f"claim: {c!r}"
+        for c in claims(swept(t), AS_BADGE, near=near, near_live=True, keep_quotes=True, carry=True)
     ]
     if "CMP-227 EstimatedBadge is never the emulation badge." not in section(
         t.spec, "2. The emulated"
@@ -2219,6 +2578,9 @@ def pin_facts() -> tuple[str, ...]:
     return tuple(bad)
 
 
+LANE_ID = re.compile(r"\bLANE-[A-Za-z0-9-]+")
+
+
 def g_ruled(t: Texts) -> list[str]:
     """Condition: "RULED" cites comment 6397030902; the twenty rows are there."""
     bad: list[str] = []
@@ -2231,6 +2593,11 @@ def g_ruled(t: Texts) -> list[str]:
         for cid in re.findall(r"comment (\d{9,})", text):
             if cid not in (RULING_ID, BQ_LIST_ID):
                 bad.append(f"comment {cid} is not the ruling")
+        # "RULED" cites the comment, never a lane thread (record r1)
+        bad += [f"{m[0]} is a lane thread, not a #988 comment" for m in LANE_ID.finditer(text)]
+        for m in re.finditer(r"\bRULED by ([^.;:]{0,80})", text):
+            if RULING_ID not in m[1]:
+                bad.append(f"RULED by {m[1][:40]!r} does not cite comment {RULING_ID}")
     bq = list(rows_by(section(t.spec, "The twenty questions"), r"BQ-\d+"))
     if bq != [f"BQ-{i}" for i in range(1, 21)]:
         bad.append("the BQ table is not BQ-1…BQ-20")
@@ -2306,6 +2673,8 @@ def g_stories(t: Texts) -> list[str]:
     label = story_list(rows.get("CMP-246 AlgoStateLabel", ["", ""])[1])
     if label != storybook_items(bullet(section(t.hand, "C.2 A-2"), "Storybook")):
         bad.append("§F label list ≠ A-2 Storybook")
+    if "Paused/RateLimit" not in label:  # §0's `CMP-246/paused-rate-limit` (D03:213)
+        bad.append("§F label list has no rate-limit pause story")
     return one("G-STORIES", bad)
 
 
@@ -2458,30 +2827,32 @@ def g_cvd_port(t: Texts) -> list[str]:
     )
 
 
-LANE_RULING = "the orchestrator's ruling of 2026-10-25 14:42Z (LANE-hcl1-98)"
+# the 14:42Z decisions are not in comment 6397030902, so they are never marked RULED (record r1)
+LANE_RULING = "the orchestrator's decision of 2026-10-25 14:42Z (its #988 comment is owed)"
 PENDING_WORDS = r"\bpending\b|\bawait\w*|\brequested\b|\bmay instead\b|\bopen\b"
 
 
 def g_q3(t: Texts) -> list[str]:
-    """L-9 / D04-Q3 (LANE ruling): `cancelled` takes `slash` (CR-G4, PROPOSED); Q3 is RULED."""
+    """L-9 / D04-Q3 (the 14:42Z decision): `cancelled` takes `slash` (CR-G4, PROPOSED); Q3 is
+    DECIDED, never RULED (RULED cites comment 6397030902 only)."""
     q3 = bullet(section(t.spec, "13.3 Open questions"), "D04-Q3")
     bad: list[str] = []
-    if "RULED" not in q3 or LANE_RULING not in q3:
-        bad.append("D04-Q3 is not RULED by the LANE ruling")
+    if "DECIDED" not in q3 or LANE_RULING not in q3 or "RULED" in q3.replace("DECIDED", ""):
+        bad.append("D04-Q3 is not DECIDED by the 14:42Z decision")
     if re.search(PENDING_WORDS, norm_text(q3)):
         bad.append("D04-Q3 still reads as pending")
     # the family's glyph is G-ENCODE's; a missing CR-G4 row is G-CR's
     g4 = rows_by(section(t.hand, "§D Change requests"), r"CR-[A-Z0-9]+").get("CR-G4", [])
-    if g4 and ("`slash`" not in g4[1] or "PROPOSED" not in g4[-1] or "RULED" not in g4[-1]):
-        bad.append("CR-G4 is not the PROPOSED `slash` with D04-Q3 RULED")
+    if g4 and ("`slash`" not in g4[1] or "PROPOSED" not in g4[-1] or "DECIDED" not in g4[-1]):
+        bad.append("CR-G4 is not the PROPOSED `slash` with D04-Q3 DECIDED")
     if g4 and "open" in g4[-1]:
         bad.append("CR-G4 still reads D04-Q3 open")
     return one("G-Q3", bad)
 
 
 def g_c15(t: Texts) -> list[str]:
-    """D04-C15 (LANE ruling): A-7.2 binds `danger.strong` for the bar fill; CR-T1 carries the
-    measurement to E05's tokens owner, PROPOSED, with the measured values anchored."""
+    """D04-C15 (the 14:42Z decision): A-7.2 binds `danger.strong` for the bar fill; CR-T1 carries
+    the measurement to E05's tokens owner, PROPOSED, with the measured values anchored."""
     bad: list[str] = []
     a72 = next((r for r in table_rows(section(t.hand, "Table A")) if r[0] == "A-7.2"), [])
     new = a72[4] if len(a72) > 4 else ""
@@ -2507,7 +2878,8 @@ def g_c15(t: Texts) -> list[str]:
 
 
 def g_dr14(t: Texts) -> list[str]:
-    """DR-14 (LANE ruling): class (a) CONFIRMED by the `16`:178 cite; FO H21 stays the owner's."""
+    """DR-14 (the 14:42Z decision): class (a) CONFIRMED by the `16`:178 cite; FO H21 stays the
+    owner's."""
     d = drift_rows(t.hand).get("DR-14", {})
     rep = d.get("Replacement", "")
     bad: list[str] = []
@@ -2535,7 +2907,8 @@ GATES: tuple[Callable[[Texts], list[str]], ...] = (
     g_triad, g_encode, g_word_leads, g_twin, g_twin16, g_reduce_instant, g_instant, g_nofade,
     g_banner, g_step, g_cadence, g_easing, g_motion_tokens, g_loop, g_focused, g_countdown,
     g_tween, g_dialog, g_q1, g_tier, g_kind, g_reduce_source, g_cr, g_one_entry, g_resume,
-    g_halted, g_t2, g_exits, g_tag, g_emulated, g_afford, g_untouched, g_boards, g_budget,
+    g_halted, g_t2, g_exits, g_tag, g_tagname, g_emulated, g_afford, g_untouched, g_boards,
+    g_budget,
     g_drift, g_drift_scope, g_pin, g_ruled, g_ac, g_crow, g_owner, g_stories, g_handoff,
     g_cmp118, g_a11y, g_token, g_contrast, g_cvd_port, g_q3, g_c15, g_dr14, g_mutlist,
 )  # fmt: skip
@@ -3251,19 +3624,20 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=add_row_after(
             "0. Artefacts",
             "10",
-            "| 11a | `E33-D04 / 10 builder-shell-light` | light twin of 05 | PENDING: drawn in the boards PR |",
+            "| 11a | `E33-D04 / 10 builder-shell-light` | light twin of 05"
+            " | PENDING: drawn in the boards PR |",
         ),
     ),
     Mutation(
         "M-99",
         "G-Q3",
-        "LANE-hcl1-98",
-        spec=line_edit("- **D04-Q3**", "RULED", "awaiting ruling"),
+        "14:42Z decision",
+        spec=line_edit("- **D04-Q3**", "DECIDED", "awaiting ruling"),
     ),
     Mutation(
         "M-100",
         "G-C15",
-        "LANE-hcl1-98",
+        "14:42Z decision",
         hand=row_edit(
             "Table A",
             "A-7.2",
@@ -3276,13 +3650,200 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M-101",
         "G-DR14",
-        "LANE-hcl1-98",
+        "14:42Z decision",
         hand=row_edit(
             "§E Drift ledger",
             "DR-14",
             DR_COLS.index("Replacement"),
             lambda c: c.replace("CONFIRMED", "proposed", 1),
         ),
+    ),
+    # record r1 (comment 6400168737): one mutation per form that passed at round 1
+    Mutation(
+        "M-102",
+        "G-TWEEN",
+        "BQ-10 rule 3",
+        spec=prose_at(
+            "7.3 Never animates", "Between samples, the card bar eases to the next value."
+        ),
+    ),
+    Mutation(
+        "M-103",
+        "G-TWEEN",
+        "BQ-10 rule 3",
+        spec=prose_at("5. CMP-245", "The bar interpolates between samples."),
+    ),
+    Mutation(
+        "M-104",
+        "G-TWEEN",
+        "BQ-10 rules 1 and 3",
+        hand=row_edit(
+            "C.8 The `16`",
+            "Bars on single-run surfaces",
+            2,
+            to("the fill eases on toward the next value between samples"),
+        ),
+    ),
+    Mutation(
+        "M-105",
+        "G-COUNTDOWN",
+        "BQ-13",
+        spec=prose_at("7.3 Never animates", "The countdown eases into each new second."),
+    ),
+    Mutation(
+        "M-106",
+        "G-AFFORD",
+        "BQ-4",
+        spec=sub_in(
+            "1.3 Locked inputs",
+            "`algo-builder`; CMP-227 never the badge",
+            "`algo-builder`; CMP-227 EstimatedBadge as the badge",
+        ),
+    ),
+    Mutation(
+        "M-107",
+        "G-TAGNAME",
+        "BQ-4 part 1 (D03:363)",
+        spec=sub_in(
+            "2. The emulated",
+            'accessible name "Emulated — run by CandleViewer, not Bybit"',
+            'accessible name "Emulated"',
+        ),
+    ),
+    Mutation(
+        "M-108",
+        "G-AFFORD",
+        "BQ-4 (quoted copy)",
+        spec=prose_at(
+            "2. The emulated", 'The emulated run is marked with the "(estimated)" badge.'
+        ),
+    ),
+    Mutation(
+        "M-109",
+        "G-T2",
+        "R-5 / BQ-9 (lock)",
+        spec=prose_at("3.6 A11y contract", "A halted label carries the CMP-019 `lock` glyph."),
+    ),
+    Mutation(
+        "M-110",
+        "G-T2",
+        "R-5 / BQ-9 (T2)",
+        spec=prose_at("3.6 A11y contract", "The paused label is T2 while a run is live."),
+    ),
+    Mutation(
+        "M-111",
+        "G-HALTED",
+        "BQ-9",
+        spec=sub_in(
+            "9.2 The frame register",
+            "the PROPOSED stamp of §3.3",
+            "`halted` is drawn as shipped, with no PROPOSED stamp",
+        ),
+    ),
+    Mutation(
+        "M-112",
+        "G-INSTANT",
+        "BQ-11 (a cite exempts its clause only)",
+        spec=with_values(
+            lambda v: prose_at(
+                "7.3 Never animates",
+                f"Running → paused settles over {anchored('MOTION:ticket.crossfade-ms')(v)} ms"
+                " (D04-C3).",
+            )
+        ),
+    ),
+    Mutation(
+        "M-113",
+        "G-NOFADE",
+        "BQ-11",
+        hand=with_values(
+            lambda v: sub_in(
+                "C.2 A-2",
+                "word, glyph and fill change at frame 0 in both modes",
+                "word, glyph and fill cross-fade over"
+                f" {anchored('MOTION:ticket.crossfade-ms')(v)} ms",
+            )
+        ),
+    ),
+    Mutation(
+        "M-114",
+        "G-INSTANT",
+        "BQ-11 (quoted copy)",
+        spec=mo("Mo-6", "Safe", appended('; the copy deck says "settles over 120 ms"')),
+    ),
+    Mutation(
+        "M-115",
+        "G-TWIN",
+        "BQ-14 (per CMP-043 on Mo-8 only)",
+        spec=mo("Mo-2", "Twin", to("prefers-reduced-motion: per CMP-043")),
+    ),
+    Mutation(
+        "M-116",
+        "G-RULED",
+        "RULED cites comment 6397030902",
+        spec=prose_at(
+            "14.3 Deviations",
+            "D04-Q3 is RULED by the orchestrator's ruling of 2026-10-25 14:42Z (LANE-hcl1-98).",
+        ),
+    ),
+    Mutation(
+        "M-117",
+        "G-STORIES",
+        "§0 `CMP-246/paused-rate-limit`",
+        hand=row_edit(
+            "§F Storybook",
+            "CMP-246 AlgoStateLabel",
+            1,
+            lambda c: c.replace(" · Paused/RateLimit", "", 1),
+        ),
+    ),
+    # record r2: one mutation per class of form that passed at round 2
+    Mutation(
+        "M-118",
+        "G-COUNTDOWN",
+        "BQ-13 (the motion vocabulary)",
+        spec=prose_at("7.3 Never animates", "The countdown pulses on each new second."),
+    ),
+    Mutation(
+        "M-119",
+        "G-TWEEN",
+        "BQ-10 rule 3 (the sample nouns)",
+        spec=prose_at(
+            "7.3 Never animates", "Between readings, the card bar eases to the next value."
+        ),
+    ),
+    Mutation(
+        "M-120",
+        "G-T2",
+        "R-5 / BQ-9 (the subject carried across a semicolon)",
+        spec=prose_at(
+            "3.6 A11y contract",
+            "The paused label sits in the header; it is T2 while a run is live.",
+        ),
+    ),
+    Mutation(
+        "M-121",
+        "G-TWEEN",
+        "BQ-10 rule 3 (a negation chain)",
+        spec=prose_at("7.3 Never animates", "The bar never stops easing between samples."),
+    ),
+    Mutation(
+        "M-122",
+        "G-CADENCE",
+        "R-3 / BQ-10 rule 1 (a rate in fps)",
+        spec=prose_at("7.3 Never animates", "The card bar moves at 30 fps."),
+    ),
+    Mutation(
+        "M-123",
+        "G-DIALOG",
+        "BQ-14 (a cite exempts its own sub-clause only)",
+        spec=prose_at("5. CMP-245", "Dialogs scale in per CMP-043 as ruled, and also fade."),
+    ),
+    Mutation(
+        "M-124",
+        "G-EMULATED",
+        "BQ-4 / T Sec (the tag suppressed)",
+        spec=prose_at("4.3 The `emulated: true`", "The Emulated tag is suppressed on dense rows."),
     ),
 )
 
