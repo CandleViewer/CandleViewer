@@ -71,7 +71,7 @@ cvd = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simu
 
 MULTI = re.MULTILINE
 THEMES = ("dark", "light", "high-contrast")
-BASE = "0bf4b87c556a7ae8cba11a584b2f81708c0c9bd9"
+BASE = "cba937ef0f94815de1c85622645579ccb724c2a0"
 # The merged inputs the header pins (E15-D01, E15-D02 text and boards, E05-D02 slices 3 and 4,
 # E09-D09): each full sha must stand in the header.
 MERGE_SHAS = (
@@ -269,21 +269,21 @@ CITED_TABLE = """
 14 | 514 | `Ctrl+S` save; `Ctrl+Shift+S` save as
 14 | 515 | unsaved changes (`*` on the tab, prompt on navigation)
 14 | 516 | save conflict → "This workspace changed elsewhere. [Keep mine] [Load theirs]"
-14 | 610 | ### SCR-025 — Workspace settings modal
-14 | 612 | default account scope, density (compact/cosy/comfortable), theme override
-14 | 614 | the last workspace cannot be deleted ("You need at least one workspace.")
-14 | 615 | **Stories:** US-WS-020.
-14 | 616 | grouped fieldsets for defaults (symbol, interval, environment binding)
-14 | 618 | CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField
-14 | 619 | - **Stories:** US-LAY-002, US-LAY-003.
-14 | 621 | [ ] 'this workspace is pinned to LIVE' warning drawn
-14 | 659 | ### SCR-029 — Unsaved-changes / layout-conflict dialog
-14 | 661 | the conflict variant adds a side-by-side summary of differences
-14 | 662 | CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
-14 | 664 | the three choices are explicit buttons with verbs
-14 | 665 | within 300 ms of the conflicting write being detected
-14 | 666 | `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics)
-14 | 668 | [ ] Esc maps to Cancel, never to Discard
+14 | 612 | ### SCR-025 — Workspace settings modal
+14 | 614 | default account scope, density (compact/cosy/comfortable), theme override
+14 | 616 | the last workspace cannot be deleted ("You need at least one workspace.")
+14 | 617 | **Stories:** US-WS-020.
+14 | 618 | grouped fieldsets for defaults (symbol, interval, environment binding)
+14 | 620 | CMP-001 Button, CMP-004 Toggle, CMP-019 Icon (`lock`), CMP-040 FormField
+14 | 621 | - **Stories:** US-LAY-002, US-LAY-003.
+14 | 623 | [ ] 'this workspace is pinned to LIVE' warning drawn
+14 | 661 | ### SCR-029 — Unsaved-changes / layout-conflict dialog
+14 | 663 | the conflict variant adds a side-by-side summary of differences
+14 | 664 | CMP-027 ErrorState / InlineError, CMP-044 ConfirmDialog, CMP-079 RbacGate.
+14 | 666 | the three choices are explicit buttons with verbs
+14 | 667 | within 300 ms of the conflicting write being detected
+14 | 668 | `layout.conflict_detected`, `layout.conflict_resolved` with `{choice}` (analytics)
+14 | 670 | [ ] Esc maps to Cancel, never to Discard
 15 | 48 | ### CMP-001 Button
 15 | 79 | ### CMP-004 Toggle (Switch)
 15 | 83 | only the track dims; the label and the knob stay at full opacity
@@ -319,24 +319,24 @@ CITED_TABLE = """
 16 | 138 | so a switch is a CSS custom-property swap with no remount
 21 | 4849 | **`viewer` holds no write permission.**
 22 | 658 | - code: version_conflict
-22 | 8507 | `limit_reached` (32 live workspaces)
-22 | 8555 | `ETag`: the workspace token versions its metadata only
-22 | 8570 | operationId: updateWorkspace
-22 | 8587 | `412 version_conflict` (stale or unparseable `If-Match`, nothing
-22 | 8616 | operationId: deleteWorkspace
-22 | 8621 | workspace is `409 conflict` with `errors[0].rule = last_workspace`
-22 | 8707 | `limit_reached` (32 live layouts)
-22 | 8821 | operationId: updateLayout
-22 | 8830 | `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`
-22 | 12658 | operationId: exportWorkspace
-22 | 19576 | WorkspaceIconToken:
-22 | 19585 | WorkspaceInput:
-22 | 19595 | `name` is at most 40 characters as sent (rule
-22 | 19647 | Concurrency token (also the `ETag`) for the workspace metadata only
-22 | 19854 | Panes have no id of their own
-22 | 19960 | of the whole layout aggregate, panes included
-22 | 20390 | density: { type: string, enum: [compact, comfortable, spacious] }
-22 | 20431 | default_environment: { $ref:
+22 | 8519 | `limit_reached` (32 live workspaces)
+22 | 8567 | `ETag`: the workspace token versions its metadata only
+22 | 8582 | operationId: updateWorkspace
+22 | 8599 | `412 version_conflict` (stale or unparseable `If-Match`, nothing
+22 | 8628 | operationId: deleteWorkspace
+22 | 8633 | workspace is `409 conflict` with `errors[0].rule = last_workspace`
+22 | 8719 | `limit_reached` (32 live layouts)
+22 | 8833 | operationId: updateLayout
+22 | 8842 | `If-Match`, the no-op rule and `412 version_conflict` work as on `updateWorkspace`
+22 | 12670 | operationId: exportWorkspace
+22 | 19603 | WorkspaceIconToken:
+22 | 19612 | WorkspaceInput:
+22 | 19622 | `name` is at most 40 characters as sent (rule
+22 | 19674 | Concurrency token (also the `ETag`) for the workspace metadata only
+22 | 19881 | Panes have no id of their own
+22 | 19987 | of the whole layout aggregate, panes included
+22 | 20417 | density: { type: string, enum: [compact, comfortable, spacious] }
+22 | 20458 | default_environment: { $ref:
 23 | 818 | ### 6.2 Private topics
 BL | 239 | grouped fieldsets (identity, defaults, appearance, startup, danger zone)
 BL | 783 | switches workspaces or closes the app
@@ -774,11 +774,11 @@ D02 | 569 | SCR-029/unsaved, SCR-029/revert, SCR-029/conflict, SCR-029/conflict-
 D02 | 569 | SCR-029/save-as-t2, SCR-029/viewer-unsaved
 D02 | 574 | SCR-029/conflict-refreshed
 D02 | 505 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 614 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 621 | SCR-025/default, SCR-025/planned-defaults, SCR-025/discard-prompt
-14 | 621 | SCR-025/delete-confirm, SCR-025/delete-last
-14 | 661 | SCR-029/unsaved, SCR-029/conflict
-14 | 668 | SCR-029/unsaved, SCR-029/conflict
+14 | 616 | SCR-025/delete-confirm, SCR-025/delete-last
+14 | 623 | SCR-025/default, SCR-025/planned-defaults, SCR-025/discard-prompt
+14 | 623 | SCR-025/delete-confirm, SCR-025/delete-last
+14 | 663 | SCR-029/unsaved, SCR-029/conflict
+14 | 670 | SCR-029/unsaved, SCR-029/conflict
 """
 COPY_KEY_RE = (
     r"^(?:e15\.[a-z0-9_.]+|rbac\.[a-z_]+|notice\.[a-z_]+|workspace\.limit\.[a-z_]+"
@@ -3217,7 +3217,7 @@ def more_mutations() -> list[tuple[str, Callable[[str], str], str]]:
         ),
         (
             "X110-head-base",
-            sub("`0bf4b87c556a7ae8cba11a584b2f81708c0c9bd9`", "`0bf4b87c5`"),
+            sub("`cba937ef0f94815de1c85622645579ccb724c2a0`", "`cba937ef0`"),
             "[head-base]",
         ),
         (
