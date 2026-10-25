@@ -326,6 +326,10 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _UI_FLAG = "rules.graph_editor"
 
 
+#: The protective write registered so far (E29-T04's cancel-all, `PROTECTIVE_WRITES`).
+_CANCEL_ALL = ("POST", "/orders/cancel-all")
+
+
 def _coded(answer: httpx.Response) -> tuple[int, Any]:
     """An answer's status and its problem `code` (None for a body with none, or not JSON)."""
     try:
@@ -365,10 +369,12 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     as `test_ac_adm_15` reads the audit routes, so a new write route cannot escape the case, and
     the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
     The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
-    second start is the start route's own refusal, and leaving is never refused. No protective
-    write is registered yet (E39-S03, E29-T07, E34-S03 and E29-T04's cancels), so none is carved
-    out; the day one is, this case must say what it admits. The guard's own check of a registered
-    one's target, through this same wiring, is the case after it."""
+    second start is the start route's own refusal, and leaving is never refused. One protective
+    write is registered, E29-T04's cancel-all: the guard passes it on, the Manager holding
+    `orders:write` (22's dual check, its permission half), and its handler decides it, which this
+    case says. The others (E39-S03, E29-T07, E34-S03 and E29-T04's cancel) are not registered
+    yet, so the sweep refuses them; the day one is, this case must say what it admits. The guard's
+    own check of a registered one's target, through this same wiring, is the case after it."""
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
     stamp = _flag_updated_at(admin, _UI_FLAG)
@@ -397,11 +403,12 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
 
     unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
-    assert not [op for op in protective if admin.app.state.protective_writes.is_registered(op)]
+    registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
+    assert registered == {_CANCEL_ALL}  # cancel-all's handler decides it; the next must say what
     assert _contract_own_operations() == OWN_OPERATIONS  # the contract's list, read from its prose
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
     assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
-    swept = sorted(unsafe - carved_out)
+    swept = sorted(unsafe - carved_out - registered)
     assert len(swept) < VIEW_AS_REFUSAL_BUDGET  # one record each: the sweep fits the world's cap
     ids = {  # the viewed Manager's user and session, and a flag whose write can be read back
         "userId": str(manager.user_id),
@@ -444,6 +451,14 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     }
     refused = Stack.in_process("auth_view_as_refused_total", reason="view_as_read_only")
     assert refused - counted == len(swept)
+
+    # The registered protective write reaches its handler, which decides it: with no OMS composed
+    # here, its own `501`. The guard records no refusal for it, and nothing changes.
+    routed, mark = len(admin.reached), len(admin.audit.records)
+    passed = admin.send("owner", *_CANCEL_ALL, {"json": {}})
+    assert _coded(passed) == (501, "not_implemented")
+    assert admin.reached[routed:] == [_CANCEL_ALL]
+    assert (admin.audit.records[mark:], _held(admin)) == ([], before)
 
     second = admin.send("owner", "POST", "/admin/view-as", start)  # the viewer's own: not refused
     assert _coded(second) == (409, "view_as_active")  # as the start route answers it, not read-only
