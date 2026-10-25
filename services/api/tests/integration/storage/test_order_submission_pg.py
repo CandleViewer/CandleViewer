@@ -556,6 +556,40 @@ async def test_an_end_and_a_put_in_force_racing_on_one_key_one_commits_and_the_o
     assert {row[0]: row[1:] for row in rows} == expected
 
 
+async def test_an_end_holds_only_the_rows_it_names(pg_dsn: str) -> None:
+    """An end locks the rows it names (`lock_stops_statement`), not the key's. Held over its audit,
+    it leaves a stop-loss in flight on the same key to a settle from another connection, which
+    completes; an end that locked the key would hold that settle past its bound."""
+    account, at_a, at_b = _account(pg_dsn)[0], _T0 + timedelta(hours=1), _T0 + timedelta(hours=2)
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def hold(rows: tuple[RecordedStopRow, ...]) -> None:
+        entered.set()
+        await release.wait()
+
+    async with (
+        asyncio.timeout(20),
+        _racing(pg_dsn, "end-lock-a") as rel_a,
+        _racing(pg_dsn, "end-lock-b") as rel_b,
+    ):
+        a = SqlAlchemyRecordedStopStore(rel_a, statement_timeout_ms=15_000, audit_timeout_s=15)
+        b = SqlAlchemyRecordedStopStore(rel_b, statement_timeout_ms=15_000)
+        [named] = await a.insert([trading_stop(account)])
+        [named] = await a.settle(account, [named.id], "answered", at=_T0)
+        [flight] = await a.insert([trading_stop(account)])  # the next request: in flight, unnamed
+        ending = asyncio.ensure_future(a.end(account, [named], at=at_a, write_ahead=hold))
+        try:
+            await entered.wait()
+            async with asyncio.timeout(5):  # a lock on the key would hold this past its bound
+                [settled] = await b.settle(account, [flight.id], "answered", at=at_b)
+            release.set()
+            [ended] = await ending
+        finally:
+            release.set()
+    assert (ended.id, ended.status, ended.closed_at) == (named.id, "ended", at_a)
+    assert (settled.id, settled.status, settled.answered_at) == (flight.id, "pending", at_b)
+
+
 # -- E29-T04 commit 4: the order step's settle and the startup sweep -------------------------------
 
 

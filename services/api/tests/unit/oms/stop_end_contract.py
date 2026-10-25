@@ -94,14 +94,16 @@ class StopEndContract:
         assert (await now_of(h, rows), await h.stops.live_for_key(account, *KEY)) == before
 
     @pytest.mark.parametrize(
-        "moved", ["replaced", "in_force", "void", "ended", "another_account", "another_key"]
+        "moved",
+        ["replaced", "in_force", "void", "ended", "another_account", "another_key", "forged"],
     )
     async def test_end_of_rows_moved_since_read_is_stale_and_writes_nothing(
         self, h: Harness, moved: str
     ) -> None:
         """SEC-BND-02: a row replaced, put in force, voided or ended since it was read, or read on
-        another account or key, is `StaleRecordedStop`, and its sibling, still as read, is not
-        ended either. A put in force never revives a row an end closed."""
+        another account or key, or read as answered when it is in flight (a forged `answered_at`:
+        the guard would refuse it, so the compare must), is `StaleRecordedStop`, and its sibling,
+        still as read, is not ended either. A put in force never revives a row an end closed."""
         account, profile = h.new_account()
         rows = await request(h, account, profile, moves=FILLED)
         await repo(h).put_in_force(account, rows[:1], at=AT)
@@ -120,12 +122,15 @@ class StopEndContract:
         elif moved == "another_account":
             who = uuid4()
             named = tuple(replace(r, exchange_account_id=who) for r in live)
+        elif moved == "forged":  # a stop-loss still in flight, read as answered
+            [flight] = await h.stops.insert([sc.trading_stop(account)])
+            named = (replace(flight, answered_at=T0),)
         else:
             named = tuple(replace(r, symbol="ETHUSDT") for r in live)
-        before = await now_of(h, rows)
+        before = (await now_of(h, rows), await h.stops.live_for_key(account, *KEY))
         with pytest.raises(StaleRecordedStop):
             await repo(h).end(who, named, at=LATER)
-        assert await now_of(h, rows) == before
+        assert (await now_of(h, rows), await h.stops.live_for_key(account, *KEY)) == before
         if moved == "ended":
             with pytest.raises(StaleRecordedStop):
                 await repo(h).put_in_force(account, rows[1:], at=LATER)

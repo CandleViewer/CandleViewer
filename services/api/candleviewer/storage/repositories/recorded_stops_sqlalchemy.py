@@ -367,8 +367,9 @@ def resolve_statement(
 
 def end_statement(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime) -> sa.Update:
     """21 Sec.3.3.11 "Ends with its position": each of `rows`, as read (its key, `status` and
-    `answered_at`), becomes `ended` at `at`; nothing else is written (R-5, the set-once times)."""
-    as_read = sa.or_(*(sa.and_(_as_read((r,)), _S.status == r.status) for r in rows))
+    `answered_at`), becomes `ended` at `at`; nothing else is written (R-5, the set-once times).
+    No rows match no row: an empty `or_()` would be no condition, the whole account."""
+    as_read = sa.or_(sa.false(), *(sa.and_(_as_read((r,)), _S.status == r.status) for r in rows))
     stmt = sa.update(recorded_stops).where(_S.exchange_account_id == account_id, as_read)
     return stmt.values(status="ended", closed_at=at).returning(*STOP_COLUMNS)
 

@@ -925,6 +925,16 @@ def test_the_end_statement_compares_each_row_as_read_and_sets_status_and_closed_
     assert (params["status_1"], params["status_2"]) == ("in_force", "pending")
 
 
+@pytest.mark.filterwarnings("error::sqlalchemy.exc.SADeprecationWarning")
+def test_the_end_statement_of_no_rows_matches_none_not_the_whole_account() -> None:
+    """SEC-S2D-01: the builder is exported and callable without `check_end` (P1 does), and an empty
+    `or_()` is no condition: the account's every row. It starts from `false()`, so no rows match no
+    row, the account predicate stays, and SQLAlchemy's empty-`or_()` warning is never raised."""
+    sql = _sql(mod.end_statement(_ACCOUNT, [], _LATER))
+    where = sql.split(" WHERE ", 1)[1].split(" RETURNING ", 1)[0]
+    assert where == "recorded_stops.exchange_account_id = $3::UUID AND false"
+
+
 async def test_an_end_locks_then_ends_every_row_or_none_audited_before_its_commit() -> None:
     ended = {"status": "ended", "answered_at": _T, "closed_at": _LATER}
     rows = _rows(_row(_SL, status="in_force", answered_at=_T, in_force_at=_T),

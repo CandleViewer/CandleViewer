@@ -380,7 +380,8 @@ def check_resolve(
 def check_end(account_id: UUID, rows: Sequence[RecordedStopRow], at: datetime) -> None:
     """`ValueError` before any statement unless `rows` are the account's, of one key, each named
     once, and each in force or pending and answered as read: `trg_rs_guard`'s two moves into
-    `ended` (21 Sec.3.3.11). An unanswered row never ends; a closed one ended already."""
+    `ended` (21 Sec.3.3.11), and `at` is timezone-aware. An unanswered row never ends; a closed
+    one ended already."""
     if not rows or len({row.id for row in rows}) != len(rows):
         raise ValueError("a row ended is named once, and at least one is")
     key = (account_id, rows[0].symbol, rows[0].position_idx)
