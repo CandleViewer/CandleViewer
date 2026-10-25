@@ -508,6 +508,19 @@ async def test_the_state_is_starting_while_the_startup_runs_and_degraded_once_fa
         assert (runtime.started, runtime.state) == (True, "degraded")  # no bundle: never ready
 
 
+async def test_a_dead_lane_pages_once_per_death_however_often_its_state_is_read() -> None:
+    """SEC-S3L1A-02: the runtime pages its lane's death as it does its other fail-closed
+    transitions, the first time it reads it, and never again; the next start's lane, dying, pages
+    once more."""
+    world = World()
+    runtime = world.runtime()
+    for _ in range(2):
+        async with started(runtime):
+            world.lanes[-1].dead = True
+            assert [runtime.state for _ in range(3)] == ["degraded"] * 3
+    assert (world.pager.calls, world.pager.severities) == (["oms_lane_died"] * 2, ["page"] * 2)
+
+
 async def test_the_startup_waits_out_its_bound_for_the_clock_and_keys_then_for_both_flags() -> None:
     """20 Sec.6.2 step 1: at most `CV_OMS_STARTUP_WAIT_S` for the clock guard's first measurement
     and the key standing's first good read, then on; the flags' first read, however long."""

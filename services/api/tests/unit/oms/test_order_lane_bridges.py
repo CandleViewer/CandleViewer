@@ -140,6 +140,29 @@ async def test_a_rejected_credential_is_refused_on_the_lane_before_its_notice_la
     ]
 
 
+async def test_a_landed_rejection_is_dropped_never_a_later_one_and_a_failed_one_stays() -> None:
+    """SEC-S3L1C-03: the lane's own refusal is the gate's `NO_ACTIVE_KEY`; a rejection whose notice
+    has landed is dropped, never a later one of its account still on its way; one whose notice
+    fails there stays refused for good."""
+    loop, seen = asyncio.new_event_loop(), list[bool]()  # a serving loop that turns only below
+
+    class Standing:
+        def credential_rejected(self, account_id: UUID, refusal: Refusal) -> None:
+            seen.append(standings.refused(cr.ACCOUNT))
+            if account_id == OTHER:
+                raise RuntimeError("the key standing failed")
+
+    standing: Any = Standing()
+    serving = Serving(loop, Metrics("demo"))
+    standings = ServedStandings(standing, serving)
+    for account in (cr.ACCOUNT, cr.ACCOUNT, OTHER):
+        standings.credential_rejected(account, Refusal.UNKNOWN_KEY)
+    await asyncio.to_thread(loop.run_until_complete, asyncio.sleep(0))  # the notices land
+    loop.close()
+    assert seen == [True, True, False] and list(standings._sent) == [OTHER]
+    assert ServedGate(standing, serving, standings).refusal(OTHER) is oms_wiring.NO_ACTIVE_KEY
+
+
 async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a_private_stream(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

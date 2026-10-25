@@ -306,6 +306,67 @@ async def test_a_lane_whose_loop_dies_is_marked_dead_and_answers_its_callers() -
     assert 5 * oms_lane._CLEANUP_S < oms_lane.LANE_JOIN_S
 
 
+async def test_a_call_racing_the_lanes_death_never_begins_and_is_answered() -> None:
+    """SEC-S3L1A-01 (C-2.18): a call made as the lane's loop dies, past the death's check, is only
+    taken by the cleanup, which refuses it: its caller is answered, its coroutine closed unrun."""
+    began, go, ran = threading.Event(), threading.Event(), list[str]()
+
+    async def exits() -> None:
+        began.set()
+        go.wait(BOUND_S)  # the lane's thread is held: the racing call is queued meanwhile
+        raise SystemExit
+
+    async def racing() -> None:
+        ran.append("a step")
+
+    lane, raced = OrderLane(), racing()
+    await lane.start()
+    _, thread = await lane.call(_where())
+    answers = [lane.call(exits())]
+    await _began(began)
+    answers.append(lane.call(raced))
+    go.set()
+    for answer in answers:  # each answered, cancelled: the exit's and the racing call's
+        with pytest.raises(asyncio.CancelledError):
+            async with asyncio.timeout(BOUND_S):
+                await answer
+    await asyncio.to_thread(thread.join, BOUND_S)
+    await lane.stop()
+    assert lane.dead and ran == [] and inspect.getcoroutinestate(raced) == inspect.CORO_CLOSED
+
+
+async def test_a_task_the_cleanup_begins_after_its_last_round_is_cancelled_before_the_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S3L1A-01: a task begun on the lane after its cleanup's last cancel round (here, by its
+    executor's shutdown) is cancelled, and given a turn, before the loop closes."""
+    factory, outcome = OrderLane.loop_factory, list[str]()
+
+    async def lingers() -> None:
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            outcome.append("cancelled")
+            raise
+
+    def made() -> asyncio.AbstractEventLoop:
+        loop, late = factory(), list[asyncio.Future[None]]()
+        shutdown = loop.shutdown_default_executor
+
+        async def begins(*args: Any) -> None:
+            late.append(asyncio.ensure_future(lingers()))
+            await asyncio.sleep(0)  # it has begun: it waits, past every round
+            await shutdown(*args)
+
+        monkeypatch.setattr(loop, "shutdown_default_executor", begins)
+        return loop
+
+    monkeypatch.setattr(OrderLane, "loop_factory", staticmethod(made))
+    async with running():
+        pass
+    assert outcome == ["cancelled"]
+
+
 async def test_start_refuses_a_started_lane_and_fails_closed_on_a_loop_that_never_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -536,3 +597,27 @@ async def test_a_cancelled_start_lets_the_compose_close_on_the_lane_before_the_l
         await start
     assert world.log == ["pool.release", "lane.stop"] and world.venue.ports[0].closed
     assert not b01.ports_wired()
+
+
+async def test_a_start_cancelled_again_while_the_compose_closes_still_stops_its_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SEC-S3L1C-01: the start, cancelled while the sink starts on the lane, is cancelled again
+    while it waits there for the compose to close the trading port; the lane is still stopped."""
+    world, began, closing = World(), threading.Event(), threading.Event()
+
+    async def hangs(self: Any) -> None:
+        (closing if isinstance(self, Port) else began).set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(Sink, "start", hangs)
+    monkeypatch.setattr(Port, "aclose", hangs)  # the compose's unwind, held on this loop
+    monkeypatch.setattr(OrderLane, "stop", _logged(OrderLane.stop, "lane.stop", world.log))
+    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 10 * BOUND_S)  # no share runs out
+    start = asyncio.ensure_future(world.runtime(lane=OrderLane).start())
+    for event in (began, closing):
+        await _began(event)
+        start.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await start
+    assert world.log == ["lane.stop"] and not b01.ports_wired()

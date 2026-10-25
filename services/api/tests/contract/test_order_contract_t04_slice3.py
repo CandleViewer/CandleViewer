@@ -552,7 +552,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
     stop inside the grace, from the code's own bounds; the hops named until L2 and L3; the notices'
     bound and their count (CR-S3L1A-01); the private stream the lane's port refuses (CR-S3L1B-05);
-    and, the runtime on the lane since L1b, no status note left in 20, 23 or 24."""
+    the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read in place
+    (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); and, the runtime on the lane since L1b, no
+    status note left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -571,10 +573,18 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "and its refusal records, per-order cancels and amends within the service's own bounds",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
         f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
+        "The bound is per call: while the serving loop stalls, N such calls hold the lane's thread "
+        "N times that bound in series, ahead of any other step there, the ruled interim until L2 "
+        "and L4",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
         "is logged by its call's name and counted (`oms_lane_notices_failed_total`, §12.1)",
+        "The switches' gate reads the lane's own refusals of rejected credentials "
+        "(`ServedStandings.refused`) on either loop: one dict read, GIL-atomic against the item "
+        "the lane assigns and the one the serving loop drops once its notice lands.",
         f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
+        "A lane whose loop ends without `stop()` has died, logged: the runtime is `degraded` and "
+        "pages it once, the first time it reads that state",
     )
     assert "awaits the pipeline on the order lane" in _ROUTE
     ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))
