@@ -4863,7 +4863,9 @@ Row-level scoping (`✔(g)`, `✔(own)`) is **not** expressed in `role_permissio
 
 ### 10.2 Bootstrap owner
 
-Created only when `users` is empty: username/email from `CV_BOOTSTRAP_OWNER_EMAIL`, a random 32-char password printed once to stdout and never stored, `status='invited'`, `mfa_required=true`. First login forces password change and MFA enrollment. If the env var is absent the seeder fails loudly rather than creating a default credential.
+**What ships (#4479).** `0002_rbac_seed`'s step for `CV_BOOTSTRAP_OWNER_EMAIL` with `CV_BOOTSTRAP_OWNER_CONFIRM=1` cannot commit: it inserts an `invited` user and its `owner` `user_roles` row, and the deferred `trg_owner_floor_user_roles` (0001) raises 23514 at COMMIT because no Owner is active, so the upgrade's transaction rolls back; without both variables it seeds nothing. Never set them. While no Owner is active, no transaction may write `user_roles` unless it also leaves an active Owner.
+
+The first Owner comes from the offline CLI `python -m candleviewer.bootstrap_owner --owner <email>`, run on the host while cv-api is stopped (`docs/ops/runbooks/auth-rbac.md` §4, "Bootstrap the first Owner"). Its mint is one transaction under `pg_advisory_xact_lock(hashtext('cv_bootstrap_owner'))` that re-counts the active Owners and refuses if there is one. It creates (or reuses) an `invited` user with `mfa_required=true`, a placeholder password hash and **no role row**, revokes any open bootstrap invite, and inserts one marked `owner` invite (§2.1) valid 4 h. The 256-bit token is printed once to the operator's terminal and stored only as its sha256 `token_hash`; no password is printed or stored. The `owner` grant is written at activation, in cv-api, under the same lock and only while no Owner is active (§2.1 `user_invites`).
 
 ### 10.3 Retention defaults
 
