@@ -233,8 +233,9 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | O11 | Elevation of privilege | XSS payload uses the live session to place orders silently                                  | L   | H   | **High**     | SR-112 CSP, SR-043 arm toggle + per-session live-trading confirmation, SR-025 step-up re-auth                                          | Low      |
 
 **E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01, Approved 2026-10-20)
-re-derives O1-O11 above for the E29 order path, not yet mounted, live WS trade included: 48 rows (OM-S01..OM-E07;
-OM-E07, a KILL that stops nothing, added by E29-T03 after the approval), 6 inherent Critical and 22 High. Main
+re-derives O1-O11 above for the E29 order path, not yet mounted, live WS trade included: 52 rows (OM-S01..OM-E08;
+OM-E07, a KILL that stops nothing, added by E29-T03 after the approval, and OM-D10 to OM-D12 and OM-E08, the order
+lane's, by #913 slice 3), 6 inherent Critical and 25 High. Main
 findings: the client's `intent` decides whether an opening order needs a native
 stop and which rate bucket pays; the shipped REST client resends an order create after a timeout or 5xx with no
 lookup; the `untracked` path and a mismatched duplicate-id lookup had no B1 contract (its contract half is on `main`
@@ -718,7 +719,7 @@ Medium until E27-Q03 measures it. U34 (Area 6) is a Medium residual awaiting Own
 not in the counts above and are not accepted: they are release blockers for R2 under the rule at the head of this
 paragraph, recorded as RR-09..RR-12 in §16.1 with owner sign-off pending (queued on #2701); RR1 to RR3 are tracked as
 RSK-069..RSK-071 and RR4 through G6 and G7 (`docs/security/threat-models/E26-replay.md` §13).
-The E29 OMS rows (E29-X01, OM-S01..OM-E07) are rated Low contingent on the E29 tickets and gaps in §11 of the E29 model
+The E29 OMS rows (E29-X01, OM-S01..OM-E08) are rated Low contingent on the E29 tickets and gaps in §11 of the E29 model
 (`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (RR-20), and the other
 §12.2 residuals, OM-S05 with §5.4, OM-I09 and OM-T03 (Low), await it as RR-18, RR-19 and RR-21 (E29 model §12.2). The
 open Critical and High findings of that model are tracked as RSK-076 to RSK-081.
