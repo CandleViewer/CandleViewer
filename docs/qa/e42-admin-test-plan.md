@@ -389,11 +389,12 @@ read-only"; 22 "View-as session")
   - the countdown runs to the server's `expires_at`;
   - MGR-M is told someone is viewing as them; the reason is never shown to MGR-M (D02 D10);
   - every state-changing control is disabled, with a reason, **except the protective writes** (C-2.6; 22
-    "View-as session", "Protective writes"): engaging the kill switch on the target's accounts, amending an
-    order or a trade group, and setting a position's TP/SL stay enabled and are served as the viewer (the
-    audit actor), when the viewer's and the target's RBAC both allow them. D02 draws only one of them as an
-    enabled control, the freeze engage on the target's accounts (rung 0; D02 §4.1 and §5). The handlers of
-    the four are not mounted yet, so this half is blocked (§6);
+    "View-as session", "Protective writes"): engaging the kill switch on the target's accounts, cancelling
+    an order or every selected order (`cancelOrder`, `cancelAllOrders`), amending an order or a trade group,
+    and setting a position's TP/SL stay enabled and are served as the viewer (the audit actor), when the
+    viewer's and the target's RBAC both allow them. D02 draws only one of them as an enabled control, the
+    freeze engage on the target's accounts (rung 0; D02 §4.1 and §5). The six handlers are not all mounted
+    and registered as protective writes yet, so this half is blocked (§6);
   - the carve-out is bounded: releasing the kill switch, `scope: global` and an amend with any non-protective
     component are refused `403 view_as_read_only` by their handlers, before any effect; any other write sent
     anyway is refused the same way before authorisation, validation and any step-up (AC-ADM-22).
@@ -1229,9 +1230,10 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
   the case is marked blocked on it;
 - for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and AD-S03-N11),
   `POST /admin/view-as` is mounted, as it is on `main` since #3085's server slices (AC-ADM-22 is
-  `test_ac_adm_22_view_as_cannot_mutate`); AD-S03-05's protective-write half also needs the four handlers,
-  E39-S03 (`setKillSwitch`), E29-T07 (`amendOrder`, `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since
-  until each is mounted the guard refuses it like any other write;
+  `test_ac_adm_22_view_as_cannot_mutate`); AD-S03-05's protective-write half also needs the six handlers,
+  E39-S03 (`setKillSwitch`), E29-T04 (`cancelOrder`, `cancelAllOrders`), E29-T07 (`amendOrder`,
+  `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted and registered as a
+  protective write the guard refuses it like any other write;
 - for S08's latch cases (AD-S08-02 and AD-S08-03), Q-7 is answered: until the story's contract slice
   registers the acknowledge operation, its step-up class and its audit action, both are blocked; so are
   AD-S05-07 (Q-29), AD-S06-04's "stale since" half (Q-27), AD-S04-04's UI half (Q-19) and AD-S07-05's

@@ -10,15 +10,31 @@ key, and a cross-site page cannot cause one.
 
 For a request whose bearer names a session holding a context (`ViewAsPhase` not `NONE`):
 
-| the operation                        | live                        | held                  |
-|--------------------------------------|-----------------------------|-----------------------|
-| the viewer's own (`OWN_OPERATIONS`)  | passes, as the viewer       | passes, as the viewer |
-| protective, its handler registered   | passes to it, as the viewer | the same              |
-| GET, HEAD or OPTIONS                 | passes, as the target       | `view_as_expired`     |
-| any other                            | `view_as_read_only`         | `view_as_expired`     |
+| the operation                        | live                          | held                     |
+|--------------------------------------|-------------------------------|--------------------------|
+| the viewer's own (`OWN_OPERATIONS`)  | passes, as the viewer         | passes, as the viewer    |
+| protective, its handler registered   | passes to it, as the viewer,  | passes to it, as the     |
+|                                      | once the target may make it   | viewer, no target read   |
+| GET, HEAD or OPTIONS                 | passes, as the target         | `view_as_expired`        |
+| any other                            | `view_as_read_only`           | `view_as_expired`        |
 
 A protective write whose handler is not registered is refused as any write (the tripwire,
-`ProtectiveWrites`). A live context is evaluated as a request's would be
+`ProtectiveWrites`). A live one is admitted only when both the viewer's own RBAC and the target's
+`x-rbac` allow it (22), and the guard checks the target's half of the permission for every
+protective write, so no handler can forget it: the target must hold each permission the
+operation's `x-rbac` names (`rbac_permissions`, read from the contract at build; a protective
+write naming none fails the build). One that does not, or a target who can no longer act
+(missing, not `active`, a role outside the system set), is `403 forbidden`, counted in
+`authz_denied_total` before its record, as `enforce` counts, and audited `rbac.denied` with the
+viewer and the viewer's session as the actor and the target as the object, naming the refused
+operation: a 403 even when the writer cannot write that record (its own failure, a writer not
+started, or the write past its bound), as at the key store's owner gate (`api/exchange_keys.py`),
+with a warning log; any other failure of the write is a defect and propagates. A target read that
+fails or passes `TARGET_READ_TIMEOUT_S`, or a guard built with nothing to read it, is `503
+store_unavailable`.
+The handler checks the account half (`scope_for_target`). In the hold the write runs in the
+viewer's own scope, and no target is read (22 "View-as session", Protective writes). A live
+context is evaluated as a request's would be
 (`ViewAsService.evaluate`): one whose viewer or target is no longer eligible ends there, and the
 request answers `view_as_expired`. Before refusing a write, a read-only session gets the read-only
 guard's own `session_read_only` (`assert_writable`, at most once a request), because the contract
@@ -36,7 +52,8 @@ backend), the request passes untouched.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Iterable
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import datetime
 from typing import Any, Final, Protocol
 
@@ -45,6 +62,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from starlette._utils import get_route_path
 
+from candleviewer.api.audit_principal import _Identity, identity_snapshot
 from candleviewer.api.csrf import _compile_operations, bounded_method, match_operation, source_ip
 from candleviewer.api.step_up import (
     _SAFE_METHODS,
@@ -53,7 +71,7 @@ from candleviewer.api.step_up import (
     _bearer,
     readonly_problem,
 )
-from candleviewer.api.view_as_policy import OWN_OPERATIONS, ProtectiveWrites
+from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.api.view_as_refusals import (
     OperationReason,
     ViewAsRefusalRecorder,
@@ -61,8 +79,12 @@ from candleviewer.api.view_as_refusals import (
 )
 from candleviewer.api.view_as_subject import STATE_KEY as STATE_KEY
 from candleviewer.api.view_as_subject import ViewAsUnstamped as ViewAsUnstamped
+from candleviewer.audit.errors import AuditError
 from candleviewer.auth.errors import AuthError, SessionReadOnly
+from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.metrics import authz_denied_total, normalise_permission
 from candleviewer.auth.models import SessionRecord
+from candleviewer.auth.scopes import Deny, PrincipalSnapshot, decide
 from candleviewer.auth.view_as import (
     ViewAsBinding,
     ViewAsPhase,
@@ -78,10 +100,16 @@ _DETAILS: Final[dict[str, str]] = {
     "end view-as to make changes.",
     "view_as_expired": "The view-as context has ended; clear it with DELETE /auth/session/view-as.",
     "audit_unavailable": "The refusal could not be recorded; nothing changed. Try again shortly.",
+    "forbidden": "The user you are viewing as may not make this change; end view-as to act as "
+    "yourself.",
     "store_unavailable": "The session could not be checked; try again shortly.",
 }
 
 CallNext = Callable[[Request], Awaitable[Response]]
+
+#: Bounds the target's identity read, and its denial's record, as the trading principal bounds its
+#: reads (`PRINCIPAL_READ_TIMEOUT_S`): a stalled store holds no protective write.
+TARGET_READ_TIMEOUT_S: Final = 2.0
 
 
 class ViewAsViews(Protocol):
@@ -90,6 +118,27 @@ class ViewAsViews(Protocol):
     async def evaluate(self, record: SessionRecord, *, now: datetime) -> ViewAsBinding | None: ...
 
     async def viewer_label(self, record: SessionRecord) -> str: ...
+
+
+class _Denials(Protocol):
+    """`AuditWriter.emit`'s part a target's refusal writes (`rbac.denied`)."""
+
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: Any = None,
+        actor_ip: str | None = None,
+        session_id: Any = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        outcome: Any = ...,
+        severity: Any = ...,
+        reason: str | None = None,
+        after_state: dict[str, Any] | None = None,
+        request_id: Any = None,
+    ) -> None: ...
 
 
 def _log() -> Any:
@@ -128,14 +177,26 @@ def make_view_as_guard(
     protective: ProtectiveWrites,
     operations: Iterable[tuple[str, str]],
     clock: Callable[[], datetime],
+    permissions: Mapping[tuple[str, str], frozenset[Permission]] | None = None,
+    identity: _Identity | None = None,
+    denials: _Denials | None = None,
 ) -> Callable[[Request, CallNext], Awaitable[Response]]:
     """HTTP middleware body; see the module docstring. *views* and *refusals* are read per request
     (`create_app` builds them after the middleware stack); *operations* are the contract's
     declared operations, which name a refused one (`match_operation`, never the raw path); *clock*
-    is the auth clock."""
+    is the auth clock. *permissions* (`rbac_permissions`), *identity* and *denials* check a live
+    protective write's target: without the first two, every such write is `503`; and a guard given
+    *permissions* but no *denials* would refuse unaudited, so it is not built."""
     declared = frozenset(operations)
     if not OWN_OPERATIONS <= declared:
         raise ValueError(f"undeclared own operations: {sorted(OWN_OPERATIONS - declared)}")
+    if permissions is not None and denials is None:
+        raise ValueError("a guard that checks targets records their denials")
+    required = dict(permissions or {})
+    if permissions is not None and (
+        bare := sorted(id_ for id_, (op, _) in PROTECTIVE_WRITES.items() if not required.get(op))
+    ):
+        raise ValueError(f"protective writes without an x-rbac permission: {bare}")
     templates = _compile_operations(declared)
 
     async def view_as_guard(request: Request, call_next: CallNext) -> Response:
@@ -182,6 +243,13 @@ def make_view_as_guard(
             phase=binding.phase,
         )
         if as_viewer or reads:
+            if as_viewer and not own and binding.phase is ViewAsPhase.LIVE:
+                needs = required.get(operation, frozenset())
+                refused = await _target_refusal(
+                    identity, denials, context, operation, needs, source_ip(request.scope)
+                )
+                if refused is not None:
+                    return refused
             request.scope.setdefault("state", {})[STATE_KEY] = context
             with bound_view_as(context):
                 return await call_next(request)
@@ -195,6 +263,50 @@ def make_view_as_guard(
         return await _refuse(refusals(), context, reason, operation, source_ip(request.scope))
 
     return view_as_guard
+
+
+async def _target_refusal(
+    identity: _Identity | None,
+    denials: _Denials | None,
+    context: ViewAsRequestContext,
+    operation: tuple[str, str],
+    needs: frozenset[Permission],
+    ip: str | None,
+) -> Response | None:
+    """The target's half of a live protective write's permission check (module docstring): `None`
+    when `decide` allows the target every permission in *needs*, else the refusal for the first it
+    denies, with the reason `enforce` records for a denial."""
+    if identity is None or denials is None or not needs:  # nothing to check or record with
+        return _unavailable("target", LookupError("no target read"))
+    try:
+        async with asyncio.timeout(TARGET_READ_TIMEOUT_S):
+            read = await identity_snapshot(identity, context.target_user_id)
+    except LookupError:  # no such user any more
+        read = None
+    except Exception as exc:  # the bound passed, or the store failed
+        return _unavailable("target", exc)
+    nobody = PrincipalSnapshot(context.target_user_id, frozenset(), frozenset())
+    target = nobody if read is None else read  # one who cannot act is allowed nothing
+    denied = next((d for p in sorted(needs) if isinstance(d := decide(target, p), Deny)), None)
+    if denied is None:
+        return None
+    # SR-125: counted before its record, as `enforce` counts, so a lost record never hides it
+    authz_denied_total.labels(permission=normalise_permission(denied.permission)).inc()
+    method, template = operation
+    try:
+        async with asyncio.timeout(TARGET_READ_TIMEOUT_S):
+            await denials.emit(
+                "rbac.denied", actor_label=context.viewer_label,
+                actor_user_id=context.viewer_user_id, actor_ip=ip,
+                session_id=context.viewer_session_id, object_kind="user",
+                object_id=str(context.target_user_id), outcome="denied", severity="warning",
+                reason=f"{denied.reason.value}:{denied.permission.value}:{denied.scope.value}",
+                after_state={"method": method, "path": template},
+                request_id=current_request_uuid(),
+            )  # fmt: skip
+    except (AuditError, RuntimeError, TimeoutError) as exc:  # RuntimeError: writer not started
+        _log().warning("auth.view_as_target_denial_unaudited", error=type(exc).__name__)
+    return _problem(ErrorCode.FORBIDDEN, 403)  # standing, as at the key store's owner gate
 
 
 async def _session_read_only(auth: StepUpAuth, record: SessionRecord) -> Response | None:

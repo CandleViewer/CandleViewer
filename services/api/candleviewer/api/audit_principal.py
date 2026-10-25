@@ -26,6 +26,7 @@ from candleviewer.api.csrf import source_ip
 from candleviewer.api.view_as_subject import view_as_stamp, view_as_subject
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.auth.errors import SessionIdleLocked, SessionNotFound, SessionRevoked
+from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import last_step_up_at
 from candleviewer.observability.context import current_request_uuid
@@ -60,6 +61,25 @@ class _Identity(Protocol):
     async def user(self, user_id: str) -> dict[str, Any]: ...
 
     async def session_info(self, user_id: str) -> dict[str, Any]: ...
+
+
+async def identity_snapshot(identity: _Identity, user_id: uuid.UUID) -> PrincipalSnapshot | None:
+    """`user_id`'s roles and permissions as the identity store holds them, with no grants, or
+    `None` for a user who cannot act: not `active`, or holding a role outside the system set (fail
+    closed). A user the store does not hold raises `LookupError`; any other failure propagates."""
+    user = await identity.user(str(user_id))
+    info = await identity.session_info(str(user_id))
+    if user.get("status") != "active":
+        return None
+    codes = {str(code) for code in info.get("permissions", ())}
+    try:
+        return PrincipalSnapshot(
+            user_id=user_id,
+            roles=frozenset(str(role) for role in user.get("roles") or ()),
+            permissions=frozenset(p for p in Permission if p.value in codes),
+        )
+    except ValueError:
+        return None
 
 
 class SessionAuditPrincipalResolver:

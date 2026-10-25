@@ -205,12 +205,14 @@ def test_login_failures_catalogue_text_names_exactly_the_audit_rows_it_counts() 
     assert "cv_ws_auth_failures_total" in text and "cv_ws_auth_failures_total" in _SPECS
 
 
-def test_authz_denied_help_names_its_three_deciders_as_the_catalogue_does() -> None:
+def test_authz_denied_help_names_its_four_deciders_as_the_catalogue_does() -> None:
     # #836 slice 2b6 (C-15.2): the exported HELP text is the catalogue's, and both name each site
-    # that counts a denial, as the runbook does: enforce, the key store's gate and the admin guard.
+    # that counts a denial, as the runbook does: enforce, the key store's gate, the view-as guard
+    # (a protective write's target, #3085) and the admin guard.
     (family,) = authz_denied_total.describe()
     assert family.documentation == _SPECS["authz_denied_total"].help
-    assert all(d in family.documentation for d in ("enforce", "api.exchange_keys", "admin.http"))
+    deciders = ("enforce", "api.exchange_keys", "api.view_as_guard", "admin.http")
+    assert all(d in family.documentation for d in deciders)
 
 
 #: #3415 (SR-029, E09-S03): the one revoke-to-close latency series.

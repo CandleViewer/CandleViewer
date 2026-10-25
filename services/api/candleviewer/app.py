@@ -122,6 +122,7 @@ from candleviewer.api.deny_by_default import (
     assert_app_routes_declared,
     declared_operations,
     make_deny_undeclared_dependency,
+    rbac_permissions,
 )
 from candleviewer.api.drawings import make_drawings_router
 from candleviewer.api.drawings_models import TOOLS
@@ -1853,7 +1854,10 @@ def create_app(
     # so CSRF, the idle lock and the enrolment check come first. It reads the view-as service
     # (`None` on the fake backend) and the refusal recorder per request; both are set below, so a
     # missing one fails loudly. The protective writes' handlers register on
-    # `app.state.protective_writes` as they are mounted.
+    # `app.state.protective_writes` as they are mounted. For a live protective write it also
+    # checks the target's permission with `permissions` (the contract's `x-rbac`), `identity` (the
+    # target's reads) and `denials` (the `rbac.denied` record of a refusal): without the first two
+    # such a write is a 503, and `permissions` given without `denials` is not built.
     protective_writes = ProtectiveWrites(declared_operations(spec))
     app.state.protective_writes = protective_writes
     app.middleware("http")(
@@ -1864,6 +1868,9 @@ def create_app(
             protective=protective_writes,
             operations=declared_operations(spec),
             clock=auth_clock or (lambda: datetime.now(UTC)),
+            permissions=rbac_permissions(spec),
+            identity=identity,
+            denials=_LazyAuditEmitter(ctx.audit),
         )
     )
     # #2295: the enrolment-only session reaches five operations; added after (so outside) the

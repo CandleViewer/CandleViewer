@@ -15,6 +15,7 @@ from fastapi import FastAPI, HTTPException, WebSocketException
 from starlette.requests import HTTPConnection
 
 from candleviewer.api.contract_conformance import NON_CONTRACT_ROUTES
+from candleviewer.auth.generated_permissions import Permission
 
 #: Operational endpoints intentionally outside the REST contract and public.
 PUBLIC_OPERATIONAL_ROUTES = NON_CONTRACT_ROUTES | frozenset({"/healthz", "/readyz", "/metrics"})
@@ -41,6 +42,20 @@ def declared_operations(spec: dict[str, Any]) -> set[tuple[str, str]]:
             if method in _METHODS and isinstance(op, dict):
                 if isinstance(op.get("x-rbac"), dict) or op.get("security") == []:
                     out.add((method.upper(), path))
+    return out
+
+
+def rbac_permissions(spec: dict[str, Any]) -> dict[tuple[str, str], frozenset[Permission]]:
+    """(METHOD, path) -> the permissions its `x-rbac` names, for each operation that names any;
+    a code outside the generated vocabulary raises `ValueError` (the build fails)."""
+    out: dict[tuple[str, str], frozenset[Permission]] = {}
+    for path, item in spec.get("paths", {}).items():
+        if not isinstance(item, dict):
+            continue
+        for method, op in item.items():
+            rbac = op.get("x-rbac") if method in _METHODS and isinstance(op, dict) else None
+            if isinstance(rbac, dict) and (codes := rbac.get("permissions")):
+                out[(method.upper(), path)] = frozenset(Permission(str(c)) for c in codes)
     return out
 
 
