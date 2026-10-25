@@ -15,7 +15,10 @@ to count; a run that sets either says so in its summary. Its list reads page by 
 list more than a page reads every page, as on the venue. A test can rest an order or hold a
 position no run placed (`rest_foreign_order`, `hold_foreign_position`): the account's other
 users, which the harness must never touch. It serves no cancel-all: the harness never sends one
-(ruling R1C-02 (b)), and one sent would be refused here as an unknown route.
+(ruling R1C-02 (b)), and one sent would be refused here as an unknown route. Its key-info read
+(`GET /v5/user/query-api`) answers `key_info`: by default the accounts pack's compliant reply
+(`packages/fixtures/accounts`, E27-Q01, the key-info corpus), and a test serves another of that
+pack's replies (a withdrawal right, a transfer right, no IP binding) through the pack's resolver.
 
 `offline_stack` stands in for the host: the stack's M2 boots once over an in-memory store (which
 enrols the KEK's check value, as cv-api's first boot does) and the owner imports one synthetic
@@ -70,6 +73,26 @@ _CURSOR_NUMBER: Final = {
 def default_corpus() -> Path:
     """The corpus beside this checkout: `services/api/spike/oms_demo_path` -> repository root."""
     return Path(__file__).resolve().parents[4] / "packages" / "fixtures" / "bybit" / CAPTURE
+
+
+def default_accounts_pack() -> Path:
+    """The accounts pack beside this checkout (E27-Q01): the corpus of key-info replies."""
+    return Path(__file__).resolve().parents[4] / "packages" / "fixtures" / "accounts"
+
+
+#: The key-info call, as the accounts pack's manifests name its stub.
+KEY_INFO_STUB: Final = "GET /v5/user/query-api"
+
+
+def key_info_reply(pack: Path | None = None) -> dict[str, Any]:
+    """The accounts pack's compliant key-info reply: the payload its root scenario, `compliant`,
+    answers `GET /v5/user/query-api` with, as the pack holds it (the harness judges rights and the
+    allow-list, so the pack's clock anchoring is not applied)."""
+    root = default_accounts_pack() if pack is None else pack
+    manifest = json.loads((root / "compliant" / "manifest.json").read_text(encoding="utf-8"))
+    payload = root / str(manifest["rest"][KEY_INFO_STUB]["payload"])
+    body: dict[str, Any] = json.loads(payload.read_text(encoding="utf-8"))
+    return body
 
 
 def _wall_ms() -> int:
@@ -196,6 +219,7 @@ class CorpusVenue:
         reorder_every: int = 0,
         rate_limit_once: bool = False,
         refuse_auth: int = 0,
+        key_info: Mapping[str, Any] | None = None,
     ) -> None:
         self.corpus = corpus
         self.now_ms = now_ms
@@ -205,6 +229,10 @@ class CorpusVenue:
         self.drop_every, self.reorder_every = drop_every, reorder_every
         self.rate_limit_once = rate_limit_once
         self.refuse_auth = refuse_auth
+        #: What `GET /v5/user/query-api` answers: an accounts-pack reply, whole.
+        self.key_info: dict[str, Any] = (
+            key_info_reply() if key_info is None else json.loads(json.dumps(key_info))
+        )
         self.orders: dict[str, VenueOrder] = {}
         self.links: set[str] = set()
         self.executions: list[dict[str, Any]] = []
@@ -423,6 +451,11 @@ class CorpusVenue:
         [coin] = account["coin"]
         unified = patched(account, coin=[patched(coin, coin="USDT", walletBalance="50000")])
         return patched(shape, result=patched(shape["result"], list=[unified]))
+
+    def _user_query_api(self, _body: dict[str, Any], _params: dict[str, str]) -> dict[str, Any]:
+        """The key-info read: `key_info`, a fresh copy (its envelope `time` the venue's)."""
+        reply: dict[str, Any] = json.loads(json.dumps(self.key_info))
+        return reply
 
     # -- matching -----------------------------------------------------------------------------
 

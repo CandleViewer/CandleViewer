@@ -18,11 +18,13 @@
    clock_offset_ms=...)`: the real port, signed by M2 under `sign_rest` and `sign_ws_auth`
    through a timing wrapper (`measure.timed_borrower`: each `sign` call timed, the call and its
    result untouched), offline over the in-memory M2 the same way. The harness names the key by
-   its `api_keys.id` and never holds a secret.
+   its `api_keys.id` and never holds a secret. The key-rights preflight reads the key's rights
+   through the same adapter (`Composed.key_info_read`: its own key-info read, `key_verify`).
 
 `close` stops in reverse, the flatten having run first (`run.py`): the adapter's streams, the
-ports, the transport, M2 (the KEK zeroed), then the audit writer, flushed into Postgres with what
-is left in its WAL reported (never delete that volume before it drains, C-2.9), then the pools.
+ports and the key-info client, the transport, M2 (the KEK zeroed), then the audit writer, flushed
+into Postgres with what is left in its WAL reported (never delete that volume before it drains,
+C-2.9), then the pools.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
+from uuid import UUID
 
 import httpx
 
@@ -53,12 +56,15 @@ from candleviewer.secrets import (
     KekCheckResult,
     prove_kek_possession,
 )
+from spike.oms_demo_path.config import BUCKET_UID
 from spike.oms_demo_path.measure import Timings, timed_borrower
 from spike.oms_demo_path.safety import Refused, check_environment
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
     from candleviewer.audit.repository import AuditRepository
+    from candleviewer.exchange.bybit.key_info import ApiKeyFacts
+    from candleviewer.exchange.bybit.key_verify import KeyVerificationCalls
     from candleviewer.settings import Settings
 
 #: `prove_kek_possession`'s shape (offline passes its `harden` seam).
@@ -125,6 +131,7 @@ class Composed:
     transport: httpx.AsyncBaseTransport
     timings: Timings
     ports: list[BybitTradingPort] = field(default_factory=list)
+    key_calls: list[KeyVerificationCalls] = field(default_factory=list)
     kek_version: int | None = None
 
     def skewed_port(self, offset_ms: int) -> BybitTradingPort:
@@ -132,6 +139,24 @@ class Composed:
         port = self.venue.trading_port("demo", clock_offset_ms=lambda: offset_ms)
         self.ports.append(port)
         return port
+
+    def key_info_read(
+        self, key_ref: str, offset_ms: Callable[[], int]
+    ) -> Callable[[], Awaitable[ApiKeyFacts]]:
+        """The adapter's own key-info read of the run's key, as cv-api's self-check builds it
+        (`key_verification_calls`: one `GET /v5/user/query-api`, signed by M2 under `key_verify`
+        through the timing wrapper, sent through the account transport and so the recording
+        seam, on the verification budget): the key-rights preflight's only read. Never a second
+        signing path."""
+        calls = self.venue.key_verification_calls(
+            "demo",
+            UUID(key_ref),
+            uid=BUCKET_UID,
+            recv_window_ms=self.settings.recv_window_ms,
+            clock_offset_ms=offset_ms,
+        )
+        self.key_calls.append(calls)
+        return calls.key_info
 
 
 def app_context(settings: Settings, gate: ReadOnlyGate) -> AppContext:
@@ -201,6 +226,8 @@ async def close(composed: Composed, grace_s: float = 10.0) -> dict[str, Any]:
     await composed.venue.stop(grace_s)
     for port in composed.ports:
         await port.aclose()
+    for calls in composed.key_calls:
+        await calls.aclose()
     await composed.transport.aclose()
     await composed.bundle.lifecycle.stop(grace_s)
     audit = composed.audit

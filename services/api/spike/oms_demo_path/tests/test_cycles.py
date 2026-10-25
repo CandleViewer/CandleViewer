@@ -33,6 +33,7 @@ from candleviewer.exchange.base.models import (
     PrivateStreamStatus,
     Wallet,
 )
+from candleviewer.exchange.bybit.key_info import ApiKeyFacts, parse_key_info
 from spike.oms_demo_path import cycles, run
 from spike.oms_demo_path.config import RunConfig
 from spike.oms_demo_path.harness import Harness, PublicReads
@@ -42,6 +43,7 @@ from spike.oms_demo_path.offline import (
     CorpusVenue,
     OfflineStack,
     default_corpus,
+    key_info_reply,
     offline_stack,
 )
 from spike.oms_demo_path.outputs import RunOutputs
@@ -203,6 +205,36 @@ def test_sigterm_ends_the_run_and_the_flatten_runs(
     assert s["shutdown"]["flat"] is True and s["shutdown"]["action"] == "scoped flatten"
 
 
+def test_sighup_the_terminal_closing_winds_the_run_down_as_sigterm_does(
+    tmp_path: Path, stacks: list[OfflineStack]
+) -> None:
+    """Fold 3: closing the owner's terminal sends SIGHUP. The run winds down as on SIGINT or
+    SIGTERM: the armed, scoped flatten, then the outputs. A stand-in handler catches the signal
+    should the harness not (the default would end the test session itself)."""
+    venue = _venue()
+    original = cycles.one_cycle
+    caught: list[int] = []
+
+    async def then_hang_up(*args: Any, **kwargs: Any) -> str:
+        outcome = await original(*args, **kwargs)
+        os.kill(os.getpid(), signal.SIGHUP)
+        return outcome
+
+    previous = signal.signal(signal.SIGHUP, lambda signum, _frame: caught.append(signum))
+    cycles.one_cycle = then_hang_up  # restored below
+    try:
+        code = asyncio.run(run.run(_cfg(tmp_path / "out", cycles=5), venue=venue))
+    finally:
+        cycles.one_cycle = original
+        signal.signal(signal.SIGHUP, previous)
+    assert caught == [] and code == 0
+    s = _summary(tmp_path / "out")
+    assert s["cycles"]["completed"] == 1
+    assert s["shutdown"]["reason"] == "signal:SIGHUP" and s["outcome"] == "stopped"
+    assert s["shutdown"]["flat"] is True and s["shutdown"]["action"] == "scoped flatten"
+    assert venue.size == 0 and (tmp_path / "out" / "metrics.prom").is_file()
+
+
 # -- the same logic against FakeTradingPort ----------------------------------------------------
 
 
@@ -333,6 +365,10 @@ async def test_the_cycle_logic_against_the_fake_trading_port(tmp_path: Path) -> 
     venue = _venue()
     fake = _Book(account, venue.ref)
     scrubber = Scrubber()
+
+    async def key_info() -> ApiKeyFacts:  # the accounts pack's compliant key, as parsed
+        return parse_key_info(key_info_reply())
+
     h = Harness(
         port=GuardedPort(fake),
         account=account,
@@ -340,6 +376,7 @@ async def test_the_cycle_logic_against_the_fake_trading_port(tmp_path: Path) -> 
         outputs=RunOutputs(tmp_path / "out", scrubber),
         scrubber=scrubber,
         shutdown=Shutdown(),
+        key_info=key_info,
     )
     fake.set_wallet(_wallet(account))
     result = await cycles.run_cycles(h, _cfg(tmp_path, cycles=2, side="buy", fill_mode="join"))

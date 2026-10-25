@@ -12,7 +12,9 @@ streams and caps it again). Each exchange records how long the seam had been idl
 TLS included (`cold`), else `warm` (R1C-06); a create is also told apart as a limit opener or a
 reduce-only close. A failed exchange is counted by class (R1C-09). Each exchange is an event
 and, for its first few replies per call class and code, a fixture candidate; never a header.
-Both are handed to the outputs' writer, so the port's call never pays for a scrub (R1C-03).
+Both are handed to the outputs' writer, so the port's call never pays for a scrub (R1C-03). The
+key-info read's reply (`NOT_KEPT`) is never a fixture candidate or an error shape: it names the
+key, the UID, the key's label and the host's egress addresses; its timing and code are kept.
 
 `RecordingConnector` wraps the private-stream connector: it refuses any URL but the demo
 stream's, counts dials, and its sockets register each `auth` op's key id and signature with the
@@ -61,6 +63,8 @@ KEEPALIVE_S: Final = 5.0
 _TRANSFER_HEADERS: Final = frozenset({"content-encoding", "content-length", "transfer-encoding"})
 _KEY_HEADER: Final = "X-BAPI-API-KEY"
 _SIGN_HEADER: Final = "X-BAPI-SIGN"
+#: Replies never kept whole (see the module docstring): the key-info read's.
+NOT_KEPT: Final = frozenset({"/v5/user/query-api"})
 
 
 def _wall_ms() -> float:
@@ -223,9 +227,10 @@ class RecordingTransport(httpx.AsyncBaseTransport):
         )
         if code is not None and code != 0:
             self.codes[code] += 1
-            self.shapes.setdefault(code, reply)
+            if path not in NOT_KEPT:
+                self.shapes.setdefault(code, reply)
         self._kept[(name, code)] += 1
-        if self._kept[(name, code)] <= FIXTURES_PER_CODE:
+        if self._kept[(name, code)] <= FIXTURES_PER_CODE and path not in NOT_KEPT:
             label = f"{name}_{'none' if code is None else code}_{self._kept[(name, code)]}"
             self._outputs.rest_fixture(label, reply, transient=transient)
 

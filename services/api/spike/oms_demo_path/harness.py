@@ -8,12 +8,15 @@ reads demo's market data: demo has no public feed), limited to two `GET` paths a
 key; offline, the corpus. The clock offset comes from the signed wallet read's envelope `time`,
 timed at the seam (`ClockOffset`).
 
-A mode that touches orders runs `preflight` first: the size limits set, the account flat, the
-offset measured; only then is the run armed (`arm`). Until it is, nothing it does touches the
-account, and the shutdown touches nothing either (ruling R1C-02 (a)). Every `orderLinkId` the run
-sends carries its own prefix (`Links`, one trade group per run), and its `RunScope` keeps the
-fills of those orders, so the shutdown flatten cancels and closes only what the run itself
-placed and opened (ruling R1C-02 (b)).
+A mode that touches orders runs `preflight` first: the size limits set, the key's rights checked
+against what M2's import admitted (`check_key`: the adapter's own signed key-info read, never a
+write), the account flat, the offset measured; only then is the run armed (`arm`). Until it is,
+nothing it does touches the account, and the shutdown touches nothing either (ruling R1C-02 (a)).
+Every create the run sends is written to its intent ledger first (`ledger.IntentLedger`: no row,
+no order), and its `RunScope` owns exactly what that ledger lists and the fills of those orders,
+so the shutdown flatten cancels and closes only what the run itself placed and opened (ruling
+R1C-02 (b)). Its `orderLinkId`s still share one prefix (`Links`, one trade group per run), which
+names the run in the venue's UI; ownership is the ledger's.
 """
 
 from __future__ import annotations
@@ -40,6 +43,7 @@ from candleviewer.exchange.bybit.trades import RECENT_TRADE_PATH, recent_trades_
 from candleviewer.observability.context import spawn
 from candleviewer.oms.order_link import SEQ_MAX, OrderLinkIdParts, OrderPurpose
 from spike.oms_demo_path.config import SYMBOL
+from spike.oms_demo_path.ledger import IntentLedger
 from spike.oms_demo_path.measure import ClockOffset, StreamMonitor
 from spike.oms_demo_path.outputs import RunOutputs
 from spike.oms_demo_path.safety import (
@@ -50,10 +54,13 @@ from spike.oms_demo_path.safety import (
     Shutdown,
     check_flat,
     flatten,
+    key_mismatch,
+    key_record,
 )
 from spike.oms_demo_path.scrub import Scrubber
 
 if TYPE_CHECKING:
+    from candleviewer.accounts.verification import KeyFacts
     from candleviewer.domain.events import Instrument
     from candleviewer.exchange.base.ports import TradingPort
     from spike.oms_demo_path.recorder import RecordingConnector, RecordingTransport
@@ -160,14 +167,22 @@ class Harness:
     monotonic: Callable[[], float] = time.monotonic
     #: Called once the run is armed (`run.py` writes the provisional summary then).
     on_armed: Callable[[], None] | None = None
+    #: The adapter's own key-info read of the run's key (`compose.Composed.key_info_read`).
+    key_info: Callable[[], Awaitable[KeyFacts]] | None = None
     links: Links = field(init=False)
+    ledger: IntentLedger = field(init=False)
     scope: RunScope = field(init=False)
     armed: bool = field(init=False, default=False)
+    #: The key-rights preflight's record (`safety.key_record`), once the key was read.
+    key_check: dict[str, object] | None = field(init=False, default=None)
 
     def __post_init__(self) -> None:
         self.links = Links(self.account.account_id, self.scrubber)
-        self.scope = RunScope(self.links.prefix, self.account.account_id, self.monotonic)
-        self.port.scope = self.scope
+        self.ledger = IntentLedger(
+            self.outputs.directory, self.scrubber, elapsed=self.outputs.elapsed
+        )
+        self.scope = RunScope(self.ledger, self.account.account_id, self.monotonic)
+        self.port.scope, self.port.ledger = self.scope, self.ledger
         if self.monitor is None:
             self.monitor = StreamMonitor(self.offset, self.monotonic)
 
@@ -188,16 +203,34 @@ class Harness:
         return self.now_us() + (self.offset.value or 0) * 1000 + slack * round((1 + rtt / 2) * 1000)
 
     async def preflight(self) -> None:
-        """Ruling R1C-02 (a): the size limits set, the account flat (no open order, no
-        position), the offset measured; then the run is armed. Whatever fails first refuses the
-        run, and nothing was sent: the shutdown then touches nothing either."""
+        """Ruling R1C-02 (a): the size limits set, the key's rights checked (`check_key`), the
+        account flat (no open order, no position), the offset measured; then the run is armed.
+        Whatever fails first refuses the run, and nothing was sent: the shutdown then touches
+        nothing either."""
         if self.port.limits is None:
             raise Refused("no size limits: the instrument read comes first; nothing was sent")
+        await self.check_key()
         orders = await self.port.open_orders(self.account, SYMBOL)
         positions = await self.port.positions(self.account)
         check_flat(orders, positions)
         await self.measure_offset()
         self.arm()
+
+    async def check_key(self) -> None:
+        """The key's live rights against what M2's import admitted it with (`safety.key_mismatch`,
+        C-2.8), from the adapter's own key-info read (one signed `GET /v5/user/query-api`, never
+        a write, the first signed call of the preflight), before the run is armed. A mismatch,
+        or no read wired, refuses the run with nothing touched (ruling R1C-02 (a)). The UID and
+        the allow-list's addresses it reads are registered with the scrubber, never written."""
+        if self.key_info is None:
+            raise Refused("no key-info read is wired: the key's rights are unchecked")
+        facts = await self.key_info()
+        for value in (facts.uid, *facts.ip_whitelist):
+            self.scrubber.secret(value)
+        mismatch = key_mismatch(facts)
+        self.key_check = key_record(facts, mismatch)
+        if mismatch is not None:
+            raise Refused(f"{mismatch}; nothing was touched")
 
     async def flatten(self) -> dict[str, object]:
         """`safety.flatten` over the run's own scope (ruling R1C-02 (b)), on its clocks."""

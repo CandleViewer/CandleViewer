@@ -318,3 +318,16 @@ def test_a_frame_or_metrics_text_the_check_refuses_is_never_written(tmp_path: Pa
 
 def test_an_unreadable_frame_is_never_kept() -> None:
     assert Scrubber().frame("{not json") is None
+
+
+def test_a_frame_kept_before_its_identifier_was_learnt_is_refused_at_close(tmp_path: Path) -> None:
+    """A frame scrubbed and kept, then an identifier it holds learnt (a later record showed it):
+    each fixture is re-checked whole at close, so this one is refused, never written."""
+    recorder = _Recorder()
+    scrubber = Scrubber()
+    outputs = RunOutputs(tmp_path / "run", scrubber, write=recorder)
+    outputs.frame("order", json.dumps({"topic": "order", "data": [{"note": f"echo {ACCOUNT}"}]}))
+    scrubber.secret(ACCOUNT)  # learnt only after the frame was kept
+    outputs.close()
+    assert ACCOUNT not in recorder.text() and outputs.refused == 1
+    assert not [path for path, _, _ in recorder.writes if path.name.startswith("private_order")]

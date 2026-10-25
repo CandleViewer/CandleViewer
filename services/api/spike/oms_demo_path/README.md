@@ -21,7 +21,7 @@ something without a change, the gap is listed at the end with its workaround.
 | `soak`      | The private stream open for `--hours` (24 for the ticket), no orders: dials, `auth` grants and refusals, pongs and heartbeats, `down`s, gaps, the longest silence. The offset is re-measured every 10 minutes. Its idle phase is a block of its own (below).                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `shapes`    | The duplicate `orderLinkId` reply and the `10002` reply (below); `10018` is never provoked.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `retention` | On day 8 or later of a `cycles` run: its order history from `--since-ms` (its `started_at_ms`), by state and age (24 §8.3 rule 6).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| `flatten`   | The owner's recovery when a run's shutdown flatten failed: it adopts that run's scope from its summary (`--run-dir`) and cancels and closes only that run's own orders and fills (below). The same consent flags and typed confirmation; no floors.                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `flatten`   | The owner's recovery when a run's shutdown flatten failed: it adopts that run's scope from its summary and its intent ledger (`--run-dir`) and cancels and closes only the orders that ledger lists and their fills (below). The same consent flags and typed confirmation; no floors.                                                                                                                                                                                                                                                                                                                                                                              |
 | `report`    | The tables of a run, from its scrubbed `summary.json` (`--run-dir`), and `adr-0006-addendum.md` in `--out`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 
 The order size is `--qty-multiple` minimum quantities, 2 by default: BTCUSDT's minimum is one
@@ -82,32 +82,54 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
   confirmation `PLACE DEMO ORDERS`. The harness never holds a secret and needs no UID (the
   governor's bucket label is a constant; `AccountRef.uid` is never sent).
 - **A run that touches orders is armed only after its preflight** (ruling R1C-02 (a)): the size
-  limits set from the instrument read, the account flat (no open order, no position), the offset
-  measured. If anything fails first (an account not flat, the limits unset, a failed instrument
-  read, a failed key check, any error, composition included), the run is `refused` and touches
-  nothing on the account: no cancel, no close. The summary's `outcome` is `refused`, `refused`
-  names the reason and the `shutdown` block shows no action (`action: none`); the exit code is 2.
+  limits set from the instrument read, the key's rights checked (below), the account flat (no open
+  order, no position), the offset measured. If anything fails first (an account not flat, the
+  limits unset, a failed instrument read, a failed key check, any error, composition included),
+  the run is `refused` and touches nothing on the account: no cancel, no close. The summary's
+  `outcome` is `refused`, `refused` names the reason and the `shutdown` block shows no action
+  (`action: none`); the exit code is 2.
+- **The key's rights, before arming** (fold 3): the preflight's first signed call is the adapter's
+  own key-info read (`GET /v5/user/query-api` through `key_verification_calls`, signed by M2 under
+  `key_verify`, through the recording seam: never a second signing path, never a write). The
+  key's live rights must still be what M2's import admitted (C-2.8): no withdrawal or transfer
+  right (the shared deny-list the import applies), no right outside the import's allow-list (a
+  fund group's, a spot right), write access with both trade rights, and an IP allow-list of host
+  addresses (none empty, no wildcard or range). Any mismatch refuses the run, nothing touched;
+  `summary.key_check` says what was judged and why, never the UID, an address or the key id. The
+  reply is never kept as a fixture candidate (it names the key, the UID and the host's egress);
+  the UID and the addresses it holds are registered with the scrubber. `flatten` checks the key
+  the same way; `soak` and `retention` arm nothing and send no order, so they do not.
 - BTCUSDT only; no order above `--max-qty-multiple` minimums or off the quantity step.
 - **Every position-opening order carries a native `stop_loss` on the protective side** (C-2.6);
   a close is a reduce-only market order with no stop (the venue refuses one), so it never opens;
   no amend removes or zeroes a stop. `GuardedPort` is the only trading surface: no batch,
   leverage, stop write, withdrawal or transfer (C-2.8; the adapter has no such endpoint).
+- **No row, no order** (fold 3): each create's intent is written, scrubbed, to the run's ledger
+  `intents.jsonl` before the create is sent: the run-scoped `orderLinkId` token (`link#3`), side,
+  quantity, price, stop and reduce-only, with the link's digest (16 hex of its sha256, a handle,
+  never the id). One `write(2)` on a file opened for append, synchronously: a run killed after it
+  (SIGKILL, the OOM killer) leaves the row, so the row of an order exists before the order can.
+  A row not written (the scrub's leak check or the disk refused it) is refused, and its create
+  is not sent: a flatten's close too (the native stop stays the backstop; `flatten` retries).
 - **Once armed, the shutdown flatten is scoped to the run's own state** (ruling R1C-02 (b)).
-  Every `orderLinkId` the run sends carries its own prefix (`cvd-` and one trade group per run,
-  `harness.Links`), and its `RunScope` keeps the fills of those orders. SIGINT, SIGTERM or an
-  unhandled error ends the mode, then, before M2 and audit stop, the flatten cancels only the
-  open orders carrying the run's prefix, one by one (never a cancel-all), and closes, reduce-only,
-  only the quantity the run's own fills hold open (re-read from the execution list over the run's
-  window), never more than the venue's position on that side. It never flattens the account: a
-  foreign order or position is left and counted (`shutdown.not_ours_left`). The guard refuses an
-  amend or a cancel of any order not the run's. The flatten has 40 s in all, inside the
-  container's 60 s grace. Three venue failures in a row end a `cycles` run the same way.
+  The ledger is the run's own state: the run owns exactly the orders its ledger lists and the
+  fills of those orders, never what an id's form suggests (an order with the run's own prefix that
+  it never sent is not its). Its `orderLinkId`s still share one prefix (`cvd-` and one trade group
+  per run, `harness.Links`), which finds them in the venue's UI. SIGINT, SIGTERM, SIGHUP (the
+  owner's terminal closing: unhandled, it would kill the run where it stands) or an unhandled
+  error ends the mode, then, before M2 and audit stop, the flatten cancels only the open orders
+  its ledger lists, one by one (never a cancel-all), and closes, reduce-only, only the quantity
+  the run's own fills hold open (re-read from the execution list over the run's window), never
+  more than the venue's position on that side. It never flattens the account: a foreign order or
+  position is left and counted (`shutdown.not_ours_left`). The guard refuses an amend or a cancel
+  of any order not the run's. The flatten has 40 s in all, inside the container's 60 s grace.
+  Three venue failures in a row end a `cycles` run the same way.
 - The venue keeps one one-way position per symbol, so a foreign position nets with the run's own:
   a run's sell against a foreign long reduces that long, and undoing it would open a position.
   The flatten never opens one: it reports the run's net it could not close (`net_not_held`) and
   leaves it. The preflight's flat check and "No manual trading on that demo account during a
   run." keep this from arising; a native stop's or a liquidation's close is the venue's own (no
-  prefix), so it is not in the run's fills either, and the same cap applies.
+  row in the run's ledger), so it is not in the run's fills either, and the same cap applies.
 
 ## Audit: a WAL of its own (decided, brief item 2)
 
@@ -164,8 +186,9 @@ bundle.exchange_borrower, ...).trading_port("demo")`. A second process starting 
 
 ## Outputs, scrubbed before they are written (brief item 7)
 
-`<out>/events.jsonl`, `summary.json`, `metrics.prom`, and fixture candidates in the corpus's
-layout: `fixtures/rest_<call>_<code>_<n>.json` (reply bodies) and
+`<out>/events.jsonl`, `summary.json`, `metrics.prom`, the intent ledger `intents.jsonl` (above:
+written before each create, never through the writer's queue), and fixture candidates in the
+corpus's layout: `fixtures/rest_<call>_<code>_<n>.json` (reply bodies) and
 `fixtures/private_<topic>.jsonl.gz`. The directory is 0700, every file 0600.
 
 Every write passes `Scrubber.dumps` first (`outputs._emit`): a value under an identifier key
@@ -343,19 +366,22 @@ strands its signing: every signed request, the shutdown flatten's included, then
 
    Follow a run with `tail -f /srv/cv-spike/out/<run>/events.jsonl` (scrubbed).
 
-6. **Stop**: Ctrl-C in its terminal (SIGINT), or `docker kill --signal SIGTERM <container>`: the
-   harness cancels the run's own open orders, closes reduce-only what its own fills hold open,
-   and writes its summary (the flatten has 40 s, inside `stop_grace_period` 60 s). It touches
-   nothing it did not place. The summary is written provisionally when the run is armed and
-   again before that flatten, with the run's scope (`run_scope`: digests of its link prefix and
-   account, and its window start), so even a run killed past the grace period leaves both. A
-   refused run (`outcome: refused`) touched nothing: read `refused`, fix it, start again.
+6. **Stop**: Ctrl-C in its terminal (SIGINT), `docker kill --signal SIGTERM <container>`, or the
+   terminal closing (SIGHUP): the harness cancels the run's own open orders, closes reduce-only
+   what its own fills hold open, and writes its summary (the flatten has 40 s, inside
+   `stop_grace_period` 60 s). It touches nothing its ledger does not list. The summary is written
+   provisionally when the run is armed and again before that flatten, with the run's scope
+   (`run_scope`: its ledger's file, the account's digest and its window start), and every create
+   was in `intents.jsonl` before it was sent, so even a run killed past the grace period leaves
+   both. A refused run (`outcome: refused`) touched nothing: read `refused`, fix it, start again.
 7. **Flatten** (the owner's recovery when a run's shutdown flatten failed: `shutdown.flat: false`,
    or a run killed with only its provisional summary): an audited, M2-signed retry, scoped to the
-   failed run as its shutdown was. It adopts that run's scope from its summary, refuses another
-   account's, cancels that run's own open orders and closes what its own fills hold open, never
-   the account; the same consent flags and typed confirmation, no floors. Its native stops
-   protect the position meanwhile.
+   failed run as its shutdown was. It adopts that run's scope (its window from its summary, its
+   orders from its `intents.jsonl`, refusing a run with neither), refuses another account's,
+   checks the key's rights, cancels the open orders that ledger lists and closes what their fills
+   hold open, never the account; the same consent flags and typed confirmation, no floors. Its
+   own ledger lists what it adopted, so a failed `flatten` can be flattened in turn. Its native
+   stops protect the position meanwhile.
 
    ```sh
    $SPIKE flatten $IDS --run-dir /var/lib/candleviewer/spike-out/<failed run> \

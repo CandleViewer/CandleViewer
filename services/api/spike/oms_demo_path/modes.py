@@ -19,10 +19,11 @@
 - `retention`: on day 8 or later of an earlier run, the order history from its start, counted by
   state and age (24 §8.3 rule 6: demo keeps orders 7 days; a cancelled one may show 24 h only).
 - `flatten` (R1S-04): the owner's audited, M2-signed retry when a run's shutdown flatten failed.
-  It adopts that run's scope from its summary (`--run-dir`: the digests of its link prefixes and
-  its window), refuses another account's, reads the instrument for the size step, measures the
-  offset, arms and runs `safety.flatten`: only that run's orders and fills, and its own closes,
-  are ever touched; never the account. No floors; the same consent flags and confirmation.
+  It adopts that run's scope (`--run-dir`: its window from its summary, its orders from its
+  intent ledger, `intents.jsonl`), refuses another account's, reads the instrument for the size
+  step, checks the key's rights, measures the offset, arms and runs `safety.flatten`: only the
+  orders that run's ledger lists, their fills, and its own closes, are ever touched; never the
+  account. No floors; the same consent flags and confirmation.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from candleviewer.exchange.base.models import CancelOrderRequest, PlaceOrderRequ
 from spike.oms_demo_path.config import SOAK_HOURS, SYMBOL, RunConfig
 from spike.oms_demo_path.cycles import prices
 from spike.oms_demo_path.harness import Harness
+from spike.oms_demo_path.ledger import LEDGER
 from spike.oms_demo_path.measure import stats
 from spike.oms_demo_path.safety import QtyLimits, Refused
 
@@ -214,7 +216,8 @@ async def run_flatten(h: Harness, cfg: RunConfig) -> dict[str, object]:
     instrument = await h.public.instrument()
     limits, _ = QtyLimits.of(instrument, multiple=1, max_multiple=cfg.max_qty_multiple)
     h.port.limits = limits
-    h.scope.adopt(record)
+    h.scope.adopt(record, cfg.run_dir / LEDGER)
+    await h.check_key()
     await h.measure_offset()
     h.arm()
     report = await h.flatten()

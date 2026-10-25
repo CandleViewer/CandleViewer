@@ -19,6 +19,7 @@ from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import RateLimitError
 from candleviewer.exchange.base.models import AccountRef
 from candleviewer.exchange.base.reconnect import ConnectionBudget, ReconnectPolicy
+from candleviewer.exchange.bybit.key_verify import key_verification_calls, verification_governor
 from candleviewer.exchange.bybit.private_stream import PrivateStreams
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.trading import BybitTradingPort
@@ -104,6 +105,18 @@ class _Rig:
                 monotonic=self.clock,
             )
 
+        # The adapter's own key-info read, as `Composed.key_info_read` builds it (fold 3).
+        key_calls = key_verification_calls(
+            fake_capability(SIGNER),
+            "demo",
+            CREDENTIAL_ID,
+            uid="spike",
+            recv_window_ms=5000,
+            governor=verification_governor(governor),
+            clock_offset_ms=lambda: self.offset.value or 0,
+            transport=self.recorder,
+        )
+
         self.harness = Harness(
             port=GuardedPort(port, timings),
             account=_account(),
@@ -117,6 +130,7 @@ class _Rig:
             skewed_port=skewed,
             sleep=self.clock.sleep,
             monotonic=self.clock,
+            key_info=key_calls.key_info,
         )
 
 

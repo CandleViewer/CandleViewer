@@ -12,6 +12,7 @@ failed shutdown flatten, adopts that run's scope from its summary and is scoped 
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from decimal import Decimal
 from pathlib import Path
@@ -23,6 +24,7 @@ import pytest
 from spike.oms_demo_path import cycles, report, run
 from spike.oms_demo_path.config import RunConfig
 from spike.oms_demo_path.harness import Harness
+from spike.oms_demo_path.ledger import LEDGER
 from spike.oms_demo_path.offline import (
     Corpus,
     CorpusVenue,
@@ -102,7 +104,8 @@ async def test_a_non_flat_account_is_refused_and_its_foreign_rows_survive(
     order = _foreign(venue)
     assert await run.run(_cfg(tmp_path / "out"), venue=venue) == 2
     _refused_and_untouched(tmp_path / "out", venue, "open order")
-    assert venue.paths == ["/v5/order/realtime", "/v5/position/list"]  # its preflight only
+    # its preflight only: the key's rights (fold 3), then the flat check's two reads
+    assert venue.paths == ["/v5/user/query-api", "/v5/order/realtime", "/v5/position/list"]
     _untouched(venue, order, FOREIGN)
     text = report.render(tmp_path / "out")
     assert "Refused, nothing touched: the account has an open order" in text
@@ -263,8 +266,16 @@ async def test_flatten_takes_the_failed_runs_scope_and_ends_it_flat(
     assert all(
         o.status not in ("New", "PartiallyFilled") for o in venue.orders.values() if o is not order
     )
-    failed_digests = _summary(failed)["run_scope"]["link_prefix_digests"]
-    assert set(failed_digests) < set(s["run_scope"]["link_prefix_digests"])
+    failed_rows = _ledger(failed)
+    assert [r["reduce_only"] for r in failed_rows] == [False]  # its one opener, before its send
+    adopted = [r for r in _ledger(out) if r.get("adopted")]
+    assert [r["link_digest"] for r in adopted] == [failed_rows[0]["link_digest"]]
+    assert s["ledger"] == {"file": "intents.jsonl", "intents": 1, "adopted": 1, "orders": 2}
+
+
+def _ledger(run_dir: Path) -> list[dict[str, Any]]:
+    text = (run_dir / LEDGER).read_text(encoding="utf-8")
+    return [json.loads(line) for line in text.splitlines()]
 
 
 async def test_flatten_refuses_another_accounts_run_with_nothing_touched(

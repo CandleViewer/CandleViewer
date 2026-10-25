@@ -23,11 +23,13 @@ from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.base.models import (
     Execution,
     Order,
+    PlaceOrderRequest,
     PrivateEvent,
 )
 from spike.oms_demo_path import cycles, modes, report, run
 from spike.oms_demo_path.config import DEMO_PRIVATE_WS, RunConfig
 from spike.oms_demo_path.harness import Harness
+from spike.oms_demo_path.ledger import IntentLedger
 from spike.oms_demo_path.measure import ClockOffset, StreamMonitor, Timings, stats
 from spike.oms_demo_path.metrics import export
 from spike.oms_demo_path.offline import Corpus, CorpusVenue, default_corpus
@@ -607,6 +609,17 @@ async def test_flatten_mode_refuses_without_a_scope_and_reports_a_net_it_cannot_
     rig.venue.executions[-1] |= {"orderLinkId": theirs, "side": "Buy"}
     scope = h.scope.record() | {"window_start_ms": int(time.time() * 1000) - 60_000}
     run_dir = _written(tmp_path / "failed2", {"run_scope": scope})
+    sent = PlaceOrderRequest(  # that run's row for it, as its guard wrote it before the send
+        account=h.account,
+        symbol="BTCUSDT",
+        side="buy",
+        order_type="limit",
+        qty=Decimal("0.002"),
+        price=Decimal("60000"),
+        order_link_id=theirs,
+        stop_loss=Decimal("58000"),
+    )
+    IntentLedger(run_dir, Scrubber(), elapsed=lambda: 0.0).record(sent)
     report_ = await modes.run_flatten(h, RunConfig(mode="flatten", out=tmp_path, run_dir=run_dir))
     assert report_["flat"] is False and report_["errors"] == ["net_not_held"]
     assert h.shutdown.reason == "error:not_flat"

@@ -32,6 +32,7 @@ from candleviewer.settings import Environment, Settings
 from spike.oms_demo_path import safety
 from spike.oms_demo_path.config import CONFIRMATION, RunConfig
 from spike.oms_demo_path.harness import Links
+from spike.oms_demo_path.ledger import LEDGER, IntentLedger
 from spike.oms_demo_path.scrub import Scrubber
 from tests._corpus import rest
 
@@ -81,10 +82,21 @@ def close(qty: str = "0.002", **overrides: object) -> PlaceOrderRequest:
     return PlaceOrderRequest.model_validate(fields | overrides)
 
 
+def memory_ledger(rows: list[bytes] | None = None) -> IntentLedger:
+    """An intent ledger whose rows go to `rows`, never a file: the unit tests' disk."""
+    kept: list[bytes] = [] if rows is None else rows
+
+    def keep(_path: Path, data: bytes, _append: bool) -> None:
+        kept.append(data)
+
+    return IntentLedger(Path("/nonexistent/run"), Scrubber(), elapsed=lambda: 0.0, write=keep)
+
+
 def guarded(fake: FakeTradingPort | None = None) -> tuple[safety.GuardedPort, FakeTradingPort]:
     port = fake if fake is not None else FakeTradingPort()
     guard = safety.GuardedPort(port)
     guard.limits = LIMITS
+    guard.ledger = memory_ledger()
     return guard, port
 
 
@@ -421,9 +433,24 @@ NOW_US = 1_790_000_000_000_000
 
 def scoped() -> tuple[Links, safety.RunScope]:
     links = Links(ACCOUNT.account_id, Scrubber())
-    scope = safety.RunScope(links.prefix, ACCOUNT.account_id)
+    scope = safety.RunScope(memory_ledger(), ACCOUNT.account_id)
     scope.start_us = NOW_US - 60_000_000
     return links, scope
+
+
+def mine(links: Links, scope: safety.RunScope, purpose: OrderPurpose = "entry") -> str:
+    """One of the run's own links: minted, and its intent in the run's ledger, as a create the
+    guard let through leaves it; so the scope owns it."""
+    value = links.new(purpose)
+    req = opener(order_link_id=value) if purpose == "entry" else close(order_link_id=value)
+    scope.ledger.record(req)
+    return value
+
+
+def bind(guard: safety.GuardedPort, scope: safety.RunScope) -> None:
+    """The guard and the scope on one ledger, as the harness binds them: the flatten's own
+    closes are written there, so their fills are the run's."""
+    guard.scope, guard.ledger = scope, scope.ledger
 
 
 def execution(link_id: str, side: str, qty: str, n: int) -> Execution:
@@ -500,10 +527,10 @@ async def test_flatten_cancels_only_the_runs_own_orders_and_closes_only_its_own_
     links, scope = scoped()
     fake = _Venue("0.005")  # the run's 0.002 and a foreign 0.003, netted as on the venue
     guard, _ = guarded(fake)
-    guard.scope = scope
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     fake.seed_execution(execution(link(), "buy", "0.003", 2))  # a foreign fill
-    own, foreign = open_order(links.new(), "venue-own"), open_order(link(), "venue-foreign")
+    own, foreign = open_order(mine(links, scope), "venue-own"), open_order(link(), "venue-foreign")
     for order in (own, foreign):
         fake.seed_order(order, uid=ACCOUNT.uid)
     report = await _flatten(guard, scope, links)
@@ -530,12 +557,36 @@ async def test_flatten_cancels_only_the_runs_own_orders_and_closes_only_its_own_
     assert report["not_ours_left"] == {"open_orders": 1, "venue_position_less_own_net": "0.003"}
 
 
+async def test_flatten_owns_what_the_ledger_lists_never_what_an_ids_form_suggests() -> None:
+    """Fold 3: the flatten reads the run's own from its ledger. An order with the run's own
+    prefix that the run never sent (no row), and another harness run's, are not the run's."""
+    links, scope = scoped()
+    fake = _Venue("0.002")
+    guard, _ = guarded(fake)
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    other_run = Links(ACCOUNT.account_id, Scrubber())
+    for order in (
+        open_order(mine(links, scope), "venue-own"),
+        open_order(links.new(), "venue-no-row"),  # the run's prefix, never sent by it
+        open_order(other_run.new(), "venue-other-run"),
+    ):
+        fake.seed_order(order, uid=ACCOUNT.uid)
+    report = await _flatten(guard, scope, links)
+    left = {o.exchange_order_id for o in await fake.open_orders(ACCOUNT)}
+    assert left == {"venue-no-row", "venue-other-run"}
+    assert (report["cancelled"], report["closed_qty"], report["flat"]) == (1, "0.002", True)
+    assert report["not_ours_left"] == {"open_orders": 2, "venue_position_less_own_net": "0"}
+
+
 async def test_flatten_never_closes_more_than_the_run_opened() -> None:
     links, scope = scoped()
     fake = _Venue("0.004")
     guard, _ = guarded(fake)
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
-    fake.seed_execution(execution(links.flatten(), "sell", "0.001", 2))  # its own earlier close
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
+    closed = mine(links, scope, "flatten")  # its own earlier close
+    fake.seed_execution(execution(closed, "sell", "0.001", 2))
     first = await _flatten(guard, scope, links)
     again = await _flatten(guard, scope, links)
     assert (first["own_net_qty"], first["closed_qty"], fake.held) == (
@@ -550,8 +601,8 @@ async def test_flatten_counts_a_close_sent_but_not_yet_listed_and_never_closes_t
     links, scope = scoped()
     fake = _Venue("0.002", lists_closes=False)
     guard, _ = guarded(fake)
-    guard.scope = scope
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     report = await _flatten(guard, scope, links)
     assert [c.method for c in fake.calls].count("place_order") == 1
     assert report["flat"] is False and report["flatten_orders"] == 1
@@ -561,7 +612,8 @@ async def test_flatten_leaves_a_net_the_venue_no_longer_holds() -> None:
     links, scope = scoped()
     fake = _Venue("0")  # its native stop closed it: the venue holds nothing
     guard, _ = guarded(fake)
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     report = await _flatten(guard, scope, links)
     assert "place_order" not in [c.method for c in fake.calls]
     assert report["errors"] == ["net_not_held"] and report["flat"] is False
@@ -571,7 +623,8 @@ async def test_flatten_records_a_failed_read_by_class_and_still_closes() -> None
     links, scope = scoped()
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     fake.script("open_orders", RuntimeError("venue down"))
     fake.script("positions", RuntimeError("venue down"))
     report = await _flatten(guard, scope, links)
@@ -583,7 +636,8 @@ async def test_flatten_stops_at_its_deadline() -> None:
     links, scope = scoped()
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     ticks = iter([0.0, 0.0, 41.0, 41.0, 41.0])
     report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
     errors = report["errors"]
@@ -595,7 +649,8 @@ async def test_flatten_stops_at_its_deadline_before_any_cancel() -> None:
     links, scope = scoped()
     fake = _Venue("0")
     guard, _ = guarded(fake)
-    fake.seed_order(open_order(links.new(), "venue-own"), uid=ACCOUNT.uid)
+    bind(guard, scope)
+    fake.seed_order(open_order(mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
     ticks = iter([0.0, 41.0, 41.0])
     report = await _flatten(guard, scope, links, monotonic=lambda: next(ticks))
     assert report["errors"] == ["deadline", "deadline"] and report["flat"] is False
@@ -606,9 +661,9 @@ async def test_flatten_records_a_cancel_and_a_close_that_raise_and_tries_again()
     links, scope = scoped()
     fake = _Venue("0.002")
     guard, _ = guarded(fake)
-    guard.scope = scope
-    fake.seed_order(open_order(links.new(), "venue-own"), uid=ACCOUNT.uid)
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_order(open_order(mine(links, scope), "venue-own"), uid=ACCOUNT.uid)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     fake.script("cancel_order", RuntimeError("venue down"))
     fake.script("place_order", RuntimeError("venue down"))
     report = await _flatten(guard, scope, links)
@@ -621,8 +676,8 @@ async def test_a_close_the_flatten_cancels_no_longer_counts_as_pending() -> None
     links, scope = scoped()
     fake = _Venue("0.002", lists_closes=False)
     guard, _ = guarded(fake)
-    guard.scope = scope
-    fake.seed_execution(execution(links.new(), "buy", "0.002", 1))
+    bind(guard, scope)
+    fake.seed_execution(execution(mine(links, scope), "buy", "0.002", 1))
     await _flatten(guard, scope, links)  # its close rests unfilled, pending
     assert scope.unconfirmed() == Decimal("0.002")
     fake.lists_closes = True
@@ -648,22 +703,41 @@ async def test_guarded_port_refuses_an_amend_or_a_cancel_of_another_order() -> N
     assert fake.calls == []
 
 
-def test_the_run_scope_owns_its_prefix_records_no_identifier_and_adopts_a_failed_runs() -> None:
-    links, scope = scoped()
-    mine, theirs = links.new(), link()
-    assert scope.owns(mine) and not scope.owns(theirs) and not scope.owns(None)
-    assert not scope.owns("ext-" + "0" * 32)
+def test_the_run_scope_owns_what_its_ledger_lists_records_no_id_and_adopts_a_failed_runs(
+    tmp_path: Path,
+) -> None:
+    for name in ("failed", "later"):
+        (tmp_path / name).mkdir()
+    failed = IntentLedger(tmp_path / "failed", Scrubber(), elapsed=lambda: 0.0)
+    scope = safety.RunScope(failed, ACCOUNT.account_id)
+    links = Links(ACCOUNT.account_id, Scrubber())
+    mine_, unsent = mine(links, scope), links.new()  # the run's prefix, never sent: not the run's
+    assert scope.owns(mine_) and not scope.owns(unsent) and not scope.owns(link())
+    assert not scope.owns(None) and not scope.owns("ext-" + "0" * 32)
+    scope.start_us = NOW_US - 60_000_000
     record = scope.record()
-    assert record["account_digest"] == safety.digest(str(ACCOUNT.account_id))
-    assert mine[: safety.LINK_PREFIX_LEN] not in str(record) and str(ACCOUNT.account_id) not in str(
-        record
+    assert record == {
+        "ledger": LEDGER,
+        "account_digest": safety.digest(str(ACCOUNT.account_id)),
+        "window_start_ms": (NOW_US - 60_000_000) // 1000,
+    }
+    assert str(ACCOUNT.account_id) not in str(record)
+    later = safety.RunScope(
+        IntentLedger(tmp_path / "later", Scrubber(), elapsed=lambda: 0.0), ACCOUNT.account_id
     )
-    later, other = scoped()
-    other.start_us = NOW_US
-    other.adopt(record)
-    assert other.owns(mine) and other.owns(later.new()) and other.start_us == NOW_US - 60_000_000
+    later.start_us = NOW_US
+    later.adopt(record, tmp_path / "failed" / LEDGER)
+    assert later.owns(mine_) and not later.owns(unsent) and later.start_us == NOW_US - 60_000_000
+    adopted = (tmp_path / "later" / LEDGER).read_text()
+    assert safety.digest(mine_) in adopted and '"adopted":true' in adopted  # a later flatten's too
+    assert mine_ not in adopted and mine_ not in (tmp_path / "failed" / LEDGER).read_text()
     with pytest.raises(safety.Refused, match="no run scope"):
-        other.adopt({"link_prefix_digests": [], "window_start_ms": 1})
+        later.adopt({"window_start_ms": None}, tmp_path / "failed" / LEDGER)
+    with pytest.raises(safety.Refused, match="no readable intent ledger"):
+        later.adopt(record, tmp_path / "none" / LEDGER)
+    (tmp_path / "torn.jsonl").write_text('{"t":1.0,"link_dig\n')  # a row a kill cut short
+    with pytest.raises(safety.Refused, match="lists no order"):
+        later.adopt(record, tmp_path / "torn.jsonl")
 
 
 def test_links_carry_one_prefix_and_keep_the_last_numbers_for_the_flatten(
@@ -691,6 +765,23 @@ async def test_shutdown_trips_once_on_a_real_sigterm() -> None:
     finally:
         remove()
     assert shutdown.reason == "signal:SIGTERM"
+
+
+async def test_shutdown_trips_on_a_real_sighup_the_terminal_closing() -> None:
+    """Closing the owner's terminal sends SIGHUP; unhandled, it would kill the run where it
+    stands. A stand-in handler catches it should the harness not (never the session's kill)."""
+    caught: list[int] = []
+    previous = signal.signal(signal.SIGHUP, lambda signum, _frame: caught.append(signum))
+    shutdown = safety.Shutdown()
+    remove = shutdown.install(asyncio.get_running_loop())
+    try:
+        os.kill(os.getpid(), signal.SIGHUP)
+        async with asyncio.timeout(5):
+            await shutdown.event.wait()
+    finally:
+        remove()
+        signal.signal(signal.SIGHUP, previous)
+    assert shutdown.reason == "signal:SIGHUP" and caught == []
 
 
 async def test_shutdown_pause_returns_early_once_tripped() -> None:

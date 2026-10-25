@@ -9,16 +9,24 @@ every one is proven offline (`tests/test_safety.py`).
 - `check_audit_dir`: the harness's audit WAL is never the stack's (brief item 2).
 - `check_flat`: a run that touches orders starts with no open order and no position; until that
   holds the run is not armed, and a refusal touches nothing (ruling R1C-02 (a)).
+- `key_mismatch` (fold 3): before a run is armed, the key's live rights, read through the
+  adapter's own signed key-info read (`harness.Harness.check_key`), against what M2's import
+  admitted it with (C-2.8): no withdrawal or transfer right, no right outside the import's
+  allow-list, write access with both trade rights, and an IP allow-list of host addresses. Any
+  mismatch refuses the run, and nothing is touched.
 - `GuardedPort`: the only trading surface the modes see. BTCUSDT only; no size above the cap;
   a native `stop_loss` on the protective side of every position-opening order (C-2.6); a close
   is a reduce-only market order with no stop (the venue refuses a stop on one), so it never
   opens; no amend removes a stop; an amend or a cancel names one of the run's own orders; no
-  cancel-all, batch, leverage, stop write, withdrawal or transfer (C-2.8).
-- `RunScope` and `flatten` (ruling R1C-02 (b)): what the run owns is the orders whose
-  `orderLinkId` carries its prefix and the fills of those orders. SIGINT, SIGTERM or an
-  unhandled error ends an armed mode, then the flatten cancels the run's own open orders one by
-  one and closes, reduce-only, the quantity its own fills hold open, before M2 and audit stop
-  (`run.py`). It never cancels or closes anything else: a foreign order or position is left.
+  cancel-all, batch, leverage, stop write, withdrawal or transfer (C-2.8). No row, no order: each
+  create's intent is written to the run's ledger (`ledger.IntentLedger`) before it is sent, and a
+  create whose row is not written is not sent.
+- `RunScope` and `flatten` (ruling R1C-02 (b)): what the run owns is the orders its intent ledger
+  lists and the fills of those orders, never what an id's form suggests. SIGINT, SIGTERM, SIGHUP
+  (the owner's terminal closing) or an unhandled error ends an armed mode, then the flatten
+  cancels the run's own open orders one by one and closes, reduce-only, the quantity its own
+  fills hold open, before M2 and audit stop (`run.py`). It never cancels or closes anything else:
+  a foreign order or position is left.
 """
 
 from __future__ import annotations
@@ -32,10 +40,13 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mappin
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from decimal import Decimal
+from ipaddress import ip_network
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Literal
 from uuid import UUID
 
+from candleviewer.accounts.verification import ALLOWED_RIGHTS, TRADE_GROUP, TRADE_RIGHTS
+from candleviewer.domain import key_permissions
 from candleviewer.exchange.base.models import (
     AccountRef,
     AmendOrderRequest,
@@ -64,17 +75,20 @@ from spike.oms_demo_path.measure import CallRecord, Timings
 if TYPE_CHECKING:
     from uuid import UUID as AccountUuid
 
+    from candleviewer.accounts.verification import KeyFacts
     from candleviewer.domain.events import Instrument
     from candleviewer.domain.primitives import OrderLinkId, Side, Symbol, TsUs
     from candleviewer.exchange.base.ports import PrivateStream, TradingPort
     from candleviewer.settings import Settings
+    from spike.oms_demo_path.ledger import IntentLedger
 
 #: Written into the harness's own WAL directory at its first start: a WAL without it is another
 #: writer's, and the harness refuses it.
 WAL_MARKER: Final = "SPIKE-E29-K01.harness-wal"
 _DAY_MS: Final = 86_400_000
 #: The characters of one of our `orderLinkId`s that name its run: `cv`, the environment letter,
-#: `-` and the run's trade group (24 §8.3: `{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}`).
+#: `-` and the run's trade group (24 §8.3: `{prefix}{env}-{group22}-{acct4}-{seq2}{suffix}`). The
+#: owner finds a run's orders by it in the venue's UI; what the run owns is its ledger's alone.
 LINK_PREFIX_LEN: Final = 26
 #: The flatten's whole budget: inside the container's `stop_grace_period` (60 s), so a stop
 #: never ends in a kill before the summary is written (R1C-14).
@@ -211,25 +225,82 @@ def check_flat(orders: Sequence[Order], positions: Sequence[Position]) -> None:
         raise Refused("the account holds a position: a run starts flat; nothing was touched")
 
 
+def _one_host(entry: str) -> bool:
+    """A single host address (bare, or a /32 or /128 network): never a wildcard or a range."""
+    try:
+        net = ip_network(entry, strict=True)
+    except ValueError:
+        return False
+    return net.prefixlen == net.max_prefixlen
+
+
+def _allow_listed(permissions: Mapping[str, object]) -> bool:
+    """Every group a list of rights the import's allow-list admits for it (SR-030, #2270)."""
+    return all(
+        isinstance(rights, list)
+        and all(isinstance(r, str) and r in ALLOWED_RIGHTS.get(group, frozenset()) for r in rights)
+        for group, rights in permissions.items()
+    )
+
+
+def key_mismatch(facts: KeyFacts) -> str | None:
+    """The first way the key's live rights differ from what M2's import admitted it with (C-2.8):
+    a withdrawal or transfer right (the shared deny-list the import applies; rights it cannot judge
+    count, fail closed); a right outside the import's allow-list (a fund group's, a spot right);
+    read-only; a trade right missing; no IP allow-list; an entry that is no host address (a
+    wildcard or a range). `None` when it matches. Fund rights first, as M13 judges a key."""
+    try:
+        funds = key_permissions.grants_fund_right(facts.permissions)
+    except key_permissions.PermissionsUnreadable:
+        funds = True
+    if funds:
+        return "the key holds a withdrawal or transfer right (C-2.8)"
+    if not _allow_listed(facts.permissions):
+        return "the key holds a right the import's allow-list refuses (SR-030)"
+    if facts.read_only:
+        return "the key is read-only: it cannot trade"
+    trade = facts.permissions.get(TRADE_GROUP)
+    if not isinstance(trade, list) or not set(TRADE_RIGHTS) <= set(trade):
+        return "the key lacks a trade right (ContractTrade Order and Position)"
+    if not facts.ip_whitelist:
+        return "the key has no IP allow-list (C-2.8)"
+    if not all(_one_host(entry) for entry in facts.ip_whitelist):
+        return "the key's IP allow-list holds a wildcard or a range, not host addresses"
+    return None
+
+
+def key_record(facts: KeyFacts, mismatch: str | None) -> dict[str, object]:
+    """The summary's `key_check`: what was judged and why, never a value (no UID, address or key
+    id)."""
+    return {
+        "read": "GET /v5/user/query-api: the adapter's key-info read, signed by M2 (key_verify)",
+        "verdict": "compliant" if mismatch is None else "refused",
+        "reason": mismatch,
+        "read_only": facts.read_only,
+        "ip_allow_list_entries": len(facts.ip_whitelist),
+    }
+
+
 def digest(value: str) -> str:
     """A run's handle on a value it never writes: the first 16 hex characters of its sha256."""
     return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
 class RunScope:
-    """What a run owns on the account (ruling R1C-02 (b)): the orders whose `orderLinkId`
-    starts with one of its prefixes, and the trade fills of those orders, from `start_us` (the
-    venue's clock, when it was armed). The prefixes are held as digests, so the summary carries
-    them though no `orderLinkId` reaches an output, and a `flatten` run adopts a failed run's
-    scope from that run's summary (`adopt`). `net` is what the run's own fills hold open."""
+    """What a run owns on the account (ruling R1C-02 (b)): the orders its intent ledger lists
+    (`ledger.IntentLedger`: each create's row, written before it was sent), and the trade fills
+    of those orders, from `start_us` (the venue's clock, when it was armed). Nothing is owned by
+    the form of its id: an order the ledger does not list is never the run's, whatever its prefix.
+    `net` is what the run's own fills hold open. A `flatten` run adopts a failed run's scope
+    (`adopt`): its window from that run's summary, its orders from that run's ledger."""
 
     def __init__(
         self,
-        prefix: str,
+        ledger: IntentLedger,
         account_id: AccountUuid,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        self.digests: set[str] = {digest(prefix)}
+        self.ledger = ledger
         self.account = digest(str(account_id))
         self.start_us: int | None = None
         self._monotonic = monotonic
@@ -239,11 +310,7 @@ class RunScope:
         self.closes: dict[str, tuple[Decimal, float]] = {}
 
     def owns(self, link: str | None) -> bool:
-        return (
-            link is not None
-            and len(link) >= LINK_PREFIX_LEN
-            and digest(link[:LINK_PREFIX_LEN]) in self.digests
-        )
+        return self.ledger.owns(link)
 
     def add(self, fills: Iterable[Execution]) -> None:
         for fill in fills:
@@ -271,20 +338,21 @@ class RunScope:
             _ZERO,
         )
 
-    def adopt(self, record: Mapping[str, object]) -> None:
-        """A failed run's scope, from its summary's `run_scope`: its prefixes join this run's,
-        and the window reaches back to its start."""
-        digests, start_ms = record.get("link_prefix_digests"), record.get("window_start_ms")
-        if not isinstance(digests, list) or not digests or not isinstance(start_ms, int):
+    def adopt(self, record: Mapping[str, object], ledger: Path) -> None:
+        """A failed run's scope: its window from its summary's `run_scope` (refused when it names
+        none: that run was never armed), then its orders from its intent ledger at `ledger`
+        (`IntentLedger.adopt`); the window reaches back to its start."""
+        start_ms = record.get("window_start_ms")
+        if not isinstance(start_ms, int):
             raise Refused("that summary names no run scope: nothing to flatten from it")
-        self.digests |= {str(d) for d in digests}
+        self.ledger.adopt(ledger)
         start = start_ms * 1000
         self.start_us = start if self.start_us is None else min(self.start_us, start)
 
     def record(self) -> dict[str, object]:
-        """The summary's `run_scope`: digests and a time, never an id."""
+        """The summary's `run_scope`: the ledger's file, a digest and a time, never an id."""
         return {
-            "link_prefix_digests": sorted(self.digests),
+            "ledger": self.ledger.path.name,
             "account_digest": self.account,
             "window_start_ms": None if self.start_us is None else self.start_us // 1000,
         }
@@ -323,19 +391,28 @@ def _check_opener_stop(req: PlaceOrderRequest) -> None:
 class GuardedPort:
     """The only trading surface the modes see (see the module docstring); every call is timed
     (`Timings`), so the recording transport can split our overhead from the venue's RTT. With a
-    `scope` (the harness sets the run's), an amend or a cancel of another order is refused."""
+    `scope` (the harness sets the run's), an amend or a cancel of another order is refused. A
+    create is sent only once its intent row is in `ledger` (the harness sets the run's): with no
+    ledger, or a row not written, it is refused before anything leaves (no row, no order)."""
 
     def __init__(self, port: TradingPort, timings: Timings | None = None) -> None:
         self._port = port
         self.timings = timings if timings is not None else Timings()
         self.limits: QtyLimits | None = None
         self.scope: RunScope | None = None
+        self.ledger: IntentLedger | None = None
         self.openers = 0
         self.closes = 0
 
     def _own(self, link: str | None) -> None:
         if self.scope is not None and not self.scope.owns(link):
             raise Refused("not one of the run's orders: the harness touches only its own")
+
+    def _intend(self, req: PlaceOrderRequest) -> None:
+        """No row, no order: `req`'s intent is written to the ledger before it is sent."""
+        if self.ledger is None:
+            raise Refused("no row, no order: no intent ledger; nothing was sent")
+        self.ledger.record(req)
 
     @asynccontextmanager
     async def _call(self, name: str) -> AsyncIterator[CallRecord]:
@@ -361,6 +438,7 @@ class GuardedPort:
         else:
             self._qty(req.qty, closing=False)
             _check_opener_stop(req)
+        self._intend(req)
         async with self._call("create"):
             ack = await self._port.place_order(req)
         if req.reduce_only:
@@ -428,8 +506,9 @@ class GuardedPort:
 
 
 class Shutdown:
-    """SIGINT, SIGTERM or an error ends the mode; the first reason is the one kept. `sleep` is
-    the clock the pauses run on (a test's virtual one)."""
+    """SIGINT, SIGTERM, SIGHUP (the owner's terminal closing: its default would kill the run
+    where it stands, an order resting and nothing written) or an error ends the mode; the first
+    reason is the one kept. `sleep` is the clock the pauses run on (a test's virtual one)."""
 
     def __init__(self, sleep: Callable[[float], Awaitable[None]] = asyncio.sleep) -> None:
         self.event = asyncio.Event()
@@ -442,7 +521,7 @@ class Shutdown:
         self.event.set()
 
     def install(self, loop: asyncio.AbstractEventLoop) -> Callable[[], None]:
-        signals = (signal.SIGINT, signal.SIGTERM)
+        signals = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
         for sig in signals:
             loop.add_signal_handler(sig, self.trip, f"signal:{sig.name}")
 
@@ -500,15 +579,17 @@ async def flatten(
     settle_s: float = 1.0,
     deadline_s: float = FLATTEN_DEADLINE_S,
 ) -> dict[str, object]:
-    """Ruling R1C-02 (b): the run's own state, and nothing else, made flat.
+    """Ruling R1C-02 (b): the run's own state, and nothing else, made flat. What is the run's is
+    what its intent ledger lists (`scope.owns`), never a guess from an id's form.
 
-    1. Its own open orders (an `orderLinkId` with its prefix) are cancelled one by one, re-read
-       until none is left; no cancel-all, so a foreign order is never touched.
-    2. Its net, what its own fills hold open, is read again from the venue's execution list over
-       its window (`scope.start_us` to `venue_now_us()`), and closed by a reduce-only market
-       order of at most the venue's position on that side; re-read until the net is zero. A
-       close the venue accepted but no read has listed yet counts (`RunScope.unconfirmed`), so a
-       slow list never makes it close twice.
+    1. Its own open orders (each one its ledger lists) are cancelled one by one, re-read until
+       none is left; no cancel-all, so a foreign order is never touched.
+    2. Its net, what its own fills hold open (the fills of orders its ledger lists), is read again
+       from the venue's execution list over its window (`scope.start_us` to `venue_now_us()`),
+       and closed by a reduce-only market order of at most the venue's position on that side
+       (its row written first, as every create's); re-read until the net is zero. A close the
+       venue accepted but no read has listed yet counts (`RunScope.unconfirmed`), so a slow list
+       never makes it close twice.
 
     Every failure is recorded by class, never raised; the whole stays within `deadline_s`. It
     needs M2 and audit up (every signing is audited first), so it runs before they stop."""

@@ -62,6 +62,7 @@ CALL_CLASSES: Final = {
     "/v5/order/history": "order_history",
     "/v5/position/list": "positions",
     "/v5/account/wallet-balance": "wallet",
+    "/v5/user/query-api": "key_info",
 }
 
 

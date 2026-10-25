@@ -5,7 +5,8 @@ The findings PR quotes them: budget #4 judged by its own rule (the three p95s, t
 beside our overhead, the verdict, and the create's p95 by connection and by kind), the RTT (with
 the failed exchanges per class), our overhead and the signing time per call class, the private
 stream's latency per kind, parity, the two ordering counts kept apart, the cycle outcomes, the
-soak's idle phase, the error shapes and the retention reading.
+soak's idle phase, the error shapes, the retention reading, the key-rights preflight and the
+intent ledger's counts.
 
 What the audit log holds (R1S-05): the harness drives the port directly, so `audit_log` gets one
 `security.credential_borrowed` row per signed request (M2's write-ahead record), not one per
@@ -198,6 +199,8 @@ def render(run_dir: Path) -> str:
     for code, shape in summary.get("error_shapes", {}).items():
         lines += [f"### Reply shape {code}", "", "```json", json.dumps(shape, indent=2), "```", ""]
     lines += _pairs("Retention", {k: v for k, v in summary.get("retention", {}).items()})
+    lines += _pairs("Key rights preflight (C-2.8)", summary.get("key_check") or {})
+    lines += _pairs("Intent ledger (no row, no order)", summary.get("ledger") or {})
     lines += _pairs("Shutdown", summary.get("shutdown", {}))
     lines += _pairs("Clock", summary.get("clock", {}))
     return "\n".join(lines) + "\n"

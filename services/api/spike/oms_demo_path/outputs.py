@@ -14,7 +14,8 @@ bounded (`QUEUE_BOUND`, C-2.18): an item past it is dropped and counted (`droppe
 waited for. Items are written in the order they were handed over, so the scrubber learns each
 identifier in the same order as before; `flush` waits for the queue to empty and `stop` ends the
 writer, after which every write is synchronous again (the summary and the metrics). Unstarted,
-every write is synchronous.
+every write is synchronous. The intent ledger (`ledger.py`, `intents.jsonl`) is never queued: its
+row is written, through the same scrubber and `write_file`, before its create is sent.
 """
 
 from __future__ import annotations
@@ -96,6 +97,10 @@ class RunOutputs:
     def deferred(self) -> bool:
         return self._queue is not None
 
+    def elapsed(self) -> float:
+        """Seconds since the run began, to the ms: every line's `t` (the intent ledger's too)."""
+        return round(self._monotonic() - self._started, 3)
+
     def later(self, work: Callable[..., object], *args: object) -> bool:
         """`work(*args)` on the writer task, or now when the writer is not started; `False`
         when the queue is full (the item is dropped and counted)."""
@@ -158,7 +163,7 @@ class RunOutputs:
     ) -> bool:
         """One line of `events.jsonl`: `t` (seconds since the run began), `kind`, the fields;
         queued once the writer is started (`True` then means queued)."""
-        line = {"t": round(self._monotonic() - self._started, 3), "kind": kind}
+        line = {"t": self.elapsed(), "kind": kind}
         line |= {**(fields or {}), **more}
         if self._queue is None:
             return self.write_event(line, tuple(transient))

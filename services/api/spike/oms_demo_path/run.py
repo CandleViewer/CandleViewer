@@ -6,16 +6,17 @@ connector; offline, demo settings over a KEK file made for the run, the stack in
 (`offline.offline_stack`), the corpus venue behind both seams. Everything between is the same
 composition, the same recording seams, the same scrubbed outputs.
 
-A mode that touches orders is armed only once its preflight passed (the limits set, the account
-flat, the offset measured). Anything that ends it before that, a refusal or any error, composition
-included, is a `refused` outcome naming the reason, and nothing on the account is touched: no
-cancel, no close (ruling R1C-02 (a)). Once armed, whatever ends the mode (completion, SIGINT,
-SIGTERM or an error), the shutdown flatten runs over the run's own orders and fills only (ruling
-R1C-02 (b)) before M2 and audit stop, and the summary records why it ended and what the flatten
-did. The summary is written provisionally when the run is armed and again before that flatten,
-with the run's scope, so a run killed past its grace period still leaves both (R1C-14) and
-`flatten` (the owner's retry, R1S-04) can adopt the scope. Exit codes: 0 completed, 1 an error
-(or a flatten left unfinished), 2 refused (nothing touched).
+A mode that touches orders is armed only once its preflight passed (the limits set, the key's
+rights checked, the account flat, the offset measured). Anything that ends it before that, a
+refusal or any error, composition included, is a `refused` outcome naming the reason, and nothing
+on the account is touched: no cancel, no close (ruling R1C-02 (a)). Once armed, whatever ends the
+mode (completion, SIGINT, SIGTERM, SIGHUP or an error), the shutdown flatten runs over the run's
+own orders and fills only, as its intent ledger lists them (ruling R1C-02 (b)), before M2 and
+audit stop, and the summary records why it ended and what the flatten did. The summary is
+written provisionally when the run is armed and again before that flatten, with the run's scope,
+so a run killed past its grace period still leaves both (R1C-14), beside the ledger it wrote
+before each create, and `flatten` (the owner's retry, R1S-04) can adopt them. Exit codes: 0
+completed, 1 an error (or a flatten left unfinished), 2 refused (nothing touched).
 """
 
 from __future__ import annotations
@@ -343,6 +344,7 @@ async def open_harness(
             recorder=recorder,
             connector=connector,
             skewed_port=composed.skewed_port,
+            key_info=composed.key_info_read(key_ref, lambda: offset.value or 0),
         )
     finally:
         notes["audit"] = await close(composed)
@@ -366,6 +368,8 @@ def _summarise(h: Harness, summary: dict[str, Any]) -> None:
     summary["budget4"] = budget(timings, offline=bool(summary.get("offline")))
     summary["private"] = h.stream.summary()
     summary["run_scope"] = h.scope.record()
+    summary["ledger"] = h.ledger.summary()
+    summary["key_check"] = h.key_check
     summary["clock"] = {
         "offset_ms": h.offset.value,
         "best_rtt_ms": None if h.offset.best_rtt_ms is None else round(h.offset.best_rtt_ms, 2),
