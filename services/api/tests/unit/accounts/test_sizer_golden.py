@@ -19,7 +19,8 @@ from tests.unit.accounts.test_sizer_caps import _QA, assert_every_figure_has_a_u
 
 D = Decimal
 _OWN: Final = _json(Path(__file__).parent / "golden" / "e28_sizer_vectors.json")
-_VECTORS: Final = [*_QA, *_OWN]
+VECTORS: Final = [*_QA, *_OWN]
+_VECTORS: Final = VECTORS  # the name this module has always used
 #: QA's `binding_cap` labels (the fixture README) and the caps each names.
 _LABELS: Final[dict[str, set[str | None]]] = {
     "none": {None},
