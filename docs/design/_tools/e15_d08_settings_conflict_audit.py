@@ -43,6 +43,7 @@ import itertools
 import json
 import re
 import sys
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
@@ -677,14 +678,26 @@ FOCUS_ALLOWED = {
     "SCR-025/settings-conflict": (
         "and Load theirs puts the saved values in the form, clean, focus on Save",
     ),
+    # The boards-PR carry 3 reads the verb on either side: a refused send keeps the retry focused.
+    "SCR-029/unsaved-saving": ("Save layout at rest and focused, nothing applied",),
+    # Round 2 reads every frame kind: the form's own Save, and the error summary it focuses.
+    "SCR-025/invalid-long": ('on Save the error summary "" takes focus',),
+    "SCR-025/invalid-duplicate": ('on Save the error summary "" takes focus',),
+    "SCR-025/failed": ("focus stays on Save",),
 }
+# The boards-PR carry 3: a focus word in any form, and the window on each side of it read for a
+# footer verb, any case; every `initial focus:` clause of a row, any case, is read.
+FOCUS_WORD_RE = r"(?i)(?<!\bno )\bfocus(?:es|ed|ing)?\b"
+FOCUS_WINDOW = 40
+INITIAL_FOCUS_RE = r"(?i)\binitial focus: ([^;|]+)"
 DESTRUCTIVE = ("Discard changes", "Load theirs", "Keep mine", "Revert to saved")
 UNVERBED = ("OK", "Yes", "No", "Confirm", "Discard", "Apply", "Done")
 # The exits (A3): never gated anywhere in a row — a T2 clause, a footer note, the exits clause, the
 # `Esc` mapping, the close button, or any sentence that pairs an exit with a gating word.
 EXIT_RE = (
-    r"\b(?:Cancel|Esc|Close|Discard(?: changes)?|Keep editing|Load theirs|Revert to saved)\b"
-    r"|close " + TIMES
+    r"\b(?:Cancel|Esc|Escape|Close|Discard(?: changes)?|Keep editing|Load theirs"
+    r"|Revert to saved)\b"
+    r"|close " + TIMES + r"|\bclose button\b"
 )
 # MJ-2 (orchestrator text round 1): the vocabulary of a gated exit, read case-insensitively —
 # a lock or T2, disabled or unavailable, greyed, dimmed, held, hidden, inactive, unusable, "can't
@@ -697,6 +710,9 @@ GATED_RE = (
     r"|activated|chosen|clicked|focused|operated|reached)\b|\binert\b|\bignor(?:ed|es)\b"
     r"|\bdoe?s? nothing\b|\bnot (?:operable|available|enabled|focusable)\b|\binoperable\b"
     r"|\bsuppress(?:ed|es)\b|\bwait(?:s|ing)?\b|\bdeferred\b|\bno-op\b|\bunresponsive\b"
+    # The boards-PR carry 2: an exit that is no longer there, has no effect or is taken away.
+    r"|\bno longer (?:available|offered|shown|there|usable|operable|enabled|works?|responds?)\b"
+    r"|\b(?:has|have|had|with) no effect\b|\b(?:is|are|gets?|was|were) removed\b"
 )
 # `Esc` only ever cancels (MJ-2): every `Esc` in a frame row, any case, is `Esc → Cancel`, an item
 # of the row's `exits T1:` list, or inside one of these phrases, each pinned to its frame.
@@ -735,82 +751,115 @@ T2_DIM_RE = r"opacity\.disabled|color\.text\.disabled"
 # `default environment`, CMP-074 / CMP-075). Each word must sit inside one of the phrases below,
 # the spec's other senses and its statements of the absence, read as written (case-sensitive),
 # and each phrase stands at most as often as pinned, so a copy of one in a new place fails too.
+# The boards-PR carries 1 and 7: the vocabulary takes its plurals and synonyms (`envs`, `demos`,
+# `testnets`, "real-money", "real money"), and each phrase is tied to its places — the section,
+# the table row by its first cell, the frame or the entry point (`where`) — one per occurrence.
 ENV_RE = (
-    r"(?i:\b(?:demo|live|testnet|mainnet|paper(?:[- ]trad\w*)?|env|environments?|pins?|pinned"
-    r"|pinning)\b)|\bCMP-07[45]\b"
+    r"(?i:\b(?:demos?|live|testnets?|mainnets?|paper(?:[- ]trad\w*)?|envs?|environments?|pins?"
+    r"|pinned|pinning|real[- ]money)\b)|\bCMP-07[45]\b"
 )
-ENV_ALLOWED: tuple[tuple[str, int], ...] = (
-    ("the boards PR pins it", 1),
-    ("account and environment semantics (E27, E28)", 1),
-    ("**Inputs pinned.**", 1),
-    ("stored fields only are drawn live", 2),
-    ("**Deviation — the environment pin.**", 1),
-    ('"this workspace is pinned to LIVE" warning, its control and its persistence', 1),
-    ("the environment is never stored in a layout", 2),
-    ("carries no environment control at all", 1),
-    ("the stored fields live and the four planned insets", 1),
-    ('environment pinning: the "pinned to LIVE" warning, unmissable', 1),
-    ("(BQ-8 RULED): no environment control; D08-C4", 1),
-    ("the LIVE-pinning warning drawn", 1),
-    ("the pinned state; the account-scope", 1),
-    ("stored fields only drawn live", 1),
-    ("| BQ-8  | the environment pin ", 1),
-    ("no environment control at all: D-7", 1),
-    ("the ticket's pin, warning and chrome persistence", 1),
-    ("the CMP-075 LIVE pill in a warning that cannot be dismissed", 1),
-    ("the environment comes from the account a panel acts on", 2),
-    ("the TopBar and its environment badge", 1),
-    ("SCR-025 has no environment control", 2),
-    ("the four planned insets live", 2),
-    ("`sort_order` are stored and live but carry no control", 1),
+ENV_ALLOWED: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("the boards PR pins it", ("the header",)),
+    ("account and environment semantics (E27, E28)", ("the header",)),
+    ("**Inputs pinned.**", ("the header",)),
+    ("stored fields only are drawn live", ("the header", "§2")),
+    ("**Deviation — the environment pin.**", ("the header",)),
+    (
+        '"this workspace is pinned to LIVE" warning, its control and its persistence',
+        ("the header",),
+    ),
+    ("the environment is never stored in a layout", ("the header", "the header row 'BQ-8'")),
+    ("carries no environment control at all", ("the header",)),
+    ("the stored fields live and the four planned insets", ("the header row 'DL-2'",)),
+    ('environment pinning: the "pinned to LIVE" warning, unmissable', ("the header row 'DL-3'",)),
+    ("(BQ-8 RULED): no environment control; D08-C4", ("the header row 'DL-3'",)),
+    ("the LIVE-pinning warning drawn", ("the header row 'DoD-2'",)),
+    ("the pinned state; the account-scope", ("the header row 'N-2'",)),
+    ("stored fields only drawn live", ("the header row 'BQ-2'",)),
+    ("| BQ-8  | the environment pin ", ("the header row 'BQ-8'",)),
+    ("no environment control at all: D-7", ("the header row 'BQ-8'",)),
+    ("the ticket's pin, warning and chrome persistence", ("the header row 'BQ-8'",)),
+    ("the CMP-075 LIVE pill in a warning that cannot be dismissed", ("the header row 'BQ-8'",)),
+    (
+        "the environment comes from the account a panel acts on",
+        ("§1 row 'D-7: the environment comes from '", "§11 row 'D08-G5'"),
+    ),
+    ("the TopBar and its environment badge", ("§1 row 'D-7: the environment comes from '",)),
+    ("SCR-025 has no environment control", ("§1 row 'D-7: the environment comes from '", "§5")),
+    ("the four planned insets live", ("SCR-025/default", "§1 row 'D08-D3'")),
+    ("`sort_order` are stored and live but carry no control", ("§2",)),
     (
         (
             "**No environment control (BQ-8 RULED).** The environment comes from the "
             "account a panel acts on and is never stored in a layout (D-7 `D02:125`; "
             "C-2.11), so SCR-025 draws no environment control, no pin and no warning."
         ),
-        1,
+        ("§2",),
     ),
-    ("The ticket's pin is the fourth deviation", 1),
-    ("unique among the user's live workspaces", 1),
-    ('aria-live="off"', 5),
-    ("the account and environment legs never apply", 2),
-    ("`workspace.environment_pinned{env}`", 3),
-    ("Discard changes, live after CMP-044's `confirmDelayMs`", 1),
-    ("the TopBar with its env band", 1),
-    ("the TopBar with its environment badge", 1),
-    ("no live region", 3),
-    ("## 6. Exits, keyboard, focus and live regions", 1),
-    ("the TopBar with its ENV band", 1),
-    ("the shell's live regions", 1),
-    ("never live: part of the description", 1),
-    ("the edits live in the form", 1),
-    ("`FLATTEN`, `LIVE`", 2),
-    ('"pinned to LIVE" callout', 1),
-    ('the "pinned to LIVE" item to the fourth deviation', 1),
-    ("Only the stored fields are live", 1),
-    ("a workspace stores no environment (E15-D02 D-7)", 1),
-    ("(symbol, interval, environment binding)", 1),
-    ("the environment pattern, should a per-workspace environment default ever be approved", 1),
-    ("the CMP-075 LIVE pill in a CMP-028 warning callout", 1),
+    ("The ticket's pin is the fourth deviation", ("§2",)),
+    ("unique among the user's live workspaces", ("§2 row 'Name'",)),
+    (
+        'aria-live="off"',
+        (
+            "SCR-025/invalid-long",
+            "§2 row 'Name'",
+            "§6 row 'the name counter changes'",
+            "§8 row '`e15.settings.name.counter`'",
+            "§9 row 'D08-A5'",
+        ),
+    ),
+    ("the account and environment legs never apply", ("§2", "§5")),
+    ("`workspace.environment_pinned{env}`", ("§11 row 'D08-C12'", "§11 row 'D08-G5'", "§2")),
+    ("Discard changes, live after CMP-044's `confirmDelayMs`", ("SCR-025/discard-prompt",)),
+    ("the TopBar with its env band", ("§2 row 'Scrim'",)),
+    ("the TopBar with its environment badge", ("§3",)),
+    ("no live region", ("§3", "§4", "§6 row 'a dialog opens'")),
+    ("## 6. Exits, keyboard, focus and live regions", ("§6",)),
+    ("the TopBar with its ENV band", ("§6",)),
+    ("the shell's live regions", ("§6",)),
+    ("never live: part of the description", ("§6 row 'the difference summary'",)),
+    ("the edits live in the form", ("§8 row '`e15.settings.failed`'",)),
+    ("`FLATTEN`, `LIVE`", ("§9 row 'D08-A3'", "§9 row 'D08-A3'")),
+    ('"pinned to LIVE" callout', ("§9",)),
+    ('the "pinned to LIVE" item to the fourth deviation', ("§10",)),
+    ("Only the stored fields are live", ("§10 row 'D08-A9'",)),
+    ("a workspace stores no environment (E15-D02 D-7)", ("§10 row 'D08-A9'",)),
+    ("(symbol, interval, environment binding)", ("§10 row 'D08-A12'",)),
+    (
+        "the environment pattern, should a per-workspace environment default ever be approved",
+        ("§11 row 'D08-G5'",),
+    ),
+    ("the CMP-075 LIVE pill in a CMP-028 warning callout", ("§11 row 'D08-G5'",)),
     (
         (
             "acts on LIVE; the pick never silent, a confirm naming LIVE before it is "
             "stored; the pinned state visible afterwards"
         ),
-        1,
+        ("§11 row 'D08-G5'",),
     ),
-    ('the ticket\'s "pinned to LIVE" warning, its control and its persistence', 1),
-    ("no environment control (the fourth deviation", 2),
-    ("the pinned environment only if D08-G5 is approved", 1),
-    ("the account and environment binding (D08-G2, D08-G5)", 1),
-    ("default symbol/interval, environment binding, autosave toggle", 1),
-    ("the environment: none (BQ-8 RULED; D08-C4)", 1),
-    ("the environment the fourth deviation", 1),
-    ("'this workspace is pinned to LIVE' warning drawn", 1),
-    ("why none is an environment (BQ-8 RULED)", 1),
-    ("DL-3, DoD-2 environment pinning", 1),
-    ("(stored fields only; no environment control)", 1),
+    (
+        'the ticket\'s "pinned to LIVE" warning, its control and its persistence',
+        ("§11 row 'D08-C4'",),
+    ),
+    (
+        "no environment control (the fourth deviation",
+        ("§1 row 'D-7: the environment comes from '", "§11 row 'D08-C4'"),
+    ),
+    ("the pinned environment only if D08-G5 is approved", ("§11 row 'E15-D03 (SCR-020 chrome)'",)),
+    ("the account and environment binding (D08-G2, D08-G5)", ("§11 row 'E27, E44, E09'",)),
+    (
+        "default symbol/interval, environment binding, autosave toggle",
+        ("§12 row 'rename, default symbol/interval,'",),
+    ),
+    ("the environment: none (BQ-8 RULED; D08-C4)", ("§12 row 'rename, default symbol/interval,'",)),
+    ("the environment the fourth deviation", ("§12 row 'rename, default symbol/interval,'",)),
+    (
+        "'this workspace is pinned to LIVE' warning drawn",
+        ('§12 row "\'this workspace is pinned to LIV"',),
+    ),
+    ("why none is an environment (BQ-8 RULED)", ("§13",)),
+    ("DL-3, DoD-2 environment pinning", ("§14 row 'DL-3, DoD-2 environment pinning'",)),
+    ("(stored fields only; no environment control)", ("§15",)),
 )
 # MJ-4 (orchestrator text round 1): a "no dialog" route (BQ-11 RULED: D-9 stands) holds no
 # prompt of any kind in its Route, outcome or Focus cell — no dialog, toast, confirm, question or
@@ -820,6 +869,8 @@ PROMPT_RE = (
     r"(?i)\b(?:asks?|asking|asked|prompts?|prompted|prompting|confirms?|confirmation|confirming"
     r"|toasts?|dialogs?|modals?|alerts?|alertdialog|pop-?ups?|questions?|warns?|warning"
     r"|interrupts?|save now)\b|\?|\bSCR-029\b|\bCMP-04[34]\b"
+    # The boards-PR carry 4: a route that offers or lists anything first is a prompt in disguise.
+    r"|(?i:\b(?:offers?|offered|offering|lists?|listed|listing)\b[^|;.]{0,80}?\bfirst\b)"
 )
 PROMPT_ALLOWED = {"E5": "the import dialog's trigger"}
 # id | a ticket route (yes / no) | the words its Route cell holds | the frame it opens, or "none"
@@ -999,7 +1050,10 @@ ROUTE_OPEN_RE = (
     r"|clos(?:e|es|ing) (?:a |the )?(?:workspace )?tab|navigat\w+|import\w*|app close"
     r"|clos(?:e|es|ing) the app|layout switch|switching layouts|the rail)\b"
 )
-ROUTE_NEG_RE = r"(?i)\b(?:never|not|no|nor|nothing|instead)\b"
+ROUTE_NEG_RE = r"(?i)\b(?:never|not|no|nor|nothing|instead)\b(?! longer\b)"
+# The boards-PR carry 4: a negation exempts only the clause it stands in, before the opening
+# words; "no longer" negates nothing, and a clause added to a negated sentence is read alone.
+ROUTE_CLAUSE_RE = r";|:| — | -- |, (?:and|but|or|then|while|so|yet)\b|\((?!s\))|\)"
 # m3: the full shas the spec may name — the base, the merged inputs and the two siblings merged as
 # text (E15-D04 #4454, E15-D06 #4470); any other is a sibling pinned by mistake.
 SIBLING_SHAS = (
@@ -1550,18 +1604,28 @@ def esc_cancels(name: str, shows: str) -> bool:
 
 
 def focus_moved(name: str, shows: str) -> bool:
-    """MJ-3: a clause of a dialog row, other than its `initial focus:` one, that names focus and
-    then a footer verb that is not safe moves focus off the safe action (FOCUS_ALLOWED aside)."""
-    verbs = sorted({v for vs in FOOTERS.values() for v in vs} - set(SAFE), key=len, reverse=True)
-    verb_re = r"\b(?:" + "|".join(re.escape(v.rstrip("…")) for v in verbs) + r")"
+    """MJ-3 and the boards-PR carry 3: a clause of a dialog row, other than its `initial focus:`
+    ones, that names focus (focus, focused, focuses, focusing) with a footer verb that is not safe
+    on either side of it, any case, moves focus off the safe action (FOCUS_ALLOWED aside)."""
     for part in re.sub(r'"[^"]*"', '""', shows).split(";"):
         part = part.strip()
         for allowed in FOCUS_ALLOWED.get(name, ()):
             part = part.replace(allowed, "")
-        if part.startswith("initial focus:"):
+        if re.match(r"(?i)initial focus:", part):
             continue
-        m = re.search(r"(?i)(?<!\bno )\bfocus\b", part)
-        if m and re.search(verb_re, part[m.end() :]):
+        if focus_on_verb(part):
+            return True
+    return False
+
+
+def focus_on_verb(text: str) -> bool:
+    """A focus word (focus, focused, focuses, focusing) with a footer verb that is not safe within
+    FOCUS_WINDOW on either side of it, any case."""
+    verbs = sorted({v for vs in FOOTERS.values() for v in vs} - set(SAFE), key=len, reverse=True)
+    verb_re = r"(?i)\b(?:" + "|".join(re.escape(v.rstrip("…")) for v in verbs) + r")(?!\w)"
+    for m in re.finditer(FOCUS_WORD_RE, text):
+        near = text[max(0, m.start() - FOCUS_WINDOW) : m.end() + FOCUS_WINDOW]
+        if re.search(verb_re, near):
             return True
     return False
 
@@ -1770,12 +1834,14 @@ def dialog_gates(name: str, kind: str, params: dict[str, str], shows: str) -> li
                 )
             elif weighted and label not in SAFE + DESTRUCTIVE and i != len(items) - 1:
                 bad.append(fail("primary-last", f"primary or danger {label} not last in {name}"))
-    if kind in DIALOG_KINDS:
-        first_focus = clause(shows, "initial focus:")
-        if first_focus not in (*SAFE, FOCUS_QUALIFIED.get(name)):
-            bad.append(fail("focus-safe", f"initial focus not on the safe action in {name}"))
-        elif focus_moved(name, shows):
-            bad.append(fail("focus-moved", f"a clause moves focus off the safe action in {name}"))
+    firsts = [f.strip() for f in re.findall(INITIAL_FOCUS_RE, shows)]
+    if kind in DIALOG_KINDS and (
+        not firsts or any(f not in (*SAFE, FOCUS_QUALIFIED.get(name)) for f in firsts)
+    ):
+        bad.append(fail("focus-safe", f"initial focus not on the safe action in {name}"))
+    elif focus_moved(name, shows):
+        # The boards-PR carries, round 2: every frame kind is read, not only the dialogs.
+        bad.append(fail("focus-moved", f"a clause moves focus off the safe action in {name}"))
     if not esc_cancels(name, shows) or (kind in EXIT_KINDS and "Esc → Cancel" not in shows):
         bad.append(fail("esc", f"Esc not mapped to Cancel in {name}"))
     if kind in EXIT_KINDS:
@@ -2268,13 +2334,18 @@ def section_gates(spec: str, ctx: Ctx) -> list[str]:
 
 
 def where(spec: str, pos: int) -> str:
-    """The frame, the entry point or the section a position of the spec sits in."""
-    line = spec[spec.rfind("\n", 0, pos) + 1 : spec.find("\n", pos)]
+    """The frame, the entry point, or the section a position of the spec sits in, with its table
+    row named by its first cell (the boards-PR carry 7)."""
+    end = spec.find("\n", pos)
+    line = spec[spec.rfind("\n", 0, pos) + 1 : end if end >= 0 else len(spec)]
     m = re.match(FRAME_RE, line) or re.match(r"^\| (E\d+) +\|", line)
     if m:
         return m.group(1)
-    heads = [h for h in re.finditer(r"^## (\d+)\. ", spec, MULTI) if h.start() < pos]
-    return f"§{heads[-1].group(1)}" if heads else "the header"
+    heads = [h for h in re.finditer(r"^## (\d+)\. ", spec, MULTI) if h.start() <= pos]
+    place = f"§{heads[-1].group(1)}" if heads else "the header"
+    if line.startswith("| "):
+        return f"{place} row {cells(line)[0][:32]!r}"
+    return place
 
 
 def env_gates(spec: str) -> list[str]:
@@ -2282,11 +2353,25 @@ def env_gates(spec: str) -> list[str]:
     phrase at most as often as pinned; one FAIL per line."""
     bad: list[str] = []
     covered = bytearray(len(spec))
-    for phrase, want in ENV_ALLOWED:
+    for phrase, places in ENV_ALLOWED:
         found = [m.start() for m in re.finditer(re.escape(phrase), spec)]
-        if len(found) > want:
+        got = Counter(where(spec, at) for at in found)
+        stray = sorted((got - Counter(places)).elements())
+        if len(found) > len(places):
             bad.append(
-                fail("env", f"environment phrase {phrase[:40]!r} {len(found)} times, {want} pinned")
+                fail(
+                    "env",
+                    f"environment phrase {phrase[:40]!r} {len(found)} times, {len(places)} "
+                    f"pinned (in {', '.join(stray)})",
+                )
+            )
+        elif stray:
+            bad.append(
+                fail(
+                    "env",
+                    f"environment phrase {phrase[:40]!r} in {', '.join(stray)}, pinned to "
+                    f"{', '.join(sorted(set(places)))}",
+                )
             )
         for at in found:
             covered[at : at + len(phrase)] = b"\1" * len(phrase)
@@ -2333,6 +2418,12 @@ def planned_prose_gates(spec: str) -> list[str]:
     return bad
 
 
+def route_opens(part: str) -> bool:
+    """A clause that opens the dialog on a no-dialog route with no negation before the words."""
+    m = re.search(ROUTE_OPEN_RE, part)
+    return bool(m) and not re.search(ROUTE_NEG_RE, part[: m.end()] if m else "")
+
+
 def route_open_gates(spec: str) -> list[str]:
     """m3: no sentence of §3's or §4's prose opens the dialog on a no-dialog route (D-9)."""
     bad: list[str] = []
@@ -2341,13 +2432,299 @@ def route_open_gates(spec: str) -> list[str]:
             if ln.startswith(("|", "```", "#", "│", "┌", "└")):
                 continue
             for sentence in re.split(r"(?<=[.!?])\s+", re.sub(r'"[^"]*"', '""', ln)):
-                if re.search(ROUTE_OPEN_RE, sentence) and not re.search(ROUTE_NEG_RE, sentence):
+                if any(route_opens(part) for part in re.split(ROUTE_CLAUSE_RE, sentence)):
                     bad.append(
                         fail(
                             "route-opens",
                             f"§{n} opens the dialog on a no-dialog route: {sentence[:60]!r}",
                         )
                     )
+    return bad
+
+
+# The boards-PR carry 5: E15-D03 merged as text (#4478), so no line names it PENDING (the
+# ruling's own time aside; any case), and the queued conflict's marker row cites it at that merge.
+D03_PENDING_RE = (
+    r"\b(?:E15-)?D03\b[^.;|\n]{0,20}?\bPENDING\b|\bPENDING\b[^.;|\n]{0,8}?\b(?:E15-)?D03\b"
+)
+D03_PENDING_HISTORY = "PENDING when the ruling was written"
+D03_MERGED = "E15-D03, merged as text in #4478 at `c4989493461ec6b6d22b9254633452a6362b750e`"
+# The boards-PR carry 6: a section named beside a `D02` cite is the section that line sits in
+# (or its parent).
+SECTION_CITE_RE = r"§(\d+(?:\.\d+)?)\)?,? \(?`D02:(\d+)"
+D02_HEAD_RE = r"^#{2,3} (\d+(?:\.\d+)?)\.? "
+
+
+# The boards-PR carries, round 2: the prose (every line but the frame rows and the headings) is
+# split at sentence ends, `;` and table pipes, and read for a gated exit and a moved focus. The
+# sentences below say neither — each states an availability, a return of focus or a T2 elsewhere
+# — and each is pinned, read as written (quoted copy blanked), to its place (`where`).
+PROSE_SPLIT_RE = r"(?<=[.!?])\s+|;|\|"
+EXIT_PROSE_ALLOWED: tuple[tuple[str, str], ...] = (
+    (
+        "§2",
+        "Cancel returns to SCR-025, whose Delete workspace… is T2 too.",
+    ),
+    (
+        "§2 row 'discard-prompt'",
+        (
+            "a stacked CMP-044 `standard` over the inert form: the title, the message in "
+            "`type.ui.body` + `color.text.secondary`, and the footer Keep editing · Discard "
+            "changes, both CMP-001 `secondary`, `space.inset.sm` apart"
+        ),
+    ),
+    (
+        "§3",
+        (
+            "As an `alertdialog` it has no close button, a press on its scrim does nothing, "
+            "and the page under it is inert, while the TopBar with its environment badge, the"
+            " banner band and the StatusBar stay outside the inert subtree and unscrimmed "
+            "(`15:468`"
+        ),
+    ),
+    (
+        "§3",
+        (
+            "On a T2 Save layout, whose reason is inline and has no tooltip echo, `Esc` is "
+            "still the dialog's Cancel: on a T2 control `Esc` closes only a tooltip echo "
+            "(`D09:238–244`)."
+        ),
+    ),
+    (
+        "§3",
+        (
+            "**Save layout in flight (BQ-10 RULED: `Esc` while Save is in flight).** Save "
+            "layout sends `updateLayout` for Layout 1 with `If-Match` (`22:8863–8873`) and "
+            "turns `loading` — `aria-busy`, its label width locked, a second press ignored "
+            "(`15:48–57`)"
+        ),
+    ),
+    (
+        "§3",
+        (
+            "On a layout never stored, and on the viewer's unsaved default, Revert to saved… "
+            "is unavailable — an availability state, not T2 — so the form never opens there "
+            "(`D02:635–675`)."
+        ),
+    ),
+    (
+        "§4",
+        (
+            "**Locked, cited and not re-decided:** D-11's four verbs, the initial focus and "
+            "`Esc` on Cancel, and the silent re-save of an equal re-read (`D02:129`)"
+        ),
+    ),
+    (
+        "§4",
+        (
+            "On SCR-025 the same lost leg turns the settings conflict's Keep mine T2 in "
+            'place, its reason "" under the footer, while Load theirs and Cancel stay T1 '
+            "(`SCR-025/settings-conflict`"
+        ),
+    ),
+    (
+        "§4",
+        (
+            "On close, focus returns to the element that held it when the dialog opened — the"
+            " `[Save]` button, the panel where `Ctrl+S` was pressed, or where focus went on "
+            "leaving the order-capable panel — and, when Load theirs or Save mine as new "
+            "layout… has re-rendered that panel away, to `[Layout ▾]` (`D02:280`"
+        ),
+    ),
+    (
+        "§5",
+        (
+            "The session lock (SCR-005) is its own `alertdialog`, which `Esc` does not "
+            "dismiss (`14:233`), not a state of these dialogs"
+        ),
+    ),
+    (
+        "§6",
+        (
+            "A press on the scrim is Cancel on SCR-025, a `dialog`, and does nothing on every"
+            " `alertdialog` (`15:468`)."
+        ),
+    ),
+    (
+        "§10 row 'D08-A15'",
+        (
+            "``- **Components:** CMP-001 Button, CMP-019 Icon (`lock`), CMP-027 ErrorState / "
+            'InlineError, CMP-043 Dialog (`role=""`, its footer carrying the verbs, Cancel '
+            "first), CMP-044 ConfirmDialog (Keep mine's plain confirm only), CMP-079 "
+            "RbacGate.``"
+        ),
+    ),
+    (
+        "§11 row 'D08-A21'",
+        (
+            "the tab's conflict marker while a conflict waits or after its Cancel: a glyph "
+            'before the name and the words in the tab\'s accessible name, "" '
+            "(`e15.conflict.queued`), never colour alone"
+        ),
+    ),
+)
+FOCUS_PROSE_ALLOWED: tuple[tuple[str, str], ...] = (
+    (
+        "§2",
+        (
+            "H36 (a), `S4:904`).** With edits, Cancel, Esc, Close and a press on the scrim "
+            'ask first: a stacked CMP-044 `standard` `role=""`, "", "", with Keep editing '
+            "(first, focused) and Discard changes (`secondary`: the prompt is itself the "
+            "confirm, and a red fill would pull the eye to the loss"
+        ),
+    ),
+    (
+        "§2",
+        "Discard changes closes both and returns focus to `[⋯]`.",
+    ),
+    (
+        "§2 row 'invalid-empty, invalid-long, inv'",
+        "Save or `Enter` in Name moves focus to the summary's heading, which speaks first",
+    ),
+    (
+        "§2 row 'discard-prompt'",
+        "after Keep editing focus is where it was, after Discard changes on `[⋯]`",
+    ),
+    (
+        "§2 row 'saving'",
+        "focus stays on Save (`aria-busy`)",
+    ),
+    (
+        "§2 row 'failed'",
+        "focus stays on Save",
+    ),
+    (
+        "§2 row 'delete-racing'",
+        "focus stays on Delete workspace",
+    ),
+    (
+        "§3",
+        "Save layout returns to rest and keeps focus: it is the retry.",
+    ),
+    (
+        "§3",
+        (
+            "Cancel (`secondary`, focused) and Revert to saved (`secondary`: a destructive "
+            "verb never carries the primary weight, AC 1)."
+        ),
+    ),
+    (
+        "§4",
+        (
+            "`Esc` is Cancel — never Load theirs, never Keep mine — in the dialog and in the "
+            "confirm, where it goes back to the dialog with focus on Keep mine."
+        ),
+    ),
+    (
+        "§6 row 'The discard prompt, CMP-044 `sta'",
+        "Discard changes closes both, and focus returns to `[⋯]`",
+    ),
+    (
+        "§6 row 'The typed delete, CMP-044 `typed'",
+        "Cancel: SCR-025, focus on Delete workspace…",
+    ),
+    (
+        "§6 row 'SCR-029 conflict, CMP-043 `alert'",
+        (
+            "Save mine as new layout… hands focus to the save-as dialog's name field, "
+            'prefilled "" (`D02:449`)'
+        ),
+    ),
+    (
+        '§6 row "Keep mine\'s confirm, CMP-044 `st"',
+        "Cancel: the conflict dialog, focus on Keep mine",
+    ),
+    (
+        "§6 row 'The settings conflict, CMP-043 `'",
+        (
+            "Load theirs: the form, clean, with the saved values, focus on Save, the control "
+            "that sent"
+        ),
+    ),
+    (
+        "§6 row '`SCR-025/viewer-read-only`, focu'",
+        "`SCR-025/viewer-read-only`, focus on Save",
+    ),
+    (
+        "§13",
+        (
+            "**Record:** whether the typed value, its letter case and the unsaved clause were"
+            " read, and whether the reason was heard when Delete workspace… took focus."
+        ),
+    ),
+)
+
+
+def carry_gates(spec: str, t: dict[str, str]) -> list[str]:
+    """The boards-PR carries 5 and 6: E15-D03 never PENDING and cited at its merge in
+    `SCR-029/conflict-queued`; every `§n (`D02:line`)` names the section that line sits in."""
+    bad: list[str] = []
+    text = spec.replace(D03_PENDING_HISTORY, "")
+    pending = [where(text, m.start()) for m in re.finditer(D03_PENDING_RE, text, re.IGNORECASE)]
+    bad += [fail("d03-pending", f"E15-D03 named PENDING in {place}") for place in pending]
+    queued = [line for name, _, line in frame_rows(spec) if name == "SCR-029/conflict-queued"]
+    if queued and D03_MERGED not in queued[0] and "SCR-029/conflict-queued" not in pending:
+        bad.append(
+            fail("d03-pending", "SCR-029/conflict-queued does not cite E15-D03 at its merge")
+        )
+    heads = [
+        (t["D02"].count("\n", 0, h.start()) + 1, h.group(1))
+        for h in re.finditer(D02_HEAD_RE, t["D02"], MULTI)
+    ]
+    for m in re.finditer(SECTION_CITE_RE, spec):
+        line = int(m.group(2))
+        sec = next((s for at, s in reversed(heads) if at <= line), "")
+        if m.group(1) != sec and not sec.startswith(m.group(1) + "."):
+            bad.append(
+                fail(
+                    "cite-section",
+                    f"`D02:{line}` sits in §{sec} of E15-D02, cited as §{m.group(1)} in "
+                    f"{where(spec, m.start())}",
+                )
+            )
+    return bad
+
+
+def prose_sentences(spec: str) -> list[tuple[int, str]]:
+    """(the line's start, sentence) for every sentence, `;` clause and table cell of the spec
+    outside its frame rows and headings, its quoted copy blanked (`""`)."""
+    out: list[tuple[int, str]] = []
+    at = 0
+    for line in spec.split("\n"):
+        if line and not line.startswith("#") and not re.match(FRAME_RE, line):
+            for part in re.split(PROSE_SPLIT_RE, re.sub(r'"[^"]*"', '""', line)):
+                if part.strip():
+                    out.append((at, part.strip()))
+        at += len(line) + 1
+    return out
+
+
+def prose_gates(spec: str) -> list[str]:
+    """The boards-PR carries, round 2: A3 and MJ-3 read the prose too — no sentence pairs an exit
+    with a gating word (its negations aside), and none puts focus on a verb that is not safe,
+    unless it is one of the sentences pinned to its place, each at most as often as pinned."""
+    bad: list[str] = []
+    exits, moved = Counter(EXIT_PROSE_ALLOWED), Counter(FOCUS_PROSE_ALLOWED)
+    for at, text in prose_sentences(spec):
+        bare = plain(text)
+        on_exit = bool(re.search(EXIT_RE, bare) and re.search(GATED_RE, bare))
+        on_verb = focus_on_verb(text)
+        place = where(spec, at) if on_exit or on_verb else ""
+        if on_exit:
+            if exits[(place, text)] > 0:
+                exits[(place, text)] -= 1
+            else:
+                bad.append(fail("exit-gated", f"exit drawn gated in {place}: {text[:60]!r}"))
+        if on_verb:
+            if moved[(place, text)] > 0:
+                moved[(place, text)] -= 1
+            else:
+                bad.append(
+                    fail(
+                        "focus-moved",
+                        f"a clause moves focus off the safe action in {place}: {text[:60]!r}",
+                    )
+                )
     return bad
 
 
@@ -2641,7 +3018,7 @@ def gates(spec: str, ctx: Ctx) -> tuple[list[str], dict[str, Any]]:
     bc, nc = cite_gates(spec, ctx.t)
     bad += bh + b0 + frame_gates(spec, ctx.facts, deck_ids(spec)) + b3 + bc
     bad += text_gates(spec, ctx.t, ctx.facts) + reconcile_gates() + section_gates(spec, ctx)
-    bad += env_gates(spec) + known_gates(spec)
+    bad += env_gates(spec) + known_gates(spec) + carry_gates(spec, ctx.t) + prose_gates(spec)
     bad += [fail("token-missing", f"token MISSING: {tok}") for tok in ctx.missing]
     bad += [
         fail("contrast-fail", f"contrast FAIL: {r['element']}")
@@ -2838,7 +3215,15 @@ def mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "[cmp-043] SCR-029 dialog SCR-029/conflict",
         ),
     ]
-    return m + frame_mutations() + more_mutations() + section_mutations() + round1_mutations()
+    return (
+        m
+        + frame_mutations()
+        + more_mutations()
+        + section_mutations()
+        + round1_mutations()
+        + carry_mutations()
+        + prose_mutations()
+    )
 
 
 def frame_mutations() -> list[tuple[str, Callable[[str], str], str]]:
@@ -3700,7 +4085,7 @@ def section_mutations() -> list[tuple[str, Callable[[str], str], str]]:
                 6,
                 lambda t: t.replace(
                     "never locked by view-as, the kill switch",
-                    "locked by view-as, the kill switch",
+                    "seldom touched by view-as, the kill switch",
                     1,
                 ),
             ),
@@ -3710,7 +4095,7 @@ def section_mutations() -> list[tuple[str, Callable[[str], str], str]]:
             "X144-exits-a3-standing",
             sub(
                 "Close on every frame, never locked by view-as",
-                "Close on every frame, locked by view-as",
+                "Close on every frame, seldom touched by view-as",
             ),
             "[exits-a3] the standing additions lost A3",
         ),
@@ -4334,6 +4719,367 @@ def round1_mutations() -> list[tuple[str, Callable[[str], str], str]]:
             ),
             "[head-ruling] RULED does not name the ruling comment 6392398481",
         ),
+    ]
+
+
+def carry_mutations() -> list[tuple[str, Callable[[str], str], str]]:
+    """The orchestrator's boards-PR carries (2026-10-25, record 6396885006), each form in the
+    record's words and two variants of it — one new FAIL each."""
+    env = "[env] environment word outside the allow-list in "
+    gated = "[exit-gated] exit drawn gated in "
+    moved = "[focus-moved] a clause moves focus off the safe action in "
+    first_ = "[focus-safe] initial focus not on the safe action in "
+    share = "Share (Export…)"
+    queued = "SCR-029/conflict-queued"
+    merged = D03_MERGED + ", its dirty name `ws.tab.dirty.name` `D03:602`"
+
+    def s025(add: str) -> Callable[[str], str]:
+        return frame_sub("SCR-025/default", share, f"{share[:-1]}, {add})")
+
+    def before_exits(frame: str, add: str) -> Callable[[str], str]:
+        return frame_sub(frame, "; exits T1:", f"; {add}; exits T1:")
+
+    def entry(eid: str, add: str) -> Callable[[str], str]:
+        return row_fn(
+            rf"^\| {eid} +\|.*$",
+            lambda ln: ln.replace("| no dialog — ", f"| no dialog — {add}; ", 1),
+        )
+
+    def in_row(first_cell: str, add: str) -> Callable[[str], str]:
+        return row_fn(
+            rf"^\| {re.escape(first_cell)} +\|.*$", lambda ln: ln.replace(" | ", f" | {add}", 1)
+        )
+
+    return [
+        # Carry 1: the plurals and synonyms, any case, and each allowed phrase at its place.
+        ("K1-env-envs", s025("a list of envs"), env + "SCR-025/default"),
+        ("K1-env-demos", s025("two demos side by side"), env + "SCR-025/default"),
+        ("K1-env-testnets", s025("a note on testnets"), env + "SCR-025/default"),
+        ("K1-env-real-money", s025('a "real-money" badge'), env + "SCR-025/default"),
+        (
+            "K1-env-real-money-prose",
+            sub(
+                "so opening reads nothing.",
+                "so opening reads nothing. Real money is never at stake.",
+            ),
+            env + "§2",
+        ),
+        ("K1-env-mainnets-row", in_row("D08-G6", "and MAINNETS, "), env + "§11 row 'D08-G6'"),
+        (
+            "K1-env-place-topbar",
+            chain(
+                sub("the TopBar with its env band and the CMP-211", "the TopBar and the CMP-211"),
+                before_exits("SCR-025/dirty", "the TopBar with its env band"),
+            ),
+            (
+                "[env] environment phrase 'the TopBar with its env band' in SCR-025/dirty, "
+                "pinned to §2 row 'Scrim'"
+            ),
+        ),
+        (
+            "K1-env-place-live-region",
+            chain(
+                sub("with no live region of its own", "with nothing of its own"),
+                sub("so opening reads nothing.", "so opening reads nothing, with no live region."),
+            ),
+            "[env] environment phrase 'no live region' in §2, pinned to",
+        ),
+        (
+            "K1-env-place-shell",
+            chain(
+                sub(" and the shell's live regions stay outside it", " stay outside it"),
+                sub(
+                    "never a control's state;",
+                    "never a control's state, as the shell's live regions are;",
+                ),
+            ),
+            '[env] environment phrase "the shell\'s live regions" in §5, pinned to §6',
+        ),
+        # Carry 2: an exit no longer available, with no effect or removed, and the exit words.
+        (
+            "K2-exit-no-longer",
+            before_exits("SCR-025/saving", "Cancel is no longer available while saving"),
+            gated + "SCR-025/saving",
+        ),
+        (
+            "K2-exit-no-longer-offered",
+            before_exits("SCR-029/unsaved-saving", "Esc is no longer offered once the send starts"),
+            gated + "SCR-029/unsaved-saving",
+        ),
+        (
+            "K2-exit-no-longer-works",
+            before_exits("SCR-025/failed", "Close no longer works while the banner shows"),
+            gated + "SCR-025/failed",
+        ),
+        (
+            "K2-exit-no-effect",
+            before_exits("SCR-029/conflict", "Cancel has no effect while the re-read runs"),
+            gated + "SCR-029/conflict",
+        ),
+        (
+            "K2-exit-no-effect-esc",
+            before_exits("SCR-025/saving", "Esc has no effect until the answer"),
+            gated + "SCR-025/saving",
+        ),
+        (
+            "K2-exit-had-no-effect",
+            before_exits(
+                "SCR-029/conflict-from-preset", "Load theirs had no effect under the kill switch"
+            ),
+            gated + "SCR-029/conflict-from-preset",
+        ),
+        (
+            "K2-exit-removed",
+            before_exits("SCR-025/failed", "Cancel is removed while the banner shows"),
+            gated + "SCR-025/failed",
+        ),
+        (
+            "K2-exit-removed-discard",
+            before_exits("SCR-029/unsaved-saving", "Discard changes is removed after the send"),
+            gated + "SCR-029/unsaved-saving",
+        ),
+        (
+            "K2-exit-gets-removed",
+            before_exits("SCR-025/dirty", "Close gets removed under the kill switch"),
+            gated + "SCR-025/dirty",
+        ),
+        (
+            "K2-exit-escape",
+            before_exits("SCR-029/revert", "Escape is disabled while viewing as"),
+            gated + "SCR-029/revert",
+        ),
+        (
+            "K2-exit-close-button",
+            before_exits("SCR-025/saving", "the close button is hidden while saving"),
+            gated + "SCR-025/saving",
+        ),
+        (
+            "K2-exit-escape-waits",
+            before_exits("SCR-029/unsaved-saving", "Escape waits for the send"),
+            gated + "SCR-029/unsaved-saving",
+        ),
+        # Carry 3: the verb on either side of focus, every `initial focus:` clause, any case.
+        (
+            "K3-focus-verb-before",
+            before_exits("SCR-029/conflict", "Keep mine takes focus after 400 ms"),
+            moved + "SCR-029/conflict",
+        ),
+        (
+            "K3-focus-focused",
+            before_exits("SCR-029/unsaved", "Discard changes is focused once the summary is read"),
+            moved + "SCR-029/unsaved",
+        ),
+        (
+            "K3-focus-gets",
+            before_exits("SCR-029/conflict-from-preset", "Load theirs gets the focus"),
+            moved + "SCR-029/conflict-from-preset",
+        ),
+        (
+            "K3-focus-second-initial",
+            before_exits("SCR-029/conflict", "initial focus: Keep mine"),
+            first_ + "SCR-029/conflict",
+        ),
+        (
+            "K3-focus-initial-capital",
+            before_exits("SCR-029/conflict-refreshed", "Initial focus: Load theirs"),
+            first_ + "SCR-029/conflict-refreshed",
+        ),
+        (
+            "K3-focus-initial-discard",
+            before_exits("SCR-025/discard-prompt", "initial focus: Discard changes"),
+            first_ + "SCR-025/discard-prompt",
+        ),
+        (
+            "K3-focus-lowercase",
+            before_exits("SCR-029/conflict", "after 400 ms focus moves to keep mine"),
+            moved + "SCR-029/conflict",
+        ),
+        (
+            "K3-focus-lowercase-lands",
+            before_exits("SCR-029/unsaved", "focus lands on discard changes"),
+            moved + "SCR-029/unsaved",
+        ),
+        (
+            "K3-focus-lowercase-replace",
+            before_exits("SCR-029/keep-mine-confirm", "focus goes to replace saved version"),
+            moved + "SCR-029/keep-mine-confirm",
+        ),
+        # Carry 4: "offers … first" / "lists … first" on a no-dialog route, and §3's clauses.
+        (
+            "K4-entry-offers-first",
+            entry("E2", "the tab strip offers Save layout first"),
+            "[entry-prompt] a prompt on the no-dialog route E2",
+        ),
+        (
+            "K4-entry-lists-first",
+            entry("E7", "the menu lists Save first"),
+            "[entry-prompt] a prompt on the no-dialog route E7",
+        ),
+        (
+            "K4-entry-offering-first",
+            entry("E3", "offering Keep editing first"),
+            "[entry-prompt] a prompt on the no-dialog route E3",
+        ),
+        (
+            "K4-route-no-longer-clause",
+            sub(
+                "a write the user is no longer watching meets a conflict",
+                "a write the user is no longer watching meets a conflict, and it opens on a tab "
+                "switch",
+            ),
+            "[route-opens] §3 opens the dialog on a no-dialog route",
+        ),
+        (
+            "K4-route-no-longer-waits",
+            sub(
+                "a write the user is no longer watching meets a conflict",
+                "a write the user is no longer watching meets a conflict — it no longer stays shut and "
+                "opens on navigation",
+            ),
+            "[route-opens] §3 opens the dialog on a no-dialog route",
+        ),
+        (
+            "K4-route-added-clause",
+            sub(
+                "an import or an app close (D-9; §3.2);",
+                "an import or an app close (D-9; §3.2); it also opens on a layout switch;",
+            ),
+            "[route-opens] §3 opens the dialog on a no-dialog route",
+        ),
+        # Carry 5: E15-D03 merged, never PENDING, cited at its merge in the queued row.
+        (
+            "K5-d03-pending",
+            frame_sub(queued, merged, "E15-D03, PENDING"),
+            "[d03-pending] E15-D03 named PENDING in SCR-029/conflict-queued",
+        ),
+        (
+            "K5-d03-pending-handoff",
+            sub("| merged text (#4478) ", "| D03 PENDING        "),
+            "[d03-pending] E15-D03 named PENDING in §11 row 'E15-D03 (SCR-020 chrome)'",
+        ),
+        (
+            "K5-d03-still-pending",
+            sub(
+                "E15-D03, E15-D04 and E15-D06 (merged as text) take",
+                "E15-D03 (still PENDING), E15-D04 and E15-D06 take",
+            ),
+            "[d03-pending] E15-D03 named PENDING in §15",
+        ),
+        (
+            "K5-d03-lowercase-pending",
+            sub(
+                "E15-D03, E15-D04 and E15-D06 (merged as text) take",
+                "E15-D03 (still pending), E15-D04 and E15-D06 take",
+            ),
+            "[d03-pending] E15-D03 named PENDING in §15",
+        ),
+        (
+            "K5-d03-no-sha",
+            frame_sub(queued, " in #4478 at `c4989493461ec6b6d22b9254633452a6362b750e`", ""),
+            "[d03-pending] SCR-029/conflict-queued does not cite E15-D03 at its merge",
+        ),
+        # Carry 6: the section beside a `D02` cite is the one its line sits in.
+        (
+            "K6-c19-cite",
+            sub("E15-D02 §8.1 (`D02:645`", "E15-D02 §8.1 (`D02:280`"),
+            "[cite-section] `D02:280` sits in §5.1 of E15-D02, cited as §8.1 in §11 row 'D08-C19'",
+        ),
+        (
+            "K6-c19-section",
+            sub("E15-D02 §8.1 (`D02:645`", "E15-D02 §5.1 (`D02:645`"),
+            "[cite-section] `D02:645` sits in §8.1 of E15-D02, cited as §5.1 in §11 row 'D08-C19'",
+        ),
+        (
+            "K6-header-section",
+            sub("§5.7 `D02:417–449`", "§5.10 `D02:417–449`"),
+            "[cite-section] `D02:417` sits in §5.7 of E15-D02, cited as §5.10 in the header",
+        ),
+        # Carry 7: an `[env]` FAIL outside the frame rows names its row.
+        ("K7-env-row-g7", in_row("D08-G7", "on demo, "), env + "§11 row 'D08-G7'"),
+        ("K7-env-row-bq3", in_row("BQ-3", "on live, "), env + "the header row 'BQ-3'"),
+        (
+            "K7-env-row-deck",
+            in_row("`e15.conflict.queued`", "a testnet tab, "),
+            env + "§8 row '`e15.conflict.queued`'",
+        ),
+    ]
+
+
+def prose_mutations() -> list[tuple[str, Callable[[str], str], str]]:
+    """The boards-PR carries, round 2: the exit gate reads the prose, the carry-2 phrases with it,
+    and the focus gate reads every frame kind and the prose — one new FAIL each."""
+    gated = "[exit-gated] exit drawn gated in "
+    moved = "[focus-moved] a clause moves focus off the safe action in "
+    weights = "**Weights and initial focus (AC 1).**"
+    keyboard = "**Each dialog's keyboard model**"
+    t2_too = "Cancel returns to SCR-025, whose Delete workspace… is T2 too."
+
+    def para(start: str, add: str) -> Callable[[str], str]:
+        return row_fn(rf"^{re.escape(start)}.*$", lambda ln: f"{ln} {add}")
+
+    def in_row(first_cell: str, add: str) -> Callable[[str], str]:
+        return row_fn(
+            rf"^\| {re.escape(first_cell)} +\|.*$", lambda ln: ln.replace(" | ", f" | {add}", 1)
+        )
+
+    return [
+        # The exit gate reads every sentence of the prose, its negations aside.
+        (
+            "P1-exit-prose-s3-esc",
+            para("SCR-029 is one component", "`Esc` is disabled."),
+            gated + "§3",
+        ),
+        ("P1-exit-prose-s6-cancel", para(keyboard, "Cancel is greyed out."), gated + "§6"),
+        (
+            "P1-exit-prose-s4-held",
+            para("The conflict variant answers", "Close is held."),
+            gated + "§4",
+        ),
+        ("P1-exit-prose-cell", in_row("AC-1", "Cancel is disabled; "), gated + "the header row"),
+        # The carry-2 phrases in the prose.
+        ("P2-exit-prose-no-longer", para(keyboard, "Close is no longer available."), gated + "§6"),
+        ("P2-exit-prose-no-effect", para(weights, "`Esc` has no effect there."), gated + "§3"),
+        (
+            "P2-exit-prose-removed",
+            para("The conflict variant answers", "The close button is removed."),
+            gated + "§4",
+        ),
+        # A pinned sentence holds only its place, at most as often as pinned.
+        ("P3-exit-prose-elsewhere", para(keyboard, t2_too), gated + "§6"),
+        ("P3-exit-prose-twice", sub(t2_too, f"{t2_too} {t2_too}"), gated + "§2"),
+        # The focus gate reads every frame kind, footer or none.
+        (
+            "P4-focus-compact",
+            frame_sub("SCR-029/compact", "(`16:125`)", "(`16:125`); Discard changes is focused"),
+            moved + "SCR-029/compact",
+        ),
+        (
+            "P4-focus-reflow",
+            frame_sub("SCR-029/reflow-200", "footer sticky", "footer sticky, focus on Keep mine"),
+            moved + "SCR-029/reflow-200",
+        ),
+        (
+            "P4-focus-queued",
+            frame_sub(
+                "SCR-029/conflict-queued",
+                "no dialog yet:",
+                "no dialog yet; focus moves to Load theirs;",
+            ),
+            moved + "SCR-029/conflict-queued",
+        ),
+        (
+            "P4-focus-025-no-verb",
+            frame_sub(
+                "SCR-025/compact",
+                "at `size.control.compact`:",
+                "at `size.control.compact`; Keep mine is focused;",
+            ),
+            moved + "SCR-025/compact",
+        ),
+        # ... and the prose.
+        ("P5-focus-prose-s3", para(weights, "Discard changes is focused."), moved + "§3"),
+        ("P5-focus-prose-s6", para(keyboard, "Focus opens on Keep mine."), moved + "§6"),
+        ("P5-focus-prose-elsewhere", para(keyboard, "focus stays on Save."), moved + "§6"),
     ]
 
 
