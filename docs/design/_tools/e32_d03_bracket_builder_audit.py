@@ -8,8 +8,9 @@ resolved or MISSING; (3-4) the contract facts the spec quotes, parsed from text,
 claim; (5) the string gates (every E32-D02 section 3.8 key byte-equal, the CMP-158 sentence, the
 RULED class word in sections 2 / 5 / 10, no "app-managed" in UI copy and no middle-dot class word
 outside HA-14, T2 reasons within 60 characters, no private text,
-every cited id and `file:line` still valid, C-2.6 on every position-opening frame); (6) the counts
-and the fixture arithmetic (the E32-D01 ladder tool's formulas re-implemented; nothing typed twice).
+every cited id and `file:line` still valid, C-2.6 on every position-opening frame, no R price
+or R target without a valid stop); (6) the counts and the fixture arithmetic (the E32-D01
+ladder tool's formulas re-implemented; nothing typed twice).
 `--json` feeds the check-nums script; `--check` re-derives the spec's `audit:` markers;
 `--self-test` mutation-tests the cite rule (moved line = WARN; vanished or ambiguous = FAIL) and
 the section 3 frame gates on this spec (a present-tense stop marker on one pre-send row = one
@@ -17,7 +18,9 @@ FAIL, in three phrasings; a renamed pre-send row = one FAIL; the viewer row with
 one FAIL with its label kept; `submitted` without its flag = no FAIL, without its flag and "held by
 the exchange" = one FAIL; a post-confirm control = no FAIL) and the class-word gate (a middle dot in
 section 10's `cls.emulated` or in one of section 5's two = one FAIL each; section 10 without the
-RULED word = one FAIL).
+RULED word = one FAIL) and the R read-out gate (an R price planted on `validating` or on
+`validating · stop empty`, the 0.250 BTC reward on the 0.002 BTC row, an R target in the
+stop-empty Place label, or section 4 without the rule = one FAIL each).
 Exit 1 on a gated FAIL or a failed gate.
 
 Usage: python3 -I docs/design/_tools/e32_d03_bracket_builder_audit.py [--json|--check|--self-test]
@@ -99,6 +102,13 @@ PRESENT_HELD = (
     r"\d[\d,.]*(?: ·)? held by Bybit \(exchange\)",
 )
 CLASS_RE = r"\*\*(?:T2|T4|validity|status|outcome|T1|—)\*\*"
+# Section 4.1's R read-out rule: a take-profit set in R resolves through the stop, so a row whose
+# stop is empty or on the wrong side states no R price, and the 0.002 BTC row no 0.250 BTC reward.
+R_RULE = "an R read-out never shows a price the stop does not define"
+NO_VALID_STOP = ("validating", "validating · stop empty")
+TINY_ROW = "validating · ladder not splittable"
+R_PRICE = r"(?:R = |\d R · )\d"
+PLACE_RE = r"Place bracket: [^\"\\|]*?stop ([\d,.]+|—), target ([\d,.]+|—)"
 # element | fg | bg | role — every pair the screen draws (spec section 11, rows in order).
 PAIRS_TABLE = """
 dialog body, field values, the validation line | color.text.primary | color.surface.overlay | text
@@ -723,6 +733,68 @@ def self_test_frames() -> list[str]:
     return bad
 
 
+def tp_readout_gates(spec: str) -> list[str]:
+    """Section 4.1's R read-out rule stated; no R price on a section 3 row whose stop is empty
+    or on the wrong side; no 0.250 BTC reward on the 0.002 BTC row (the reward from `fixture`); no
+    Place label anywhere whose stop is empty or wrong-side naming an R-derived target."""
+    bad: list[str] = []
+    if R_RULE not in section(spec, 4, 5):
+        bad.append("spec section 4.1: the R read-out rule is missing")
+    fx = fixture()
+    full = f"{Decimal(str(fx['reward'])):,.2f} USDT"
+    r_px = ENTRY - STOP  # the R-derived targets: 2 R and each rung, as `fixture` builds them
+    derived = {f"{toward_entry(ENTRY + r_px * m, ENTRY):,.1f}" for m in R_MULTIPLES}
+    invalid = {"—", f"{fx['wrong_side_stop']:,.1f}"}
+    for m in re.finditer(PLACE_RE, spec):
+        if m.group(1) in invalid and m.group(2) in derived:
+            bad.append(
+                f"spec: a Place label with stop {m.group(1)} names the R target {m.group(2)}"
+            )
+    s3 = section(spec, 3, 4)
+    for row in re.finditer(r"^\| \d+ +\| `SCR-069 / ([^`]+)` +\|([^\n]*)", s3, MULTI):
+        name, rest = row.group(1), row.group(2)
+        if name in NO_VALID_STOP and re.search(R_PRICE, rest):
+            bad.append(f"spec section 3: `{name}` holds no valid stop but states an R price")
+        if name == TINY_ROW and full in rest:
+            bad.append(f"spec section 3: `{name}` holds 0.002 BTC but states the {full} reward")
+    return bad
+
+
+def self_test_tp_readout() -> list[str]:
+    """Mutation-test the R read-out gate: the head is clean; an R price planted on `validating`
+    or on `validating · stop empty`, the 0.250 BTC reward on the 0.002 BTC row, an R target in
+    the stop-empty Place label, or the rule dropped from section 4 is exactly one FAIL each."""
+    spec = SPEC.read_text(encoding="utf-8")
+    bad: list[str] = []
+    if tp_readout_gates(spec):
+        bad.append("self-test: the head must pass the R read-out gate")
+    for name, plant in (
+        ("validating", "TP 2 · +2 R · 64,230.0"),
+        ("validating · stop empty", "one target — [2.0] R = 64,230.0"),
+        (TINY_ROW, "one target — [2.0] R = 64,230.0 · +55.00 USDT"),
+    ):
+        hits = list(re.finditer(rf"^\| \d+ +\| `SCR-069 / {re.escape(name)}` +\| ", spec, MULTI))
+        if len(hits) != 1:
+            bad.append(f"self-test: cannot plant the {name} read-out mutation")
+            continue
+        at = hits[0].end()
+        got = len(tp_readout_gates(spec[:at] + plant + "; " + spec[at:]))
+        if got != 1:
+            bad.append(f"self-test: the {name} read-out mutation gave {got} FAIL, not 1")
+    rx = r"^\| \d+ +\| `SCR-069 / validating · stop empty` +\|.*$"
+    row = (re.findall(rx, spec, MULTI) or [""])[0]
+    old = "stop —, target — · risk —"
+    if old not in row:
+        bad.append("self-test: cannot plant the stop-empty Place mutation")
+    else:
+        planted = spec.replace(row, row.replace(old, "stop —, target 64,230.0 · risk —"))
+        if len(tp_readout_gates(planted)) != 1:
+            bad.append("self-test: an R target in the stop-empty Place label must be one FAIL")
+    if len(tp_readout_gates(spec.replace(R_RULE, "a rule"))) != 1:
+        bad.append("self-test: section 4 without the R read-out rule must be exactly one FAIL")
+    return bad
+
+
 def class_word_gates(spec: str) -> list[str]:
     """The RULED class word present in sections 2, 5 and 10; every retired word refused: the
     "app-managed" pattern in the UI sections, the middle-dot form anywhere outside the HA-14 row
@@ -804,6 +876,7 @@ def gates(files: list[Path], spec: str, facts: dict[str, object], t: dict[str, s
             if len(s) > 60 or not s.endswith(".") or re.search(r"\d", s):
                 bad.append(f"T2 reason {key}: {len(s)} chars; stop {s.endswith('.')}")
     bad += frame_gates(section(spec, 3, 4))
+    bad += tp_readout_gates(spec)
     s5 = section(spec, 5, 6)
     bad += [f"spec section 5: consumer {c} is not specified" for c in CONSUMERS if c not in s5]
     lines = {k: v.split("\n") for k, v in t.items()}
@@ -866,13 +939,15 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 
 def main(argv: list[str]) -> int:
     if "--self-test" in argv:
-        bad = self_test() + self_test_frames() + self_test_class_word()
+        bad = self_test() + self_test_frames() + self_test_class_word() + self_test_tp_readout()
         msg = "self-test: clean (cite: moved → WARN, gone → FAIL, ambiguous → FAIL; frames: "
         msg += "pre-send present tense (3 phrasings) → 1 FAIL, a renamed pre-send row → 1 FAIL, "
         msg += "viewer with its label alone → 1 FAIL, submitted without its flag → 0, without its "
         msg += "flag and 'held by the exchange' → 1, post-confirm → 0; class word: middle dot in "
         msg += "section 10 cls.emulated → 1 FAIL, in section 5 (one of two) → 1 FAIL, "
-        msg += "section 10 without it → 1 FAIL)"
+        msg += "section 10 without it → 1 FAIL; R read-out: an R price on validating or on stop "
+        msg += "empty → 1 FAIL each, the 0.250 BTC reward on the 0.002 BTC row → 1, an R target "
+        msg += "in the stop-empty Place label → 1, section 4 without the rule → 1)"
         print(msg if not bad else "\n".join(bad))
         return 1 if bad else 0
     themes = {k: load_theme(k) for k in THEMES}
