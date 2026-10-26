@@ -317,6 +317,26 @@ async def test_the_offset_snapshot_reads_the_verified_offset_and_never_checks_a_
     assert service.clock_offset_snapshot_ms() == 10_000
 
 
+async def test_the_offset_snapshot_floors_a_sub_millisecond_offset_as_the_serving_read() -> None:
+    """#913 L1d: a venue 0.5 ms behind the host is an offset of -1 ms in the snapshot, floored as
+    `offset_ms_or_none` floors it, never truncated to 0."""
+    clocks = _Clocks()
+
+    async def behind() -> tuple[int, float, float]:
+        return (clocks.wall() // 1000 - 500, clocks.wall() / 1e9, 0.0)
+
+    guard = ClockGuard(
+        behind,
+        sample_count=1,
+        wall_ns=clocks.wall,
+        mono_ns=clocks.mono,
+        step_check_interval_ms=0,
+        sleep=_no_sleep,
+    )
+    await guard.measure_once()
+    assert guard.offset_ms_snapshot() == guard.offset_ms_or_none() == -1
+
+
 async def test_periodic_failure_log_survives_logging_reconfiguration() -> None:
     """Regression (#1961, mirrors #1921): clock.py resolves its logger per call, so
     `capture_logs()` still sees periodic-measure events after logging is reconfigured."""
