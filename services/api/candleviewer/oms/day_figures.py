@@ -30,6 +30,8 @@ the lane the adapter assigns (poll), never the stop and cancel reserve:
 The reads run concurrently, each within `FIGURES_READ_TIMEOUT_S` and all within
 `FIGURES_BUDGET_S`; one that fails or times out gives None for its own figures only, keeps
 nothing, and is logged by its figure and error type alone (balances are Confidential, C-12.6).
+Figures the `AccountFigures` model refuses make every account figure None, logged as
+`figures` with the error type alone.
 Each answer is kept `FIGURES_TTL_S` on the injected monotonic clock. `invalidate` drops the
 account's wallet, day's loss and book and bumps their generation, so a read in flight across it
 answers its value but keeps none of it: the next read is the venue's. Overlapping reads on one
