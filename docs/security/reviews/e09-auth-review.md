@@ -13,6 +13,7 @@
 - Method: white-box code walk by an agent (read-only on 2026-10-23), plus the two drills of §3 and
   §4 on a dev compose stack. This was not the conversational review with the epic owner that the
   ticket describes; that session is still needed.
+- Public record: open findings carry only id, severity, area, status and tracker (`SECURITY.md` §1).
 
 > **Status: re-examined 2026-10-23. The R0 area-6 security gate is not met.** The review found
 > Critical: none; High: none new. #4254, which corrects the break-glass runbook, merged as
@@ -33,28 +34,28 @@ and §4.
 <!-- prettier-ignore -->
 | Control | Implementation (file:line) | Proving test | Verdict |
 |---|---|---|---|
-| SR-010 local auth, no anonymous routes | Deny by default (SR-017). Public to every mesh peer: FastAPI's default `/docs`, `/redoc` and `/openapi.json`, plus `/metrics`, `/readyz` and `/health/*` (`api/deny_by_default.py:20`, `api/contract_conformance.py:50-52`, `app.py:1364-1368`) | `tests/unit/api/test_deny_by_default.py::test_runtime_denies_undeclared_route_with_403` | **FAIL-T** #4206 (L2: `/metrics`, and the `/readyz` and `/health/*` probes; #4222 closed the probes' sha exposure, and the anonymous-probe question is #4206's Owner decision): SR-010 allows only `/healthz` (loopback only), login and static assets |
+| SR-010 local auth, no anonymous routes | details held in the private repository advisory (maintainers) | — | **FAIL-T** #4206 (L2) |
 | SR-011 Argon2id, params stored, rehash on login | `auth/hashing.py:34` (m=65536, t=3, p=4; argon2-cffi's 16-byte salt), `:126`; rehash at `auth/login_service.py:148-152` | `tests/unit/auth/test_hashing.py::test_hasher_needs_rehash_true_for_stale_params`; AC-CRED-01 | PASS. The ≥100 ms on-host cost is FU-3 (#2097) |
 | SR-012 opaque tokens, cookie flags | `auth/session_service.py:417` (256-bit), `:331`; cookie flags at `api/sessions.py:423-432` (path `/api/v1/auth`, stricter than `/`); the SR-041 token at `api/csrf.py:194` (#2238) | AC-CSRF-03 (`tests/security/auth/test_csrf_cookie_abuse.py`) | PASS. F-2 (no IP/UA binding) is accepted (§2) |
-| SR-013 rotate on login, TOTP, step-up, password change, role change | Rotation at `api/auth.py:707`, `:1061` and `auth/session_service.py:557-576`. A role change only pushes permissions (`api/users.py:477-484`, `:549-660`); a step-up mints nothing (`auth/step_up.py:457-483`); there is no password change route (SR-028) | AC-SES-01..04; `tests/unit/ws/test_gateway_e2e.py::test_ws_e2e_permissions_sub_check_and_live_role_change` | **FAIL-T** #2101 (R-1), #2110 (R-4) |
-| SR-014 uniform login failures + dummy verify | Dummy verify at `auth/login_service.py:118-124`. A locked account answers `423` with `Retry-After` whatever password was sent (`api/auth.py:600-609`); an unknown name always gets `401` | AC-ENUM-01/03; `tests/unit/auth/test_login_timing_enumeration.py`; `tests/security/auth/test_observability.py:101-102` pins the `423` (`[401]*5 + [423]` against a ghost's `401`) | **FAIL-T** #1233 (L1). The contract's `/auth/login` lists only 200, 401, 429 and 503 and calls failures "uniform"; the `403` for a disabled user is AC-ENUM-02's documented trade-off |
-| SR-015 per-account + per-IP throttling | Per IP, 20 per 60 s (`auth/throttle.py:30-31`); the account locks after 5 failures from any address (SR-016) | `tests/unit/auth/test_login_service.py::test_per_ip_throttle_blocks_independent_of_username`; AC-CRED-03 | **FAIL-T** #1233: no backoff (M1) |
-| SR-016 lockout + owner alert | The lock: 5 failures, a fixed 15 minutes, no doubling (`auth/login_service.py:50-51`, `:136-140`; `storage/repositories/users_sqlalchemy.py:145-160`). `AuthLockouts` is a ticket (`infra/prometheus/alerts/system_ticket.yml:154`) | `test_lockout_after_five_failures_refuses_even_correct_password`; AC-CRED-04/05 | **FAIL-T** #2621, #1233 (M1): the ticket is muted in quiet hours, and nothing unlocks the account |
+| SR-013 rotate on login, TOTP, step-up, password change, role change | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2101 (R-1), #2110 (R-4) |
+| SR-014 uniform login failures + dummy verify | details held in the private repository advisory (maintainers) | — | **FAIL-T** #1233 (L1) |
+| SR-015 per-account + per-IP throttling | details held in the private repository advisory (maintainers) | — | **FAIL-T** #1233 (M1) |
+| SR-016 lockout + owner alert | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2621, #1233 (M1) |
 | SR-017 deny-by-default start-up | `api/deny_by_default.py:71-82` (build), `:85-96` (runtime `403`, WS `1008`) | `tests/unit/api/test_deny_by_default.py:19`, `:30` | PASS |
 | SR-018 route × role matrix | `services/api/tests/contract/rbac/matrix.yaml` | `services/api/tests/contract/rbac/test_route_matrix.py`, `test_scope_and_ws.py` (E09-Q03) | PASS |
 | SR-019 list and revoke own sessions | `api/sessions.py:1487`, `:1625`; `api/users.py:1294`, `:1311` | `tests/unit/api/test_sessions_router.py`; AC-CSRF-05 | PASS |
 | SR-020 mandatory TOTP | `api/auth.py:642`; the enrolment-only session (`auth/login_service.py:157-161`, `api/enrolment_guard.py:79`) | `tests/unit/auth/test_mfa_service.py` | PASS |
 | SR-021 ±1 skew + replay cache | `auth/totp.py:24`; `auth/mfa_service.py:138-143` | `tests/unit/auth/test_totp.py::test_verify_code_rejects_beyond_skew_window`; AC-MFA-01 | PASS |
-| SR-022 recovery codes | `auth/recovery_codes.py:33`, `:36-40`, `:61-67`; `auth/mfa_service.py:310`, `:332`; `api/auth.py:888`, paged by `AuthRecoveryCodeUsed` (#2660). The key is still the environment setting (`auth/service.py:285-292`, `settings.py:393`), the keyring is "unused until S4 and S5b" (`secrets/_auth_keyring.py:1-9`), and the digests do not bind the user (`auth/recovery_codes.py:61-67`) | `test_recovery_code_entropy_is_at_least_128_bits`; AC-MFA-03/04/05 | **FAIL-T** #2152 (M3): the SR, as amended by ADR-0009 Amendment 4, requires a KEK-wrapped, user-bound key, and `live` refuses environment keys. D-1 is decided (§2) |
+| SR-022 recovery codes | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2152 (M3) |
 | SR-023 break-glass CLI | `breakglass.py`; `admin/breakglass.py:5-11`, `:395-411`, `:464-502`; `secrets/service.py:688-707`; the notice at `ws/gateway.py:1682-1688` and `app.py:1699` | `tests/unit/admin/test_breakglass_flow.py:256` (`test_break_glass_requires_host_filesystem_and_kek_present`); the drill (§3) | PASS in code (#2119). The drill passes AC3; AC2 fails, pending (§3) |
-| SR-024 timeouts + 12 h trading freshness | 12 h absolute at `auth/session_service.py:87`, carried on refresh at `:576`; `extend` only re-stamps idle (`api/sessions.py:1321-1343`) | `tests/unit/auth/test_session_service.py`; no test pins ≤ 12 h | PASS, by construction. `mfa_satisfied_at` is re-stamped on every refresh (`auth/session_service.py:432`, `:570`), so it cannot be the marker. #2108 (R-2) stays open for a pin or an explicit check (E43-T03, #1232) |
+| SR-024 timeouts + 12 h trading freshness | 12 h absolute at `auth/session_service.py:87`, carried on refresh at `:576`; `extend` only re-stamps idle (`api/sessions.py:1321-1343`) | `tests/unit/auth/test_session_service.py` | PASS, by construction. #2108 (R-2) open. |
 | SR-025 step-up, 5 min, scoped | `auth/step_up.py:72`, `:83`, `:98`, `:457-483` (password and TOTP, #2154), `:658`; the view-as start is handler-gated (`api/step_up.py`) | `tests/unit/auth/test_step_up.py`; AC-STEP-01..04 | PASS. D-2 shipped in #2154. U35's binding is still #2304 |
 | SR-026 no target-user on self-service | `security/semgrep/auth/no-target-user-on-self-service.yml`; `undeclared_query_refusal` at `api/auth.py:562` | rule fixtures under `security/semgrep/auth/fixtures/` | PASS |
 | SR-027 invite creates least-privilege user | `auth/models.py:376-381` (#2124) | `tests/unit/api/test_invites_router.py::test_create_rejects_owner_role_and_duplicate`; AC-INV-01..04 | PASS. R-3 is fixed (#2124) |
-| SR-028 password policy + other-session revoke | Policy at `auth/invite_service.py:69-110`; no `PUT /auth/password` route | invite-redeem tests | **FAIL-T** #2110, #2099 (R-4) |
+| SR-028 password policy + other-session revoke | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2110, #2099 (R-4) |
 | SR-029 disable user → sessions, sockets, pending actions | `api/users.py:790`; `admin/user_disable.py:1-30`, `:75`, `:293` (E42-T04, #965) | `tests/security/auth/test_disable_user_e2e.py:427`, `:477`, `:483`; `tests/security/auth/test_disable_user_drill.py` (#4254); the drill (§4) | PASS in code. The drill fails AC4 as written, on the rule-engine clause (§4) |
-| SR-050 two-layer authZ | `auth/scopes.py:158-198`, `:265-298`. No order router is mounted, so the OMS layer is E29's | AC-AUTHZ-02/04; E09-Q03 matrix | **FAIL-T** #2094 (FU-1); U30's guard is #1237 (L3) |
-| SR-051 server-side account resolution | `auth/scopes.py:201-212` to `OwnerScope` and `GrantScope` (`storage/repositories/accounts.py:28`, `:35`); Semgrep `no-raw-account-id` | AC-AUTHZ-02/03 | **FAIL-T** #2291 (M2): `GET /rules` filters after fetching |
+| SR-050 two-layer authZ | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2094 (FU-1), #1237 (L3) |
+| SR-051 server-side account resolution | details held in the private repository advisory (maintainers) | — | **FAIL-T** #2291 (M2) |
 
 ### 1.1 Other items in the brief
 
@@ -63,7 +64,7 @@ and §4.
 |---|---|---|---|
 | Audit chain trigger + revoked UPDATE/DELETE | `migrations/versions/0003_audit_log.py:150-154` (chain, append-only, no-truncate triggers) | `services/api/tests/integration/audit/test_audit_repository.py::test_app_role_cannot_update_or_delete`, `::test_truncate_refused_even_for_owner` (integration; not run in this review) | PASS (by inspection + integration test) |
 | audit:read grants (SR-067) | `migrations/versions/0016_audit_read_grants.py` | `services/api/tests/integration/auth/test_0016_audit_read_grants_migration.py` | PASS. Fixed in #2083 / PR #2095 |
-| Scheduled chain verifier + `cv_audit_chain_verified` | The job runs the verifier at start-up and nightly (#3017), from `create_app` since #3872 (`app.py:2167-2174`); a failure counts on `audit_chain_verification_failures_total` (`api/audit_verify_runner.py:150`). The verifier cross-checks `audit_checkpoints` (`audit/query.py:484-489`, `:564-569`), but `run_checkpoint` (`audit/checkpoint.py:33`) has no caller | `test_trigger_chain_genesis_and_python_verifier_agree`; `services/api/tests/integration/audit/test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens` | PASS: R-5 is fixed (#3017, #3059, #3872). No tail-truncation anchor (M4) |
+| Scheduled chain verifier + `cv_audit_chain_verified` | The job runs the verifier at start-up and nightly (#3017), from `create_app` since #3872 (`app.py:2167-2174`); a failure counts on `audit_chain_verification_failures_total` (`api/audit_verify_runner.py:150`). The verifier cross-checks `audit_checkpoints` (`audit/query.py:484-489`, `:564-569`) | `test_trigger_chain_genesis_and_python_verifier_agree`; `services/api/tests/integration/audit/test_audit_verify_runner_pg.py::test_scheduled_run_finds_a_row_altered_behind_the_chain_and_the_next_run_still_happens` | PASS: R-5 fixed |
 | Tailscale-only binding self-check, fail-closed read-only (US-ONB-008) | `net/middleware.py:85-100`, `:140-150` (mesh CIDR check, then 403 or WS 4403); `net/binding_check.py:155` trips `ReadOnlyGate`; gauge `net_binding_safe` | `tests/unit/net/test_binding_check.py::test_self_check_fails_closed_when_enumeration_raises`, `tests/unit/net/test_read_only_gate.py` | PASS |
 | Detections: lockouts, authz denied, binding, chain, break-glass | The table below | `tests/unit/net/test_binding_metric_export.py`, `tests/unit/auth/test_break_glass_alert_metric.py`, `tests/unit/auth/test_break_glass_attempts_metric.py`, `tests/unit/auth/test_break_glass_read_failures_metric.py`; `infra/prometheus/tests/system_alerts.test.yml` (promtool, run in CI) | PASS, with the residuals below (re-examined 2026-10-23). This row first read "PASS for the metrics", and was corrected to FAIL-T on 2026-10-15 (#2496) |
 
@@ -82,10 +83,7 @@ The rules are in `infra/prometheus/alerts/`:
 
 - Break-glass: `AuthBreakGlassUsed` (`system_page.yml:145`), `AuthBreakGlassAttempted` (`:165`)
   and `AuthBreakGlassStateReadFailing` (`system_ticket.yml:284`).
-- Residuals: tickets are muted in quiet hours (#2621); a pre-audit refusal is invisible;
-  `AuthBreakGlassAttempted` needs 7 days of history; Alertmanager delivery has never been drilled
-  (`obs` is not in the `core` profile); `AuthzDeniedSpike` has no promtool case, and only the
-  Python test checks that it reads `authz_denied_total` (#2746).
+- Residuals: #2621, #2746.
 
 ## 2. Findings triage
 
@@ -106,10 +104,10 @@ the SR-ids row is the editor's proposal, and so is F-8's entry in §5.
 | F-2 | E09-X02 | Access tokens not bound to IP/UA; theft detected only on refresh reuse (repro: abuse case AC-SES-06 in `docs/security/abuse-cases/e09-auth.md`) | Spoofing | Low–Medium | Architect + Owner | #2145; #2161 | 2026-10-09 / review 2027-01-22 | **Accepted design decision** per #2161's record (2026-10-10); no Owner comment found; owner to confirm, with the review date, on #2701 item 20 (comment 6364889494). SR-012 stores IP/UA but does not bind; no change. Residual bearer-theft window bounded by the 12 min access TTL and refresh-reuse detection |
 | F-3 | E09-X02 | Two invite refusal paths returned 500 with no audit row (unregistered actions) | Repudiation | Medium | Backend | #2316 | 2026-10-16 | **Fixed** by #2316 |
 | F-4 | E09-X02 | A WS `auth` frame replayed on a second socket is accepted while the session is live (AC-WS-02, U13) | Spoofing | Low–Medium | Architect + Owner | #4202 (hardening) | 2026-10-16 / review 2027-01-22 | **Accepted** 2026-10-22 under the #2701 delegation, inside F-2's envelope; hardening in #4202; owner to confirm on #2701 item 20 (comment 6364889494) |
-| F-5 | E09-X02 | SR-013 rotation missing on role change and step-up | Spoofing | Medium | E09 epic owner | #2101 | 2026-10-16 | Same as R-1 |
+| F-5 | E09-X02 | SR-013 (R-1) | Spoofing | Medium | E09 epic owner | #2101 | 2026-10-16 | Same as R-1 |
 | F-6 | E09-X02 | No scheduled audit-chain verifier | Repudiation | Medium | Security | #2111 | 2026-10-16 | Same as R-5 |
 | F-7 | E09-X02 | Invites could carry `manager` | Elevation of privilege | Low | Architect + Owner | #2109 | 2026-10-16 | Same as R-3 |
-| F-8 | E09-X02 | Build metadata (the git sha) served before authentication (U26) | Information disclosure | Low | Architect + Owner | #4236, #4222, #4206 | 2026-10-16 / review 2027-01-22 | WS half **fixed** by #4236; the probes **fixed** by #4222 (after #4221); the metrics endpoint in #4206. The sha after authentication is **accepted**, review 2027-01-22; owner to confirm on #2701 item 20 (comment 6364889494) |
+| F-8 | E09-X02 | Build metadata (the git sha) served before authentication (U26) | Information disclosure | Low | Architect + Owner | #4236, #4222, #4206 | 2026-10-16 / review 2027-01-22 | WS half **fixed** by #4236; the probes **fixed** by #4222 (after #4221); the remainder is #4206. The sha after authentication is **accepted**, review 2027-01-22; owner to confirm on #2701 item 20 (comment 6364889494) |
 | O-1..O-4 | E09-X02 | Defended attacks whose defence was partly invisible | Repudiation | Low | — | #2319 | 2026-10-16 | **Closed** by #2319; O-2's alert rules are #2746 (open) |
 | A-1 | #2083 | `audit:read` grants misaligned with 04 §7.2 / SR-067 | Information disclosure | High (P0) | Security | #2083 → PR #2095 | 2026-10-08 | Fixed (merged) |
 | X3-1 | E09-X03 | ZAP authenticated scan needs CI fixture secrets | — (gate coverage) | Medium | Owner | #1778 item D | 2026-10-04 / 2026-11-26 | Open. The weekly authenticated ZAP runs 38239151651 (2026-10-12) and 39226251666 (2026-10-19) failed at "Check fixture credentials present", and PR runs skip |
@@ -118,23 +116,23 @@ the SR-ids row is the editor's proposal, and so is F-8's entry in §5.
 | FU-1 | E09-Q03 | Rules-manager layer-2 grant check not tested in isolation | Elevation of privilege | Medium | Backend | #2094 | 2026-10-09 / 2026-11-26 | Open |
 | FU-2 | E09-Q03 | `rules_actor` uses an inline role compare in place of `PrincipalSnapshot.is_owner` | Elevation of privilege | Low | Backend | #2096 | 2026-10-09 | **Fixed** by #2164 |
 | FU-3 | E09-Q05 | Argon2 on-host cost (≥100 ms) not measurable by the k6 profile | Denial of service | Low | Backend | #2097 | 2026-10-09 / 2027-02-04 | Open |
-| R-1 | this review | SR-013 rotation missing on step-up and role change (role change only refreshes permissions) | Spoofing | Medium | E09 epic owner | #2101 (scope extended to step-up rotation) | 2026-10-09 / 2026-11-26 | Open |
-| R-2 | this review | SR-024 12-hour trading-capability freshness not enforced on order paths | Elevation of privilege | Medium | E09 / OMS owner | #2108 | 2026-10-09 / 2027-02-04 | Open. It holds by construction (§1); a pin or an explicit check closes it |
+| R-1 | this review | SR-013 session rotation | Spoofing | Medium | E09 epic owner | #2101 | 2026-10-09 / 2026-11-26 | Open |
+| R-2 | this review | SR-024 12-hour trading-capability freshness not enforced on order paths | Elevation of privilege | Medium | E09 / OMS owner | #2108 | 2026-10-09 / 2027-02-04 | Open. It holds by construction (§1) |
 | R-3 | this review | SR-027: invites can carry `manager` directly (no Viewer-first elevation) | Elevation of privilege | Low | Architect + Owner | #2109; Owner item AC on #1778 | 2026-10-09 | **Fixed** by #2124 |
-| R-4 | this review | SR-028: `PUT /auth/password` not implemented, so no other-session revocation on change | Spoofing | Medium | E09 epic owner | #2110 (route); #2099 (test) | 2026-10-09 / 2026-11-26 | Open |
+| R-4 | this review | SR-028 password change | Spoofing | Medium | E09 epic owner | #2110 (route); #2099 (test) | 2026-10-09 / 2026-11-26 | Open |
 | R-5 | this review | No scheduled nightly audit-chain verifier; only on-demand `verify()` | Repudiation | Medium | Security | #2111; E43-T10 (#1238) verifies | 2026-10-09 | **Fixed** by #3017, #3059, #3872 |
 | R-6 | this review | SR-023 break-glass CLI missing | Denial of service (lockout) | High | Owner | E09-S11 (#2119), from Owner item AB on #1778 | 2026-10-09 | **Fixed** under #2119 by #2655, #2647, #2682, #2782, #2867, #3886 (audit volume: #3290). The drill is §3 |
 | R-7 | this review | SR-029 disable cascade missing | Elevation of privilege | High | Accounts/admin | E42-T04 (#965) | 2026-10-09 | **Fixed** under #965 by #3062, #3096, #3135, #3414, #3440, with the 4403 close by #2581. The drill is §4 |
-| D-1 | this review | SR-022 says Argon2id for recovery codes; code uses keyed HMAC-SHA256 (≈138-bit codes) | — | Info | Security + Owner | Owner item AD on #1778 | 2026-10-09 | **Decided** (#1778 AD, `issuecomment-6083128397`): keep the keyed HMAC; SR-022 amended by #2122; the key's move under the KEK is #2152 (M3) |
+| D-1 | this review | SR-022 says Argon2id for recovery codes; code uses keyed HMAC-SHA256 (≈138-bit codes) | — | Info | Security + Owner | Owner item AD on #1778 | 2026-10-09 | **Decided** (#1778 AD, `issuecomment-6083128397`): keep the keyed HMAC; SR-022 amended by #2122; the follow-up is #2152 (M3) |
 | D-2 | this review | SR-025 says password + TOTP for step-up; code requires TOTP only | Spoofing | Low | Architect + Owner | Owner item AE on #1778 | 2026-10-09 | **Decided** (AE): password plus TOTP, shipped in #2154 |
-| M1 | this review | Lockout as a denial of service: 5 failures from any address lock the account for a fixed 15 minutes while the per-IP throttle allows 20 per 60 s; nothing unlocks it; `AuthLockouts` is a ticket with no `keep_firing_for`, muted 22:00 to 07:00 UTC (`infra/alertmanager/alertmanager.yml:39-45`); and a burst of exactly five writes only `auth.login_failed`, no `auth.account_locked` row (`tests/security/auth/test_lockout_audit_route.py:3-6`), against C-2.9. One mesh peer that knows the Owner's username locks the account with 5 requests and keeps it locked with one per 15-minute window: the counter resets only on a successful login (`storage/repositories/users_sqlalchemy.py:80-91`), so the first failure after a lock expires locks it again (`auth/login_service.py:210-213`). SR-016 says 10 failures; the code locks at 5 | Denial of service | Medium | Security | #1233 (backoff, a counter reset on expiry, the lock record, the unlock decision, 5 against 10; scope extended by comment 6367778083); #2621 (quiet hours) | 2026-10-23 / #2621 2026-11-26; #1233 2027-02-25 | Open. The Owner-unlock clause goes into #1233, or SR-016 is amended (an owner item on #2701). Kill-switch engage needs no code (`api/step_up.py:551-558`), but needs a live session |
-| M2 | E09-Q03 | SR-051: `GET /rules` filters after fetching: `list_rules` calls `self._s.all()`, then filters with `_visible` (`rules/manager.py:592-603`). Any future paging or limit before `_visible`, or a bug in it, leaks other managers' rules | Information disclosure | Medium | Backend | #2291 (P1, `sla-breached`) | 2026-10-23 / 2026-11-05 | Open; missing from this table until 2026-10-23 |
-| M3 | this review | SR-022 key custody: the recovery-code key is the environment setting, not KEK-wrapped and user-bound (§1) | Spoofing | Medium | Security | #2152 | 2026-10-23 / 2027-02-25 | Open; `live` needs it, since ADR-0009 Amendment 4 refuses environment keys there |
-| M4 | this review | U20, no tail-truncation anchor: a superuser who deletes the newest rows leaves a chain that verifies (§1.1). The default checkpoint path is relative (`settings.py:451`), which matters when #1238 wires the job | Repudiation | Medium | Security | #1238; E42's AD-F14 | 2026-10-23 / 2027-02-04 | Open; accepted under AD-F14 until #1238 |
-| L1 | this review | SR-014 login oracle: six requests per candidate name reveal whether it exists, and lock it (§1) | Information disclosure | Low | Security | #1233 (scope extended by comment 6367778083) | 2026-10-23 / 2027-02-25 | Open. Fix: answer a lock exactly like a wrong password and keep the record and the metric, or Owner-accept it and change the contract |
-| L2 | this review | SR-010 anonymous routes: `/docs`, `/redoc`, `/openapi.json`, `/metrics`, `/readyz` and `/health/*` answer every mesh peer (§1) | Information disclosure | Low | Owner | #4206 (`/metrics`, the docs routes proposed for it, and `/readyz` and `/health/*`: #4222 closed the probes' sha exposure, and the anonymous-probe question is #4206's Owner decision) | 2026-10-23 / 2027-01-22 | Open. Fix: `docs_url=None` and `redoc_url=None`, and the published contract behind authentication |
-| L3 | this review | U30 permissive default: `decide()` and `enforce()` default to `scope=Scope.NONE` (`auth/scopes.py:162`, `:269`), with no required argument, no `no-implicit-authorize-default` rule and no `test_authorize_requires_explicit_scope_argument`. Every account-scoped call site checked passes `scope=` explicitly: a regression risk, not a current exploit (C-12.4) | Elevation of privilege | Low | Security | #1237 (E43-T09; nearest fit, scope to be added by comment) | 2026-10-23 / 2027-02-25 | Open |
-| L4 | this review | U29: no expired-session reap job (the only reaper is the anonymisation one) | Denial of service | Low | Security | #1232 (E43-T03), its scope extended by comment 6367777597 | 2026-10-23 / 2027-02-04 | Open |
+| M1 | this review | SR-016: details held in the private repository advisory (maintainers) | Denial of service | Medium | Security | #1233; #2621; #2701 item | 2026-10-23 / #2621 2026-11-26; #1233 2027-02-25 | Open |
+| M2 | E09-Q03 | SR-051: details held in the private repository advisory (maintainers) | Information disclosure | Medium | Backend | #2291 (P1, `sla-breached`) | 2026-10-23 / 2026-11-05 | Open |
+| M3 | this review | SR-022: details held in the private repository advisory (maintainers) | Spoofing | Medium | Security | #2152 | 2026-10-23 / 2027-02-25 | Open |
+| M4 | this review | U20: details held in the private repository advisory (maintainers) | Repudiation | Medium | Security | #1238; E42's AD-F14 | 2026-10-23 / 2027-02-04 | Open; accepted under AD-F14 until #1238 |
+| L1 | this review | SR-014: details held in the private repository advisory (maintainers) | Information disclosure | Low | Security | #1233 | 2026-10-23 / 2027-02-25 | Open |
+| L2 | this review | SR-010: details held in the private repository advisory (maintainers) | Information disclosure | Low | Owner | #4206; #4222 | 2026-10-23 / 2027-01-22 | Open |
+| L3 | this review | U30: details held in the private repository advisory (maintainers) | Elevation of privilege | Low | Security | #1237 (E43-T09) | 2026-10-23 / 2027-02-25 | Open |
+| L4 | this review | U29: details held in the private repository advisory (maintainers) | Denial of service | Low | Security | #1232 (E43-T03) | 2026-10-23 / 2027-02-04 | Open |
 | SR-ids | this review | The threat model's provisional SR-024, -052, -053, -054 and -057 collide with registered SRs in 04 §6.3 and §6.4; RSK-020's text, RSK-021's `(SR-024, U12)`, AC-AUTHZ-03 and the abuse-case U23 row (SR-054) cite the colliding ids | — | Info | Security | #2832 | 2026-10-23 / 2026-11-26 | Open |
 
 Rows R-1 to R-7 and D-1/D-2 come from this review on 2026-10-09; M1 to M4, L1 to L4 and the SR-ids
@@ -203,11 +201,8 @@ Run cold on 2026-10-23 (#2494), on a dev compose stack, not on staging.
   `tests/unit/auth/test_break_glass_notice.py::test_notice_after_auth_ok_while_unresolved` (the
   server's notice, in process).
 
-**AC3 (the CLI without its preconditions): PASS.** No run went ahead without the host filesystem
-or the KEK, and every refusal wrote its attempt and refusal records. One deviation from AC3's
-letter stands, as QA's third round recorded it: with no usable journal and Postgres unreachable,
-a run refuses before any check and leaves no record, so it does not page either. That is #2119's
-S3 criterion, "a documented pre-audit refusal", and a residual of the threat model (§3.6.1).
+**AC3 (the CLI without its preconditions): PASS.** One deviation from AC3's letter stands; see
+#2119 (S3).
 
 **AC2 (break-glass works for someone who has never run it): FAIL, pending.** The reset and its
 audit records are shown, but:
@@ -275,16 +270,10 @@ Each carries a review date, proposed on 2026-10-23 for the owner to confirm on #
 5. **Build metadata after authentication** (F-8): the sha reaches every authenticated role,
    accepted 2026-10-22 under the #2701 delegation. Review 2027-01-22, owner to confirm on #2701
    item 20 (comment 6364889494).
-6. **Session fixation surface on privilege change** (R-1, #2101). It is mitigated by short token
-   TTLs and server-side permission refresh, but the SR-013 rotation set is incomplete. Review
-   2026-11-26.
-7. **No tail-truncation anchor** (M4): deleting the newest audit rows leaves a chain that
-   verifies, until #1238 wires the checkpoint job. Review 2027-02-04.
-8. **Break-glass blind spots**: a pre-audit refusal leaves no record and does not page,
-   `AuthBreakGlassAttempted` needs 7 days of history, and Alertmanager delivery has never been
-   drilled. Review 2027-02-25.
-9. **Quiet-hours loss** (#2621): tickets are muted 22:00 to 07:00 UTC, so a lock inside those
-   hours is never sent. Review 2026-11-26.
+6. SR-013 (R-1, #2101). Review 2026-11-26.
+7. U20 (M4, #1238). Review 2027-02-04.
+8. **Break-glass residuals.** Review 2027-02-25.
+9. #2621 (M1). Review 2026-11-26.
 10. **Stack gaps**: what the drill stack lacked is carried on #4249 (comment 6361838859). Review
     with #4249.
 11. **Host-level compromise defeats break-glass** (the threat model's §3.6.1): its blast radius is
@@ -297,22 +286,17 @@ The CSRF residual of 2026-10-09 is gone: #2238 fixed F-1.
 
 Controls that most warrant external testing before R4 live enablement, in priority order:
 
-1. The deny-by-default route registry and the `x-rbac` → `decide()` second layer (SR-017,
-   SR-050, SR-051), using cross-account identifiers in body, path and query, and WS topic options;
-   and `decide()`'s permissive default (U30, L3).
+1. SR-017, SR-050, SR-051 (L3)
 2. Session lifecycle: refresh rotation and family revocation, idle and absolute expiry, the
    enrolment-only window (RR-15), WS revocation on logout or disable, the disable cascade and the
    U45 window, and the bearer-only state-change model (F-1, fixed by #2238; F-2).
 3. Step-up scope and grace window across action classes and sessions (SR-025).
-4. The mesh-only middleware and binding self-check on the deployed host (US-ONB-008, RSK-022), and
-   the routes left anonymous to every mesh peer (L2).
-5. Audit append-only guarantees under the application role, and chain verification: the scheduled
-   verifier and the missing tail anchor (M4, with #1238, E43-T10).
+4. US-ONB-008 (L2)
+5. SR-066, SR-063 (M4)
 6. The break-glass CLI: precondition enforcement (host filesystem + KEK), its KEK-default semantics
    (unset `CV_KEK_*` settings fall back to the `handle` source at `/run/secrets/cv_kek`), attempt
    recording and the pre-audit refusal.
-7. Login throttling and lockout as a denial-of-service vector (U27, U28, M1) and the login oracle
-   (L1), coordinated with E43-T04 (#1233).
+7. SR-015, SR-016, SR-014 (M1, L1)
 
 Out of scope for this note: the key vault (E27) and the order path beyond its `authorize()`
 calls.
