@@ -617,18 +617,29 @@ async def test_terms_changed_write_refused_rolls_back_keeping_the_terms(
         ("submitted", {"exchange_order_id": EXCHANGE_ID, "updated_time": 2}),
         ("submitted", TERMS | {"trigger_price": "0"}),
         ("partially_filled", TERMS | {"qty": "0.3"}),
+        ("partially_filled", TERMS | {"qty": "0.4"}),
     ],
-    ids=["other_order", "no_term", "zero_term", "under_filled"],
+    ids=["other_order", "no_term", "zero_term", "under_filled", "equal_filled"],
 )
+@pytest.mark.parametrize("triggered", [False, True], ids=["untriggered", "triggered"])
 async def test_terms_changed_not_taken_changes_nothing_and_records_terms_refused(
-    state: str, push: dict[str, Any]
+    state: str, push: dict[str, Any], triggered: bool
 ) -> None:
     """INV-B1-q, C-07b: a push the guard denies is consumed by the ordered unguarded arm, never
     deferred: the row, its context and its events stay as they were; it is logged at ERROR and
-    recorded as `terms_refused`, never as `guard_denied`, which the OMS answers with `FAULT`."""
+    recorded as `terms_refused`, never as `guard_denied`, which the OMS answers with `FAULT`. A
+    quantity equal to the filled one is refused too (the 2026-10-25 ruling Q1): the row would be
+    left with nothing to fill. The same after a trigger push (S1's CODE-2)."""
     with _booked() as book, capture_logs() as logs:
         async with _machine() as interp:
-            await _to(interp, state)
+            if triggered:
+                await _send(interp, "MATERIALISED", order=STOP)
+                await _send(interp, "TRIGGERED", updated_time=1)
+                if state == "partially_filled":
+                    await _send(interp, "EXEC", **_fill("e1", "0.4"))
+                state = _leaf(interp)
+            else:
+                await _to(interp, state)
             before, events = copy.deepcopy(interp.context), await book.events()
             await _send(interp, "TERMS_CHANGED", **push)
             assert (_leaf(interp), interp.context, interp.deferred_count) == (state, before, 0)
@@ -738,7 +749,7 @@ async def test_inv_b1_q_terms_move_only_by_a_written_step_property(
                 moved = terms != (before["qty"], before["trigger_price"])
                 steps_kept = [e for e in written if e[0] == "exchange_push" and e[2] == e[3]]
                 assert moved == (len(steps_kept) == 1) and (kind == "TERMS" or not moved)
-                under = Decimal(qty) <= 0 or Decimal(qty) < Decimal(before["filled_qty"])
+                under = Decimal(qty) <= 0 or Decimal(qty) <= Decimal(before["filled_qty"])
                 assert not (moved and (foreign or under))
                 assert _leaf(interp) != "killed"
             assert (book.commands.sent, _leaf(interp, "protection")) == ([], "not_required")

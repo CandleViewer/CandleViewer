@@ -1,8 +1,9 @@
 """The private-stream consumer (E29-T05 #848, S4c; 24-internal-schemas.md Sec.8.12). Plain code
 on the hot-path contract (C-2.20). One task per streamed account in a `TaskGroup` (C-2.18), each
 taking its stream's rows and statuses inline in arrival order, so the adapter's bounded buffer is
-the only backpressure: a row is fed to account health as evidence first, then its work is done (a
-pairing push, a position, a wallet), and each status has its Sec.8.12 effect. Every await is
+the only backpressure: a row is fed to account health as evidence first, then the account's due
+pending terms are flushed (S7a), then its work is done (a pairing push, a position, a wallet), and
+each status has its Sec.8.12 effect, a `heartbeat` flushing those terms too. Every await is
 bounded, the stream is closed on every exit, and a cancel is never swallowed. Loop-agnostic: it
 never hops, and treats `AccountHealthFeed` and `AccountNotices` as synchronous and non-blocking.
 Ids only in logs and no figure of a wallet in any (C-12.6).
@@ -75,6 +76,7 @@ class PrivateStreams(Protocol):
 
 class RowPushes(Protocol):  # `StreamPushes`
     async def handle(self, account_id: AccountId, event: PrivateEvent, r: ForPairing) -> None: ...
+    async def flush(self, account_id: AccountId) -> None: ...  # its recorded stops' due terms
 
 
 class PositionRows(Protocol):
@@ -237,6 +239,7 @@ class StreamConsumer:
     async def _row(self, account_id: AccountId, session: _Session, event: PrivateEvent) -> None:
         if session.down is None:  # evidence on dequeue, before the row's work
             self._health.ws_heartbeat(account_id)
+        await self._pushes.flush(account_id)  # 24 Sec.8.12: at the account's next row
         r, p = route(event), event.payload
         if isinstance(r, ForPairing):
             await self._pushes.handle(account_id, event, r)
@@ -254,6 +257,7 @@ class StreamConsumer:
             case "heartbeat":
                 if session.down is None:
                     self._health.ws_heartbeat(account_id)
+                await self._pushes.flush(account_id)  # 24 Sec.8.12: or at its `heartbeat`
             case "resyncing":
                 await self._resync(account_id, cast(ResyncReason, status.reason))
             case "down":
