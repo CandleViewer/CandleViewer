@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from operator import attrgetter
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import duckdb
 import pyarrow as pa
@@ -33,6 +34,9 @@ from candleviewer.storage.cold.observability import LoggingSystemEventSink, Syst
 from candleviewer.storage.cold.scrub import verify_partition
 from candleviewer.storage.errors import StorageExportVerifyFailed, StorageTierUnavailable
 from candleviewer.storage.models import StreamKind
+
+if TYPE_CHECKING:  # storage never imports ingestion at runtime (C-3.1)
+    from candleviewer.ingestion.kline_coverage import Range
 
 _MAX_MONTHS = 120
 _DEFAULT_MAX_ROWS = 5_100
@@ -162,7 +166,7 @@ class ParquetKlineReader:
         db.users += 1
         return db, cur
 
-    def _release(self, db: _SharedDuckDB, fut: asyncio.Future[list[ColdKlineRow]]) -> None:
+    def _release(self, db: _SharedDuckDB, fut: asyncio.Future[Any]) -> None:
         """Done-callback of a read's worker future (event loop thread). It runs only once the
         worker thread has returned: `thread_future` is a plain executor future that nothing but
         this reader could cancel, and it never does. So a caller cancelled mid-read, or the
@@ -217,17 +221,35 @@ class ParquetKlineReader:
             return []
         return await self._query(files, lo, hi)
 
+    async def page(
+        self, symbol: str, interval: str, rng: Range
+    ) -> ColdKlinePage | list[ColdKlineRow]:
+        """`ingestion.kline_read.ColdKlinePager`: the window as a `ColdKlinePage` (bar JSON
+        emitted by DuckDB, #2523 lever 4), or the lever-3 rows when the files cannot be emitted
+        as JSON text. Same files, verification, bounds and timeout as `__call__`."""
+        lo, hi = int(rng.start_us), int(rng.end_us)
+        files: list[str] = []
+        for ym in months_between(lo, hi):
+            files.extend(await self._files(self._partition(symbol, interval, ym)))
+        if not files:
+            return []
+        async with self._sem:
+            return await self._query_unbounded(_read_page, files, lo, hi)
+
     async def _query(self, files: list[str], lo: int, hi: int) -> list[ColdKlineRow]:
         async with self._sem:
-            return await self._query_unbounded(files, lo, hi)
+            return await self._query_unbounded(_read_rows, files, lo, hi)
 
-    async def _query_unbounded(self, files: list[str], lo: int, hi: int) -> list[ColdKlineRow]:
+    async def _query_unbounded[T](
+        self, worker: Callable[[duckdb.DuckDBPyConnection, list[str], int, int, int], T],
+        files: list[str], lo: int, hi: int,
+    ) -> T:  # fmt: skip
         # N4: take this read's cursor BEFORE the worker thread starts so `interrupt()` can never
         # be a no-op; it interrupts this cursor only (#2523). The worker closes the cursor.
         db, cur = self._cursor()
         # Not `spawn(to_thread(...))`: cancelling that Task would cancel the executor future
         # while the thread still runs, and `_release` would drop the count early (see there).
-        fut = thread_future(_read_rows, cur, files, lo, hi, self._max_rows)
+        fut = thread_future(worker, cur, files, lo, hi, self._max_rows)
         fut.add_done_callback(lambda f: self._release(db, f))
         try:
             async with asyncio.timeout(self._timeout_s):
@@ -254,7 +276,7 @@ class _SharedDuckDB:
     retired: bool = False
 
 
-def _log_late_failure(fut: asyncio.Future[list[ColdKlineRow]]) -> None:
+def _log_late_failure(fut: asyncio.Future[Any]) -> None:
     """Debug trace of a worker that failed after its caller stopped waiting (timeout or
     cancel); `_release` consumes the exception. Type names only: no paths, no values."""
     exc = fut.exception()
@@ -367,7 +389,150 @@ def _read_rows(
     return out
 
 
+# #2523 lever 4: DuckDB emits each bar's JSON text, so a cold page never becomes Python objects.
+#
+# `body` is one bar's `serialize_bar` JSON without its closing brace (`ColdKlinePage.bars_json`
+# appends the `include_delta` nulls and `}` while joining). `t` is `datetime.isoformat()`'s
+# form: `.ffffff` only when the microseconds are non-zero, then `+00:00`. Each number is
+# DuckDB's DOUBLE text, Python's `repr` of the float (lever 3's property test); a row whose
+# text holds an exponent, inf or nan ("e" / "n"), or a NULL, is `odd`, and only its body is
+# rebuilt through `_num` in Python. `typed` is false when any emitted column is not the type
+# the text form assumes; the whole page then takes the lever-3 row path. The window, dedup,
+# LIMIT and pushdown are `_READ_SQL`'s.
+# One literal, assembled by the interpreter and never at run time: every runtime value is a
+# bound `$` parameter. `bool(None)` is False and a blank source reads "parquet", as `_read_rows`
+# builds them; `confirm` is `coalesce(TRY_CAST(confirmed AS BOOLEAN), false)` in both places.
+_PAGE_SQL = (
+    "WITH r AS (SELECT epoch_us(ts) AS t_us, confirmed, source, open, high, low, close, "
+    "volume, turnover, CAST(open AS VARCHAR) AS o_t, CAST(high AS VARCHAR) AS h_t, "
+    "CAST(low AS VARCHAR) AS l_t, CAST(close AS VARCHAR) AS c_t, CAST(volume AS VARCHAR) "
+    "AS v_t, CAST(turnover AS VARCHAR) AS tv_t, typeof(open) = 'DOUBLE' AND typeof(high) = "
+    "'DOUBLE' AND typeof(low) = 'DOUBLE' AND typeof(close) = 'DOUBLE' AND typeof(volume) = "
+    "'DOUBLE' AND typeof(turnover) = 'DOUBLE' AND typeof(confirmed) = 'BOOLEAN' AND "
+    "typeof(source) = 'VARCHAR' AS typed FROM read_parquet($files, hive_partitioning = "
+    "false, union_by_name = true) WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < "
+    "make_timestamptz($hi::BIGINT) QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) "
+    "= 1 ORDER BY ts DESC LIMIT $n) SELECT t_us AS ts, coalesce(TRY_CAST(confirmed AS "
+    "BOOLEAN), false) AS confirmed, CASE WHEN source IS NULL OR CAST(source AS VARCHAR) = "
+    "'' THEN 'parquet' ELSE CAST(source AS VARCHAR) END AS source, open, high, low, close, "
+    "volume, turnover, typed, o_t AS __cv_txt_open, h_t AS __cv_txt_high, l_t AS "
+    "__cv_txt_low, c_t AS __cv_txt_close, v_t AS __cv_txt_volume, tv_t AS "
+    "__cv_txt_turnover, '{\"t\":\"' || strftime(make_timestamp(t_us), '%Y-%m-%dT%H:%M:%S') || "
+    "CASE WHEN t_us % 1000000 = 0 THEN '' ELSE '.' || lpad(CAST(((t_us % 1000000) + "
+    '1000000) % 1000000 AS VARCHAR), 6, \'0\') END || \'+00:00","o":"\' || o_t || \'","h":"\' || '
+    'h_t || \'","l":"\' || l_t || \'","c":"\' || c_t || \'","v":"\' || v_t || \'","turnover":"\' '
+    '|| tv_t || \'","confirm":\' || CASE WHEN coalesce(TRY_CAST(confirmed AS BOOLEAN), '
+    "false) THEN 'true' ELSE 'false' END AS body, (o_t || h_t || l_t || c_t || v_t || "
+    "tv_t) IS NULL OR regexp_matches(o_t || h_t || l_t || c_t || v_t || tv_t, '[en]') AS "
+    "odd FROM r ORDER BY t_us"
+)
+_BAR_KEYS = ("o", "h", "l", "c", "v", "turnover")  # `serialize_bar`'s keys for `_NUM_COLS`
+
+
+def _odd_body(table: pa.Table, i: int) -> str:
+    """Row `i`'s body with each number through `_num` (exponent, inf, nan or NULL text)."""
+    ts_us: int = table.column("ts")[i].as_py()
+    stamp = datetime.fromtimestamp(ts_us / 1_000_000, tz=UTC).isoformat()  # `iso_us`
+    nums = (_num(table.column(name)[i].as_py()) for name in _NUM_COLS)
+    fields = "".join(f',"{k}":"{v}"' for k, v in zip(_BAR_KEYS, nums, strict=True))
+    confirm = "true" if table.column("confirmed")[i].as_py() else "false"
+    return f'{{"t":"{stamp}"{fields},"confirm":{confirm}'
+
+
+@dataclass(frozen=True, slots=True)
+class ColdKlinePage:
+    """A cold window held as Arrow columns, ascending by `ts` (#2523 lever 4): `ts` (int64
+    µs), `confirmed`, `source` (blank -> "parquet"), `body` (each bar's JSON, no closing
+    brace), plus the raw and text price columns `rows()` needs. `ingestion.kline_read`'s
+    `KlinePageLike`; every operation is an Arrow kernel, never a per-row Python body."""
+
+    table: pa.Table
+
+    def __len__(self) -> int:
+        return int(self.table.num_rows)
+
+    def last_ts_us(self) -> int:
+        """`ts` of the newest bar; the page must not be empty."""
+        value: int = self.table.column("ts")[-1].as_py()
+        return value
+
+    def confirmed_only(self) -> ColdKlinePage:
+        return ColdKlinePage(self.table.filter(self.table.column("confirmed")))
+
+    def head(self, n: int) -> ColdKlinePage:
+        return ColdKlinePage(self.table.slice(0, max(0, n)))
+
+    def tail(self, n: int) -> ColdKlinePage:
+        n = max(0, min(n, len(self)))
+        return ColdKlinePage(self.table.slice(len(self) - n, n))
+
+    def without_ts(self, ts: set[int]) -> ColdKlinePage:
+        hit = pc.is_in(self.table.column("ts"), value_set=pa.array(sorted(ts), pa.int64()))
+        return ColdKlinePage(self.table.filter(pc.invert(hit)))
+
+    def has_source(self, sources: frozenset[str]) -> bool:
+        hit = pc.is_in(self.table.column("source"), value_set=pa.array(sorted(sources)))
+        return bool(pc.any(hit).as_py())
+
+    def bars_json(self, suffix: bytes) -> bytes:
+        """The bars as `{...}` objects joined by `,`, no brackets; `suffix` and `}` close each
+        one. One Arrow join over the `body` buffer: no per-bar Python string or dict."""
+        if not len(self):
+            return b""
+        body = self.table.column("body").combine_chunks()
+        one_list = pa.ListArray.from_arrays(pa.array([0, len(body)], pa.int32()), body)
+        joined = pc.binary_join(one_list, suffix.decode() + "},")[0].as_buffer()
+        if joined is None:  # a body is never NULL (`_read_page` rebuilt every odd one)
+            raise ColdKlineReadError("cold kline page holds a NULL bar")
+        out: bytes = joined.to_pybytes()
+        return out + suffix + b"}"
+
+    def rows(self) -> list[ColdKlineRow]:
+        """The lever-3 rows, equal field by field (the interleaving-tape fallback)."""
+        t = self.table
+        return list(
+            map(
+                ColdKlineRow,
+                t.column("ts").to_pylist(),
+                *(_num_column(t, name) for name in _NUM_COLS),
+                t.column("confirmed").to_pylist(),
+                t.column("source").to_pylist(),
+            )
+        )
+
+
+def _read_page(
+    cur: duckdb.DuckDBPyConnection, files: list[str], lo: int, hi: int, max_rows: int
+) -> ColdKlinePage | list[ColdKlineRow]:
+    """`_read_rows`' window as a `ColdKlinePage`, or `_read_rows` itself when the files cannot
+    be emitted as JSON text: a column no file carries (a binder error) or a non-DOUBLE price,
+    non-BOOLEAN `confirmed` or non-VARCHAR `source` column. The cursor is closed on every
+    path, whatever raises (N4); `_read_rows` closes it too, and a second close is a no-op."""
+    try:
+        try:
+            cur.execute("SET TimeZone = 'UTC'")
+            table = cur.execute(
+                _PAGE_SQL, {"files": files, "lo": lo, "hi": hi, "n": max_rows}
+            ).to_arrow_table()
+        except duckdb.BinderException:
+            return _read_rows(cur, files, lo, hi, max_rows)
+        except duckdb.Error as exc:
+            raise ColdKlineReadError(f"cold kline read failed: {type(exc).__name__}") from exc
+        if table.num_rows and not pc.all(table.column("typed")).as_py():
+            return _read_rows(cur, files, lo, hi, max_rows)
+    finally:
+        cur.close()
+    odd = pc.fill_null(table.column("odd"), False).combine_chunks()
+    if pc.any(odd).as_py():
+        idx = pc.indices_nonzero(odd).to_pylist()
+        fixed = pa.array([_odd_body(table, i) for i in idx], pa.string())
+        body = pc.replace_with_mask(table.column("body").combine_chunks(), odd, fixed)
+        table = table.set_column(table.schema.get_field_index("body"), "body", body)
+    return ColdKlinePage(table)
+
+
 __all__ = [
+    "ColdKlinePage",
     "ColdKlineReadError",
     "ColdKlineReadTimeout",
     "ColdKlineRow",

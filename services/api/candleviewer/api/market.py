@@ -51,6 +51,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.market_response import (
+    BarSegments,
     InvalidCursor,
     build_meta,
     cursor_scope,
@@ -58,7 +59,6 @@ from candleviewer.api.market_response import (
     encode_cursor,
     kline_response,
     problem,
-    serialize_bars,
 )
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US
 from candleviewer.bars.metrics import record_page, record_param_rejected
@@ -386,19 +386,22 @@ def make_market_router(
         # `_MAX_SLICES` slices were scanned (a long data hole: the page then ends at the last
         # scanned slice and the cursor resumes after it; `meta.coverage_holes` names the gap).
         recording_started: int | None = None
-        rows: list[KlineRowLike] = []
+        bars = BarSegments()
         sources: list[str] = []
         slice_start, slices = start_us, 0
-        while slice_start < end_us and len(rows) <= limit and slices < _MAX_SLICES:
+        while slice_start < end_us and len(bars) <= limit and slices < _MAX_SLICES:
             slice_end = min(end_us, slice_start + (limit + 1) * width)
             rng = Range(slice_start, slice_end)
             if service is not None:
                 try:
-                    read = await service.read(symbol, interval, rng, limit=limit + 1)
+                    read = await service.read_page(symbol, interval, rng, limit=limit + 1)
                 except StorageTierUnavailable:  # e.g. cold-tier DuckDB timeout: typed 503
                     return _problem(
                         503, "Service unavailable", "A kline storage tier is unavailable."
                     )
+                if read.cold_page is not None:  # emitted-JSON cold bars, oldest first
+                    page = read.cold_page
+                    bars.add_page(page if include_open else page.confirmed_only())
                 got = list[KlineRowLike](read.rows)
                 sources += [t for t in read.sources if t not in sources]
                 recording_started = read.recording_started_at_us
@@ -407,13 +410,13 @@ def make_market_router(
                 got = list(await cache.read_klines(symbol, interval, tr, limit=limit + 1))
                 if got and SOURCE_HOT not in sources:
                     sources.append(SOURCE_HOT)
-            rows += [r for r in got if include_open or r.confirmed]
+            bars.add_rows([r for r in got if include_open or r.confirmed])
             slice_start, slices = slice_end, slices + 1
-        more = len(rows) > limit or slice_start < end_us
-        rows = rows[:limit]
+        more = len(bars) > limit or slice_start < end_us
+        bars.truncate(limit)
         next_cursor: str | None = None
         if more:
-            resume = rows[-1].ts_us + width if len(rows) == limit else slice_start
+            resume = bars.last_ts_us() + width if len(bars) == limit else slice_start
             if grid is not None:
                 resume = -(-resume // grid) * grid  # round up onto the bar grid
             next_cursor = encode_cursor(cursor_scope("klines", symbol, interval), resume)
@@ -430,16 +433,16 @@ def make_market_router(
                 holes[-1]["end_us"] = requested_end_us
             else:
                 holes.append({"start_us": tail_start, "end_us": requested_end_us})
-        served = sources if rows else []  # a tier is claimed only when its rows are served
-        record_page("klines", len(rows), list(served))
+        served = sources if len(bars) else []  # a tier is claimed only when its bars are served
+        record_page("klines", len(bars), list(served))
         meta = build_meta(
-            count=len(rows), next_cursor=next_cursor, sources=served,
+            count=len(bars), next_cursor=next_cursor, sources=served,
             recording_started_at_us=recording_started, generated_at_us=now_us(),
             coverage_holes=holes,
         )  # fmt: skip
         return kline_response(
             symbol=symbol, interval=interval, bar_type="time",
-            bars=serialize_bars(rows, include_delta=include_delta), meta=meta,
+            bars_json=bars.json(include_delta=include_delta), meta=meta,
         )  # fmt: skip
 
     return router
