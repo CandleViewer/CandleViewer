@@ -471,7 +471,8 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
     "rule",
     [
         "Required for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
-        "`sl_loosen` or `accounts`, named by the live challenge or by `action_class`)",
+        "`sl_loosen`, `accounts` or `recorder_purge`, named by the live challenge or by "
+        "`action_class`)",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
         "Optional for a grace class: without it the server uses the session's live challenge",

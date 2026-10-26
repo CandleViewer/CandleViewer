@@ -188,8 +188,8 @@ def test_the_owners_step_up_is_the_no_grace_sl_loosen_class() -> None:
     assert "sl_loosen" in _step_up_classes() and "risk_caps" in _step_up_classes()
     step_up = _OPS["authStepUp"]
     assert (
-        "`live_enablement`, `killswitch`, `backups`, `sl_loosen` and `accounts` are no-grace"
-        in _words(step_up["description"])
+        "`live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and "
+        "`recorder_purge` are no-grace" in _words(step_up["description"])
     )
     body = step_up["requestBody"]["content"]["application/json"]["schema"]
     klass = _words(body["properties"]["action_class"]["description"])
@@ -197,8 +197,8 @@ def test_the_owners_step_up_is_the_no_grace_sl_loosen_class() -> None:
         "`sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`" in klass
     )
     assert (
-        "`live_enablement`/`killswitch`/`backups`/`sl_loosen`/`accounts`: none, fresh code each "
-        "time" in _INTERNAL_DOC
+        "`live_enablement`/`killswitch`/`backups`/`sl_loosen`/`accounts`/`recorder_purge`: none, "
+        "fresh code each time" in _INTERNAL_DOC
     )
     assert "the owner's loosening of a position's stop (`sl_loosen`, §8.8 rule 5)" in _INTERNAL_DOC
     for text in (_rule_5(), _words(_OPS["setPositionTpSl"]["description"])):

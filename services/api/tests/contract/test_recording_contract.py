@@ -37,8 +37,12 @@ _NAMED: dict[str, set[tuple[int, str]]] = {
     "importTradeArchive": {(409, "job_running"), (422, "import_range_invalid")}
     | {(422, "idempotency_key_reused")},
     "purgeRecordedData": {_UP, _BAD, (409, "job_running"), (422, "idempotency_key_reused")}
-    | {(422, "purge_confirmation_mismatch"), (422, "retention_pinned_refused")},
+    | {(422, "purge_confirmation_mismatch"), (422, "retention_pinned_refused")}
+    | {(409, "idempotency_key_reuse")},
 }
+#: The step-up an operation names where it is not the `recorder` grace class: a purge needs its
+#: own no-grace class (E16-T06, #490).
+_STEP_UP_NAMED = {"purgeRecordedData": "`recorder_purge` is a no-grace step-up class"}
 _NOT_LIMITED = {"importTradeArchive", "purgeRecordedData"}  # the other writes declare 429
 _FORBIDDEN = {"$ref": "#/components/responses/Forbidden"}  # also `forbidden` and `step_up_required`
 #: statuses an operation declares beyond 401, 403 and 503 that no named code pins.
@@ -80,7 +84,7 @@ def test_every_code_an_operation_names_is_catalogued_at_its_status(operation_id:
     own = text(" ".join([op.get("description", ""), *inline]))
     ticked = set(re.findall(r"`(?:\d{3} )?([a-z][a-z0-9_]*)`", own))
     assert ticked & {code for _, code in _CATALOGUE} <= {code for _, code in named}
-    assert ("`recorder` step-up" in own) is (_UP in named)
+    assert (_STEP_UP_NAMED.get(operation_id, "`recorder` step-up") in own) is (_UP in named)
 
 
 @pytest.mark.parametrize("operation_id", sorted(_OPS))

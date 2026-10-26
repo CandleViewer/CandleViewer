@@ -229,7 +229,10 @@ def test_backups_is_a_no_grace_class_for_restore_download_and_delete_only() -> N
     assert "backups" in klass["enum"]
     assert "`deleteBackup`), one fresh code per action" in text(klass["description"])
     step_up = text(_STEP_UP["description"])
-    no_grace = "`live_enablement`, `killswitch`, `backups`, `sl_loosen` and `accounts` are no-grace"
+    no_grace = (
+        "`live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and `recorder_purge` "
+        "are no-grace"
+    )
     assert no_grace in step_up
     assert _RESTORE["summary"] == "Restore from a backup (owner, step-up `backups`)"
     gated = "`403 step_up_required` with `action_class` set to `backups`"
@@ -310,8 +313,8 @@ def test_docs_share_the_audit_vocabulary_and_the_backups_step_up() -> None:
     assert "and restoring, downloading or deleting a backup (one fresh code each)" in sec
     assert "✔(restore+delete step-up)" in sec and "✔(step-up: restore, delete, link)" in sec
     no_grace = (
-        "(`live_enablement`/`killswitch`/`backups`/`sl_loosen`/`accounts`: none, fresh code each "
-        "time)"
+        "(`live_enablement`/`killswitch`/`backups`/`sl_loosen`/`accounts`/`recorder_purge`: none, "
+        "fresh code each time)"
     )
     assert no_grace in internal
     assert "never embeds `str(exc)` or raw probe output" in internal
