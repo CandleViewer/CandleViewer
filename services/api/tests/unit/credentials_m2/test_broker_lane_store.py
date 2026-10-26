@@ -8,6 +8,7 @@ rig: bounded waits, no sleeps, fixed vectors."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -15,7 +16,13 @@ from typing import Any, cast
 import pytest
 
 from candleviewer import app
-from candleviewer.admin.wiring import build_audit_service, build_secrets_service, secrets_bundle
+from candleviewer.admin import wiring
+from candleviewer.admin.wiring import (
+    SecretsBundle,
+    build_audit_service,
+    build_secrets_service,
+    secrets_bundle,
+)
 from candleviewer.audit.service import AuditService
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import CredentialUnavailable, SigningLoopMismatch
@@ -340,6 +347,23 @@ def test_a_lane_bound_to_the_serving_loops_audit_writer_is_refused(given: str) -
     with pytest.raises(ValueError, match="never the serving loop's"):
         bind(audit=cast(Any, served if given == "service" else writer))
     assert pools.built == []
+
+
+def test_the_bundle_binds_the_lane_through_lane_signing_alone() -> None:
+    """L-3 (C-3.2, Q10): M2 builds the lane's store, so the bundle offers no binder that takes one
+    (L3b's `loop_signing` is retired): its one lane binder takes the lane's audit writer alone."""
+    binders = [f.name for f in dataclasses.fields(SecretsBundle) if f.name.endswith("_signing")]
+    assert (binders, hasattr(wiring, "LoopSigningBinder")) == (["lane_signing"], False)
+
+
+async def test_m2_refuses_a_lane_store_that_is_the_serving_loops() -> None:
+    """Minor 2 (Q10), as L3b's identity refusals: a factory that hands M2 the serving loop's own
+    store is a wiring fault, refused at the bind, before the store is counted, read or used."""
+    store, before = InMemoryCredentialStore(), _pools_in_use()
+    bind = build_secrets_service(store, store, loop_store=_Pools(store)).lane_signing
+    with pytest.raises(ValueError, match="never the serving loop's"):
+        bind(audit=_Writer())
+    assert _pools_in_use() == before
 
 
 def test_a_lane_binding_with_no_store_factory_wired_is_refused(rig: _Rig) -> None:

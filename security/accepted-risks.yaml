@@ -109,7 +109,7 @@ entries:
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/836"
-  - id: "py/weak-sensitive-data-hashing:services/api/tests/unit/credentials_m2/test_broker_two_loops.py:41"
+  - id: "py/weak-sensitive-data-hashing:services/api/tests/unit/credentials_m2/test_broker_two_loops.py:40"
     tool: codeql
     severity: HIGH
     reason: "False positive by construction: the test's expected-MAC helper computes the venue's keyed request MAC (HMAC-SHA256) over fixed test vectors; the API secret is an HMAC key, not a stored password — the production signer is secrets/signing.py::mac_hex"
