@@ -27,7 +27,8 @@ adapter's signer has M2 make there (`ws_signature_verifies`).
 The venue's hosts and header names are this stub's vocabulary by design (ADR-0036, Enforcement), so
 `cvdev/**` is excluded from the two adapter-vocabulary Semgrep rules (S9).
 
-This module decides, and holds one piece of state: `LATCH`, the process's one key-id guard latch.
+This module decides, and holds the process's state: `LATCH`, its one key-id guard latch, and
+(S12b) `BUILD_ONCE`, the sentinel of its one fixture-pair build.
 `transport.FixtureTransport` refuses, latches, logs and answers. Nothing here imports
 `candleviewer.secrets` or `candleviewer.audit`.
 """
@@ -76,6 +77,10 @@ _WS_HOSTS: Final[dict[str | None, HostEnv]] = {
 #: and S12's socket, is built with it unless a test injects its own. Set by the first trip of any;
 #: only a restart clears it (FX-D01).
 LATCH: Final = threading.Event()
+#: Taken by the process's one fixture-pair build (`wiring.FixtureDoor.arm`) and never released: a
+#: second build, or a retry, refuses. Held here, beside `LATCH`, not in `wiring`, so a re-executed
+#: `wiring` (a reload) still finds it taken: once a process, not once a module object.
+BUILD_ONCE: Final = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)

@@ -100,7 +100,10 @@ class _Teardown:
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx: AppContext = app.state.app_context
     default_registry()  # E17-T08: load and validate the 20 charts once, before a module builds one
-    fixture_boot = await account_fixture_guard(ctx.settings)  # #2893 S8: before any module starts
+    # #2893 S8: before any module starts; S12b: a pass builds the fixture pair behind the handle
+    fixture_boot = await account_fixture_guard(
+        ctx.settings, getattr(app.state, "account_fixture", None), ctx.oms_read_only_gate
+    )
     supervisor = Supervisor(ctx)
     # E50-T63: the statechart persistence bundle (the `machine_events` sink) runs before any module:
     # a restore inside `start_all` writes rows. It is the last teardown step, after `stop_all`,
