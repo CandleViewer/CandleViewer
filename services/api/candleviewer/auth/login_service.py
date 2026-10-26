@@ -15,7 +15,9 @@
 - five consecutive failures -> `AccountLocked` for 15 minutes, persisted so
   a process restart does not clear it;
 - a per-IP throttle independent of the per-account one (ticket "Scope /
-  Deliverables": "one attacker cannot lock every account").
+  Deliverables": "one attacker cannot lock every account");
+- every failed sign-in (`InvalidCredentials`, `AccountLocked`, `AccountDisabled`)
+  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648).
 
 Audit emissions (`auth.login`/`auth.login_failed`) are the caller's
 responsibility here: `LoginService` raises typed errors and returns typed
@@ -28,10 +30,12 @@ intact.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import secrets
+import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -56,7 +60,15 @@ LOCKOUT_DURATION = timedelta(minutes=15)
 #: `MfaService.verify()`/`check_recovery()` can look the opaque `mfa_token` up.
 MFA_CHALLENGE_TTL = timedelta(minutes=5)
 
+#: #4648: a failed sign-in returns no sooner than this after the attempt started. It is set
+#: well above the time a normal failure takes at the default Argon2id parameters, the store's
+#: failure write included, so every failure normally waits out the same deadline; a failure that
+#: is already slower is never held longer. A successful sign-in is never held.
+LOGIN_FAILURE_FLOOR = timedelta(milliseconds=250)
+
 Clock = Callable[[], datetime]
+MonotonicClock = Callable[[], float]
+Sleep = Callable[[float], Awaitable[None]]
 
 #: The id of the placeholder record below: the nil UUID, never a real user (user ids are
 #: server-generated uuid4), so `UserRepository.record_login_failure` for it changes no row.
@@ -108,6 +120,9 @@ class LoginService:
         clock: Clock = _utc_now,
         mfa_token_factory: Callable[[], str] = lambda: secrets.token_urlsafe(32),
         mfa_repository: MfaRepository | None = None,
+        failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
+        monotonic: MonotonicClock = time.monotonic,
+        sleep: Sleep = asyncio.sleep,
     ) -> None:
         self._repository = repository
         self._hasher = hasher
@@ -115,6 +130,9 @@ class LoginService:
         self._clock = clock
         self._mfa_token_factory = mfa_token_factory
         self._mfa_repository = mfa_repository
+        self._failure_floor_s = max(failure_floor.total_seconds(), 0.0)
+        self._monotonic = monotonic
+        self._sleep = sleep
 
     async def login(
         self, request: LoginRequest, *, source_ip: str
@@ -125,7 +143,30 @@ class LoginService:
         Raises `InvalidCredentials`, `AccountDisabled`, or `AccountLocked`, all
         before either outcome. A user without `mfa_required` and without a method
         still raises `NotImplementedError` (see the note at that branch).
+
+        #4648: each of those three refusals returns no sooner than the failure floor after
+        the attempt started (`_hold_failure`); a successful outcome is never held.
         """
+        started = self._monotonic()
+        try:
+            return await self._check_credentials(request, source_ip=source_ip)
+        except (InvalidCredentials, AccountLocked, AccountDisabled):
+            # Every failure write has already happened inside the check; only the response
+            # waits. A cancellation during the wait propagates (nothing here catches it).
+            await self._hold_failure(started)
+            raise
+
+    async def _hold_failure(self, started: float) -> None:
+        """Wait until the failure floor has passed since *started*. Bounded by the floor
+        itself, and no wait at all when the attempt already took longer."""
+        remaining = started + self._failure_floor_s - self._monotonic()
+        wait = min(remaining, self._failure_floor_s)
+        if wait > 0:
+            await self._sleep(wait)
+
+    async def _check_credentials(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin:
         if self._per_ip_throttle.is_blocked(source_ip):
             # Per-IP throttle failures are indistinguishable from a wrong
             # password to the caller: same exception type *and* same
