@@ -91,6 +91,7 @@ from candleviewer.oms.order_machine import (
 )
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
+    NO_TIER_REQUESTS,
     ArmRecords,
     ClockHealth,
     Interim,
@@ -102,6 +103,7 @@ from candleviewer.oms.ports import (
     RuntimePortName,
     SubmissionPorts,
     SubmitActor,
+    TierRequests,
     announce_interim_port,
     announce_interim_ports,
 )
@@ -425,9 +427,12 @@ class CatalogueReading(Protocol):
 
 
 class InstrumentCatalogue(Protocol):
-    """`ingestion.instruments_refresh.InstrumentsRefreshScheduler`'s read (24 Sec.1.3)."""
+    """`ingestion.instruments_refresh.InstrumentsRefreshScheduler`'s read (24 Sec.1.3), and its
+    tier requests (S4-S-d, `ServedTierRequests`): why it dropped one, or None."""
 
     def snapshot(self) -> CatalogueReading | None: ...
+
+    def request_tiers(self, symbol: str) -> Literal["full", "stopped"] | None: ...
 
 
 class InstrumentsBinding:
@@ -1070,6 +1075,64 @@ class ServedClock:
 
     async def resync_after_signature_failure(self, *, reason: str) -> int:
         return await self._serving.call(self._guard.resync_after_signature_failure(reason=reason))
+
+
+#: How many tier requests may wait to land on the serving loop (#913 S4-S-d), one per symbol.
+TIER_REQUESTS_PENDING_MAX: Final = 100
+#: The tier requests dropped, by `reason`: `full` (the bridge or the catalogue), or `stopped` (the
+#: catalogue had stopped).
+TIER_REQUESTS_DROPPED: Final = "oms_tier_requests_dropped_total"
+
+
+class ServedTierRequests:
+    """`TierRequests` from the lane (#913 S4-S-d, 24 Sec.9.3.6): each symbol is notified to the
+    catalogue on the serving loop (`Serving.notify`), never awaited, so the submit path makes no
+    network call of its own (CV-C13). At most `TIER_REQUESTS_PENDING_MAX` symbols wait to land
+    there, a symbol already waiting adding nothing. A request past that is counted `full`, and
+    one the catalogue drops is counted by its reason (`full`, `stopped`); none raises into its
+    caller. A request the closed serving loop cannot take is not this counter's: `Serving`
+    counts it (`oms_lane_notices_failed_total{lost}`); that symbol stays waiting, so a repeat
+    request for it adds nothing until the runtime's stop ends the wait (`close`)."""
+
+    def __init__(self, catalogue: InstrumentCatalogue, serving: Serving, metrics: Metrics) -> None:
+        self._catalogue, self._serving = catalogue, serving
+        spec = next(spec for spec in CATALOGUE if spec.name == TIER_REQUESTS_DROPPED)
+        dropped = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+        self._dropped = {"full": dropped.labels("full"), "stopped": dropped.labels("stopped")}
+        #: The symbols handed over and not yet landed: added on the lane, dropped on the serving
+        #: loop, each under `_guard`.
+        self._pending: set[str] = set()
+        self._guard = threading.Lock()
+
+    def request_tiers(self, symbol: Symbol) -> None:
+        try:
+            with self._guard:
+                if symbol in self._pending:
+                    return
+                full = len(self._pending) >= TIER_REQUESTS_PENDING_MAX
+                if not full:
+                    self._pending.add(symbol)
+            if full:
+                self._dropped["full"].inc()
+                return
+            self._serving.notify(self._land, symbol)
+        except Exception as exc:  # a request's failure is never its caller's
+            _log().error("oms_tier_request_failed", error=type(exc).__name__)
+
+    async def close(self) -> None:
+        """The runtime's stop: the symbols still waiting are dropped, none will land."""
+        with self._guard:
+            self._pending.clear()
+
+    def _land(self, symbol: str) -> None:
+        with self._guard:
+            self._pending.discard(symbol)
+        try:
+            dropped = self._catalogue.request_tiers(symbol)
+            if dropped is not None:
+                self._dropped[dropped].inc()
+        except Exception as exc:  # logged here: no caller waits for it
+            _log().error("oms_tier_request_failed", error=type(exc).__name__)
 
 
 # --- part 3: the runtime (#913 slice 3E) ---
@@ -2003,6 +2066,14 @@ class OmsRuntime:
             validator = Validator(read_only_gate=self._read_only)
             # the profile cache is the serving loop's: the pipeline and the exits share one bridge
             profiles = ServedProfiles(self.profiles, serving)
+            # S4-S-d: the size step's ask for missing tiers (S4-S-b2a calls it); a no-op when no
+            # catalogue is composed, as on a process with no exchange feed
+            catalogue = ingestion.instruments
+            tiers: TierRequests = NO_TIER_REQUESTS
+            if catalogue is not None:
+                bridge = ServedTierRequests(catalogue, serving, metrics)
+                closers.append(("tier_requests", bridge.close))
+                tiers = bridge
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=instruments,
@@ -2012,6 +2083,7 @@ class OmsRuntime:
                 gate=gate,
                 audit=audit,
                 groups=TradeGroupRepository(stores.groups),
+                tier_requests=tiers,
             )
             submission = OrderSubmission(
                 ports, deps, machines=machines, commands=commands,

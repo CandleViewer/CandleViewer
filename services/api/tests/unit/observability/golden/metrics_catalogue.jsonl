@@ -275,6 +275,7 @@
 ["oms_state_transitions_total", "counter", ["from", "to", "source"], "planned", "E29"]
 ["oms_stop_resolutions_total", "counter", ["outcome"], "planned", "E29"]
 ["oms_submit_rejected_total", "counter", ["code"], "planned", "E29"]
+["oms_tier_requests_dropped_total", "counter", ["reason"], "planned", "E29"]
 ["oms_unknown_orders", "gauge", [], "planned", "E29"]
 ["order_submit_seconds", "histogram", ["transport"], "planned", "E29"]
 ["orders_total", "counter", ["state"], "planned", "E29"]
