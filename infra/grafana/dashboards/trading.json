@@ -847,6 +847,7 @@
         "type": "prometheus",
         "uid": "cv-prometheus"
       },
+      "description": "A profile save's round trip in the router, from the handler's entry. The dashed lines: 1.5 s is the second validation pass's catalogue deadline, the longest a save waits for a catalogue refresh; 2 s is SCR-131's save budget, a cold refresh included.",
       "fieldConfig": {
         "defaults": {
           "custom": {

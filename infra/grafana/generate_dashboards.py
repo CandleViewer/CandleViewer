@@ -813,6 +813,12 @@ def trading() -> Board:
         legend="{{rule}}",
     )
     b.ts("Profile save p95 (budget 2 s)", q("cv_profile_save_seconds"), "s", 1.5, 2.0)
+    _describe(
+        b,
+        "A profile save's round trip in the router, from the handler's entry. The dashed lines: "
+        "1.5 s is the second validation pass's catalogue deadline, the longest a save waits for a "
+        "catalogue refresh; 2 s is SCR-131's save budget, a cold refresh included.",
+    )
     _threshold_lines(b)
     b.ts(
         "Instrument catalogue refreshes/s by result",

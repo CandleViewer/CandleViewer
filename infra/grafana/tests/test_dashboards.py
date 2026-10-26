@@ -252,10 +252,14 @@ def test_the_trading_board_shows_the_profile_save_series() -> None:
     for p in ours:
         (expr,) = [t["expr"] for t in p["targets"]]
         (metric,) = [m for m in sums_by if m in expr]
-        assert f'rate({metric}{{env="$env"}}[$__rate_interval])' in expr, expr
+        # the "(" before rate keeps irate( (or any other prefix) from passing
+        assert f'(rate({metric}{{env="$env"}}[$__rate_interval]))' in expr, expr
         assert f"sum by ({sums_by[metric]}) (" in expr and expr.count("by (") == 1, expr
         drawn[metric] = p
     assert (len(ours), sorted(drawn)) == (4, sorted(sums_by))
+    # saves/s, refusals/s, the p95, refreshes/s: the p95 alone is in seconds
+    units = [p["fieldConfig"]["defaults"]["unit"] for p in ours]
+    assert units == ["ops", "ops", "s", "ops"]
     assert all(m.removesuffix("_bucket") in lint.catalogue_names() for m in sums_by)
     p95 = drawn["cv_profile_save_seconds_bucket"]
     defaults = p95["fieldConfig"]["defaults"]
@@ -263,4 +267,5 @@ def test_the_trading_board_shows_the_profile_save_series() -> None:
     assert defaults["unit"] == "s"
     assert [s["value"] for s in defaults["thresholds"]["steps"]] == [None, 1.5, 2.0]
     assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+    assert p95.get("description")
     assert drawn["instruments_refresh_total"].get("description")
