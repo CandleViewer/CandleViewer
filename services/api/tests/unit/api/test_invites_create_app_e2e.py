@@ -152,7 +152,7 @@ async def _owner_invite(w: _World) -> tuple[str, str]:
     owner = await _login(w, "owner", _OWNER_PERMS)
     r = w.client.post("/users", headers=_h(owner), json=_BODY)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
-    ok = w.elevate(owner)
+    ok = w.elevate(owner, challenge_id=r.json()["challenge_id"])
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     r = w.client.post("/users", headers=_h(owner), json=_BODY)
     assert r.status_code == 201
@@ -167,7 +167,8 @@ async def test_create_requires_step_up_then_link_only_in_response(
     denied = world.client.post("/users", headers=_h(owner), json=_BODY)
     assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
     assert not world.invites.rows  # nothing created before the code
-    assert world.elevate(owner).status_code == 200  # `{code}` only, like the M-020 modal
+    # The dialog answers the challenge by its id (#2725).
+    assert world.elevate(owner, challenge_id=denied.json()["challenge_id"]).status_code == 200
     r = world.client.post("/users", headers=_h(owner), json=_BODY)
     assert r.status_code == 201 and r.json()["status"] == "invited"
     token = r.json()["invite_url"].rsplit("/", 1)[1]

@@ -186,7 +186,7 @@ async def test_a_replay_needs_a_live_window_and_never_outlives_it(rot: _Rot) -> 
     assert (resent.status_code, resent.json()["code"]) == (403, "step_up_required")
     assert "idempotency-replayed" not in resent.headers and _unstored(resent)
     assert first.json()["active"]["key_id"] not in resent.text
-    assert rot.w.elevate(token, action_class="keys").status_code == 200
+    assert rot.w.elevate(token, challenge_id=resent.json()["challenge_id"]).status_code == 200
     again = rot.post(token, ref)
     assert (again.status_code, again.headers["idempotency-replayed"]) == (200, "true")
     assert again.json() == first.json() and len(rot.keys.rows) == 2

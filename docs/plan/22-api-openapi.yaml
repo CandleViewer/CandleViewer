@@ -12137,7 +12137,11 @@ paths:
         against the live challenge: `challenge_id`, when sent, must name it. A step-up for a
         no-grace class (named by the live challenge or by `action_class`) must send it: without
         it, or without a live challenge, the answer is `400`, so `action_class` alone never
-        elevates a no-grace class. The `200` echoes the consumed `challenge_id` (additive,
+        elevates a no-grace class. Every step-up while the session has a live challenge must
+        send its `challenge_id`, grace classes included (`400` with rule `challenge_required`
+        without it), so a newer `403` cannot change the class the password and code elevate;
+        `action_class` alone elevates only a grace class, and only while no challenge is live.
+        The `200` echoes the consumed `challenge_id` (additive,
         defence in depth), so a client can tell which refused request the grant answers; it is
         omitted when no challenge was consumed and is never a challenge the grant did not use.
         Audit: `auth.step_up_required` records the `challenge_id`;
@@ -12231,15 +12235,16 @@ paths:
                 challenge_id:
                   description: >
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
-                    Required for a no-grace class (`live_enablement`, `killswitch`, `backups`,
-                    `sl_loosen`, `accounts` or `recorder_purge`, named by the live challenge or by
-                    `action_class`):
+                    Required whenever the session has a live challenge, whatever its class,
+                    grace classes included, and always for a no-grace class
+                    (`live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` or
+                    `recorder_purge`, named by the live challenge or by `action_class`):
                     omitting it is `400 validation_failed` with
-                    `errors: [{field: challenge_id, rule: challenge_required}]`. Optional for a
-                    grace class: without it the server uses the session's live challenge. This
-                    grace-class optionality is transitional and ends with #2725 (the web client
-                    sends `challenge_id` on every step-up); from then on it is required whenever
-                    the session has a live challenge. A value that does not name the live
+                    `errors: [{field: challenge_id, rule: challenge_required}]`. Only a grace
+                    class named by `action_class` while no challenge is live elevates without
+                    it. This ends the transitional grace-class optionality that #2725 was to
+                    end (the web client sends `challenge_id` on every step-up): a tightening
+                    this contract announced before any client relied on the optionality. A value that does not name the live
                     challenge (expired, superseded, already used or unknown), or that is sent
                     when there is none, gets `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is
@@ -12312,8 +12317,8 @@ paths:
                     description: >
                       The `challenge_id` of the challenge this step-up consumed (#2304, additive,
                       C-6.3). Present when the step-up answered a live challenge, which is always
-                      the case for a no-grace class and for a grace class that sent `challenge_id`
-                      or had a live challenge. A client uses it to tell which refused request the
+                      the case for a no-grace class and for a grace class with a live challenge
+                      (whose step-up must send its `challenge_id`). A client uses it to tell which refused request the
                       grant answers. Absent when no challenge was consumed (a grace class named by
                       `action_class` with no live challenge); the server never echoes a challenge
                       the grant did not consume.
@@ -16406,7 +16411,8 @@ components:
             `step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4
             scoped to the issuing session, so a value from another session is unknown. One
             challenge is live per session; a newer refusal supersedes it. Send it as
-            `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.
+            `challenge_id` to `POST /auth/step-up`, which requires it while the challenge is
+            live, whatever the class; a step-up for a no-grace class must send it.
         challenge_expires_at:
           type: string
           format: date-time

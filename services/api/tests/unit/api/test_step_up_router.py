@@ -274,11 +274,7 @@ async def test_dangerous_route_is_403_without_elevation_then_passes() -> None:
     r = c.post(f"/users/{uid}/invite", headers=_H)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
     assert "auth.step_up_required" in em.actions()
-    c.post(
-        "/auth/step-up",
-        headers=_H,
-        json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
-    )
+    c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), r))
     assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 200
     clock.now += timedelta(minutes=5, seconds=1)
     assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 403
@@ -317,9 +313,13 @@ async def test_preview_with_position_store_needs_no_ack() -> None:
     assert prev["requires_acknowledge_unknown_positions"] is False
 
 
-#: Exactly what the merged M-020 modal (apps/web/src/routes/StepUpGate.tsx) posts.
-def _modal_body(code: str) -> dict[str, str]:
-    return {"code": code, "password": _PW}
+def _modal_body(code: str, refused: Any = None) -> dict[str, str]:
+    """What the step-up dialog posts (#2725): the password and code, and the `challenge_id` of
+    the `403 step_up_required` it answers (`refused`), which a live challenge requires."""
+    body = {"code": code, "password": _PW}
+    if refused is not None:
+        body["challenge_id"] = refused.json()["challenge_id"]
+    return body
 
 
 async def test_real_modal_payload_elevates_challenged_class_end_to_end() -> None:
@@ -327,7 +327,7 @@ async def test_real_modal_payload_elevates_challenged_class_end_to_end() -> None
     uid = uuid.uuid4()
     denied = c.post(f"/users/{uid}/invite", headers=_H)
     assert denied.status_code == 403 and denied.json()["action_class"] == "users"
-    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock)))
+    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), denied))
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == clock.now + timedelta(minutes=5)
@@ -343,13 +343,14 @@ async def test_code_only_without_pending_challenge_is_400() -> None:
 
 async def test_client_action_class_mismatching_challenge_is_400() -> None:
     c, _em, seed, clock, _ = await _build()
-    c.post(f"/users/{uuid.uuid4()}/invite", headers=_H)
+    denied = c.post(f"/users/{uuid.uuid4()}/invite", headers=_H)
     r = c.post(
         "/auth/step-up",
         headers=_H,
-        json={"code": _code(seed, clock), "password": _PW, "action_class": "keys"},
+        json=_modal_body(_code(seed, clock), denied) | {"action_class": "keys"},
     )
     assert r.status_code == 400
+    assert r.json()["errors"][0]["rule"] == "challenge_mismatch"
 
 
 # -- PR #1674 finding 4: unknown target user -----------------------------------
@@ -385,7 +386,7 @@ async def test_rotate_revoke_reveal_scope_need_step_up_then_share_grace_window()
         r = c.request(method, path, headers=_H)
         assert r.status_code == 403 and r.json()["code"] == "step_up_required", path
         assert r.json()["action_class"] == "keys"
-    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock)))
+    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), r))
     assert ok.status_code == 200 and ok.json()["step_up_expires_at"] is not None
     clock.now += timedelta(minutes=3)
     for method, path in _KEY_ACTIONS:

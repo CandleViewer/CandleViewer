@@ -20,8 +20,9 @@ _INVITE = {"email": "ann@example.com", "username": "annie", "roles": ["viewer"]}
 def _owner(stack: Stack) -> dict[str, str]:
     """Headers of a signed-in owner holding `users:write`, stepped up for `users`."""
     headers, seed = stack.principal("owner", "owner", Permission.USERS_WRITE)
-    assert stack.client.post("/users", headers=headers, json=_INVITE).status_code == 403
-    assert stack.step_up(headers, seed).status_code == 200
+    denied = stack.client.post("/users", headers=headers, json=_INVITE)
+    assert denied.status_code == 403
+    assert stack.step_up(headers, seed, denied.json()["challenge_id"]).status_code == 200
     return headers
 
 

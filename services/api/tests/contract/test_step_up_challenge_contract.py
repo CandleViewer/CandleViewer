@@ -11,10 +11,11 @@ Pins the contract:
 * a label never identifies an account or a rule alone: an account is followed by its environment
   and UID, a rule (provisionally, until the route slice) by its environments, and every label is
   escaped before it is quoted;
-* `POST /auth/step-up` takes `challenge_id`: required for a no-grace class (`400
-  validation_failed`, rule `challenge_required`, without it) and optional, for now, for a grace
-  class; a stale one is `400 validation_failed` with rule `challenge_expired`; both are decided
-  before any factor is checked;
+* `POST /auth/step-up` takes `challenge_id`: required whenever the session has a live challenge,
+  grace classes included, and always for a no-grace class (`400 validation_failed`, rule
+  `challenge_required`, without it); only a grace class named by `action_class` with no challenge
+  live elevates without it (#2725 scenario 6); a stale one is `400 validation_failed` with rule
+  `challenge_expired`; both are decided before any factor is checked;
 * a no-grace grant is bound to the challenged request by a stated SHA-256 fingerprint and lives
   60 seconds; another request of the class is refused `403 step_up_required` and audited
   `auth.step_up_mismatch`;
@@ -174,6 +175,11 @@ def test_problem_declares_the_step_up_challenge_field(
             "challenge_id",
             "a random UUIDv4 scoped to the issuing session, so a value from another session is "
             "unknown",
+        ),
+        (
+            "challenge_id",
+            "Send it as `challenge_id` to `POST /auth/step-up`, which requires it while the "
+            "challenge is live, whatever the class",
         ),
         ("challenge_id", "a step-up for a no-grace class must send it"),
         ("action_summary", "It comes from a fixed per-route template"),
@@ -470,15 +476,17 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
 @pytest.mark.parametrize(
     "rule",
     [
-        "Required for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
+        "Required whenever the session has a live challenge, whatever its class, grace classes "
+        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
         "`sl_loosen`, `accounts` or `recorder_purge`, named by the live challenge or by "
         "`action_class`)",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
-        "Optional for a grace class: without it the server uses the session's live challenge",
-        "This grace-class optionality is transitional and ends with #2725 (the web client sends "
-        "`challenge_id` on every step-up); from then on it is required whenever the session has a "
-        "live challenge",
+        "Only a grace class named by `action_class` while no challenge is live elevates without "
+        "it",
+        "This ends the transitional grace-class optionality that #2725 was to end (the web client "
+        "sends `challenge_id` on every step-up): a tightening this contract announced before any "
+        "client relied on the optionality",
         "A value that does not name the live challenge (expired, superseded, already used or "
         "unknown), or that is sent when there is none, gets `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_expired}]`",
@@ -531,6 +539,10 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
         "A step-up for a no-grace class (named by the live challenge or by `action_class`) must "
         "send it: without it, or without a live challenge, the answer is `400`",
         "`action_class` alone never elevates a no-grace class",
+        "Every step-up while the session has a live challenge must send its `challenge_id`, grace "
+        "classes included (`400` with rule `challenge_required` without it), so a newer `403` "
+        "cannot change the class the password and code elevate",
+        "`action_class` alone elevates only a grace class, and only while no challenge is live",
     ],
 )
 def test_step_up_description_states_the_challenge_rule(spec: dict[str, Any], rule: str) -> None:

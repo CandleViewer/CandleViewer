@@ -239,10 +239,15 @@ def _answered(
     record: SessionRecord, now: datetime, action_class: str | None, challenge_id: uuid.UUID | None
 ) -> tuple[str, StepUpChallenge | None]:
     """The class a step-up elevates and the live challenge it answers (#2304). Every
-    refusal is decided here, before any factor is checked."""
+    refusal is decided here, before any factor is checked. While a challenge is live the
+    step-up must name it, grace classes too (#2725 scenario 6), so a newer `403` cannot change
+    the class the user's password and code elevate; only a grace class named by
+    `action_class` with no challenge live elevates without one."""
     live = next(iter(_stored(record, now, _PENDING)), None)
     if challenge_id is not None and (live is None or live.challenge_id != challenge_id):
         raise StepUpChallengeRefused("challenge_id", "challenge_expired")
+    if live is not None and challenge_id is None:
+        raise StepUpChallengeRefused("challenge_id", "challenge_required")
     if live is not None and action_class is not None and action_class != live.action_class:
         raise StepUpChallengeRefused("action_class", "challenge_mismatch")
     resolved = live.action_class if live is not None else action_class

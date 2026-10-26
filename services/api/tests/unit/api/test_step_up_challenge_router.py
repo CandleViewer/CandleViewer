@@ -296,9 +296,9 @@ async def test_refused_challenge_and_wrong_factor_rows_are_told_apart() -> None:
     `step_up_challenge` and the refusal rule as reason; a wrong password or code is outcome
     `failure`, has no object and gives `<class>:remaining=<n>`."""
     w = await _world()
-    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live `users` challenge
+    live = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a `users` challenge
     assert w.step_up(challenge_id=str(uuid.uuid4())).status_code == 400
-    assert w.step_up(code="000000").status_code == 401
+    assert w.step_up(code="000000", challenge_id=live.json()["challenge_id"]).status_code == 401
 
     refused, wrong = w.of("auth.step_up_failed")
 
@@ -346,19 +346,42 @@ async def test_challenge_id_is_unknown_to_any_other_session(who: str) -> None:
     assert w.step_up(challenge_id=challenge_id).status_code == 200  # still live for its owner
 
 
-@pytest.mark.parametrize("answer", ["with-challenge-id", "without-challenge-id"])
-async def test_grace_challenge_is_answered_with_or_without_challenge_id(answer: str) -> None:
+async def test_grace_challenge_is_answered_by_its_challenge_id() -> None:
     w = await _world()
     path = f"/users/{uuid.uuid4()}/invite"
     denied = w.client.post(path, headers=w.h())
     assert denied.status_code == 403
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(denied.json())
-    sent = {"challenge_id": denied.json()["challenge_id"]} if answer == "with-challenge-id" else {}
-    ok = w.step_up(**sent)
+    ok = w.step_up(challenge_id=denied.json()["challenge_id"])
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == w.clock.now + timedelta(minutes=5)
     assert w.client.post(path, headers=w.h()).status_code == 200
+
+
+@pytest.mark.parametrize("named", [{}, {"action_class": "users"}], ids=["bare", "action-class"])
+async def test_step_up_without_challenge_id_while_a_challenge_is_live_is_400(
+    named: dict[str, str],
+) -> None:
+    """#2725 scenario 6, grace classes too: the right password and code without the live
+    challenge's id are `400 validation_failed`, rule `challenge_required`, audited as a refused
+    challenge; no factor is counted, nothing is elevated and the challenge stays answerable."""
+    w = await _world()
+    path = f"/users/{uuid.uuid4()}/invite"
+    challenge_id = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    r = w.step_up(**named)
+    assert r.status_code == 400
+    _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [
+        ("challenge_id", "challenge_required")
+    ]
+    (refused,) = w.of("auth.step_up_failed")
+    assert (refused["outcome"], refused["reason"]) == (AuditOutcome.DENIED, "challenge_required")
+    assert not w.of("auth.step_up_granted")
+    assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
+    assert w.client.post(path, headers=w.h()).status_code == 403  # nothing elevated
+    fresh = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    assert fresh != challenge_id and w.step_up(challenge_id=fresh).status_code == 200
 
 
 @pytest.mark.parametrize("value", ["challenge-1", 7], ids=["not-a-uuid", "not-a-string"])

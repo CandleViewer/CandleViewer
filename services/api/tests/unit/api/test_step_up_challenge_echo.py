@@ -31,13 +31,15 @@ async def test_200_echoes_the_matched_challenge_for_a_no_grace_class() -> None:
     assert granted["object_id"] == challenge_id  # the audited id is the echoed one
 
 
-async def test_200_echoes_the_live_challenge_when_a_grace_step_up_sends_none() -> None:
+async def test_grace_step_up_that_omits_the_live_challenge_id_is_refused_and_echoes_none() -> None:
+    """#2725 scenario 6: the server no longer picks the live challenge for a step-up that does
+    not name it, so there is no consumed challenge to echo."""
     w = await _world()
-    challenge_id = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h()).json()[
-        "challenge_id"
-    ]
-    ok = w.step_up()  # the server matched the session's live challenge
-    assert ok.status_code == 200 and ok.json()["challenge_id"] == challenge_id
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live `users` challenge
+    refused = w.step_up()
+    assert refused.status_code == 400
+    assert refused.json()["errors"][0]["rule"] == "challenge_required"
+    assert "challenge_id" not in refused.json()
 
 
 @pytest.mark.parametrize("action_class", ["keys", "users"])

@@ -102,7 +102,7 @@ AUDIT_UNAVAILABLE_DETAIL = "audit unavailable"
 _AUDIT_NOT_STARTED = "AuditService.start() has not wired"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
-    "challenge_required": "A step-up for this action class must send the challenge_id.",
+    "challenge_required": "This step-up must send the challenge_id it answers.",
     "challenge_expired": "The step-up challenge cannot be answered.",
     "challenge_mismatch": "action_class does not match the step-up challenge.",
     "required": "There is no step-up challenge to answer; send action_class.",

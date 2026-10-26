@@ -14,7 +14,12 @@ from candleviewer.auth.errors import (
     StepUpChallengeRefused,
     UnknownActionClass,
 )
-from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
+from candleviewer.auth.step_up import (
+    ACTION_CLASSES,
+    CHALLENGE_WINDOW,
+    NO_GRACE_ACTION_CLASSES,
+    StepUpChallenge,
+)
 from tests.conftest import RecordingAuditSink
 
 from .session_fakes import FakeSessionRepository
@@ -72,8 +77,12 @@ async def test_stale_challenge_id_is_refused_before_any_factor(stale: str) -> No
     assert _sample("auth_stepup_failures_total") == failures
 
 
-@pytest.mark.parametrize("answer", ["challenge-id", "live-challenge", "action-class-only"])
-async def test_grace_class_step_up_with_or_without_challenge_id(answer: str) -> None:
+@pytest.mark.parametrize("answer", ["challenge-id", "action-class-only"])
+async def test_grace_class_step_up_with_its_challenge_id_or_without_a_challenge(
+    answer: str,
+) -> None:
+    """A grace class elevates by the live challenge's id, or, with no challenge live, by
+    `action_class` alone (#2725 scenario 6 keeps the second)."""
     svc, clock, seed, user, sessions = await _setup()
     challenge = None if answer == "action-class-only" else await svc.record_pending("s1", "keys")
     grant = await svc.step_up(
@@ -82,12 +91,36 @@ async def test_grace_class_step_up_with_or_without_challenge_id(answer: str) -> 
         "keys" if challenge is None else None,
         _code(seed, clock),
         PASSWORD,
-        challenge_id=challenge.challenge_id if answer == "challenge-id" and challenge else None,
+        challenge_id=None if challenge is None else challenge.challenge_id,
     )
     assert not grant.single_use and grant.elevated_until == clock.now + timedelta(minutes=5)
     assert grant.challenge_id == (None if challenge is None else challenge.challenge_id)
     assert _keys(sessions) == ["keys"]  # an unbound window; the challenge is used up
     await svc.require_elevation("s1", "keys")
+
+
+@pytest.mark.parametrize("named", [False, True], ids=["no-action-class", "same-action-class"])
+@pytest.mark.parametrize("action_class", sorted(ACTION_CLASSES))
+async def test_step_up_without_challenge_id_is_refused_while_a_challenge_is_live(
+    action_class: str, named: bool
+) -> None:
+    """#2725 scenario 6: while the session has a live challenge of any class, grace classes
+    included, a step-up that omits `challenge_id` is `challenge_required`, decided before any
+    factor (the right password and code elevate nothing), counting no failure and leaving the
+    challenge live for the step-up that names it."""
+    svc, clock, seed, user, sessions = await _setup()
+    bound = "ab" * 32 if action_class in NO_GRACE_ACTION_CLASSES else None
+    challenge = await svc.record_pending("s1", action_class, fingerprint=bound)
+    failures = _sample("auth_stepup_failures_total")
+    with pytest.raises(StepUpChallengeRefused) as refused:
+        await svc.step_up(
+            str(user), "s1", action_class if named else None, _code(seed, clock), PASSWORD
+        )
+    assert (refused.value.field, refused.value.rule) == ("challenge_id", "challenge_required")
+    assert sessions.sessions["s1"].step_up_failures == 0
+    assert _sample("auth_stepup_failures_total") == failures
+    assert await svc.live_challenge("s1") == challenge
+    assert _keys(sessions) == [challenge.key()]  # nothing elevated
 
 
 @pytest.mark.parametrize(
@@ -102,10 +135,10 @@ async def test_action_class_is_only_a_cross_check_of_the_live_challenge(
     live: str | None, sent: str | None, field: str, rule: str
 ) -> None:
     svc, _clock, _seed, user, sessions = await _setup()
-    if live is not None:
-        await svc.record_pending("s1", live)
+    challenge = None if live is None else await svc.record_pending("s1", live)
+    cid = None if challenge is None else challenge.challenge_id
     with pytest.raises(StepUpChallengeRefused) as refused:
-        await svc.step_up(str(user), "s1", sent, "000000", PASSWORD)
+        await svc.step_up(str(user), "s1", sent, "000000", PASSWORD, challenge_id=cid)
     assert (refused.value.field, refused.value.rule) == (field, rule)
     assert sessions.sessions["s1"].step_up_failures == 0
 

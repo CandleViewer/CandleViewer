@@ -100,19 +100,22 @@ async def _setup(
 _BODY = {"email": "ann@example.com", "username": "annie", "roles": ["viewer"]}
 
 
-def _elevate(c: TestClient, seed: bytes, clock: Any) -> None:
-    c.post(
-        "/auth/step-up",
-        headers=_H,
-        json={"code": _code(seed, clock), "password": PASSWORD, "action_class": "users"},
-    )
+def _elevate(c: TestClient, seed: bytes, clock: Any, refused: Any = None) -> None:
+    """Open a `users` window: by naming the class, or, while the `403` `refused` left a live
+    challenge, by answering it with its `challenge_id` (#2725)."""
+    answer = {"code": _code(seed, clock), "password": PASSWORD}
+    if refused is None:
+        answer["action_class"] = "users"
+    else:
+        answer["challenge_id"] = refused.json()["challenge_id"]
+    c.post("/auth/step-up", headers=_H, json=answer)
 
 
 async def test_create_user_requires_step_up_then_returns_link_once() -> None:
     c, em, seed, clock, _, _ = await _setup()
     r = c.post("/users", headers=_H, json=_BODY)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
-    _elevate(c, seed, clock)
+    _elevate(c, seed, clock, r)
     r = c.post("/users", headers=_H, json=_BODY)
     assert r.status_code == 201
     body = r.json()
