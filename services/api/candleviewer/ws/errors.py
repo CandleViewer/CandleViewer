@@ -20,6 +20,31 @@ class UnknownErrorCode(WsError):
     """An error code outside the generated 23-ws-protocol.md 10.2 catalogue was emitted (S10)."""
 
 
+def topic_error(code: str, message: str, field: str | None = None) -> dict[str, Any]:
+    """The per-topic ``error`` object of a ``sub_ok`` result (§6.2, ``common#/$defs/error``).
+
+    Same rule as ``build_ws_error``: ``internal_error`` carries only its catalogue title, so no
+    caller text (an exception's, say) and no ``field`` can reach a client. Other codes keep the
+    caller's ``message`` and ``field``. Raises ``UnknownErrorCode`` for a code that is not in the
+    WS catalogue, as ``build_ws_error`` does (S10).
+    """
+    try:
+        known = ErrorCode(code)
+    except ValueError:
+        raise UnknownErrorCode(f"error code {code!r} is not in the WS catalogue") from None
+    if known not in WS_ERROR_CODES:
+        raise UnknownErrorCode(f"error code {code!r} is REST-only, not legal on the WS")
+    meta = ERROR_META[known]
+    err: dict[str, Any] = {"code": code, "retryable": meta.retryable}  # §10.2
+    if known is ErrorCode.INTERNAL_ERROR:
+        err["message"] = meta.title
+        return err
+    err["message"] = message
+    if field is not None:
+        err["field"] = field
+    return err
+
+
 def build_ws_error(
     code: str,
     *,

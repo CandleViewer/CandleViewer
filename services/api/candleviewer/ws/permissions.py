@@ -59,8 +59,7 @@ from candleviewer.orderflow.errors import (
     RecomputeRefusedError,
 )
 from candleviewer.orderflow.indicators.engine import Requested, resolve_instances
-from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
-from candleviewer.ws.errors import WsError, build_ws_error
+from candleviewer.ws.errors import WsError, build_ws_error, topic_error
 from candleviewer.ws.lifecycle import bye_frame as lifecycle_bye
 from candleviewer.ws.limits import (
     DENIAL_AUDIT_WINDOW_S,
@@ -419,10 +418,7 @@ _REFUSED: Final = {
 
 
 def _fail(ch: Any, code: str, message: str, fld: str | None = None) -> dict[str, Any]:
-    retryable = ERROR_META[ErrorCode(code)].retryable  # §10.2, as an `err` frame says it
-    err: dict[str, Any] = {"code": code, "message": message, "retryable": retryable}
-    if fld is not None:
-        err["field"] = fld
+    err = topic_error(code, message, fld)
     return {"ch": ch if isinstance(ch, str) else str(ch)[:120], "ok": False, "error": err}
 
 
