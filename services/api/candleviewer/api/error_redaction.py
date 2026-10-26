@@ -25,6 +25,9 @@ def _log() -> Any:
 
 _PROBLEM = "application/problem+json"
 _BASE = "https://candleviewer.local/errors/"
+#: Constant validation messages (C-12.6), keyed by pydantic error type: the types whose `msg`
+#: quotes the input itself. Closed list, pinned by `tests/unit/api/test_validation_constants.py`.
+CONSTANT_MESSAGES: dict[str, str] = {"uuid_parsing": "Input should be a valid UUID."}
 
 
 def _problem(status: int, code: str, title: str, **extra: Any) -> JSONResponse:
@@ -47,7 +50,9 @@ async def validation_error_handler(request: Request, exc: Exception) -> JSONResp
             "field": ".".join(str(p) for p in err.get("loc", ())),
             "rule": str(err.get("type", "value_error")),
             # `msg` can interpolate the input; `input`/`ctx` are dropped entirely.
-            "message": redact_text(str(err.get("msg", ""))),
+            "message": CONSTANT_MESSAGES.get(
+                str(err.get("type")), redact_text(str(err.get("msg", "")))
+            ),
         }
         for err in exc.errors()
     ]
