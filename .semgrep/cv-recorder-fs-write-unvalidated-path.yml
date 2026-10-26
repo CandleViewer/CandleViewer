@@ -65,5 +65,3 @@ rules:
         - "services/api/candleviewer/storage/cold/**"
         - "services/api/candleviewer/*wiring.py"
         - "**/cv-recorder-fs-write-unvalidated-path*"
-      exclude:
-        - "services/api/candleviewer/recorder/wal.py" # its own WAL directory (named in the message)

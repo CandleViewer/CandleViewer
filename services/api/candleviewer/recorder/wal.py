@@ -143,11 +143,13 @@ class ReplayPrep:
 
 
 def _open_append(path: Path) -> int:
+    # nosemgrep: cv-recorder-fs-write-unvalidated-path reason=wal-own-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
     return os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | _BINARY, 0o600)
 
 
 def _write_atomic(path: Path, data: bytes, fsync: Callable[[int], None]) -> None:
     tmp = path.with_suffix(path.suffix + ".tmp")
+    # nosemgrep: cv-recorder-fs-write-unvalidated-path reason=wal-own-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | _BINARY, 0o600)
     try:
         os.write(fd, data)
@@ -358,6 +360,7 @@ class SpillWal:
     def _quarantine(self, offset: int, length: int) -> None:
         self.corrupt_dir.mkdir(mode=0o700, exist_ok=True)
         name = self.corrupt_dir / f"{len(list(self.corrupt_dir.iterdir())):06d}.wal"
+        # nosemgrep: cv-recorder-fs-write-unvalidated-path reason=wal-own-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
         fd = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | _BINARY, 0o600)
         try:
             with self.replay_path.open("rb") as src:
