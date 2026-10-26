@@ -86,9 +86,13 @@ _FAILURE_SQL = sa.text("""
       failed_login_count = failed_login_count + 1,
       locked_until = CASE WHEN failed_login_count + 1 >= :threshold
                           THEN CAST(:lock_until AS timestamptz) ELSE locked_until END
-    WHERE id = CAST(:id AS uuid)
+    WHERE id = CAST(:id AS uuid) AND id <> CAST(:absent AS uuid)
     RETURNING CASE WHEN failed_login_count >= :threshold THEN locked_until END AS locked_until
     """)
+#: The nil UUID: `LoginService`'s placeholder id for an unknown identifier. Never a real user
+#: (ids are server-generated uuid4), and the failure update never matches it, so a failed sign-in
+#: for an unknown identifier changes no row.
+_ABSENT_ID = str(uuid.UUID(int=0))
 _REHASH_SQL = sa.text(
     "UPDATE users SET password_hash = :h, password_algo_params = CAST(:p AS jsonb), "
     "password_changed_at = now() WHERE id = CAST(:id AS uuid)"
@@ -151,6 +155,7 @@ class SqlAlchemyUserRepository:
                     _FAILURE_SQL,
                     {
                         "id": user_id,
+                        "absent": _ABSENT_ID,
                         "threshold": lockout_threshold,
                         "lock_until": now + lock_duration,
                     },

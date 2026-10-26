@@ -7,8 +7,9 @@
 - successful credentials on a user who must enrol TOTP first ->
   `EnrolmentOnlyLogin` (#2295; the router mints the enrolment-only session);
 - wrong password / unknown identifier -> `InvalidCredentials`, same message,
-  same code path, same timing (dummy-hash verification on the unknown-user
-  path — see `hashing.Hasher.verify_dummy`);
+  and the same steps by construction: an unknown identifier is checked as a
+  placeholder record (`_ABSENT_USER`, the nil UUID and the dummy hash) through
+  the one lock check, verify call and failure block a wrong password takes;
 - disabled account -> `AccountDisabled`, but only ever raised *after* a
   correct password (ticket's documented trade-off);
 - five consecutive failures -> `AccountLocked` for 15 minutes, persisted so
@@ -37,7 +38,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, ConfigDict
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
-from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
+from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.metrics import auth_lockouts_total
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
@@ -56,6 +57,24 @@ LOCKOUT_DURATION = timedelta(minutes=15)
 MFA_CHALLENGE_TTL = timedelta(minutes=5)
 
 Clock = Callable[[], datetime]
+
+#: The id of the placeholder record below: the nil UUID, never a real user (user ids are
+#: server-generated uuid4), so `UserRepository.record_login_failure` for it changes no row.
+ABSENT_USER_ID = uuid.UUID(int=0)
+
+#: What an unknown identifier is checked as, so both failure paths perform the same steps.
+#: It can never sign in: `login` fails an unknown identifier whatever its verify returns.
+_ABSENT_USER = UserRecord(
+    id=ABSENT_USER_ID,
+    username="",
+    email="",
+    password_hash=DUMMY_PASSWORD_HASH,
+    password_algo_params=dict(DEFAULT_ARGON2_PARAMS),
+    status=UserStatus.ACTIVE,
+    mfa_required=True,
+    failed_login_count=0,
+    locked_until=None,
+)
 
 
 class EnrolmentOnlyLogin(BaseModel):
@@ -115,15 +134,15 @@ class LoginService:
             # failure reasons actually applied.
             raise InvalidCredentials("Username or password is incorrect")
 
-        user = await self._repository.find_by_identifier(request.identifier)
-        if user is None:
-            # Enumeration resistance: run the identical Argon2id work a real
-            # user would incur, then fail exactly like a wrong password.
-            await self._hasher.verify_dummy(request.password)
-            self._per_ip_throttle.record_failure(source_ip)
-            raise InvalidCredentials("Username or password is incorrect")
+        found = await self._repository.find_by_identifier(request.identifier)
+        # Enumeration resistance: an unknown identifier (or, defensively, a record
+        # carrying the placeholder's id) continues as `_ABSENT_USER` through the same
+        # steps as a wrong password, and always fails.
+        known = found is not None and found.id != ABSENT_USER_ID
+        user = found if found is not None and known else _ABSENT_USER
 
-        if user.locked_until is not None and user.locked_until > self._clock():
+        now = self._clock()
+        if user.locked_until is not None and user.locked_until > now:
             # Still run the full Argon2id verification (against the real
             # hash) before reporting the lock, so a locked account's
             # response takes the same wall-clock time and the same
@@ -135,7 +154,7 @@ class LoginService:
             raise AccountLocked(max(remaining, 1))
 
         password_ok = await self._hasher.verify(user.password_hash, request.password)
-        if not password_ok:
+        if not (known and password_ok):
             self._per_ip_throttle.record_failure(source_ip)
             await self._on_failure(user)
             raise InvalidCredentials("Username or password is incorrect")

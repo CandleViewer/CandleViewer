@@ -44,6 +44,9 @@ _LAST_VERIFY_MS: ContextVar[float | None] = ContextVar("cv_argon2_last_verify_ms
 #: verification, never so a "correct" password could ever match it.
 _DUMMY_HASH = "$argon2id$v=19$m=65536,t=3,p=4$SBCH3a1MjHOuiTouZgR4bA$umiYIItBsPSAhOO1pYFi6IVfawadHXCivexpiinH8OU"  # noqa: E501 -- a real Argon2id encoded hash cannot be wrapped without changing its bytes
 
+#: The same dummy hash under a public name: `LoginService`'s placeholder record carries it.
+DUMMY_PASSWORD_HASH = _DUMMY_HASH
+
 
 def _params_to_hasher(params: dict[str, int]) -> PasswordHasher:
     return PasswordHasher(

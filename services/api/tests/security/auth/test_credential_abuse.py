@@ -289,9 +289,6 @@ def test_timing_failures_ratio_uses_the_medians_of_the_sorted_arms() -> None:
 
 
 @pytest.mark.perf
-# A consistent ~80 µs found-user residual after the counterbalance (C-9.3, SR-014).
-# ticket: GH-4540 quarantined: 2026-10-26
-@pytest.mark.flaky
 async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples(  # SR-014 / U8
     tmp_path: Path,
 ) -> None:
