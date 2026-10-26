@@ -9,7 +9,7 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -25,9 +25,9 @@ from candleviewer.oms import stream_push
 from candleviewer.oms.errors import OrderStepRefused
 from candleviewer.oms.fakes import InMemoryRecordedStopStore
 from candleviewer.oms.pairing import ToRecordedStop
-from candleviewer.oms.ports import PositionKey
+from candleviewer.oms.ports import KeyedRecord, PositionKey
 from candleviewer.oms.push_mapping import ForPairing, route
-from candleviewer.oms.recorded_stop_stream import RecordedStopStream
+from candleviewer.oms.recorded_stop_stream import RecordedStopStream, Successor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms.stream_push import StreamPushes
 from candleviewer.statechart.bindings import b01_order as b01
@@ -60,6 +60,7 @@ class Ports:
     account_error: Exception | None = None
     position: Position | None = None  # the projection's last applied row for the key
     summaries: list[tuple[str, str]] = field(default_factory=list)
+    audited: list[KeyedRecord] = field(default_factory=list)  # the successor's release records
 
     async def order_of(self, account_id: UUID, xid: str, symbol: str) -> Order | None:
         return self.order
@@ -93,6 +94,9 @@ class Ports:
     def last_applied(self, key: PositionKey) -> Position | None:
         return self.position if key == KEY else None
 
+    async def write(self, record: KeyedRecord) -> None:  # the successor's `ReleaseAudit`
+        self.audited.append(record)
+
 
 @dataclass
 class World:
@@ -101,6 +105,16 @@ class World:
     machines: Any = None
     positions: Any = None
     reads: Any = None  # the stream's order reads, when not the store's own
+    stops: Any = None  # the successor's record store, when not the repository over the rig's
+    clock: Callable[[], datetime] = lambda: T0  # the OMS's clock
+    audit: Any = None  # the successor's release audit, when not the ports' list
+
+    def successor(self) -> Successor:
+        stops = self.stops or RecordedStopRepository(self.rig.store.stops)
+        return Successor(
+            stops=stops, audit=self.audit or self.ports, positions=self.positions or self.ports,
+            counts=self.ports, clock=self.clock,
+        )  # fmt: skip
 
     def stream(self) -> RecordedStopStream:
         return RecordedStopStream(
@@ -115,7 +129,7 @@ class World:
         p = self.ports
         pushes = StreamPushes(
             target=self.rig.facade, reads=self, fill_orders=p, lockout=p, handovers=p,
-            stops=self.stream(), no_intent=p, counts=p, pager=p,
+            stops=self.stream(), successors=self.successor(), no_intent=p, counts=p, pager=p,
             monotonic=asyncio.get_running_loop().time,
         )  # fmt: skip
         async with asyncio.timeout(5.0):  # real seconds: only a failing test's
