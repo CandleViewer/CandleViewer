@@ -314,7 +314,8 @@ class EntrySizer:
             _log().warning("oms_submit_figures_unread", failure=type(exc).__name__)
             return UNKNOWN_FIGURES, False
         rates = reading.symbols.get(symbol)
-        if rates is None:
+        if rates is None:  # no entry: the source has no rates to read (live, another venue), so
+            # no tiers to ask for; `TierRequests` asks only where the figures read them
             return reading.account, False
         known = reading.account.model_copy(
             update={

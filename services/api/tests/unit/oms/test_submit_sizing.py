@@ -341,11 +341,14 @@ async def test_submit_two_overlapping_entries_on_one_account_are_judged_in_turn(
 async def test_submit_a_live_entry_is_503_sizing_unavailable(rig: SubmitRig) -> None:
     """On live nothing serves the day's figures (`NoDayFigures`, the wiring's binding there), so
     every live entry is `figure_unknown`: 503 `sizing_unavailable`, nothing recorded or sent."""
-    rig.pipeline._sizer = EntrySizer(NoDayFigures(), SizerMetrics.register(rig.metrics))
+    rig.pipeline._sizer = EntrySizer(
+        NoDayFigures(), SizerMetrics.register(rig.metrics), tier_requests=rig.tiers
+    )
     rig.profiles.held[(cr.LIVE_ACCOUNT, None)] = profile(cr.LIVE_ACCOUNT)
     refused = await _refused(rig, entry(account_id=cr.LIVE_ACCOUNT))
     assert isinstance(refused, SizingUnavailable)
     assert rig.count("cv_sizer_outcomes_total", outcome="fail", reason="figure_unknown") == 1
+    assert rig.tiers.asked == []  # the figures source is absent, not the tiers: none requested
 
 
 def _free(rig: SubmitRig) -> bool:

@@ -1003,7 +1003,7 @@ async def test_no_day_figures_answers_every_figure_none() -> None:
     reading = await stand_in.read(ref, ["BTCUSDT"], fallback_sl_offset_pct=Decimal("0.02"))
     assert reading.account is UNKNOWN_FIGURES
     assert set(UNKNOWN_FIGURES.model_dump().values()) == {None}
-    assert reading.symbols == {"BTCUSDT": SymbolRates()}
+    assert reading.symbols == {}  # no symbol entry: the size step requests no tiers
     stand_in.invalidate(ACCOUNT)  # nothing kept, nothing to drop
 
 

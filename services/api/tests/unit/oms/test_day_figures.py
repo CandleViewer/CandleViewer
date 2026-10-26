@@ -484,7 +484,7 @@ async def test_day_figures_unknown_or_unreadable_tiers_give_none() -> None:
         "BTCUSDT"
     ].maintenance_margin_rate is None
     figures = DayRiskFigures(
-        "testnet", port_for=lambda _e: cast(TradingPort, venue), tiers=broken,
+        "demo", port_for=lambda _e: cast(TradingPort, venue), tiers=broken,
         now=lambda: NOW, monotonic=Clock(),
     )  # fmt: skip
     assert (await _read(figures)).symbols["BTCUSDT"].maintenance_margin_rate is None
@@ -501,7 +501,7 @@ async def test_day_figures_account_of_another_environment_reads_nothing(
             served_not_routed, ["BTCUSDT"], fallback_sl_offset_pct=FALLBACK
         )
     assert set(reading.account.model_dump().values()) == {None} and venue.calls == []
-    assert reading.symbols == {"BTCUSDT": SymbolRates()}
+    assert reading.symbols == {}  # no symbol entry: the size step requests no tiers
     assert logs == [
         {
             "event": "oms_figures_environment_mismatch", "log_level": "critical",

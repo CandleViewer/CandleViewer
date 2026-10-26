@@ -117,8 +117,9 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
         return replace(world.stores(), groups=cast(GroupStores, Groups(world.store)))
 
     # Every timed entry rests on the fake venue and counts in the next one's committed risk, so
-    # the profile's day and position caps hold all of them: the measure is the path, not a cap.
-    roomy = profile(max_daily_loss="1000000", max_position_notional="1000000")
+    # the profile's day cap holds all of them (the position cap does not bind): the measure
+    # is the path, not a cap.
+    roomy = profile(max_daily_loss="1000000")
     runtime = world.runtime(stores=stores, profiles=Profiles(held={(cr.ACCOUNT, None): roomy}))
     app = FastAPI()
     records = OmsAudit(world.writer, environment="demo")

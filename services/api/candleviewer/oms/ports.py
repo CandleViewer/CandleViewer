@@ -951,7 +951,7 @@ class NoDayFigures(Interim):
         *,
         fallback_sl_offset_pct: Decimal | None,
     ) -> FiguresReading:
-        return FiguresReading(UNKNOWN_FIGURES, dict.fromkeys(symbols, SymbolRates()))
+        return FiguresReading(UNKNOWN_FIGURES, {})  # no symbol entry: no tiers to request
 
     def invalidate(self, account_id: AccountId) -> None:
         return None
