@@ -13,6 +13,7 @@ read in flight across it keeps nothing.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -24,6 +25,7 @@ from prometheus_client import generate_latest
 from structlog.testing import capture_logs
 
 from candleviewer.domain.primitives import AccountId, Environment, Symbol, TsUs
+from candleviewer.exchange.base.errors import RateBudgetExceededError, RateLimitError
 from candleviewer.exchange.base.models import (
     AccountRef,
     ClosedPnl,
@@ -34,6 +36,7 @@ from candleviewer.exchange.base.models import (
     Wallet,
 )
 from candleviewer.exchange.base.ports import TradingPort
+from candleviewer.exchange.bybit.trading import ENDPOINTS
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import day_figures
 from candleviewer.oms.day_figures import FIGURES_TTL_S, DayRiskFigures, committed_risk
@@ -137,6 +140,7 @@ class Venue:
         self.calls: list[str] = []
         self.windows: list[tuple[TsUs, TsUs]] = []
         self.fail: set[str] = set()
+        self.error: Exception = RuntimeError("venue refused")
         self.hang: set[str] = set()
         self.paused: set[str] = set()
         self.entered, self.release = asyncio.Event(), asyncio.Event()
@@ -144,7 +148,7 @@ class Venue:
     async def _answer[T](self, name: str, value: T) -> T:
         self.calls.append(name)
         if name in self.fail:
-            raise RuntimeError("venue refused")
+            raise self.error
         if name in self.hang:
             await asyncio.Event().wait()
         if name in self.paused:
@@ -342,6 +346,56 @@ async def test_day_figures_read_failure_gives_none_and_keeps_nothing(
     assert getattr((await _read(figures)).account, figure) is None
     venue.fail.clear()
     assert getattr((await _read(figures)).account, figure) is not None  # read again, not kept
+
+
+@pytest.mark.parametrize(
+    "refusal", [RateBudgetExceededError("no token within the wait"), RateLimitError("10006")]
+)
+@pytest.mark.parametrize(
+    ("read", "figure"),
+    [
+        ("wallet", "equity"),
+        ("closed_pnl", "realised_loss_today"),
+        ("positions", "committed_risk"),
+        ("open_orders", "committed_risk"),
+    ],
+)
+async def test_day_figures_budget_refusal_gives_none_without_retry_or_cache(
+    read: str, figure: str, refusal: Exception
+) -> None:
+    """C-12.7: a refused read is `figure_unknown`: asked once, not retried, nothing kept."""
+    venue = Venue()
+    venue.fail.add(read)
+    venue.error = refusal
+    figures = _figures(venue)
+    assert getattr((await _read(figures)).account, figure) is None
+    assert venue.calls.count(read) == 1  # no retry, though the refusal says retryable
+    venue.fail.clear()
+    assert getattr((await _read(figures)).account, figure) is not None
+    assert venue.calls.count(read) == 2  # the refusal was not cached
+
+
+@pytest.mark.parametrize("refusal", [RateBudgetExceededError("no token"), RateLimitError("10006")])
+async def test_day_figures_fee_budget_refusal_gives_none_without_retry_or_cache(
+    refusal: Exception,
+) -> None:
+    venue = Venue()
+    venue.fail.add("fee_rate")
+    venue.error = refusal
+    figures = _figures(venue)
+    assert (await _read(figures)).symbols["BTCUSDT"].taker_fee_rate is None
+    assert venue.calls.count("fee_rate") == 1
+    venue.fail.clear()
+    assert (await _read(figures)).symbols["BTCUSDT"].taker_fee_rate is not None
+    assert venue.calls.count("fee_rate") == 2
+
+
+@pytest.mark.parametrize("read", ["wallet", "closed_pnl", "positions", "open_orders", "fee_rate"])
+def test_day_figures_reads_take_no_lane_and_the_adapter_serves_them_on_poll(read: str) -> None:
+    """C-12.7: the port's reads take no lane, so a caller cannot ask for the stop and cancel
+    reserve; the adapter's endpoint table fixes each of them on the `poll` lane."""
+    assert "lane" not in inspect.signature(getattr(TradingPort, read)).parameters
+    assert ENDPOINTS[read].lane == "poll"
 
 
 async def test_day_figures_fee_read_failure_gives_none() -> None:
