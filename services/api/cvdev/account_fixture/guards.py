@@ -165,8 +165,8 @@ def ws_signature_verifies(key_id: str, expires: object, given: object) -> bool:
     """Guard 4 for a WS `auth` a pack key id signed: HMAC-SHA256 with the stored-under scenario's
     derived secret over `GET/realtime` and `expires` (an integer, as the adapter sends it); false
     for any other part. The stub never judges `expires` itself, as it never judges REST time."""
-    if type(expires) is not int or not isinstance(given, str):
-        return False
+    if type(expires) is not int or not isinstance(given, str) or not given.isascii():
+        return False  # a hex digest is ASCII; a lone surrogate would not even encode
     secret = derived_secret(stored_under(key_id)).encode()
     message = WS_AUTH_PREFIX + str(expires).encode()
     expected = hmac.new(secret, message, hashlib.sha256).hexdigest()

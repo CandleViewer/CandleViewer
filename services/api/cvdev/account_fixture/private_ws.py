@@ -30,7 +30,7 @@ is checked again before every frame sent.
 
 The clock and the key's file are read, off the event loop, on every read, so a switch reaches an
 open socket. A read waits for the next due frame, at most `POLL_S`, on the injected `sleep`, or
-until a frame is sent: there is no background task. At most `OUTBOX_FRAMES` replies wait unread;
+until a frame is sent: no task outlives a read. At most `OUTBOX_FRAMES` replies wait unread;
 one more drops the socket. Each connect, `auth` and close is one request-log line (transport
 `ws`, the event as `method`: `CONNECT`, `REFUSE`, `AUTH`, `DROP`, `CLOSE`), never a frame, a
 signature or a secret; a line that cannot be written refuses the connect or closes the socket.
@@ -180,7 +180,7 @@ class FixtureSocket:
             frame, due = self._next(now, scenario, started)
             if frame is not None:
                 self._open()  # the latch, again: it may have tripped while the state was read
-                if len(frame) > max_bytes:
+                if len(frame.encode()) > max_bytes:  # bytes, as the adapter's real socket
                     self._drop("served", scenario)
                     raise FrameTooLarge("a fixture frame above the read bound")
                 return frame
@@ -338,11 +338,12 @@ class FixtureSocket:
         verified: bool | None = None,
     ) -> dict[str, Any]:
         """What both logs hold of the socket: never a frame, but a pack key id. The key the socket
-        follows verified; another key's line says how it fared."""
+        follows verified, unless the line says otherwise (a failed re-auth with that key); another
+        key's line says how it fared."""
         key = key or self._key
         named: KeyClass = key_class or ("fixture" if key else "unsigned")
         signing = key if named == "fixture" else None
-        if signing is not None and signing == self._key:
+        if verified is None and signing is not None and signing == self._key:
             verified = True
         return {
             "host": self._host,

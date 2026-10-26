@@ -427,6 +427,7 @@ async def test_a_clock_file_off_its_rule_refuses_by_a_fixed_code(
             with pytest.raises(httpx.ConnectError) as refused:
                 await clocked.handle_async_request(request)
             assert (str(refused.value), refused.value.__cause__) == (_REFUSED + code, None)
+            assert refused.value.__context__ is None  # nothing caught rides along, nor its path
     assert [e["event"].removeprefix("exchange.account_fixture_") for e in events] == [
         "clock_invalid",
         "signature_mismatch",
@@ -452,6 +453,7 @@ async def test_a_keys_directory_changed_after_boot_is_refused_never_followed(
     with capture_logs() as events, pytest.raises(httpx.ConnectError) as refused:
         await stack.transport.handle_async_request(_get(STORED))
     assert str(refused.value) == _REFUSED + "key_state_invalid"
+    assert (refused.value.__cause__, refused.value.__context__) == (None, None)
     with pytest.raises(KeyStateError, match="held since boot"):
         stack.keys.switch(_key(STORED), "ws_blip_20s")
     assert [e["event"] for e in events] == ["exchange.account_fixture_key_state_invalid"]
@@ -470,6 +472,7 @@ async def test_a_key_file_that_cannot_be_linked_is_refused_by_a_fixed_code(
     with capture_logs() as events, pytest.raises(httpx.ConnectError) as refused:
         await stack.transport.handle_async_request(_get(STORED))
     assert (str(refused.value), refused.value.__cause__) == (_REFUSED + "key_state_invalid", None)
+    assert refused.value.__context__ is None  # the PermissionError, and its path, is not kept
     assert [e["event"] for e in events] == ["exchange.account_fixture_key_state_invalid"]
     assert str(keys) not in repr(events) and os.listdir(keys) == []
 

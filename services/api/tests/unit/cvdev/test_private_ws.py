@@ -298,6 +298,32 @@ async def test_a_wrong_secret_answers_success_false_and_verified_false(rig: Rig)
     assert not rig.latch.is_set()
 
 
+MISMATCH: Final = ("AUTH", "signature_mismatch", "fixture", _key("compliant"), False, None)
+
+
+@pytest.mark.parametrize("given", ["\udc80", "\u00e9" * 64], ids=["lone-surrogate", "non-ascii"])
+async def test_a_non_ascii_signature_is_a_mismatch_not_an_error(rig: Rig, given: str) -> None:
+    """`json.loads` hands a lone surrogate through; it must not escape `send` unclassified."""
+    socket = await rig.sockets.connect(DEMO_WS)
+    await socket.send(json.dumps({"op": "auth", "args": [_key("compliant"), EXPIRES, given]}))
+    assert await _frame(socket) == {"success": False, "op": "auth"}
+    assert rig.logged()[-1] == MISMATCH
+
+
+async def test_a_reauth_with_the_sockets_key_and_a_wrong_secret_stays_open(rig: Rig) -> None:
+    """The line says `verified=false` though the key is the one the socket follows."""
+    socket = await rig.authed()
+    with capture_logs() as events:
+        await socket.send(_auth(signed_as="ws_quiet"))
+    assert await _frame(socket) == {"success": False, "op": "auth"}
+    assert rig.logged()[-1] == MISMATCH
+    assert [_of(e, "event", "verified") for e in events] == [
+        ("exchange.account_fixture_signature_mismatch", False)
+    ]
+    await socket.send(PING)
+    assert await _frame(socket) == PONG
+
+
 @pytest.mark.parametrize(
     "args",
     [
@@ -482,6 +508,22 @@ async def test_a_frame_above_the_read_bound_ends_the_socket(rig: Rig) -> None:
         await socket.recv(4096)
 
 
+async def test_the_read_bound_counts_bytes_not_characters(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The pack's frames are served ASCII-escaped, so a multi-byte frame is put in by hand."""
+    frame = json.dumps("\u00e9" * 40, ensure_ascii=False)  # 42 characters, 82 bytes
+
+    def due(*_args: object) -> tuple[str, None]:
+        return frame, None
+
+    monkeypatch.setattr(FixtureSocket, "_next", due)
+    socket = await rig.sockets.connect(DEMO_WS)
+    assert await socket.recv(82) == frame
+    with pytest.raises(FrameTooLarge):
+        await socket.recv(81)
+
+
 async def test_a_reader_that_never_reads_is_dropped_at_the_bound(rig: Rig) -> None:
     socket = await rig.authed()
     with pytest.raises(ConnectionResetError):
@@ -503,10 +545,11 @@ async def test_a_state_off_its_rule_refuses_by_a_fixed_code(rig: Rig) -> None:
     assert events[0]["event"] == "exchange.account_fixture_clock_invalid"
 
 
-async def test_a_log_that_cannot_be_written_refuses(rig: Rig) -> None:
+@pytest.mark.parametrize("signed_as", ["compliant", "ws_quiet"], ids=["verified", "mismatch"])
+async def test_a_log_that_cannot_be_written_refuses(rig: Rig, signed_as: str) -> None:
     socket = await rig.sockets.connect(DEMO_WS)
     rig.transport.log.close()
-    await socket.send(_auth())
+    await socket.send(_auth(signed_as=signed_as))
     assert await _dropped(socket) == []  # the auth is never answered
     with pytest.raises(ConnectionRefusedError, match="request_log_failed"):
         await rig.sockets.connect(DEMO_WS)

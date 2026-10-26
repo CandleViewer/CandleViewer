@@ -431,7 +431,9 @@ socket, after the same guards as REST: the demo private stream only, a pack key 
 other trips the process latch), and its signature over `GET/realtime` and `expires` with the
 secret of the scenario the key is stored under. A connect answers as the stack default
 (`CV_ACCOUNT_FIXTURE`, from boot), so TC-115 runs with `demo_ws_unreachable`; after a verified
-`auth` the socket follows the key's scenario on the fixture clock, a switch included. A refused
+`auth` the socket follows the key's scenario on the fixture clock, a switch included. A connect
+carries no key, so a stack default's `refuse_reconnects` refuses the dial, while a key-only
+scenario's refusal comes at its `auth`, which closes the socket. A refused
 `auth` gets the auth reply with `success: false`, a stand-in like the WS frames above. A frame the
 script does not answer, a subscribe before `auth` or of a topic the adapter does not use, closes
 the socket unanswered. The request log has one `ws` line per connect, `auth` and close; its

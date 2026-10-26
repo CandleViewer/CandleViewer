@@ -213,12 +213,15 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         body: a stub's status, its headers and its body, anchored on the clock. A call nothing
         answers is unstubbed."""
         call = f"{request.method} {request.url.path}"
+        code: str | None = None
         try:
             now, scenario, started = await asyncio.to_thread(self.select, seen.key_id)
         except ClockInvalid:
-            self._invalid(request, seen, "clock_invalid")
+            code = "clock_invalid"
         except (KeyStateError, OSError):  # a key file, or `keys/`, that cannot be read or written
-            self._invalid(request, seen, "key_state_invalid")
+            code = "key_state_invalid"
+        if code is not None:  # raised outside the handler: no context to carry a path
+            self._invalid(request, seen, code)
         sent: dict[str, object] | None = None
         at_ms = max(0, (now - started) // _MS)  # before its start, a scenario answers as at it
         overlays = tuple(str(overlay["scenario"]) for overlay in scenario.overlays)
