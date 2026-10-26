@@ -39,6 +39,7 @@ from candleviewer.exchange.bybit.config import RestClientConfig
 from candleviewer.exchange.bybit.rate_limit import TokenBucketGovernor
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.observability.support_bundle import filter_config
+from candleviewer.oms_wiring import build_oms_runtime
 from candleviewer.settings import Environment, FeedMode, Settings
 from cvdev.account_fixture.wiring import RefusingTransport
 from cvdev.account_fixture.wiring import build as dev_build
@@ -229,6 +230,39 @@ def test_set_in_checkout_create_app_keeps_the_handle_for_later_slices(tmp_path: 
     app = app_module.create_app(_dev(tmp_path))
 
     assert app.state.account_fixture is not None
+
+
+@pytest.mark.parametrize("fixture", [False, True], ids=["production", "account-fixture"])
+def test_the_root_hands_the_oms_the_bundles_lane_binder_and_the_fixtures_lane_transport(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixture: bool
+) -> None:
+    """#913 L1d-1 (C-2.11, C-12.2): `create_app` hands `build_oms_runtime` the bundle's own lane
+    binder (`lane_signing`) and, with the dev-only account fixture, the handle's lane transport
+    factory (`lane_rest_transport`), never the adapter's shared `rest_transport`, which the
+    transport fence, a count of call sites, cannot tell apart; in production, no transport. What
+    the builder hands the runtime is `test_oms_runtime.py`'s."""
+    bundles: list[Any] = []
+    calls: list[dict[str, Any]] = []
+    build_secrets, build_oms = app_module._build_secrets, build_oms_runtime
+
+    def secrets(*args: Any, **kwargs: Any) -> Any:
+        bundles.append(build_secrets(*args, **kwargs))
+        return bundles[-1]
+
+    def oms(*args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs)
+        return build_oms(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "_build_secrets", secrets)
+    monkeypatch.setattr(app_module, "build_oms_runtime", oms)
+    app = app_module.create_app(_dev(tmp_path) if fixture else Settings())
+    [bundle], [handed] = bundles, calls
+    assert handed["lane_signing"] is bundle.lane_signing
+    handle = app.state.account_fixture
+    if fixture:  # its bound method: a new transport at each start, built on the lane
+        assert handed["lane_transport"] == handle.lane_rest_transport
+    else:
+        assert (handle, handed["lane_transport"]) == (None, None)
 
 
 _ABSENT = object()

@@ -570,8 +570,8 @@ async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_j
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """20 Sec.6.2 on `OrderLane`: the sweep resumes a create left at the venue's door, whose venue
-    call runs on the serving loop (ruling Q11's interim); the facade's machine refuses a send from
-    this loop; the route's reads answer from the lane. The stop drains (its bound spent at once
+    call runs on the lane, through its own port (#913 L1d-1); the facade's machine refuses a send
+    from this loop; the route's reads answer from the lane. The stop drains (its bound spent at once
     here), cancels a submit still on the lane and waits there for its unwinding, which ends only
     once that wait has begun, before the machines and the commands close (CR-S3L1B-06), then stops
     the lane: its closers' deadline leaves `LANE_JOIN_S` of the reserve for the join."""
@@ -618,7 +618,7 @@ async def test_the_oms_runs_on_the_lane_and_its_stop_drains_cancels_closes_and_j
             cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=BOUND_S
         )
         assert await parts.lane.call(resumed) == "submitted"
-        assert threads == [threading.current_thread()]  # the create went out on this loop
+        assert threads == [thread]  # R1: the create went out on the lane (#913 L1d-1)
         with pytest.raises(LoopAffinityError):
             await parts.machines._gateway.send(str(SENDING.id), "KILL")
         assert await runtime.route.accounts.environment_of(cr.ACCOUNT) == "demo"
@@ -642,8 +642,9 @@ async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_it
     """#913 slice 4 on the lane (the orchestrator's ruling of 2026-10-25 02:50Z): the route's call
     hands the amend to the lane, which reads the order's instrument there while this loop is
     blocked. A price move is risk-increasing, so the amend reads its profile through the
-    pipeline's `ServedProfiles`, on this loop, as its venue call runs; it answers once this loop
-    turns again: accepted, the order `submitted`."""
+    pipeline's `ServedProfiles`, on this loop (OM-D10's named residual), and its venue call runs on
+    the lane, through the lane's own port (#913 L1d-1); it answers once this loop turns again:
+    accepted, the order `submitted`."""
     reads, sent = list[tuple[str, threading.Thread]](), list[threading.Thread]()
     listed, read_profile = threading.Event(), sr.Profiles.get_effective_profile
 
@@ -685,7 +686,7 @@ async def test_an_amend_runs_on_the_lane_while_this_loop_is_blocked_and_reads_it
         got = await amended
     here = threading.current_thread()
     assert (got.kind, got.status, got.lifecycle_state) == ("accepted", 202, "submitted")
-    assert reads == [("instrument", on_lane), ("profile", here)] and sent == [here]
+    assert reads == [("instrument", on_lane), ("profile", here)] and sent == [on_lane]  # R2
 
 
 async def test_a_cancelled_start_lets_the_compose_close_on_the_lane_before_the_lane_stops(
@@ -737,8 +738,9 @@ async def test_a_start_cancelled_again_while_the_compose_closes_still_stops_its_
         start.cancel()
     with pytest.raises(asyncio.CancelledError):
         await start
-    assert world.log == ["lock.acquire", "audit.start", "audit.stop", "lane.stop"]
-    assert not b01.ports_wired()
+    # the lane's writer, the pool and the lock close after the port and its signing (#913 L1d), so
+    # the hung port's close holds them; the lane's stop ends its tasks
+    assert world.log == ["lock.acquire", "audit.start", "lane.stop"] and not b01.ports_wired()
 
 
 def _dying_at(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
