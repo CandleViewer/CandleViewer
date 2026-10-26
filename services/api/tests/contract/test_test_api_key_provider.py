@@ -41,6 +41,7 @@ from tests.contract.test_create_api_key_provider import Resolver
 from tests.unit.accounts.test_key_import import ACCT, KEY, OTHER, OWNER
 from tests.unit.accounts.test_key_selfcheck import EGRESS, NOW, World, facts, target
 from tests.unit.accounts.test_key_test import Reads, flow_of
+from tests.unit.audit.audit_waits import virtual
 from tests.unit.exchange.bybit.test_key_ws_probe import Stream
 from tests.unit.test_key_import_wiring import Rig
 
@@ -337,10 +338,13 @@ class Held(World):
         return await super().key_info()
 
 
+@virtual
 async def test_a_test_racing_one_still_at_the_exchange_is_a_429_and_probes_nothing() -> None:
     """The ticket's denial-of-service threat is simultaneous tests: a key's minute is taken before
     the first await that reaches the exchange, so a second request is refused at once, never
-    queued behind a hung first one."""
+    queued behind a hung first one. On a `VirtualTimeLoop` (C-13.7, #4615): the one-second
+    `asyncio.timeout` reads the loop's fake clock, so it is a hang guard, not a budget; it fires
+    only if the race hangs, never because a loaded host is slow."""
     route = Route(w := Held(target()))
     async with asyncio.timeout(1.0):
         first = asyncio.create_task(route.post())
