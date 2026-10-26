@@ -272,6 +272,7 @@ def test_every_job_is_read_only_bounded_and_ends_with_its_duration_budget() -> N
         assert [c["with"]["persist-credentials"] for c in checkouts] == [False], name
         last = job["steps"][-1]
         assert (last["name"], last["if"], last["env"]["BUDGET_MS"]) == (BUDGET, "always()", "90000")
+        assert last["continue-on-error"] is False, name  # blocking
 
 
 def test_the_shard_job_summary_names_the_shard_and_the_pytest_wall_time() -> None:
@@ -280,8 +281,10 @@ def test_the_shard_job_summary_names_the_shard_and_the_pytest_wall_time() -> Non
     assert "pytest_ms" in pytest_step["run"] and "GITHUB_OUTPUT" in pytest_step["run"]
     last = job["steps"][-1]
     assert last["env"]["PYTEST_MS"] == "${{ steps.pytest.outputs.pytest_ms }}"
-    assert "| pytest wall time (ms) |" in last["run"] and "shard ${SHARD}/${TOTAL}" in last["run"]
-    assert 'if [ "$duration_ms" -gt "$BUDGET_MS" ]' in last["run"]  # the assertion is unchanged
+    assert "| pytest wall time (ms), budgeted |" in last["run"]
+    assert "shard ${SHARD}/${TOTAL}" in last["run"]
+    # #4666: the budget judges the suite's own time, not the job's (test_governance_yml_budget.py)
+    assert 'if [ "$PYTEST_MS" -gt "$BUDGET_MS" ]; then' in last["run"]
 
 
 def test_the_aggregate_combines_exactly_one_coverage_file_per_shard() -> None:
