@@ -107,12 +107,20 @@ it (BQ-16 is the scope):
    ``--repin-exit-state`` prints the table for a reviewer. r6o also bounds K4 / K9's revision
    exemption by the revision line's own line range (as section 16's is), carries K9's exit into a
    next sentence that opens on "it", "this" or "which", and runs K4 on the hand-off; r6b reads bare
-   lower-case "cancel" as an exit where it is the subject of a state verb ("cancel is ...").
+   lower-case "cancel" as an exit where it is the subject of a state verb ("cancel is ..."). r7
+   reads an exit's clause across a colon, a dash, an arrow, a middle dot or a slash (what follows
+   must be another exit, a next control by its label or a cite), before it across a colon or a
+   dash ("Disabled: Cancel"), and through a closing verb's tail (a condition such as "while
+   disabled", a parenthesis such as "(greyed out)"); "that" and "both" carry an exit as "it" does;
+   K9 reads the same colon, dash, arrow, slash and parenthetical forms.
 7g. The loading state, pinned default-deny (r6b): a clause of the spec or the hand-off that names
    the confirm (or, r6c, "[Revoke key ...]", "[Delete ...]", "[Disable ...]", "the Revoke button")
    where the load is named ("load" in any form, "the load", "During the load", "while it reads",
    "still reading", "Reading what"; r6c: "fetched", "the summary is pending", "before the summary
-   arrives") - a table cell with its whole row, a prose sentence
+   arrives"; r7: by its nouns and verbs - a time word before the read, the summary or the
+   consequences, "the read", "in flight", or the read / summary / consequences with a progress
+   word: "during the read", "before the summary is ready", "the summary is read") - a table cell
+   with its whole row, a prose sentence
    with the one before it, a heading or a fenced line on its own - or a prose sentence that opens
    on "it", "this" or "which" after such a sentence, is a load-state clause, and every one must
    equal, in document order, its entry of LOAD_STATE_PINS. No state-word list exists: "enabled",
@@ -164,6 +172,11 @@ lens, each in lower, Title and UPPER case, on frame 49, in
 section 11's SCR-129 row, in the hand-off's opening prose and in its first table (``load-state``;
 ``k4.loading`` and the pins beside it), and bare "cancel is unresponsive" at the six exit sites
 (``exit-state``); a neutral edit at each of the ten sites raises none of the loading or exit codes.
+r7 adds round 6's M1'' forms (an exit's state across a colon, a dash, an arrow, a middle dot or a
+slash, "Disabled: Cancel", a closing verb's condition and parenthesis, "That" / "Both" carries) in
+lower, Title and UPPER case in section 11's SCR-126 edit row, section 7's prose, the hand-off's
+prose and its Table 2 (``exit-state``, with ``k9.exit`` where K9's word is the state; a neutral
+edit at the two new sites stays quiet), and M2's four load forms and six of its own to 7g's list.
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
        [--repin-security] [--repin-confirm-look] [--repin-exit-state] [--repin-load-state]
@@ -1448,9 +1461,19 @@ EXIT_GATED = re.compile(
     rf"|(?:(?!confirm)[^.|])*?[;(—] *(?:it|which)\b +(?:(?:is|stays|becomes|remains|has|drawn)(?: +but)? +){{0,2}}"
     rf"{GATE_WORD}"
     # r6o: carried across a sentence stop into a sentence that opens on "it", "this" or "which"
-    rf"|(?:(?!confirm)[^.|!?])*?[.!?] +(?:it|this|which)\b"
-    rf" +(?:(?:is|stays|becomes|remains|has|drawn)(?: +but)? +){{0,2}}{GATE_WORD})"
-    rf"|\b{GATED_ADJ}(?:,? +(?:and +|or +)?[\w-]+){{0,2}}?,? +{EXIT_AFTER_GATE}",
+    rf"|(?:(?!confirm)[^.|!?])*?[.!?] +(?:it|this|which|that|both)\b"
+    rf" +(?:(?:is|are|stays|stay|becomes|remains|has|drawn)(?: +but)? +){{0,2}}{GATE_WORD}"
+    # r7: across a colon, a dash, an arrow, a middle dot or a slash ("`Esc`: disabled", "Cancel
+    # → disabled", "Cancel · inert"), in a parenthesis after the exit's verb ("`Esc` closes it
+    # (greyed out)") and after a "while" / "once" / "when" / "until" / "unless" / "if"
+    # ("Cancel closes the dialog while disabled"), never across the word "confirm"
+    rf"|(?: *\([^)]*\))? *(?:[:—–·→/]|\s-\s) *[\"“*`]*(?:[\w-]+ +){{0,2}}{GATE_WORD}"
+    rf"|(?: +(?!confirm\b)[\w'-]+){{1,4}} *\([^)]*?{GATE_WORD}[^)]*\)"
+    rf"|(?: +(?!confirm\b)[\w'-]+){{0,5}}? +(?:while|once|when|whenever|until|unless|if) +"
+    rf"{GATE_WORD})"
+    rf"|\b{GATED_ADJ}(?:,? +(?:and +|or +)?[\w-]+){{0,2}}?,? +{EXIT_AFTER_GATE}"
+    # r7: an exit named after its state across a colon or a dash ("Disabled: Cancel")
+    rf"|\b{GATED_ADJ}\**\s*[:—–][\s\"“*]*{EXIT_AFTER_GATE}",
     re.IGNORECASE,
 )
 EXIT_CONTROL = re.compile(r"^(?:\[?(?:Cancel|Close|Back)\b|`?Esc`?)", re.IGNORECASE)
@@ -2691,12 +2714,17 @@ def confirm_look_gate(spec: str, handoff: str, out: Out) -> None:
 # prose), "cancel" in any case after "a", "an", "the" or "its" (one word between allowed), and
 # (r6b) bare lower-case "cancel" as the subject of a state verb ("cancel is unresponsive").
 # There is no list of bad states: an exit is paired with a state unless what follows it is one of
-# EXIT_NEXT's non-states (the clause's end, a punctuation stop, an arrow or a slash, a next button,
-# another exit joined by "and", "or", a comma, "=" or "is", a closing / cancelling / focus-returning
-# verb with no state verb after it, a parenthesis of cites only, or "first", "last", "alone" or
-# "throughout" before a stop) and unless the word right before it is one of EXIT_BEFORE's
-# function words; a sentence (or a semicolon, dash or "which" part) that opens on "it", "this" or
-# "which" after a part that names an exit is read as that exit. Every clause with such a pairing
+# exit_clear's non-states (the clause's end or a stop, a next button, another exit joined by "and",
+# "or", a comma, "=" or "is", a closing / cancelling / focus-returning verb whose tail holds no
+# state verb, condition, parenthesis or separator with a state, a parenthesis of cites only, or
+# "first", "last", "alone" or "throughout" before one of these) and unless the word right before
+# it (r7: or before a colon or a dash ahead of it, "Disabled: Cancel") is one of EXIT_BEFORE's
+# function words. r7: a colon, a dash, an arrow, a middle dot or a slash after an exit no longer
+# ends its clause - what follows must be EXIT_FOLLOW (another exit, a next control by its label,
+# "the primary", "the confirm", "focus return", a cite), so "`Esc`: disabled", "Cancel → disabled"
+# and "Cancel · inert" pair. A sentence (or a semicolon, dash or "which" part) that opens on "it",
+# "this", "which" (r7: "that", "both") after a part that names an exit is read as that exit, and
+# lower-case "cancel" before a separator or a closing verb is an exit. Every clause with a pairing
 # must equal its EXIT_STATE_PINS entry (section, row and column or "prose", exact text); the only
 # state the pins allow an exit is SCR-006's "`Esc` is a safe no-op" (D02:1052, frame 30 and section
 # 11); the other pinned clauses give an exit its place, order, presence, label, variant or focus,
@@ -2708,12 +2736,15 @@ EXIT_WORD = re.compile(
 EXIT_LOWER = re.compile(r"\b(?i:a|an|the|its) +(?:[\w-]+ +)?((?i:cancel))\b")
 # r6b: bare lower-case "cancel" is an exit when it is the subject of a state clause ("cancel is
 # unresponsive", "cancel stays put"); "to cancel" is a verb, never the exit
-EXIT_SUBJECT = re.compile(
-    r"(?<!\bto )(?<![\w-])(cancel) +(?=(?i:is|are|stays|remains|becomes|was|gets|goes|turns|looks"
-    r"|appears|seems|does|has|reads|stops|keeps|can|cannot|won't|no longer)\b)"
-)
 EXIT_ACT = (
     r"(?:closes|cancels|returns|dismisses|discards|reaches|leaves|exits|goes back|steps back)\b"
+)
+# r7: and when a separator or a closing verb follows it ("cancel → disabled", "cancel closes the
+# dialog while disabled")
+EXIT_SUBJECT = re.compile(
+    r"(?<!\bto )(?<![\w-])(cancel)(?: +(?=(?i:is|are|stays|remains|becomes|was|gets|goes|turns"
+    r"|looks|appears|seems|does|has|reads|stops|keeps|can|cannot|won't|no longer)\b)"
+    rf"| +(?={EXIT_ACT})|(?=\s*(?:[:—–·→]|\s/\s)))"
 )
 EXIT_STATE_VERB = re.compile(
     r"\b(?:and|but|yet|or|then|while|though)\s+(?:is|are|stays|remains|becomes|was|gets|goes"
@@ -2721,15 +2752,40 @@ EXIT_STATE_VERB = re.compile(
     re.IGNORECASE,
 )
 EXIT_CITE = r"(?:`[\w.-]+:\d+(?:-\d+)?`|§[\d.]+|D\d+|CMP-\d+)"
-EXIT_STOP = r"\s*(?:$|[.;:)\]\"”·|→/—])"
+# r7: a colon, a dash, an arrow, a middle dot or a slash no longer ends the exit's clause: what
+# follows it must itself be a non-state (EXIT_FOLLOW: the clause's end, another exit, a next
+# control by its label, "the primary", "the confirm", "focus return" or a cite)
+EXIT_SEP = re.compile(r"\s*(?:[:—–·→/]|\s-\s)\s*")
+EXIT_END = re.compile(r"\s*(?:$|[.;)\]\"”|])")
+EXIT_LABEL = (
+    r"(?:Verify|Save|Register|Confirm|Next|Run|Change|Skip|Continue|Copy|Details|Actions|Add"
+    r"|Rotate|Revoke|Delete|Disable|Freeze|Done|Retry)"
+)
+EXIT_FOLLOW = re.compile(
+    r"[\[`\"“*]*(?:\[(?i:cancel|close(?: card)?|back)\]|(?i:esc)\b"
+    r"|(?:Close card|CLOSE CARD|Cancel|CANCEL|Close|CLOSE|Back|BACK)\b"
+    rf"|{EXIT_LABEL}\b(?!-)|the primary\b|(?:the )?confirm\b|focus return\b|\+ |{EXIT_CITE})"
+)
 EXIT_NEXT = re.compile(
-    r"\s*(?:$|[.;:)\]\"”·|→/—]|\["
+    r"\s*(?:\["
     r"|(?:and|or|,|=|is)\s+(?:\[(?i:cancel|close(?: card)?|back)\]|`(?i:esc)`|(?i:esc)\b"
     r"|(?:Cancel|Close|Back)\b)"
-    rf"|{EXIT_ACT}"
-    rf"|\({EXIT_CITE}(?:[,;] *{EXIT_CITE})*\){EXIT_STOP}"
-    rf"|(?:first|last|alone|throughout){EXIT_STOP})"
+    rf"|{EXIT_ACT})"
 )
+# what may follow "first", "last", "alone", "throughout" or a parenthesis of cites
+EXIT_ASIDE = re.compile(
+    rf"\s*(?:\({EXIT_CITE}(?:[,;] *{EXIT_CITE})*\)|(?:first|last|alone|throughout)\b)"
+)
+# r7: a closing verb's tail is a state when it holds a state verb, a condition ("while
+# disabled", "once enabled"), a parenthesis of anything but cites and a ruling marker, or a
+# separator not followed by a non-state
+EXIT_COND = re.compile(
+    r"\b(?:while|whilst|once|when|whenever|until|unless|if|though|although|except)\b",
+    re.IGNORECASE,
+)
+EXIT_TAIL_SEP = re.compile(r":(?!\d)|[—–·→]|\s/(?:\s|$)|\s-\s")
+EXIT_PAREN = re.compile(r"\(([^)]*)\)?")
+EXIT_PAREN_OK = re.compile(rf"(?:{EXIT_CITE}|PROPOSED|RULED)")
 EXIT_BEFORE = frozenset(
     [
         "a",
@@ -2768,8 +2824,16 @@ EXIT_BEFORE = frozenset(
         "footer",
     ]
 )
-EXIT_PRONOUN = re.compile(r"(?:(?:and|but|so) +)?(?:it|this|which)\b", re.IGNORECASE)
+# r7: "that" and "both" carry an exit into the next sentence as "it", "this" and "which" do
+EXIT_PRONOUN = re.compile(
+    r"(?:(?:and|but|so) +)?(?:it|this|which|that|both)\b(?!'s\b)", re.IGNORECASE
+)
 EXIT_PART = re.compile(r"(?<=[.!?;])\s+|\s[—·]\s|,\s+(?=which\b)")
+# r7: lower-case "cancel" right after a separator and before a stop ("disabled: cancel") is an
+# exit too; "Flatten first — cancel {m} orders" is the verb
+EXIT_AFTER_SEP = re.compile(
+    r"(?:[:—–·→]|\s/)\s*[\"“*]*(cancel)\b(?=[\"”*]*\s*(?:$|[.;)\]|]|[:—–·→]|\s/))"
+)
 
 
 def exit_spans(text: str) -> list[tuple[int, int]]:
@@ -2777,46 +2841,98 @@ def exit_spans(text: str) -> list[tuple[int, int]]:
     spans = {(m.start(), m.end()) for m in EXIT_WORD.finditer(text)}
     spans |= {(m.start(1), m.end(1)) for m in EXIT_LOWER.finditer(text)}
     spans |= {(m.start(1), m.end(1)) for m in EXIT_SUBJECT.finditer(text)}
+    spans |= {(m.start(1), m.end(1)) for m in EXIT_AFTER_SEP.finditer(text)}
     return sorted(spans)
+
+
+def exit_clear(rest: str) -> bool:
+    """r7: ``rest`` (what follows an exit) is one of the non-states: the clause's end, a next
+    button, another exit after "and" / "or" / a comma / "=" / "is", a closing verb with a clear
+    tail, a parenthesis of cites or "first" / "last" / "alone" / "throughout" with a clear rest, or
+    a separator (colon, dash, arrow, middle dot, slash) followed by EXIT_FOLLOW."""
+    if EXIT_END.match(rest):
+        return True
+    if sep := EXIT_SEP.match(rest):
+        after = rest[sep.end() :]
+        return EXIT_FOLLOW.match(after) is not None or EXIT_END.match(after) is not None
+    if aside := EXIT_ASIDE.match(rest):
+        return exit_clear(rest[aside.end() :])
+    if not EXIT_NEXT.match(rest):
+        return False
+    if act := re.match(rf"\s*{EXIT_ACT}", rest):
+        return not exit_act_state(rest[act.end() :])
+    return True
+
+
+def exit_act_state(tail: str) -> bool:
+    """r7: a closing verb's tail (to the part's end) pairs the exit with a state: a state verb,
+    a condition ("while disabled / once enabled"), a parenthesis of anything but cites or a ruling
+    marker ("closes it (greyed out while it reads)"), or a separator not followed by EXIT_FOLLOW;
+    the tail ends at the first separator that is."""
+    seg = re.split(r"[.;|]", tail, maxsplit=1)[0]
+    sep = EXIT_TAIL_SEP.search(seg)
+    head = seg[: sep.start()] if sep else seg
+    if EXIT_STATE_VERB.search(head) or EXIT_COND.search(head):
+        return True
+    for m in EXIT_PAREN.finditer(head):
+        bits = [b.strip() for b in re.split(r"[,;]", m[1]) if b.strip()]
+        if not bits or not all(EXIT_PAREN_OK.fullmatch(b) for b in bits):
+            return True
+    if sep:
+        after = seg[sep.end() :].lstrip()
+        return EXIT_FOLLOW.match(after) is None and EXIT_END.match(after) is None
+    return False
 
 
 def exit_state_after(text: str, end: int) -> bool:
     """What follows an exit (or its carrying pronoun) pairs it with a state: anything but
-    EXIT_NEXT's non-states, or a closing verb with a state verb after it in the same part."""
-    rest = re.sub(r"^[`\"”*]+", "", text[end:])
-    if not EXIT_NEXT.match(rest):
-        return True
-    if re.match(rf"\s*{EXIT_ACT}", rest):
-        return EXIT_STATE_VERB.search(re.split(r"[.;|]", rest, maxsplit=1)[0]) is not None
-    return False
+    exit_clear's non-states (r7: read across a separator and through a closing verb's tail)."""
+    return not exit_clear(re.sub(r"^[`\"”*]+", "", text[end:]))
+
+
+# r7: the word before a colon or a dash that may name an exit's place, not its state
+EXIT_LABEL_BEFORE = frozenset(["focus"])
 
 
 def exit_state_before(text: str, start: int) -> bool:
     """The word right before an exit (spaces only between) is not one of EXIT_BEFORE's function
     words: "a frozen Cancel", "the dormant `Esc`"; a word ending in "'s" ("stage 5's Close") is a
-    place, not a look, and so is "footer" ("Footer [Cancel]")."""
+    place, not a look, and so is "footer" ("Footer [Cancel]"). r7: so is the word before a colon
+    or a dash ahead of the exit ("Disabled: Cancel" pairs; "Focus: Cancel" does not)."""
     m = re.search(r"(?:^|[\s(\"“])([A-Za-z][\w'-]*) +$", text[:start])
+    if m:
+        word = m[1]
+        return word.lower() not in EXIT_BEFORE and not word.endswith("'s")
+    m = re.search(r"(?:^|[\s(\"“*])([A-Za-z][\w'-]*)\**\s*(?::|—|–)[\s\"“*]*$", text[:start])
     if not m:
         return False
-    word = m[1]
-    return word.lower() not in EXIT_BEFORE and not word.endswith("'s")
+    word = m[1].lower()
+    return word not in EXIT_BEFORE and word not in EXIT_LABEL_BEFORE
 
 
 def exit_state_hits(text: str, carry: bool = False) -> tuple[list[str], bool]:
     """The exit-state pairings of one clause, and whether its last part names an exit (so a next
-    prose sentence that opens on "it", "this" or "which" carries it); ``carry``: the clause before
-    ended on an exit."""
+    prose sentence that opens on "it", "this", "which", "that" or "both" carries it); ``carry``:
+    the clause before ended on an exit. r7: an exit's pairing is read on the whole clause, so a
+    dash or a middle dot after it no longer ends what it is paired with."""
     hits: list[str] = []
     prev = carry
-    for part in EXIT_PART.split(text):
+    at = 0
+    parts: list[tuple[int, str]] = []
+    for m in EXIT_PART.finditer(text):
+        parts.append((at, text[at : m.start()]))
+        at = m.end()
+    parts.append((at, text[at:]))
+    every = exit_spans(text)
+    for off, part in parts:
         lead = part.lstrip("(\"'`* ")
         if prev and (p := EXIT_PRONOUN.match(lead)) and exit_state_after(lead, p.end()):
             hits.append(lead[:60])
-        spans = exit_spans(part)
+        spans = [(a, b) for a, b in every if off <= a and b <= off + len(part)]
         hits += [
-            part[max(0, a - 20) : b + 30]
+            text[max(0, a - 20) : b + 30]
             for a, b in spans
-            if exit_state_after(part, b) or exit_state_before(part, a)
+            if exit_state_after(text, b) or exit_state_before(text, a)
         ]
         prev = bool(spans)
     return hits, prev
@@ -2854,8 +2970,11 @@ def exit_state_gate(spec: str, handoff: str, out: Out) -> None:
 # states: "enabled", "active", "live", "clickable", "ready" fail as "disabled" does. The load is
 # named by "load" in any form ("loads", "loading", "loaded", "the load", "During the load"),
 # "while it reads", "still reading" or "Reading what" (r6c: "fetched", "the summary is pending",
-# "before the summary arrives"); the confirm by LOAD_CONFIRM (CONFIRM_NOUN, a bracketed destructive
-# label, "the Revoke button"). A table cell
+# "before the summary arrives"; r7: by its nouns and verbs, not a phrase list - a time word before
+# the read, the summary or the consequences, "the read" as a noun, "in flight", or the read, the
+# summary or the consequences with a progress word up to three words on: "during the read",
+# "before the summary is ready", "the summary is read", "the consequences arrive"); the confirm
+# by LOAD_CONFIRM (CONFIRM_NOUN, a bracketed destructive label, "the Revoke button"). A table cell
 # that names the confirm is read with its whole row (frame 53's Class cell with its name, a deck
 # row's Where cell with its key); a prose sentence that names the confirm is read with the
 # sentence before it in the same section ("The summary loads. The confirm is enabled."), and one
@@ -2868,11 +2987,27 @@ def exit_state_gate(spec: str, handoff: str, out: Out) -> None:
 # budget) and "no confirm exists in the DOM until the summary has loaded" (section 15); the
 # `15:477` Old cell quotes the native `disabled` it replaces, and section 16 and the revision line
 # quote the forms the tool refuses.
+LOAD_NOUN = r"\b(?:read(?!-)|reading|summary|summaries|consequences?|fetch|lookup)\b"
+# the noun that a progress word follows: "the read" (never the verb), the summary, the consequences
+LOAD_SUBJECT = r"\b(?:(?:the|its|a|one) read(?!-)|summary|summaries|consequences?)\b"
+LOAD_TIME = r"(?:before|until|till|during|while|whilst|through(?:out)?|pending|awaiting|as|amid)"
+LOAD_VERB = (
+    r"(?:read|ready|pending|in[- ]flight|arriv\w*|return\w*|back|fetch\w*|load\w*|comput\w*"
+    r"|built|running|underway|outstanding|on its way|finish\w*|done|complete\w*|resolv\w*)\b"
+)
 LOAD_NAME = re.compile(
     r"\bload(?:s|ing|ed)?\b|\bwhile (?:it|the [\w-]+) reads?\b|\b(?:still|while) reading\b"
     r"|\breading what\b|\b(?:summary|consequences|it) (?:is |are )?(?:still )?(?:pending|in flight)\b"
     r"|\bfetch(?:es|ed|ing)?\b|\bawait(?:s|ed|ing)? (?:it|the [\w-]+)\b"
-    r"|\b(?:before|until|till) (?:it|the [\w-]+) (?:arrives|has arrived|returns|has returned|is back)\b",
+    r"|\b(?:before|until|till) (?:it|the [\w-]+) (?:arrives|has arrived|returns|has returned|is back)\b"
+    # r7: by its nouns and verbs, not a phrase list: a time word before the read, the summary or
+    # the consequences ("during the read", "before the summary is ready", "pending the read"),
+    # "the read" as a noun, "in flight", and the read / summary / consequences with a progress
+    # word up to three words on ("the read is in flight", "the summary is read", "the
+    # consequences come back", "the summary is computed")
+    rf"|\b{LOAD_TIME}\s+(?:the|its|a|their)\s+(?:[\w-]+\s+)?{LOAD_NOUN}"
+    r"|\b(?:the|its|a|one) read\b(?!-)|\bin[- ]flight\b"
+    rf"|{LOAD_SUBJECT}(?:\s+[\w'-]+){{0,3}}?\s+{LOAD_VERB}",
     re.IGNORECASE,
 )
 # r6c: the confirm is named by CONFIRM_NOUN or by what it is: a bracketed destructive label
@@ -5280,6 +5415,42 @@ EXIT_ROW11 = "SCR-125 list"
 EXIT_NEUTRAL = "See the row above"
 EXIT_CODES = frozenset({"exit-state", "k9.exit", "k4.loading"})
 PINS_BESIDE = frozenset(PIN_CODES)
+# r7 (round 6's M1''): an exit's state across a colon, a dash, an arrow, a middle dot or a slash,
+# after its state and a colon, in a closing verb's tail (a condition, a parenthesis) and carried by
+# "That" / "Both", each in lower, Title and UPPER case at four sites: section 11's SCR-126 edit
+# row, section 7's prose, the hand-off's prose and its Table 2 (``exit-state``, and ``k9.exit``
+# where the state is one of K9's gated words)
+_STATE_K9 = frozenset({"exit-state", "k9.exit"})
+EXIT_SEP_FORMS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("`Esc`: disabled while the summary loads", _STATE_K9),
+    ("`Esc` — disabled while it reads", _STATE_K9),
+    ("Cancel → disabled", _STATE_K9),
+    ("Cancel · inert until the summary arrives", _STATE_K9),
+    ("Disabled: Cancel", _STATE_K9),
+    ("Cancel closes the dialog while disabled / once enabled", _STATE_K9),
+    ("`Esc` closes it (greyed out while it reads)", _STATE_K9),
+    # r7's own: the other separators, a state K9 does not name, and the two carries
+    ("`Esc` – disabled while it reads", _STATE_K9),
+    ("Cancel / disabled", _STATE_K9),
+    ("Cancel closes the dialog once enabled", frozenset({"exit-state"})),
+    ("`Esc` closes it. That is disabled while it reads.", _STATE_K9),
+    ("`Esc` closes it. Both are disabled while it reads.", _STATE_K9),
+)
+ROW11_EDIT = "SCR-126 edit"
+H_TABLE2 = "no roving tabindex (D22)"
+
+
+def exit_sep_sites(text: str) -> tuple[tuple[str, str, Mutation], ...]:
+    """(where, the document it edits, the edit) for ``text`` at r7's four exit sites."""
+    sent = text if text.endswith(".") else f"{text}."
+    sent = sent[:1].upper() + sent[1:]
+    cell = text.rstrip(".")
+    return (
+        ("section 11's SCR-126 edit row", "spec", table_add("11", ROW11_EDIT, cell)),
+        ("section 7's prose", "spec", sec_sub("7", S7_PARA, f"{S7_PARA}{sent} ")),
+        ("the hand-off's prose", "hand-off", hand_sub(H_ENTRIES, f"{sent} {H_ENTRIES}")),
+        ("the hand-off's Table 2", "hand-off", hand_sub(H_TABLE2, f"{H_TABLE2}; {cell}")),
+    )
 
 
 def hand_sub(old: str, new: str) -> Mutation:
@@ -5378,6 +5549,12 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
             hand_sub(H_ENTRIES, f"{EXIT_CARRY}. {H_ENTRIES}"),
         ),
     ]
+    for i, (form, need) in enumerate(EXIT_SEP_FORMS, 1):
+        for case, fn in CASES:
+            for j, (where, doc, edit) in enumerate(exit_sep_sites(fn(form)), 1):
+                out.append(
+                    (f"ES{i}{case[0]}{j}", f'"{fn(form)}" ({case}) in {where}', need, doc, edit)
+                )
     loading = frozenset({"k4.loading"})
     out += [
         (
@@ -5411,6 +5588,9 @@ def exit_controls() -> tuple[tuple[str, str, Mutation], ...]:
         ("frame 53", "spec", frame_sub(53, F53_END, f"{F53_END} {n}.")),
         ("the hand-off's prose", "hand-off", hand_sub(H_ENTRIES, f"{n}. {H_ENTRIES}")),
         ("a hand-off table row", "hand-off", hand_sub(HAND_ROW, f"{HAND_ROW}; {n}")),
+        # r7's two new sites
+        ("section 11's SCR-126 edit row", "spec", table_add("11", ROW11_EDIT, n)),
+        ("the hand-off's Table 2", "hand-off", hand_sub(H_TABLE2, f"{H_TABLE2}; {n}")),
     )
 
 
@@ -5492,6 +5672,18 @@ LOAD_FORMS = (
     "Before the summary arrives the confirm is enabled.",
     "The summary is pending; the confirm is enabled.",
     "While the consequences are fetched, the confirm is enabled.",
+    # r7 (round 6's M2): the load read by its nouns and verbs - the lens's four forms
+    "[Cancel] [Disable sub_002] enabled during the read.",
+    "[Cancel] [Disable sub_002] enabled while the read is in flight.",
+    "[Cancel] [Disable sub_002] enabled before the summary is ready.",
+    "The summary is read before [Cancel] [Disable sub_002] enabled.",
+    # and six of r7's own
+    "The confirm is enabled until the consequences arrive.",
+    "The confirm is enabled as the summary is computed.",
+    "With the summary still on its way, the confirm is enabled.",
+    "The confirm is enabled; the read has not finished.",
+    "Pending the read, the confirm is clickable.",
+    "The consequences are still outstanding; the confirm is enabled.",
 )
 F49_END = 'focus returns to "Actions for sub_002 · LIVE".'
 ROW11_LOAD = "SCR-129 disable, delete, revoke"
@@ -11155,6 +11347,8 @@ EXIT_STATE_PINS = r"""
   environment, UID or expiry refusal, when a step-up is cancelled, expires or fails a third time,
   on the idle lock (SCR-005), at absolute session expiry and on sign-out (`22:11915-11916`), and
   once the server answers `200`
+@ row Footer ‖ Content and copy
+  one sticky row, right-aligned, Cancel first: the stage's buttons (rows below)
 @ row Footer ‖ Size · tokens
   32 px controls (`size.control.height`), `space.button.paddingX`, `radius.control`,
   `space.inset.sm` apart; Cancel, Close and Back CMP-001 secondary
@@ -11644,6 +11838,24 @@ LOAD_STATE_PINS = r"""
   `aria-busy="true"`; when the summary arrives the list replaces the skeleton, its first sentence
   is announced politely once and the confirm renders (PROPOSED: the description lands after the
   open). Focus: Cancel throughout.
+@ row 56 ‖ Hi-fi (dark; light by to
+  Two forms after the press (`22:14517-14561`; `22:16839-16854`). **Dead** (`remedy:
+  leave_positions`): the CMP-027 summary (`role="alert"`, once) "sub_002's keys no longer work at
+  Bybit, so its positions and orders can't be read or flattened. It can be disabled, leaving them
+  at Bybit, each with whatever stop-loss it carries — check each in Bybit's dashboard. It can't be
+  deleted."; the dialog then offers only that resend, a new request the Owner presses — the client
+  never sends it on its own (`22:16843-16853`): from Disable and from Delete the typed label, the
+  stamped ask and [Cancel] [Disable and leave positions open] (a dead account is disabled, never
+  deleted); from the revoke dialog, "Revoke here and leave positions open" with its served ask.
+  **Fixable** (`remedy: fix_key`): "Bybit refuses sub_002's key from 203.0.113.10. Fix it in
+  Bybit's dashboard [Copy], then try again; until then nothing can be revoked, disabled or
+  deleted." — the address and its Copy a target state stamped "not yet served — D03-G1, #896" (the
+  `409` carries no address, `22:15180-15188`); [Close] only: the action is reopened, and its
+  summary read again, once the key is fixed. Focus moves to the summary (`tabindex="-1"`), since
+  the answer replaces the dialog's content.
+@ row 56 ‖ Copy keys
+  `e27.scr129.unknown.dead` · `e27.scr129.unknown.fixable` · `e27.scr129.typed` · `e27.shared.ask`
+  · `e27.scr129.confirm.disable_leave` · `e27.shared.close`
 § spec ‖ 10.3 What is NOT T2
 @ prose
   - **The validity look** — form validity, E42-D03's form for a rung confirm (`E42-D03:542`,
