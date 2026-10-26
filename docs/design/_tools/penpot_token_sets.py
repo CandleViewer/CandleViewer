@@ -11,7 +11,8 @@ the plugin's tab.
     penpot_token_sets.py --emit-js themes   # the themes, after every set
     penpot_token_sets.py --self-test        # the check refuses each of its mutations
 
-(run each with `python3 -I -B docs/design/_tools/`; add `--ref origin/main` to read a git ref.)
+(run each as `python3 -I -B docs/design/_tools/penpot_token_sets.py ...`; add `--ref origin/main`
+to read the tokens at a git ref.)
 
 Offline, stdlib only. Re-running a script is safe: a set, token or theme that already exists is
 kept, not duplicated. Token types Penpot does not support (`duration`, `cubicBezier`) are skipped
@@ -26,6 +27,7 @@ import json
 import re
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -69,7 +71,7 @@ def read(rel: str, ref: str | None) -> str:
     if ref is None:
         return (ROOT / rel).read_text(encoding="utf-8")
     out = subprocess.run(
-        ["git", "-C", str(ROOT), "show", f"{ref}:{rel}"],
+        ["git", "-C", str(ROOT), "show", "--end-of-options", f"{ref}:{rel}"],
         capture_output=True,
         check=True,
         timeout=60,
@@ -203,10 +205,9 @@ def self_test(sets: dict[str, dict[str, object]], themes: dict[str, object]) -> 
     """Each mutation of the real sets must be refused by --check (or skipped, for a type)."""
     fails = 0
 
-    def refused(name: str, mutate: object) -> None:
+    def refused(name: str, mutate: Callable[[dict[str, dict[str, object]]], None]) -> None:
         nonlocal fails
         copy = json.loads(json.dumps(sets))
-        assert callable(mutate)
         mutate(copy)
         try:
             rows, _ = plan(copy)
@@ -220,6 +221,8 @@ def self_test(sets: dict[str, dict[str, object]], themes: dict[str, object]) -> 
         c["semantic-dark"]["color.surface.app"] = {"$type": "color", "$value": "{palette.gone}"}
 
     def light_only(c: dict[str, dict[str, object]]) -> None:
+        # the token exists, but only in semantic-hc: the light theme does not activate that set
+        c["semantic-hc"]["color.only.hc"] = {"$type": "color", "$value": "#000000"}
         c["semantic-light"]["color.only.light"] = {"$type": "color", "$value": "{color.only.hc}"}
 
     def bad_typo(c: dict[str, dict[str, object]]) -> None:
