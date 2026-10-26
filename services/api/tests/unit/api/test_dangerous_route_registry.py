@@ -1066,5 +1066,6 @@ def test_no_mounted_route_is_path_gated() -> None:
     are pre-registered for routes their tickets have not mounted, which must gate in their
     handlers once mounted."""
     served = served_operations(create_app())
+    assert served  # an empty walk would pass vacuously
     mounted = [(m, p) for m, p in served if dangerous_action_class(m, _concrete(p)) is not None]
     assert mounted == []

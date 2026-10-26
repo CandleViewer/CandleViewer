@@ -607,3 +607,26 @@ async def test_an_invite_write_wired_without_its_step_up_fails_closed() -> None:
     _elevate(c, seed, clock)
     r = c.post("/users", headers=_H, json=_BODY)
     assert (r.status_code, r.json()["code"]) == (503, "service_unavailable") and not repo.rows
+
+
+async def test_a_reissue_wired_without_a_user_store_fails_closed() -> None:
+    """The re-issue's target lookup is a port like the step-up's: unwired, the route answers 503
+    before any gate or change, never skipping the lookup."""
+    c, em, seed, clock, user = await _build(gated_stub=False)
+    repo = FakeRepo()
+    svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
+    snap = PrincipalSnapshot(user_id=user, roles=frozenset({"owner"}),
+                             permissions=frozenset({Permission.USERS_WRITE}))  # fmt: skip
+    gate = request_elevation(c.app.state.step_up_auth, "users")  # type: ignore[attr-defined]
+    router = make_invites_router(
+        cast(Any, _InvAuth(svc)), em, _Resolver(snap), audit_ready=lambda: True, elevation=gate,
+    )  # fmt: skip
+    c.app.include_router(router)  # type: ignore[attr-defined]
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 201  # a create needs no store
+    uid = c.get("/users/invites", headers=_H).json()["items"][0]["user_id"]
+    clock.now += timedelta(minutes=5, seconds=1)  # no live window: a skipped lookup would challenge
+    r = c.post(f"/users/{uid}/invite", headers=_H)
+    assert (r.status_code, r.json()["detail"]) == (503, "the user store is not wired")
+    assert "challenge_id" not in r.json() and len(repo.rows) == 1
+    assert "users.invite_reissued" not in em.actions()

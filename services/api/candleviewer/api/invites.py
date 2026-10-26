@@ -159,7 +159,7 @@ def make_invites_router(
     actions audit ahead, in the store's transaction: refused, nothing persists.
     `principal_resolver=None` fails the owner routes closed with 501 (as
     `/users/{id}/roles`). `elevation` demands the writes' `users` step-up (None: 503, nothing
-    changes); `users` is the re-issue's target lookup (None: the service's own, after the gate)."""
+    changes); `users` is the re-issue's target lookup (None: 503, nothing changes)."""
     if emitter is None:
         raise TypeError("make_invites_router: audit emitter is required")
     router = APIRouter(tags=["users"])
@@ -247,15 +247,21 @@ def make_invites_router(
             return _problem(503, "Service unavailable", "the user store is unavailable")
         return None if found else _problem(404, "Not found", detail)
 
-    async def _invited(user_id: uuid.UUID) -> bool:
-        return users is None or await users.get_status(user_id) == "invited"
+    async def _invited(user_id: uuid.UUID, store: UserStatuses) -> bool:
+        return await store.get_status(user_id) == "invited"
 
     async def _pending(user_id: uuid.UUID) -> bool:
+        # The whole pending list per revoke (`list_pending` also sets the pending gauge, as the
+        # list route does): fine at the expected scale, as invites are few and Owner-issued, and
+        # the store has no per-user read of a pending invite.
         return any(rec.user_id == user_id for rec in await auth.invites.list_pending())
 
     async def _not_invited(user_id: uuid.UUID) -> JSONResponse | None:
-        """A re-issue's: an `invited` user (no store wired: the service answers after the gate)."""
-        return await _looked_up(_invited(user_id), "no invited user with this id")
+        """A re-issue's: an `invited` user. No store wired is a wiring fault, 503, as the other
+        unwired ports answer: the lookup is never skipped (C-2.21)."""
+        if users is None:
+            return _problem(503, "Service unavailable", "the user store is not wired")
+        return await _looked_up(_invited(user_id, users), "no invited user with this id")
 
     async def _not_pending(user_id: uuid.UUID) -> JSONResponse | None:
         """A revoke's: a pending invite of the user, as `list_pending` lists them."""

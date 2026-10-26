@@ -987,6 +987,25 @@ async def test_a_kept_pin_is_read_back_only_behind_a_live_window() -> None:
     assert env.actions() == ["retention.change"]  # recorded once
 
 
+async def test_an_unelevated_callers_key_reused_for_another_pin_is_challenged_not_409() -> None:
+    """The key's lookup comes after the gate, as on the retention set: without a live window a
+    reused key with another body meets the challenge, never `409 idempotency_key_reuse`; with
+    one, the 409."""
+    fake, key = FakeRecorder(), {"Idempotency-Key": str(uuid.uuid4())}
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W, elevated=True)
+    first = await env.http.put(_PIN.format(entry.id), json={"pinned": True}, headers=key)
+    assert first.status_code == 200
+    env.elevated = False
+    other = await env.http.put(_PIN.format(entry.id), json={"pinned": False}, headers=key)
+    assert (other.status_code, other.json()["code"]) == (403, "step_up_required")
+    assert other.json()["action_summary"] == "Unpin the recording of BTCUSDT"
+    env.elevated = True
+    reused = await env.http.put(_PIN.format(entry.id), json={"pinned": False}, headers=key)
+    assert (reused.status_code, reused.json()["code"]) == (409, "idempotency_key_reuse")
+    assert fake.entries["BTCUSDT"].pinned and env.actions() == ["retention.change"]
+
+
 async def test_a_pin_wired_without_its_step_up_fails_closed() -> None:
     fake = FakeRecorder()
     entry = fake.put("BTCUSDT")
