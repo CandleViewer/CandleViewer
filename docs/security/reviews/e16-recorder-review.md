@@ -15,7 +15,8 @@
   not the review by the security engineer that the ticket describes; the sign-off comment on E16
   is still needed (§5).
 - Disclosure: open findings carry only id, severity, area, status and tracker (`SECURITY.md` §1,
-  C-12.13). A finding fixed on `main` may be described as the control its PR built.
+  C-12.13); details of open findings are held in the private repository advisory (maintainers).
+  A finding fixed on `main` may be described as the control its PR built.
 
 > **Status: pending.** Still open: every finding in §2 (none Critical or High), the Owner's
 > decision on E16-R-08, the Semgrep rules, the DAST profile and the permanent probe tests (§3), the
@@ -66,19 +67,19 @@ Ids are public and stable, ordered by severity. Every finding has an owning tick
 Critical or High. Scenario, mechanism, location and repro stay in the private triage (C-12.13);
 a fixed finding may later be described here as the control its PR built.
 
-| Id       | Severity | Area                                                                          | Status                          | Tracker                                                        |
-| -------- | -------- | ----------------------------------------------------------------------------- | ------------------------------- | -------------------------------------------------------------- |
-| E16-R-01 | Medium   | 1 Destructive-path authorisation                                              | open                            | E16-T06 (#490), cross-ticket with E09                          |
-| E16-R-06 | Medium   | 5 Resource limits                                                             | open                            | E16-T10 (#493)                                                 |
-| E16-R-07 | Medium   | 5 Resource limits / SR-125 detection                                          | open                            | E16-T07 (#491), E16-T09 (#567)                                 |
-| E16-R-08 | Medium   | 5 Resource limits / §14.8 item 4 (Owner decision between two normative texts) | open, **Owner decision needed** | E16-T07 (#491), E16-X01 (#407); 04 amendment if SR-096 changes |
-| E16-R-10 | Medium   | 8 Idempotency                                                                 | open                            | E16-T06 (#490)                                                 |
-| E16-R-02 | Low      | 1 Destructive-path authorisation / 7 Information exposure                     | open                            | E16-T05 (#489)                                                 |
-| E16-R-03 | Low      | 2 Audit completeness                                                          | open                            | E16-T06 (#490)                                                 |
-| E16-R-04 | Low      | 3 Path containment                                                            | open                            | E16-T06 (#490), cross-ticket with E07                          |
-| E16-R-05 | Low      | 3 Path containment                                                            | open                            | E16-T05 (#489)                                                 |
-| E16-R-09 | Low      | 6 Config gating / SR-125 detection                                            | open                            | E16-T09 (#567), E16-T07 (#491)                                 |
-| E16-R-11 | Low      | SR-125 detection                                                              | open                            | E16-T08 (#492)                                                 |
+| Id       | Severity | Area                                                                          | Status                          | Tracker                                                                                       |
+| -------- | -------- | ----------------------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------- |
+| E16-R-01 | Medium   | 1 Destructive-path authorisation                                              | open                            | #4579; E16-T06 (#490), cross-ticket with E09                                                  |
+| E16-R-06 | Medium   | 5 Resource limits                                                             | open                            | #4580; E16-T10 (#493)                                                                         |
+| E16-R-07 | Medium   | 5 Resource limits / SR-125 detection                                          | open                            | #4581; E16-T07 (#491), E16-T09 (#567)                                                         |
+| E16-R-08 | Medium   | 5 Resource limits / §14.8 item 4 (Owner decision between two normative texts) | open, **Owner decision needed** | Owner decision needed (#2701); E16-T07 (#491), E16-X01 (#407); 04 amendment if SR-096 changes |
+| E16-R-10 | Medium   | 8 Idempotency                                                                 | open                            | #4582; E16-T06 (#490)                                                                         |
+| E16-R-02 | Low      | 1 Destructive-path authorisation / 7 Information exposure                     | open                            | E16-T05 (#489)                                                                                |
+| E16-R-03 | Low      | 2 Audit completeness                                                          | open                            | E16-T06 (#490)                                                                                |
+| E16-R-04 | Low      | 3 Path containment                                                            | open                            | E16-T06 (#490), cross-ticket with E07                                                         |
+| E16-R-05 | Low      | 3 Path containment                                                            | open                            | E16-T05 (#489)                                                                                |
+| E16-R-09 | Low      | 6 Config gating / SR-125 detection                                            | open                            | E16-T09 (#567), E16-T07 (#491)                                                                |
+| E16-R-11 | Low      | SR-125 detection                                                              | open                            | E16-T08 (#492)                                                                                |
 
 By disposition: open 11; fixed 0; accepted 0. An acceptance needs a dated Owner signature in §5.
 E16-R-08 is a decision between two normative texts (SR-096, ADR-0015 d6), not a code defect alone;
