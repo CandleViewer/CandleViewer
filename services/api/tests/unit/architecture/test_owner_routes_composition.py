@@ -209,6 +209,14 @@ def _headers(client: TestClient, actor: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {rbac.token_of(actor)}", **csrf_headers(codec, sid)}
 
 
+def _saves(deployed: SimpleNamespace) -> list[float]:
+    """#906 D3b: the deployed app's `saved` saves and timed saves, read from its own facade."""
+    facade = deployed.client.app.state.metrics_facade
+    get, env = facade.registry.get_sample_value, {"env": facade.env}
+    counted = get("cv_profile_saves_total", {**env, "result": "saved"})
+    return [counted or 0.0, get("cv_profile_save_seconds_count", env) or 0.0]
+
+
 def _assert_matrix_cell(key: str, actor: str, resp: httpx.Response) -> None:
     """Branches on the cell's reviewed outcome class on purpose (allow / CSRF / 401-403)."""
     expected = _ROWS[key]["outcomes"][actor]
@@ -604,11 +612,13 @@ def test_deployed_app_serves_the_profile_writes_owner_only(
     """#906 D2-m: nothing injected, so the writes are the ones `create_app()` mounts over the real
     backend's stores: the Owner's create of a profile allowing nothing (no listing read, so no
     catalogue is needed) is stored and recorded ahead of its commit; any other caller is refused
-    and nothing is stored (the unauthenticated one by SR-041 first)."""
+    and nothing is stored (the unauthenticated one by SR-041 first). #906 D3b: the measures bound
+    at the include count and time the Owner's save, and no refusal (admission is no save)."""
     path = f"/exchange-accounts/{rbac.GRANTED}/profiles"
     body = {**_RISK, "name": f"Composed {actor}", "allowed_symbols": []}
     headers = {**_headers(deployed.client, actor), "Idempotency-Key": str(uuid.uuid4())}
     before, start = len(deployed.profiles.rows[rbac.GRANTED]), len(deployed.audit.records)
+    saves = _saves(deployed)
     try:
         resp = deployed.client.post(path, json=body, headers=headers)
         assert resp.status_code == status, resp.text
@@ -619,5 +629,7 @@ def test_deployed_app_serves_the_profile_writes_owner_only(
             assert "profile.created" in actions and len(deployed.profiles.hooks) == 1
         else:
             assert created == () and "profile.created" not in actions
+        counted = 1.0 if status == 201 else 0.0
+        assert [b - a for a, b in zip(saves, _saves(deployed), strict=True)] == [counted] * 2
     finally:
         deployed.profiles.reset()

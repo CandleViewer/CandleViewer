@@ -180,6 +180,9 @@ REVOCATION_CLOSE_BUCKETS: Final = (0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10
 #: A profile write's `ts_event` to its `profiles.changed` hand-off (#906 D3e): an edge at SCR-130's
 #: 2 s end-to-end line, so a quantile above it is decided exactly, and one at 5 s above it.
 PROFILE_PROPAGATION_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0)
+#: A profile save's round trip (#906 D3b): edges at the 300 ms write budget (06 budget #13), the
+#: second pass's 1.5 s catalogue deadline and SCR-131's 2 s.
+PROFILE_SAVE_BUCKETS: Final = (0.025, 0.05, 0.1, 0.3, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0)
 #: One leg's sizing (E28-T03): edges around the 1 ms p95 per-leg budget (06-performance #4).
 SIZER_BUCKETS: Final = (5e-5, 1e-4, 2.5e-4, 5e-4, 1e-3, 2.5e-3, 5e-3, 0.01)
 #: Statechart transition latency.
@@ -734,11 +737,51 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "notices",
         (),
-        "Profile changes whose profiles.changed notice could not be offered (the offer raised); "
-        "each is logged as profile.notice_failed with the account and the error class.",
+        "Profile changes whose profiles.changed notice could not be offered (the offer raised), "
+        "and any item on the pattern that is no ProfilesChanged; each is logged as "
+        "profile.notice_failed with the error class and, for a change, the account.",
         "dashboard only (a change no socket heard; E28-S01's backstops re-read)",
         _L,
         "E28",
+        max_series=1,
+    ),
+    # --- Profile saves (E28-T02, #906 D3b): `api/profile_writes.SaveMeasures` --------------------
+    # A create or a replace past admission, its children bound once where the router is built.
+    _s(
+        "cv_profile_saves_total",
+        "counter",
+        "saves",
+        ("result",),
+        "Profile saves (create or replace) past admission, by answer: saved, refused (422), stale "
+        "(412, 428), conflict (409), not_found (404) or unavailable (503); a replay is no save.",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=6,
+    ),
+    _s(
+        "cv_profile_validation_failures_total",
+        "counter",
+        "refusals",
+        ("rule",),
+        "Refused profile saves, once per distinct rule of a refusal: the contract's named rules, "
+        "schema for any other.",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=18,
+    ),
+    _s(
+        "cv_profile_save_seconds",
+        "histogram",
+        "seconds",
+        (),
+        "A profile save's round trip in the router, from the handler's entry (SCR-131: 2 s p95, a "
+        "cold catalogue refresh included).",
+        "dashboard only",
+        _L,
+        "E28",
+        buckets=PROFILE_SAVE_BUCKETS,
         max_series=1,
     ),
     # --- Leg sizer (E28-T03 #907; planned until E28-T05 #909 / E34-S01 #999 wire it) -----------
@@ -4069,7 +4112,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "AuditSinkRefusing (any; ticket, page pending #2701)",
         _L,
         "E09",
-        max_series=39,
+        max_series=38,
         exported=True,
     ),
     _s(

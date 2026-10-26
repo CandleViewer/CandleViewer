@@ -153,9 +153,6 @@ AUDIT_ACTIONS: frozenset[str] = frozenset(
         # (the account's id where no key is stored); critical for a withdraw, transfer, fiat or
         # card right, any right that moves funds.
         "security.key_policy_violation",
-        # `profiles.update` is 21 Sec.3.10.1's name from before E28: nothing emits it. A profile
-        # record is one of the `profile.*` actions below (SR-E28-20: one vocabulary).
-        "profiles.update",
         # E28-T02 (#906): a profile write, written ahead of its commit (C-2.9) with `object_kind`
         # `account_profile` and the profile's id; 24 Sec.15.5 holds the fields. The default moves
         # only by `setAccountDefaultProfile` (#906 0d), as `.unbound` (the profile it replaces) then

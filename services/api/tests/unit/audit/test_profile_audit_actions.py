@@ -71,6 +71,16 @@ def test_a_missing_step_up_is_no_save_refused_reason() -> None:
     assert "auth.step_up_required" in AUDIT_ACTIONS
 
 
+def test_the_pre_e28_profiles_update_is_retired() -> None:
+    """#906 D3b (#4087's ruling 2): nothing ever emitted it, so it leaves the registry, the writer
+    refuses it, and neither 21 nor 24 names it (SR-E28-20: one vocabulary)."""
+    assert "profiles.update" not in AUDIT_ACTIONS
+    with pytest.raises(UnknownAuditAction):
+        validate_action("profiles.update")
+    for doc in ("21-database-schema.md", "24-internal-schemas.md"):
+        assert "profiles.update" not in (ROOT / "docs" / "plan" / doc).read_text(encoding="utf-8")
+
+
 def test_the_docs_list_the_profile_actions_and_the_closed_save_refused_reasons() -> None:
     """24 section 15.5 is the closed set (and holds each family's fields); 21 section 3.10.1 lists
     the actions that must be audited. Both name all six; 24 names the reasons the code holds."""

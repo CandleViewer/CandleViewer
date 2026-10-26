@@ -156,7 +156,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
-from candleviewer.api.profile_writes import make_profile_writes_router
+from candleviewer.api.profile_writes import SaveMeasures, make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
@@ -2314,6 +2314,7 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             profiles_resolver,
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
+            measures=SaveMeasures.bound(metrics_facade),  # each save counted and timed (D3b)
         )
     )
     # #895 (E27-S01): `listExchangeAccounts` and `createExchangeAccount` over the M13 store built

@@ -221,6 +221,8 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_api_keys_rows"].labels("active").set(1)
     r["cv_profile_rows"].labels("trading_enabled").set(1)
     r["cv_profile_cache_lookups_total"].labels("hit").inc()
+    r["cv_profile_saves_total"].labels("saved").inc()
+    r["cv_profile_validation_failures_total"].labels("schema").inc()
     r["cv_audit_verify_runs_total"].labels("ok").inc()
     r["cv_http_request_duration_seconds"].labels("/v1/x", "GET", "2xx").observe(0.01)
     r["authz_denied_by_route_total"].labels("orders:write", "/v1/x", "viewer").inc()
@@ -271,7 +273,26 @@ def test_profile_series_are_live_and_bounded_by_their_closed_sets() -> None:
         "cv_profile_cache_lookups_total": ("counter", ("result",), 2, "live", "E28"),
         "cv_profile_propagation_seconds": ("histogram", (), 1, "live", "E28"),
         "cv_profile_notices_failed_total": ("counter", (), 1, "live", "E28"),
+        "cv_profile_saves_total": ("counter", ("result",), 6, "live", "E28"),
+        "cv_profile_validation_failures_total": ("counter", ("rule",), 18, "live", "E28"),
+        "cv_profile_save_seconds": ("histogram", (), 1, "live", "E28"),
     }
+
+
+def test_the_save_series_are_live_and_bounded_by_their_closed_sets() -> None:
+    """#906 D3b: a save by its answer, a refusal by each distinct rule, and its round trip, never
+    per account, profile or principal (SR-125), each bound by its set in `api/profile_writes`; the
+    round trip's edges hold the 300 ms write budget, the 1.5 s catalogue deadline and SCR-131's
+    2 s."""
+    from candleviewer.api.profile_writes import FAILURE_RULES, SAVE_RESULTS
+
+    specs = {s.name: s for s in registered_specs()}
+    bounds = {"cv_profile_saves_total": len(SAVE_RESULTS), "cv_profile_save_seconds": 1}
+    bounds |= {"cv_profile_validation_failures_total": len(FAILURE_RULES)}
+    assert {name: specs[name].max_series for name in bounds} == bounds
+    assert {0.3, 1.5, 2.0} <= set(specs["cv_profile_save_seconds"].buckets or ())
+    golden = set(GOLDEN_CATALOGUE.read_text(encoding="utf-8").splitlines())
+    assert {row for row in _catalogue_rows() if json.loads(row)[0] in bounds} <= golden
 
 
 def test_key_selfcheck_series_are_bounded_by_their_closed_sets() -> None:
