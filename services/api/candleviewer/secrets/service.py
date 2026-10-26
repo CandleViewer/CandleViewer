@@ -32,7 +32,7 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NoReturn, Protocol, final
+from typing import TYPE_CHECKING, Any, Final, NoReturn, Protocol, final
 from uuid import UUID
 
 import structlog
@@ -205,20 +205,40 @@ class CredentialBorrower:
 @final
 class LoopSigning:
     """Signing bound to the order lane's loop (#913 L3b, 29 CV-C13): `borrower` reads and records
-    through that loop's own store and sink, and refuses any other loop. Closures only (C-3.2)."""
+    through that loop's own store and sink, and refuses any other loop. Closures only (C-3.2).
+    #913 L1d: `self_check` proves the binding at the lane's start, and `release` frees the store M2
+    built for the loop, after the close."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
         super().__init_subclass__(**kw)
 
-    __slots__ = ("__close", "borrower")
+    __slots__ = ("__check", "__close", "__release", "borrower")
 
-    def __init__(self, borrower: CredentialBorrower, close: Callable[[], Awaitable[None]]) -> None:
+    def __init__(
+        self,
+        borrower: CredentialBorrower,
+        close: Callable[[], Awaitable[None]],
+        check: Callable[[], None],
+        release: Callable[[], Awaitable[None]],
+    ) -> None:
         self.borrower, self.__close = borrower, close
+        self.__check, self.__release = check, release
 
     async def aclose(self) -> None:
         """On its own loop only: no more signing; its writes cancelled and awaited. Idempotent."""
         await self.__close()
+
+    def self_check(self) -> None:
+        """On its own loop, what M2's loop check answers a signing there, with nothing read,
+        recorded, decrypted or counted as a borrow: `signing_loop_mismatch` on another loop or once
+        closed, so a wiring fault fails the lane's start, never an order's signing (#913 L1d)."""
+        self.__check()
+
+    async def release(self) -> None:
+        """On its own loop only: the close first, then the pool of the store M2 built for the loop
+        disposed of, once; nothing more when the binder was given a store. Idempotent."""
+        await self.__release()
 
 
 class SecretsLifecycleFacade:
@@ -850,21 +870,39 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
     return _sealed_borrower(service._require, caller_module)
 
 
+#: #913 L1d (Q10): the connections the store M2 builds for another loop, the order lane's, may hold,
+#: each opened lazily there: one read per signing, one `last_used_at` write per key a minute.
+LOOP_STORE_CONNECTIONS: Final = 4
+#: Builds a loop's own credential store over a pool of its own, bounded at the connections M2 asks
+#: for, and that pool's release: the composition root's, called by M2 alone, on that loop.
+LoopStoreFactory = Callable[[int], tuple[CredentialStore, Callable[[], Awaitable[None]]]]
+
+
 def mint_loop_signing(
-    service: SecretsService, caller_module: str
-) -> Callable[[CredentialStore, AuditSink], LoopSigning]:
+    service: SecretsService, caller_module: str, *, loop_store: LoopStoreFactory | None = None
+) -> Callable[[CredentialStore | None, AuditSink], LoopSigning]:
     """Wiring-time binder of signing to one more event loop (#913 L3b), minted once, in
     `admin.wiring.secrets_bundle`. It runs on the loop it serves (else `RuntimeError`) with that
     loop's store and sink, wrapped as the service's own; its borrower resolves the broker per call,
-    as `mint_borrower`'s: closed while degraded."""
+    as `mint_borrower`'s: closed while degraded. #913 L1d: given no store, it builds the loop's own
+    there with `loop_store`, at `LOOP_STORE_CONNECTIONS`, holds it alone, counted in
+    `cv_credential_loop_pools_in_use`, and frees its pool at `LoopSigning.release`."""
     if caller_module not in ALLOWED_CALLERS:
         raise ValueError("caller not permitted to borrow credentials")
 
-    def bind(store: CredentialStore, audit: AuditSink) -> LoopSigning:
+    def bind(store: CredentialStore | None, audit: AuditSink) -> LoopSigning:
+        loop = asyncio.get_running_loop()  # nothing is built off the loop it serves
+        free: Callable[[], Awaitable[None]] | None = None
+        if store is None:
+            if loop_store is None:
+                raise RuntimeError("no loop credential store is wired")
+            store, free = loop_store(LOOP_STORE_CONNECTIONS)
+            m.credential_loop_pools.inc()
+
         async def sink(action: str, fields: dict[str, str]) -> None:
             await _sink_call(audit, action, fields)
 
-        io = _LoopIo(store, sink, asyncio.get_running_loop())
+        io = _LoopIo(store, sink, loop)
 
         async def close() -> None:
             broker = service._broker  # each wait bounded by its `io_timeout_s`, as its `aclose`
@@ -872,7 +910,23 @@ def mint_loop_signing(
             if broker is not None:
                 broker._leave(io)
 
-        return LoopSigning(_sealed_borrower(service._require, caller_module, io), close)
+        def check() -> None:
+            broker = service._broker  # degraded: every signing is refused before the loop check
+            if broker is not None:
+                broker._bound(io, caller_module)
+
+        async def release() -> None:
+            nonlocal free
+            await close()  # first, so no signing reads the store once its pool is gone
+            pool, free = free, None
+            if pool is not None:
+                try:
+                    await pool()
+                finally:
+                    m.credential_loop_pools.dec()
+
+        borrower = _sealed_borrower(service._require, caller_module, io)
+        return LoopSigning(borrower, close, check, release)
 
     return bind
 

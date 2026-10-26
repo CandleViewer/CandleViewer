@@ -51,7 +51,7 @@ _DRIVER_TEXT = ("message", "detail", "hint", "context", "internal_query", "query
 _ROLLED_BACK = "this session's transaction was rolled back after an earlier error"
 
 
-def _build_engine(dsn: str) -> AsyncEngine:
+def _build_engine(dsn: str, *, pool_size: int = 10, max_overflow: int = 5) -> AsyncEngine:
     # `application_name`/`statement_timeout` are applied per-`unit_of_work()`
     # via `SET LOCAL` (see `_PendingUnitOfWork.__aenter__`), not at connect
     # time — the DSN is constructed at runtime from `Settings.pg_dsn` with no
@@ -65,8 +65,8 @@ def _build_engine(dsn: str) -> AsyncEngine:
     # bound values into a log (C-12.6).
     return create_async_engine(
         dsn,
-        pool_size=10,
-        max_overflow=5,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
         pool_pre_ping=True,
         hide_parameters=True,
     )
@@ -300,8 +300,17 @@ class SqlAlchemyRelationalRepository:
     fresh `SqlAlchemyUnitOfWork`/`AsyncSession` per call to `unit_of_work()`.
     """
 
-    def __init__(self, dsn: str, application_name_suffix: str = "api") -> None:
-        self._engine = _build_engine(dsn)
+    def __init__(
+        self,
+        dsn: str,
+        application_name_suffix: str = "api",
+        *,
+        pool_size: int = 10,
+        max_overflow: int = 5,
+    ) -> None:
+        """`pool_size` and `max_overflow` bound the pool below the module's 10 + 5 for a narrow
+        reader (#913 L1d: the order lane's credential reads, 4 + 0)."""
+        self._engine = _build_engine(dsn, pool_size=pool_size, max_overflow=max_overflow)
         self._sessionmaker = async_sessionmaker(self._engine, expire_on_commit=False)
         self._application_name_suffix = application_name_suffix
 

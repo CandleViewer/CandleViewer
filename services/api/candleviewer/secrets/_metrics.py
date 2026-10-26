@@ -51,3 +51,7 @@ process_hardening_failures_total = Counter(
 credential_outcome_audit_failures_total = Counter(
     "cv_credential_outcome_audit_failures_total", "Failure-outcome audit records that failed."
 )
+credential_loop_pools = Gauge(
+    "cv_credential_loop_pools_in_use",
+    "Credential-store pools M2 holds for another loop's signing, the order lane's (#913).",
+)

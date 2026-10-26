@@ -639,6 +639,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         max_series=8,
         exported=True,
     ),
+    _s(
+        "cv_credential_loop_pools_in_use",
+        "gauge",
+        "pools",
+        (),
+        "Credential-store pools M2 holds for another loop's signing, the order lane's (#913).",
+        "> 1, or > 0 once the OMS has stopped = a lane pool left open",
+        _L,
+        "E29",
+        max_series=8,
+        exported=True,
+    ),
     # --- Accounts (M13, #2314 / E27-T01); AccountsService refresh loop, real backend only ----
     # `env` is the facade's process environment, which also scopes the counted rows (20 §7.1).
     _s(

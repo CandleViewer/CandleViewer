@@ -22,6 +22,7 @@ from candleviewer.secrets.errors import CredentialUnavailable, SigningLoopMismat
 from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Settings
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.unit.credentials_m2.test_broker_two_loops import BORROWED, MSG, _Rig, rig
 from tests.unit.exchange.bybit.test_rate_limit_two_loops import JOIN_S, _on
 
@@ -66,7 +67,9 @@ def _pools_in_use() -> float:
 
 def _borrows() -> float:
     counted = m.credential_borrow_total.labels
-    return sum(counted(stage="exchange_adapter", result=r)._value.get() for r in ("ok", "error"))
+    return float(
+        sum(counted(stage="exchange_adapter", result=r)._value.get() for r in ("ok", "error"))
+    )
 
 
 def _bound(rig: _Rig, pools: _Pools, writer: _Writer) -> Any:
@@ -178,7 +181,7 @@ async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
     lazy (nothing connects), and disposed of by its release, never the serving one."""
     pools: list[Any] = []
 
-    class Noted(app.SqlAlchemyRelationalRepository):
+    class Noted(SqlAlchemyRelationalRepository):
         def __init__(self, dsn: str, suffix: str = "api", **bound: int) -> None:
             super().__init__(dsn, suffix, **bound)
             self.suffix, self.bound, self.disposed = suffix, bound, False

@@ -931,14 +931,28 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     `tests/unit/credentials_m2/test_degraded_wiring.py`."""
     if settings.storage_backend != "real":
         return build_secrets_service(audit=audit)
-    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
+    dsn = settings.pg_dsn.get_secret_value()
+    relational = SqlAlchemyRelationalRepository(dsn, "secrets")
     audit_row = secrets_audit_row(settings.environment.value)
     store = SqlAlchemyCredentialStore(relational, audit_row=audit_row)  # #2266: in-tx records
     # #3505: a KEK re-wrap run counts this environment's auth keyring rows.
     keyring = SqlAlchemyAuthKeyStore(relational, env=settings.environment.value)
     # #889: boot opens or generates the signing key; a re-wrap counts it, an enrolment may trial it.
     keys = SqlAlchemyExportKeyStore(relational, env=settings.environment.value, audit_row=audit_row)
-    return build_secrets_service(store, store, audit, auth_keys=keyring, export_keys=keys)
+
+    def loop_store(
+        connections: int,
+    ) -> tuple[SqlAlchemyCredentialStore, Callable[[], Awaitable[None]]]:
+        # #913 L1d (Q10): the order lane's credential reads, over a small lazy pool of their own,
+        # which M2 alone builds on the lane's loop, holds and releases after its signing closes
+        pool = SqlAlchemyRelationalRepository(
+            dsn, "oms-secrets", pool_size=connections, max_overflow=0
+        )
+        return SqlAlchemyCredentialStore(pool), pool.dispose
+
+    return build_secrets_service(
+        store, store, audit, auth_keys=keyring, export_keys=keys, loop_store=loop_store
+    )
 
 
 def _record_factory(model: Any) -> Callable[..., Any]:
