@@ -42,6 +42,7 @@ from candleviewer.oms import day_figures
 from candleviewer.oms.day_figures import FIGURES_TTL_S, DayRiskFigures, committed_risk
 from candleviewer.oms.ports import (
     INTERIM_PORT_LABELS,
+    UNKNOWN_FIGURES,
     FiguresReading,
     OrderFigures,
     SymbolRates,
@@ -450,6 +451,20 @@ async def test_day_figures_failure_logs_carry_figure_and_error_only() -> None:
             "event": "oms_figures_read_failed", "log_level": "warning",
             "figure": event["figure"], "error": "RuntimeError",
         }  # fmt: skip
+
+
+async def test_day_figures_refused_figure_gives_all_none_and_logs_the_type_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(day_figures, "committed_risk", lambda *_a: Decimal("-7.25"))
+    with capture_logs() as logs:
+        reading = await _read(_figures(Venue()))
+    assert reading.account == UNKNOWN_FIGURES
+    assert [e for e in logs if e["event"] == "oms_figures_read_failed"] == [
+        {"event": "oms_figures_read_failed", "log_level": "warning",
+         "figure": "figures", "error": "ValidationError"}
+    ]  # fmt: skip
+    assert "7.25" not in repr(logs)
 
 
 async def test_day_figures_negative_equity_gives_none() -> None:

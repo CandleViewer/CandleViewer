@@ -6,7 +6,7 @@ live process keeps `ports.NoDayFigures`. It answers only for its own process's e
 `AccountRef` of another (testnet on a demo process) gets every figure None and a CRITICAL log
 naming the two environments (C-2.11). Every venue read goes through the trading port the OMS
 routes its orders to (`TradingRouter.port_for`), for the `AccountRef` the size step resolved, on
-the order lane:
+the lane the adapter assigns (poll), never the stop and cancel reserve:
 
 - equity and the available margin: the venue's wallet; a negative equity is None;
 - `realised_loss_today`: the venue's closed P&L since 00:00 UTC on the injected wall clock, a loss
@@ -18,6 +18,9 @@ the order lane:
   The stop distance is the stop the venue records on the item (a position's trailing distance
   when it has no stop), else the profile's fallback, `entry x fallback_sl_offset_pct`, which
   errs high. An order's `partial` stop covers part of its size only, so it counts as no stop.
+  A position's `stop_loss` is taken as covering its whole `qty`; in Partial mode the venue leaves
+  the position's `stopLoss` empty and its stops are `partial_stop_loss` orders, which are
+  excluded, so the fallback applies (errs high). This is an assumption E39-T01 carries.
   An item with no entry, or with neither stop, makes the figure None, never 0;
 - `taker_fee_rate`: the venue's taker rate per (account, symbol); an estimated rate, or one
   outside `[0, 1)`, is None;
@@ -29,7 +32,8 @@ The reads run concurrently, each within `FIGURES_READ_TIMEOUT_S` and all within
 nothing, and is logged by its figure and error type alone (balances are Confidential, C-12.6).
 Each answer is kept `FIGURES_TTL_S` on the injected monotonic clock. `invalidate` drops the
 account's wallet, day's loss and book and bumps their generation, so a read in flight across it
-answers its value but keeps none of it: the next read is the venue's.
+answers its value but keeps none of it: the next read is the venue's. Overlapping reads on one
+account are not serialised here; 24 Sec.9.3.6's overlap rule is the size step's (S4-S-b2).
 """
 
 from __future__ import annotations
@@ -42,7 +46,9 @@ from decimal import Decimal
 from typing import Any, ClassVar, Final
 
 import structlog
+from pydantic import ValidationError
 
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.tiers import lowest_tier_rate
 from candleviewer.domain.primitives import AccountId, Environment, Symbol
 from candleviewer.exchange.base.models import (
@@ -189,7 +195,7 @@ class DayRiskFigures(Interim):
             )
             wallet = spawn_child(group, read_wallet, name="oms-figures-wallet")
             read_loss = self._kept(
-                self._losses, key, "day_loss", deadline, lambda: self._loss(account)
+                self._losses, key, "day_loss", deadline, lambda: self._loss(port, account)
             )
             lost = spawn_child(group, read_loss, name="oms-figures-day-loss")
             read_book = self._kept(self._books, key, "book", deadline, lambda: _book(port, account))
@@ -221,14 +227,19 @@ class DayRiskFigures(Interim):
         rates: dict[Symbol, SymbolRates],
     ) -> FiguresReading:
         held = None if book is None else committed_risk(book.positions, book.orders, fallback)
-        figures = UNKNOWN_FIGURES.model_copy(
-            update={
-                "equity": None if wallet is None or wallet.equity < 0 else wallet.equity,
-                "available_margin": None if wallet is None else wallet.available_margin,
-                "realised_loss_today": lost,
-                "committed_risk": held,
-            }
-        )
+        try:
+            figures = AccountFigures.model_validate(
+                {
+                    **dict(UNKNOWN_FIGURES),
+                    "equity": None if wallet is None or wallet.equity < 0 else wallet.equity,
+                    "available_margin": None if wallet is None else wallet.available_margin,
+                    "realised_loss_today": lost,
+                    "committed_risk": held,
+                }
+            )
+        except ValidationError as exc:  # a figure the model refuses: unknown, type name only
+            _log().warning("oms_figures_read_failed", figure="figures", error=type(exc).__name__)
+            return FiguresReading(UNKNOWN_FIGURES, rates)
         return FiguresReading(figures, rates)
 
     async def _rates(
@@ -257,7 +268,10 @@ class DayRiskFigures(Interim):
         """The figure kept under `key` while younger than `FIGURES_TTL_S`, else read again within
         `FIGURES_READ_TIMEOUT_S` and the read's `deadline`. A read that fails is None and keeps
         nothing; one that `invalidate` crossed answers its value and keeps nothing either."""
-        held, now = kept.get(key), self._monotonic()
+        held, now = (
+            kept.get(key),
+            self._monotonic(),
+        )  # the stamp is the read's START: slow re-reads sooner
         if held is not None and now - held.at < FIGURES_TTL_S:
             return held.value
         kept.pop(key, None)
@@ -273,10 +287,9 @@ class DayRiskFigures(Interim):
             kept[key] = _Kept(value, now)
         return value
 
-    async def _loss(self, account: AccountRef) -> Decimal:
+    async def _loss(self, port: TradingPort, account: AccountRef) -> Decimal:
         now = self._now().astimezone(UTC)
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
-        port = self._port_for(account.environment)
         records = await port.closed_pnl(account, _us(midnight), _us(now))
         return max(Decimal(0), -sum((r.closed_pnl for r in records), Decimal(0)))
 
