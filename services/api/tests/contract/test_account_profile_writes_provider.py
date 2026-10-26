@@ -1081,8 +1081,9 @@ def test_no_rule_names_a_profile_yet() -> None:
     assert named == {"place_order.profile"}, "a rule can name a profile: #951's C-row, ruling B6"
 
 
-#: The order path's own profile id and its resolve (22 `PlaceOrderRequest.profile_id`).
-_ORDER_PATH = {"oms/exits.py", "oms/ports.py", "oms/submit.py"}
+#: The order path's own profile id and its resolve (22 `PlaceOrderRequest.profile_id`); the size
+#: step names the resolved profile's id for the comparator and resolves none (#913 S4-S).
+_ORDER_PATH = {"oms/exits.py", "oms/ports.py", "oms/sizing.py", "oms/submit.py"}
 
 
 def _named(node: ast.AST) -> str:

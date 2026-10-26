@@ -18,8 +18,8 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
 3. the size step (24 Sec.8.4 item 2, #913 S4-S): 3a the market read and the price band, 3b the
    reference price (24 Sec.9.3 step 2), 3c the size: an entry by its effective profile's sizer
    (`oms.sizing`, which answers each outcome but `ok` as 22 maps it, `figure_unknown` 503
-   `sizing_unavailable`, and refuses whole a request's qty or stop that goes past the
-   profile), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
+   `sizing_unavailable`, and refuses whole a request's sizing, stop or take-profit that goes past
+   the profile), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
    exchange-truth position (SR-E29-01, read for a reduce-only order only, within
    `position_timeout_s`), the native stop and the intent (`NativeStopGuard`, C-2.6, over the
    sizer's own stop for an entry), the take-profit (S2-Q6), then the `SizedOrder`. Two entries on
@@ -551,6 +551,8 @@ def _entry_intent(request: OrderRequest) -> EntryIntent:
     return EntryIntent(
         symbol=request.symbol, side=request.side, order_type=request.order_type,
         price=request.price, sizing=request.sizing, stop_loss=request.stop_loss,
+        take_profit=request.take_profit, time_in_force=request.time_in_force,
+        tpsl_mode=request.tpsl_mode, position_idx=request.position_idx,
     )  # fmt: skip
 
 
@@ -885,6 +887,9 @@ class OrderSubmission:
         stop, take_profit = self._protection(
             request, effect, reference, instrument, profile, bare=bare, stop=stop_offset
         )
+        if trace.size is not None:  # an overlaid entry, judged once its take-profit is known
+            judged = _entry_intent(request)
+            self._sizer.judge(trace.size, judged, take_profit=take_profit, instrument=instrument)
         return SizedOrder(
             account_id=request.account_id,
             environment=account.environment,
