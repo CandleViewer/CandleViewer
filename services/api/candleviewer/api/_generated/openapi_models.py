@@ -903,7 +903,7 @@ class Sizing(BaseModel):
     risk_per_trade_pct: Annotated[
         str | None,
         Field(
-            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            description="Percent of equity lost at the stop (`risk_based`): `0.5` is 0.5 %, at most 100.",
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
