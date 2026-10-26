@@ -7,7 +7,6 @@ import {
   type StepUpCredentials,
   type StepUpFailure,
 } from "./StepUpDialog";
-import { recordStepUp } from "../../lib/auth/meCache";
 import { apiFetch } from "../../lib/http/csrfFetch";
 import {
   STEP_UP_PATH,
@@ -155,10 +154,8 @@ export function StepUpChallengeGate({
     if (settled.current) return; // dropped meanwhile (Esc, expiry): never re-sent
     if (response.ok) {
       const granted = body as Partial<StepUpGranted> | null;
+      // Elevation is server-side session state: the client keeps no copy of it.
       if (granted?.action_class !== challenge.actionClass) return drop();
-      if (typeof granted.elevated_until === "string") {
-        recordStepUp(granted.elevated_until, granted.step_up_expires_at ?? null);
-      }
       return resend();
     }
     if (endsChallenge(response.status, body)) return drop();

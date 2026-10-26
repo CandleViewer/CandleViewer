@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { buildRoutes } from "../../src/routes/tree";
@@ -19,12 +19,11 @@ function renderAt(path: string) {
   return render(<RouterProvider router={router} />);
 }
 
-function claimsFor(role: Role | null, elevatedAt: string | null = null) {
+function claimsFor(role: Role | null) {
   setMeClaims({
     authenticated: role !== null,
     role,
     permissions: [],
-    elevatedAt,
   });
 }
 
@@ -77,47 +76,23 @@ describe("route tree x RBAC matrix", () => {
     );
   });
 
-  it("shows the step-up modal for an owner whose step-up has expired", async () => {
-    claimsFor("owner", null);
-    renderAt("/admin");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Confirm it's you" })).toBeInTheDocument(),
-    );
-  });
-
-  it("returns to /admin?tab=x, replacing the entry, when Continue is pressed after a step-up", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ elevated_until: new Date().toISOString() }),
-      }),
-    );
-    claimsFor("owner", null);
+  it("renders /admin for an owner with no step-up dialog and no step-up request (#2725)", async () => {
+    const f = vi.fn();
+    vi.stubGlobal("fetch", f);
+    claimsFor("owner");
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin?tab=x"] });
     render(<RouterProvider router={router} />);
-    fireEvent.change(await screen.findByLabelText("Password"), { target: { value: "pw" } });
-    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
-    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Continue" }));
     expect(
       await screen.findByRole("heading", { name: /R-300 — owned by E18/ }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-    expect(router.state.historyAction).toBe("REPLACE");
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(router.state.location.search).toBe("?tab=x");
-  });
-
-  it("renders the admin stub for an owner with fresh step-up", async () => {
-    claimsFor("owner", new Date().toISOString());
-    renderAt("/admin");
-    await waitFor(() =>
-      expect(screen.getByRole("heading", { name: /R-300 — owned by E18/ })).toBeInTheDocument(),
-    );
+    expect(f.mock.calls.filter(([u]) => String(u).includes("/auth/step-up"))).toEqual([]);
   });
 
   it("every manifest route is reachable by at least one role without crashing", async () => {
-    claimsFor("owner", new Date().toISOString());
+    claimsFor("owner");
     for (const entry of ROUTE_MANIFEST) {
       if (entry.access.roles === "public") continue;
       if (!entry.access.roles.includes("owner")) continue;
@@ -142,7 +117,7 @@ describe("E49-S07 reachability through the real route tree", () => {
 });
 
 describe("route ranking: a static path outranks its dynamic sibling", () => {
-  beforeEach(() => claimsFor("owner", new Date().toISOString()));
+  beforeEach(() => claimsFor("owner"));
   it.each([
     ["/trade-groups/new", "R-142"],
     ["/trade-groups/g1", "R-141"],

@@ -37,13 +37,13 @@ describe("route manifest coverage", () => {
     expect(new Set(paths).size).toBe(paths.length);
   });
 
-  it("marks every /admin/** route as owner-only, deny-as-404, step-up required", () => {
+  it("marks every /admin/** route as owner-only, deny-as-404, with no client step-up pre-emption", () => {
     for (const entry of ROUTE_MANIFEST) {
       if (entry.path.startsWith("/admin/") || entry.path === "/admin") {
         if (entry.id === "R-360") continue; // documented exception: reduced view for O/M outside admin-hat
         expect(entry.access.roles).toEqual(["owner"]);
         expect(entry.access.denyAs).toBe("404");
-        expect(entry.access.requiresStepUp).toBe(true);
+        expect(entry.access).toEqual({ roles: ["owner"], denyAs: "404" });
       }
     }
   });

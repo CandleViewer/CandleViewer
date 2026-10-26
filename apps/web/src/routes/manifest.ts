@@ -21,7 +21,7 @@ export interface ManifestEntry {
 
 const ALL: RouteAccess = { roles: ["owner", "manager", "viewer"] };
 const OWNER_ONLY: RouteAccess = { roles: ["owner"] };
-const ADMIN: RouteAccess = { roles: ["owner"], denyAs: "404", requiresStepUp: true };
+const ADMIN: RouteAccess = { roles: ["owner"], denyAs: "404" };
 const PUBLIC: RouteAccess = { roles: "public" };
 
 export const ROUTE_MANIFEST: readonly ManifestEntry[] = [

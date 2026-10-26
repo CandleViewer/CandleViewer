@@ -1,10 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import {
-  getMeClaims,
-  setMeClaims,
-  recordStepUp,
-  resetMeClaims,
-} from "../../../src/lib/auth/meCache";
+import { getMeClaims, setMeClaims, resetMeClaims } from "../../../src/lib/auth/meCache";
 
 describe("meCache", () => {
   beforeEach(() => {
@@ -16,7 +11,6 @@ describe("meCache", () => {
       authenticated: false,
       role: null,
       permissions: [],
-      elevatedAt: null,
     });
   });
 
@@ -25,16 +19,14 @@ describe("meCache", () => {
       authenticated: true,
       role: "owner",
       permissions: ["rules:author"],
-      elevatedAt: null,
     });
     expect(getMeClaims().role).toBe("owner");
   });
 
-  it("records a step-up timestamp without touching other fields", () => {
-    setMeClaims({ authenticated: true, role: "owner", permissions: [], elevatedAt: null });
-    recordStepUp("2026-09-29T12:00:00Z");
-    const claims = getMeClaims();
-    expect(claims.elevatedAt).toBe("2026-09-29T12:00:00Z");
-    expect(claims.role).toBe("owner");
+  it("holds no step-up elevation: that is server-side session state (#2725)", () => {
+    setMeClaims({ authenticated: true, role: "owner", permissions: [] });
+    expect(Object.keys(getMeClaims()).sort()).toEqual(["authenticated", "permissions", "role"]);
+    resetMeClaims();
+    expect(getMeClaims().authenticated).toBe(false);
   });
 });

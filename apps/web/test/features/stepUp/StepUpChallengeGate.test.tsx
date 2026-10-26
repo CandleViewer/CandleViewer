@@ -6,7 +6,7 @@ import {
   StepUpChallengeGate,
 } from "../../../src/features/stepUp/StepUpChallengeGate";
 import { holdRequest, type StepUpChallenge } from "../../../src/features/stepUp/challenge";
-import { getMeClaims, resetMeClaims } from "../../../src/lib/auth/meCache";
+import { resetMeClaims } from "../../../src/lib/auth/meCache";
 
 // axe-core is a transitive dependency of @axe-core/playwright (already a devDependency).
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -137,7 +137,6 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     const headers = new Headers(resent[0]?.headers);
     expect(headers.get("Idempotency-Key")).toBe("idem-0001");
     expect(headers.get("Content-Type")).toBe("application/json");
-    expect(getMeClaims().elevatedAt).toBe(GRANTED.elevated_until);
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(screen.queryByText("Not sent")).not.toBeInTheDocument();
   });
@@ -171,7 +170,6 @@ describe("StepUpChallengeGate (#2725, E09-D06)", () => {
     answer();
     expect(await screen.findByRole("status")).toHaveTextContent("Not sent");
     expect(calls("/keys/k1/rotate")).toHaveLength(0);
-    expect(getMeClaims().elevatedAt).toBeNull();
   });
 
   it("test_resend_network_error_reads_back_never_not_sent_never_resends", async () => {

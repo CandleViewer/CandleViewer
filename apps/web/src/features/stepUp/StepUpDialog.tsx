@@ -8,7 +8,7 @@ import {
   type JSX,
 } from "react";
 
-/** What the user enters in the step-up dialog (`POST /auth/step-up` `{password, code}`). */
+/** What the user enters in the step-up dialog: the `{password, code}` of the step-up request. */
 export interface StepUpCredentials {
   readonly password: string;
   readonly code: string;
