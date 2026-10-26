@@ -959,7 +959,7 @@ def test_the_failed_read_answers_are_the_existing_retryable_problem_shapes() -> 
     components = _SPEC["components"]["responses"]
     bad_gateway = components["ExchangeError"]["content"]["application/problem+json"]
     assert bad_gateway["examples"]["bybitReject"]["value"]["code"] == "exchange_error"
-    title = "Bybit returned a non-zero exchange refusal code"
+    title = "The exchange returned a non-zero refusal code"
     assert registered["exchange_error"]["title"] == title
     assert bad_gateway["examples"]["bybitReject"]["value"]["title"] == title
     unavailable = components["ServiceUnavailable"]

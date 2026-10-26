@@ -291,8 +291,11 @@ def test_the_texts_say_who_may_write_and_hide_out_of_grant_accounts() -> None:
     )
     owner = "`accounts:write` is held by the Owner role alone, so no grant on an account gives a"
     assert f"{owner} Manager this write" in post  # R1S-08 (#4083)
-    order = "so a Manager meets the step-up first and `403 forbidden` after one"
-    assert f"The write is path-gated, {order}" in post  # 06:01Z, R1C-01; #2304: no key-route claim
+    order = "so a Manager gets `403 forbidden` and is never challenged"
+    assert "The write is handler-gated: the step-up" in post  # #2304 slice 3c: no key-route claim
+    assert "comes after authentication, request validation, RBAC and the account lookup" in post
+    assert order in post
+    assert "path-gated" not in post and "meets the step-up first" not in post
     # R1S-05: out of the caller's grants answers as missing, so a 404 is no existence oracle
     hidden = "outside the caller's grants"
     assert f"An account {hidden} is `404`, as one that does not exist is" in listed
@@ -417,6 +420,8 @@ def test_a_stale_tag_never_moves_the_default_and_a_lost_answer_replays() -> None
         "takes this binding's `ETag`, never a profile's, and it is checked before the profile",
         "`412 version_conflict`, even when the default has since come back to the profile it was",
         "answered from the stored `200` before `If-Match` is read",
+        "only once the session holds the `risk_caps` step-up: a retry without one is challenged",
+        "(`403 step_up_required`) before the stored answer is served",
         "deleted or another account's is `404`, as an account outside the caller's grants is",
         "the key with another body is `409 idempotency_key_reuse`",  # R1S-05
     )

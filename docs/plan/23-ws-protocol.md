@@ -1584,7 +1584,7 @@ The `REST` column shows the REST code a client may fold this into; “=” means
 | `view_as_read_only`        | any        | no          | =                      | Action frame on a view-as session (§9.6); `cv.v1` defines none yet. Nothing changes. |
 | `unknown_topic`            | topic      | no          | `not_found`            | Not in the catalogue, or a `bars.*` or `indicators.*` topic not served (§6.1).       |
 | `invalid_topic_format`     | topic      | no          | `validation_failed`    | Malformed topic (bad depth, dotted `param`, unknown bar type) or bad spec (§6.1).    |
-| `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not a Bybit USDT linear perpetual, or unknown instrument.                            |
+| `unsupported_symbol`       | topic      | no          | `unsupported_category` | Not one of the exchange's USDT linear perpetuals, or unknown instrument.             |
 | `invalid_options`          | topic      | no          | `validation_failed`    | Bad value or key; `field` names it; an unknown key gets `p` (§5.4) or `opts` (§5.1). |
 | `encoding_unsupported`     | topic      | no          | —                      | Binary requested on a structured-only topic.                                         |
 | `subscription_limit`       | topic      | yes         | `rate_limited`         | A subscription (§3.6), bars spec or instance cap (§6.1) is reached. Unsubscribe one. |
