@@ -10,8 +10,9 @@ lane's watchdog's probe.
 `release()` asks `pg_advisory_unlock(key)`, then ends the session whatever the unlock did, so the
 lock is gone either way. The OMS runtime holds one per environment for its facade's life
 (`oms_wiring.environment_lock_key`); `storage.retention.locks.PgAdvisoryRunLock` is the reaper's
-per-run form. One literal statement each, the key a bound parameter; a failure leaves with its
-type and SQLSTATE only, never the server's text (#2748)."""
+per-run form. One literal statement each, the key a bound parameter; a failure leaves as
+`StorageTierUnavailable` naming its cause's class and SQLSTATE only, never the server's text (#2748,
+CR-S3L2X-04)."""
 
 from __future__ import annotations
 
@@ -23,7 +24,7 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.relational_sqlalchemy import strip_driver_text
+from candleviewer.storage.repositories.relational_sqlalchemy import sqlstate_of, strip_driver_text
 
 _TRY: Final = sa.text("SELECT pg_try_advisory_lock(:key)")
 _UNLOCK: Final = sa.text("SELECT pg_advisory_unlock(:key)")
@@ -80,7 +81,7 @@ class SqlAlchemySessionLock:
             strip_driver_text(failed)
             await _ended(connection)
             if isinstance(failed, Exception):
-                raise StorageTierUnavailable("the session lock could not be asked") from None
+                raise _unavailable("asked", failed) from None
             raise
         if not got:
             await connection.close()
@@ -94,7 +95,7 @@ class SqlAlchemySessionLock:
                 return await self._engine.connect()
         except Exception as failed:
             strip_driver_text(failed)
-            raise StorageTierUnavailable("the session lock could not be asked") from None
+            raise _unavailable("asked", failed) from None
 
     async def confirm(self) -> bool:
         """Whether this lock's session still holds it, asked on that session within `timeout_s`
@@ -110,7 +111,7 @@ class SqlAlchemySessionLock:
                 await connection.commit()
         except Exception as failed:
             strip_driver_text(failed)
-            raise StorageTierUnavailable("the session lock could not be confirmed") from None
+            raise _unavailable("confirmed", failed) from None
         return held
 
     async def release(self) -> None:
@@ -127,6 +128,14 @@ class SqlAlchemySessionLock:
             raise
         finally:
             await _ended(connection)
+
+
+def _unavailable(what: str, failed: BaseException) -> StorageTierUnavailable:
+    """The lock could not be `what`, as `StorageTierUnavailable` naming the cause's class and, when
+    it carries one, its SQLSTATE, read off the stripped cause, never its text (CR-S3L2X-04)."""
+    state = sqlstate_of(failed)
+    cause = type(failed).__name__ if state is None else f"{type(failed).__name__}, sqlstate {state}"
+    return StorageTierUnavailable(f"the session lock could not be {what} ({cause})")
 
 
 async def _ended(connection: AsyncConnection) -> None:
