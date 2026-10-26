@@ -123,7 +123,7 @@ cvd = _load(ROOT / "docs" / "research" / "_tools" / "cvd_simulate.py", "cvd_simu
 
 MULTI = re.MULTILINE
 THEMES = ("dark", "light", "high-contrast")
-BASE = "fabb267f4cd59ded896af813949ddac89691a1d1"
+BASE = "908667f27b63c5722cb084819902bcbd7943bf28"
 # The orchestrator's ruling on the BQ list (issue comment on #363): "RULED" cites this id.
 RULING = "6396085915"
 # The BQ comment the ruling answers (the questions table's heading names both).
@@ -319,11 +319,11 @@ DEFICIENCIES = ("protanopia", "deuteranopia", "tritanopia")
 # row here (a FAIL otherwise); a `14` line after the pointer lines sits one or two lower (allowed).
 CITED_TABLE = """
 04 | 54 | **Assume the browser is hostile**
-04 | 854 | | SR-040  | All external input
-04 | 923 | | SR-097 | Replay, export and import endpoints MUST NOT accept filesystem paths
-04 | 966 | | SR-127 | React code MUST NOT use `dangerouslySetInnerHTML`
-04 | 1140 | | `workspaces:write`                                 |                 ✔
-04 | 1181 | Save/load own layouts, templates, drawings, hotkeys
+04 | 855 | | SR-040  | All external input
+04 | 924 | | SR-097 | Replay, export and import endpoints MUST NOT accept filesystem paths
+04 | 967 | | SR-127 | React code MUST NOT use `dangerouslySetInnerHTML`
+04 | 1141 | | `workspaces:write`                                 |                 ✔
+04 | 1182 | Save/load own layouts, templates, drawings, hotkeys
 05 | 35 | No functionality may depend on hover-only or drag-only interaction
 05 | 85 | **Reserved, non-remappable keys**
 05 | 96 | **Focus is never silently stolen**
@@ -393,30 +393,30 @@ CITED_TABLE = """
 16 | 456 | a new directional or status **encoding** needs every surface
 21 | 3302 | -- sanitised, 1..120 code points
 21 | 5079 | Pane settings must never carry credentials or account identifiers
-22 | 8680 | operationId: createWorkspace
-22 | 8684 | `limit_reached` (32 live workspaces)
-22 | 8689 | Bodies over 4 KiB are refused with `413` (`payload_too_large`)
-22 | 8690 | `Idempotency-Key` is accepted, never required
-22 | 8884 | `limit_reached` (32 live layouts)
-22 | 12841 | operationId: exportWorkspace
-22 | 12844 | The bundle is self-contained and contains no credentials, account identifiers or
-22 | 12846 | `POST /workspaces` with `from_bundle`.
-22 | 19817 | validation_failed`): JSON nesting depth must be at most 16;
-22 | 19829 | At most 40 characters as sent, at least 1 after sanitising (above), SCR-020.
-22 | 19969 |     PaneKind:
-22 | 20029 | and never holds credentials, account ids or user ids
-22 | 20039 | Every key must match `^[a-z][a-z0-9_]{0,31}$`
-22 | 20055 | a Bybit USDT linear perpetual symbol of at most 20 characters
-22 | 20064 | Every non-null value is refused (`422` rule `chart_template_not_found`)
-22 | 20070 | A non-empty list is refused (`422` rule `indicator_preset_not_found`)
-22 | 20388 | else 422 rule `layout_not_found`
-22 | 21400 |     WorkspaceBundle:
-22 | 21404 | Portable, credential-free export of presentation state only.
-22 | 21406 | schema_version: { type: string }
-22 | 21415 | Export holds only the caller's live presets
-22 | 21417 | Import (E15-S07; no operation takes a bundle yet) never trusts
-22 | 21420 | the array is imported whole or not
-22 | 21421 | The server refuses it whole beyond 200 items or 1 MiB of preset JSON
+22 | 8682 | operationId: createWorkspace
+22 | 8686 | `limit_reached` (32 live workspaces)
+22 | 8691 | Bodies over 4 KiB are refused with `413` (`payload_too_large`)
+22 | 8692 | `Idempotency-Key` is accepted, never required
+22 | 8886 | `limit_reached` (32 live layouts)
+22 | 12843 | operationId: exportWorkspace
+22 | 12846 | The bundle is self-contained and contains no credentials, account identifiers or
+22 | 12848 | `POST /workspaces` with `from_bundle`.
+22 | 19819 | validation_failed`): JSON nesting depth must be at most 16;
+22 | 19831 | At most 40 characters as sent, at least 1 after sanitising (above), SCR-020.
+22 | 19971 |     PaneKind:
+22 | 20031 | and never holds credentials, account ids or user ids
+22 | 20041 | Every key must match `^[a-z][a-z0-9_]{0,31}$`
+22 | 20057 | a Bybit USDT linear perpetual symbol of at most 20 characters
+22 | 20066 | Every non-null value is refused (`422` rule `chart_template_not_found`)
+22 | 20072 | A non-empty list is refused (`422` rule `indicator_preset_not_found`)
+22 | 20390 | else 422 rule `layout_not_found`
+22 | 21402 |     WorkspaceBundle:
+22 | 21406 | Portable, credential-free export of presentation state only.
+22 | 21408 | schema_version: { type: string }
+22 | 21417 | Export holds only the caller's live presets
+22 | 21419 | Import (E15-S07; no operation takes a bundle yet) never trusts
+22 | 21422 | the array is imported whole or not
+22 | 21423 | The server refuses it whole beyond 200 items or 1 MiB of preset JSON
 32 | 47 | **R13** | Team & knowledge
 BL | 242 | "key": "E15-D09",
 BL | 266 | Export again from the older version
@@ -499,7 +499,7 @@ README | 46 | **Penpot reference** to the ticket's page
 """
 # The fixture (synthetic; the spec's Fixture paragraph prints it through markers). The export
 # fixture is E15-D02's (`D02:511`); the import fixture `scalping.json` is a colleague's export from
-# a build that knows two more panel kinds (a kind is additive for readers, `22:19969`), whose
+# a build that knows two more panel kinds (a kind is additive for readers, `22:19971`), whose
 # Positions pane carries an account filter; `wall.json` is the budget fixture. The two account
 # labels are the exporter's: no frame, row or line of the spec may print either (S3).
 FIXTURE: dict[str, Any] = {
@@ -1667,7 +1667,7 @@ PRODUCERS = {
     ),
     "SCR-025/export-preparing": (
         "Export… chosen on the stored workspace Scalping; `exportWorkspace` called "
-        "(`22:12841`), its bundle not back yet"
+        "(`22:12843`), its bundle not back yet"
     ),
     "SCR-025/export-preview": (
         "the bundle arrived and passed the check of §2.3: the preview is built from it and "
@@ -1690,12 +1690,12 @@ PRODUCERS = {
         "`D03:564`; the rail's item, D09-A22)"
     ),
     "SCR-026/entry-permission": (
-        'a Viewer session opens "+" or the rail\'s workspace menu (`04:1140`, `D03:564`; the '
+        'a Viewer session opens "+" or the rail\'s workspace menu (`04:1141`, `D03:564`; the '
         "rail's item, D09-A22)"
     ),
     "SCR-026/entry-limit": (
         'an Owner session at the workspace limit opens "+" or the rail\'s workspace menu '
-        "(`22:8684`, `D03:564`; the rail's item, D09-A22)"
+        "(`22:8686`, `D03:564`; the rail's item, D09-A22)"
     ),
     "SCR-026/pick": ("Import… chosen: the dialog opens empty (`D02:513`)"),
     "SCR-026/drag-over": ("one .json file dragged over the zone"),
@@ -1742,7 +1742,7 @@ PRODUCERS = {
         "`report.csv` dropped: the picker filters by type, a drop does not"
     ),
     "SCR-026/rejected-nodes": (
-        "a file nested deeper than the depth limit (`22:19817`); over the node count is its "
+        "a file nested deeper than the depth limit (`22:19819`); over the node count is its "
         "variant (`BL:1136`)"
     ),
     "SCR-026/refused-limit": (
@@ -2208,37 +2208,37 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "worker (`14:637`) | `SCR-026/rejected-oversized` | "
             "`e15.import.rejected.oversized` |",
             "| 2 parse | nesting at most 16 <!-- audit:contract.depth=16 --> levels | the "
-            "server's own rule for a workspace body (`22:19817`), reused (BQ-5 RULED) | "
+            "server's own rule for a workspace body (`22:19819`), reused (BQ-5 RULED) | "
             "`SCR-026/rejected-nodes` | `e15.import.rejected.depth` |",
             "| 2 parse | at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED | "
             'E15-S07 names a node-count limit and fuzzes "a document with 10000 nested nodes" '
             "(`BL:1136`); no contract carries a number (D09-G5) | `SCR-026/rejected-nodes`, "
             "its variant | `e15.import.rejected.nodes` |",
             "| 3 schema | the envelope's `schema_version` first, then the shape of a version "
-            "this app reads: every required key and every known key's type (`22:21400–21421`) "
-            "| `22:21400–21421`; an unknown key ignored by the client and refused by the "
-            "server on its write path (C-6.3; `04:854`); the bundle and `ChartTemplateInput` "
+            "this app reads: every required key and every known key's type (`22:21402–21423`) "
+            "| `22:21402–21423`; an unknown key ignored by the client and refused by the "
+            "server on its write path (C-6.3; `04:855`); the bundle and `ChartTemplateInput` "
             "are not closed yet (D09-G4) | `SCR-026/rejected-malformed` | "
             "`e15.import.rejected.malformed` |",
             "| 3 schema | at most 16 <!-- audit:contract.panes_max=16 --> panels a layout | "
             "the contract's 16 (`D02:133`) | `SCR-026/rejected-malformed`, its variant | "
             "`e15.import.rejected.panes` |",
             "| 3 schema | at most 32 <!-- audit:contract.layouts_max=32 --> layouts a "
-            "workspace | the store's limit (`22:8884`); the bundle carries none (D09-G5) | "
+            "workspace | the store's limit (`22:8886`); the bundle carries none (D09-G5) | "
             "`SCR-026/rejected-malformed`, its variant | `e15.import.rejected.layouts` |",
             "| 3 schema | at most 200 <!-- audit:contract.presets_max=200 --> indicator "
-            "presets, the array whole or not at all | `22:21420–21421`, where the server also "
+            "presets, the array whole or not at all | `22:21422–21423`, where the server also "
             "refuses the array beyond 1 MiB of preset JSON | `SCR-026/rejected-malformed`, its "
             "variant; the server's refusal is `SCR-026/refused-server` | "
             "`e15.import.rejected.presets` |",
-            "| 4 version | the format versions this app reads (§5.3) | `22:21406`; D09-G2 | "
+            "| 4 version | the format versions this app reads (§5.3) | `22:21408`; D09-G2 | "
             "the two version refusals; the migrated preview | §5.3 |",
             "| 5 registry | each pane's kind and each setting against the registry | the "
-            "open-ended kinds (`22:19969`); settings that never hold account ids (`22:20029`) "
+            "open-ended kinds (`22:19971`); settings that never hold account ids (`22:20031`) "
             "| never a rejection: an unknown kind or an account-scoped setting is a Drop row "
             "(§4.2) | `e15.import.reason.unknown_kind` |",
             "| the send | at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a "
-            "user | `22:8684` | `SCR-026/refused-limit` | `e15.import.refused.limit` |",
+            "user | `22:8686` | `SCR-026/refused-limit` | `e15.import.refused.limit` |",
             "| the send | everything above, checked again by the server | E15-S07 (`BL:1136`); "
             "`04:54`; C-2.12 | `SCR-026/refused-server` | `e15.import.refused.server` |",
         ),
@@ -2261,26 +2261,26 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "| 2 | parse depth / node count | the JSON, parsed in the worker with both limits "
             "counted while it parses, so a hostile file stalls a worker and never the page "
             "(`BL:1136`) | depth 16 <!-- audit:contract.depth=16 --> levels, the server's own "
-            "rule for a request body (`22:19817`); 10,000 <!-- audit:contract.nodes=10000 --> "
+            "rule for a request body (`22:19819`); 10,000 <!-- audit:contract.nodes=10000 --> "
             "values (`BL:1136`), PROPOSED (D09-G5) | `SCR-026/rejected-nodes` (the depth, with "
             "the node count its variant); invalid JSON: `SCR-026/rejected-malformed`'s parse "
             "variant, which names the line | `malformed` |",
             "| 3 | schema | first the envelope, `schema_version` present and a whole number "
             "(D09-D25), else the malformed outcome that names it; then the shape of that "
             "format version, only when this app reads it (one shape per readable version, "
-            "D09-G2), against `WorkspaceBundle` (`22:21400–21421`): every required key present "
+            "D09-G2), against `WorkspaceBundle` (`22:21402–21423`): every required key present "
             "and every known key's value of its kind, a pane's kind an open string for a "
-            "reader (`22:19969`), no layout over its panes, no workspace over its layouts, the "
+            "reader (`22:19971`), no layout over its panes, no workspace over its layouts, the "
             "indicator presets whole or not at all; an unknown key is ignored and never read "
             "into the app (C-6.3); a version above the newest or below the floor skips the "
             "shape and goes to step 4, so the shape never shadows the version outcome (D09-Q5) "
             "| 16 <!-- audit:contract.panes_max=16 --> panes a layout (`D02:133`); 32 <!-- "
-            "audit:contract.layouts_max=32 --> layouts a workspace (`22:8884`); 200 <!-- "
-            "audit:contract.presets_max=200 --> presets a file (`22:21420–21421`) | "
+            "audit:contract.layouts_max=32 --> layouts a workspace (`22:8886`); 200 <!-- "
+            "audit:contract.presets_max=200 --> presets a file (`22:21422–21423`) | "
             "`SCR-026/rejected-malformed`: the missing key, or the known key whose value is "
             "the wrong kind, named in mono, or its panes, layouts and presets variants | "
             "`malformed` |",
-            "| 4 | version | the file's `schema_version` (`22:21406`) against the format "
+            "| 4 | version | the file's `schema_version` (`22:21408`) against the format "
             "version this app reads (BQ-4 RULED): newer is refused; older and still readable "
             "is migrated forward in the worker; older than the oldest this app reads is "
             "refused | this app reads format version 1 <!-- audit:fixture.app_format=1 -->; "
@@ -2288,7 +2288,7 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "`SCR-026/rejected-version-newer`; `SCR-026/rejected-version-older`; a migration "
             "is no failure: `SCR-026/preview-migrated` | `version-newer`; `version-older` |",
             "| 5 | per-pane registry | each pane's kind against this build's registry "
-            "(`22:19969`) and each pane setting against the registry's list for its kind "
+            "(`22:19971`) and each pane setting against the registry's list for its kind "
             "(`BL:1136`) | — | nothing fails here: an unknown kind is a Drop row, never a "
             "refusal (AC 3); a setting the registry marks account-scoped is a Drop row, and so "
             "is a setting it does not list for its kind, a newer build's option (D09-D35); the "
@@ -2413,13 +2413,13 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
         ),
     ),
     (
-        "| Included item | Built from the bundle (`22:21400–21421`) | For Scalping | Left out "
+        "| Included item | Built from the bundle (`22:21402–21423`) | For Scalping | Left out "
         "when |"
     ): (
         "pinned-row",
         (
             "| the layouts, with their names | `layouts[]`, each `name` (at most 40 <!-- "
-            "audit:contract.name_max=40 --> characters, `22:19829`), in the bundle's order | 2 "
+            "audit:contract.name_max=40 --> characters, `22:19831`), in the bundle's order | 2 "
             "<!-- audit:fixture.export_layouts=2 --> layouts (Layout 1, Order-flow) | the "
             "workspace has no layout yet |",
             "| the panels | every pane of every layout, `layouts[].panes[]` | 7 <!-- "
@@ -2435,7 +2435,7 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "`21:3302`) | 12 drawings, with their text labels | there is no drawing |",
             "| the chart templates | `chart_templates[]` | 1 chart template | there is none |",
             "| the indicator presets | `indicator_presets[]`: every live preset of the caller, "
-            "never truncated (`22:21417–21421`) | 3 indicator presets | there is none |",
+            "never truncated (`22:21419–21423`) | 3 indicator presets | there is none |",
         ),
     ),
     ("| # | Question | Built here (the ruled outcome) | Status |"): (
@@ -2454,10 +2454,10 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "tokens; accounts, trade-group and user ids; environment binding (DEMO or LIVE); "
             'alert and rule bindings; P&L, positions or orders." — a C-row to `D02:511`, an '
             "extension and not a contradiction; the Included list names only what "
-            "`WorkspaceBundle` holds (`22:21400–21421`); the import's trust note is `D02:513` "
+            "`WorkspaceBundle` holds (`22:21402–21423`); the import's trust note is `D02:513` "
             'verbatim: "A workspace file never carries credentials or account bindings. '
             'Importing creates a new workspace and changes nothing else."; the sharing claim '
-            "in `22:12844`'s description is never written anywhere (its G-row names it without "
+            "in `22:12846`'s description is never written anywhere (its G-row names it without "
             "repeating it); the tool gates both sentences byte for byte on every frame that "
             "shows them; owner approval pending (#2701) | RULED (6396085915) — owner approval "
             "pending (#2701) |",
@@ -2491,7 +2491,7 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "— SCR-025's Share section (E15-D08, merged at `fb1b4804`), the tab's `[⋯]` "
             "(`D03:384`) and the rail's workspace menu (`D02:511`) — and one CMP-043 `md` "
             "dialog with the Included and Excluded lists built from the fetched bundle; "
-            "Export… is a read (`22:12841`), never gated (a read): T1 for every session, "
+            "Export… is a read (`22:12843`), never gated (a read): T1 for every session, "
             "view-as included; on "
             "the viewer's unsaved default it is an availability state (`D03:583`) | RULED "
             "(6396085915) |",
@@ -2524,7 +2524,7 @@ PINNED: dict[str, tuple[str, tuple[str, ...]]] = {
             "whose `Enter` or `Space` opens the OS picker; the drop zone only adds to the "
             "input; the table is one Tab stop read with its headers; each announcement polite "
             "and once (§7) | RULED (6396085915) |",
-            "| BQ-14 | T2 per role, view-as first | Import… is a write (`22:8680`): its legs "
+            "| BQ-14 | T2 per role, view-as first | Import… is a write (`22:8682`): its legs "
             "in the server's order, view-as first (`rbac.view_as`), then the permission "
             "(`rbac.permission`), then the state (`workspace.limit.count`), keys as merged "
             "E15-D02 (`D02:655`) and E15-D03 (`D03:564`) carry them; Export… is never gated; a "
@@ -2960,7 +2960,7 @@ SHA_COUNTS = {
     "c4989493461ec6b6d22b9254633452a6362b750e": 2,
     "fb1b48041ae0a12638beacae6a61854833c5cc4d": 12,
     "013562636a339ab32c80d257b9d1f8cef8e64422": 4,
-    "fabb267f4cd59ded896af813949ddac89691a1d1": 1,
+    "908667f27b63c5722cb084819902bcbd7943bf28": 1,
     "04a8caa9513e90debcf7cbc41a9ca585496eba01": 1,
 }
 
@@ -7556,7 +7556,7 @@ def more_mutations(share: str, home: str, closing: str) -> list[Mutation]:
             "[cite-unpinned]",
             None,
         ),
-        ("cite-range", sub("`22:21400–21421`", "`22:21400–100190`"), "[cite-range]", None),
+        ("cite-range", sub("`22:21402–21423`", "`22:21402–100192`"), "[cite-range]", None),
         (
             "forbidden",
             line_sub(
@@ -8841,12 +8841,12 @@ SEC_PIN_TXT = r"""
   credentials — API keys or tokens; accounts, trade-group and user ids; environment binding
   (DEMO or LIVE); alert and rule bindings; P&L, positions or orders."
 @ row BQ-2 · col 3
-  the Included list names only what `WorkspaceBundle` holds (`22:21400–21421`)
+  the Included list names only what `WorkspaceBundle` holds (`22:21402–21423`)
 @ row BQ-2 · col 3
   the import's trust note is `D02:513` verbatim: "A workspace file never carries credentials
   or account bindings. Importing creates a new workspace and changes nothing else."
 @ row BQ-2 · col 3
-  the sharing claim in `22:12844`'s description is never written anywhere (its G-row names
+  the sharing claim in `22:12846`'s description is never written anywhere (its G-row names
   it without repeating it)
 @ row BQ-3 · col 2
   account-scoped elements on import
@@ -8866,7 +8866,7 @@ SEC_PIN_TXT = r"""
   and one CMP-043 `md` dialog with the Included and Excluded lists built from the fetched
   bundle
 @ row BQ-7 · col 3
-  Export… is a read (`22:12841`), never gated (a read): T1 for every session, view-as
+  Export… is a read (`22:12843`), never gated (a read): T1 for every session, view-as
   included
 @ row BQ-8 · col 3
   a dismissed save sheet keeps the preview (`SCR-025/export-cancelled`)
@@ -8932,14 +8932,14 @@ SEC_PIN_TXT = r"""
 § §1.2
 @ row Exfiltration: the file leaves the machin · col 2
   no field of `WorkspaceBundle` holds a credential, an account, a trade-group or user id, an
-  environment, an alert or rule binding, P&L, a position or an order (`22:21400–21421`
+  environment, an alert or rule binding, P&L, a position or an order (`22:21402–21423`
 @ row Exfiltration: the file leaves the machin · col 2
   the preview names what travels and, first-class, the Excluded list, so a mistake in the
   build is visible rather than hidden
 @ row Injection through content: every string  · col 1
   Injection through content: every string from the file is untrusted
 @ row Injection through content: every string  · col 2
-  text only: never markup, never a link, never interpreted (SR-127, `04:966`
+  text only: never markup, never a link, never interpreted (SR-127, `04:967`
 @ row Injection through content: every string  · col 2
   capped, an ellipsis past the cap, and nothing past a cap rendered, announced, copied or
   logged
@@ -8964,7 +8964,7 @@ SEC_PIN_TXT = r"""
   for byte wherever it shows: the Excluded list on the export and the trust note on the
   import (§9 holds both).
 @ prose
-  the sharing claim of `22:12844`'s description is written nowhere in this spec (D09-G11).
+  the sharing claim of `22:12846`'s description is written nowhere in this spec (D09-G11).
 § §1.3
 @ prose
   a failure after the send has no partial frame, because the import is never partial
@@ -9099,14 +9099,14 @@ SEC_PIN_TXT = r"""
   2.3 The Included and Excluded lists: anatomy and redlines
 @ prose
   owner approval pending (#2701)).** The Included list is counted from the fetched bundle,
-  so it names only what `WorkspaceBundle` holds (`22:21400–21421`): no density, which no
+  so it names only what `WorkspaceBundle` holds (`22:21402–21423`): no density, which no
   workspace stores (the third deviation).
 @ prose
   The Excluded list is BQ-2's sentence, byte for byte, drawn as a list of its five clauses
   and first-class: the same type, weight and column width as the Included list, never a
   footnote, a hint or a tooltip.
 @ prose
-  a pane's settings never hold credentials, account ids or user ids, `22:20029`, `21:5079`
+  a pane's settings never hold credentials, account ids or user ids, `22:20031`, `21:5079`
 @ prose
   credentials never leave the secrets module, C-2.7), the server builds the bundle by
   copying fields in by name, never by spreading a row (E15-S07, `BL:1136`), and the client
@@ -9121,7 +9121,7 @@ SEC_PIN_TXT = r"""
   the Included list leaves both out because they are facts about the file, not about the
   workspace.
 @ prose
-  Every name in the lists is rendered as text, never as markup (SR-127, `04:966`).
+  Every name in the lists is rendered as text, never as markup (SR-127, `04:967`).
 @ prose
   and because the file is the bytes as fetched (§2.4), the client declines to save a bundle
   that carries one, or a pane setting the import would drop as account-scoped (§4.2's third
@@ -9131,7 +9131,7 @@ SEC_PIN_TXT = r"""
 @ prose
   - A limit an import would refuse (the file's size, its nesting or its count of values, or
   its presets: an export carries every live preset, while an import takes at most 200 <!--
-  audit:contract.presets_max=200 --> of them, `22:21417–21421`) keeps Download file and adds
+  audit:contract.presets_max=200 --> of them, `22:21419–21423`) keeps Download file and adds
   a CMP-028 `warning` line under the caveat: the import's own first sentence, then "You can
   save it, but this app won't import it." For a file with 240 presets: "This file has 240
   indicator presets; a file may carry at most 200. You can save it, but this app won't
@@ -9355,7 +9355,7 @@ SEC_PIN_TXT = r"""
 @ prose
   DL-17).** Every string the table takes from the file (kind names, layout names, symbols,
   intervals, drawing labels) is a text node and nothing else: never markup, never a link,
-  never interpreted (SR-127, `04:966`
+  never interpreted (SR-127, `04:967`
 @ prose
   Within its cap, a value wider than its column ends in an ellipsis on screen and keeps the
   whole capped value in the cell's text, for a screen reader and for Copy report.
@@ -9430,7 +9430,7 @@ SEC_PIN_TXT = r"""
   raw `schema_version` text never reaches the screen (§5.5).
 § §5.4
 @ row 5 registry · col 3
-  settings that never hold account ids (`22:20029`)
+  settings that never hold account ids (`22:20031`)
 @ row 5 registry · col 4
   never a rejection: an unknown kind or an account-scoped setting is a Drop row (§4.2)
 @ prose
@@ -9460,7 +9460,7 @@ SEC_PIN_TXT = r"""
   a log, and Choose another file starts from nothing (BQ-5 RULED).
 @ prose
   `422 validation_failed` when the server's own re-check refuses what the browser passed
-  (`22:19817`): "Nothing was imported." then "The server didn't accept this file: `{key}`
+  (`22:19819`): "Nothing was imported." then "The server didn't accept this file: `{key}`
   isn't valid.", the key the first field path of the problem's `errors[]`, cleaned and
   capped as above
 @ prose
@@ -9497,7 +9497,7 @@ SEC_PIN_TXT = r"""
   T1, reached by a link only
 @ prose
   - **Export…, a read.** No leg gates it: T1 for every session on a stored workspace,
-  view-as included, its preview, its Download file and its completion alike (`22:12841`
+  view-as included, its preview, its Download file and its completion alike (`22:12843`
 @ prose
   - **Busy.** "Preparing the file…", "Checking scalping.json… step 3 of 5" and Import as new
   workspace in flight are `aria-busy` with their labels kept, focusable, no lock and no
@@ -9617,7 +9617,7 @@ SEC_PIN_TXT = r"""
   layout is not atomic (`FL:171`), the partial import the ticket forbids (`11:2871`)
 @ row D09-G3 · col 2
   Account-scoped elements: no bundle schema has an account field and `PaneConfig` forbids
-  account ids (`22:20029`), so a strict server refuses a file that carries one whole (C-6.3
+  account ids (`22:20031`), so a strict server refuses a file that carries one whole (C-6.3
 @ row D09-G3 · col 2
   `14:633`'s "the user's default account" names nothing a workspace has
 @ row D09-G3 · col 3
@@ -9633,20 +9633,20 @@ SEC_PIN_TXT = r"""
   audited (`BL:721`)
 @ row D09-G11 · col 2
   The data class and the sharing claim: `exportWorkspace`'s description makes the sharing
-  claim (`22:12844`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
+  claim (`22:12846`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
   file user-confidential (`BL:721`)
 @ row D09-G11 · col 3
   `22`'s description drops the sharing claim and names the class
 @ row D09-G15 · col 2
   An export carries the caller's whole live preset library, at most 500 and never truncated
-  (`22:21415–21417`), not only the presets this workspace's panes use, while the Included
+  (`22:21417–21419`), not only the presets this workspace's panes use, while the Included
   list's "3 indicator presets" reads as the workspace's own
 @ row D09-G15 · col 3
   the owner (#2701) chooses: the Included list says "all 3 of your indicator presets", or
   the bundle carries only the presets the panes reference (`22`'s owner)
 @ row D09-C3 · col 2
   the ticket's Included list names densities, which `WorkspaceBundle` does not hold
-  (`22:21400–21421`
+  (`22:21402–21423`
 @ row D09-C5 · col 2
   E15-D02's sentence "Never included: API keys or tokens, account or trade-group ids, user
   ids, P&L figures, positions or orders." (`D02:511`) is extended by BQ-2's to name
@@ -9672,7 +9672,7 @@ SEC_PIN_TXT = r"""
 @ row D09-Q6 · col 2
   the trust note's "Importing creates a new workspace and changes nothing else." stands
   beside Add rows for indicator presets, chart templates and drawings, which join the
-  importer's own libraries (`22:21420–21423`, counted against the 500-preset cap): is the
+  importer's own libraries (`22:21422–21425`, counted against the 500-preset cap): is the
   sentence kept word for word?
 @ row E15-D08 (SCR-025 settings) · col 2
   Export… in its Share section opening §2's dialog (BQ-7 RULED)
@@ -9791,9 +9791,9 @@ STATUS_PIN_TXT = r"""
   PROPOSED, D09-G5)
 @ prose
   The caps on a string from the file: names 40 <!-- audit:contract.name_max=40 -->
-  (`22:19829`), symbols 20 <!-- audit:contract.symbol_max=20 --> (`22:20055`), panel kinds
+  (`22:19831`), symbols 20 <!-- audit:contract.symbol_max=20 --> (`22:20057`), panel kinds
   32 <!-- audit:contract.kind_max=32 --> (PROPOSED: `PaneKind` has no length bound,
-  `22:19969`, so the setting keys' cap of `22:20039` stands in
+  `22:19971`, so the setting keys' cap of `22:20041` stands in
 @ prose
   D09-G5), drawing labels 120 <!-- audit:contract.label_max=120 --> (`21:3302`), keys 64
   <!-- audit:design.key_cap=64 --> and file names 40 <!-- audit:design.file_cap=40 -->
@@ -9954,12 +9954,12 @@ STATUS_PIN_TXT = r"""
 @ row BQ-2 · col 3
   a C-row to `D02:511`, an extension and not a contradiction
 @ row BQ-2 · col 3
-  the Included list names only what `WorkspaceBundle` holds (`22:21400–21421`)
+  the Included list names only what `WorkspaceBundle` holds (`22:21402–21423`)
 @ row BQ-2 · col 3
   the import's trust note is `D02:513` verbatim: "A workspace file never carries credentials
   or account bindings. Importing creates a new workspace and changes nothing else."
 @ row BQ-2 · col 3
-  the sharing claim in `22:12844`'s description is never written anywhere (its G-row names
+  the sharing claim in `22:12846`'s description is never written anywhere (its G-row names
   it without repeating it)
 @ row BQ-2 · col 3
   the tool gates both sentences byte for byte on every frame that shows them
@@ -10049,7 +10049,7 @@ STATUS_PIN_TXT = r"""
   and one CMP-043 `md` dialog with the Included and Excluded lists built from the fetched
   bundle
 @ row BQ-7 · col 3
-  Export… is a read (`22:12841`), never gated (a read): T1 for every session, view-as
+  Export… is a read (`22:12843`), never gated (a read): T1 for every session, view-as
   included
 @ row BQ-7 · col 3
   on the viewer's unsaved default it is an availability state (`D03:583`)
@@ -10153,7 +10153,7 @@ STATUS_PIN_TXT = r"""
 @ row BQ-14 · col 2
   T2 per role, view-as first
 @ row BQ-14 · col 3
-  Import… is a write (`22:8680`): its legs in the server's order, view-as first
+  Import… is a write (`22:8682`): its legs in the server's order, view-as first
   (`rbac.view_as`), then the permission (`rbac.permission`), then the state
   (`workspace.limit.count`), keys as merged E15-D02 (`D02:655`) and E15-D03 (`D03:564`)
   carry them
@@ -10382,7 +10382,7 @@ STATUS_PIN_TXT = r"""
   owner approval pending (#2701))
 @ row Injection through content: every string  · col 2
   the same rule holds in the applied workspace, whose names the server sanitises again
-  (`22:19817`)
+  (`22:19819`)
 @ prose
   **The server re-checks (Condition 1).** No guard in the browser replaces the server's own
   validation: the server re-checks size, depth, nodes, schema and version when the file is
@@ -10492,7 +10492,7 @@ STATUS_PIN_TXT = r"""
   **What the two lists say (BQ-2 RULED
 @ prose
   owner approval pending (#2701)).** The Included list is counted from the fetched bundle,
-  so it names only what `WorkspaceBundle` holds (`22:21400–21421`): no density, which no
+  so it names only what `WorkspaceBundle` holds (`22:21402–21423`): no density, which no
   workspace stores (the third deviation).
 @ prose
   **The check before the preview (PROPOSED).** The preview can vouch only for what it lists,
@@ -10565,7 +10565,7 @@ STATUS_PIN_TXT = r"""
   workspace… and Open workspace… (`D03:365`), and of the rail's workspace menu, where no
   merged text places it yet (BQ-9 RULED
 @ prose
-  no operation takes a bundle yet, `22:21417`), so §6's legs gate it, view-as first, with
+  no operation takes a bundle yet, `22:21419`), so §6's legs gate it, view-as first, with
   the keys merged E15-D02 and E15-D03 carry (`D02:655`
 @ prose
   **One chrome, five steps (BQ-9 RULED).** The body changes with the step
@@ -10622,7 +10622,7 @@ STATUS_PIN_TXT = r"""
 @ row 2 · col 4
   10,000 <!-- audit:contract.nodes=10000 --> values (`BL:1136`), PROPOSED (D09-G5)
 @ row 4 · col 3
-  the file's `schema_version` (`22:21406`) against the format version this app reads (BQ-4
+  the file's `schema_version` (`22:21408`) against the format version this app reads (BQ-4
   RULED): newer is refused
 @ prose
   BQ-9 RULED).** `SCR-026/validating` is CMP-023, determinate (`15:262–268`): its value
@@ -10707,7 +10707,7 @@ STATUS_PIN_TXT = r"""
   `14:632–633`'s "remap to the user's default account" gets a PROPOSED A-row (§11).
 @ prose
   Each value is direction-isolated (`<bdi>`), and each control or bidirectional-formatting
-  character in it (the set `22:19817–19822` makes the server strip from a name), and each
+  character in it (the set `22:19819–19824` makes the server strip from a name), and each
   character of the `Default_Ignorable_Code_Point` property, which would be invisible (§5.5),
   shows as a visible "�" instead of acting or hiding, so no file string can reorder the row
   around it or hide part of itself (PROPOSED).
@@ -10797,7 +10797,7 @@ STATUS_PIN_TXT = r"""
 @ heading
   5.3 The version rule (BQ-4 RULED, owner approval pending (#2701))
 @ prose
-  The contract types it as a string with no order (`22:21406`), so this spec reads it as a
+  The contract types it as a string with no order (`22:21408`), so this spec reads it as a
   whole number written in decimal and compares it as a number, PROPOSED
 @ prose
   "format version" names what is compared, and the ticket's "This layout was exported by v2
@@ -10807,7 +10807,7 @@ STATUS_PIN_TXT = r"""
   The checks run cheapest first, and the first that fails ends the run, so a 50 MB file is
   refused before it is read (BQ-5 RULED
 @ row 2 parse · col 3
-  the server's own rule for a workspace body (`22:19817`), reused (BQ-5 RULED)
+  the server's own rule for a workspace body (`22:19819`), reused (BQ-5 RULED)
 @ row 2 parse · col 2
   at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED
 @ row 3 schema · col 3
@@ -10841,7 +10841,7 @@ STATUS_PIN_TXT = r"""
   its toast stands (§3.5).
 @ prose
   `422 validation_failed` when the server's own re-check refuses what the browser passed
-  (`22:19817`): "Nothing was imported." then "The server didn't accept this file: `{key}`
+  (`22:19819`): "Nothing was imported." then "The server didn't accept this file: `{key}`
   isn't valid.", the key the first field path of the problem's `errors[]`, cleaned and
   capped as above
 @ prose
@@ -10849,7 +10849,7 @@ STATUS_PIN_TXT = r"""
   didn't answer. Choose the file again in a moment.", in place of the key's sentence:
   nothing of the file was kept, so the way on is to choose it again (§9
 @ prose
-  A `413`, a file larger than the server takes (`22:8689`), takes the same frame with the
+  A `413`, a file larger than the server takes (`22:8691`), takes the same frame with the
   PROPOSED `e15.import.refused.size`, "The server didn't accept this file: it is larger than
   the server takes.", the oversized refusal's words at the send, the number the server's
   (D09-G5).
@@ -11586,7 +11586,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-A18 · col 4
   "Export… (a workspace file, E15-D09 §2)"
 @ row D09-A18 · col 5
-  `exportWorkspace` exports a workspace file, never a template (`22:12841`)
+  `exportWorkspace` exports a workspace file, never a template (`22:12843`)
 @ row D09-A18 · col 5
   BQ-7 RULED
 @ row D09-A18 · col 5
@@ -11666,10 +11666,10 @@ STATUS_PIN_TXT = r"""
   D09-G1
 @ row D09-G1 · col 2
   **The atomic import.** No operation takes a bundle: `exportWorkspace`'s description names
-  `POST /workspaces` with `from_bundle` (`22:12846`), a field no input schema has, and `22`
-  says so (`22:21417`)
+  `POST /workspaces` with `from_bundle` (`22:12848`), a field no input schema has, and `22`
+  says so (`22:21419`)
 @ row D09-G1 · col 2
-  `createWorkspace` refuses a body over 4 KiB (`22:8689`) while a file may be 2 MB
+  `createWorkspace` refuses a body over 4 KiB (`22:8691`) while a file may be 2 MB
 @ row D09-G1 · col 2
   and an import built in the client from `createWorkspace` and then `createLayout` for each
   layout is not atomic (`FL:171`), the partial import the ticket forbids (`11:2871`)
@@ -11681,7 +11681,7 @@ STATUS_PIN_TXT = r"""
   it re-runs every check of §3.4 on the server, admits a 2 MB body, returns the name it gave
   and the items it dropped, and refuses with the problem types of D09-G7
 @ row D09-G1 · col 3
-  it takes an `Idempotency-Key`, as `createWorkspace` does (`22:8690`), so a send repeated
+  it takes an `Idempotency-Key`, as `createWorkspace` does (`22:8692`), so a send repeated
   after a lost answer never imports twice (`SCR-026/refused-unconfirmed`)
 @ row D09-G1 · col 3
   the import is built on it and never before it (§3.5, §5.5)
@@ -11692,7 +11692,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-G2 · col 1
   D09-G2
 @ row D09-G2 · col 2
-  `schema_version` is a free string (`22:21406`): no current value, no order, no oldest
+  `schema_version` is a free string (`22:21408`): no current value, no order, no oldest
   version still read, no outcome for a value that is absent or malformed
 @ row D09-G2 · col 2
   E15-S07 names `schemaVersion` and `appVersion` in another shape (`BL:1136`)
@@ -11713,9 +11713,9 @@ STATUS_PIN_TXT = r"""
   D09-G3
 @ row D09-G3 · col 2
   Account-scoped elements: no bundle schema has an account field and `PaneConfig` forbids
-  account ids (`22:20029`), so a strict server refuses a file that carries one whole (C-6.3
+  account ids (`22:20031`), so a strict server refuses a file that carries one whole (C-6.3
 @ row D09-G3 · col 2
-  SR-040, `04:854`), while the story wants it dropped with a clear report (`11:2868`)
+  SR-040, `04:855`), while the story wants it dropped with a clear report (`11:2868`)
 @ row D09-G3 · col 2
   `14:633`'s "the user's default account" names nothing a workspace has
 @ row D09-G3 · col 3
@@ -11733,7 +11733,7 @@ STATUS_PIN_TXT = r"""
   D09-G4
 @ row D09-G4 · col 2
   `WorkspaceBundle` and `ChartTemplateInput` are not closed, and a template's `config` is
-  open (`22:21400–21421`), against C-6.3 and SR-040 (`04:854`)
+  open (`22:21402–21423`), against C-6.3 and SR-040 (`04:855`)
 @ row D09-G4 · col 3
   `additionalProperties: false` on both and a closed `config`
 @ row D09-G4 · col 3
@@ -11745,12 +11745,12 @@ STATUS_PIN_TXT = r"""
 @ row D09-G5 · col 2
   The limits the contract does not carry: the file's size (2 MB, E15-S07's default,
   `BL:1136`), the count of values (10,000, PROPOSED), the `layouts` array (32 a workspace in
-  the store, `22:8884`, none in the bundle), the `drawings` and `chart_templates` arrays,
-  and a pane kind's length (32 here, PROPOSED from the setting keys' pattern of `22:20039`,
-  since `PaneKind` has none, `22:19969`)
+  the store, `22:8886`, none in the bundle), the `drawings` and `chart_templates` arrays,
+  and a pane kind's length (32 here, PROPOSED from the setting keys' pattern of `22:20041`,
+  since `PaneKind` has none, `22:19971`)
 @ row D09-G5 · col 2
   and the two directions disagree: an export carries every live preset, 500 a user and never
-  truncated, while an import takes 200 (`22:21420–21421`), and an export's size has no cap
+  truncated, while an import takes 200 (`22:21422–21423`), and an export's size has no cap
   while an import's is 2 MB
 @ row D09-G5 · col 3
   the caps in `22`, the same numbers in both directions, or an export that warns when its
@@ -11763,8 +11763,8 @@ STATUS_PIN_TXT = r"""
   D09-G6
 @ row D09-G6 · col 2
   References inside the bundle point at the exporter's ids: a drawing's `layout_id`
-  (`22:20388`), a pane's `chart_template_id` (`22:20064`) and its `indicator_preset_ids`
-  (`22:20070`), each refused today on a create
+  (`22:20390`), a pane's `chart_template_id` (`22:20066`) and its `indicator_preset_ids`
+  (`22:20072`), each refused today on a create
 @ row D09-G6 · col 3
   a rule that the server makes new ids for everything it imports and re-points each
   reference, never honouring the exporter's (E15-X01, `BL:721`), and drops a reference it
@@ -11778,9 +11778,9 @@ STATUS_PIN_TXT = r"""
 @ row D09-G7 · col 2
   No problem type names a newer or an older format version, a wrong file type, or a store
   that does not answer at the import: today the workspace routes refuse with
-  `validation_failed` and `limit_reached` (`22:19817`
+  `validation_failed` and `limit_reached` (`22:19819`
 @ row D09-G7 · col 2
-  `22:8684`), so these refusals are the client's
+  `22:8686`), so these refusals are the client's
 @ row D09-G7 · col 2
   the budget is a confirm and needs none
 @ row D09-G7 · col 3
@@ -11795,7 +11795,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-G8 · col 2
   E15-S07 wants the file to carry its own report of what the export dropped (`BL:1136`)
 @ row D09-G8 · col 2
-  `WorkspaceBundle` has no field for it (`22:21400–21421`)
+  `WorkspaceBundle` has no field for it (`22:21402–21423`)
 @ row D09-G8 · col 3
   a report field in the bundle that the preview's Drop rows read, or the import's answer
   naming what the server dropped
@@ -11837,7 +11837,7 @@ STATUS_PIN_TXT = r"""
   D09-G11
 @ row D09-G11 · col 2
   The data class and the sharing claim: `exportWorkspace`'s description makes the sharing
-  claim (`22:12844`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
+  claim (`22:12846`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
   file user-confidential (`BL:721`)
 @ row D09-G11 · col 3
   `22`'s description drops the sharing claim and names the class
@@ -11901,7 +11901,7 @@ STATUS_PIN_TXT = r"""
   D09-G15
 @ row D09-G15 · col 2
   An export carries the caller's whole live preset library, at most 500 and never truncated
-  (`22:21415–21417`), not only the presets this workspace's panes use, while the Included
+  (`22:21417–21419`), not only the presets this workspace's panes use, while the Included
   list's "3 indicator presets" reads as the workspace's own
 @ row D09-G15 · col 3
   the owner (#2701) chooses: the Included list says "all 3 of your indicator presets", or
@@ -11946,7 +11946,7 @@ STATUS_PIN_TXT = r"""
   D09-C3
 @ row D09-C3 · col 2
   the ticket's Included list names densities, which `WorkspaceBundle` does not hold
-  (`22:21400–21421`
+  (`22:21402–21423`
 @ row D09-C3 · col 2
   `D02:507`) (the third deviation
 @ row D09-C3 · col 2
@@ -11958,7 +11958,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-C4 · col 2
   BQ-10 RULED a symbol cap of 16 from the pattern's `{2,16}`
 @ row D09-C4 · col 2
-  a symbol is at most 20 characters with its `USDT` (`22:20055`), so the cap here is 20 (the
+  a symbol is at most 20 characters with its `USDT` (`22:20057`), so the cap here is 20 (the
   fourth deviation
 @ row D09-C4 · col 2
   D09-Q1)
@@ -12021,7 +12021,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-C11 · col 1
   D09-C11
 @ row D09-C11 · col 2
-  `04:1181` marks a Viewer ✔(own) on saving layouts against `04:1140`, where a Viewer holds
+  `04:1182` marks a Viewer ✔(own) on saving layouts against `04:1141`, where a Viewer holds
   no `workspaces:write`, and E15-D01's locked list (`D02:84`)
 @ row D09-C11 · col 2
   this spec draws the Viewer's Import… in T2, and the server enforces either way (C-12.4)
@@ -12072,7 +12072,7 @@ STATUS_PIN_TXT = r"""
   D09-C16
 @ row D09-C16 · col 2
   SCR-025's "export as template" (`14:618`) against `exportWorkspace`, which exports a
-  workspace file (`22:12841`)
+  workspace file (`22:12843`)
 @ row D09-C16 · col 2
   D09-A18
 @ row D09-C16 · col 3
@@ -12167,7 +12167,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-Q1 · col 1
   D09-Q1
 @ row D09-Q1 · col 2
-  the symbol cap: BQ-10's 16, or the contract's 20 (`22:20055`)?
+  the symbol cap: BQ-10's 16, or the contract's 20 (`22:20057`)?
 @ row D09-Q1 · col 3
   20, the contract's (the fourth deviation)
 @ row D09-Q1 · col 4
@@ -12219,7 +12219,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-Q6 · col 2
   the trust note's "Importing creates a new workspace and changes nothing else." stands
   beside Add rows for indicator presets, chart templates and drawings, which join the
-  importer's own libraries (`22:21420–21423`, counted against the 500-preset cap): is the
+  importer's own libraries (`22:21422–21425`, counted against the 500-preset cap): is the
   sentence kept word for word?
 @ row D09-Q6 · col 3
   the ruled sentence, verbatim (BQ-2 RULED)
@@ -12469,18 +12469,18 @@ RULED_PIN_TXT = r"""
    `013562636a339ab32c80d257b9d1f8cef8e64422`: named only, never cited by line; D09-A22 hands it
    the rail's Import….
 @ ¶5 ‖ paragraph ‖ 1
-  **Inputs pinned.** Base `origin/main` `fabb267f4cd59ded896af813949ddac89691a1d1`; every
+  **Inputs pinned.** Base `origin/main` `908667f27b63c5722cb084819902bcbd7943bf28`; every
    `file:line` cite in this file is at it and the tool re-checks each (a moved line is a WARN; a
    fragment gone or ambiguous is a FAIL; a `14` line after this PR's pointer lines sits one or two
    lower). Plan: `14` SCR-025 `14:616–627`, SCR-026 `14:630–640`, SCR-089 `14:1990`; `15` CMP-001
    `15:48`, CMP-019 `15:225`, CMP-023 `15:262`, CMP-027 `15:301–307`, CMP-028 `15:311`, CMP-033
    `15:361`, CMP-038 `15:409`, CMP-043 `15:463–468`, CMP-044 `15:473`, CMP-045 `15:483`, CMP-049
    `15:524–529`, CMP-067 `15:690–696`, CMP-068 `15:699`, CMP-079 `15:811`, CMP-234 `15:2738–2742`;
-   US-LAY-007 `11:2858–2874`; `22` `createWorkspace` `22:8680–8684`, the layout limit `22:8884`,
-   `exportWorkspace` `22:12841–12846`, `WorkspaceInput` `22:19817`, `22:19829`, `PaneKind`
-   `22:19969`, `PaneConfig` `22:20029`, the setting keys `22:20039`, the symbol `22:20055`,
-   `WorkspaceBundle` `22:21400–21421`; `21:3302`, `21:5079`; `04:54`, `04:854`, `04:923`, `04:966`,
-   `04:1140`, `04:1181`; `05:35`, `05:96`, `05:101`, `05:131`, `05:144`, `05:150`; the ticket
+   US-LAY-007 `11:2858–2874`; `22` `createWorkspace` `22:8682–8686`, the layout limit `22:8886`,
+   `exportWorkspace` `22:12843–12848`, `WorkspaceInput` `22:19819`, `22:19831`, `PaneKind`
+   `22:19971`, `PaneConfig` `22:20031`, the setting keys `22:20041`, the symbol `22:20057`,
+   `WorkspaceBundle` `22:21402–21423`; `21:3302`, `21:5079`; `04:54`, `04:855`, `04:924`, `04:967`,
+   `04:1141`, `04:1182`; `05:35`, `05:96`, `05:101`, `05:131`, `05:144`, `05:150`; the ticket
    `BL:242` and E15-S07 `BL:1111`, `BL:1136`. Merged upstream: E15-D01 (`D01:39`); E15-D02
    (`D02:84`, D-15 `D02:133`, D-30 `D02:148`, `D02:292`, `D02:507`, §5.11 `D02:509–522`, §8.1
    `D02:635–674`, `D02:732`, A-10 `D02:823`, G-12 `D02:843`, OQ-O `D02:865`, the hand-off
@@ -12519,15 +12519,15 @@ RULED_PIN_TXT = r"""
    budget of 16 <!-- audit:contract.budget_ms=16 --> ms p95 (C-14.2). The limits: a file of at most
    2 <!-- audit:contract.size_mb=2 --> MB (E15-S07's default, `BL:1136`), checked within 500 <!--
    audit:contract.parse_ms=500 --> ms (`14:637`); nesting depth at most 16 <!--
-   audit:contract.depth=16 --> (`22:19817`); at most 10,000 <!-- audit:contract.nodes=10000 -->
+   audit:contract.depth=16 --> (`22:19819`); at most 10,000 <!-- audit:contract.nodes=10000 -->
    values (`BL:1136`; PROPOSED, D09-G5); at most 32 <!-- audit:contract.layouts_max=32 --> layouts
-   a workspace (`22:8884`) and 16 <!-- audit:contract.panes_max=16 --> panes a layout (`D02:133`);
-   at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a user (`22:8684`); at most 200
+   a workspace (`22:8886`) and 16 <!-- audit:contract.panes_max=16 --> panes a layout (`D02:133`);
+   at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a user (`22:8686`); at most 200
    <!-- audit:contract.presets_max=200 --> indicator presets a file, whole or not at all
-   (`22:21420–21421`). The caps on a string from the file: names 40 <!-- audit:contract.name_max=40
-   --> (`22:19829`), symbols 20 <!-- audit:contract.symbol_max=20 --> (`22:20055`), panel kinds 32
-   <!-- audit:contract.kind_max=32 --> (PROPOSED: `PaneKind` has no length bound, `22:19969`, so
-   the setting keys' cap of `22:20039` stands in; D09-G5), drawing labels 120 <!--
+   (`22:21422–21423`). The caps on a string from the file: names 40 <!-- audit:contract.name_max=40
+   --> (`22:19831`), symbols 20 <!-- audit:contract.symbol_max=20 --> (`22:20057`), panel kinds 32
+   <!-- audit:contract.kind_max=32 --> (PROPOSED: `PaneKind` has no length bound, `22:19971`, so
+   the setting keys' cap of `22:20041` stands in; D09-G5), drawing labels 120 <!--
    audit:contract.label_max=120 --> (`21:3302`), keys 64 <!-- audit:design.key_cap=64 --> and file
    names 40 <!-- audit:design.file_cap=40 --> (PROPOSED). The import dialog is CMP-043 `size="lg"`,
    at most 960 <!-- audit:contract.dialog_lg_px=960 --> px wide; the export dialog is `size="md"`,
@@ -12541,10 +12541,10 @@ RULED_PIN_TXT = r"""
   - **Deviation — the branch.** The ticket names `design/e15-workspace-import-export-hifi`; the
    work is on `design/e15-d09-hifi` (C-4.4; BQ-1 RULED).
   - **Deviation — the densities.** The ticket's Included list names densities; `WorkspaceBundle`
-   holds none (`22:21400–21421`; density is global or per panel, `D02:507`), so a C-row records the
+   holds none (`22:21402–21423`; density is global or per panel, `D02:507`), so a C-row records the
    densities, and the Included list names only what the bundle holds (BQ-2 RULED).
   - **Deviation — the symbol cap.** BQ-10 RULED reads 16 for symbols from the pattern's `{2,16}`;
-   a symbol is at most 20 characters with its `USDT` (`22:20055`), so the cap here is the
+   a symbol is at most 20 characters with its `USDT` (`22:20057`), so the cap here is the
    contract's 20 and D09-Q1 asks the orchestrator to confirm it; every other number of BQ-10
    stands.
   - **Deviation — the intervals.** The ticket's Scope lists intervals among what the export
@@ -12645,9 +12645,9 @@ RULED_PIN_TXT = r"""
    in AC 1's words: "Never included: credentials — API keys or tokens; accounts, trade-group and
    user ids; environment binding (DEMO or LIVE); alert and rule bindings; P&L, positions or
    orders." — a C-row to `D02:511`, an extension and not a contradiction; the Included list names
-   only what `WorkspaceBundle` holds (`22:21400–21421`); the import's trust note is `D02:513`
+   only what `WorkspaceBundle` holds (`22:21402–21423`); the import's trust note is `D02:513`
    verbatim: "A workspace file never carries credentials or account bindings. Importing creates a
-   new workspace and changes nothing else."; the sharing claim in `22:12844`'s description is never
+   new workspace and changes nothing else."; the sharing claim in `22:12846`'s description is never
    written anywhere (its G-row names it without repeating it); the tool gates both sentences byte
    for byte on every frame that shows them; owner approval pending (#2701) | RULED (6396085915) —
    owner approval pending (#2701) |
@@ -12676,7 +12676,7 @@ RULED_PIN_TXT = r"""
   | BQ-7 | the export surface and Export…'s availability | Export… in three places — SCR-025's
    Share section (E15-D08, merged at `fb1b4804`), the tab's `[⋯]` (`D03:384`) and the rail's
    workspace menu (`D02:511`) — and one CMP-043 `md` dialog with the Included and Excluded lists
-   built from the fetched bundle; Export… is a read (`22:12841`), never gated (a read): T1 for
+   built from the fetched bundle; Export… is a read (`22:12843`), never gated (a read): T1 for
    every session, view-as included; on the viewer's unsaved default it is an availability state
    (`D03:583`) | RULED (6396085915) |
   | BQ-8 | the file name and the completion | `<slug>.cv-workspace-v<schema_version>.json`, the
@@ -12703,7 +12703,7 @@ RULED_PIN_TXT = r"""
   | BQ-13 | the keyboard path and the tree | Choose file… is a real `<button>` whose `Enter` or
    `Space` opens the OS picker; the drop zone only adds to the input; the table is one Tab stop
    read with its headers; each announcement polite and once (§7) | RULED (6396085915) |
-  | BQ-14 | T2 per role, view-as first | Import… is a write (`22:8680`): its legs in the server's
+  | BQ-14 | T2 per role, view-as first | Import… is a write (`22:8682`): its legs in the server's
    order, view-as first (`rbac.view_as`), then the permission (`rbac.permission`), then the state
    (`workspace.limit.count`), keys as merged E15-D02 (`D02:655`) and E15-D03 (`D03:564`) carry
    them; Export… is never gated; a rejected file never T2-locks Import because the verb is absent;
@@ -12846,21 +12846,21 @@ RULED_PIN_TXT = r"""
    rejection (§5.4) |
   | `22`: `exportWorkspace` is a read (`workspaces:read`, scope `self`) that returns one
    `WorkspaceBundle`; `createWorkspace` is a write (`workspaces:write`), refused past 32
-   workspaces; no operation takes a bundle yet | `22:12841–12846`; `22:21400–21421`;
-   `22:8680–8684`; `22:21417` | Export… never gated (BQ-7 RULED); the Included list counted from
+   workspaces; no operation takes a bundle yet | `22:12843–12848`; `22:21402–21423`;
+   `22:8682–8686`; `22:21419` | Export… never gated (BQ-7 RULED); the Included list counted from
    the bundle (§2.3); Import… a write with its legs (§6); D09-G1 |
   | `22`'s limits: the nesting depth of a body; a name's 40 characters; a symbol's 20; a setting
    key's pattern; 32 layouts a workspace; 16 panes a layout; indicator presets whole or not at all,
-   refused beyond 200 | `22:19817`; `22:19829`; `22:20055`; `22:20039`; `22:8884`; `D02:133`;
-   `22:21420–21421` | the check steps and their limits (§3.4, §5.4); the caps clause of every frame
+   refused beyond 200 | `22:19819`; `22:19831`; `22:20057`; `22:20041`; `22:8886`; `D02:133`;
+   `22:21422–21423` | the check steps and their limits (§3.4, §5.4); the caps clause of every frame
    that shows a string from the file |
   | `PaneConfig` never holds credentials, account ids or user ids; the pane columns are class P0 |
-   `22:20029`; `21:5079` | the Excluded list holds for every file the dialog saves (§2.3); the
+   `22:20031`; `21:5079` | the Excluded list holds for every file the dialog saves (§2.3); the
    account setting's Drop row (§4.2) |
   | `04`: the browser is hostile; the server refuses unknown fields and never coerces them
    (SR-040), while a client ignores them (C-6.3); no import path takes a filesystem path (SR-097);
-   no `dangerouslySetInnerHTML` (SR-127); `workspaces:write` per role | `04:54`; `04:854`;
-   `04:923`; `04:966`; `04:1140` | §1.2; every `renders:` and `server:` clause; §6 |
+   no `dangerouslySetInnerHTML` (SR-127); `workspaces:write` per role | `04:54`; `04:855`;
+   `04:924`; `04:967`; `04:1141` | §1.2; every `renders:` and `server:` clause; §6 |
   | `05`: no function by hover or drag alone; focus never silently stolen; dragging alternatives;
    text resize; live regions and their hygiene | `05:35`; `05:96`; `05:101`; `05:131`; `05:144`;
    `05:150` | Choose file… as the keyboard path, the drop zone never a Tab stop (§3.3); focus and
@@ -12901,16 +12901,16 @@ RULED_PIN_TXT = r"""
   | Exfiltration: the file leaves the machine and may end up in a chat | the server builds the
    bundle by an allow-list projection (E15-S07, `BL:1136`); no field of `WorkspaceBundle` holds a
    credential, an account, a trade-group or user id, an environment, an alert or rule binding, P&L,
-   a position or an order (`22:21400–21421`; `22:20029`; C-2.7); the preview names what travels
+   a position or an order (`22:21402–21423`; `22:20031`; C-2.7); the preview names what travels
    and, first-class, the Excluded list, so a mistake in the build is visible rather than hidden;
    the client saves only what its lists can show (D09-D2) | `SCR-025/export-preview`,
    `SCR-025/export-done` (BQ-2 RULED; owner approval pending (#2701)) |
   | Injection through content: every string from the file is untrusted | text only: never markup,
-   never a link, never interpreted (SR-127, `04:966`; C-12.10); capped, an ellipsis past the cap,
+   never a link, never interpreted (SR-127, `04:967`; C-12.10); capped, an ellipsis past the cap,
    and nothing past a cap rendered, announced, copied or logged; direction-isolated, each control,
    bidi or invisible character shown as a visible "�" so it never acts or hides (D09-D20); a key
    named in mono; the report repeats nothing of the file beyond those capped strings; the same rule
-   holds in the applied workspace, whose names the server sanitises again (`22:19817`) | every
+   holds in the applied workspace, whose names the server sanitises again (`22:19819`) | every
    `caps:` and `renders:` clause; §4.4; §5.5 |
   | Resource abuse: a file sized or shaped to stall the app | checked in a worker, cheapest first:
    the size before a byte is parsed, then the depth and the count of values while it parses, then
@@ -12926,7 +12926,7 @@ RULED_PIN_TXT = r"""
   **The server re-checks (Condition 1).** No guard in the browser replaces the server's own
    validation: the server re-checks size, depth, nodes, schema and version when the file is
    imported (E15-S07), refuses unknown fields on its write paths, fail closed, while the client
-   ignores them (C-6.3; SR-040, `04:854`), and treats the browser as hostile (`04:54`; C-2.12), and
+   ignores them (C-6.3; SR-040, `04:855`), and treats the browser as hostile (`04:54`; C-2.12), and
    the same holds for every later write of the workspace, `PUT /workspaces/{workspaceId}` included
    (the ticket's Security notes, `BL:266`). `SCR-026/validating` says so in its `server:` clause,
    which the tool gates.
@@ -12939,7 +12939,7 @@ RULED_PIN_TXT = r"""
   **What the user is told (BQ-2 RULED; owner approval pending (#2701)).** Two sentences carry the
    trust claims, each gated byte for byte wherever it shows: the Excluded list on the export and
    the trust note on the import (§9 holds both). The caveat says what the file does show; the
-   sharing claim of `22:12844`'s description is written nowhere in this spec (D09-G11).
+   sharing claim of `22:12846`'s description is written nowhere in this spec (D09-G11).
 § E15-D09 — SCR-026 workspace import / export, preview and rejection states: hi-fi › 1. Locked
    inputs, the trust boundary and decisions › 1.3 The state inventory, reconciled (binding; the
    tool gates every row)#1
@@ -13079,7 +13079,7 @@ RULED_PIN_TXT = r"""
   ## 2. Export: entry points, the preview dialog, the file and its completion
 @ ¶1 ‖ paragraph ‖ 1
   Export is a read. `exportWorkspace` returns the stored workspace as one `WorkspaceBundle`,
-   `workspaces:read`, scope `self` (`22:12841–12847`), so Export… is never gated (a read): T1 for
+   `workspaces:read`, scope `self` (`22:12843–12849`), so Export… is never gated (a read): T1 for
    every session on a stored workspace, Owner, Manager, Viewer and view-as alike (`D02:645`; T2 is
    stated once, in §6). It sits in three places and opens one dialog (BQ-7 RULED, §2.2): a CMP-043
    `role="dialog"`, `size="md"`, at most 560 <!-- audit:contract.dialog_md_px=560 --> px wide
@@ -13087,7 +13087,7 @@ RULED_PIN_TXT = r"""
    and saves that same bundle, so what the owner checks is what the file holds (`D02:511`; F-LAY-6,
    `FL:139–171`). Beside the Included list stands the Excluded list, first-class (§2.3). The file
    is written on this machine through the platform's save sheet and its name carries the format
-   version (§2.4); no path ever goes to the server (SR-097, `04:923`), and nothing leaves the
+   version (§2.4); no path ever goes to the server (SR-097, `04:924`), and nothing leaves the
    machine until the owner sends the file on. The trust copy is BQ-2's ruled text, owner approval
    pending (#2701), and the sharing claim in `exportWorkspace`'s description is written nowhere in
    this spec (D09-G11). A decision that names no ruling is PROPOSED.
@@ -13133,7 +13133,7 @@ RULED_PIN_TXT = r"""
    and a screen reader reads its second line with its name · `Enter` and `Space` change nothing and
    open nothing | availability | `e15.export.menu_item` · `ws.export.unstored` | 07 |
   | `SCR-025/export-preparing` | Export… chosen on the stored workspace Scalping;
-   `exportWorkspace` called (`22:12841`), its bundle not back yet | dialog: CMP-043 `size="md"`
+   `exportWorkspace` called (`22:12843`), its bundle not back yet | dialog: CMP-043 `size="md"`
    `role="dialog"` "Export Scalping", close × "Close Export Scalping"; busy: "Preparing the file…"
    — CMP-038 with `aria-busy="true"` on the body, a load, so Cancel stays; footer: Cancel
    (`secondary`); initial focus: Cancel; Esc → Cancel; exits T1: Cancel · Esc · ×; Components:
@@ -13342,21 +13342,21 @@ RULED_PIN_TXT = r"""
 @ ¶1 ‖ paragraph ‖ 1
   **What the two lists say (BQ-2 RULED; owner approval pending (#2701)).** The Included list is
    counted from the fetched bundle, so it names only what `WorkspaceBundle` holds
-   (`22:21400–21421`): no density, which no workspace stores (the third deviation). The Excluded
+   (`22:21402–21423`): no density, which no workspace stores (the third deviation). The Excluded
    list is BQ-2's sentence, byte for byte, drawn as a list of its five clauses and first-class: the
    same type, weight and column width as the Included list, never a footnote, a hint or a tooltip.
    It holds for every file this dialog saves: the bundle has no field for any of the five classes
-   (`22:21404`; a pane's settings never hold credentials, account ids or user ids, `22:20029`,
+   (`22:21406`; a pane's settings never hold credentials, account ids or user ids, `22:20031`,
    `21:5079`; credentials never leave the secrets module, C-2.7), the server builds the bundle by
    copying fields in by name, never by spreading a row (E15-S07, `BL:1136`), and the client saves
    only a bundle that passes the check below. The caveat says what the file does show, a trader's
    symbols, layouts and settings, which makes the file user-confidential (E15-X01); the sharing
    claim of `exportWorkspace`'s description is never written (D09-G11).
 @ ¶2 ‖ table ‖ 1
-  | Included item | Built from the bundle (`22:21400–21421`) | For Scalping | Left out when |
+  | Included item | Built from the bundle (`22:21402–21423`) | For Scalping | Left out when |
   | --- | --- | --- | --- |
   | the layouts, with their names | `layouts[]`, each `name` (at most 40 <!--
-   audit:contract.name_max=40 --> characters, `22:19829`), in the bundle's order | 2 <!--
+   audit:contract.name_max=40 --> characters, `22:19831`), in the bundle's order | 2 <!--
    audit:fixture.export_layouts=2 --> layouts (Layout 1, Order-flow) | the workspace has no layout
    yet |
   | the panels | every pane of every layout, `layouts[].panes[]` | 7 <!--
@@ -13372,15 +13372,15 @@ RULED_PIN_TXT = r"""
    text labels | there is no drawing |
   | the chart templates | `chart_templates[]` | 1 chart template | there is none |
   | the indicator presets | `indicator_presets[]`: every live preset of the caller, never
-   truncated (`22:21417–21421`) | 3 indicator presets | there is none |
+   truncated (`22:21419–21423`) | 3 indicator presets | there is none |
 @ ¶3 ‖ paragraph ‖ 1
   A count of one takes the singular ("1 layout (Layout 1)", "1 panel"); the items keep the
    sentence's order and the last one takes its full stop. The workspace record itself (its name,
    whether it opens at startup, its icon and its place in the rail) travels as the file's
-   `workspace` (`22:21404–21408`) and is named by the title; the format version and the time of
-   export travel too (`22:21406–21407`), the version also in the file's name (§2.4); the Included
+   `workspace` (`22:21406–21410`) and is named by the title; the format version and the time of
+   export travel too (`22:21408–21409`), the version also in the file's name (§2.4); the Included
    list leaves both out because they are facts about the file, not about the workspace. Every name
-   in the lists is rendered as text, never as markup (SR-127, `04:966`).
+   in the lists is rendered as text, never as markup (SR-127, `04:967`).
 @ ¶4 ‖ paragraph ‖ 1
   **The check before the preview (PROPOSED).** The preview can vouch only for what it lists, so
    before it draws the lists the client reads the fetched bundle with the import's own check (§3's
@@ -13398,7 +13398,7 @@ RULED_PIN_TXT = r"""
    written to a file, and on import an unknown key is never read into the app (§3.4).
   - A limit an import would refuse (the file's size, its nesting or its count of values, or its
    presets: an export carries every live preset, while an import takes at most 200 <!--
-   audit:contract.presets_max=200 --> of them, `22:21417–21421`) keeps Download file and adds a
+   audit:contract.presets_max=200 --> of them, `22:21419–21423`) keeps Download file and adds a
    CMP-028 `warning` line under the caveat: the import's own first sentence, then "You can save it,
    but this app won't import it." For a file with 240 presets: "This file has 240 indicator
    presets; a file may carry at most 200. You can save it, but this app won't import it." The
@@ -13470,15 +13470,15 @@ RULED_PIN_TXT = r"""
   **The name (BQ-8 RULED; the slug rule is D09-G14).**
    `<slug>.cv-workspace-v<schema_version>.json`, for the fixture `scalping.cv-workspace-v1.json`.
    The format token follows SCR-089's `cv-rule-bundle/1` family (`E36D03:153–155`); the version is
-   the bundle's own `schema_version` (`22:21406`), never an app version; and there is no date,
-   because `exported_at` is inside the file (`22:21406–21407`) and a date in the name invites stale
+   the bundle's own `schema_version` (`22:21408`), never an app version; and there is no date,
+   because `exported_at` is inside the file (`22:21408–21409`) and a date in the name invites stale
    copies. The import reads the version inside the file and never the name (§5), so a renamed file
    imports as well as any other. The slug, PROPOSED in full:
 @ ¶2 ‖ list ‖ 1
   1. the stored name, Unicode NFKD with its combining marks removed, lower-cased;
   2. every character outside `a`–`z` and `0`–`9` becomes `-`, a run of them one `-`, and the ends
    are trimmed;
-  3. cut at 40 <!-- audit:contract.name_max=40 --> characters, the name's own cap (`22:19829`),
+  3. cut at 40 <!-- audit:contract.name_max=40 --> characters, the name's own cap (`22:19831`),
    and trimmed again;
   4. an empty result is `workspace`, and a Windows device name (`con`, `prn`, `aux`, `nul`, `com1`
    to `com9`, `lpt1` to `lpt9`) takes `workspace-` in front;
@@ -13508,7 +13508,7 @@ RULED_PIN_TXT = r"""
    nothing saved and no event (`FL:146`). Where a browser has no save picker, the file goes to its
    downloads under the suggested name; the hand-off is the only answer the page gets there, so it
    counts as the save (PROPOSED; D09-Q2). No path, folder or file name ever goes to the server
-   (SR-097, `04:923`).
+   (SR-097, `04:924`).
 @ ¶5 ‖ paragraph ‖ 1
   **The completion step (BQ-8 RULED).** When the write ends, the body changes in place
    (`SCR-025/export-done`): a CMP-028 `success` line, "Exported Scalping as
@@ -13616,14 +13616,14 @@ RULED_PIN_TXT = r"""
    `rbac.permission` → `workspace.limit.count`; Esc → Close (the menu, focus back on its button);
    exits T1: Esc | T2 | `e15.import.menu_item` · `rbac.view_as` | 07 |
   | `SCR-026/entry-permission` | a Viewer session opens "+" or the rail's workspace menu
-   (`04:1140`, `D03:564`; the rail's item, D09-A22) | T2: Import… in "+" and in the rail's
+   (`04:1141`, `D03:564`; the rail's item, D09-A22) | T2: Import… in "+" and in the rail's
    workspace menu — the full label, the CMP-019 `lock` leading it, `aria-disabled="true"` (never
    `disabled`), CMP-079 RbacGate, rendering 2a, the item's second line (§6); reason:
    `rbac.permission` "Your role can't save workspaces."; legs: `rbac.view_as` → `rbac.permission` →
    `workspace.limit.count`; Esc → Close (the menu, focus back on its button); exits T1: Esc | T2 |
    `e15.import.menu_item` · `rbac.permission` | 07 |
   | `SCR-026/entry-limit` | an Owner session at the workspace limit opens "+" or the rail's
-   workspace menu (`22:8684`, `D03:564`; the rail's item, D09-A22) | T2: Import… in "+" and in the
+   workspace menu (`22:8686`, `D03:564`; the rail's item, D09-A22) | T2: Import… in "+" and in the
    rail's workspace menu — the full label, the CMP-019 `lock` leading it, `aria-disabled="true"`
    (never `disabled`), CMP-079 RbacGate, rendering 2a, the item's second line (§6); reason:
    `workspace.limit.count` "You have the most workspaces you can have."; legs: `rbac.view_as` →
@@ -13721,10 +13721,10 @@ RULED_PIN_TXT = r"""
    Back opens the dialog for any session, and where §6's legs gate Import…, the dialog's Import as
    new workspace takes §6's form in place from the start, as on `SCR-026/import-leg-lost`, while
    Choose file…, the checks and the preview work as for every session. Import… is a write, because
-   it creates a workspace (`createWorkspace`, `22:8680`; no operation takes a bundle yet,
-   `22:21417`), so §6's legs gate it, view-as first, with the keys merged E15-D02 and E15-D03 carry
+   it creates a workspace (`createWorkspace`, `22:8682`; no operation takes a bundle yet,
+   `22:21419`), so §6's legs gate it, view-as first, with the keys merged E15-D02 and E15-D03 carry
    (`D02:655`; `D03:564`). An Owner or a Manager under 32 <!-- audit:contract.workspaces_max=32 -->
-   workspaces (`22:8684`) meets `SCR-026/entry` (`04:1140`); the three other entry frames,
+   workspaces (`22:8686`) meets `SCR-026/entry` (`04:1141`); the three other entry frames,
    `SCR-026/entry-view-as`, `SCR-026/entry-permission` and `SCR-026/entry-limit`, are drawn as §6
    states the rule. Each menu's own `Esc` closes it and returns focus to its button, on every entry
    frame (§7).
@@ -13848,7 +13848,7 @@ RULED_PIN_TXT = r"""
    its drag-over words, "Drop one .json file", are announced once, politely (PROPOSED; no event
    fires, because nothing was read). A drop that carries no file — text, an address, an HTML
    fragment, an image dragged from a page — is ignored: nothing is read, nothing is fetched and no
-   address is ever followed (SR-097, `04:923`); only the drop's files are read, and only through
+   address is ever followed (SR-097, `04:924`); only the drop's files are read, and only through
    the input. While the dialog is open, a drop outside the zone is ignored too, the page's default
    prevented, so a file let go over the header, the footer or the scrim never makes the page open
    it (D09-D34). Dropping one file that is not JSON leads to `SCR-026/rejected-wrong-type` (§5.1):
@@ -13907,29 +13907,29 @@ RULED_PIN_TXT = r"""
    `oversized`; `wrong-type` |
   | 2 | parse depth / node count | the JSON, parsed in the worker with both limits counted while
    it parses, so a hostile file stalls a worker and never the page (`BL:1136`) | depth 16 <!--
-   audit:contract.depth=16 --> levels, the server's own rule for a request body (`22:19817`);
+   audit:contract.depth=16 --> levels, the server's own rule for a request body (`22:19819`);
    10,000 <!-- audit:contract.nodes=10000 --> values (`BL:1136`), PROPOSED (D09-G5) |
    `SCR-026/rejected-nodes` (the depth, with the node count its variant); invalid JSON:
    `SCR-026/rejected-malformed`'s parse variant, which names the line | `malformed` |
   | 3 | schema | first the envelope, `schema_version` present and a whole number (D09-D25), else
    the malformed outcome that names it; then the shape of that format version, only when this app
-   reads it (one shape per readable version, D09-G2), against `WorkspaceBundle` (`22:21400–21421`):
+   reads it (one shape per readable version, D09-G2), against `WorkspaceBundle` (`22:21402–21423`):
    every required key present and every known key's value of its kind, a pane's kind an open string
-   for a reader (`22:19969`), no layout over its panes, no workspace over its layouts, the
+   for a reader (`22:19971`), no layout over its panes, no workspace over its layouts, the
    indicator presets whole or not at all; an unknown key is ignored and never read into the app
    (C-6.3); a version above the newest or below the floor skips the shape and goes to step 4, so
    the shape never shadows the version outcome (D09-Q5) | 16 <!-- audit:contract.panes_max=16 -->
    panes a layout (`D02:133`); 32 <!-- audit:contract.layouts_max=32 --> layouts a workspace
-   (`22:8884`); 200 <!-- audit:contract.presets_max=200 --> presets a file (`22:21420–21421`) |
+   (`22:8886`); 200 <!-- audit:contract.presets_max=200 --> presets a file (`22:21422–21423`) |
    `SCR-026/rejected-malformed`: the missing key, or the known key whose value is the wrong kind,
    named in mono, or its panes, layouts and presets variants | `malformed` |
-  | 4 | version | the file's `schema_version` (`22:21406`) against the format version this app
+  | 4 | version | the file's `schema_version` (`22:21408`) against the format version this app
    reads (BQ-4 RULED): newer is refused; older and still readable is migrated forward in the
    worker; older than the oldest this app reads is refused | this app reads format version 1 <!--
    audit:fixture.app_format=1 -->; the order of versions and the oldest one read are D09-G2's |
    `SCR-026/rejected-version-newer`; `SCR-026/rejected-version-older`; a migration is no failure:
    `SCR-026/preview-migrated` | `version-newer`; `version-older` |
-  | 5 | per-pane registry | each pane's kind against this build's registry (`22:19969`) and each
+  | 5 | per-pane registry | each pane's kind against this build's registry (`22:19971`) and each
    pane setting against the registry's list for its kind (`BL:1136`) | — | nothing fails here: an
    unknown kind is a Drop row, never a refusal (AC 3); a setting the registry marks account-scoped
    is a Drop row, and so is a setting it does not list for its kind, a newer build's option
@@ -13964,17 +13964,17 @@ RULED_PIN_TXT = r"""
   **What the check in the browser is, and is not (Condition 1).** It is a courtesy: it tells the
    user early and keeps a hostile file away from the page, and it never replaces the server's own
    check. The server re-checks size, depth, nodes, schema and version when the file is imported
-   (E15-S07, `BL:1136`); it refuses unknown fields on its write paths (SR-040, `04:854`) and treats
+   (E15-S07, `BL:1136`); it refuses unknown fields on its write paths (SR-040, `04:855`) and treats
    the browser as hostile (`04:54`), and the ticket's Security notes say the same of every client
    guard (`BL:266`). `SCR-026/validating` says so in its `server:` clause, which the tool gates
    (S14). A file the server refuses at the send is `SCR-026/refused-server` (§5.1) and never a
    partial import, because the import is one request that creates everything or nothing (D09-G1,
    §12). Until it has passed, the file is never used to build a component, open a window or send a
-   request (`BL:1136`), and no import path takes a filesystem path (SR-097, `04:923`). The worker
+   request (`BL:1136`), and no import path takes a filesystem path (SR-097, `04:924`). The worker
    reads the file as plain data and builds the preview only from the fields `WorkspaceBundle`
    names, so an unknown key, `__proto__` and `constructor` included, is never read into the app:
    the client ignores it, as C-6.3 asks of every client, and the server refuses it on its write
-   path, fail closed (C-6.3; SR-040, `04:854`), which is `SCR-026/refused-server`; D09-G4 asks `22`
+   path, fail closed (C-6.3; SR-040, `04:855`), which is `SCR-026/refused-server`; D09-G4 asks `22`
    to close the schemas so the bundle says so too, and E15-S07's fuzz corpus covers the
    prototype-shaped keys (`BL:1136`).
 @ ¶6 ‖ paragraph ‖ 1
@@ -13991,7 +13991,7 @@ RULED_PIN_TXT = r"""
 @ ¶1 ‖ paragraph ‖ 1
   **The send (BQ-9 RULED; D-30, `D02:148`).** Import as new workspace sends the checked file once,
    and the server creates the new workspace with all of it in one request, or nothing (D09-G1, §12:
-   no operation of `22` takes a bundle, `22:21417`, and E15-S07 lands one first, C-6.1; done in the
+   no operation of `22` takes a bundle, `22:21419`, and E15-S07 lands one first, C-6.1; done in the
    client as `createWorkspace` and then `createLayout` per layout, the import would not be atomic,
    `FL:171`, which is why no frame here shows a partial state). The bytes sent are the bytes the
    preview was built from, held in the worker and never read again from the file's handle, so a
@@ -14326,7 +14326,7 @@ RULED_PIN_TXT = r"""
 @ ¶7 ‖ paragraph ‖ 1
   **Strings from the file (Condition 1; DL-17).** Every string the table takes from the file (kind
    names, layout names, symbols, intervals, drawing labels) is a text node and nothing else: never
-   markup, never a link, never interpreted (SR-127, `04:966`; C-12.10). Each is capped before it
+   markup, never a link, never interpreted (SR-127, `04:967`; C-12.10). Each is capped before it
    reaches the page, at names 40 <!-- audit:contract.name_max=40 -->, symbols 20 <!--
    audit:contract.symbol_max=20 -->, panel kinds 32 <!-- audit:contract.kind_max=32 -->, keys 64
    <!-- audit:design.key_cap=64 -->, file names 40 <!-- audit:design.file_cap=40 --> and drawing
@@ -14335,7 +14335,7 @@ RULED_PIN_TXT = r"""
    Within its cap, a value wider than its column ends in an ellipsis on screen and keeps the whole
    capped value in the cell's text, for a screen reader and for Copy report. Each value is
    direction-isolated (`<bdi>`), and each control or bidirectional-formatting character in it (the
-   set `22:19817–19822` makes the server strip from a name), and each character of the
+   set `22:19819–19824` makes the server strip from a name), and each character of the
    `Default_Ignorable_Code_Point` property, which would be invisible (§5.5), shows as a visible "�"
    instead of acting or hiding, so no file string can reorder the row around it or hide part of
    itself (PROPOSED).
@@ -14402,7 +14402,7 @@ RULED_PIN_TXT = r"""
    version 1 to 2." (`e15.import.migrated`; CMP-028 `info`). The table then lists what the migrated
    file creates, and the report of a migrated import carries the same line above its table
    (PROPOSED; not drawn). The comparison reads `schema_version` alone, never an app version
-   (`22:21406`); the order of versions and the oldest one still read are D09-G2's to fix in `22`. A
+   (`22:21408`); the order of versions and the oldest one still read are D09-G2's to fix in `22`. A
    newer file, or an older one past that oldest, is refused (§5).
 @ ¶13 ‖ paragraph ‖ 1
   **Per frame: what changes, the components and the focus.**
@@ -14685,7 +14685,7 @@ RULED_PIN_TXT = r"""
    is spoken once by its polite region and is not the button's description, so it is never read
    twice | outcome (rejection) | `e15.import.rejected.wrong_type` · `e15.import.choose_another` ·
    `e15.import.cancel` | 04 |
-  | `SCR-026/rejected-nodes` | a file nested deeper than the depth limit (`22:19817`); over the
+  | `SCR-026/rejected-nodes` | a file nested deeper than the depth limit (`22:19819`); over the
    node count is its variant (`BL:1136`) | dialog: CMP-043 `size="lg"` `role="dialog"` "Import
    workspace", close × "Close Import workspace"; trust: CMP-028 `info` `role="note"` under the
    title, not a Tab stop — "A workspace file never carries credentials or account bindings.
@@ -14888,8 +14888,8 @@ RULED_PIN_TXT = r"""
   ### 5.3 The version rule (BQ-4 RULED, owner approval pending (#2701))
 @ ¶1 ‖ paragraph ‖ 1
   The file's `schema_version` is compared with the format versions this app reads, and nothing
-   else is: never an app version, never the build or the date that exported the file (`22:21406`;
-   E15-S07, `BL:1136`). The contract types it as a string with no order (`22:21406`), so this spec
+   else is: never an app version, never the build or the date that exported the file (`22:21408`;
+   E15-S07, `BL:1136`). The contract types it as a string with no order (`22:21408`), so this spec
    reads it as a whole number written in decimal and compares it as a number, PROPOSED — D09-G2
    asks `22`'s owner for the format, the order and the oldest version still read (the floor). Today
    the app reads format version 1 <!-- audit:fixture.app_format=1 -->, which is both its newest and
@@ -14953,32 +14953,32 @@ RULED_PIN_TXT = r"""
    audit:contract.parse_ms=500 --> ms in a worker (`14:637`) | `SCR-026/rejected-oversized` |
    `e15.import.rejected.oversized` |
   | 2 parse | nesting at most 16 <!-- audit:contract.depth=16 --> levels | the server's own rule
-   for a workspace body (`22:19817`), reused (BQ-5 RULED) | `SCR-026/rejected-nodes` |
+   for a workspace body (`22:19819`), reused (BQ-5 RULED) | `SCR-026/rejected-nodes` |
    `e15.import.rejected.depth` |
   | 2 parse | at most 10,000 <!-- audit:contract.nodes=10000 --> values, PROPOSED | E15-S07 names
    a node-count limit and fuzzes "a document with 10000 nested nodes" (`BL:1136`); no contract
    carries a number (D09-G5) | `SCR-026/rejected-nodes`, its variant | `e15.import.rejected.nodes`
    |
   | 3 schema | the envelope's `schema_version` first, then the shape of a version this app reads:
-   every required key and every known key's type (`22:21400–21421`) | `22:21400–21421`; an unknown
-   key ignored by the client and refused by the server on its write path (C-6.3; `04:854`); the
+   every required key and every known key's type (`22:21402–21423`) | `22:21402–21423`; an unknown
+   key ignored by the client and refused by the server on its write path (C-6.3; `04:855`); the
    bundle and `ChartTemplateInput` are not closed yet (D09-G4) | `SCR-026/rejected-malformed` |
    `e15.import.rejected.malformed` |
   | 3 schema | at most 16 <!-- audit:contract.panes_max=16 --> panels a layout | the contract's 16
    (`D02:133`) | `SCR-026/rejected-malformed`, its variant | `e15.import.rejected.panes` |
   | 3 schema | at most 32 <!-- audit:contract.layouts_max=32 --> layouts a workspace | the store's
-   limit (`22:8884`); the bundle carries none (D09-G5) | `SCR-026/rejected-malformed`, its variant
+   limit (`22:8886`); the bundle carries none (D09-G5) | `SCR-026/rejected-malformed`, its variant
    | `e15.import.rejected.layouts` |
   | 3 schema | at most 200 <!-- audit:contract.presets_max=200 --> indicator presets, the array
-   whole or not at all | `22:21420–21421`, where the server also refuses the array beyond 1 MiB of
+   whole or not at all | `22:21422–21423`, where the server also refuses the array beyond 1 MiB of
    preset JSON | `SCR-026/rejected-malformed`, its variant; the server's refusal is
    `SCR-026/refused-server` | `e15.import.rejected.presets` |
-  | 4 version | the format versions this app reads (§5.3) | `22:21406`; D09-G2 | the two version
+  | 4 version | the format versions this app reads (§5.3) | `22:21408`; D09-G2 | the two version
    refusals; the migrated preview | §5.3 |
   | 5 registry | each pane's kind and each setting against the registry | the open-ended kinds
-   (`22:19969`); settings that never hold account ids (`22:20029`) | never a rejection: an unknown
+   (`22:19971`); settings that never hold account ids (`22:20031`) | never a rejection: an unknown
    kind or an account-scoped setting is a Drop row (§4.2) | `e15.import.reason.unknown_kind` |
-  | the send | at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a user | `22:8684`
+  | the send | at most 32 <!-- audit:contract.workspaces_max=32 --> workspaces a user | `22:8686`
    | `SCR-026/refused-limit` | `e15.import.refused.limit` |
   | the send | everything above, checked again by the server | E15-S07 (`BL:1136`); `04:54`;
    C-2.12 | `SCR-026/refused-server` | `e15.import.refused.server` |
@@ -15020,7 +15020,7 @@ RULED_PIN_TXT = r"""
    The two strings follow five rules:
 @ ¶2 ‖ list ‖ 1
   1. **Text only.** Each is one text node of its own, never set through `dangerouslySetInnerHTML`
-   (`04:966`; C-12.10), never a link and never a format string, so a `{` in a key stays a `{`. No
+   (`04:967`; C-12.10), never a link and never a format string, so a `{` in a key stays a `{`. No
    Markdown, HTML or link is ever rendered from it, and nothing in it that looks like an address is
    made live (the ticket's Security notes, hazard 2; `BL:266`).
   2. **Cleaned.** Before display the characters that `22`'s name rule removes — the C0 and C1
@@ -15032,7 +15032,7 @@ RULED_PIN_TXT = r"""
    U+1BCA0–U+1BCA3, U+1D173–U+1D17A and U+E0000–U+E0FFF), each shows as a visible "�" instead of
    acting or hiding, as in the preview's table (§4.4), so neither string can reorder the sentence
    around it, pad a key past its cap with what cannot be seen or spoof an extension
-   (`22:19817–19822`); PROPOSED for a key and a file name, which no contract cleans, and a file's
+   (`22:19819–19824`); PROPOSED for a key and a file name, which no contract cleans, and a file's
    extension is read after this cleaning (§3.4).
   3. **Capped.** A key is shown at most 64 <!-- audit:design.key_cap=64 --> characters, a file
    name at most 40 <!-- audit:design.file_cap=40 -->, counted after cleaning, an ellipsis (…) past
@@ -15063,21 +15063,21 @@ RULED_PIN_TXT = r"""
 @ ¶5 ‖ list ‖ 1
   - **`SCR-026/refused-limit`** — `409 limit_reached` when another window created a workspace
    between the preview and the send, so the user now has 32 <!-- audit:contract.workspaces_max=32
-   --> workspaces (`22:8684`; `FL:164`). The message is "Nothing was imported." then E15-D02's "You
+   --> workspaces (`22:8686`; `FL:164`). The message is "Nothing was imported." then E15-D02's "You
    have 32 workspaces, the most you can have. Delete one, then import again." (`D02:518`). The
    footer is Cancel alone, and it takes focus; the zone and Choose file… leave the body, an absence
    (§6), because another file would meet the same limit; the way on is in the words. Once the
    dialog closes, the session's legs and states are read again and Import… reads
    `workspace.limit.count` in its menus (`SCR-026/entry-limit`, §6).
   - **`SCR-026/refused-server`** — `422 validation_failed` when the server's own re-check refuses
-   what the browser passed (`22:19817`): "Nothing was imported." then "The server didn't accept
+   what the browser passed (`22:19819`): "Nothing was imported." then "The server didn't accept
    this file: `{key}` isn't valid.", the key the first field path of the problem's `errors[]`,
    cleaned and capped as above; the server's own sentence is never shown (`15:306`). Choose another
    file takes focus. A refusal that names no field — the store unavailable, `503` — takes the same
    frame with the PROPOSED `e15.import.refused.store`, "The workspace store didn't answer. Choose
    the file again in a moment.", in place of the key's sentence: nothing of the file was kept, so
    the way on is to choose it again (§9; the problem types are D09-G7's). A `413`, a file larger
-   than the server takes (`22:8689`), takes the same frame with the PROPOSED
+   than the server takes (`22:8691`), takes the same frame with the PROPOSED
    `e15.import.refused.size`, "The server didn't accept this file: it is larger than the server
    takes.", the oversized refusal's words at the send, the number the server's (D09-G5).
   - **`SCR-026/refused-unconfirmed`** — not a refusal but an outcome nobody knows: a send whose
@@ -15085,7 +15085,7 @@ RULED_PIN_TXT = r"""
    never claims that nothing was imported; it says "We couldn't confirm the import. Check your
    workspaces before importing again." (PROPOSED, `e15.import.refused.unconfirmed`). The zone and
    Choose file… leave the body, no verb sends the file again, and Close takes focus; the one-call
-   operation takes an `Idempotency-Key`, as `createWorkspace` does (`22:8690`), so a send the
+   operation takes an `Idempotency-Key`, as `createWorkspace` does (`22:8692`), so a send the
    platform repeats never imports twice (D09-G1; D09-D33).
   - **A `403` at the send is the session's, not the file's**: view-as began or the permission went
    while the dialog was open. Nothing is imported, and the dialog shows `SCR-026/import-leg-lost`
@@ -15109,13 +15109,13 @@ RULED_PIN_TXT = r"""
    every T2 row of §3 cites "§6").** E09-D09's decision rule decides every control here, the first
    "yes" winning (`E09D09:32`; `14:85`): a server refusal is T4 at the point of action; then the
    session's legs, in the server's own order, then a state the client knows. **Import… is a write**
-   — `createWorkspace` · `workspaces:write`, scope `self` (`22:8680`; `04:1140`) — so its legs run
+   — `createWorkspace` · `workspaces:write`, scope `self` (`22:8682`; `04:1141`) — so its legs run
    `rbac.view_as` → `rbac.permission` → `workspace.limit.count`: first, while `GET
    /auth/session/view-as` reports a context, it is T2 with `rbac.view_as`, "Read-only while viewing
    as {user}." (`E09D09:95`), because the server refuses a view-as write before it authorises;
    otherwise, without `workspaces:write`, it is T2 with `rbac.permission` and the verb of
    `E09D09:114`, "Your role can't save workspaces." (`E09D09:89`); otherwise, at 32 <!--
-   audit:contract.workspaces_max=32 --> workspaces (`22:8684`), it is T2 with the state key
+   audit:contract.workspaces_max=32 --> workspaces (`22:8686`), it is T2 with the state key
    `workspace.limit.count`, "You have the most workspaces you can have." (`D02:674`). These are the
    keys merged E15-D02 gives "+" › Import… (`D02:639`; `D02:655`) and merged E15-D03 renders as its
    R-5 (`D03:564`; its deck `D03:634–636`); this spec adds none. A workspace write is scope `self`,
@@ -15143,7 +15143,7 @@ RULED_PIN_TXT = r"""
   ### 6.1 The gated set, per session
 @ ¶1 ‖ paragraph ‖ 1
   The session's legs decide, never a role's name (`E09D09:32`): an Owner holds `workspaces:write`,
-   a Manager holds it for their own workspaces and a Viewer does not (`04:1140`). `04:1181` marks a
+   a Manager holds it for their own workspaces and a Viewer does not (`04:1141`). `04:1182` marks a
    Viewer ✔(own) on that permission, a contradiction listed in §12 that gates nothing here, because
    the server enforces (C-12.4) and E15-D01's locked list says a Viewer cannot save a workspace
    (`D02:84`). The view-as column holds for any target.
@@ -15153,7 +15153,7 @@ RULED_PIN_TXT = r"""
   | --- | --- | --- | --- | --- | --- | --- | --- |
   | Import… in "+" and the rail's workspace menu (`SCR-026/entry`, `SCR-026/entry-view-as`,
    `SCR-026/entry-permission`, `SCR-026/entry-limit`) | `createWorkspace` · `workspaces:write`,
-   scope `self` (`22:8680`) | T1 | T1 (own workspaces) | T2 `rbac.permission`
+   scope `self` (`22:8682`) | T1 | T1 (own workspaces) | T2 `rbac.permission`
    (`SCR-026/entry-permission`) | T2 `rbac.view_as`, the banner the one notice
    (`SCR-026/entry-view-as`) | T2 `workspace.limit.count` (`SCR-026/entry-limit`) | 2a, the item's
    second line; view-as: the one notice |
@@ -15163,7 +15163,7 @@ RULED_PIN_TXT = r"""
    reached by a link only: T2 `rbac.view_as` in place | a race at the send is T4
    (`SCR-026/refused-limit`), then the entry reads the key | 2a under the button |
   | Export… in SCR-025's Share section, the tab's `[⋯]` and the rail's workspace menu; Download
-   file (`SCR-025/*`) | `exportWorkspace` · `workspaces:read` (`22:12841`) | T1 | T1 | T1 on a
+   file (`SCR-025/*`) | `exportWorkspace` · `workspaces:read` (`22:12843`) | T1 | T1 | T1 on a
    stored workspace; on the unsaved default an availability state (`SCR-025/export-unavailable`) |
    T1: a read | none | — : never gated |
   | Choose file…, a drop, the five checks, the preview, Copy report | none: the browser and its
@@ -15175,7 +15175,7 @@ RULED_PIN_TXT = r"""
   **Not T2 — each owned elsewhere, never drawn with a lock** (`D02:645`; `S4:194`):
 @ ¶4 ‖ list ‖ 1
   - **Export…, a read.** No leg gates it: T1 for every session on a stored workspace, view-as
-   included, its preview, its Download file and its completion alike (`22:12841`; `D03:384`). On
+   included, its preview, its Download file and its completion alike (`22:12843`; `D03:384`). On
    the viewer's unsaved default it is an availability state — `aria-disabled`, the line "This
    workspace isn't saved." (`ws.export.unstored`) under it, no lock, no CMP-079, no key
    (`D03:583`).
@@ -15694,7 +15694,7 @@ RULED_PIN_TXT = r"""
    layouts (Layout 1, Order-flow) · 7 panels · symbols BTCUSDT, ETHUSDT · sync groups A and B ·
    each panel's settings · 12 drawings, with their text labels · 1 chart template · 3 indicator
    presets." | upstream · `D02:511`; only what `WorkspaceBundle` holds (BQ-2 RULED;
-   `22:21400–21421`) |
+   `22:21402–21423`) |
   | `e15.export.excluded` | the Excluded list, first-class, one item per clause
    (`SCR-025/export-preview`, `SCR-025/export-done`) | "Never included: credentials — API keys or
    tokens; accounts, trade-group and user ids; environment binding (DEMO or LIVE); alert and rule
@@ -15864,11 +15864,11 @@ RULED_PIN_TXT = r"""
    PROPOSED; the limit `D02:133` |
   | `e15.import.rejected.layouts` | its variant: too many layouts | "This file has {n} layouts; a
    workspace holds at most {max}. Nothing was imported." · fixture "This file has 40 layouts; a
-   workspace holds at most 32. Nothing was imported." | new · PROPOSED; the limit `22:8884` |
+   workspace holds at most 32. Nothing was imported." | new · PROPOSED; the limit `22:8886` |
   | `e15.import.rejected.presets` | its variant: too many indicator presets | "This file has {n}
    indicator presets; a file may carry at most {max}. Nothing was imported." · fixture "This file
    has 240 indicator presets; a file may carry at most 200. Nothing was imported." | new ·
-   PROPOSED; the limit `22:21420–21421` |
+   PROPOSED; the limit `22:21422–21423` |
   | `e15.import.rejected.invalid` | a variant of `SCR-026/rejected-malformed`: a known key whose
    value is the wrong kind, or a key written twice (§5.4) | "This isn't a workspace file: `{key}`
    isn't valid. Nothing was imported." · fixture "This isn't a workspace file:
@@ -15883,7 +15883,7 @@ RULED_PIN_TXT = r"""
   | `e15.import.rejected.depth` | the CMP-027 message (`SCR-026/rejected-nodes`) | "This file is
    nested too deeply: the limit is {max} levels. Nothing was imported." · fixture "This file is
    nested too deeply: the limit is 16 levels. Nothing was imported." | new · PROPOSED; the limit
-   `22:19817` |
+   `22:19819` |
   | `e15.import.rejected.nodes` | its variant: too many values | "This file has more than {max}
    values: the limit is {max}. Nothing was imported." · fixture "This file has more than 10,000
    values: the limit is 10,000. Nothing was imported." | new · PROPOSED; the limit PROPOSED
@@ -16093,7 +16093,7 @@ RULED_PIN_TXT = r"""
    approval pending (#2701); `11:2871`; E15-D02 drew the refusal, not the checklist's words
    (`D02:732`), and its A-10 asked for this item (`D02:823`) |
   | D09-A18 | SCR-025 · Type (`14:618`), a fragment | "export as template" | "Export… (a workspace
-   file, E15-D09 §2)" | `exportWorkspace` exports a workspace file, never a template (`22:12841`);
+   file, E15-D09 §2)" | `exportWorkspace` exports a workspace file, never a template (`22:12843`);
    BQ-7 RULED; E15-D08's merged row rewrites the whole line and composes with this one |
   | D09-A19 | SCR-089 · a new line after its checklist (`14:1999`) | — | `- **Reuse (E15-D09):**
    [E15-D09.md](../design/E15/E15-D09.md) §3 to §7: a file that crosses the trust boundary is
@@ -16131,18 +16131,18 @@ RULED_PIN_TXT = r"""
   | Id | Gap | What closes it | Owner |
   | --- | --- | --- | --- |
   | D09-G1 | **The atomic import.** No operation takes a bundle: `exportWorkspace`'s description
-   names `POST /workspaces` with `from_bundle` (`22:12846`), a field no input schema has, and `22`
-   says so (`22:21417`); `createWorkspace` refuses a body over 4 KiB (`22:8689`) while a file may
+   names `POST /workspaces` with `from_bundle` (`22:12848`), a field no input schema has, and `22`
+   says so (`22:21419`); `createWorkspace` refuses a body over 4 KiB (`22:8691`) while a file may
    be 2 MB; and an import built in the client from `createWorkspace` and then `createLayout` for
    each layout is not atomic (`FL:171`), the partial import the ticket forbids (`11:2871`) | one
    operation, contract first, that takes the checked bundle and creates the workspace with all its
    layouts, chart templates, drawings and indicator presets in one transaction, or creates nothing;
    it re-runs every check of §3.4 on the server, admits a 2 MB body, returns the name it gave and
    the items it dropped, and refuses with the problem types of D09-G7; it takes an
-   `Idempotency-Key`, as `createWorkspace` does (`22:8690`), so a send repeated after a lost answer
+   `Idempotency-Key`, as `createWorkspace` does (`22:8692`), so a send repeated after a lost answer
    never imports twice (`SCR-026/refused-unconfirmed`); the import is built on it and never before
    it (§3.5, §5.5) | `22`'s owner, contract first (C-6.1); E15-S07 builds on it |
-  | D09-G2 | `schema_version` is a free string (`22:21406`): no current value, no order, no oldest
+  | D09-G2 | `schema_version` is a free string (`22:21408`): no current value, no order, no oldest
    version still read, no outcome for a value that is absent or malformed; E15-S07 names
    `schemaVersion` and `appVersion` in another shape (`BL:1136`) | the format (PROPOSED: a whole
    number written in decimal, §5.3), the current value 1, the order, the oldest version still read,
@@ -16151,39 +16151,39 @@ RULED_PIN_TXT = r"""
    so the schema step reads a file against its own version's shape and never shadows the version
    outcome (§3.4) | `22`'s owner; E15-S07 |
   | D09-G3 | Account-scoped elements: no bundle schema has an account field and `PaneConfig`
-   forbids account ids (`22:20029`), so a strict server refuses a file that carries one whole
-   (C-6.3; SR-040, `04:854`), while the story wants it dropped with a clear report (`11:2868`);
+   forbids account ids (`22:20031`), so a strict server refuses a file that carries one whole
+   (C-6.3; SR-040, `04:855`), while the story wants it dropped with a clear report (`11:2868`);
    `14:633`'s "the user's default account" names nothing a workspace has | the contract's rule: the
    server drops an account-scoped setting at export and again at import and names it in its answer
    (E15-S07, `BL:1136`), or it refuses the whole file, in which case the preview's Drop row is a
    prediction and the outcome is `SCR-026/refused-server`; no default account for a workspace |
    `22`'s owner; E15-S07 |
   | D09-G4 | `WorkspaceBundle` and `ChartTemplateInput` are not closed, and a template's `config`
-   is open (`22:21400–21421`), against C-6.3 and SR-040 (`04:854`) | `additionalProperties: false`
+   is open (`22:21402–21423`), against C-6.3 and SR-040 (`04:855`) | `additionalProperties: false`
    on both and a closed `config`; the export's check (§2.3) and the import's schema step then read
    closed schemas | `22`'s owner |
   | D09-G5 | The limits the contract does not carry: the file's size (2 MB, E15-S07's default,
    `BL:1136`), the count of values (10,000, PROPOSED), the `layouts` array (32 a workspace in the
-   store, `22:8884`, none in the bundle), the `drawings` and `chart_templates` arrays, and a pane
-   kind's length (32 here, PROPOSED from the setting keys' pattern of `22:20039`, since `PaneKind`
-   has none, `22:19969`); and the two directions disagree: an export carries every live preset, 500
-   a user and never truncated, while an import takes 200 (`22:21420–21421`), and an export's size
+   store, `22:8886`, none in the bundle), the `drawings` and `chart_templates` arrays, and a pane
+   kind's length (32 here, PROPOSED from the setting keys' pattern of `22:20041`, since `PaneKind`
+   has none, `22:19971`); and the two directions disagree: an export carries every live preset, 500
+   a user and never truncated, while an import takes 200 (`22:21422–21423`), and an export's size
    has no cap while an import's is 2 MB | the caps in `22`, the same numbers in both directions, or
    an export that warns when its file would be refused (§2.3's warning line meanwhile) | `22`'s
    owner; E15-S07 |
   | D09-G6 | References inside the bundle point at the exporter's ids: a drawing's `layout_id`
-   (`22:20388`), a pane's `chart_template_id` (`22:20064`) and its `indicator_preset_ids`
-   (`22:20070`), each refused today on a create | a rule that the server makes new ids for
+   (`22:20390`), a pane's `chart_template_id` (`22:20066`) and its `indicator_preset_ids`
+   (`22:20072`), each refused today on a create | a rule that the server makes new ids for
    everything it imports and re-points each reference, never honouring the exporter's (E15-X01,
    `BL:721`), and drops a reference it cannot resolve, with its report | `22`'s owner; E15-S07 |
   | D09-G7 | No problem type names a newer or an older format version, a wrong file type, or a
    store that does not answer at the import: today the workspace routes refuse with
-   `validation_failed` and `limit_reached` (`22:19817`; `22:8684`), so these refusals are the
+   `validation_failed` and `limit_reached` (`22:19819`; `22:8686`), so these refusals are the
    client's; the budget is a confirm and needs none | a problem type, or an `errors[]` rule, for
    each, so the server's refusal at the send maps to §9's keys and never shows its own words
    (`15:306`) | `22`'s owner; E15-S07 |
   | D09-G8 | E15-S07 wants the file to carry its own report of what the export dropped
-   (`BL:1136`); `WorkspaceBundle` has no field for it (`22:21400–21421`) | a report field in the
+   (`BL:1136`); `WorkspaceBundle` has no field for it (`22:21402–21423`) | a report field in the
    bundle that the preview's Drop rows read, or the import's answer naming what the server dropped
    | `22`'s owner; E15-S07 |
   | D09-G9 | The ticket cites a workspace document in `24-internal-schemas.md` (`BL:266`), and
@@ -16195,7 +16195,7 @@ RULED_PIN_TXT = r"""
    the audit question is about | one class for the event; this spec draws it as analytics with
    counts only (§2.4) | the owner; E15-X01; `14`'s owner |
   | D09-G11 | The data class and the sharing claim: `exportWorkspace`'s description makes the
-   sharing claim (`22:12844`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
+   sharing claim (`22:12846`), while `21:5079` classes the pane columns P0 and E15-X01 classes the
    file user-confidential (`BL:721`) | `22`'s description drops the sharing claim and names the
    class; this spec writes the caveat instead (BQ-2 RULED) | `22`'s owner; the owner (#2701) for
    the class |
@@ -16212,7 +16212,7 @@ RULED_PIN_TXT = r"""
   | D09-G14 | The file-name slug rule: whoever names the file applies it (BQ-8 RULED the pattern)
    | §2.4's rule, in the client or in E15-S07's export | E15-S07 |
   | D09-G15 | An export carries the caller's whole live preset library, at most 500 and never
-   truncated (`22:21415–21417`), not only the presets this workspace's panes use, while the
+   truncated (`22:21417–21419`), not only the presets this workspace's panes use, while the
    Included list's "3 indicator presets" reads as the workspace's own | the owner (#2701) chooses:
    the Included list says "all 3 of your indicator presets", or the bundle carries only the presets
    the panes reference (`22`'s owner) | the owner (#2701); `22`'s owner |
@@ -16227,9 +16227,9 @@ RULED_PIN_TXT = r"""
   | D09-C2 | the ticket's branch `design/e15-workspace-import-export-hifi` against
    `design/e15-d09-hifi` (C-4.4; the second deviation; BQ-1 RULED) | the owner |
   | D09-C3 | the ticket's Included list names densities, which `WorkspaceBundle` does not hold
-   (`22:21400–21421`; `D02:507`) (the third deviation; BQ-2 RULED) | the owner |
+   (`22:21402–21423`; `D02:507`) (the third deviation; BQ-2 RULED) | the owner |
   | D09-C4 | BQ-10 RULED a symbol cap of 16 from the pattern's `{2,16}`; a symbol is at most 20
-   characters with its `USDT` (`22:20055`), so the cap here is 20 (the fourth deviation; D09-Q1) |
+   characters with its `USDT` (`22:20057`), so the cap here is 20 (the fourth deviation; D09-Q1) |
    the orchestrator |
   | D09-C5 | E15-D02's sentence "Never included: API keys or tokens, account or trade-group ids,
    user ids, P&L figures, positions or orders." (`D02:511`) is extended by BQ-2's to name
@@ -16251,7 +16251,7 @@ RULED_PIN_TXT = r"""
   | D09-C10 | CMP-234 ValidationPanel, which the ticket and E15-S07 name for the report
    (`BL:1136`), anchors its entries to rule rows and nodes (`15:2738–2742`); the report here is a
    region with a table (BQ-12 RULED) | E15-S07's owner; the design system's owner |
-  | D09-C11 | `04:1181` marks a Viewer ✔(own) on saving layouts against `04:1140`, where a Viewer
+  | D09-C11 | `04:1182` marks a Viewer ✔(own) on saving layouts against `04:1141`, where a Viewer
    holds no `workspaces:write`, and E15-D01's locked list (`D02:84`); this spec draws the Viewer's
    Import… in T2, and the server enforces either way (C-12.4) | `04`'s owner |
   | D09-C12 | a refusal at the send speaks politely here (§7), against slice 4's conventions 33,
@@ -16271,7 +16271,7 @@ RULED_PIN_TXT = r"""
    success line counted 2 dropped where the tool's fixture drops 3 | the orchestrator (6396085915)
    |
   | D09-C16 | SCR-025's "export as template" (`14:618`) against `exportWorkspace`, which exports a
-   workspace file (`22:12841`); D09-A18 | `14`'s owner |
+   workspace file (`22:12843`); D09-A18 | `14`'s owner |
   | D09-C17 | the ticket's 30-panel file (`BL:266`), meant for the budget's confirm, holds more
    panes than the 16 a layout holds (`D02:133`), so it is the panes variant of
    `SCR-026/rejected-malformed`, never the budget (BQ-5 and BQ-6 RULED) | the owner |
@@ -16308,7 +16308,7 @@ RULED_PIN_TXT = r"""
 @ ¶9 ‖ table ‖ 1
   | Id | Question | Built now | Owner |
   | --- | --- | --- | --- |
-  | D09-Q1 | the symbol cap: BQ-10's 16, or the contract's 20 (`22:20055`)? | 20, the contract's
+  | D09-Q1 | the symbol cap: BQ-10's 16, or the contract's 20 (`22:20057`)? | 20, the contract's
    (the fourth deviation) | the orchestrator |
   | D09-Q2 | where a browser has no save picker, does the download hand-off count as the save, for
    the completion step and for `workspace.exported`? | yes: the hand-off is the only answer the
@@ -16324,7 +16324,7 @@ RULED_PIN_TXT = r"""
    (§3.4, step 3; §5.3) | the orchestrator |
   | D09-Q6 | the trust note's "Importing creates a new workspace and changes nothing else." stands
    beside Add rows for indicator presets, chart templates and drawings, which join the importer's
-   own libraries (`22:21420–21423`, counted against the 500-preset cap): is the sentence kept word
+   own libraries (`22:21422–21425`, counted against the 500-preset cap): is the sentence kept word
    for word? | the ruled sentence, verbatim (BQ-2 RULED) | the owner (#2701) |
   | D09-Q7 | the newer refusal's ruled way on, "Export it again from a version 1 app, or update
    this app.", prints the format number as an app's version; the alternative "Export it again from
