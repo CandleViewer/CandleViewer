@@ -186,6 +186,22 @@ async def test_the_private_socket_connector_refuses_every_dial(tmp_path: Path) -
         await fixture.private_ws_connect("wss://stream-demo.bybit.com/v5/private")
 
 
+async def test_each_lane_transport_is_new_never_the_adapters_and_refuses_every_request(
+    tmp_path: Path,
+) -> None:
+    """#913 L1d (L3b's follow-up 4): the order lane's REST transport, built on its loop by the
+    root, as no transport is shared across loops: a new one at each call, never the adapter's
+    (`lane_trading_port` refuses that one), and refusing every request as the adapter's does."""
+    fixture = build_account_fixture(_dev(tmp_path))
+    assert fixture is not None
+    first, second = fixture.lane_rest_transport(), fixture.lane_rest_transport()
+    assert first is not second and fixture.rest_transport not in (first, second)
+    create = httpx.Request("POST", "https://api-demo.bybit.com/v5/order/create")
+    for transport in (first, second):
+        with pytest.raises(httpx.ConnectError):
+            await transport.handle_async_request(create)
+
+
 def test_the_adapter_dials_with_productions_connector_or_behind_the_door_the_handles(
     tmp_path: Path,
 ) -> None:
