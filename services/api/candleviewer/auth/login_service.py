@@ -173,9 +173,7 @@ class LoginService:
 
         #4663: raises `SignInBusy` at once, before the identifier is looked up or any password
         is checked, when verification is already running for as many attempts as it admits.
-        That refusal is not held to the failure floor: it is answered as soon as it is decided,
-        so a burst is turned away without tying anything up, and it is the same for every
-        identifier and password because neither has been read.
+        That refusal is not held to the failure floor: it is answered as soon as it is decided.
         """
         started = self._monotonic()
         try:
@@ -237,6 +235,10 @@ class LoginService:
             # must not become a cheap, fast-fail oracle that confirms the
             # account exists and is currently locked.
             await self._hasher.verify(user.password_hash, request.password)
+            # #4663: an attempt at a locked account is a failed attempt from this address, so
+            # repeated attempts from one address are refused by the throttle above and take
+            # no verification place.
+            self._per_ip_throttle.record_failure(source_ip)
             remaining = int((user.locked_until - self._clock()).total_seconds())
             raise AccountLocked(max(remaining, 1))
 

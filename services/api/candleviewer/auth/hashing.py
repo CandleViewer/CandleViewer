@@ -23,10 +23,13 @@ import asyncio
 import hmac
 import time
 from collections.abc import Callable
+from concurrent.futures import Executor
 from contextvars import ContextVar
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
+
+from candleviewer.observability.context import executor_future
 
 #: Default parameters (ticket: "m=65536,t=3,p=4 default"), matching
 #: `users.password_algo_params`'s column default in
@@ -67,11 +70,23 @@ class Hasher:
     """
 
     def __init__(
-        self, pepper: str = "", *, perf_counter: Callable[[], float] = time.perf_counter
+        self,
+        pepper: str = "",
+        *,
+        perf_counter: Callable[[], float] = time.perf_counter,
+        executor: Executor | None = None,
     ) -> None:
         self._pepper = pepper
         self._default_hasher = _params_to_hasher(DEFAULT_ARGON2_PARAMS)
         self._perf_counter = perf_counter
+        #: #4663: the pool the hash work runs on. `None` is the default thread pool; the sign-in
+        #: hasher gets a pool of its own, as large as the sign-in verification bound.
+        self._executor = executor
+
+    async def _off_loop[T](self, fn: Callable[..., T], *args: str) -> T:
+        if self._executor is None:
+            return await asyncio.to_thread(fn, *args)
+        return await executor_future(self._executor, fn, *args)
 
     def _peppered(self, password: str) -> str:
         return password + self._pepper
@@ -81,11 +96,11 @@ class Hasher:
 
         Argon2id hashing is deliberately CPU/memory heavy (tuned cost
         parameters), so it must never run inline on the asyncio event loop
-        (C-2.18) — the actual work happens in a worker thread via
-        `asyncio.to_thread`."""
+        (C-2.18) — the actual work happens in a worker thread (`asyncio.to_thread`, or the
+        executor this hasher was given)."""
         hasher = _params_to_hasher(params) if params is not None else self._default_hasher
         peppered = self._peppered(password)
-        return await asyncio.to_thread(hasher.hash, peppered)
+        return await self._off_loop(hasher.hash, peppered)
 
     async def verify(self, password_hash: str, password: str) -> bool:
         """Constant-time-equivalent verify (argon2-cffi's C extension does
@@ -102,7 +117,7 @@ class Hasher:
         queueing) and the result is kept for this context (`last_verify_ms`).
         Every path, the dummy hash included, runs the same timed call."""
         peppered = self._peppered(password)
-        ok, elapsed_ms = await asyncio.to_thread(self._timed_verify_sync, password_hash, peppered)
+        ok, elapsed_ms = await self._off_loop(self._timed_verify_sync, password_hash, peppered)
         _LAST_VERIFY_MS.set(elapsed_ms)
         return ok
 

@@ -113,14 +113,17 @@ AUTH_LOGIN_FAILURE_FLOOR_MAX_MS: Final = 5000
 
 #: #4663: `CV_AUTH_LOGIN_VERIFY_CONCURRENCY`. Sign-in verification (the identifier lookup and the
 #: password hash) runs for at most this many attempts at a time; an attempt beyond that is refused
-#: at once with a retry-after instead of queueing. The default keeps every admitted attempt's hash
-#: on a worker of its own: the hash runs on the default thread pool, which has at least five
-#: workers on any host (`min(32, cpus + 4)`), so four admitted hashes never queue for a worker.
+#: at once with a retry-after instead of queueing. The sign-in hasher has a thread pool of its own
+#: with this many workers, so an admitted attempt's hash never waits behind other work. A hash
+#: whose attempt was cancelled still finishes on its worker, so after a cancellation an admitted
+#: hash can briefly wait for that worker. Each hash uses four lanes (`DEFAULT_ARGON2_PARAMS` `p`),
+#: so a value of about a quarter of the API container's CPUs keeps the hashes from competing for
+#: CPU; a higher value admits more attempts at a time, each slower.
 AUTH_LOGIN_VERIFY_CONCURRENCY: Final = 4
 #: The lowest accepted value. Zero is refused: no setting refuses every sign-in.
 AUTH_LOGIN_VERIFY_CONCURRENCY_MIN: Final = 1
-#: The highest accepted value: the default thread pool's largest size, so no setting admits more
-#: hashes at a time than the pool can ever run.
+#: The highest accepted value: a typo guard, so a mistyped value cannot start a pool of hundreds
+#: of hashing threads.
 AUTH_LOGIN_VERIFY_CONCURRENCY_MAX: Final = 32
 
 

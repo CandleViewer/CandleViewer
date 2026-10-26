@@ -19,7 +19,7 @@ from typing import Any
 import pytest
 from prometheus_client import REGISTRY
 
-from candleviewer.auth.errors import InvalidCredentials, SignInBusy
+from candleviewer.auth.errors import AccountLocked, InvalidCredentials, SignInBusy
 from candleviewer.auth.hashing import DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.login_service import (
     LOGIN_BUSY_RETRY_AFTER_S,
@@ -256,6 +256,35 @@ async def test_login_blocked_address_is_refused_by_the_throttle_before_the_bound
     assert _refused() == before and admission.in_flight == 1
     hasher.release.set()
     await asyncio.gather(*held)
+
+
+async def test_login_attempts_at_a_locked_account_count_against_the_address() -> None:
+    """Attempts at a locked account are failed attempts from their address: once the address
+    reaches the throttle, it is refused before the bound and takes no place."""
+    repo = _CountingRepository()
+    repo.add(make_user(password_hash=DUMMY_PASSWORD_HASH, locked_until=_NOW + timedelta(hours=1)))
+    admission = VerifyAdmission(1)
+    hasher = _GateHasher(verdict=False, expected=1)
+    hasher.release.set()
+    service = LoginService(
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=3),
+        clock=lambda: _NOW,
+        failure_floor=timedelta(milliseconds=500),
+        monotonic=lambda: 0.0,
+        sleep=_Sleeps(),
+        admission=admission,
+    )
+    for _ in range(3):
+        with pytest.raises(AccountLocked):
+            await _attempt(service, ip="10.7.7.7")
+    lookups = repo.lookups
+
+    with pytest.raises(InvalidCredentials):
+        await _attempt(service, ip="10.7.7.7")
+
+    assert repo.lookups == lookups and hasher.calls == 3 and admission.in_flight == 0
 
 
 def test_login_service_default_bound_is_the_setting_default() -> None:

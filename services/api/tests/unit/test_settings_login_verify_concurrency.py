@@ -109,3 +109,17 @@ async def test_auth_service_start_passes_the_bound_to_login_service() -> None:
 
 def test_auth_service_default_bound_is_the_login_service_default() -> None:
     assert AuthService()._login_verify_concurrency == LOGIN_VERIFY_CONCURRENCY
+
+
+async def test_auth_service_gives_the_login_hasher_a_pool_as_large_as_the_bound() -> None:
+    service = AuthService(
+        repository=FakeUserRepository(), pepper="pepper", login_verify_concurrency=3
+    )
+
+    await service.start(ctx=None)  # type: ignore[arg-type]  # no MFA store: ctx is not read
+    pool = service._login_hash_pool
+    hasher_pool = service.login._hasher._executor
+
+    assert pool is not None and hasher_pool is pool and pool._max_workers == 3
+    await service.stop(1.0)
+    assert service._login_hash_pool is None and pool._shutdown

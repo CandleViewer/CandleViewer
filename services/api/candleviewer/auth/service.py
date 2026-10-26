@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
@@ -95,6 +96,9 @@ class AuthService:
         self._login_failure_floor = login_failure_floor
         #: #4663: sign-in verifications at a time (`CV_AUTH_LOGIN_VERIFY_CONCURRENCY`).
         self._login_verify_concurrency = login_verify_concurrency
+        #: #4663: the sign-in hasher's own pool, as large as the bound, so every admitted
+        #: verification has a worker and other work on the default pool cannot hold it back.
+        self._login_hash_pool: ThreadPoolExecutor | None = None
         #: Where a TOTP clock-skew event goes (#2146); `None` still counts the metric.
         self._system_events = system_events
         self._invite_repository = invite_repository
@@ -253,9 +257,12 @@ class AuthService:
         otherwise stays the no-op scaffold. `auth` never imports a storage
         driver (ADR-0003 import-linter contract)."""
         if self._repository is not None:
+            self._login_hash_pool = ThreadPoolExecutor(
+                max_workers=self._login_verify_concurrency, thread_name_prefix="cv-signin-hash"
+            )
             self._login = LoginService(
                 self._repository,
-                Hasher(pepper=self._pepper),
+                Hasher(pepper=self._pepper, executor=self._login_hash_pool),
                 mfa_repository=self._mfa_repository,
                 clock=self._clock,
                 failure_floor=self._login_failure_floor,
@@ -346,6 +353,10 @@ class AuthService:
         still land, and a hung unit cannot take the whole bound."""
         sessions = self._sessions
         self._login = None
+        if self._login_hash_pool is not None:
+            # A hash still running finishes on its worker; nothing new is accepted.
+            self._login_hash_pool.shutdown(wait=False, cancel_futures=True)
+            self._login_hash_pool = None
         self._mfa = None
         self._invites = None
         if self._skew_reporter is not None:
