@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from structlog.testing import capture_logs
@@ -36,6 +36,25 @@ from tests.unit.oms.command_rig import T0, T0_US, Rig
 _TP, _SL2 = Decimal("64000"), Decimal("58500")
 _NO: dict[str, Any] = {"ok": False}
 _REDUCE = {"reduce_only": True, "intent": "take_profit", "stop_loss": None, "take_profit": None}
+#: A refused amend's records as the writer keeps them: each row's request, then its void (C-2.9).
+_REQUESTED_THEN_VOIDED = [
+    ("sl.modified", oc.AMEND_REASON),
+    ("tp.modified", oc.AMEND_REASON),
+    ("sl.modified", oc.AMEND_REFUSED),
+    ("tp.modified", oc.AMEND_REFUSED),
+]
+#: A user's amend, the principal its exit watch holds (C-2.9).
+_USER = SubmitActor(user_id=UUID("3f6c1a2b-9d4e-4f5a-8b7c-6d5e4f3a2b1c"), role="manager")
+
+
+def _principals(rig: Rig) -> list[UUID | None]:
+    """The principal each keyed record the writer kept names (`actor_user_id`)."""
+    return [r.actor_user_id for r, _ in rig.audits.written if isinstance(r, KeyedRecord)]
+
+
+def _settle_failures(logs: list[Any]) -> list[str]:
+    """The failure of each settle that was logged and swallowed, its rows left in flight."""
+    return [e["failure"] for e in logs if e["event"] == "oms_stop_settle_failed"]
 
 
 async def _live(rig: Rig, **over: Any) -> Any:
@@ -163,17 +182,23 @@ async def test_the_rows_exist_when_the_venue_call_lands(
     )
 
 
-async def test_a_refused_amend_voids_its_rows_audited_ahead(rig: Rig) -> None:
+@pytest.mark.parametrize("actor", [None, _USER], ids=["system", "user"])
+async def test_a_refused_amend_voids_its_rows_audited_ahead(
+    rig: Rig, actor: SubmitActor | None
+) -> None:
+    """#4587: the writer keeps both of each row's records, the void never deduped against the
+    request's record. A user's void names the user, with the role the writer refuses it without
+    (C-2.9), so it lands and its rows end void, nothing swallowed (CR-4609-01)."""
     order = await _live(rig)
+    rig.port.expect_exit(order.id, "amend", actor=actor)
     rig.demo.script("amend_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "hidden"))
-    answer = await rig.port.amend(_amend(order, stop_loss="58500"))
+    with capture_logs() as logs:
+        answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     codes = {key: answer[key] for key in ("ok", "error_code", "exchange_ret_code")}
     assert codes == _NO | {"error_code": "INSTRUMENT_FILTER", "exchange_ret_code": 110003}
     assert "hidden" not in repr(answer) and [r.status for r in _rows(rig)] == ["void"] * 2
-    assert rig.audits.actions()[2:] == [
-        ("sl.modified", oc.AMEND_REFUSED),
-        ("tp.modified", oc.AMEND_REFUSED),
-    ]
+    assert rig.audits.actions() == _REQUESTED_THEN_VOIDED and _settle_failures(logs) == []
+    assert _principals(rig) == [None if actor is None else actor.user_id] * 4
 
 
 async def test_an_amend_whose_send_raises_leaves_its_rows_in_flight(rig: Rig) -> None:
@@ -188,12 +213,19 @@ async def test_an_amend_whose_send_raises_leaves_its_rows_in_flight(rig: Rig) ->
     assert watch.answered and await watch.answer() is None
 
 
-async def test_a_refused_rate_token_voids_the_rows_with_nothing_sent(rig: Rig) -> None:
+@pytest.mark.parametrize("actor", [None, _USER], ids=["system", "user"])
+async def test_a_refused_rate_token_voids_the_rows_with_nothing_sent(
+    rig: Rig, actor: SubmitActor | None
+) -> None:
     order = await _live(rig)
+    rig.port.expect_exit(order.id, "amend", actor=actor)
     rig.demo.script("amend_order", RateBudgetExceededError("no token", retry_after_s=2.0))
-    answer = await rig.port.amend(_amend(order, stop_loss="58500"))
+    with capture_logs() as logs:
+        answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     assert answer == _NO | {"error_code": "RATE_BUDGET_EXCEEDED", "retry_after_s": 2}
     assert [r.status for r in _rows(rig)] == ["void", "void"]
+    assert rig.audits.actions() == _REQUESTED_THEN_VOIDED and _settle_failures(logs) == []
+    assert _principals(rig) == [None if actor is None else actor.user_id] * 4
 
 
 async def test_one_insert_shares_one_created_at() -> None:
