@@ -717,11 +717,11 @@ def make_step_up_router(
             return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
         token = _bearer(request)
         if token is None:
-            return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+            return _unauthenticated()
         try:
             record: SessionRecord = await auth.sessions.authenticate_access_token(token)
         except AuthError:
-            return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+            return _unauthenticated()
         return record
 
     async def _audit(action: str, record: SessionRecord, **kw: Any) -> None:
@@ -835,7 +835,7 @@ def make_step_up_router(
         # The principal's user is the subject: the target on a live view (#3085), so a viewer
         # is refused 403 below, never 401 here.
         if principal is None or principal.user_id != view_as_subject(request, record):
-            return _problem(401, "unauthorized", "Unauthorized", "authentication required")
+            return _unauthenticated()
         try:
             await enforce(
                 principal,

@@ -49,7 +49,7 @@ day it is fixed and a harness error never passes as one (D11):
 - `#2836` (SR-E42-09): own guards that count no denial or carry no `code`, and
   `GET /admin/support-bundle/{job_id}`, which refuses with no record at all.
 - AD-F24 (e42-admin.md §13.1): a 401 whose `code` is not the registry's `unauthenticated`. The
-  model owns it on `#2304` for the step-up router (`api/users.py`'s half was met by #2649); the
+  halves the model owns are met (`api/users.py` by #2649, the step-up router by #2304); the
   invites router's 401, which carries no `code` at all, has no issue (finding X03-F6 in the
   catalogue).
 
@@ -566,11 +566,8 @@ UNAUTHENTICATED_CODE_GAPS: dict[str, str] = {
     ),
     "GET /users/invites": (
         f"{_AD_F24}: no `code` (`make_invites_router`'s `_owner`); no issue tracks it: AD-F24's "
-        "owners name `api/users.py` (#2649, met) and `api/step_up.py` (#2304), so the "
+        "owners name `api/users.py` (#2649, met) and `api/step_up.py` (#2304, met), so the "
         "catalogue records it as X03-F6 under the filing freeze"
-    ),
-    "GET /users/{userId}/mfa/reset-preview": (
-        f"{_AD_F24}: `unauthorized` (`make_step_up_router`'s `_session`), #2304"
     ),
 }
 
