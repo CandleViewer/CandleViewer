@@ -940,7 +940,7 @@ async def test_an_unelevated_viewers_pin_is_the_audited_403_never_a_challenge() 
     assert env.actions() == ["rbac.denied"] and env.asked == []
 
 
-@pytest.mark.parametrize("entry_id", [str(uuid.uuid4()), "not-a-uuid"])
+@pytest.mark.parametrize("entry_id", [str(uuid.UUID(int=1)), "not-a-uuid"])
 async def test_an_unelevated_callers_pin_of_a_missing_entry_is_the_404_never_a_challenge(
     entry_id: str,
 ) -> None:
