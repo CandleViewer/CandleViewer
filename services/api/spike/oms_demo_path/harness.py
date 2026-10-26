@@ -13,7 +13,8 @@ key's rights against what M2's import admitted (the adapter's own signed key-inf
 write; the coordinator's ruling 2 of fold 4): `soak` before its stream's `auth` and any signed
 read, `retention` before its history read, and the modes that touch orders in their `preflight`.
 That preflight goes on: the size limits set, the account flat (every USDT perpetual's open
-orders and positions), the offset measured; only then is the run armed (`arm`), and never once a
+orders and positions, and no row of those reads set aside by the adapter as another account's or
+environment's), the offset measured; only then is the run armed (`arm`), and never once a
 stop arrived (R2-06: it ends `stopped`). Until it is armed, nothing it does touches the account,
 and the shutdown touches nothing either (ruling R1C-02 (a)). A stop ends a fill wait at once
 (`wait`), so a stopped run reaches its flatten at once.
@@ -59,9 +60,11 @@ from spike.oms_demo_path.safety import (
     Shutdown,
     Stopped,
     check_flat,
+    check_none_set_aside,
     flatten,
     key_mismatch,
     key_record,
+    rows_set_aside,
 )
 from spike.oms_demo_path.scrub import Scrubber
 
@@ -212,15 +215,18 @@ class Harness:
 
     async def preflight(self) -> None:
         """Ruling R1C-02 (a): the size limits set, the key's rights checked (`check_key`), the
-        account flat (no open order on any USDT perpetual, no position: R2-08), the offset
-        measured; then the run is armed. Whatever fails first refuses the run, and nothing was
-        sent: the shutdown then touches nothing either."""
+        account flat (no open order on any USDT perpetual, no position: R2-08; no row of those
+        reads set aside by the adapter: R3-04), the offset measured; then the run is armed.
+        Whatever fails first refuses the run, and nothing was sent: the shutdown then touches
+        nothing either."""
         if self.port.limits is None:
             raise Refused("no size limits: the instrument read comes first; nothing was sent")
         await self.check_key()
+        before = rows_set_aside()
         orders = await self.port.open_orders(self.account)  # every symbol (`settleCoin`)
         positions = await self.port.positions(self.account)
         check_flat(orders, positions)
+        check_none_set_aside(before, rows_set_aside())  # no order of ours hidden from the reads
         await self.measure_offset()
         self.arm()
 

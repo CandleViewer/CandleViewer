@@ -21,6 +21,13 @@ The outcome is read again after the cancel (R1C-10): a fill that landed meanwhil
 `unfilled` cycle `partial`. After each cycle the execution list is read back for the cycle's
 window (parity), its ends on the exchange's clock (R1C-11); a venue or transport failure is
 recorded, the cycle cleaned up and the run goes on, until three in a row.
+
+A cycle checks for a stop before its opener's create and before its drive (R3-02, as `shapes`
+checks before each create): once one arrived, it sends nothing more and ends `stopped`, which is
+no completed cycle. A stop that lands while it prices its opener (`reference`) or in the
+periodic offset read before it sends no opener; one that lands after the opener sends no drive
+(a cross would fill as a taker), and the order rests away from the touch, under its native stop,
+until the run's flatten cancels it.
 """
 
 from __future__ import annotations
@@ -48,6 +55,8 @@ MAX_CONSECUTIVE_FAILURES: Final = 3
 TERMINAL: Final = frozenset(
     {"filled", "cancelled", "partially_filled_canceled", "rejected", "deactivated"}
 )
+#: The outcome of a cycle a stop cut short (R3-02): counted, never as a completed cycle.
+STOPPED: Final = "stopped"
 _BPS: Final = Decimal(10_000)
 
 
@@ -127,7 +136,7 @@ async def run_cycles(h: Harness, cfg: RunConfig) -> dict[str, object]:
     await backfill(h, window_start)
     return {
         "planned": cfg.cycles,
-        "completed": sum(outcomes.values()),
+        "completed": sum(count for outcome, count in outcomes.items() if outcome != STOPPED),
         "outcomes": dict(sorted(outcomes.items())),
         "actions": dict(sorted(actions.items())),
         "errors": dict(sorted(errors.items())),
@@ -171,11 +180,22 @@ async def read_order(h: Harness, link: str) -> Order | None:
     return None
 
 
+def _stopped(h: Harness, n: int, side: Side, mode: FillMode, where: str) -> bool:
+    """Whether a stop arrived (R3-02): then the cycle sends nothing more, and its `cycle` event
+    says where it ended."""
+    if not h.shutdown.event.is_set():
+        return False
+    h.outputs.event("cycle", n=n, side=side, mode=mode, outcome=STOPPED, stopped=where)
+    return True
+
+
 async def one_cycle(
     h: Harness, cfg: RunConfig, n: int, qty: Decimal, tick: Decimal, actions: Counter[str]
 ) -> str:
-    side = side_of(cfg.side, n)
+    side, mode = side_of(cfg.side, n), fill_mode_of(cfg.fill_mode, n)
     ref = await h.public.reference()
+    if _stopped(h, n, side, mode, "before the opener"):  # it landed in the offset read or here
+        return STOPPED
     away, further, stop = prices(ref, side, cfg, tick)
     link = h.links.new("entry")
     placed = await h.port.place_order(
@@ -210,7 +230,8 @@ async def one_cycle(
 
     _step(h, n, "amend", await h.port.amend_order(amend(further)))
     actions["amend"] += 1
-    mode = fill_mode_of(cfg.fill_mode, n)
+    if _stopped(h, n, side, mode, "before the drive"):  # it rests for the run's flatten
+        return STOPPED
     _step(
         h,
         n,

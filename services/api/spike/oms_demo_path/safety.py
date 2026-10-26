@@ -8,8 +8,10 @@ every one is proven offline (`tests/test_safety.py`).
   account and key ids, the ticket's floors and a typed confirmation.
 - `check_audit_dir`: the harness's audit WAL is never the stack's (brief item 2).
 - `check_flat`: a run that touches orders starts with no open order on any USDT perpetual and no
-  position, both read account-wide (the adapter's `settleCoin` reads); until that holds the run
-  is not armed, and a refusal touches nothing (ruling R1C-02 (a)).
+  position, both read account-wide (the adapter's `settleCoin` reads), and with no row of those
+  reads set aside by the adapter (`check_none_set_aside`, R3-04: an order of ours naming another
+  account or environment, which the reads drop); until that holds the run is not armed, and a
+  refusal touches nothing (ruling R1C-02 (a)).
 - `key_mismatch` (fold 3): the key's live rights, read through the adapter's own signed key-info
   read (`harness.Harness.check_key`, the first signed call of every mode that signs anything:
   the coordinator's ruling 2 of fold 4), against what M2's import admitted it with (C-2.8): no
@@ -62,6 +64,7 @@ from candleviewer.exchange.base.models import (
     Position,
     Wallet,
 )
+from candleviewer.exchange.bybit.metrics import bybit_rows_refused_total
 from candleviewer.observability.context import spawn
 from spike.oms_demo_path.config import (
     CONFIRMATION,
@@ -235,6 +238,31 @@ def check_flat(orders: Sequence[Order], positions: Sequence[Position]) -> None:
         raise Refused("the account has an open order: a run starts flat; nothing was touched")
     if any(p.qty > 0 for p in positions):
         raise Refused("the account holds a position: a run starts flat; nothing was touched")
+
+
+def rows_set_aside() -> dict[str, float]:
+    """The adapter's `bybit_rows_refused_total` in this process, by reason: the rows its trading
+    reads dropped (`trading_parse.refuse_row`, logged as `bybit_row_refused`). Read, never set."""
+    return {
+        sample.labels["reason"]: sample.value
+        for family in bybit_rows_refused_total.collect()
+        for sample in family.samples
+        if sample.name.endswith("_total")
+    }
+
+
+def check_none_set_aside(before: Mapping[str, float], after: Mapping[str, float]) -> None:
+    """R3-04: the flat check's reads hid no row. The adapter drops a row whose `orderLinkId` is
+    one of ours naming another account or environment (`trading_parse.owner_refusal`), so
+    `check_flat` cannot see such an order; `rows_set_aside` moving across those reads (`before`,
+    `after`) refuses the run, and nothing was touched."""
+    moved = {r: int(n - before.get(r, 0.0)) for r, n in after.items() if n > before.get(r, 0.0)}
+    if moved:
+        counts = ", ".join(f"{reason} +{n}" for reason, n in sorted(moved.items()))
+        raise Refused(
+            f"the flat check's reads held rows the adapter set aside ({counts}): an order of ours"
+            " naming another account or environment is invisible to it; nothing was touched"
+        )
 
 
 def _one_host(entry: str) -> bool:

@@ -91,10 +91,14 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
 - **A run that touches orders is armed only after its preflight** (ruling R1C-02 (a)): the size
   limits set from the instrument read, the key's rights checked (below), the account flat (no open
   order on any USDT perpetual and no position: both read account-wide, the adapter's `settleCoin`
-  form), the offset measured. If anything fails first (an account not flat, the limits unset, a
-  failed instrument read, a failed key check, any error, composition included), the run is
-  `refused` and touches nothing on the account: no cancel, no close. The summary's `outcome` is
-  `refused`, `refused` names the reason and the `shutdown` block shows no action
+  form), the offset measured. The adapter drops a row whose `orderLinkId` is one of ours naming
+  another account or environment (`trading_parse.owner_refusal`: it logs `bybit_row_refused` and
+  counts the row in `bybit_rows_refused_total`), so the flat check cannot see such an order; the
+  harness reads that counter before and after the flat check's reads, and a count that moved
+  refuses the run (R3-04). If anything fails first (an account not flat, a row set aside, the
+  limits unset, a failed instrument read, a failed key check, any error, composition included),
+  the run is `refused` and touches nothing on the account: no cancel, no close. The summary's
+  `outcome` is `refused`, `refused` names the reason and the `shutdown` block shows no action
   (`action: none`); the exit code is 2. A stop (SIGINT, SIGTERM, SIGHUP) that arrives during the
   preflight never arms the run: it ends `stopped`, the `shutdown` block shows no action, and
   nothing is touched.
@@ -142,8 +146,12 @@ Pure logic is also tested against `FakeTradingPort` (`tests/test_safety.py`, `te
   position is left and counted (`shutdown.not_ours_left`). The guard refuses an amend or a cancel
   of any order not the run's. The flatten has 40 s in all, inside the container's 60 s grace; a
   stop ends a cycle's fill waits (`--fill-wait-s`) at once, so a stopped run reaches its flatten
-  well inside that grace, and `shapes` checks for a stop before each create. Three venue failures
-  in a row end a `cycles` run the same way.
+  well inside that grace, and `shapes` checks for a stop before each create. A cycle checks for a
+  stop before its opener's create and before its drive (R3-02): a stop that lands while it prices
+  its opener or in the periodic offset read sends nothing more, and one that lands after the
+  opener sends no drive (a cross would fill as a taker), so its order rests away from the touch,
+  under its native stop, until the flatten cancels it. Such a cycle's outcome is `stopped`, never
+  a completed one. Three venue failures in a row end a `cycles` run the same way.
 - The venue keeps one one-way position per symbol, so a foreign position nets with the run's own:
   a run's sell against a foreign long reduces that long, and undoing it would open a position.
   The flatten never opens one: it reports the run's net it could not close (`net_not_held`) and
@@ -260,8 +268,7 @@ are reviewed before anything reaches `packages/fixtures`, in the findings PR.
   opener's RTT is usually cold and a close's warm. **Our overhead** is each port call's latency
   minus the RTTs of its exchanges (never the intent ledger's row: the ledger row's write and
   fsync happen before the measured window opens): it holds M2's key read and the fsynced audit
-  append before
-  each signature, the governor and the parse (budget #4's <=50 ms).
+  append before each signature, the governor and the parse (budget #4's <=50 ms).
 - **The signing share**, on its own: the borrower `compose` hands `ExchangeBybitService` is
   wrapped (`measure.timed_borrower`, offline over the in-memory M2 the same way), and each M2
   `sign` call is timed: the key read, the fsynced audit append and the MAC. The wrapper passes
@@ -356,9 +363,22 @@ strands its signing: every signed request, the shutdown flatten's included, then
 
 1. **The spike checkout** at `<spike>`: check out `spike/oms-demo-path-m2` at the head named in
    the latest APPROVE record on the draft PR, and confirm it with `git rev-parse HEAD` (a commit
-   cannot hold its own SHA, so the record names it). If the stack's pinned sha differs from that
-   head's base, rebase onto it and re-run the offline gates (README "Offline"); the image's
-   `candleviewer` must be the one the harness was built against.
+   cannot hold its own SHA, so the record names it). The image's `candleviewer` must be the one
+   the harness was tested against, so if the stack's pinned sha (the commit the image is built
+   from, `<stack sha>`) differs from that head's base (`<approved base>`), rebase onto it. That
+   rebase is acceptable only if all three of these hold; if one does not, stop: the rebased head
+   needs a new re-check before any run.
+   - Its range-diff is `=` for every commit:
+     `git range-diff <approved base>..<approved head> <stack sha>..HEAD`.
+   - `git rev-parse HEAD:services/api/spike` prints the same tree hash as
+     `git rev-parse <approved head>:services/api/spike`, the spike tree the APPROVE record
+     approved.
+   - The offline gates are re-run on the rebased head, from its `services/api`, and pass:
+     `ruff check spike/`, `ruff format --check spike/`,
+     `mypy --strict --platform linux --explicit-package-bases spike`, the harness's tests
+     (`pytest spike/oms_demo_path/tests`, under their session guard that fails any socket
+     connect), `pytest tests/unit/architecture --no-cov`, and the offline dry run (README
+     "Offline": `cycles`, then `report`).
 2. **The image**, built from the stack's checkout (**CHECK #3180**: its overlay's name, and the
    image name it gives `api`; compose's default is `cv-demo-api`). Run this and every compose
    command below as root, as all of #4522's commands are: its `infra/compose/.env` is
@@ -393,7 +413,11 @@ strands its signing: every signed request, the shutdown flatten's included, then
    `cv_kek` secret at `/run/secrets/cv_kek` (the host file `CV_KEK_FILE`, 10001:10001 0400) read
    as a file source (`CV_KEK_SOURCE=file`, as #4522's api: one custody description for one KEK;
    demo logs the expected `secrets.kek_file_source` warning), the runtime DSN, the audit WAL on
-   `cv-spike-audit`, no lane-key secret, no `cv-audit-data`, no static IP. Core dumps are off
+   `cv-spike-audit`, no lane-key secret, no `cv-audit-data`, no static IP. The `cv_kek` mount
+   carries `uid: "10001"`, `gid: "10001"` and `mode: 0400`, and the service
+   `healthcheck: {disable: true}` (a one-shot), as #4522's KEK services have them, line for line.
+   Compose ignores those three mount keys outside Swarm and bind-mounts the host file as it is,
+   so the host file carries them: 10001:10001, 0400, as this step says. Core dumps are off
    (`ulimits: core: 0`, as #4522 sets for every service that loads the KEK): the harness's M2
    holds the KEK for the whole run. #4522's accepted swap deviation (swap on and not encrypted on
    this demo host, demo funds only) covers this container too.
@@ -415,17 +439,18 @@ strands its signing: every signed request, the shutdown flatten's included, then
 6. **Stop**: Ctrl-C in its terminal (SIGINT), `docker kill --signal SIGTERM <container>`, or the
    terminal closing (SIGHUP): the harness cancels the run's own open orders, closes reduce-only
    what its own fills hold open, and writes its summary (the flatten has 40 s, inside
-   `stop_grace_period` 60 s; a stop ends a cycle's fill waits at once, so it reaches the flatten
-   at once). It touches nothing its ledger does not list. A stop during the preflight never arms
-   the run: `outcome: stopped`, nothing touched. A closed terminal sends SIGHUP into the
-   container only if the compose client forwards it, which nothing offline proves (without it
-   the run goes on to its end, then flattens); tmux (step 5) is the supported way to keep a run
-   alive, and Ctrl-C or `docker kill --signal SIGTERM` the supported ways to stop one. The
-   summary is written provisionally when the run is armed and again before that flatten, with
-   the run's scope (`run_scope`: its ledger's file, the account's digest and its window start),
-   and every create was in `intents.jsonl`, fsynced, before it was sent, so even a run killed past
-   the grace period leaves both. A refused run (`outcome: refused`) touched nothing: read
-   `refused`, fix it, start again.
+   `stop_grace_period` 60 s; a stop ends a cycle's fill waits at once, and a cycle sends no
+   opener or drive once it arrived, so it reaches the flatten at once). It touches nothing its
+   ledger does not list. A stop during the preflight never arms the run: `outcome: stopped`,
+   nothing touched. A closed terminal sends SIGHUP into the container only if the compose client
+   forwards it, which nothing offline proves (without it the run goes on to its end, then
+   flattens); tmux (step 5) is the supported way to keep a run alive, and Ctrl-C or
+   `docker kill --signal SIGTERM` the supported ways to stop one. The summary is written
+   provisionally when the run is armed and again before that flatten, with the run's scope
+   (`run_scope`: its ledger's file, the account's digest and its window start), and every create
+   was in `intents.jsonl`, fsynced, before it was sent, so even a run killed past the grace
+   period leaves both. A refused run (`outcome: refused`) touched nothing: read `refused`, fix
+   it, start again.
 7. **Flatten** (the owner's recovery when a run's shutdown flatten failed: `shutdown.flat: false`,
    or a run killed with only its provisional summary): an audited, M2-signed retry, scoped to the
    failed run as its shutdown was. It adopts that run's scope (its window from its summary, its

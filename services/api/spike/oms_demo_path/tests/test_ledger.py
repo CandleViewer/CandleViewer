@@ -7,7 +7,8 @@ foreign order and a foreign position do, and `flatten` adopts a failed run's fro
 
 Fold 4 (the coordinator's ruling 3): each row is fsynced before its create is sent, the run
 directory once when the file is created, and a failed fsync is a failed write; the row's write
-and fsync both fall before the create's measured window opens."""
+and fsync both fall before the create's measured window opens. Fold 5 (R3-01): each fsync comes
+after its row's write, so it covers the row's bytes."""
 
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ import os
 import re
 import stat
 from decimal import Decimal
+from itertools import accumulate
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -210,19 +212,35 @@ async def test_flatten_refuses_a_failed_run_whose_ledger_is_gone(
 
 
 class _Syncs:
-    """`os.fsync`, each call kept by what it synced (`file` or `directory`); `fail` makes the
+    """`os.fsync`, each call kept by what it synced (`file` or `directory`), and a file's size as
+    each of its fsyncs found it (`sizes`, R3-01: an fsync covers only the bytes written before
+    it, so one that ran before the row's write would cover none of the row); `fail` makes the
     calls on that kind raise, as a disk that cannot sync would."""
 
     def __init__(self, fail: str | None = None) -> None:
         self.fail = fail
         self.calls: list[str] = []
+        self.sizes: list[int] = []
 
     def __call__(self, fd: int) -> None:
-        kind = "directory" if stat.S_ISDIR(os.fstat(fd).st_mode) else "file"
+        found = os.fstat(fd)
+        kind = "directory" if stat.S_ISDIR(found.st_mode) else "file"
         if kind == self.fail:
             raise OSError("fsync: input/output error")
         os.fsync(fd)
         self.calls.append(kind)
+        if kind == "file":
+            self.sizes.append(found.st_size)
+
+
+def _row_end(path: Path, link: str) -> int:
+    """Where the ledger row of `link`'s create ends in the file, in bytes (its newline in)."""
+    end = 0
+    for line in path.read_bytes().splitlines(keepends=True):
+        end += len(line)
+        if json.loads(line)["link_digest"] == digest(link):
+            return end
+    raise AssertionError("the ledger has no row for this create")
 
 
 async def test_each_row_is_fsynced_once_and_the_directory_once_when_the_file_is_created(
@@ -240,6 +258,8 @@ async def test_each_row_is_fsynced_once_and_the_directory_once_when_the_file_is_
     assert await ledger.adopt(tmp_path / "failed" / LEDGER) == 2  # `adopted` rows: each fsynced
     assert syncs.calls.count("file") == 5 and syncs.calls.count("directory") == 1
     assert len(_rows(tmp_path)) == 5 and ledger.summary()["adopted"] == 2
+    lines = (tmp_path / LEDGER).read_bytes().splitlines(keepends=True)
+    assert syncs.sizes == list(accumulate(map(len, lines)))  # each fsync after its row's write
 
 
 @pytest.mark.parametrize("fails", ["file", "directory"])
@@ -262,15 +282,18 @@ async def test_each_row_is_fsynced_before_the_venue_sees_its_create(
     venue, out, syncs = _venue(), tmp_path / "out", _Syncs()
     monkeypatch.setattr(harness, "IntentLedger", functools.partial(IntentLedger, fsync=syncs))
     create = venue._order_create
-    seen: list[tuple[int, int]] = []
+    seen: list[tuple[int, int, bool]] = []
 
     def at_the_venue(body: dict[str, Any], params: dict[str, str]) -> dict[str, Any]:
-        seen.append((syncs.calls.count("file"), len(_rows(out))))  # fsynced rows, rows
+        end = _row_end(out / LEDGER, str(body["orderLinkId"]))
+        covered = bool(syncs.sizes) and syncs.sizes[-1] >= end  # R3-01: its row's bytes synced
+        seen.append((syncs.calls.count("file"), len(_rows(out)), covered))  # fsyncs, rows
         return create(body, params)
 
     monkeypatch.setattr(venue, "_order_create", at_the_venue)
     assert await run.run(_cfg(out), venue=venue) == 0
-    assert seen == [(1, 1), (2, 2), (3, 3), (4, 4)]  # 2 openers, 2 closes: each row on disk first
+    # 2 openers, 2 closes: each row on disk, and covered by its fsync, before its create
+    assert seen == [(1, 1, True), (2, 2, True), (3, 3, True), (4, 4, True)]
     assert syncs.calls.count("directory") == 1
 
 
