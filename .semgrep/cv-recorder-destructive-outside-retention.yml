@@ -18,8 +18,9 @@ rules:
       - pattern: os.removedirs(...)
       - pattern: $P.rmdir()
       # SQL text in code, not in a comment or a docstring line: the line is not a comment and
-      # holds no triple quote (a multi-line docstring body naming the statement is the one
-      # accepted blind spot; `# nosemgrep` with a reason is the escape).
+      # holds no triple quote. Accepted blind spots: a multi-line docstring body naming the
+      # statement, and SQL written inside a one-line triple-quoted string; `# nosemgrep` with a
+      # reason is the escape.
       - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bDROP\s+(PARTITION|TABLE)\b'
       - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bTRUNCATE\s+TABLE\b'
     paths:

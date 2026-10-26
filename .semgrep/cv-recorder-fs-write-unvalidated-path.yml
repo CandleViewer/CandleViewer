@@ -37,7 +37,9 @@ rules:
           # Allowed path roots: the registry's ColdPaths fields, a registry-resolved target
           # (`dest`/`tmp_path` of the atomic writer), the recorder WAL's own directory members, a
           # temp name next to a registry path, and `self._path(...)` (closed-charset ledger and
-          # checkpoint names).
+          # checkpoint names). A heuristic: the roots are matched as substrings of the path
+          # expression, so an unchecked path that merely contains one (`user_dir / "tmp"`) passes;
+          # the runtime containment checks and the dynamic review stay the backstop.
           regex: '^(?!.*(paths\.|partition_dir|manifests_dir|\.root\b|registry|wal_dir|runs_dir|replay_path|spill_path|corrupt_dir|_meta\(|self\.tmp_path|self\.dest|self\.path\b|self\._path\b|self\._dir\b|\bdest\b|\btmp\b|staged|sidecar)).*$'
     paths:
       include:
