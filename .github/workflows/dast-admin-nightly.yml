@@ -9,7 +9,9 @@ name: dast-admin-nightly
 # against real staging needs the owner's runner, environment and users: the PR's Deviations).
 # Phase A sends each role one request per /admin* and /users* operation matrix.yaml refuses it;
 # "Every refusal planned and in the audit log" (check_admin_denials.py) requires the planned
-# status and the request's own denial record, and fails on any CSRF refusal. Phase B is the
+# status and the request's own denial record, and fails on any CSRF refusal. The Owner, signed in
+# with no step-up, sends phase A's fixed purge refusals (security/zap/owner-purge-denials.yaml,
+# E16-X02): each a 403 with its own `retention.purge` denial record. Phase B is the
 # passive and active scan; "The scans stayed signed in, and no new medium+ alert" requires the
 # session to stay authenticated (check_liveness.py) and no alert outside the baseline
 # (baseline_gate.py). Both roles run before a phase fails. The zap-admin-surface artefact holds
@@ -84,9 +86,11 @@ jobs:
           export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
           uv sync --frozen
           uv run --frozen alembic upgrade head
-          # The owner floor refuses a user while no active Owner exists; this one never signs in.
+          # The owner floor refuses a user while no active Owner exists. This one signs in, with
+          # TOTP and no step-up, only for phase A's fixed purge refusals; it never scans.
           CV_SEED_USERNAME="$ZAP_OWNER_USER" CV_SEED_PASSWORD="$ZAP_OWNER_PASSWORD" \
-            uv run --frozen python scripts/seed_fixture_user.py
+            uv run --frozen python scripts/seed_fixture_user.py \
+            --totp-secret-out "$RUNNER_TEMP/cv/owner.totp"
           for role in manager viewer; do
             user="ZAP_${role^^}_USER" password="ZAP_${role^^}_PASSWORD"
             CV_SEED_USERNAME="${!user}" CV_SEED_PASSWORD="${!password}" \
@@ -141,7 +145,7 @@ jobs:
           set -uo pipefail
           mkdir -p zap-reports && chmod a+rwx zap-reports "$WORK" # the image runs as its own user
           rc=0
-          for role in manager viewer; do # both roles run, then the step fails
+          for role in owner manager viewer; do # every role runs, then the step fails
             user="ZAP_${role^^}_USER" envfile="$RUNNER_TEMP/cv/$role-denials.env"
             { python3 security/zap/mint_sessions.py --target "$ZAP_TARGET" --username "${!user}" \
                 --password-env "ZAP_${role^^}_PASSWORD" --totp-secret-file "$RUNNER_TEMP/cv/$role.totp" \
@@ -158,12 +162,13 @@ jobs:
           query="SELECT coalesce(json_agg(json_build_object('username', u.username,
             'request_id', a.request_id, 'action', a.action, 'outcome', a.outcome)), '[]')
             FROM audit_log a JOIN users u ON u.id = a.actor_user_id
-            WHERE u.username IN ('$ZAP_MANAGER_USER', '$ZAP_VIEWER_USER')"
+            WHERE u.username IN ('$ZAP_OWNER_USER', '$ZAP_MANAGER_USER', '$ZAP_VIEWER_USER')"
           docker compose -f infra/compose/docker-compose.yml --profile core exec -T postgres \
             psql -U cv -d candleviewer -v ON_ERROR_STOP=1 -qAt \
             -c "SET default_transaction_read_only = on" -c "$query" > "$WORK/audit-rows.json"
           python3 security/zap/check_admin_denials.py --dir "$WORK" --audit "$WORK/audit-rows.json" \
-            --user "manager=$ZAP_MANAGER_USER" --user "viewer=$ZAP_VIEWER_USER" \
+            --user "owner=$ZAP_OWNER_USER" --user "manager=$ZAP_MANAGER_USER" \
+            --user "viewer=$ZAP_VIEWER_USER" \
             --api-log "$RUNNER_TEMP/cv/api.log"
 
       - name: Phase B, the passive and active scan, as each role

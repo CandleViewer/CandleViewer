@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from types import ModuleType
@@ -28,6 +29,7 @@ CALLERS = {
     "rules": ROOT / ".github/workflows/dast-rules-nightly.yml",
     "market": ROOT / ".github/workflows/dast-market-nightly.yml",
     "drawings": ROOT / ".github/workflows/dast-drawings-nightly.yml",
+    "recording": ROOT / ".github/workflows/dast-recording-nightly.yml",
 }
 SESSION_SCRIPT = ROOT / "security/zap/role_session.js"
 
@@ -46,6 +48,9 @@ def _load(name: str) -> ModuleType:
 plans = _load("nightly_plans")
 liveness = _load("check_liveness")
 CONTRACT = yaml.safe_load(plans.CONTRACT.read_text(encoding="utf-8"))
+MATRIX = yaml.safe_load(
+    (ROOT / "services/api/tests/contract/rbac/matrix.yaml").read_text(encoding="utf-8")
+)
 TEMPLATES = {
     name: yaml.safe_load(path.read_text(encoding="utf-8"))
     for name, (path, _) in plans.PROFILES.items()
@@ -275,10 +280,12 @@ def test_each_template_checks_the_session_before_and_after_the_scan(profile: str
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
 def test_each_template_has_exactly_the_requestors_the_liveness_check_counts(profile: str) -> None:
-    """`check_liveness.py` counts its `REQUESTORS` by default: a third requestor would let the
-    first `/me` and another stand in for an after-scan `/me` that never ran."""
+    """`check_liveness.py` counts its `REQUESTORS` unless the caller passes `requestors`: a third
+    requestor would let the first `/me` and another stand in for an after-scan `/me` that never
+    ran."""
     kinds = [job["type"] for job in TEMPLATES[profile]["jobs"]]
-    assert kinds.count("requestor") == liveness.REQUESTORS
+    for job in _jobs(profile).values():
+        assert kinds.count("requestor") == job.get("requestors", liveness.REQUESTORS)
 
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
@@ -295,6 +302,10 @@ def test_each_scan_fits_in_one_12_minute_bearer(profile: str) -> None:
         ("rules", ["${ZAP_TARGET}/rules([/?].*)?", "${ZAP_TARGET}/schemas/rule-ir\\.json"]),
         ("market", ["${ZAP_TARGET}/market/klines([/?].*)?", "${ZAP_TARGET}/market/bars([/?].*)?"]),
         ("drawings", ["${ZAP_TARGET}/drawings([/?].*)?"]),
+        (
+            "recording",
+            ["${ZAP_TARGET}/recording([/?].*)?", "${ZAP_TARGET}/admin/recorder([/?].*)?"],
+        ),
     ],
 )
 def test_each_context_is_its_surface(profile: str, include: list[str]) -> None:
@@ -365,6 +376,40 @@ def test_no_plan_names_a_rule_the_pinned_image_lacks() -> None:
             assert not named & absent
 
 
+def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the_scan() -> None:
+    """E16-X02 (#494): as the Viewer (no `recording:write`) and the Manager (purge is owner-only,
+    a pin needs `recorder` step-up) each purge and pin is refused 403, never 202: the purge with a
+    matching and a mismatched confirmation (RBAC and owner-only before the body is read), the pin
+    on the matrix's filler id. Each request has its own Idempotency-Key."""
+    jobs = TEMPLATES["recording"]["jobs"]
+    kinds = [job["type"] for job in jobs]
+    (refusals,) = [job for job in jobs if job.get("name") == "purge-and-pin-refused-for-this-role"]
+    assert kinds.index("requestor") < jobs.index(refusals) < kinds.index("openapi")
+    requests = refusals["requests"]
+    assert [(r["method"], r["url"], r["responseCode"]) for r in requests] == [
+        ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
+        ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
+        ("PUT", "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin", 403),
+    ]
+    bodies = [json.loads(r["data"]) for r in requests]
+    assert bodies[0]["confirm_symbol"] == bodies[0]["symbol"] == "BTCUSDT"
+    assert bodies[1]["confirm_symbol"] != bodies[1]["symbol"]
+    assert bodies[2] == {"pinned": True}
+    keys = [h.split(": ", 1)[1] for r in requests for h in r["headers"] if h.startswith("Idem")]
+    assert len(set(keys)) == 3 and all(uuid.UUID(key).version == 4 for key in keys)
+    for role in ("viewer", "manager_without_grant"):  # the matrix refuses both roles the purge
+        assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"][role] == "403"
+
+
+def test_the_recording_scan_uses_the_admin_profiles_injection_policy() -> None:
+    def policy(template: dict[str, Any]) -> dict[str, Any]:
+        (scan,) = [job for job in template["jobs"] if job["type"] == "activeScan"]
+        return dict(scan["policyDefinition"])
+
+    admin = yaml.safe_load((ROOT / ".zap/admin-surface.yaml").read_text(encoding="utf-8"))
+    assert policy(TEMPLATES["recording"]) == policy(admin)
+
+
 # --- role_session.js ----------------------------------------------------------------------------
 
 
@@ -402,6 +447,14 @@ def _session_rule(name: str) -> re.Pattern[str]:
         ("DRAWINGS", "/drawingsx", False),  # whole segments
         ("DRAWINGS", "/drawing-templates", False),
         ("DRAWINGS", "/admin/overview", False),
+        ("RECORDING", "/recording/symbols?limit=50", True),
+        ("RECORDING", "/recording/symbols/0f4c/pin", True),
+        ("RECORDING", "/admin/recorder/purge", True),
+        ("RECORDING", "/me", True),
+        ("RECORDING", "/recordings", False),  # whole segments
+        ("RECORDING", "/admin/recorderx", False),
+        ("RECORDING", "/admin/overview", False),
+        ("RECORDING", "/replay/sessions", False),
     ],
 )
 def test_the_session_goes_only_to_the_profiles_surface_and_the_liveness_check(
@@ -414,18 +467,18 @@ def test_the_profile_picks_the_surface_and_any_other_name_gets_none() -> None:
     script = SESSION_SCRIPT.read_text(encoding="utf-8")
     assert 'var PROFILE = System.getenv("ZAP_PROFILE") || "admin";' in script
     assert (
-        "var SURFACES = { admin: ADMIN, rules: RULES, market: MARKET, drawings: DRAWINGS };"
-        in script
+        "var SURFACES = {\n  admin: ADMIN,\n  rules: RULES,\n  market: MARKET,\n"
+        "  drawings: DRAWINGS,\n  recording: RECORDING,\n};" in script
     )
     own_keys = "hasOwnProperty.call(SURFACES, PROFILE) ? SURFACES[PROFILE] : null;"
     assert own_keys in script  # `constructor` and `__proto__` name no surface
-    assert set(plans.PROFILES) == {"rules", "market", "drawings"}  # each has its surface above
+    assert set(plans.PROFILES) == {"rules", "market", "drawings", "recording"}  # each has one
 
 
 # --- the workflows ------------------------------------------------------------------------------
 
 #: Each nightly's own schedule and files: swapping two of them fails here.
-_NIGHTLY: dict[str, dict[str, str]] = {
+_NIGHTLY: dict[str, dict[str, Any]] = {
     "rules": {
         "cron": "37 3 * * *",
         "report": "rules-viewer",
@@ -447,7 +500,29 @@ _NIGHTLY: dict[str, dict[str, str]] = {
         "role": "manager",
         "fixture": ".zap/e14-drawings-seed.json",
     },
+    # E16-X02 (#494): both roles the recorder refuses, one runner each; the plan's third requestor
+    # is the purge and pin refusals before the scan.
+    "recording": {
+        "cron": "7 4 * * *",
+        "jobs": {
+            f"zap-recording-{role}": {
+                "report": "recording",
+                "baseline": ".zap/recording-baseline.json",
+                "artifact": f"zap-recording-{role}",
+                "role": role,
+                "requestors": 3,
+            }
+            for role in ("viewer", "manager")
+        },
+    },
 }
+
+
+def _jobs(profile: str) -> dict[str, dict[str, Any]]:
+    """Each caller job's files: the nightly's own, as `zap-<profile>`, unless it names its jobs."""
+    entry = _NIGHTLY[profile]
+    files = {key: value for key, value in entry.items() if key != "cron"}
+    return entry.get("jobs") or {f"zap-{profile}": files}
 
 
 def _caller(profile: str) -> dict[str, Any]:
@@ -472,11 +547,12 @@ def test_each_nightly_only_reads_the_repository(profile: str) -> None:
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
 def test_each_nightly_calls_the_low_privilege_workflow_with_its_own_files(profile: str) -> None:
-    (job,) = _caller(profile)["jobs"].values()
-    files = {key: value for key, value in _NIGHTLY[profile].items() if key != "cron"}
-    assert job["uses"] == "./.github/workflows/_dast-low-priv.yml"
-    assert job["with"] == {"profile": profile, **files}
-    assert (ROOT / files["baseline"]).is_file()
+    jobs = _caller(profile)["jobs"]
+    assert set(jobs) == set(_jobs(profile))
+    for name, files in _jobs(profile).items():
+        assert jobs[name]["uses"] == "./.github/workflows/_dast-low-priv.yml"
+        assert jobs[name]["with"] == {"profile": profile, **files}
+        assert (ROOT / files["baseline"]).is_file()
 
 
 def test_the_fixture_a_nightly_seeds_is_the_one_its_plan_aims_at() -> None:
@@ -484,16 +560,17 @@ def test_the_fixture_a_nightly_seeds_is_the_one_its_plan_aims_at() -> None:
     examples at them: two names for one file, or the scan aims at a row the seed never made."""
     seeded = {}
     for profile in CALLERS:
-        (job,) = _caller(profile)["jobs"].values()
-        if "fixture" in job["with"]:
-            seeded[profile] = ROOT / job["with"]["fixture"]
+        for job in _caller(profile)["jobs"].values():
+            if "fixture" in job["with"]:
+                seeded[profile] = ROOT / job["with"]["fixture"]
     assert seeded == plans.SEEDS
 
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
 def test_each_nightly_gates_the_report_its_plan_writes(profile: str) -> None:
     (report,) = [entry for entry in TEMPLATES[profile]["jobs"] if entry["type"] == "report"]
-    assert report["parameters"]["reportFile"] == _NIGHTLY[profile]["report"]
+    for job in _jobs(profile).values():
+        assert report["parameters"]["reportFile"] == job["report"]
 
 
 def _steps() -> dict[str, dict[str, Any]]:
@@ -544,6 +621,18 @@ def test_the_scan_signs_in_as_its_role_the_viewer_unless_the_profile_names_anoth
     inputs = yaml.safe_load(CALLED.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
     assert inputs["role"]["default"] == "viewer"
     assert inputs["fixture"]["default"] == ""  # no Owner and no rows unless the caller names them
+    assert inputs["requestors"] == {
+        "description": inputs["requestors"]["description"],
+        "type": "number",
+        "default": liveness.REQUESTORS,  # the /me pair unless the plan has more
+    }
+
+
+def test_the_liveness_check_counts_the_requestors_the_caller_names() -> None:
+    workflow = yaml.safe_load(CALLED.read_text(encoding="utf-8"))
+    (job,) = workflow["jobs"].values()
+    assert job["env"]["ZAP_REQUESTORS"] == "${{ inputs.requestors }}"
+    assert 'check_liveness.py --requestors "$ZAP_REQUESTORS" ' in _steps()[_CHECKS]["run"]
 
 
 def test_zap_gets_the_session_file_the_target_and_the_profile_and_nothing_else() -> None:
@@ -644,6 +733,7 @@ def _run_step(tmp_path: Path, step: str, **exit_codes: int | str) -> tuple[int, 
         "ZAP_OWNER_USER": "owner-user",
         "ZAP_REPORT": "zap-reports/rules-viewer.json",
         "ZAP_BASELINE": ".zap/rules-low-priv-baseline.json",
+        "ZAP_REQUESTORS": "2",
         "CALLS": str(calls),
         **{name.upper(): str(code) for name, code in exit_codes.items()},
     }

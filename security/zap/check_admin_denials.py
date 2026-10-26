@@ -11,7 +11,9 @@ synthetic users (`audit-rows.json`: `username`, `request_id`, `action`, `outcome
   match`), or a plan failure;
 - a refused request with no `denied` record of its user that names it: matched by its request id
   (sent as `X-Correlation-Id` and `X-Request-Id`), which the API keeps as the record's
-  `request_id`; a record without one answers for no request;
+  `request_id`; a record without one answers for no request. A request that names an `action`
+  (the Owner's fixed purge refusals, E16-X02) needs a record of that action, so a step-up
+  record alone does not answer for it;
 - a `denied` record of either user without a request id: since #3990 (#4001, #4042) every refusal
   record names its request, so one that does not is a regression;
 - a CSRF refusal: an `auth.csrf_refused` record of either user, or that event in the API's log
@@ -74,6 +76,7 @@ def audit_problems(
     denied = [row for row in rows if row.get("outcome") == "denied"]
     named = [row for row in denied if row.get("request_id") and row.get("action") != CSRF_REFUSED]
     by_id = Counter(str(row["request_id"]) for row in named)
+    by_action = {(str(row["request_id"]), row.get("action")) for row in named}
     nameless = sum(
         1 for row in denied if not row.get("request_id") and row.get("action") != CSRF_REFUSED
     )
@@ -93,11 +96,14 @@ def audit_problems(
         if not item.get("recorded", True):
             continue
         operation, matched = item["operation"], by_id[item["correlation_id"]] > 0
+        action = item.get("action")
         if operation in KNOWN_SILENT:
             if matched:
                 problems.append(f"{role}: {operation} is recorded now: drop it from KNOWN_SILENT")
         elif not matched:
             problems.append(f"{role}: {operation} was refused with no audit record")
+        elif action and (item["correlation_id"], action) not in by_action:
+            problems.append(f"{role}: {operation} was refused with no {action} denied record")
     return problems
 
 

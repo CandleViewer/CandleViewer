@@ -1,8 +1,8 @@
 name: _dast-low-priv
 
 # #3991: one low-privilege ZAP nightly, called by dast-rules-nightly.yml (E35-X02, /rules*),
-# dast-market-nightly.yml (E12-X03, /market/klines and /market/bars) and dast-drawings-nightly.yml
-# (E14-X03, /drawings*). It scans the profile's surface authenticated as a synthetic Viewer, or a
+# dast-market-nightly.yml (E12-X03, /market/klines and /market/bars), dast-drawings-nightly.yml
+# (E14-X03, /drawings*) and dast-recording-nightly.yml (E16-X02, /recording*, /admin/recorder*). It scans the profile's surface authenticated as a synthetic Viewer, or a
 # Manager where the profile writes (`role`), with a real TOTP method and no MFA exception, against
 # a throwaway stack on this runner, never a live exchange, as dast-admin-nightly.yml does (#1026).
 # A profile with a `fixture` also has a synthetic Owner (a TOTP method too) whose rows are seeded
@@ -44,6 +44,10 @@ on:
         description: The Owner's drawings drawings_isolation.py seeds and checks, or empty for none
         type: string
         default: ""
+      requestors:
+        description: The plan's requestor jobs, each of which must run as planned (check_liveness.py)
+        type: number
+        default: 2
 
 permissions:
   contents: read
@@ -61,6 +65,7 @@ jobs:
       ZAP_FIXTURE: ${{ inputs.fixture }}
       ZAP_REPORT: zap-reports/${{ inputs.report }}.json
       ZAP_BASELINE: ${{ inputs.baseline }}
+      ZAP_REQUESTORS: ${{ inputs.requestors }}
       WORK: zap-work
       # Compose checks every service's variables on each command; these stores never start here.
       GF_SECURITY_ADMIN_PASSWORD: unused-ci
@@ -194,8 +199,9 @@ jobs:
         run: |
           set -uo pipefail
           rc=0 # both checks run, then the step fails
-          # Both GET /me requestors of the plan ran and answered 200 (no "lost authentication").
-          python3 security/zap/check_liveness.py "$WORK/$ZAP_PROFILE-scan.log" "$ZAP_REPORT" || rc=1
+          # Every requestor of the plan, both GET /me among them, ran and answered as planned
+          # (no "lost authentication").
+          python3 security/zap/check_liveness.py --requestors "$ZAP_REQUESTORS" "$WORK/$ZAP_PROFILE-scan.log" "$ZAP_REPORT" || rc=1
           python3 security/zap/baseline_gate.py "$ZAP_REPORT" "$ZAP_BASELINE" || rc=1
           exit "$rc"
 

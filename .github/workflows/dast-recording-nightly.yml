@@ -1,0 +1,36 @@
+name: dast-recording-nightly
+
+# E16-X02 (#494): the nightly low-privilege OWASP ZAP scan of the recorder's surface
+# (/recording* and /admin/recorder*; plan: .zap/recording.yaml), once as a synthetic Viewer and
+# once as a synthetic Manager on throwaway stacks (_dast-low-priv.yml, #3991). Before each scan the
+# plan sends the purge and pin requests the role is refused: any status but 403 fails the run.
+# Gate: the scan stays signed in with every requestor answered as planned, and no High/Medium
+# alert outside .zap/recording-baseline.json. Nightly and by hand, never per-PR; never a live
+# exchange; no repository secret.
+on:
+  schedule:
+    - cron: "7 4 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  zap-recording-viewer:
+    uses: ./.github/workflows/_dast-low-priv.yml
+    with:
+      profile: recording
+      report: recording
+      baseline: .zap/recording-baseline.json
+      artifact: zap-recording-viewer
+      role: viewer
+      requestors: 3
+  zap-recording-manager:
+    uses: ./.github/workflows/_dast-low-priv.yml
+    with:
+      profile: recording
+      report: recording
+      baseline: .zap/recording-baseline.json
+      artifact: zap-recording-manager
+      role: manager
+      requestors: 3

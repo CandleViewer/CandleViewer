@@ -227,14 +227,41 @@ def written_plans(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def test_main_writes_both_roles_plans_and_the_cut_contract(written_plans: Path) -> None:
     names = sorted(path.name for path in written_plans.iterdir())
-    assert names == [
-        "admin-openapi.yaml",
-        *(
-            f"{role}-{kind}"
-            for role in ("manager", "viewer")
-            for kind in ("denials.yaml", "requests.json", "scan.yaml")
-        ),
-    ]
+    assert names == sorted(
+        [
+            "admin-openapi.yaml",
+            *(
+                f"{role}-{kind}"
+                for role in ("manager", "viewer")
+                for kind in ("denials.yaml", "requests.json", "scan.yaml")
+            ),
+            "owner-denials.yaml",  # the Owner's fixed refusals only: it never scans
+            "owner-requests.json",
+        ]
+    )
+
+
+def test_the_owners_plan_is_its_purge_refusals_each_named_by_its_record(
+    written_plans: Path,
+) -> None:
+    """E16-X02 (#494): the matrix allows the Owner the purge, so its refusal for want of a
+    `recorder` step-up is a fixed plan: each purge 403 with its own `retention.purge` record."""
+    assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"]["owner"] == "allow"
+    planned = json.loads((written_plans / "owner-requests.json").read_text(encoding="utf-8"))
+    assert [(item["operation"], item["expected"], item["action"]) for item in planned] == [
+        ("POST /admin/recorder/purge", 403, "retention.purge")
+    ] * 2
+    assert all(item["url"] == f"{TARGET}/admin/recorder/purge" for item in planned)
+    ids = [item["correlation_id"] for item in planned]
+    assert len(set(ids)) == 2 and all(uuid.UUID(value).version == 4 for value in ids)
+    bodies = [json.loads(item["body"]) for item in planned]
+    assert [body.get("include_pinned", False) for body in bodies] == [False, True]
+    assert all(body["confirm_symbol"] == body["symbol"] for body in bodies)
+    plan = yaml.safe_load((written_plans / "owner-denials.yaml").read_text(encoding="utf-8"))
+    session, requestor = plan["jobs"]
+    assert session["type"] == "script" and requestor["name"] == "owner-denials"
+    for entry in requestor["requests"]:  # no key: an elevated Owner would get a 400, never a 202
+        assert not any(header.lower().startswith("idempotency-key") for header in entry["headers"])
 
 
 @pytest.mark.parametrize("role", sorted(plans.ROLES))
@@ -722,6 +749,18 @@ def test_planned_refusals_pass_with_their_records_and_the_rows_the_gate_ignores(
     assert denials.audit_problems("manager", [by_id, step_up, silent, skipped], rows) == []
 
 
+def test_a_request_that_names_its_action_needs_a_denied_record_of_that_action() -> None:
+    """The Owner's purge refusal writes `auth.step_up_required` and `retention.purge`: only the
+    second answers for the planned purge (E16-X02)."""
+    item = {**_request("POST /admin/recorder/purge"), "action": "retention.purge"}
+    purge = _row(item["correlation_id"], action="retention.purge")
+    assert denials.audit_problems("owner", [item], [_step_up(item), purge]) == []
+    missing = "owner: POST /admin/recorder/purge was refused with no retention.purge denied record"
+    assert denials.audit_problems("owner", [item], [_step_up(item)]) == [missing]
+    allowed = _row(item["correlation_id"], outcome="success", action="retention.purge")
+    assert denials.audit_problems("owner", [item], [_step_up(item), allowed]) == [missing]
+
+
 def test_csrf_refusals_fail_the_gate_and_answer_for_no_request() -> None:
     """The scan lost its CSRF pair: three unsafe requests, three nameless CSRF refusals."""
     planned = [_request(op) for op in ("POST /admin/a", "PUT /admin/b", "DELETE /admin/c")]
@@ -1100,6 +1139,20 @@ def test_each_phase_keeps_its_own_sessions_and_runs_both_roles_before_failing() 
         step["run"] for name, step in steps.items() if name.startswith("Every refusal")
     )
     assert '--api-log "$RUNNER_TEMP/cv/api.log"' in denial_gate
+
+
+def test_the_owner_signs_in_with_totp_for_its_purge_refusals_and_its_records_are_checked() -> None:
+    steps = _steps()
+    users = next(step["run"] for name, step in steps.items() if name.startswith("Migrate"))
+    seed = users[users.index('CV_SEED_USERNAME="$ZAP_OWNER_USER"') :].split("for role in")[0]
+    assert '--totp-secret-out "$RUNNER_TEMP/cv/owner.totp"' in seed and "--role" not in seed
+    phase_a = next(step["run"] for name, step in steps.items() if name.startswith("Phase A"))
+    phase_b = next(step["run"] for name, step in steps.items() if name.startswith("Phase B"))
+    assert "for role in owner manager viewer; do" in phase_a
+    assert "for role in manager viewer; do" in phase_b  # the Owner never scans
+    gate = next(step["run"] for name, step in steps.items() if name.startswith("Every refusal"))
+    assert "u.username IN ('$ZAP_OWNER_USER', '$ZAP_MANAGER_USER', '$ZAP_VIEWER_USER')" in gate
+    assert '--user "owner=$ZAP_OWNER_USER"' in gate
 
 
 def test_the_workflow_runs_uv_frozen_and_stops_waiting_for_an_api_that_exited() -> None:
