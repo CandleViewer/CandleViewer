@@ -830,6 +830,10 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
         "before anything is recorded or sent",
         "`sizing.mode` `profile` sizes by the profile; another mode overlays the request's values "
         "onto a copy of the profile, judged as a resulting leg and refused whole, never clamped",
+        "an overlay that widens the profile is refused whole (ADR-0040), never clamped",
+        "an `atr` stop uses `fallback_sl_offset_pct`, recorded as `stop_fallback`",
+        "until the E13 kernel port reaches `oms`",
+        "a profile with no fallback fails closed",
         "A reduce-only order is not sized by the profile: its `fixed_qty` `qty` is floored to the "
         "lot step",
     )
@@ -903,16 +907,20 @@ def test_place_order_states_the_price_band_its_setting_and_rule() -> None:
     assert not _missing(
         band,
         "the `price` of a limit order that is not reduce-only must lie within "
-        "`[mid \N{MULTIPLICATION SIGN} (1 \N{MINUS SIGN} b), "
-        "mid \N{MULTIPLICATION SIGN} (1 + b)]`, `mid` the market's mid price and `b` the "
-        "`CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to `0.20`, with no off "
-        "value; `20-architecture.md` section 7.2)",
-        "A conditional entry, market or limit, has its `trigger.price` judged instead, and the "
-        "limit `price` behind a trigger is not judged",
+        "`[ref \N{MULTIPLICATION SIGN} (1 \N{MINUS SIGN} b), "
+        "ref \N{MULTIPLICATION SIGN} (1 + b)]`, `ref` the market's mid price, else its last "
+        "price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to "
+        "`0.20`, with no off value; `20-architecture.md` section 7.2)",
+        "A per-profile value, when the profile carries one, is bounded the same way: inside "
+        "`0.005` to `0.20`, the setting being the default",
+        "A conditional entry, market or limit, has its `trigger.price` judged against `ref`, and "
+        "the limit `price` behind a trigger is judged too, against its trigger price, with the "
+        "same `b`",
         "is refused with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}`, "
         "before the order is sized",
         "A reduce-only order is never judged",
-        "With no mid to judge against the request is `503 exchange_unavailable` with `Retry-After`",
+        "With neither a mid nor a last price to judge against the request is "
+        "`503 exchange_unavailable` with `Retry-After`",
     )
     sizer = _INTERNAL_DOC.split("**9.3.5 ", 1)[1].split("**9.3.6 ", 1)[0]
     assert "the band's scope, rule and setting are defined in `22-api-openapi.yaml`" in sizer
@@ -969,7 +977,17 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
     assert not _missing(
         _words(figures),
         'an announced interim, `DayRiskFigures` (`oms_interim_ports{port="risk_figures"}`',
-        "It serves demo accounts only and refuses a live account's order",
-        "`taker_fee_rate` comes from a per-(account, symbol) cache of the venue's fee rate",
+        "It serves demo and testnet accounts only and refuses `live` at construction",
+        "the recorded stop or, without one, the profile's fallback distance (which errs high)",
+        "`taker_fee_rate` is the venue's fee rate per (account, symbol), cached for seconds",
+        "E39-T01 (#881) replaces the counters; the fee source stays",
         "answered `503 sizing_unavailable`",
     )
+    row = _ARCH.split("| OMS | `oms_interim_ports{port}` |", 1)[1].split("\n", 1)[0]
+    assert not _missing(
+        _words(row),
+        "`risk_figures`, the demo and testnet `DayRiskFigures`, which refuses `live` at "
+        "construction",
+        "`atr`, an `atr` stop's `fallback_sl_offset_pct` until the E13 kernel port reaches `oms`",
+    )
+    assert 'oms_interim_ports{port="atr"}' in _words(_INTERNAL_DOC.split("**9.3.5 ", 1)[0])

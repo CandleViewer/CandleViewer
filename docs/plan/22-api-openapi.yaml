@@ -5620,11 +5620,14 @@ paths:
           section 9.3, `size_leg`), never by a client figure. `sizing.mode` `profile` sizes by the
           profile; another mode overlays the request's values onto a copy of the profile, judged
           as a resulting leg and refused whole, never clamped, when it goes past the profile's caps
-          (24-internal-schemas.md section 9.3.2a; ADR-0040; #913 S4-S ruling Q2). The stop sent is
+          (24-internal-schemas.md section 9.3.2a; ADR-0040; #913 S4-S ruling Q2): an overlay that
+          widens the profile is refused whole (ADR-0040), never clamped. The stop sent is
           the one the sizer measured the order's risk from, `stop_loss` or else the profile's
           offset, and the native-stop rule above still judges it (C-2.6, C-4.14): an `atr` stop
-          with no ATR reading falls back to `fallback_sl_offset_pct`, recorded as `stop_fallback`
-          (SR-E28-12; ruling Q6), and an `r_multiple` stop, which defines R, is
+          uses `fallback_sl_offset_pct`, recorded as `stop_fallback` (SR-E28-12; ruling Q6), until
+          the E13 kernel port reaches `oms` (the announced interim
+          `oms_interim_ports{port="atr"}`, `20-architecture.md` section 12.1), and a profile with
+          no fallback fails closed; an `r_multiple` stop, which defines R, is
           `validation_failed` / `stop_unit_unsupported`. A reduce-only order is not sized by the
           profile: its `fixed_qty` `qty` is floored to the lot step, and another mode on it, or
           `pct_position` on an order that is not reduce-only, is `validation_failed` /
@@ -5645,15 +5648,18 @@ paths:
           `sizing_unavailable` says a figure the sizer needs has no source yet, never that the
           exchange is down; the request may be sent again after `Retry-After`.
         * The price band (#913 S4-S rulings Q3 and Q4): the `price` of a limit order that is not
-          reduce-only must lie within `[mid × (1 − b), mid × (1 + b)]`, `mid` the market's mid
-          price and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to
-          `0.20`, with no off value; `20-architecture.md` section 7.2). A conditional entry, market
-          or limit, has its `trigger.price` judged instead, and the limit `price` behind a trigger
-          is not judged. A price outside the band is refused with `400 validation_failed`, `errors[]`
-          `{field: price, rule: price_band}`, before the order is sized. A reduce-only order is
-          never judged, so the band holds back no protective order. With no mid to judge against
-          the request is `503 exchange_unavailable` with `Retry-After`, as a market order with no
-          reference price is.
+          reduce-only must lie within `[ref × (1 − b), ref × (1 + b)]`, `ref` the market's mid
+          price, else its last price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`,
+          from `0.005` to `0.20`, with no off value; `20-architecture.md` section 7.2). A
+          per-profile value, when the profile carries one, is bounded the same way: inside `0.005`
+          to `0.20`, the setting being the default. A conditional entry, market or limit, has its
+          `trigger.price` judged against `ref`, and the limit `price` behind a trigger is judged
+          too, against its trigger price, with the same `b`. A price outside the band is refused
+          with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}`, before the
+          order is sized. A reduce-only order is never judged, so the band holds back no protective
+          order. With neither a mid nor a last price to judge against the request is
+          `503 exchange_unavailable` with `Retry-After`, as a market order with no reference price
+          is.
         * A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on
           one (`ExchangeCapabilities.supports_reduce_only_tpsl`, 24-internal-schemas.md section
           14.1). One that names either, or that would carry the profile's stop because it is not
