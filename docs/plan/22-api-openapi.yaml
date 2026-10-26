@@ -5627,7 +5627,15 @@ paths:
           profile; another mode, except `pct_position`, overlays the request's values onto a copy of the
           profile, judged by `judge_leg` (24-internal-schemas.md section 9.3.2a) as a resulting leg
           and refused whole, never clamped, when it goes past the profile's caps (ADR-0040; #913
-          S4-S ruling Q2). The stop sent is
+          S4-S ruling Q2). The overlay reads `pct` and `risk_per_trade_pct` as percents (`0.5` is
+          0.5 %, at most 100). An overlaid order that names no `time_in_force` inherits `GTC` and is
+          judged against the profile's `time_in_force_default` like one that names it; a plain
+          `profile` order that names no sizing value, `max_notional_usd`, stop or take-profit is not
+          judged, so its `time_in_force` is sent as named, whatever the profile's default. A
+          `max_notional_usd` is judged in every mode, `profile` included: a leg above it is refused
+          whole, never capped. The quantity is always floored to the lot step, so on a judged order
+          `round_to_lot: false` is `validation_failed` / `qty_rounding` on `sizing.round_to_lot`.
+          The stop sent is
           the one the sizer measured the order's risk from, `stop_loss` or else the profile's
           offset, and the native-stop rule above still judges it (C-2.6, C-4.14): an `atr` stop
           uses `fallback_sl_offset_pct`, recorded as `stop_fallback` (SR-E28-12; ruling Q6), until
@@ -5653,7 +5661,13 @@ paths:
           | `figure_unknown` | `503 sizing_unavailable` with `Retry-After` (#913 S4-S ruling Q5) |
 
           `sizing_unavailable` says a figure the sizer needs has no source yet, never that the
-          exchange is down; the request may be sent again after `Retry-After`.
+          exchange is down; the request may be sent again after `Retry-After`. Its `detail` is one
+          of two values:
+
+          | `detail` | Meaning |
+          |---|---|
+          | `tiers_pending` | The symbol's tiers are being fetched; retry in a moment. |
+          | `The order cannot be sized yet, so it was not sent.` | Another figure is unavailable. |
         * The price band (#913 S4-S rulings Q3 and Q4): the `price` of a limit order that is not
           reduce-only must lie within `[ref × (1 − b), ref × (1 + b)]`, `ref` the market's mid
           price, else its last price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`,
@@ -17538,7 +17552,11 @@ components:
             description: "Percent of equity (`pct_equity`) or of the position (`pct_position`).",
           }
         risk_per_trade_usd: { $ref: "#/components/schemas/Decimal" }
-        risk_per_trade_pct: { $ref: "#/components/schemas/Decimal" }
+        risk_per_trade_pct:
+          {
+            $ref: "#/components/schemas/Decimal",
+            description: "Percent of equity lost at the stop (`risk_based`): `0.5` is 0.5 %, at most 100.",
+          }
         max_notional_usd: { $ref: "#/components/schemas/Decimal" }
         round_to_lot: { type: boolean, default: true }
       examples:
