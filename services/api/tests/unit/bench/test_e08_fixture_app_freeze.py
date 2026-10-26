@@ -1,30 +1,24 @@
 """#3641: the pack's REST backend freezes its heap as the app's lifespan does, so the cold-read
-figures of the smoke pack and of the k6 run come from the heap shape the app serves from.
+figures of the smoke pack and of the k6 run come from the heap shape the app serves from. The
+scenario that built the app hands the process back unfrozen.
 
 `build_app` builds a bare FastAPI with no lifespan, so without its own freeze neither driver would
-see what `main._lifespan` does once startup completes."""
+see what `main._lifespan` does once startup completes. `runner all` runs the seven scenarios in one
+process, and `rest_k6` is the fifth: `latency_internal` and `ratelimit_headroom` follow it."""
 
 from __future__ import annotations
 
-import gc
-from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from bench.ingestion import fixture_app
+from bench.ingestion import fixture_app, rest_load
+from bench.ingestion.config import load
+from bench.ingestion.fixture_app import requests_plan
 from candleviewer.api.market_coverage import make_data_coverage_router
+from candleviewer.observability import metrics_runtime
 from tests._gc_freeze import Marker, is_frozen
-
-
-@pytest.fixture
-def clean_freeze() -> Iterator[None]:
-    """The freeze is the test's own: a clean slate whatever ran before, nothing left after
-    (`build_app` freezes the whole process and never undoes it)."""
-    gc.unfreeze()
-    yield
-    gc.unfreeze()
 
 
 async def test_build_app_freezes_the_heap_as_its_last_step(
@@ -43,3 +37,27 @@ async def test_build_app_freezes_the_heap_as_its_last_step(
 
     assert frozen_while_building == [False]
     assert is_frozen(marker)
+
+
+@pytest.mark.parametrize("fails", [False, True], ids=["after a run", "after a failed run"])
+async def test_run_rest_hands_the_process_back_unfrozen(
+    monkeypatch: pytest.MonkeyPatch, clean_freeze: None, fails: bool
+) -> None:
+    marker = Marker()
+
+    async def drive(*_: int) -> dict[str, list[float]]:
+        metrics_runtime.freeze_startup_heap()  # what `build_app` ends with, for real
+        assert is_frozen(marker)
+        if fails:
+            raise RuntimeError("the driver failed")
+        return {route: [1.0] for route in requests_plan()}
+
+    monkeypatch.setattr(rest_load, "drive_inprocess", drive)
+
+    if fails:
+        with pytest.raises(RuntimeError, match="the driver failed"):
+            await rest_load.run_rest(load("rest_k6", "smoke"))
+    else:
+        await rest_load.run_rest(load("rest_k6", "smoke"))
+
+    assert not is_frozen(marker)

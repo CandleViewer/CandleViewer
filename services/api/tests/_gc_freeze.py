@@ -5,6 +5,9 @@ the permanent generation in any full collection, so the count is above 0 after a
 `gc.collect()` (a freeze that never happened would still pass `count > 0`), and it leaves 0 again
 once anything collects after an `unfreeze`. `gc.get_objects()` leaves the permanent generation
 out, so a tracked object that a test kept alive and that is missing from it is frozen.
+
+The stub that keeps the freeze out of the other tests, the guard that undoes a leaked one and the
+`clean_freeze` fixture are in the root `tests/conftest.py`.
 """
 
 from __future__ import annotations
@@ -14,6 +17,13 @@ import gc
 
 class Marker:
     """A tracked object for a test to keep alive across a freeze."""
+
+
+class Cycle:
+    """A reference cycle: once unreachable, only the collector can free it."""
+
+    def __init__(self) -> None:
+        self.me = self
 
 
 def is_frozen(obj: object) -> bool:

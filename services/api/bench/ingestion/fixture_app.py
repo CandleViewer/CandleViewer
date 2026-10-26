@@ -16,8 +16,9 @@ Auth is a fixed bench principal with read permissions only (test-only identity, 
 
 `build_app` ends as the production lifespan's startup does (#3641): it freezes the heap built so
 far (`freeze_startup_heap`), so the pack's cold-read figures come from the heap shape the app
-serves from. The freeze is process-wide and never undone here: the pack's runner ends with the
-run, and a caller that outlives it (a test) calls `unfreeze_startup_heap` once it is done.
+serves from. The freeze is process-wide and never undone here: `rest_load.run_rest` undoes it when
+its scenario ends (`runner all` runs the later scenarios in the same process), and any other
+caller (a test, a rig) calls `unfreeze_startup_heap` once it is done.
 """
 
 from __future__ import annotations

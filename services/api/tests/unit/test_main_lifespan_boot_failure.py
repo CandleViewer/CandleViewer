@@ -11,8 +11,9 @@ runs; a step the boot never reached does not stop, so `WsRuntime.stop()` never w
 for a server that never served; then `stop_all`, with the teardown's grace, stops every module in
 reverse. The exception leaves unchanged. Nothing sleeps or reads a clock: no fake suspends.
 
-The heap's freeze (#3641) is a boot call as well: one the boot made before the metrics runtime, so
-a failure after it must leave nothing frozen, and one before it never freezes at all.
+The heap's freeze (#3641) is a boot call as well, the last before the metrics runtime: a failure at
+it, or at the metrics runtime after it, runs the same teardown. What a failed boot leaves frozen is
+`test_main_lifespan.py`'s to check: the root conftest's stub makes the freeze a no-op here.
 """
 
 from __future__ import annotations

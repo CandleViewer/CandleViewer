@@ -46,7 +46,7 @@ from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.boot import StoredKey
 from cvdev.account_fixture.wiring import NOT_BUILDABLE
 from tests._account_fixtures import PACK_ROOT
-from tests._gc_freeze import Marker, is_frozen
+from tests._gc_freeze import Cycle, Marker, is_frozen
 from tests.unit.test_main_lifespan_teardown_isolation import (
     _app,
     _BrokenLog,
@@ -517,14 +517,6 @@ async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_s
     assert seen == ["start", "stop, audit stopped=False"] and ctx.audit.stopped
 
 
-@pytest.fixture
-def clean_freeze(real_startup_freeze: None) -> Iterator[None]:
-    """The freeze is the test's own: a clean slate whatever ran before, nothing left after."""
-    gc.unfreeze()
-    yield
-    gc.unfreeze()
-
-
 async def test_lifespan_freezes_the_startup_heap_and_unfreezes_at_shutdown(
     clean_freeze: None,
 ) -> None:
@@ -540,13 +532,6 @@ async def test_lifespan_freezes_the_startup_heap_and_unfreezes_at_shutdown(
     assert not is_frozen(marker)
 
 
-class _Cycle:
-    """A reference cycle: once unreachable, only the collector can free it."""
-
-    def __init__(self) -> None:
-        self.me = self
-
-
 async def test_lifespan_collects_startup_garbage_before_it_freezes(
     clean_freeze: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -554,10 +539,10 @@ async def test_lifespan_collects_startup_garbage_before_it_freezes(
     the permanent generation, where nothing frees it until the unfreeze."""
     app, ctx = FastAPI(), _fake_ctx()
     app.state.app_context = ctx
-    left: list[weakref.ref[_Cycle]] = []
+    left: list[weakref.ref[Cycle]] = []
 
     async def leave_garbage() -> None:
-        left.append(weakref.ref(_Cycle()))  # unreachable at once, yet alive: it is a cycle
+        left.append(weakref.ref(Cycle()))  # unreachable at once, yet alive: it is a cycle
 
     monkeypatch.setattr(ctx.mesh_self_check, "run_once", leave_garbage)
     was_enabled = gc.isenabled()
@@ -604,6 +589,32 @@ async def test_lifespan_freezes_after_every_start_call_and_starts_the_metrics_ru
     assert seen.count("freeze") == 1
     assert seen[at + 1 :] == ["metrics_runtime.start"]  # nothing else starts after it
     assert {"start_all", "oms_runtime.start", "ws_runtime.start"} <= {*seen[:at]}
+
+
+async def test_lifespan_freezes_after_the_start_calls_that_the_step_fakes_leave_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_STEPS` has no fake for three start calls that sit just before the freeze, so the order test
+    above does not see them: the lost jobs' load, the audit exports' first sweep and the profile
+    notices' bus pattern. Each builds state that the freeze is there to take out of the full
+    collections, so each runs before it."""
+    app, _ = _app([], monkeypatch)
+    seen: list[str] = []
+
+    def starts(name: str) -> AsyncMock:
+        return AsyncMock(side_effect=lambda: seen.append(name))
+
+    app.state.admin_jobs_lost = SimpleNamespace(load=starts("lost_jobs.load"), save=AsyncMock())
+    app.state.audit_exports = SimpleNamespace(start=starts("audit_exports.start"), stop=AsyncMock())
+    app.state.profile_notices = SimpleNamespace(
+        start=lambda: seen.append("profile_notices.start"), stop=AsyncMock()
+    )
+    monkeypatch.setattr(main, "freeze_startup_heap", lambda: seen.append("freeze"))
+
+    await _run(app)
+
+    assert seen[-1] == "freeze"
+    assert sorted(seen[:-1]) == ["audit_exports.start", "lost_jobs.load", "profile_notices.start"]
 
 
 async def test_lifespan_does_not_time_its_forced_collection_as_a_natural_one(

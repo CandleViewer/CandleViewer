@@ -18,7 +18,7 @@ from candleviewer.observability import metrics_runtime
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE, register_r0
 from candleviewer.observability.metrics_runtime import GcPauseTimer
-from tests._gc_freeze import Marker, is_frozen
+from tests._gc_freeze import Cycle, Marker, is_frozen
 
 
 @pytest.fixture(autouse=True)
@@ -193,21 +193,6 @@ def test_gc_pause_timer_remove_forgets_a_pending_start(metrics: Metrics) -> None
     assert _full_collections(metrics) == 0
 
 
-@pytest.fixture
-def clean_freeze() -> Iterator[None]:
-    """The freeze is the test's own: a clean slate whatever ran before, nothing left after."""
-    gc.unfreeze()
-    yield
-    gc.unfreeze()
-
-
-class _Cycle:
-    """A reference cycle: once unreachable, only the collector can free it."""
-
-    def __init__(self) -> None:
-        self.me = self
-
-
 def test_freeze_startup_heap_freezes_and_logs_what_it_froze(clean_freeze: None) -> None:
     marker = Marker()
     gc.collect()
@@ -215,7 +200,7 @@ def test_freeze_startup_heap_freezes_and_logs_what_it_froze(clean_freeze: None) 
     with capture_logs() as logs:
         metrics_runtime.freeze_startup_heap(clock=iter([1.0, 1.25]).__next__)
     assert is_frozen(marker)
-    [line] = logs
+    [line] = [e for e in logs if e["event"] == "gc_startup_heap_frozen"]
     assert (line["event"], line["log_level"], line["collect_ms"]) == (
         "gc_startup_heap_frozen",
         "info",
@@ -230,7 +215,7 @@ def test_freeze_startup_heap_collects_before_it_freezes(clean_freeze: None) -> N
     was_enabled = gc.isenabled()
     gc.disable()  # so that only the freeze's own collection can free it
     try:
-        left = weakref.ref(_Cycle())  # unreachable at once, yet alive: it is a cycle
+        left = weakref.ref(Cycle())  # unreachable at once, yet alive: it is a cycle
         assert left() is not None
         metrics_runtime.freeze_startup_heap()
         assert left() is None

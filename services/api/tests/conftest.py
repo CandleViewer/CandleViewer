@@ -7,6 +7,7 @@ access outside `tmp_path` (Constitution C-13.5/C-13.7).
 
 from __future__ import annotations
 
+import gc
 import sys
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
@@ -87,21 +88,80 @@ def _reset_structlog_state() -> Iterator[None]:
 
 @pytest.fixture
 def real_startup_freeze() -> None:
-    """Ask for it to run the lifespan's real heap freeze: see `_stub_startup_freeze`."""
+    """Ask for it to run the real startup heap freeze: see `_stub_startup_freeze`."""
+
+
+#: The modules that call `freeze_startup_heap`: the lifespan, and the bench's fixture app, whose
+#: `build_app` ends with the same call.
+_FREEZING_MODULES = ("candleviewer.main", "bench.ingestion.fixture_app")
+
+
+def stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the startup heap freeze a no-op in `main._lifespan` and the bench's `build_app`.
+
+    A real one is a full collection of everything the pytest process holds so far, 0.2 to 1 s
+    each time (enough to use up a test's own time bound: `test_key_import`'s 1 s spans the
+    lifespan's boot), and it freezes the whole process until something unfreezes it. What it
+    freezes is not what the tests that boot the lifespan or build the app check, so they get a
+    no-op. Two kinds of test keep the real one: a test that asks for `real_startup_freeze` (the
+    freeze's own tests), and a `perf` test, because the Budget #13 rig reads the heap the app
+    serves from (`undo_a_leaked_freeze` ends its freeze).
+
+    Only a module the run has already imported is patched, so no test pays for an import it did
+    not make; a freeze through a module imported inside a test escapes the stub, and the guard
+    undoes it. With the stub, the lifespan still sets `frozen = True`, so its teardown still runs
+    the real `unfreeze_startup_heap()`: a `gc.unfreeze()` that finds nothing of its own to move.
+    """
+    asked = "real_startup_freeze" in request.fixturenames
+    if asked or request.node.get_closest_marker("perf") is not None:
+        return
+    for name in _FREEZING_MODULES:
+        module = sys.modules.get(name)
+        if module is not None:
+            monkeypatch.setattr(module, "freeze_startup_heap", lambda: None)
 
 
 @pytest.fixture(autouse=True)
 def _stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
-    """#3641: `main._lifespan` collects, then freezes, the heap of the whole process once startup
-    completes. In a test process that is a full collection of everything the run holds so far, 0.2
-    to 1 s every time a test starts the lifespan: slow, and enough to use up a test's own time
-    bound (`test_key_import`'s 1 s, which spans the boot). What it freezes is not what those tests
-    check, so they run a no-op; a test about the freeze itself asks for `real_startup_freeze`. Only
-    a `candleviewer.main` the run has already imported is patched, so no test pays for an import it
-    did not make."""
-    main = sys.modules.get("candleviewer.main")
-    if main is not None and "real_startup_freeze" not in request.fixturenames:
-        monkeypatch.setattr(main, "freeze_startup_heap", lambda: None)
+    """#3641: `main._lifespan` and the bench's `build_app` collect, then freeze, the heap of the
+    whole process. A test that does not check that runs a no-op; one that does asks for
+    `real_startup_freeze`, and a `perf` test keeps the real one (`stub_startup_freeze` says why).
+    The lifespan still sets `frozen = True` around the no-op, so its teardown still runs the real
+    unfreeze."""
+    stub_startup_freeze(request, monkeypatch)
+
+
+def undo_a_leaked_freeze() -> Iterator[None]:
+    """The body of the autouse guard below: after a test, the permanent generation holds no more
+    than before it.
+
+    A test that freezes the process and never undoes it (a `build_app` its module imported late, a
+    boot whose lifespan was not stubbed) would leave every later test running with its heap out of
+    the collector. `gc.unfreeze()` undoes every freeze in the process, so it runs only where the
+    count grew: a freeze that was already there is its caller's own. (A plain collection after an
+    unfreeze puts a few hundred immortal objects back, which counts as growth, and is harmless.)
+    """
+    before = gc.get_freeze_count()
+    yield
+    if gc.get_freeze_count() > before:
+        gc.unfreeze()
+
+
+@pytest.fixture(autouse=True)
+def _undo_a_leaked_freeze() -> Iterator[None]:
+    """#3641: what the real freeze or a freeze this suite did not stub leaves behind is undone
+    after every test, as `_reset_structlog_state` undoes the logging: no ordering can leave a
+    later test running on a frozen heap (`undo_a_leaked_freeze` says how)."""
+    yield from undo_a_leaked_freeze()
+
+
+@pytest.fixture
+def clean_freeze(real_startup_freeze: None) -> Iterator[None]:
+    """For a test that freezes for real, through the lifespan, the bench's `build_app` or the
+    helpers themselves: a clean slate whatever ran before, and nothing left frozen after."""
+    gc.unfreeze()
+    yield
+    gc.unfreeze()
 
 
 @pytest.hookimpl(wrapper=True)
