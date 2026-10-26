@@ -2754,12 +2754,13 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("port",),
         "Order-path ports served by an interim implementation (#913 ruling R4; slice 3), set once "
         "at startup: 1 per interim port (sizer, stop_resolver, risk_gate, arm_records, "
-        "kill_switch, machine_event_sink), 0 per real one. The interim risk gate and arm records "
-        "refuse every live order; the interim kill switch admits.",
+        "kill_switch, machine_event_sink, risk_figures), 0 per real one. The interim risk gate "
+        "and arm records refuse every live order, and risk_figures at 1 on live refuses every "
+        "live entry once the size step reads it (S4-S-b2); the interim kill switch admits.",
         "> 0 on env=live (dashboard)",
         _P,
         "E29",
-        max_series=6,
+        max_series=7,
     ),
     _s(
         "oms_submit_rejected_total",

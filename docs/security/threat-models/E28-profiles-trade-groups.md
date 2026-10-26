@@ -785,6 +785,12 @@ not extended (`32-risk-register.md` §1.3).
 | PF-I03 | A granted Viewer sees equity-derived sizing in a preview, if P-1 keeps `orders:read`                                  | Low   | Owner/PO          | E34-S01 | 2027-02-04 (R3 gate) |
 | PF-T19 | After SR-E28-19, two users on one account still change that account's per-symbol leverage for each other              | Low   | Owner/PO          | E29-T04 | 2027-02-04 (R3 gate) |
 | PF-T08 | A writer with database access can still change a current profile row; the hash-chained diff detects it after the fact | Low   | Security engineer | E28-T01 | 2027-03-25 (GA cut)  |
+| PF-T21 | An armed rule blocks only its first account's profile deletes; a global rule blocks none (fails closed later)         | Low   | Backend lead      | #4563   | 2027-02-04 (R3 gate) |
+
+PF-T21 is `PostgresArmedRules` (#906) matching a rule's first account only: an armed rule naming accounts A and B
+blocks A's profile deletes but not B's, and a global rule blocks none. The coordinator accepted it on 2026-10-25: a
+profile deleted under an armed rule fails that rule closed at its next evaluation, so the window is bounded and is not
+a money path.
 
 PF-T12 and PF-T13 keep E13's Medium residual (E13 model §12, RSK-060), E13's acceptance, not a new one. No High
 residual remains once the requirements ship; until then every Critical or High row is open. Register entries for every
