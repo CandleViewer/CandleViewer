@@ -42,7 +42,7 @@ from candleviewer.storage.repositories.account_profiles import (
 )
 from candleviewer.storage.repositories.user_roles_sqlalchemy import bounded_write_ahead
 
-_USER, _ACCOUNT, _PROFILE = (UUID(int=n) for n in (1, 2, 3))
+_USER, _ACCOUNT, _PROFILE, _OLD = (UUID(int=n) for n in (1, 2, 3, 4))
 _REQUEST = UUID("6f1c2a3b-4d5e-4f60-8a7b-9c0d1e2f3a4b")
 _ACTOR = ProfileActor(_USER, "100.64.0.7", _REQUEST, ExchangeEnv.DEMO)
 _T = datetime(2026, 10, 24, 9, tzinfo=UTC)
@@ -88,8 +88,10 @@ def _lev(i: int) -> ProfileFieldError:
     return ProfileFieldError(f"allowed_symbols[{i}]", "max_leverage", "High.", Decimal(25), "X")
 
 
-def _row(values: AccountProfileValues = _TRADES, *, version: int = 3) -> AccountProfileRow:
-    return AccountProfileRow(_PROFILE, _ACCOUNT, version, values, _USER, _USER, _T, _T, None)
+def _row(
+    values: AccountProfileValues = _TRADES, *, of: UUID = _PROFILE, version: int = 3
+) -> AccountProfileRow:
+    return AccountProfileRow(of, _ACCOUNT, version, values, _USER, _USER, _T, _T, None)
 
 
 def _on(object_id: UUID, kind: str = "account_profile") -> dict[str, Any]:
@@ -185,14 +187,74 @@ async def test_a_record_with_no_profile_before_it_is_refused_unwritten(hook: str
     assert writer.records == []
 
 
+def _binding(profile_id: UUID | None, version: int) -> dict[str, object]:
+    """The default binding as a move's records name it, before the move or after it."""
+    default = None if profile_id is None else str(profile_id)
+    return {"default_profile_id": default, "binding_version": version}
+
+
+def _bound(values: AccountProfileValues) -> tuple[AccountProfileRow, AccountProfileRow]:
+    """The new default's row before and after 0d-3's move: one version on, `is_default` set."""
+    after = dataclasses.replace(values, is_default=True)
+    return _row(values), _row(after, version=4)
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "caps"),
+    [
+        (_TRADES, _RAISED, ("max_leverage_cap",)),
+        (_TRADES, _LOWERED, ()),
+        (_TRADES, _INERT, ()),
+        (_INERT, _TRADES, _CAPS),
+    ],
+    ids=["cap-raised", "narrowed", "inert-target", "trading-turned-on"],
+)
+async def test_a_move_records_unbound_then_bound_with_the_binding_before_and_after(
+    old: AccountProfileValues, new: AccountProfileValues, caps: tuple[str, ...]
+) -> None:
+    """0d-3's two calls: the demoted default, its values kept, then the new one, judged on the caps
+    alone against them (the zero rule); each names the binding before and one version on, and only
+    the second answers the notice, naming both profiles."""
+    writer = _Writer()
+    hook = ProfileAudit(writer, _ACTOR, _ACCOUNT).audit_moved(_PROFILE, 7)
+    was = _row(dataclasses.replace(old, is_default=True), of=_OLD, version=4)
+    assert await _ahead(hook(was, dataclasses.replace(was, version=5, values=old))) is None
+    notice = await _ahead(hook(*_bound(new)))
+    states = {"before_state": _binding(_OLD, 7), "after_state": _binding(_PROFILE, 8)}
+    labels = {"relaxing": bool(caps), "looser_caps": list(caps)}
+    unbound = states | {"outcome": "success", "severity": "info"}
+    severity = "warning" if caps else "info"
+    bound = unbound | {"after_state": states["after_state"] | labels, "severity": severity}
+    expected = [("profile.unbound", _on(_OLD) | unbound), ("profile.bound", _on(_PROFILE) | bound)]
+    assert writer.records == expected
+    assert notice == (RelaxedNotice(_PROFILE, _OLD, caps, False, _REQUEST) if caps else None)
+
+
+async def test_a_move_on_an_account_with_no_default_is_bound_against_none() -> None:
+    """The store's one call when it demoted no default: `.bound` alone, its binding before naming
+    no profile, and every cap of a profile that can trade looser than none."""
+    writer = _Writer()
+    hook = ProfileAudit(writer, _ACTOR, _ACCOUNT).audit_moved(_PROFILE, 1)
+    notice = await _ahead(hook(*_bound(_TRADES)))
+    labels = {"relaxing": True, "looser_caps": list(_CAPS)}
+    states = {"before_state": _binding(None, 1), "after_state": _binding(_PROFILE, 2) | labels}
+    severity = {"outcome": "success", "severity": "warning"}
+    assert writer.records == [("profile.bound", _on(_PROFILE) | states | severity)]
+    assert notice == RelaxedNotice(_PROFILE, None, _CAPS, False, _REQUEST)
+
+
 @pytest.mark.parametrize(
     ("errors", "profile_id", "records"),
     [
         ([_SHAPE, _NATIVE], _PROFILE, [("native_stop_mandatory", [_NATIVE])]),
         (
-            [_NOTIONAL, _lev(0), _lev(1), _lev(2)],  # first named, last by name: the order kept
-            _PROFILE,
-            [("min_notional", [_NOTIONAL]), ("max_leverage", [_lev(0), _lev(1), _lev(2)])],
+            [_NOTIONAL, _lev(0), _lev(1), _UNBOUNDED, _lev(2)],  # first named; a rule's entries
+            _PROFILE,  # gathered across another's (D2-2's combined re-check, R2-01)
+            [
+                ("min_notional", [_NOTIONAL]),
+                ("max_leverage", [_lev(0), _lev(1), _lev(2)]),
+                ("cap_unbounded", [_UNBOUNDED]),
+            ],
         ),
         ([_SHAPE, _SHAPE], _PROFILE, []),
         ([_NATIVE, _SHAPE], None, [("native_stop_mandatory", [_NATIVE])]),
@@ -250,11 +312,13 @@ async def test_save_refused_takes_only_a_closed_reason(reason: str) -> None:
 
 
 def _writes(audit: ProfileAudit) -> list[Callable[[], Awaitable[object]]]:
-    """Every record `audit` writes: the three hooks, then a refused save."""
+    """Every record `audit` writes: the four hooks (a move's both calls), then a refused save."""
     return [
         lambda: audit.audit_created()(None, _row()),
         lambda: audit.audit_updated()(_row(), _row()),
         lambda: audit.audit_deleted()(_row(), _row()),
+        lambda: audit.audit_moved(_PROFILE, 1)(_row(of=_OLD), _row(of=_OLD)),  # `.unbound`
+        lambda: audit.audit_moved(_PROFILE, 1)(*_bound(_TRADES)),  # `.bound`
         lambda: audit.audit_refused([_NATIVE], profile_id=_PROFILE),
     ]
 

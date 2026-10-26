@@ -1,4 +1,4 @@
-"""The profile writes (E28-T02, #906 D2-4 to D2-6): create, replace and delete; none is mounted
+"""The profile writes (E28-T02, #906 D2-4 to D2-6): create, replace, delete, move; none is mounted
 before D2-m (ruling B12). Behind the middleware (the view-as guard refuses a viewing session, the
 path guard asks for the `risk_caps` step-up, SR-E28-02), `admit` answers: no resolver 501; no
 session 401; `accounts:write`, the Owner's alone (C-12.4), before any store read: a 403 audited as
@@ -8,7 +8,9 @@ other-environment one the same 404 (C-2.11), the store's live-owner gate a 403. 
 `Idempotency-Key`, the body under its cap and the replay of the caller's own `2xx` (SR-E28-17).
 A replace or a delete then needs `If-Match`: 428 without it, 412 for anything but this profile's
 current version, compared before the store is asked; a delete's blockers, the default and the
-armed rules, are named in one 409 (ruling B6).
+armed rules, are named in one 409 (ruling B6). A move (`setAccountDefaultProfile`) needs the
+binding's tag, whose version the store compares under the account's lock before it reads the
+profile the 1 KiB body names (0d-3); binding the current default writes nothing (B4).
 `answer` maps every refusal: one `profile.save_refused` per audited rule (`native_stop_mandatory`
 from every path, SR-E28-08), none for shape; a record not written is `503 audit_unavailable`, with
 nothing stored (C-2.9). Logs carry classes and rule names, never a value (C-12.6).
@@ -49,6 +51,7 @@ from candleviewer.accounts.profile_repository import (
     ARMED_SHOWN,
     ArmedRule,
     ArmedRules,
+    DefaultBinding,
     ProfilesRepository,
     StoredProfile,
 )
@@ -70,7 +73,12 @@ from candleviewer.api.idempotency import (
     request_fingerprint,
 )
 from candleviewer.api.profile_audit import Emitter, ProfileActor, ProfileAudit, ProfileAuditRefused
-from candleviewer.api.profile_projection import profile_document, profile_etag
+from candleviewer.api.profile_projection import (
+    binding_document,
+    binding_etag,
+    profile_document,
+    profile_etag,
+)
 from candleviewer.api.profiles import AccountReads, OnAccount, not_owner, problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.storage_outage import is_storage_outage
@@ -90,6 +98,9 @@ _NO_PROFILE: Final = "No such profile."
 _NAME_TAKEN: Final = "A profile of this account already uses that name, in any letter case."
 _NEEDS_TAG: Final = "This write needs the current ETag; send it as If-Match. Nothing was changed."
 _STALE: Final = "If-Match does not name this profile's current version. Nothing was changed."
+_STALE_BINDING: Final = (
+    "If-Match does not name this account's current default binding. Nothing was changed."
+)
 #: The store's rules the passes answer too, each with the pass's own entry (D2-4 R1C-06).
 _ENTRY: Final = {"ap_native_sl": NATIVE_STOP_OFF, DEFAULT_MOVES_ALONE: DEFAULT_HAS_OWN_OPERATION}
 _IS_DEFAULT: Final = (
@@ -147,6 +158,14 @@ def _schema(raw: object) -> dict[str, Any]:
     return model.model_dump(mode="json", exclude_unset=True)
 
 
+def _bound_to(raw: object) -> uuid.UUID:
+    """B2: the profile a binding body names; any other body is refused at `body`, never audited."""
+    try:
+        return api.AccountDefaultBindingInput.model_validate(raw).profile_id
+    except ValidationError as exc:
+        raise edge.refused(edge.model_errors(exc, prefix="body"), noun="field") from None
+
+
 def _blocked(is_default: bool, armed: Sequence[ArmedRule]) -> str:
     """A refused delete's 409, naming each blocker: at most `ARMED_SHOWN` rules, each by its id
     and its name, redacted, then cut to 80 characters (ruling B6)."""
@@ -200,7 +219,7 @@ def make_profile_writes_router(
         return admitted if held.env is actor.env else problem("not_found", _NO_ACCOUNT)
 
     async def answer(
-        exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None
+        exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None, *, stale: str = _STALE
     ) -> Response:
         """A write that stored nothing: an unwritten record before the `StorageError` a
         `WriteAheadTimeout` is, a stale listing before its `AccountsError`; a defect is raised."""
@@ -218,14 +237,14 @@ def make_profile_writes_router(
         if isinstance(exc, edge.IfMatchMissing):
             return problem("precondition_required", _NEEDS_TAG)
         if isinstance(exc, edge.IfMatchRefused):
-            return problem("version_conflict", _STALE)
+            return problem("version_conflict", stale)
         if isinstance(exc, ProfileAuditRefused | WriteAheadTimeout):
             return _unaudited()
         if isinstance(exc, InstrumentLimitsUnavailable):
             detail = "The exchange's limits could not be refreshed in time; nothing was saved."
             return problem("instrument_cache_unavailable", detail, retry_s=2)
         if isinstance(exc, AccountVersionConflictError):  # the router's compare, or the store's
-            return problem("version_conflict", _STALE)
+            return problem("version_conflict", stale)
         if isinstance(exc, AccountNotFoundError):
             return problem("not_found", _NO_ACCOUNT if profile_id is None else _NO_PROFILE)
         if isinstance(exc, AccountConflictError) and exc.constraint == "ux_ap_name":
@@ -364,6 +383,32 @@ def make_profile_writes_router(
         except Exception as exc:  # mapped, or raised as a defect
             return await answer(exc, got, profile_id)
         out = Response(status_code=204)
+        return remember(cache, str(got.principal.user_id), key, digest, out)
+
+    @router.put("/exchange-accounts/{accountId}/default-profile")  # nosem: no-raw-account-id reason=owner-only-write-OwnerScope-live-owner-gate-and-account-predicate-in-SQL-SR-051-PF-T01 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def set_account_default_profile(
+        request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
+    ) -> Response:
+        if isinstance(got := await admit(request, account_id), Response):
+            return got
+        profile_id: uuid.UUID | None = None  # a 404 names the profile once the body does
+        try:
+            key = edge.idempotency(request, "setAccountDefaultProfile")
+            raw = await edge.read_capped(request, edge.MAX_BINDING_BODY_BYTES)
+            digest = request_fingerprint(request.method, request.url.path, raw)
+            if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
+                return hit
+            version = edge.if_match_version(request, f"{account_id}:default")
+            profile_id = _bound_to(edge.decode(raw, field="body"))
+            move = await got.writes.profiles.set_default_profile(
+                got.scope, account_id, profile_id, expected_binding_version=version,
+                write_ahead=got.records.audit_moved(profile_id, version),
+            )  # fmt: skip
+        except Exception as exc:  # mapped, or raised as a defect
+            return await answer(exc, got, profile_id, stale=_STALE_BINDING)
+        bound = DefaultBinding(account_id, move.profile.profile_id, move.version)
+        doc = binding_document(bound, environment=got.actor.env)
+        out = JSONResponse(doc, 200, {"ETag": binding_etag(account_id, move.version)})
         return remember(cache, str(got.principal.user_id), key, digest, out)
 
     return router

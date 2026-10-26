@@ -4,14 +4,17 @@ A write's handler builds a `ProfileAudit` per request and hands its `audit_*` ho
 `ProfilesRepository`, to the profile store, which awaits it in the write's unit of work before the
 commit, bounded by `bounded_write_ahead` (C-2.9). The hook writes its record and answers a
 `RelaxedNotice` for a relaxing write (SR-E28-01; the 2026-10-22 17:25Z ruling (1)), which the store
-adds in the same transaction. A record not written (`AuditError`; `RuntimeError`, a writer not
+adds in the same transaction. A move's hook runs twice (D2-6): for the default it demotes
+(`.unbound`), then for the new one (`.bound`, judged on the caps alone against the demoted
+default's values). A record not written (`AuditError`; `RuntimeError`, a writer not
 started; `TimeoutError`) is `ProfileAuditRefused`, no `OSError`, which the store rolls back on and
 never maps as its own; a hook past the store's bound is its `WriteAheadTimeout`. A refused save
 writes one `profile.save_refused` per audited rule it names, none for shape alone, its reason
 checked first (#4087 R1S-03) and its record bounded by `AUDIT_TIMEOUT_S`, as no transaction bounds
 it (the 17:25Z ruling (3)). The edge answers either refusal `503 audit_unavailable`. A state's names
-meet no secret or PII name of `audit.redact`, and nothing here logs (C-12.6). The writer
-re-serialises a string that parses as JSON, so a `name` such as `[1, 2]` is recorded as `[1,2]`.
+meet no secret or PII name of `audit.redact`, and nothing here logs (C-12.6). The writer's `redact`
+(`audit/redact.py`) re-serialises, and redacts, a `name` that is a JSON object or array, so
+`[1, 2]` is recorded as `[1,2]`.
 """
 
 from __future__ import annotations
@@ -96,6 +99,12 @@ async def _written(record: Awaitable[None], bound: float | None = None) -> None:
             await record
     except _UNWRITTEN as exc:
         raise ProfileAuditRefused("a profile record could not be written") from exc
+
+
+def _binding(profile_id: UUID | None, version: int) -> dict[str, object]:
+    """The default binding, before a move or after it."""
+    default = None if profile_id is None else str(profile_id)
+    return {"default_profile_id": default, "binding_version": version}
 
 
 class ProfileAudit:
@@ -199,3 +208,41 @@ class ProfileAudit:
             )  # fmt: skip
 
         return deleted
+
+    def audit_moved(self, profile_id: UUID, binding_version: int) -> ProfileWriteAhead:
+        """The move's hook, given the new default and the binding's version (the `If-Match` the
+        store compared): for the demoted default, `.unbound`, keeping its values; then for the new
+        default, `.bound`, judged on the caps alone against them, or against none when the account
+        had no default. Both carry the binding before the move and after it, one version on."""
+        demoted: AccountProfileRow | None = None
+
+        async def moved(
+            _: AccountProfileRow | None, after: AccountProfileRow
+        ) -> RelaxedNotice | None:
+            nonlocal demoted
+            moved_to = _binding(profile_id, binding_version + 1)
+            if not after.values.is_default:
+                demoted = after
+                await _written(
+                    self._audit.emit(
+                        "profile.unbound", **self._on(after.id), request_id=self._actor.request_id,
+                        outcome="success", severity="info",
+                        before_state=_binding(after.id, binding_version), after_state=moved_to,
+                    )
+                )  # fmt: skip
+                return None
+            previous = None if demoted is None else demoted.id
+            caps = looser_caps(None if demoted is None else demoted.values, after.values)
+            labels = {"relaxing": bool(caps), "looser_caps": list(caps)}
+            await _written(
+                self._audit.emit(
+                    "profile.bound", **self._on(after.id), request_id=self._actor.request_id,
+                    outcome="success", severity="warning" if caps else "info",
+                    before_state=_binding(previous, binding_version), after_state=moved_to | labels,
+                )
+            )  # fmt: skip
+            if not caps:
+                return None
+            return RelaxedNotice(after.id, previous, caps, False, self._actor.request_id)
+
+        return moved

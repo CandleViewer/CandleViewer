@@ -1,4 +1,5 @@
-"""The profile reads (E28-T02, #906 slice D1c): `listAccountProfiles`, `getAccountProfile`.
+"""The profile reads (E28-T02, #906 slice D1c): `listAccountProfiles`, `getAccountProfile`, and
+the default binding's, `getAccountDefaultProfile` (D2-6).
 
 The session (401), then `accounts:read` on the permission alone (`Scope.NONE`: a refusal is a 403,
 audited as `rbac.denied`, else logged by ids and class), then the store (503 on the fake
@@ -9,7 +10,8 @@ carry (an account of any environment is answered), then its profiles; an empty l
 delete in between) is that same 404. A store's live-owner gate refusing an Owner is a 403, counted
 and audited (`not_owner`); an outage or an unreadable stored row is 503, logged by its class and
 SQLSTATE only (C-12.6); any other error is a defect (500). The list is one page (a C3 exemption)
-with no `ETag`; a profile answers its weak `ETag`. The profile writes (#906 D2) reuse `problem`,
+with no `ETag`; a profile answers its weak `ETag`, and the binding one that names its version,
+never its profile (0d-3): the move's `If-Match`. The profile writes (#906 D2) reuse `problem`,
 `OnAccount` and `not_owner`; `_STATUS` holds their codes too (D2-3), `validation_failed` at 422.
 """
 
@@ -29,9 +31,14 @@ from candleviewer.accounts.errors import (
     AccountsError,
 )
 from candleviewer.accounts.models import ExchangeAccount
-from candleviewer.accounts.profile_repository import StoredProfile
+from candleviewer.accounts.profile_repository import DefaultBinding, StoredProfile
 from candleviewer.api.csrf import source_ip
-from candleviewer.api.profile_projection import profile_document, profile_etag
+from candleviewer.api.profile_projection import (
+    binding_document,
+    binding_etag,
+    profile_document,
+    profile_etag,
+)
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
@@ -63,7 +70,7 @@ class _Emitter(Protocol):
 
 
 class ProfileReads(Protocol):
-    """`ProfilesRepository`'s two REST reads (#906 D1b)."""
+    """`ProfilesRepository`'s REST reads (#906 D1b), and the default binding (D2-6)."""
 
     async def read_profiles(
         self, scope: AccountScope, account_id: uuid.UUID
@@ -72,6 +79,10 @@ class ProfileReads(Protocol):
     async def read_profile(
         self, scope: AccountScope, account_id: uuid.UUID, profile_id: uuid.UUID
     ) -> StoredProfile: ...
+
+    async def get_default_binding(
+        self, scope: AccountScope, account_id: uuid.UUID
+    ) -> DefaultBinding: ...
 
 
 class AccountReads(Protocol):
@@ -133,7 +144,7 @@ def make_profiles_router(
     reads: ProfileReads | None, accounts: AccountReads | None, audit: _Emitter,
     resolver: SnapshotResolver | None, *, auth: SessionsLike | None = None,
 ) -> APIRouter:  # fmt: skip
-    """The two reads over the profile store's facade and the accounts store (`None`, the fake
+    """The reads over the profile store's facade and the accounts store (`None`, the fake
     backend: 503); `resolver=None` (no identity wired): 501 for every call. A refusal's record
     names the caller's session, read through `auth` (#4174)."""
     router = APIRouter(tags=["exchange-accounts"])
@@ -222,5 +233,21 @@ def make_profiles_router(
             return await refused(request, principal, account_id, exc, "No such profile.")
         doc = profile_document(stored.profile, created_at=stored.created_at, environment=env)
         return JSONResponse(doc, headers={"ETag": profile_etag(stored.profile)})
+
+    @router.get("/exchange-accounts/{accountId}/default-profile")  # nosem: no-raw-account-id reason=account-and-profile-scope-from-auth.scopes.account_scope-applied-in-SQL-by-both-stores-SR-051-PF-I06 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def get_account_default_profile(
+        request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
+    ) -> Response:
+        if isinstance(admitted := await admit(request, account_id), Response):
+            return admitted
+        principal, profiles, held = admitted
+        scope = account_scope(principal)
+        try:
+            env = (await held.get_account(scope, account_id)).env
+            binding = await profiles.get_default_binding(scope, account_id)
+        except Exception as exc:  # mapped, or raised as a defect
+            return await refused(request, principal, account_id, exc, "No such exchange account.")
+        doc = binding_document(binding, environment=env)
+        return JSONResponse(doc, headers={"ETag": binding_etag(account_id, binding.version)})
 
     return router

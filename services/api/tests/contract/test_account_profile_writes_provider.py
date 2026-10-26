@@ -1,6 +1,6 @@
-"""Contract, provider side (#906 slices D2-4, D2-5): the profile writes behind the write edge, in
+"""Contract, provider side (#906 slices D2-4 to D2-6): the profile writes behind the write edge, in
 `_profile_writes_world`'s world until D2-m mounts them. Every answer validates against what its
-operation declares. The shared tests run over `_WRITES`, which D2-6 extends.
+operation declares. The shared tests run over `_WRITES`, the default binding's move among them.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import asyncio
 import dataclasses
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -57,6 +57,7 @@ from tests.unit.accounts.test_profile_validator import _LISTED
 
 LIST = "/exchange-accounts/{accountId}/profiles"
 ITEM = LIST + "/{profileId}"
+BINDING = "/exchange-accounts/{accountId}/default-profile"
 #: 22's `riskBased` example: trading-enabled, every cap bounded, BTC and ETH allowed.
 _EXAMPLES = SPEC["paths"][LIST]["post"]["requestBody"]["content"]["application/json"]["examples"]
 _RISK: dict[str, Any] = _EXAMPLES["riskBased"]["value"]
@@ -71,27 +72,36 @@ GRANTED, FOREIGN = rbac.GRANTED, rbac.FOREIGN  # FOREIGN is a `live` account, EM
 DEFAULT, ALT = uuid.UUID(int=1), uuid.UUID(int=2)
 _ALT: dict[str, Any] = profile_body(profile_from_row(Store().rows[GRANTED][1]))
 _ALT_3 = f'W/"{ALT}:3"'  # Alt replaced once
+_BOUND_1 = f'W/"{GRANTED}:default:1"'  # GRANTED's binding, on DEFAULT since the account began
+_STALE = "If-Match does not name this profile's current version. Nothing was changed."
+_STALE_BINDING = (
+    "If-Match does not name this account's current default binding. Nothing was changed."
+)
 
 
 @dataclass(frozen=True)
 class Write:
     """A profile write: its operation, method, path template, a body it stores (`None`: none is
-    read), the record it writes and the `If-Match` it sends."""
+    read), the records it writes and the `If-Match` it sends."""
 
     name: str
     method: str
     template: str
     body: dict[str, Any] | None
-    action: str = _CREATED
+    actions: tuple[str, ...] = (_CREATED,)
     if_match: str | None = None
 
 
 _WRITES = [
     Write("createAccountProfile", "POST", LIST, _RISK),
-    Write("updateAccountProfile", "PUT", ITEM, _ALT, "profile.updated", f'W/"{ALT}:2"'),
-    Write("deleteAccountProfile", "DELETE", ITEM, None, "profile.deleted", f'W/"{ALT}:2"'),
-]
-CREATE, REPLACE, DELETE = _WRITES
+    Write("updateAccountProfile", "PUT", ITEM, _ALT, ("profile.updated",), f'W/"{ALT}:2"'),
+    Write("deleteAccountProfile", "DELETE", ITEM, None, ("profile.deleted",), f'W/"{ALT}:2"'),
+    Write(
+        "setAccountDefaultProfile", "PUT", BINDING, {"profile_id": str(ALT)},
+        ("profile.unbound", "profile.bound"), _BOUND_1,
+    ),
+]  # fmt: skip
+CREATE, REPLACE, DELETE, MOVE = _WRITES
 _BODIED = pytest.mark.parametrize("write", [CREATE, REPLACE], ids=["create", "replace"])
 _EACH = pytest.mark.parametrize("write", _WRITES, ids=[write.name for write in _WRITES])
 
@@ -279,12 +289,15 @@ def test_a_stale_catalogue_is_503_retry_after_2_and_its_retry_is_a_first_submiss
     assert (retried.status_code, "idempotency-replayed" in retried.headers) == (201, False)
 
 
-def test_a_writes_answer_carries_the_second_passes_warnings(w: Writes) -> None:
-    """The patterns admit every listed, trading perpetual (BTC, ETH, SOL), as no read can see."""
-    resp = create(w, {**_RISK, "allowed_symbols": ["*CUSDT", "*HUSDT", "*LUSDT"]})
+@_BODIED
+def test_a_writes_answer_carries_the_second_passes_warnings(w: Writes, write: Write) -> None:
+    """The patterns admit every listed, trading perpetual (BTC, ETH, SOL), as no read can see; a
+    replace answers them as a create does (D2-5 R1C-01)."""
+    patterns = {"all_symbols": False, "allowed_symbols": ["*CUSDT", "*HUSDT", "*LUSDT"]}
+    resp = send(w, write, body={**(write.body or {}), **patterns})
     message = "Allows every listed symbol — consider restricting."
     warning = {"code": "all_symbols", "message": message, "field": "allowed_symbols"}
-    assert (resp.status_code, answered(resp)["warnings"]) == (201, [warning])
+    assert (resp.is_success, answered(resp, write)["warnings"]) == (True, [warning])
 
 
 def test_a_writes_answer_carries_the_sizing_warnings_of_its_port(w: Writes) -> None:
@@ -418,7 +431,7 @@ def test_a_manager_with_a_live_grace_is_403_audited_and_changes_nothing(
     assert (viewing.status_code, viewing.json()["code"]) == (403, "view_as_read_only")
     monkeypatch.setattr(w.world.resolver, "resolve", lambda _request: None)
     assert answered(send(w, write), write)["code"] == "unauthenticated"
-    actions = {r["action"] for r in w.world.audit.records} & {"rbac.denied", write.action}
+    actions = {r["action"] for r in w.world.audit.records} & {"rbac.denied", *write.actions}
     assert (w.rows.seen, _new(w), actions) == ([], [], set())
 
 
@@ -435,11 +448,12 @@ def test_a_write_whose_audit_record_cannot_be_written_changes_nothing(
     record unwritten, or a hook past the store's bound (forced with 0)."""
     monkeypatch.setattr(w.world.audit, "emit", AsyncMock(side_effect=error or _never))
     monkeypatch.setattr(w.rows, "timeout_s", 0 if error is None else w.rows.timeout_s)
-    body = {**(write.body or {}), "require_native_stop": False} if case == "save" else None
+    saves = case == "save" and write in (CREATE, REPLACE)  # a delete or a move records no refusal
+    body = {**(write.body or {}), "require_native_stop": False} if saves else None
     resp = send(w, write, "manager_with_grant" if case == "rbac" else "owner", body=body)
     got = answered(resp, write)
     assert (resp.status_code, got["code"], resp.headers["retry-after"]) == (503, _UNAUDITED, "5")
-    hooked = case in {"hook", "timeout"} or (case == "save" and write.body is None)  # no body read
+    hooked = case in {"hook", "timeout"} or (case == "save" and not saves)  # its hook's record
     assert (len(w.rows.hooks), _new(w)) == (hooked, [])
 
 
@@ -469,7 +483,7 @@ def test_a_store_that_cannot_answer_is_503_and_a_failed_commit_keeps_its_record(
     assert (resp.status_code, got["code"], resp.headers["retry-after"]) == (503, _DOWN, "5")
     unavailable = [log for log in logs if log["event"] == "profile_write_unavailable"]
     assert [(log["error"], log["sqlstate"]) for log in unavailable] == [logged] and _new(w) == []
-    created = [write.action] if where == "commit" else []
+    created = list(write.actions) if where == "commit" else []
     assert [record["action"] for record in w.world.audit.records] == created
 
 
@@ -629,27 +643,67 @@ def test_a_replace_needs_the_current_etag(w: Writes) -> None:
     (status, problem), *refused = [(resp.status_code, answered(resp, REPLACE)) for resp in sent]
     detail = "This write needs the current ETag; send it as If-Match. Nothing was changed."
     assert (status, problem["code"], problem["detail"]) == (428, "precondition_required", detail)
-    assert {(status, problem["code"]) for status, problem in refused} == {(412, "version_conflict")}
+    said = {(status, problem["code"], problem["detail"]) for status, problem in refused}
+    assert said == {(412, "version_conflict", _STALE)}  # one detail, form or version (R2M-4)
     kinds = {kind for kind, _ in w.rows.seen}
     assert ("update" in kinds, w.world.audit.records, w.rows.hooks) == (False, [], [])
 
 
-@pytest.mark.parametrize("case", ["made-default", "unmade", "moved-since"])
-def test_a_replace_that_moves_the_default_is_an_unaudited_422(w: Writes, case: str) -> None:
+@pytest.mark.parametrize(
+    ("tags", "status", "recorded"),
+    [([], 428, 0), (["*"], 412, 0), ([f'W/"{ALT}:1"'], 422, 1)],
+    ids=["no-tag", "star", "stale"],
+)
+def test_a_replaces_body_is_read_only_past_a_well_formed_if_match(
+    w: Writes, tags: list[str], status: int, recorded: int
+) -> None:
+    """Sec.3.2 (D2-5 R1C-01): no body is evaluated on U1's 428 or 412, so nothing in it is
+    audited; a stale but well-formed tag passes U1, and the schema phase, which comes before the
+    profile is read and compared, refuses the native stop off and records it (U3 before U5)."""
+    resp = send(w, REPLACE, body={**_ALT, "require_native_stop": False}, tags=tags)
+    assert (resp.status_code, len(w.world.audit.records)) == (status, recorded)
+
+
+def test_a_replace_refuses_a_hidden_code_point_in_its_name_unaudited(w: Writes) -> None:
+    """D2-5 R1C-01: a replace runs the name check as a create does (D2-c R1S-06)."""
+    resp = send(w, REPLACE, body={**_ALT, "name": "Al\u200bt"})
+    entries = [(e["field"], e["rule"]) for e in answered(resp, REPLACE)["errors"]]
+    assert (resp.status_code, entries) == (422, [("name", "not_allowed")])
+    assert w.world.audit.records == []
+
+
+def test_a_replaces_limit_refusal_says_so_and_records_its_profile(w: Writes) -> None:
+    """D2-5 R1C-01: an unlisted symbol is refused as a limit, its detail saying so, and recorded
+    once, naming the profile."""
+    resp = send(w, REPLACE, body={**_ALT, "all_symbols": False, "allowed_symbols": ["QQQUSDT"]})
+    got = answered(resp, REPLACE)
+    assert got["detail"] == "1 member breaks an exchange limit."
+    _refused_save(w, resp, "symbol_not_listed", got["errors"], ALT)
+
+
+@pytest.mark.parametrize(
+    ("profile", "body", "tags", "race"),
+    [
+        (ALT, {**_ALT, "is_default": True}, None, None),
+        (DEFAULT, _RISK, [f'W/"{DEFAULT}:3"'], None),  # the default, `is_default` left out: false
+        (ALT, _ALT, None, _made_default),
+    ],
+    ids=["made-default", "unmade", "moved-since"],
+)
+def test_a_replace_that_moves_the_default_is_an_unaudited_422(
+    w: Writes, profile: uuid.UUID, body: dict[str, Any], tags: list[str] | None,
+    race: Callable[[Row], Row] | None,
+) -> None:  # fmt: skip
     """Only `setAccountDefaultProfile` moves the binding: the first pass refuses an `is_default`
     other than the stored one before any write or listing read, and the store a default moved
     since the read with no version bump (`default_moves_alone`), with the same entry, unaudited."""
-    profile, body, tags = ALT, {**_ALT, "is_default": True}, None
-    if case == "unmade":  # the default, sent with `is_default` left out: false
-        profile, body, tags = DEFAULT, _RISK, [f'W/"{DEFAULT}:3"']
-    if case == "moved-since":
-        body, w.rows.race = _ALT, _made_default
+    w.rows.race = race
     resp = send(w, REPLACE, body=body, profile=profile, tags=tags)
     own = "The default binding has its own operation."
     entry = {"field": "is_default", "rule": "default_has_own_operation", "message": own}
     assert (resp.status_code, answered(resp, REPLACE)["errors"]) == (422, [entry])
     assert (w.world.audit.records, w.limits.calls, _new(w)) == ([], 0, [])
-    assert len(w.rows.hooks) == (case == "moved-since")
+    assert len(w.rows.hooks) == (race is not None)
 
 
 def test_a_replace_that_only_narrows_saves_while_the_catalogue_is_down(w: Writes) -> None:
@@ -671,6 +725,8 @@ def test_a_replace_replays_its_200_before_if_match_is_read(w: Writes) -> None:
         replayed = (again.status_code, again.content, again.headers["etag"])
         assert replayed == (200, first.content, _ALT_3)
         assert again.headers["idempotency-replayed"] == "true"
+    elsewhere = send(w, REPLACE, body=body, key=key, profile=DEFAULT, tags=[f'W/"{DEFAULT}:3"'])
+    assert (elsewhere.status_code, answered(elsewhere, REPLACE)["code"]) == (409, _REUSE)  # R2-02
     assert (len(w.world.audit.records), _row(w).version) == (1, 3)
 
 
@@ -702,11 +758,14 @@ def test_a_name_another_profile_uses_is_409(w: Writes) -> None:
 
 def test_a_delete_is_204_and_records_the_profile_as_it_stood(w: Writes) -> None:
     """`profile.deleted` names the profile as it stood; the profile leaves every read; a lost
-    answer's retry is the stored 204, still bodiless, before `If-Match` is read (none here)."""
+    answer's retry is the stored 204, still bodiless, before `If-Match` is read (none here); the
+    key on another profile's delete is 409, the path being all its fingerprint tells apart."""
     key, stood = str(uuid.uuid4()), _row(w)
     done, again = send(w, DELETE, key=key), send(w, DELETE, key=key, tags=[])
     assert [(r.status_code, r.content) for r in (done, again)] == [(204, b"")] * 2
     assert again.headers["idempotency-replayed"] == "true" and "content-type" not in again.headers
+    elsewhere = send(w, DELETE, key=key, profile=DEFAULT, tags=[f'W/"{DEFAULT}:3"'])
+    assert (elsewhere.status_code, answered(elsewhere, DELETE)["code"]) == (409, _REUSE)  # R2-02
     (record,) = w.world.audit.records
     keys = ("action", "object_id", "severity", "before_state", "session_id")
     want = ["profile.deleted", str(ALT), "info", profile_state(stood), None]
@@ -716,8 +775,9 @@ def test_a_delete_is_204_and_records_the_profile_as_it_stood(w: Writes) -> None:
 
 
 _RULES = [ArmedRule(uuid.UUID(int=100 + i), f"Rule {i:02}") for i in range(ARMED_SHOWN + 1)]
-_ODD = [  # one name redacted, one cut to 80 characters
+_ODD = [  # one name redacted, one cut to 80 characters, one redacted before it is cut
     ArmedRule(uuid.UUID(int=200), "secret: open-sesame"), ArmedRule(uuid.UUID(int=201), "L" * 99),
+    ArmedRule(uuid.UUID(int=202), "x" * 70 + " secret: open-sesame"),
 ]  # fmt: skip
 _NOT_DELETED = "The profile was not deleted."
 _IS_DEFAULT = f"{_NOT_DELETED} It is the account's default profile: make another profile the"
@@ -729,35 +789,38 @@ def _armed(*named: str, more: bool = False) -> str:
     return f"Rules scoped to the account are armed: {listed}. Disarm them first."
 
 
-_ELEVEN = _armed(*(f'{rule.rule_id} "{rule.name}"' for rule in _RULES[:ARMED_SHOWN]), more=True)
-_TWO = _armed(f'{_ODD[0].rule_id} "secret: [redacted:key-name]"', f'{_ODD[1].rule_id} "{"L" * 80}"')
+_TEN = [f'{rule.rule_id} "{rule.name}"' for rule in _RULES[:ARMED_SHOWN]]
+_ODDS = _armed(
+    f'{_ODD[0].rule_id} "secret: [redacted:key-name]"', f'{_ODD[1].rule_id} "{"L" * 80}"',
+    f'{_ODD[2].rule_id} "{"x" * 70} secret: ["',
+)  # fmt: skip
 
 
 @pytest.mark.parametrize(
-    ("case", "status", "detail"),
+    ("profile", "armed", "fails", "race", "status", "detail"),
     [
-        ("default", 409, _IS_DEFAULT),
-        ("eleven-rules", 409, f"{_NOT_DELETED} {_ELEVEN}"),
-        ("both", 409, f"{_IS_DEFAULT} {_TWO}"),
-        ("moved-since", 409, _IS_DEFAULT),
-        ("lookup-failed", 503, "The profile store is unavailable."),
+        (DEFAULT, [], None, None, 409, _IS_DEFAULT),
+        (ALT, _RULES[:ARMED_SHOWN], None, None, 409, f"{_NOT_DELETED} {_armed(*_TEN)}"),
+        (ALT, _RULES, None, None, 409, f"{_NOT_DELETED} {_armed(*_TEN, more=True)}"),
+        (DEFAULT, _ODD, None, None, 409, f"{_IS_DEFAULT} {_ODDS}"),
+        (ALT, [], None, _made_default, 409, _IS_DEFAULT),
+        (ALT, [], StorageTierUnavailable("down"), None, 503, "The profile store is unavailable."),
     ],
+    ids=["default", "ten-rules", "eleven-rules", "both", "moved-since", "lookup-failed"],
 )
 def test_ac9_a_delete_is_refused_naming_each_blocker(
-    w: Writes, case: str, status: int, detail: str
-) -> None:
+    w: Writes, profile: uuid.UUID, armed: list[ArmedRule], fails: Exception | None,
+    race: Callable[[Row], Row] | None, status: int, detail: str,
+) -> None:  # fmt: skip
     """AC-9, ruling B6: the default and the account's armed rules (at most `ARMED_SHOWN`, then "and
     more"; each name redacted, then cut to 80 characters) are named in one 409 before any write;
     the store's `default_profile` (a move landed since the read) is the same 409; a failed lookup
     is 503, never a delete while unsure. Nothing changes, nothing is recorded."""
-    profile = DEFAULT if case in {"default", "both"} else ALT
-    w.rules.armed[GRANTED] = {"eleven-rules": _RULES, "both": _ODD}.get(case, [])
-    w.rules.fails = StorageTierUnavailable("down") if case == "lookup-failed" else None
-    w.rows.race = _made_default if case == "moved-since" else None
+    w.rules.armed[GRANTED], w.rules.fails, w.rows.race = armed, fails, race
     resp = send(w, DELETE, profile=profile, tags=[f'W/"{profile}:{_row(w, profile).version}"'])
     assert (resp.status_code, answered(resp, DELETE)["detail"]) == (status, detail)
     written = len(w.rows.hooks)  # the store is asked only past the router's blockers
-    assert (w.world.audit.records, _new(w), written) == ([], [], case == "moved-since")
+    assert (w.world.audit.records, _new(w), written) == ([], [], race is not None)
 
 
 def test_a_delete_needs_the_current_etag_and_checks_it_before_the_blockers(w: Writes) -> None:
@@ -802,6 +865,199 @@ def test_a_delete_whose_key_or_profile_id_is_no_uuid_is_an_unaudited_422(w: Writ
     named = [(e["field"], e["rule"]) for e in answered(pathed, DELETE)["errors"]]
     assert named == [("path.profileId", "uuid_parsing")]
     assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
+
+
+#: ALT's caps above DEFAULT's: its notional and daily-loss amounts unbounded, more positions and
+#: more orders at once (`PROFILE_CAPS` order).
+_LOOSER = [
+    "max_position_notional_usd", "max_daily_loss_usd", "max_open_positions",
+    "max_concurrent_orders",
+]  # fmt: skip
+_PUT_422 = SPEC["paths"][BINDING]["put"]["responses"]["422"]["content"]["application/problem+json"]
+_NOT_A_PROFILE = _PUT_422["examples"]["notAProfileId"]["value"]
+_EXAMPLE = tuple(_NOT_A_PROFILE["errors"][0][key] for key in ("field", "rule"))  # 22's own entry
+_PLANTED = json.dumps({"profile_id": str(ALT), "planted-member": 1}).encode()
+
+
+def _bound(profile: uuid.UUID, version: int) -> dict[str, object]:
+    """GRANTED's `AccountDefaultBinding`: a `demo` account's."""
+    on = {"exchange_account_id": str(GRANTED), "environment": "demo"}
+    return on | {"profile_id": str(profile), "version": version}
+
+
+def _binding_read(w: Writes) -> Any:
+    return w.world.client.get(BINDING.format(accountId=GRANTED), headers=rbac.bearer("owner"))
+
+
+def test_a_move_is_200_at_the_next_binding_version_unbound_then_bound(w: Writes) -> None:
+    """0d-3's move behind the edge: the binding one version on, its weak tag naming the version;
+    `profile.unbound` for the demoted default, then `profile.bound`, written ahead in that order
+    and naming the request (D2-2 R1C-02); both rows one version on; the account's effective
+    profiles invalidated (SR-E28-15); the served `GET` reads the new default. A second move, at
+    the `GET`'s tag, records the binding from version 2 to 3 (D2-6 R1C-04)."""
+    resp, tag = send(w, MOVE), f'W/"{GRANTED}:default:2"'
+    answer = (resp.status_code, answered(resp, MOVE), resp.headers["etag"])
+    assert answer == (200, _bound(ALT, 2), tag)
+    unbound, bound = w.world.audit.records
+    before = {"default_profile_id": str(DEFAULT), "binding_version": 1}
+    after = {"default_profile_id": str(ALT), "binding_version": 2}
+    keys = ("action", "object_id", "before_state", "after_state", "severity")
+    assert [unbound[k] for k in keys] == ["profile.unbound", str(DEFAULT), before, after, "info"]
+    relaxed = after | {"relaxing": True, "looser_caps": _LOOSER}
+    assert [bound[k] for k in keys] == ["profile.bound", str(ALT), before, relaxed, "warning"]
+    assert {str(r["request_id"]) for r in (unbound, bound)} == {resp.headers["x-correlation-id"]}
+    flags = [(row.id, row.version, row.values.is_default) for row in w.rows.rows[GRANTED]]
+    assert (flags, w.invalidated) == ([(DEFAULT, 4, False), (ALT, 3, True)], [GRANTED])
+    read = _binding_read(w)
+    assert (read.status_code, read.json(), read.headers["etag"]) == (200, _bound(ALT, 2), tag)
+    back = send(w, MOVE, body={"profile_id": str(DEFAULT)}, tags=[read.headers["etag"]])
+    moved = [
+        (r["action"], r["before_state"]["binding_version"], r["after_state"]["binding_version"])
+        for r in w.world.audit.records[2:]
+    ]
+    assert (back.status_code, moved) == (200, [("profile.unbound", 2, 3), ("profile.bound", 2, 3)])
+
+
+@pytest.mark.parametrize(
+    ("trades", "looser"),
+    [
+        ((True, True), _LOOSER),
+        ((True, False), []),  # ALT cannot trade: every cap of it counts as zero
+        ((False, True), [cap.column for cap in PROFILE_CAPS]),  # DEFAULT cannot: trading turned on
+    ],
+    ids=["looser", "inert-target", "trading-turned-on"],
+)
+def test_a_relaxing_move_notifies_the_owner_and_the_zero_rule_holds(
+    w: Writes, trades: tuple[bool, bool], looser: list[str]
+) -> None:
+    """SR-E28-01, the 17:25Z ruling (1): a move is judged on its caps alone, each cap of a profile
+    that cannot trade counting as zero; a looser one labels `profile.bound` relaxing, a warning,
+    and commits one notice naming both profiles with the move; any other move neither."""
+    w.rows.rows[GRANTED] = tuple(
+        dataclasses.replace(row, values=dataclasses.replace(row.values, trading_enabled=on))
+        for row, on in zip(w.rows.rows[GRANTED], trades, strict=True)
+    )
+    resp = send(w, MOVE)
+    bound = w.world.audit.records[-1]
+    relaxing, request_id = bool(looser), uuid.UUID(resp.headers["x-correlation-id"])
+    labels = [bound["after_state"][key] for key in ("relaxing", "looser_caps")]
+    assert (resp.status_code, labels) == (200, [relaxing, looser])
+    assert bound["severity"] == ("warning" if relaxing else "info")
+    notice = port.RelaxedNotice(ALT, DEFAULT, (*looser,), False, request_id)
+    assert w.rows.notices == ([notice] if relaxing else [])
+
+
+def test_binding_the_current_default_changes_nothing_and_answers_its_tag(w: Writes) -> None:
+    """B4: the default bound again commits nothing and writes no record (0d-3 returns before any
+    hook), and answers the binding at its current version, with its current tag."""
+    resp = send(w, MOVE, body={"profile_id": str(DEFAULT)})
+    answer = (resp.status_code, answered(resp, MOVE), resp.headers["etag"])
+    assert answer == (200, _bound(DEFAULT, 1), _BOUND_1)
+    assert (w.world.audit.records, w.rows.notices, _new(w)) == ([], [], [])
+
+
+def test_a_move_needs_the_bindings_current_tag(w: Writes) -> None:
+    """The 07:10Z ruling, B1: 428 without `If-Match`; 412 for anything but one weak tag of this
+    binding (`*`, a list, two headers, the strong form, `w/`, a profile's tag, another account's
+    binding tag, version 0, past 19 digits), refused before the store is asked, and for a stale
+    version, which the store finds under the account's lock before it reads the profile (0d-3):
+    a stale tag naming a missing profile is 412, and after A to B to A the first tag is still
+    stale. B1 comes before B2: a refused body is 428 with no tag and 412 with `*` (D2-6 R1C-03).
+    A refusal changes nothing and records nothing."""
+    g = f"{GRANTED}:default"
+    forms = [
+        "*", f'W/"{g}:1", W/"{g}:2"', f'"{g}:1"', f'w/"{g}:1"', f'W/"{ALT}:1"',
+        f'W/"{FOREIGN}:default:1"', f'W/"{g}:0"', f'W/"{g}:{"9" * 20}"',
+    ]  # fmt: skip
+    sent = [send(w, MOVE, tags=tags) for tags in [[], *([form] for form in forms), [_BOUND_1] * 2]]
+    unread = [send(w, MOVE, raw=b"[]", tags=tags) for tags in ([], ["*"])]  # never the body's 422
+    stale = [send(w, MOVE, tags=[f'W/"{g}:{n}"']) for n in (2, 2**31)]
+    stale.append(send(w, MOVE, body={"profile_id": str(uuid.uuid4())}, tags=[f'W/"{g}:2"']))
+    (status, problem), *refused = [(r.status_code, answered(r, MOVE)) for r in sent + stale]
+    assert (status, problem["code"]) == (428, "precondition_required")
+    said = {(status, problem["code"], problem["detail"]) for status, problem in refused}
+    assert said == {(412, "version_conflict", _STALE_BINDING)}
+    assert [r.status_code for r in unread] == [428, 412]
+    assert (len(w.rows.hooks), w.world.audit.records, _new(w)) == (len(stale), [], [])
+    there, read = send(w, MOVE), _binding_read(w)
+    back = send(w, MOVE, body={"profile_id": str(DEFAULT)}, tags=[read.headers["etag"]])
+    again = send(w, MOVE, body={"profile_id": str(DEFAULT)})  # the first tag, `:1`
+    assert [r.status_code for r in (there, back, again)] == [200, 200, 412]
+
+
+def test_a_move_naming_another_accounts_or_a_missing_profile_is_404(w: Writes) -> None:
+    """SR-E28-03 (IDOR): another account's profile, a missing one and one deleted since are a
+    profile's one 404, read after the binding's version (0d-3); nothing moves or is recorded."""
+    assert send(w, DELETE).status_code == 204  # ALT, deleted
+    w.world.audit.records.clear()
+    named = (w.rows.rows[FOREIGN][0].id, uuid.uuid4(), ALT)
+    sent = [send(w, MOVE, body={"profile_id": str(profile)}) for profile in named]
+    assert {(r.status_code, r.text) for r in sent} == {(404, sent[0].text)}
+    detail = answered(sent[0], MOVE)["detail"]
+    assert (detail, w.world.audit.records, w.rows.bindings[GRANTED]) == ("No such profile.", [], 1)
+
+
+@pytest.mark.parametrize(
+    ("raw", "entry"),
+    [
+        (b'{"profile_id": "Swing"}', _EXAMPLE),
+        (b"{}", ("body.profile_id", "missing")),
+        (b'{"profile_id": 5}', ("body.profile_id", "uuid_type")),
+        (_PLANTED, ("body", "extra_forbidden")),
+        (b"[]", ("body", "model_type")),
+        (b"null", ("body", "model_type")),
+        (b'{"profile_id": NaN}', ("body", "json_invalid")),
+        (b"[" * 9 + b"]" * 9, ("body", "json_too_deep")),
+    ],
+    ids=["22s-example", "missing", "number", "another-member", "list", "null", "nan", "deep"],
+)  # fmt: skip
+def test_a_moves_refused_body_is_an_unaudited_422_naming_body_fields(
+    w: Writes, raw: bytes, entry: tuple[str, str]
+) -> None:
+    """B2: the body names a profile and nothing else; a refusal is one entry at `body` or below
+    it, as 22's example, counted as a field, never audited and echoing nothing sent (C-12.6)."""
+    resp = send(w, MOVE, raw=raw)
+    got = answered(resp, MOVE)
+    assert (resp.status_code, got["detail"]) == (422, _NOT_A_PROFILE["detail"])
+    assert [(e["field"], e["rule"]) for e in got["errors"]] == [entry]
+    assert ("Swing" in resp.text, "planted" in resp.text) == (False, False)
+    assert (w.world.audit.records, w.rows.hooks) == ([], [])
+
+
+def test_a_move_over_1_kib_is_413_before_it_is_parsed(w: Writes) -> None:
+    """22: a binding body over 1 KiB is `413 payload_too_large`, before it is decoded (it would
+    nest too deep); one of exactly 1 KiB is read whole."""
+    resp = send(w, MOVE, raw=b"[" * (MAX_BINDING_BODY_BYTES + 1))
+    assert (resp.status_code, answered(resp, MOVE)["code"]) == (413, "payload_too_large")
+    assert (w.world.audit.records, w.rows.hooks) == ([], [])
+    padded = json.dumps(MOVE.body).encode().ljust(MAX_BINDING_BODY_BYTES)  # JSON, then blanks
+    assert send(w, MOVE, raw=padded).status_code == 200
+
+
+def test_a_lost_moves_answer_replays_before_if_match(
+    w: Writes, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 17:25Z ruling (2): a retry with the key and the body is the stored 200, read before
+    `If-Match`, stale since the move or missing; one move, two records. The key with another
+    body, or on another account's path, is 409 `idempotency_key_reuse` (D2-5's R2-02). Another
+    Owner's same request is no replay: it runs, and its tag is stale (D2-6 R1C-02)."""
+    key = str(uuid.uuid4())
+    first = send(w, MOVE, key=key)
+    for tags in (None, list[str]()):  # stale now, or none
+        again = send(w, MOVE, key=key, tags=tags)
+        replayed = (again.status_code, again.content, again.headers["etag"])
+        assert replayed == (200, first.content, first.headers["etag"])
+        assert again.headers["idempotency-replayed"] == "true"
+    monkeypatch.setitem(ENV, EMPTIED, "demo")  # a second account of this environment
+    reused = [send(w, MOVE, key=key, body={"profile_id": str(DEFAULT)})]
+    reused.append(send(w, MOVE, key=key, at=EMPTIED))
+    assert {(r.status_code, answered(r, MOVE)["code"]) for r in reused} == {(409, _REUSE)}
+    other = PrincipalSnapshot(uuid.uuid4(), frozenset({"owner"}), frozenset(Permission))
+    with monkeypatch.context() as patched:
+        patched.setattr(w.world.resolver, "snapshot", lambda _actor: other)
+        theirs = send(w, MOVE, key=key)
+    assert (theirs.status_code, "idempotency-replayed" in theirs.headers) == (412, False)
+    assert (len(w.world.audit.records), w.rows.bindings[GRANTED]) == (2, 2)
 
 
 def _profile_members(node: object, at: str) -> set[str]:

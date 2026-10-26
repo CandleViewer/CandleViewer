@@ -3,7 +3,8 @@ app serves them. The world is the RBAC pack's real `create_app()` (no network, C
 fake of the account and profile reads, scoped as Postgres scopes them: an `OwnerScope` passes the
 live-owner gate unless a test closes it, a `GrantScope` sees only its accounts (an empty one
 nothing), and a profile is found only under its own account. Every answer is checked against
-the operation's declared response (2020-12, format checker).
+the operation's declared response (2020-12, format checker). `getAccountDefaultProfile` (#906
+D2-6) is read the same way, the account's binding after the account.
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ from candleviewer.api.profiles import make_profiles_router
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.storage.errors import StorageQueryFailed, StorageTierUnavailable
-from candleviewer.storage.repositories.account_profiles import AccountProfileRow
+from candleviewer.storage.repositories.account_profiles import AccountProfileRow, DefaultBindingRow
 from candleviewer.storage.repositories.account_profiles import (
     AccountProfileStoreScopeDeniedError as ProfileGate,
 )
@@ -55,6 +56,7 @@ from tests.unit.accounts.test_key_import import account_row
 
 LIST = "/exchange-accounts/{accountId}/profiles"
 ITEM = LIST + "/{profileId}"
+BINDING = "/exchange-accounts/{accountId}/default-profile"
 #: An account found, then emptied: its profiles soft-deleted between the two reads (a race).
 EMPTIED = uuid.UUID("00000000-0000-4000-8000-00000000000c")
 #: Each account's environment. The server's is `demo`, so FOREIGN's is another environment's.
@@ -86,9 +88,9 @@ class _Cancelled(Exception):
 
 
 class Store:
-    """The two reads as Postgres scopes them (module docstring). `seen` holds each read's kind
-    (`account`, `profiles`) and scope; `gated` the kinds whose live-owner gate refuses an Owner;
-    `fails` an error per kind."""
+    """The reads as Postgres scopes them (module docstring). `seen` holds each read's kind
+    (`account`, `profiles`, `binding`) and scope; `gated` the kinds whose live-owner gate refuses
+    an Owner; `fails` an error per kind; `bindings` each account's binding version (0d-2)."""
 
     def __init__(self) -> None:
         alternate = _row("pct_equity", GRANTED, 2, is_default=False, name="Alt")
@@ -100,6 +102,7 @@ class Store:
         self.seen: list[tuple[str, object]] = []
         self.gated: set[str] = set()
         self.fails: dict[str, Exception] = {}
+        self.bindings = dict.fromkeys(self.rows, 1)
 
     def _shown(self, kind: str, scope: Any, account_id: uuid.UUID) -> bool:
         self.seen.append((kind, scope))
@@ -122,6 +125,11 @@ class Store:
     async def get_profile(self, scope: Any, account_id: uuid.UUID, profile_id: uuid.UUID) -> Any:
         rows = self.rows[account_id] if self._shown("profiles", scope, account_id) else ()
         return next((r for r in rows if r.id == profile_id), None)
+
+    async def get_default_binding(self, scope: Any, account_id: uuid.UUID) -> Any:
+        rows = self.rows[account_id] if self._shown("binding", scope, account_id) else ()
+        found = [r.id for r in rows if r.values.is_default]  # none: no live default (EMPTIED)
+        return DefaultBindingRow(account_id, found[0], self.bindings[account_id]) if found else None
 
 
 Served = tuple[World, Store]
@@ -156,9 +164,9 @@ def read(world: World, actor: str, account: Any, profile: Any = None, **query: s
     return world.client.get(path, params=query, headers=bearer(actor))
 
 
-def answer(resp: Any, *, item: bool) -> Any:
+def answer(resp: Any, *, item: bool = False, path: str | None = None) -> Any:
     """The body, once it validates against what the operation declares for its status."""
-    path, status = ITEM if item else LIST, resp.status_code
+    path, status = path or (ITEM if item else LIST), resp.status_code
     declared = SPEC["paths"][path]["get"]["responses"][str(status)]
     own = "#/paths/" + path.replace("/", "~1") + f"/get/responses/{status}"
     pointer = declared.get("$ref", own)
@@ -424,3 +432,40 @@ def test_without_a_store_the_reads_are_503_after_the_same_checks(
     monkeypatch.setattr(world.resolver, "snapshot", lambda _actor: BARE)
     assert storeless.get(path, headers=bearer("viewer")).status_code == 403
     assert store.seen == []  # a reader wired alone is never read
+
+
+def test_the_binding_reads_as_its_profile_and_version_with_its_tag(
+    served: Served, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#906 D2-6, `getAccountDefaultProfile`: the account first, in the caller's scope, for the
+    environment its answer carries (no read checks it), then its binding: the default profile and
+    the binding's version, which the weak `ETag` names, never the profile. A miss is the account's
+    one 404, unaudited (PF-I06); the store's owner gate is 403, recorded; an outage 503."""
+    world, store = served
+    monkeypatch.setitem(store.bindings, FOREIGN, 7)
+
+    def get(actor: str, account: object) -> Any:
+        return world.client.get(BINDING.format(accountId=account), headers=bearer(actor))
+
+    resp, theirs = get("owner", FOREIGN), store.rows[FOREIGN][0].id
+    want = {"exchange_account_id": str(FOREIGN), "environment": "live", "profile_id": str(theirs)}
+    assert (resp.status_code, answer(resp, path=BINDING)) == (200, want | {"version": 7})
+    tag = resp.headers["etag"]
+    assert tag == f'W/"{FOREIGN}:default:7"'
+    assert re.fullmatch(
+        SPEC["components"]["headers"]["DefaultBindingETag"]["schema"]["pattern"], tag
+    )
+    owner = OwnerScope(user_id_of("owner"))
+    assert store.seen == [("account", owner), ("binding", owner)]
+    missed = [get("manager_with_grant", FOREIGN), get("viewer", GRANTED)]
+    missed += [get("owner", uuid.uuid4()), get("owner", EMPTIED)]  # EMPTIED: no live default
+    assert {(r.status_code, r.text) for r in missed} == {(404, missed[0].text)}
+    assert answer(missed[0], path=BINDING)["detail"] == "No such exchange account."
+    assert world.audit.records == []
+    store.gated.add("binding")
+    gated = get("owner", GRANTED)
+    _denied(world.audit.records.pop(), gated, "owner", "not_owner:accounts:read:granted_accounts")
+    store.gated.clear()
+    store.fails["binding"] = StorageTierUnavailable("down")
+    down = get("owner", GRANTED)
+    assert (down.status_code, answer(down, path=BINDING)["code"]) == (503, "store_unavailable")
