@@ -62,8 +62,9 @@ jobs:
     # (tools/ci/integration_shards.py; five merge-group runs: 18-27 min in one job, 4.4-7.0 min a
     # shard). `total` is the one place the shard count is set; the job name, the split script
     # call and the summary read it. timeout-minutes is the heaviest shard at the slowest measured
-    # pace plus the job's overhead (9 min) plus 10, not vars.CV_CI_TIMEOUT_MINUTES; a pin test
-    # recomputes it from the weight table (scripts/tests/test_integration_shards.py).
+    # pace plus 90 s of job overhead (about 9 min in all) plus 10, not
+    # vars.CV_CI_TIMEOUT_MINUTES; a pin test recomputes it from the weight table
+    # (scripts/tests/test_integration_shards.py).
     name: integration-shard (${{ matrix.shard }}/${{ matrix.total }})
     # Not on a pull request (#3881, see the header); the merge group and a merge train run it.
     if: ${{ github.event_name != 'pull_request' }}
