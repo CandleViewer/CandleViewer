@@ -20,7 +20,7 @@ import threading
 import time
 import weakref
 from collections.abc import Awaitable, Callable, Mapping
-from typing import Any, Literal, final
+from typing import Any, Literal, NoReturn, final
 from uuid import UUID, uuid4
 
 import structlog
@@ -91,6 +91,17 @@ def _m2_only(cls: type) -> None:
         raise TypeError(f"{cls.__qualname__}: M2 classes may not be subclassed outside secrets/")
 
 
+def _mismatch(caller_module: str, *, own: bool) -> NoReturn:
+    """#913 L3b: `signing_loop_mismatch`. A wrong loop is a wiring fault, logged as an error; a
+    call on its own loop after the close, as a warning."""
+    log = structlog.get_logger(__name__)
+    if own:
+        log.warning("secrets.signing_loop_mismatch", caller_module=caller_module)
+    else:
+        log.error("secrets.signing_loop_mismatch", caller_module=caller_module)
+    raise SigningLoopMismatch("signing_loop_mismatch")
+
+
 class _DekCache:
     def __init__(self, ttl_s: float, clock: Clock) -> None:
         self._ttl, self._clock = ttl_s, clock
@@ -149,6 +160,13 @@ class _LoopIo:
 
     def owns_running_loop(self) -> bool:
         return self.loop() is asyncio.get_running_loop()
+
+    def bound(self, caller_module: str) -> None:
+        """`CredentialBroker._bound` for this I/O, which needs no broker (#913 L1d): it serves its
+        own loop only, and never once closed."""
+        own = self.owns_running_loop()
+        if not own or self.closed:
+            _mismatch(caller_module, own=own)
 
     def cancel_touches(self, key_id: UUID | None = None) -> None:
         for k, write in list(self.touches.items()):
@@ -271,20 +289,11 @@ class CredentialBroker:
         return BorrowHandle(self, caller_module, io=io)
 
     def _bound(self, io: _LoopIo | None, caller_module: str) -> None:
-        """#913 L3b: an I/O (None: the broker's own) serves its own loop only, and none closed. A
-        wrong loop is a wiring fault, logged as an error; a call after the close, as a warning."""
-        if io is None:
-            own = self._loop is None or self._loop() is asyncio.get_running_loop()
-        else:
-            own = io.owns_running_loop()
-        if own and (io is None or not io.closed):
-            return
-        log = structlog.get_logger(__name__)
-        if own:
-            log.warning("secrets.signing_loop_mismatch", caller_module=caller_module)
-        else:
-            log.error("secrets.signing_loop_mismatch", caller_module=caller_module)
-        raise SigningLoopMismatch("signing_loop_mismatch")
+        """#913 L3b: an I/O (None: the broker's own) serves its own loop only, and none closed."""
+        if io is not None:
+            io.bound(caller_module)
+        elif self._loop is not None and self._loop() is not asyncio.get_running_loop():
+            _mismatch(caller_module, own=False)
 
     def _leave(self, io: _LoopIo) -> None:
         with self._guard:

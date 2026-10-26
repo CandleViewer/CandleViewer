@@ -232,9 +232,12 @@ class LoopSigning:
         await self.__close()
 
     async def self_check(self) -> None:
-        """On its own loop, what M2's loop check answers a signing there, with nothing read,
-        recorded, decrypted or counted as a borrow: `signing_loop_mismatch` on another loop or once
-        closed, so a wiring fault fails the lane's start, never an order's signing (#913 L1d)."""
+        """At the lane's start, on its own loop (#913 L1d): what M2's loop check answers a signing
+        there, `signing_loop_mismatch` on another loop or once closed, while M2 is degraded too;
+        then, with M2 up, one read through the loop's own store of a key no row holds, bounded as
+        every read there, so a pool or wiring fault fails the start (`store_unavailable`), never
+        an order's signing. A missing row passes. Nothing is recorded, decrypted or counted as a
+        borrow."""
         await self.__check()
 
 
@@ -870,6 +873,9 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
 #: #913 L1d (Q10): the connections the store M2 builds for another loop, the order lane's, may hold,
 #: each opened lazily there: one read per signing, one `last_used_at` write per key a minute.
 LOOP_STORE_CONNECTIONS: Final = 4
+#: The key id the lane's start-up self-check reads: nil, which `uuid4` never makes, so no row holds
+#: it and the read finds none.
+_NO_ROW: Final = UUID(int=0)
 #: Builds a loop's own credential store over a pool of its own, bounded at the connections M2 asks
 #: for, and that pool's dispose: the composition root's, called by M2 alone, on that loop.
 LoopStoreFactory = Callable[[int], tuple[CredentialStore, Callable[[], Awaitable[None]]]]
@@ -920,9 +926,10 @@ def mint_loop_signing(
             m.credential_loop_pools.dec()
 
         async def check() -> None:
-            broker = service._broker  # degraded: every signing is refused before the loop check
+            io.bound(caller_module)  # needs no broker: refused off its loop or closed, M2 down too
+            broker = service._broker  # degraded: nothing signs until a restart binds the lane anew
             if broker is not None:
-                broker._bound(io, caller_module)
+                await broker._io(io.store.get(_NO_ROW, broker._env), "store_unavailable")
 
         borrower = _sealed_borrower(service._require, caller_module, io)
         return LoopSigning(borrower, close, check)
