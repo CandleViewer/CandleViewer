@@ -366,7 +366,10 @@ class Successor:
     def _stale(self, account_id: AccountId, order: Order, ids: Mapping[str, str]) -> bool:
         """True when the push is older, by the venue's `updated_at`, than the newest one this check
         met for the order (a late or redelivered push); else that newest time moves to it. A push
-        with no time is never judged stale."""
+        with no time is never judged stale. The newest times live in this process only, at most
+        `STAMPED_ORDERS` orders: the first push after a restart, or after the order's time was
+        evicted, is never judged stale (as the facade's own `last_update_ms`); E29-T06's read path
+        is to seed or supersede them."""
         stamp, key = order.updated_at, (account_id, order.exchange_order_id)
         if stamp is None:
             return False
