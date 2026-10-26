@@ -59,14 +59,20 @@ def _built(writer: AuditWriter, name: str) -> Any:
     return writer.build("auth.logout", actor_label="system:test", object_id=name)
 
 
-async def test_a_writer_refuses_every_call_from_another_loop_before_it_touches_anything(
-    tmp_path: Path,
-) -> None:
-    repo, wal = FakeAuditRepository(), tmp_path / "audit.wal"
-    writer = AuditWriter(repo, str(wal), sleep=repo.retry_sleep, clock=lambda: T0)
+async def _serving(tmp_path: Path) -> tuple[AuditWriter, FakeAuditRepository]:
+    """A writer started on this loop, on a fixed clock, with one record of its own (`here`)."""
+    repo = FakeAuditRepository()
+    writer = AuditWriter(
+        repo, str(tmp_path / "audit.wal"), sleep=repo.retry_sleep, clock=lambda: T0
+    )
     await writer.start()
     await writer.emit("auth.logout", actor_label="system:test", object_id="here")
-    calls: dict[str, Callable[[], Awaitable[object]]] = {
+    return writer, repo
+
+
+def _calls(writer: AuditWriter) -> dict[str, Callable[[], Awaitable[object]]]:
+    """Every call the writer serves, by name, each to be made from another loop."""
+    return {
         "emit": lambda: writer.emit("auth.logout", actor_label="system:test"),
         "emit_keyed": lambda: writer.emit_keyed("sl.attached", "a-stop", actor_label="system:test"),
         "ingest": lambda: writer.ingest(_built(writer, "ingested")),
@@ -75,15 +81,47 @@ async def test_a_writer_refuses_every_call_from_another_loop_before_it_touches_a
         "start": writer.start,
         "stop": lambda: writer.stop(1),
     }
-    with capture_logs() as logs:
-        for name, call in calls.items():
-            with pytest.raises(AuditWriterWrongLoop) as refused:
-                await _elsewhere(call)
-            assert isinstance(refused.value, AuditUnavailable), name  # callers refuse the action
-    assert _wrong_loop_pages(logs, "audit_writer_wrong_loop") == 1  # one window: one page
-    await writer.flush(5)  # its own loop still serves it: nothing else was appended or refused
+
+
+@pytest.mark.parametrize(
+    "call", ["emit", "emit_keyed", "ingest", "ingest_counted", "flush", "start", "stop"]
+)
+async def test_a_writer_refuses_a_call_from_another_loop_as_audit_unavailable(
+    tmp_path: Path, call: str
+) -> None:
+    """D6: a call from another loop is `AuditWriterWrongLoop`, an `AuditUnavailable`, so its caller
+    refuses the audited action (C-2.9, fail closed)."""
+    writer, _ = await _serving(tmp_path)
+    with pytest.raises(AuditWriterWrongLoop) as refused:
+        await _elsewhere(_calls(writer)[call])
+    assert isinstance(refused.value, AuditUnavailable)
+    await writer.stop(1)
+
+
+async def test_a_writers_refusals_from_another_loop_leave_it_as_it_was(tmp_path: Path) -> None:
+    """D6: each refusal comes before anything is read, counted or written: once every call was
+    refused, the writer's own loop still serves it, and only its own record reaches Postgres,
+    nothing counted as refused."""
+    writer, repo = await _serving(tmp_path)
+    for call in _calls(writer).values():
+        with pytest.raises(AuditWriterWrongLoop):
+            await _elsewhere(call)
+    await writer.flush(5)
     assert [row["object_id"] for row in repo.rows] == ["here"]
     assert (writer.refused_total, sum(writer.refused_by_domain.values())) == (0, 0)
+    await writer.stop(1)
+
+
+async def test_a_writers_burst_of_wrong_loop_refusals_in_one_window_pages_once(
+    tmp_path: Path,
+) -> None:
+    """CR-S3L2-08: every call refused within one window on the writer's clock: one page."""
+    writer, _ = await _serving(tmp_path)
+    with capture_logs() as logs:
+        for call in _calls(writer).values():
+            with pytest.raises(AuditWriterWrongLoop):
+                await _elsewhere(call)
+    assert _wrong_loop_pages(logs, "audit_writer_wrong_loop") == 1
     await writer.stop(1)
 
 
@@ -114,12 +152,11 @@ def _tear(path: Path) -> None:
         fh.write(encode_frame({"in_flight": True})[:-5])
 
 
-async def test_an_exclusive_writer_locks_its_wal_before_it_opens_it_and_until_its_stop_ends(
+async def test_a_second_exclusive_writer_of_a_wal_is_refused_before_it_reads_it(
     tmp_path: Path,
 ) -> None:
-    """A second exclusive writer of the file is refused before it reads it, so it never cuts the
-    first's frame in flight; the first's stop drops the lock, and a writer it stopped is not
-    started again without it."""
+    """D6: an exclusive writer locks `<wal>.lock` before it opens its WAL, so a second one of the
+    file is refused before it reads it and never cuts the first's frame in flight."""
     repo, wal = FakeAuditRepository(), tmp_path / "oms_lane.audit.wal"
     first = AuditWriter(repo, str(wal), sleep=repo.retry_sleep, exclusive=True)
     assert wal.with_name(wal.name + ".lock").exists()
@@ -128,16 +165,35 @@ async def test_an_exclusive_writer_locks_its_wal_before_it_opens_it_and_until_it
     with pytest.raises(AuditWalLocked):
         AuditWriter(repo, str(wal), exclusive=True)
     assert wal.stat().st_size == size  # not opened: its torn-tail cut never ran
+    await first.stop(1)
+
+
+async def test_an_exclusive_writers_stop_hands_its_wal_to_the_next_writer(tmp_path: Path) -> None:
+    """D6: the lock is held until the first's stop ends, and dropped then: the next exclusive
+    writer of the file builds and starts, and the first's record is in Postgres once."""
+    repo, wal = FakeAuditRepository(), tmp_path / "oms_lane.audit.wal"
+    first = AuditWriter(repo, str(wal), sleep=repo.retry_sleep, exclusive=True)
     await first.start()
     await first.emit("auth.logout", actor_label="system:test")
     await first.flush(5)
     await first.stop(1)
-    with pytest.raises(RuntimeError, match="exclusive"):
-        await first.start()
     second = AuditWriter(repo, str(wal), sleep=repo.retry_sleep, exclusive=True)
     await second.start()
     await second.stop(1)
     assert len(repo.rows) == 1
+
+
+async def test_an_exclusive_writer_once_stopped_is_not_started_again(tmp_path: Path) -> None:
+    """D6: its lock went with its stop, so a start after it is refused: never a writer of the
+    file without its lock."""
+    repo = FakeAuditRepository()
+    writer = AuditWriter(
+        repo, str(tmp_path / "oms_lane.audit.wal"), sleep=repo.retry_sleep, exclusive=True
+    )
+    await writer.start()
+    await writer.stop(1)
+    with pytest.raises(RuntimeError, match="exclusive"):
+        await writer.start()
 
 
 async def test_an_exclusive_writer_whose_wal_cannot_be_opened_drops_its_lock(
