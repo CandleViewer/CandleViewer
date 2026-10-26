@@ -318,7 +318,11 @@ def test_the_real_list_names_every_image_the_jobs_pull() -> None:
     integ = (REPO / ".github/workflows/_job-integration.yml").read_text(
         encoding="utf-8"
     )
-    assert "prepull_images.sh postgres postgres-compose questdb grafana" in integ
+    # #4605: the shards pull what testcontainers starts, the stack job what compose starts.
+    shard, _, stack = integ.partition("\n  integration-stack:\n")
+    assert "prepull_images.sh postgres postgres-compose questdb\n" in shard
+    stack_job = stack.partition("\n  integration:\n")[0]
+    assert "prepull_images.sh postgres-compose questdb grafana\n" in stack_job
 
 
 def test_the_reaper_image_is_not_pulled_mid_job() -> None:

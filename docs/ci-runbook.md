@@ -46,7 +46,8 @@ PR opened/updated, merge group queued for main, or merge train dispatched (.gith
 ├─ _job-contract.yml (protocol filter) → OpenAPI/WS conformance         (CI-CON-001)
 ├─ _job-integration.yml (py filter)  → fixture-driven + DB integration  (CI-INT-001/002, CI-INFRA-001); its
 │                                      `integration` job runs on the merge group and a merge
-│                                      train only, never on a PR's own run (#3881, see §3)
+│                                      train only, never on a PR's own run (#3881, see §3); the
+│                                      DB suite in 4 `integration-shard` jobs (#4605)
 ├─ _job-e2e.yml   (e2e filter)       → Playwright web (4 shards), e2e-staging (@demo-rest-only),
 │                                      a11y-axe smoke, e2e-electron on release/* heads
 │                                      (CI-E2E-001/002, CI-A11Y-001, CI-BUILD-001)
@@ -286,9 +287,9 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   `merge train refused` names the check the dispatch failed: rebuild the train, dispatch it again.
   Its red `ci-required` stays on the commit it ran on: on a PR's head, re-run the PR's own `pr` run;
   on `main` (the UI's default ref) it does not mean `main` is broken and goes when `main` moves.
-- The `integration` lane (the compose stack, about 14 minutes) is the one lane a pull request's own
-  run does not execute (#3881): it runs on the merge group and on a merge train, where it is
-  required like any lane. On a PR its job is skipped by its own `if:` (`_job-integration.yml`) and
+- The `integration` lane (the compose stack; sharded by #4605, below) is the one lane a pull
+  request's own run does not execute (#3881): it runs on the merge group and on a merge train,
+  where it is required like any lane. On a PR its jobs are skipped by their own `if:` and
   the lane reads `skipped`. The resolver then prints a notice, "integration: skipped — runs on the
   merge group", instead of CI-GATE-002. That rule is `MERGE_GROUP_ONLY` in
   `scripts/ci_gate_resolver.mjs`, which reads the event from `GITHUB_EVENT_NAME` (an unknown event
@@ -296,6 +297,16 @@ requires; every lane above feeds it. Read its job summary top to bottom:
   `run-audit-spike` label) and went red is still CI-GATE-001, and the lane red on a group drops its
   PR from the queue. A PR can therefore be green and still fail in the queue on `integration`:
   read the group's `integration` log, not the PR's.
+- #4605: the lane is three job definitions. `integration-shard (N/4)` runs one shard of
+  `pytest tests/integration -m "integration and not perf and not flaky"`, split by measured per-file
+  duration (`tools/ci/integration_shards.py`; about 5-7 minutes a shard on the five runs its table
+  was measured on, 18-27 minutes in one job before); `integration-stack` runs, beside them, what runs
+  once (fixture pipeline, SR-047 probe, storage chaos, Grafana render); `integration`, the check
+  `ci-required` reads, tabulates every shard's duration in its job summary and fails unless every
+  shard and the stack job passed. A red `integration`: open the red shard or stack job it names,
+  not `integration` itself. Each job's `timeout-minutes` is its measured worst plus 10 (shards 19,
+  stack 13), not `CV_CI_TIMEOUT_MINUTES`. When a shard's pytest time creeps toward its timeout,
+  re-measure the table: `python tools/ci/integration_shards.py weigh <shard job logs...>`.
 - A gate inside `gates` reports under its own lane name: read the `gates` step named after it
   (its job summary lists every gate's outcome). `gates` red while every gate lane is green
   means a setup step or the verdict step failed; read the `gates` log. A lane showing `cancelled`
