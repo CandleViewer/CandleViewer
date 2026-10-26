@@ -231,10 +231,18 @@ def test_registry_titles_carry_no_exchange_brand() -> None:
 
 def test_reworded_titles_keep_their_meaning_and_the_md_row() -> None:
     titles = _titles()
-    assert titles["unsupported_category"] == "Only the exchange's USDT linear perpetuals are supported in v1"
+    assert (
+        titles["unsupported_category"]
+        == "Only the exchange's USDT linear perpetuals are supported in v1"
+    )
     assert titles["exchange_error"] == "The exchange returned a non-zero refusal code"
-    assert titles["exchange_rate_limited"].startswith("The exchange's per-UID rate budget is exhausted")
-    assert titles["unsupported_symbol"] == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
+    assert titles["exchange_rate_limited"].startswith(
+        "The exchange's per-UID rate budget is exhausted"
+    )
+    assert (
+        titles["unsupported_symbol"]
+        == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
+    )
     assert f"{titles['unsupported_symbol']}." in MD
 
 
@@ -260,5 +268,11 @@ def test_request_level_use_of_invalid_options_and_the_wide_frame_malformed_title
         "naming a bad `ch` or `rs`, or a `resync` naming a bad `sub_id`, gets it with no `ch`"
     ) in flat
     assert "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack" in flat
-    assert "an unknown `reason`, or a `last_seq` that is neither an integer nor `null` (§7.7)" in flat
-    assert "Each counts a strike; the third closes with `bye` `bad_client` and `4400`" in flat
+    assert (
+        "an unknown `reason`, or a `last_seq` that is neither an integer nor `null` (§7.7)" in flat
+    )
+    assert "A `resync` is answered with `err` alone, no strike." in flat
+    assert (
+        "Each of the rest counts a strike; the third closes with `bye` `bad_client` and `4400`"
+        in flat
+    )

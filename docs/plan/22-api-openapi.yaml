@@ -813,7 +813,8 @@ x-error-codes:
 # the union of `x-error-codes` (entries with `ws` in `surface`) and this block.
 # `close_code` is the RFC 6455 close code used when `close: true`.
 # `frame_malformed`'s `close_code` is legacy metadata: a malformed frame never closes by itself —
-# each is a strike, the third closes with `bye bad_client` and `4400`.
+# a malformed `resync` is answered with `err` alone; each other one is a strike, and the third
+# closes with `bye bad_client` and `4400`.
 # -----------------------------------------------------------------------------
 x-error-codes-ws:
   - code: protocol_violation
