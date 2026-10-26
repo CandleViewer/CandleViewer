@@ -153,6 +153,24 @@ async def test_refresh_set_cap_keeps_the_rank_order(monkeypatch: pytest.MonkeyPa
     assert sorted(fetch.calls) == ["ETHUSDT", "SOLUSDT"]
 
 
+async def test_refresh_allowed_symbol_with_no_orders_is_fetched() -> None:
+    fetch, seed = _Fetch(), _Seed()
+    seed.ranked = ["ETHUSDT"]  # the port's rank 2 arm: a profile allows it, no order or position
+    await _sched(fetch, seed).refresh_now()
+    assert fetch.calls == ["ETHUSDT"]
+
+
+async def test_refresh_cap_drops_allowed_symbols_before_positions_and_open_orders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(refresh_mod, "TIER_SYMBOLS_MAX", 2)
+    fetch, seed = _Fetch(), _Seed()
+    # held, then a recent submit, then an allowed symbol: rank 0, 1, 2 (not by name)
+    seed.ranked = ["SOLUSDT", "ETHUSDT", "BTCUSDT"]
+    await _sched(fetch, seed).refresh_now()
+    assert sorted(fetch.calls) == ["ETHUSDT", "SOLUSDT"]  # the allowed symbol is the one dropped
+
+
 async def test_refresh_fetches_tiers_concurrently_within_the_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

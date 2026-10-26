@@ -53,3 +53,30 @@ async def test_order_path_symbols_reads_positions_open_orders_and_the_last_24_ho
     ours = [symbol for symbol in symbols if symbol in {held, opened, recent}]
     assert ours == [opened, held, recent]  # positions and open orders, then recent, by name
     assert len(await SqlAlchemyOrderPathSymbols(rel)(since_us=since_us, limit=2)) == 2
+
+
+def _profile_symbols(dsn: str, account: uuid.UUID, allowed: list[str] | None, **over: bool) -> None:
+    """Set the account's bootstrap `Default` profile's symbol scope (a wildcard needs NULL)."""
+    wild = over.get("all_symbols", False)
+    _sql(dsn, "UPDATE account_profiles SET allowed_symbols = %s, all_symbols = %s, "
+         "enabled = %s WHERE exchange_account_id = %s AND is_default",
+         allowed, wild, over.get("enabled", True), account)  # fmt: skip
+
+
+async def test_order_path_symbols_adds_the_default_profiles_allowed_symbols_at_rank_two(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    orders, account, other = SqlAlchemyOrderStore(rel), _account(pg_dsn), _account(pg_dsn)
+    wild, off = _account(pg_dsn), _account(pg_dsn)
+    opened, allowed, shared = "Y" + _symbol(), "A" + _symbol(), "B" + _symbol()
+    await orders.create(_order(account, symbol=opened, state="accepted"), _event())
+    _profile_symbols(pg_dsn, account, [allowed, shared, opened])
+    _profile_symbols(pg_dsn, other, [shared])  # the same symbol twice: one row
+    wildcard_only = "W" + _symbol()
+    _profile_symbols(pg_dsn, wild, None, all_symbols=True)
+    _profile_symbols(pg_dsn, off, [wildcard_only], enabled=False)  # disabled sizes nothing
+    symbols = await SqlAlchemyOrderPathSymbols(rel)(since_us=0, limit=10_000)
+    ours = [s for s in symbols if s in {opened, allowed, shared}]
+    assert ours == [opened, allowed, shared]  # rank 0, then rank 2 by name, distinct
+    assert wildcard_only not in symbols  # a wildcard adds nothing; so does a disabled profile
+    assert len(symbols) == len(set(symbols))

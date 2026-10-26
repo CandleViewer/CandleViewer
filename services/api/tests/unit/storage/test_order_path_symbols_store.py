@@ -19,7 +19,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 _ASYNCPG: Dialect = make_url("postgresql+asyncpg://").get_dialect()()
 
 
-def test_symbols_statement_unions_open_positions_open_orders_and_recent_orders() -> None:
+def test_symbols_statement_unions_positions_orders_recent_orders_and_allowed_symbols() -> None:
     stmt = symbols_statement(datetime(2026, 10, 26, tzinfo=UTC), 100)
     sql = " ".join(
         str(stmt.compile(dialect=_ASYNCPG, compile_kwargs={"render_postcompile": True})).split()
@@ -31,7 +31,20 @@ def test_symbols_statement_unions_open_positions_open_orders_and_recent_orders()
     assert (
         " GROUP BY anon_1.symbol ORDER BY min(anon_1.prio), anon_1.symbol LIMIT $" in sql
     )  # positions and open orders ahead of the recent ones
-    assert "exchange_account_id" not in sql and "SELECT *" not in sql  # symbols only
+    assert (
+        "SELECT unnest(account_profiles.allowed_symbols) AS symbol, 2 AS prio "
+        "FROM account_profiles WHERE" in sql
+    )
+    assert "2 AS prio" in sql  # the fourth arm, rank 2
+    assert (
+        "account_profiles.is_default IS true" in sql and "account_profiles.enabled IS true" in sql
+    )
+    assert (
+        "account_profiles.deleted_at IS NULL" in sql
+        and "FROM exchange_accounts WHERE exchange_accounts.deleted_at IS NULL" in sql
+    )
+    assert "account_profiles.all_symbols IS false" in sql  # a wildcard contributes nothing
+    assert sql.startswith("SELECT anon_1.symbol FROM (") and "SELECT *" not in sql  # symbols only
 
 
 @pytest.mark.parametrize("limit", [0, -1, True])
