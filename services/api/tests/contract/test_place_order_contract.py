@@ -4,7 +4,8 @@ doubles of the runtime, its pipeline, its anchors and its reads), meets 22 for i
 type, its body against the schema 22 declares there (2020-12, format checker), and each header it
 sends declared there, with its type. `Idempotency-Replayed: true` comes on every repeat and
 `Retry-After` where 22 promises it, equal to `retry_after_seconds`; neither comes anywhere else, but
-the store and audit `503`s may carry `Retry-After`, which `ServiceUnavailable` declares (equal too).
+the audit `503` may carry `Retry-After`, which `ServiceUnavailable` declares (equal too); the store
+`503` carries neither (22 `placeOrder`, #913 S4-G1 CG12).
 A `202` carries its order's `ETag` where B1's facade gives a version (ruling Q5), a string 22's
 `OrderETag` pattern takes; F's facade holds none. Each body meets its narrower schema
 too: the gate's `403` is a `TradingDisabledProblem`, every other `trading_disabled` a plain
@@ -154,6 +155,7 @@ CASES: dict[str, Case] = {
     "400_validation_failed": Case(_as_is, 400, "validation_failed", body=BODY | {"price": None}),
     "400_tick_size": Case(_raises(TickSizeViolation()), 400, "tick_size_violation"),
     "400_lot_size": Case(_raises(LotSizeViolation()), 400, "lot_size_violation"),
+    "401_no_session": Case(_as_is, 401, "unauthenticated", who="nobody"),
     "403_forbidden": Case(_as_is, 403, "forbidden", who="viewer"),
     "403_scope": Case(_as_is, 403, "account_scope_denied", who="manager",
                       body=BODY | {"exchange_account_id": str(FOREIGN)}),
@@ -184,7 +186,7 @@ CASES: dict[str, Case] = {
     "503_not_ready": Case(lambda w: setattr(w.oms, "state", "starting"), 503, "oms_not_ready",
                           retry_after=True),
     "503_store": Case(lambda w: setattr(w.oms.route.accounts, "fail", True), 503,
-                      "store_unavailable", retry_after=None),
+                      "store_unavailable"),
     "503_audit": Case(_audit_down, 503, "audit_unavailable", retry_after=None),
     "503_clock_drift": Case(_raises(ClockDriftBlocked(retry_after_s=5)), 503, "clock_drift",
                             retry_after=True),
@@ -205,6 +207,8 @@ async def test_each_answer_meets_the_schema_and_headers_22_declares_for_its_stat
     assert (answer.status_code, body.get("code")) == (case.status, case.code)
     sent = "retry-after" in answer.headers  # equal to `retry_after_seconds` when it is: `conforms`
     assert case.retry_after is None or case.retry_after == sent
+    if case.retry_after is False:  # 22: no header, and no `retry_after_seconds` either
+        assert "retry_after_seconds" not in body
     assert answer.headers.get("idempotency-replayed") == ("true" if case.replayed else None)
     assert "etag" not in answer.headers  # F's facade holds no version (ruling Q5)
 

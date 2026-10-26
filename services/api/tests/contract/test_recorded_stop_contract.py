@@ -381,7 +381,7 @@ def test_the_complete_read_ends_each_case_on_the_row_as_ruled() -> None:
     runtime = _words(_ARCH.split("**OMS runtime (E29-T04 slice 3, #913).**", 1)[1])
     assert not _missing(
         runtime,
-        "is the contract of #913 slice 3 (sub-slices B to H)",
+        "is as built by #913 slice 3 (sub-slices B to H)",
         "Then it starts the complete read for those accounts' waiting stop requests "
         "(`21-database-schema.md` §3.3.11) and goes on without waiting for it: the read never "
         "holds `ready`, so a venue outage at boot holds no order entry, and the hydration's "

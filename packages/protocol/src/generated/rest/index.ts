@@ -3959,7 +3959,11 @@ export interface paths {
      *       `validated`, answers that `503` too: this request sends nothing and leaves its anchor
      *       undecided, and a `submitting` row whose commit was lost is resumed by a restart's
      *       hydration, under its persisted `orderLinkId`: looked up first, and sent again only
-     *       within its re-send bound (24-internal-schemas.md section 8.3 rule 6). A store failure
+     *       within its re-send bound (24-internal-schemas.md section 8.3 rule 6). This route's own
+     *       `503 store_unavailable` carries neither `Retry-After` nor `retry_after_seconds`, unlike
+     *       the shared `storeUnavailable` example. A `503 store_unavailable` from a check ahead of
+     *       the route is that check's own: the "Enrolment-only session" check's carries
+     *       `Retry-After: 5`, the "Idle lock" and "View-as session" checks' none. A store failure
      *       after the send is never a `503`: the request answers its outcome, `202` with the order's
      *       last known state or the `502`.
      *     * An entry's stop request is recorded with its order, one stop request in flight per
@@ -4252,9 +4256,10 @@ export interface paths {
      *     `idempotency_in_flight` with `Retry-After: 1`, as an order's conflicts are reported in
      *     `results`, never as a `409`; `429 rate_limited` with `Retry-After: 1` when the in-flight
      *     guard holds all its keys, or all the caller's share of them, nothing sent
-     *     (24-internal-schemas.md section 8.4 step 9); `501 not_implemented` until the route is
-     *     wired; and `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913
-     *     slice 4, the rulings of 2026-10-24 11:31Z to 11:45Z).
+     *     (24-internal-schemas.md section 8.4 step 9); `501 not_implemented` from a deployment that
+     *     composes no OMS (the fake backend), nothing read, recorded or sent; and
+     *     `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913 slice 4,
+     *     the rulings of 2026-10-24 11:31Z to 11:45Z).
      */
     post: operations["cancelAllOrders"];
     delete?: never;
@@ -11680,6 +11685,8 @@ export interface components {
     OpenExposure: components["schemas"]["OpenExposureChoice"];
     /** @description The order's account is read from its stored row (SR-E29-13). An order on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists; so is one on an account whose grant is frozen. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF, and is a scope answer in one case only: on `amendOrder` and `cancelOrder`, an order on an account the caller holds a view-only grant on is `403 account_scope_denied`, as the caller can read that order already, so the answer discloses nothing (#913 slice 4 ruling Q7). There a Manager's request on an order another user created is `403 forbidden`, and an order no person created is the Owner's alone (04-security-program.md section 7.2.2 rows 12 and 13; ruling Q6). */
     OrderId: string;
+    /** @description `amendOrder`'s precondition: the order's `ETag` (`OrderETag`) from an answer about it, `placeOrder`'s `202` or `amendOrder`'s. With it the amend applies to that version alone: an order that has taken a step since is refused with `412 version_conflict`, nothing sent, and so are `*`, a list of tags, a weak or unparseable tag and another order's tag. Omitting it is not last-write-wins: the amend carries the version it was judged at, and an order that took a step meanwhile is refused with `409 conflict` and `Retry-After: 1`, nothing sent, never with `412`, which answers the client's own tag alone. A step into a state that takes no amend is `422 order_not_amendable` either way (ruling Q5, as amended on 2026-10-24: SEC-S4C2B-01; `amendOrder` gives the order of the checks). */
+    OrderIfMatch: string;
     /** @description The position's account is read from its stored row (SR-E29-13). A position on an account outside the caller's grants is answered exactly as an id that does not exist: `404` `not_found`, with the same title and `detail` shape, so the answer never tells whether the id exists. `403` on these routes refuses the caller's capability (permission, session state, the order-entry gate, the arm token) or fails CSRF; it is never a scope answer. */
     PositionId: string;
     PresetId: string;
@@ -17591,7 +17598,7 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays, the 24 h record's stored tag and the anchor's current one; an order already final carries none (#913 slice 4 ruling Q5). It is sent once `amendOrder` is served (E29-T04 slice 4, S4-D2); until then the `202` carries none. */
+      /** @description Accepted into the OMS, never a fill: every order the request created, with its state (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays, the 24 h record's stored tag and the anchor's current one; an order already final carries none (#913 slice 4 ruling Q5). The tag is read once the step the body renders has returned, so it may name a later step. */
       202: {
         headers: {
           ETag: components["headers"]["OrderETag"];
@@ -17603,6 +17610,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       /** @description `idempotency_key_reuse` or `idempotency_in_flight` (see the description), or `stop_request_in_flight`: an entry whose stop request collided with one still in flight on the same position, past the server's bounded retry. Nothing was recorded or sent for it and the key is not bound. `idempotency_in_flight` and `stop_request_in_flight` carry `Retry-After`, with `retry_after_seconds`; after a `stop_request_in_flight` the same key and body are a first submission. */
@@ -17723,8 +17731,8 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
         "Idempotency-Key": components["parameters"]["IdempotencyKeyRequired"];
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
-        "If-Match"?: components["parameters"]["IfMatch"];
+        /** @description `amendOrder`'s precondition: the order's `ETag` (`OrderETag`) from an answer about it, `placeOrder`'s `202` or `amendOrder`'s. With it the amend applies to that version alone: an order that has taken a step since is refused with `412 version_conflict`, nothing sent, and so are `*`, a list of tags, a weak or unparseable tag and another order's tag. Omitting it is not last-write-wins: the amend carries the version it was judged at, and an order that took a step meanwhile is refused with `409 conflict` and `Retry-After: 1`, nothing sent, never with `412`, which answers the client's own tag alone. A step into a state that takes no amend is `422 order_not_amendable` either way (ruling Q5, as amended on 2026-10-24: SEC-S4C2B-01; `amendOrder` gives the order of the checks). */
+        "If-Match"?: components["parameters"]["OrderIfMatch"];
         /**
          * @description The session's arm token (SR-043), issued by `POST /settings/arm`; it replaces the
          *     `arm_token` body fields (OM-S01). On a live account every order mutation that opens or
