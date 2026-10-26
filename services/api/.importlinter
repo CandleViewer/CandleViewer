@@ -1214,6 +1214,7 @@ source_modules =
     candleviewer.oms.push_mapping
     candleviewer.oms.recorded_stop_stream
     candleviewer.oms.stop_shown
+    candleviewer.oms.stop_terms
     candleviewer.oms.stream_consumer
     candleviewer.oms.stream_push
     candleviewer.orderflow

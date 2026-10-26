@@ -234,13 +234,14 @@ def _amend(out: dict[str, Any], terms: object) -> None:
 def _follow(out: dict[str, Any], payload: Mapping[str, Any], recorded: bool) -> None:
     """`adopt_terms`: the trigger price and quantity a recorded stop's terms step names. B1 writes
     one only on a recorded stop's row (`recorded`: its first event is `MATERIALISED`'s), naming a
-    term, each above zero, and never a quantity under the filled one (INV-1, INV-B1-q)."""
+    term, each above zero, and never a quantity at or under the filled one (INV-1, INV-B1-q). The
+    push's bound-id check is the replay's, not the fold's: the fold never sees the context."""
     named = {key: _money(payload[key]) for key in FOLLOWED if payload.get(key) is not None}
     if (
         not recorded
         or not named
         or any(value <= 0 for value in named.values())
-        or named.get("qty", out["qty"]) < out["cum_exec_qty"]
+        or named.get("qty", out["qty"]) <= out["cum_exec_qty"]
     ):
         raise OrderHistoryRefused("a terms step B1 never writes")
     out.update(named)

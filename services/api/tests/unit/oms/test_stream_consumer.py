@@ -108,6 +108,7 @@ class Rig:
     started: asyncio.Event = field(default_factory=asyncio.Event)
     take_gate: asyncio.Event | None = None  # a take that answers once the test opens it
     cancelled: list[str] = field(default_factory=list)
+    flushed: list[tuple[UUID, int]] = field(default_factory=list)  # (account, len(log) then)
     ticks: asyncio.Queue[None] = field(default_factory=asyncio.Queue)
     port: FakeTradingPort = field(default_factory=FakeTradingPort)
     now: int = NOW_US
@@ -198,6 +199,9 @@ class Rig:
             except asyncio.CancelledError:
                 self.cancelled.append("handle")
                 raise
+
+    async def flush(self, account_id: UUID) -> None:
+        self.flushed.append((account_id, len(self.log)))
 
     def count(self, outcome: str) -> None:
         self.counts.append(outcome)
@@ -327,6 +331,35 @@ async def test_consumer_heartbeat_status_feeds_health(rig: Rig) -> None:
     rig.port.push(status("heartbeat", "evidence"))
     await rig.until(lambda: bool(entries(rig, "hb")))
     assert entries(rig, "hb") == [("hb", A)] and not entries(rig, "drop")
+
+
+async def test_consumer_flushes_the_accounts_due_terms_at_each_row_before_its_work(
+    rig: Rig,
+) -> None:
+    """24 Sec.8.12 (S7a): a recorded stop's pending terms are sent at the account's next row,
+    after the row's evidence and before its work, whatever the row is."""
+    await running(rig)
+    for item in (event("order", orderStatus="Cancelled"), wallet_event()):
+        rig.port.push(item)
+    await rig.until(lambda: bool(entries(rig, "wallet")))
+    handled, wallet = rig.log.index(("handle", A)), rig.log.index(entries(rig, "wallet")[0])
+    assert [who for who, _ in rig.flushed] == [A, A]
+    assert [at for _, at in rig.flushed] == [handled, wallet]  # each row's work came right after
+    assert rig.log[handled - 1] == ("hb", A)
+
+
+@pytest.mark.parametrize("down", [False, True], ids=["live", "after_down"])
+async def test_consumer_flushes_the_accounts_due_terms_at_each_heartbeat(
+    rig: Rig, down: bool
+) -> None:
+    """24 Sec.8.12 (S7a): or at the account's `heartbeat` status, even one no evidence follows."""
+    await running(rig)
+    if down:
+        rig.port.push(status("down", "pong_timeout", 1))
+    rig.port.push(status("heartbeat", "evidence", 1))
+    await rig.until(lambda: bool(rig.flushed))
+    assert [who for who, _ in rig.flushed] == [A]
+    assert bool(entries(rig, "hb")) is not down
 
 
 async def test_consumer_down_status_drops_the_account_and_publishes_the_notice(rig: Rig) -> None:

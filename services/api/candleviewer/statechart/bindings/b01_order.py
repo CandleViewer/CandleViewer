@@ -617,8 +617,8 @@ def _followed(context: Mapping[str, Any], p: Mapping[str, Any]) -> dict[str, Dec
     terms = _positives(p, FOLLOWED)
     if not terms:
         raise ValueError("the push names no trigger price or quantity")
-    if terms.get("qty", _money(context.get("qty"))) < _money(context.get("filled_qty", "0")):
-        raise ValueError("the quantity is under the filled quantity (INV-1)")
+    if terms.get("qty", _money(context.get("qty"))) <= _money(context.get("filled_qty", "0")):
+        raise ValueError("the quantity is at or under the filled quantity (INV-1, INV-B1-q)")
     if all(_same(_text(v), context.get(k)) for k, v in terms.items()):
         raise ValueError(UNCHANGED)
     return terms
@@ -635,9 +635,9 @@ def _takes_terms(context: Mapping[str, Any], event: Any) -> bool:
 def recorded_terms_changed(context: dict[str, Any], event: Any) -> bool:
     """INV-B1-q: a `TERMS_CHANGED` a recorded stop's row takes. True only for the row
     `record_materialised` marked, a push of its bound exchange order (SR-E29-03) naming a trigger
-    price or quantity, each above zero, a quantity not under the filled one (INV-1), and a term
-    that differs from the row's. It records the exchange's terms and decides nothing else
-    (C-2.21)."""
+    price or quantity, each above zero, a quantity above the filled one (INV-1; at it, the row
+    would be left with nothing to fill), and a term that differs from the row's. It records the
+    exchange's terms and decides nothing else (C-2.21)."""
     return _total("recorded_terms_changed", lambda: _takes_terms(context, event))
 
 

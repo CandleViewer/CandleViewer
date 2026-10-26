@@ -1052,6 +1052,16 @@ def test_fold_terms_step_b1_never_writes_refuses_history(
         rebuild(_written(first, *steps))
 
 
+def test_recovery_refuses_a_history_with_qty_equal_filled_terms() -> None:
+    """INV-B1-q (the 2026-10-25 ruling Q1): B1 never writes a terms step to a quantity equal to
+    the filled one, so a history holding one is refused; one above it is taken."""
+    equal = ("partially_filled", "partially_filled", "TERMS_CHANGED", {"qty": "0.1"})
+    with pytest.raises(OrderHistoryRefused, match="a terms step B1 never writes"):
+        rebuild(_written("MATERIALISED", _FILLED, equal))
+    above = ("partially_filled", "partially_filled", "TERMS_CHANGED", {"qty": "0.2"})
+    assert rebuild(_written("MATERIALISED", _FILLED, above)).qty == Decimal("0.2")
+
+
 async def test_an_amend_the_machine_did_not_adopt_changes_no_term(rig: Rig) -> None:
     """`adopt_amend`, all or none: an accepted amend under the filled quantity (INV-1), or one
     naming a term that is no money above zero, keeps the prior terms in the fold too."""
