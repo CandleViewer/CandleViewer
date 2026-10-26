@@ -14294,8 +14294,8 @@ RULED_PIN_TXT = r"""
    `color.status.info.strong`, each measured as non-text on both stripes in §8. Remap takes the
    info hue rather than the warning one because in light `color.status.danger.strong` and
    `color.status.warning.strong` resolve to the same amber, so Drop and Remap would share a colour;
-   under tritanopia the Add and Remap colours still come close (§8's colour-vision rows), which the
-   two words and the two shapes cover.
+   under tritanopia the Add and Remap colours are the nearest of §8's colour-vision pairs, though
+   none collapses, and the two words and the two shapes carry them regardless.
 @ ¶5 ‖ paragraph ‖ 1
   **The Item, Type and Reason columns.** Item is the element as the file names it, a stored kind
    name such as `heatmap_v2`, a layout's name, a panel's symbol, interval and sync group, or a
@@ -15596,24 +15596,23 @@ RULED_PIN_TXT = r"""
    tool's) | ΔE76 | Verdict |
   | --- | --- | --- |
   | the Add glyph against the Drop glyph: `color.status.success.strong` vs
-   `color.status.danger.strong` | 68.4 · 27.1 · 43.1 · 129.7 | distinct |
+   `color.status.danger.strong` | 68.4 · 27.1 · 43.1 · 74.4 | distinct |
   | the Drop glyph against the Remap glyph: `color.status.danger.strong` vs
-   `color.status.info.strong` | 91.2 · 78.4 · 93.6 · 130.9 | distinct |
+   `color.status.info.strong` | 91.2 · 78.4 · 93.6 · 81.6 | distinct |
   | the Add glyph against the Remap glyph: `color.status.success.strong` vs
-   `color.status.info.strong` | 54.0 · 52.0 · 50.8 · 1.3 | collapses — the word and the glyph carry
-   it |
+   `color.status.info.strong` | 54.0 · 52.0 · 50.8 · 10.3 | distinct |
   | the Drop glyph against the budget line's glyph: `color.status.danger.strong` vs
-   `color.status.warning.strong` | 14.7 · 12.5 · 14.0 · 5.5 | distinct |
+   `color.status.warning.strong` | 14.7 · 12.5 · 14.0 · 11.2 | distinct |
 @ ¶11 ‖ paragraph ‖ 1
   **What carries each meaning, so nothing rests on a hue** (the ticket's test plan item 5; DoD-4;
    `05:130`). Add, Drop and Remap are their words in their own column, each after a glyph of its
    own shape — a check, a circled cross, a merge — and never a row's colour (BQ-10 RULED;
-   `14:636`). The tool's colour-vision rows show why the words must carry it: the Add and Remap
-   glyphs collapse under tritanopia, and in light `color.status.danger.strong` and
-   `color.status.warning.strong` are one amber, so the Drop glyph and the budget line's glyph
-   differ by shape and words only. A rejection is its words, its glyph and the absent import verb;
-   the budget line is its words and its numbers; T2 is the lock and the reason (§6); the drag-over
-   state is its changed words and its edge, never the fill alone.
+   `14:636`). The tool's colour-vision rows show why the words must carry it: no pair collapses,
+   yet under tritanopia the Add and Remap glyphs come nearest of any pair, and in light
+   `color.status.danger.strong` and `color.status.warning.strong` are one amber, so the Drop glyph
+   and the budget line's glyph differ by shape and words only. A rejection is its words, its glyph
+   and the absent import verb; the budget line is its words and its numbers; T2 is the lock and the
+   reason (§6); the drag-over state is its changed words and its edge, never the fill alone.
 @ ¶12 ‖ paragraph ‖ 1
   **Forced colours** (`S4:202`). Under `forced-colors: active` each dialog keeps its edge as a
    real border, which forced colours paint CanvasText; the scrim keeps its black at its opacity
@@ -16444,7 +16443,7 @@ RULED_PIN_TXT = r"""
    screen-reader user meets the caption through the polite region before the table itself |
   | `05`: colour is never the only signal | Add, Drop and Remap are words with their own shapes; a
    rejection is its words, its glyph and the absent verb | under tritanopia the Add and Remap
-   glyphs collapse (§8), so the words carry them |
+   glyphs are §8's nearest pair, so the words carry them |
   | `05`: no function by drag alone (`05:35`) | Choose file… is the keyboard path, and the drop
    zone only adds to it | — |
 @ ¶3 ‖ paragraph ‖ 1

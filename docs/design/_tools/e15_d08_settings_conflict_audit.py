@@ -3779,7 +3779,7 @@ def section_mutations() -> list[tuple[str, Callable[[str], str], str]]:
         (
             "X29-cvd-cell",
             sec_fn(
-                7, lambda t: t.replace("14.7 · 12.5 · 14.0 · 5.5", "14.7 · 12.5 · 14.0 · 5.6", 1)
+                7, lambda t: t.replace("14.7 · 12.5 · 14.0 · 11.2", "14.7 · 12.5 · 14.0 · 11.3", 1)
             ),
             "[cvd] §7 colour-vision row differs or is missing: color.status.danger.strong",
         ),
