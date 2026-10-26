@@ -628,9 +628,6 @@ def test_the_contract_lens_fold_defines_once_and_closes_the_gaps() -> None:
         _words(_SCHEMA_DOC)
     )
     assert "`order.adopted_untracked`, `orders.amend`, `orders.cancel`," in _RECORDS
-    assert "until then the `202` carries none" in _words(
-        _OPS["placeOrder"]["responses"]["202"]["description"]
-    )
     assert "A client treats it as opaque" in _words(
         _COMPONENTS["headers"]["OrderETag"]["description"]
     )
@@ -1088,4 +1085,32 @@ def test_the_change_log_records_the_amend_judged_as_it_stands_and_the_exit_answe
         "`amendOrder` and `cancelOrder` gain `401` and `500`, and `cancelAllOrders` `401`, "
         "`429` and `500`. The three `500`s are one new response, `InternalError`",
         "every exit `500` pages, one page for the fault's class",
+    )
+
+
+def test_place_orders_202_carries_its_etag_with_no_wait_for_the_amend_route() -> None:
+    """CG1 (#913 S4-G1, CR-07): S4-D2b serves `amendOrder` and sends `placeOrder`'s `ETag`, so
+    the `202` keeps its tag sentence and drops "until then the `202` carries none"."""
+    accepted = _OPS["placeOrder"]["responses"]["202"]
+    said = _words(accepted["description"])
+    assert not _missing(
+        said,
+        "every order the request created, with its state (`OrderAcceptance`), and its `ETag` "
+        "(`OrderETag`) for `If-Match` on `amendOrder`, on the first answer and on both replays",
+        "an order already final carries none (#913 slice 4 ruling Q5).",
+        "The tag is read once the step the body renders has returned, so it may name a later step.",
+    )
+    assert "It is sent once `amendOrder` is served" not in said
+    assert "until then the `202` carries none" not in said
+    assert accepted["headers"]["ETag"] == {"$ref": "#/components/headers/OrderETag"}
+
+
+def test_cancel_all_answers_501_only_from_a_deployment_that_composes_no_oms() -> None:
+    """#913 S4-G1, the drift table: the route is served since S4-E, and
+    `api/order_cancel_all.py` answers `501` only with no principal source or no runtime composed
+    (the fake backend), which 22 words as `placeOrder` does."""
+    assert "`501 not_implemented` until the route is wired" not in _CANCEL_ALL
+    assert (
+        "`501 not_implemented` from a deployment that composes no OMS (the fake backend), "
+        "nothing read, recorded or sent;" in _CANCEL_ALL
     )

@@ -31,6 +31,7 @@ from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openap
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
 from candleviewer.domain.primitives import AccountId, GroupId
 from candleviewer.exchange.base.errors import OmsErrorCode
+from candleviewer.oms.errors import PROBLEMS, Problem, StoreUnavailable
 from candleviewer.oms.order_link import OrderLinkIdParts
 from candleviewer.oms.order_machine import Legality
 from candleviewer.oms.order_steps import event_kind
@@ -388,6 +389,29 @@ def test_order_entry_is_refused_with_503_store_unavailable_when_it_cannot_be_rec
     assert "refused with `503 store_unavailable` before any exchange call" in text
 
 
+def test_place_order_declares_the_401_its_route_answers_as_the_exit_routes_do() -> None:
+    """CG12, #4367's recorded gaps (#913 S4-G1): the route answers `401 unauthenticated` with no
+    verified session (`api/orders.py`), declared as the exit routes declare it since #4506."""
+    assert _PLACE["responses"]["401"] == {"$ref": "#/components/responses/Unauthorized"}
+
+
+def test_place_orders_store_unavailable_carries_no_retry_after() -> None:
+    """CG12 (#913 S4-G1): `PROBLEMS` maps `StoreUnavailable` with no `Retry-After`, so the route's
+    own `503 store_unavailable` carries neither the header nor `retry_after_seconds`, though the
+    shared `storeUnavailable` example shows one. The three checks ahead of the route answer their
+    own: the enrolment-only guard's with `Retry-After: 5` (`api/enrolment_guard.py`), the idle-lock
+    and view-as gates' with none (`api/idle_lock.py`, `api/view_as_guard.py`). 22 says so on
+    `placeOrder`."""
+    assert PROBLEMS[StoreUnavailable] == Problem(503, "store_unavailable", retry_after=False)
+    assert (
+        "This route's own `503 store_unavailable` carries neither `Retry-After` nor "
+        "`retry_after_seconds`, unlike the shared `storeUnavailable` example. A "
+        "`503 store_unavailable` from a check ahead of the route is that check's own: the "
+        '"Enrolment-only session" check\'s carries `Retry-After: 5`, the "Idle lock" and '
+        '"View-as session" checks\' none.'
+    ) in _words(_PLACE["description"])
+
+
 def test_the_422_examples_are_marked_with_the_registry_statuses() -> None:
     """`native_stop_required` is a `400 validation_failed` and a risk refusal a `403` (#2088)."""
     statuses = (_CODES["validation_failed"]["status"], _CODES["risk_limit_breached"]["status"])
@@ -397,9 +421,29 @@ def test_the_422_examples_are_marked_with_the_registry_statuses() -> None:
 
 
 def test_an_amend_with_a_stale_if_match_is_refused_with_412() -> None:
-    """R5: T04 honours `If-Match` on `PATCH /orders/{orderId}`."""
+    """R5: T04 honours `If-Match` on `PATCH /orders/{orderId}`, through a parameter of its own
+    (#913 S4-G1, CG2) that states ruling Q5 as amended (SEC-S4C2B-01): an amend without it is
+    never last-write-wins, which the shared `IfMatch` says of the other operations."""
     amend = _OPS["amendOrder"]
-    assert {"$ref": "#/components/parameters/IfMatch"} in amend["parameters"]
+    own = {"$ref": "#/components/parameters/OrderIfMatch"}
+    assert own in amend["parameters"]
+    assert {"$ref": "#/components/parameters/IfMatch"} not in amend["parameters"]
+    assert [name for name, op in _OPS.items() if own in op.get("parameters", [])] == ["amendOrder"]
+    parameter = _SPEC["components"]["parameters"]["OrderIfMatch"]
+    shape = (parameter["name"], parameter["in"], parameter["required"], parameter["schema"])
+    assert shape == ("If-Match", "header", False, {"type": "string"})
+    said = _words(parameter["description"])
+    assert not _missing(
+        said,
+        "`amendOrder`'s precondition: the order's `ETag` (`OrderETag`) from an answer about it",
+        "an order that has taken a step since is refused with `412 version_conflict`, nothing "
+        "sent, and so are `*`, a list of tags, a weak or unparseable tag and another order's tag",
+        "Omitting it is not last-write-wins: the amend carries the version it was judged at, and "
+        "an order that took a step meanwhile is refused with `409 conflict` and `Retry-After: 1`",
+        "is `422 order_not_amendable` either way (ruling Q5, as amended on 2026-10-24: "
+        "SEC-S4C2B-01",
+    )
+    assert "accepts last-write-wins" not in said
     assert amend["responses"]["412"] == {"$ref": "#/components/responses/PreconditionFailed"}
     stale = _RESPONSES["PreconditionFailed"]["content"]["application/problem+json"]["examples"]
     assert stale["stale"]["value"]["code"] == "version_conflict"
