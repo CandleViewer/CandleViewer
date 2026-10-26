@@ -6,8 +6,10 @@ name: governance
 #   - a canary self-test (--self-test) proving each checker still fails
 #     against a deliberately-broken fixture (scripts/gov_self_test.py),
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
-#   - job-duration measurement against the 90 s budget, recorded as a
-#     GitHub Actions annotation.
+#   - a 90 s duration budget per job, recorded as a GitHub Actions annotation. It measures the
+#     suite, not the runner (#4666): each test shard budgets its pytest wall time and
+#     `governance` its combine step, while the job wall time, which runner contention stretches,
+#     is only reported; `governance-checks` budgets its job wall time.
 # Owning ticket: E01-Q02. #3789: parallel jobs instead of one. `governance-checks` runs the
 # checks, the canary and the reports; the `governance-tests` shards run the unit tests
 # (tools/ci/governance_shards.py splits the files by measured duration; #4365, #4588: six shards,
@@ -226,8 +228,9 @@ jobs:
           set -euo pipefail
           listing=$(python tools/ci/governance_shards.py "$SHARD" "$TOTAL")
           mapfile -t files <<< "$listing"
-          # The pytest wall time and file count go to the job summary (budget step below), so
-          # growth shows before a shard misses the budget; a failing run still reports them.
+          # The budget step below judges this pytest wall time (#4666: not the job's) and puts it
+          # and the file count in the job summary, so growth shows before a shard misses the
+          # budget; a failing run still reports them.
           pytest_start_ns=$(date +%s%N)
           status=0
           python -m pytest "${files[@]}" -q -n auto --dist worksteal \
@@ -248,6 +251,9 @@ jobs:
           retention-days: 5 # a later "Re-run failed jobs" of `governance` still finds every shard
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
+        # #4666: judges the shard's pytest wall time, the suite's own cost. The job wall time
+        # (checkout, installs and the upload, which runner contention stretches) is reported, not
+        # judged. A shard that recorded no pytest time fails here instead of passing unmeasured.
         if: always()
         continue-on-error: false
         env:
@@ -260,19 +266,24 @@ jobs:
         run: |
           end_ns=$(date +%s%N)
           duration_ms=$(( (end_ns - START_NS) / 1000000 ))
-          echo "$GITHUB_JOB shard ${SHARD}/${TOTAL} job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
           {
             echo "### $GITHUB_JOB shard ${SHARD}/${TOTAL} duration"
             echo "| metric | value |"
             echo "|---|---|"
-            echo "| wall time (ms) | ${duration_ms} |"
-            echo "| pytest wall time (ms) | ${PYTEST_MS:-n/a} |"
+            echo "| pytest wall time (ms), budgeted | ${PYTEST_MS:-n/a} |"
+            echo "| job wall time (ms), informational | ${duration_ms} |"
             echo "| test files | ${TEST_FILES:-n/a} |"
             echo "| budget (ms) | ${BUDGET_MS} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
-          if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
-            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+          case "$PYTEST_MS" in
+            '' | *[!0-9]*)
+              echo "::error title=$GITHUB_JOB budget not measured::the pytest step recorded no pytest wall time (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+              exit 1
+              ;;
+          esac
+          echo "::notice title=$GITHUB_JOB shard ${SHARD}/${TOTAL} duration::pytest wall time ${PYTEST_MS}ms (budget ${BUDGET_MS}ms); job wall time ${duration_ms}ms, not budgeted"
+          if [ "$PYTEST_MS" -gt "$BUDGET_MS" ]; then
+            echo "::error title=$GITHUB_JOB job over budget::pytest wall time ${PYTEST_MS}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi
 
@@ -310,10 +321,15 @@ jobs:
           path: ${{ runner.temp }}/gov-coverage
 
       - name: Combined coverage of scripts/** (>=85% gate)
+        id: combine
         env:
           COV_DIR: ${{ runner.temp }}/gov-coverage
         run: |
           set -euo pipefail
+          # The budget step below judges this step's wall time, the job's own work (#4666). The
+          # trap records it on every exit, a failed gate's included, and keeps the exit status.
+          combine_start_ns=$(date +%s%N)
+          trap 'echo "combine_ms=$(( ($(date +%s%N) - combine_start_ns) / 1000000 ))" >> "$GITHUB_OUTPUT"' EXIT
           # The combine reads only the downloaded shard files, and all six must be there.
           shopt -s nullglob
           files=("$COV_DIR"/coverage-shard-*)
@@ -334,24 +350,34 @@ jobs:
           [ "$CHECKS" = success ] && [ "$TESTS" = success ]
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
+        # #4666: judges the combine step's wall time, this job's own work. The job wall time
+        # (checkout, the install and the artifact download) is reported, not judged; a combine
+        # that recorded no time fails here instead of passing unmeasured.
         if: always()
         continue-on-error: false
         env:
           BUDGET_MS: "90000"
           START_NS: ${{ steps.gov_start.outputs.start_ns }}
+          COMBINE_MS: ${{ steps.combine.outputs.combine_ms }}
         run: |
           end_ns=$(date +%s%N)
           duration_ms=$(( (end_ns - START_NS) / 1000000 ))
-          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
           {
             echo "### $GITHUB_JOB duration"
-            echo "| metric | ms |"
+            echo "| metric | value |"
             echo "|---|---|"
-            echo "| wall time | ${duration_ms} |"
-            echo "| budget | ${BUDGET_MS} |"
+            echo "| combine wall time (ms), budgeted | ${COMBINE_MS:-n/a} |"
+            echo "| job wall time (ms), informational | ${duration_ms} |"
+            echo "| budget (ms) | ${BUDGET_MS} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
-          if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
-            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+          case "$COMBINE_MS" in
+            '' | *[!0-9]*)
+              echo "::error title=$GITHUB_JOB budget not measured::the combine step recorded no combine wall time (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+              exit 1
+              ;;
+          esac
+          echo "::notice title=$GITHUB_JOB duration::combine wall time ${COMBINE_MS}ms (budget ${BUDGET_MS}ms); job wall time ${duration_ms}ms, not budgeted"
+          if [ "$COMBINE_MS" -gt "$BUDGET_MS" ]; then
+            echo "::error title=$GITHUB_JOB job over budget::combine wall time ${COMBINE_MS}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi
