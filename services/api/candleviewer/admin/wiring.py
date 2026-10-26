@@ -123,7 +123,7 @@ class LaneAuditWriter(Protocol):
 class LaneSigningBinder(Protocol):
     """`SecretsBundle.lane_signing` (#913 L1d): called on the order lane's loop with the lane's own
     audit writer, never the serving loop's, it binds signing there over a credential store M2
-    builds on that loop and alone holds; `LoopSigning.release` frees its pool after the close."""
+    builds on that loop and alone holds; `LoopSigning.aclose` closes it, then frees its pool."""
 
     def __call__(self, *, audit: LaneAuditWriter) -> LoopSigning: ...
 

@@ -206,27 +206,29 @@ class CredentialBorrower:
 class LoopSigning:
     """Signing bound to the order lane's loop (#913 L3b, 29 CV-C13): `borrower` reads and records
     through that loop's own store and sink, and refuses any other loop. Closures only (C-3.2).
-    #913 L1d: `self_check` proves the binding at the lane's start, and `release` frees the store M2
-    built for the loop, after the close."""
+    #913 L1d: `self_check` proves the binding at the lane's start, and `aclose` also frees the
+    pool of the store M2 built for the loop, after the close."""
 
     def __init_subclass__(cls, **kw: Any) -> None:
         _m2_only(cls)
         super().__init_subclass__(**kw)
 
-    __slots__ = ("__check", "__close", "__release", "borrower")
+    __slots__ = ("__check", "__close", "borrower")
 
     def __init__(
         self,
         borrower: CredentialBorrower,
         close: Callable[[], Awaitable[None]],
         check: Callable[[], None],
-        release: Callable[[], Awaitable[None]],
     ) -> None:
-        self.borrower, self.__close = borrower, close
-        self.__check, self.__release = check, release
+        self.borrower, self.__close, self.__check = borrower, close, check
 
     async def aclose(self) -> None:
-        """On its own loop only: no more signing; its writes cancelled and awaited. Idempotent."""
+        """On its own loop only: no more signing; its writes cancelled and awaited; then the pool
+        of the store M2 built for the loop disposed of, once, and counted no more. Each wait is
+        bounded by M2's I/O bound; a dispose that fails or outlasts it raises, and the pool stays
+        held and counted (`cv_credential_loop_pools_in_use`) until a later `aclose` frees it.
+        Idempotent."""
         await self.__close()
 
     def self_check(self) -> None:
@@ -234,11 +236,6 @@ class LoopSigning:
         recorded, decrypted or counted as a borrow: `signing_loop_mismatch` on another loop or once
         closed, so a wiring fault fails the lane's start, never an order's signing (#913 L1d)."""
         self.__check()
-
-    async def release(self) -> None:
-        """On its own loop only: the close first, then the pool of the store M2 built for the loop
-        disposed of, once; nothing more when the binder was given a store. Idempotent."""
-        await self.__release()
 
 
 class SecretsLifecycleFacade:
@@ -874,7 +871,7 @@ def mint_borrower(service: SecretsService, caller_module: str) -> CredentialBorr
 #: each opened lazily there: one read per signing, one `last_used_at` write per key a minute.
 LOOP_STORE_CONNECTIONS: Final = 4
 #: Builds a loop's own credential store over a pool of its own, bounded at the connections M2 asks
-#: for, and that pool's release: the composition root's, called by M2 alone, on that loop.
+#: for, and that pool's dispose: the composition root's, called by M2 alone, on that loop.
 LoopStoreFactory = Callable[[int], tuple[CredentialStore, Callable[[], Awaitable[None]]]]
 
 
@@ -886,7 +883,7 @@ def mint_loop_signing(
     loop's store and sink, wrapped as the service's own; its borrower resolves the broker per call,
     as `mint_borrower`'s: closed while degraded. #913 L1d: given no store, it builds the loop's own
     there with `loop_store`, at `LOOP_STORE_CONNECTIONS`, holds it alone, counted in
-    `cv_credential_loop_pools_in_use`, and frees its pool at `LoopSigning.release`."""
+    `cv_credential_loop_pools_in_use`, and frees its pool at `LoopSigning.aclose`."""
     if caller_module not in ALLOWED_CALLERS:
         raise ValueError("caller not permitted to borrow credentials")
 
@@ -905,28 +902,30 @@ def mint_loop_signing(
         io = _LoopIo(store, sink, loop)
 
         async def close() -> None:
+            nonlocal free
             broker = service._broker  # each wait bounded by its `io_timeout_s`, as its `aclose`
-            await io.aclose(_IO_TIMEOUT_S if broker is None else broker._timeout)
+            bound_s = _IO_TIMEOUT_S if broker is None else broker._timeout
+            await io.aclose(bound_s)
             if broker is not None:
                 broker._leave(io)
+            pool, free = free, None  # first the close, so no signing reads a freed store
+            if pool is None:
+                return
+            try:
+                async with asyncio.timeout(bound_s):
+                    await pool()
+            except BaseException:
+                free = pool  # still held and counted: the next close retries it
+                raise
+            m.credential_loop_pools.dec()
 
         def check() -> None:
             broker = service._broker  # degraded: every signing is refused before the loop check
             if broker is not None:
                 broker._bound(io, caller_module)
 
-        async def release() -> None:
-            nonlocal free
-            await close()  # first, so no signing reads the store once its pool is gone
-            pool, free = free, None
-            if pool is not None:
-                try:
-                    await pool()
-                finally:
-                    m.credential_loop_pools.dec()
-
         borrower = _sealed_borrower(service._require, caller_module, io)
-        return LoopSigning(borrower, close, check, release)
+        return LoopSigning(borrower, close, check)
 
     return bind
 
