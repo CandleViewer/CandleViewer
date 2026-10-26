@@ -126,9 +126,11 @@ denied), is re-paired (both sides, a side the order lacks left out) and recorded
 and settled. A held key answers `STOP_REQUEST_IN_FLIGHT`; a raise leaves the rows in flight (S1).
 An account the port cannot sign for (refused, or with no active key) answers `ACCOUNT_UNAVAILABLE`,
 audited, nothing sent (the 11:34Z ruling); a read that fails before the send, `STORE_UNAVAILABLE`.
-Each of its records names the request its exit service registered (`expect_exit`), the
-principal with the role and the correlation id (C-2.9, #3990), each request's registration its
-own (#4643).
+Its records name the request whose registration B1's call spent (`expect_exit`, `_spend`), each
+request's registration its own (#4643): each side's request and each void the principal with the
+role and the correlation id, the port's own refusals the correlation id (C-2.9, #3990). A call
+that finds no registration (one dropped past `max_watches`, or forgotten by an exit service that
+ended first, `oms.exits`) names no request.
 """
 
 from __future__ import annotations
@@ -1203,9 +1205,10 @@ class OmsCommandPort:
         return watch
 
     def forget_exit(self, watch: ExitWatch) -> None:
-        """Drop a registration B1 has not spent, once no call can come for it: its command was
-        refused (a conflict, a stale version), or B1 settled the step without one. Its watch
-        answers None; another request's registration of the order stays."""
+        """Drop a registration B1 has not spent: its exit service forgets its own on every way out
+        but B1's call having taken it (`oms.exits`), its command refused, its step settled with
+        no call, or no call yet as it ends. Its watch answers None; another request's
+        registration of the order stays, and a watch no longer held is left as it is."""
         if watch in self._exits:
             del self._exits[watch]
             watch.resolve(None)
