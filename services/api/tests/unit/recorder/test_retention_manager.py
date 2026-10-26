@@ -539,6 +539,42 @@ async def test_each_deletion_has_intent_then_done_audit_records() -> None:
     assert w.data_deleted()[0]["deletion_id"] == w.data_deleted_phase("done")[0]["deletion_id"]
 
 
+class _InterleavedDeletes(list[str]):
+    """`World.deletes` that also drops a marker into the audit trail, so the trail shows where
+    each delete happened relative to the records written around it."""
+
+    def __init__(self, w: World) -> None:
+        super().__init__()
+        self.w = w
+
+    def append(self, key: str) -> None:
+        super().append(key)
+        self.w.audit.append(("<delete>", {"key": key}))
+
+
+async def test_purge_each_delete_sits_between_its_intent_and_its_done_record() -> None:
+    w = _world()
+    w.add_cold("BTCUSDT", T, 2)
+    w.add_cold("BTCUSDT", T, 40)
+    w.deletes = _InterleavedDeletes(w)
+    m = manager(w)
+    report = await m.run(await m.plan_purge("BTCUSDT", NOW_US, include_pinned=False), False)
+    assert len(report.deleted) == 2
+    trail = [
+        (a, d.get("phase"), d.get("deletion_id"))
+        for a, d in w.audit
+        if a in ("<delete>", "data.deleted", "retention.run")
+    ]
+    ids = [i for a, p, i in trail if a == "data.deleted" and p == "intent"]
+    assert len(set(ids)) == 2
+    assert [(a, p) for a, p, _ in trail] == [
+        ("retention.run", "start"),
+        *[("data.deleted", "intent"), ("<delete>", None), ("data.deleted", "done")] * 2,
+        ("retention.run", "end"),
+    ]
+    assert [i for a, p, i in trail if a == "data.deleted" and p == "done"] == ids
+
+
 async def test_failed_delete_writes_failed_record_with_class_name_only() -> None:
     w = _world()
     w.add_cold("BTCUSDT", T, 40)

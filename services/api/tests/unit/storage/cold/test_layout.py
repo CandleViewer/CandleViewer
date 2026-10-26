@@ -48,6 +48,32 @@ def test_resolve_partition_rejects_traversal_values(tmp_path: Path, value: str) 
         )
 
 
+_HOSTILE = [
+    "../x",
+    "/abs",
+    "C:\\x",
+    "\\\\srv\\share",
+    "x\x00y",
+    ".hidden",
+    "x;rm",
+    "%2e%2e",
+]
+
+
+@pytest.mark.parametrize("key", ["symbol", "dt"])
+@pytest.mark.parametrize("value", _HOSTILE)
+def test_resolve_partition_rejects_hostile_values_in_every_key(
+    tmp_path: Path, key: str, value: str
+) -> None:
+    """Every partition key is a closed charset: no separator, drive, UNC root, NUL, dotfile,
+    shell metacharacter or percent-encoding reaches a path, whichever key carries it."""
+    registry = DatasetRegistry(tmp_path)
+    values = {"symbol": "BTCUSDT", "dt": "2026-10-17"} | {key: value}
+    with pytest.raises(DatasetNotRegistered):
+        registry.resolve_partition(StreamKind.TRADES, partition_values=values)
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_resolve_partition_rejects_absolute_value(tmp_path: Path) -> None:
     registry = DatasetRegistry(tmp_path)
     absolute = str(tmp_path.parent)

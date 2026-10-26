@@ -11,6 +11,7 @@ import gzip
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -104,6 +105,47 @@ def test_url_for_rejects_names_not_from_the_pattern(name: str) -> None:
 def test_config_pins_https_and_archive_host(base: str) -> None:
     with pytest.raises(ValidationError):
         ArchiveConfig(base_url=base)
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://public.bybit.com:443",
+        "https://PUBLIC.BYBIT.COM",
+        "https://public.bybit.com?x=1",
+        "https://public.bybit.com#f",
+        "https://public.bybit.com.",
+        "https://xn--public.bybit.com",
+        "https://public.bybit.com\\evil",
+        "https://evil.example/public.bybit.com",
+        "https://127.0.0.1",
+        "https://[::1]",
+    ],
+)
+def test_config_refuses_every_origin_but_the_exact_pinned_host(base: str) -> None:
+    with pytest.raises(ValidationError):
+        ArchiveConfig(base_url=base)
+
+
+def test_config_accepts_the_pinned_origin_and_normalises_it_to_a_bare_origin() -> None:
+    assert ArchiveConfig(base_url=f"{BASE}/").base_url == BASE
+
+
+async def test_owned_client_is_built_with_tls_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    built: list[dict[str, object]] = []
+    real = httpx.AsyncClient
+
+    def capture(**kwargs: Any) -> httpx.AsyncClient:
+        built.append(kwargs)
+        return real(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", capture)
+    archive = BybitTradeArchive()
+    archive._http()
+    await archive.aclose()
+    assert len(built) == 1 and built[0]["verify"] is True
 
 
 def test_config_defaults_match_architecture_keys() -> None:

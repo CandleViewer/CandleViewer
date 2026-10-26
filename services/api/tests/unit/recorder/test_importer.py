@@ -27,6 +27,7 @@ from candleviewer.domain.archive import (
     ArchiveRangeInvalid,
     ArchiveTrade,
 )
+from candleviewer.exchange.bybit.archive import BybitTradeArchive
 from candleviewer.recorder.importer import (
     BulkImporter,
     ImportDiskBudgetExceeded,
@@ -35,7 +36,7 @@ from candleviewer.recorder.importer import (
     split_overlap,
 )
 from candleviewer.storage.cold.archive_import import ColdArchiveDayWriter, FileImportLedger
-from candleviewer.storage.cold.layout import DatasetRegistry
+from candleviewer.storage.cold.layout import DatasetNotRegistered, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 
 DAY_US = 86_400_000_000
@@ -452,6 +453,32 @@ async def test_a_disk_name_ending_in_a_newline_is_no_part_name(
     assert sorted(p.name for p in part_dir.iterdir()) == sorted([name, new_part])
     assert (part_dir / name).read_bytes() == b"in flight"
     assert pq.read_table(part_dir / new_part).num_rows == 24
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["../BTCUSDT", "BTCUSDT/..", "/BTCUSDT", "BTC USDT", "BTCUSDT\x00", ".BTCUSDT"],
+    ids=["dot-dot-lead", "dot-dot-tail", "absolute", "space", "nul", "dotfile"],
+)
+async def test_import_sites_refuse_symbols_outside_the_closed_charset(
+    tmp_path: Path, symbol: str
+) -> None:
+    """The archive listing, the import ledger and the day writer each refuse a symbol that could
+    name a path, before anything is fetched, locked or written."""
+    registry = DatasetRegistry(tmp_path)
+    ledger, writer = FileImportLedger(registry), ColdArchiveDayWriter(registry)
+    d = date(2026, 6, 1)
+    with pytest.raises(ArchiveRangeInvalid):
+        BybitTradeArchive().list_files(symbol, d, d)
+    with pytest.raises(DatasetNotRegistered):
+        await ledger.done_days(symbol)
+    with pytest.raises(DatasetNotRegistered):
+        await ledger.mark_done(symbol, d, 0, 1, 1, "0" * 64, "part-0000.parquet")
+    with pytest.raises(DatasetNotRegistered):
+        writer.day_lock(symbol, d)
+    with pytest.raises(DatasetNotRegistered):
+        await writer.open_day(symbol, d, 0, 1)
+    assert await asyncio.to_thread(lambda: list(tmp_path.iterdir())) == []
 
 
 @pytest.mark.parametrize(
