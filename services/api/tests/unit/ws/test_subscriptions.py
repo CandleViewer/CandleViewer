@@ -1435,3 +1435,11 @@ def test_other_bar_types_need_no_qty_step() -> None:
               "footprint.BTCUSDT.tick.100")  # fmt: skip
     assert all(r["ok"] for r in _sub(conn, *topics))
     assert len(bars.registered) == len(topics)
+
+
+@pytest.mark.parametrize("code", ["no_such_code", "validation_failed"])
+def test_a_result_error_outside_the_ws_catalogue_is_refused(code: str) -> None:
+    from candleviewer.ws.errors import UnknownErrorCode, topic_error
+
+    with pytest.raises(UnknownErrorCode):
+        topic_error(code, "x")

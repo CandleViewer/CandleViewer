@@ -25,9 +25,15 @@ def topic_error(code: str, message: str, field: str | None = None) -> dict[str, 
 
     Same rule as ``build_ws_error``: ``internal_error`` carries only its catalogue title, so no
     caller text (an exception's, say) and no ``field`` can reach a client. Other codes keep the
-    caller's ``message`` and ``field``. Raises ``ValueError`` for a code outside the catalogue.
+    caller's ``message`` and ``field``. Raises ``UnknownErrorCode`` for a code that is not in the
+    WS catalogue, as ``build_ws_error`` does (S10).
     """
-    known = ErrorCode(code)
+    try:
+        known = ErrorCode(code)
+    except ValueError:
+        raise UnknownErrorCode(f"error code {code!r} is not in the WS catalogue") from None
+    if known not in WS_ERROR_CODES:
+        raise UnknownErrorCode(f"error code {code!r} is REST-only, not legal on the WS")
     meta = ERROR_META[known]
     err: dict[str, Any] = {"code": code, "retryable": meta.retryable}  # §10.2
     if known is ErrorCode.INTERNAL_ERROR:
