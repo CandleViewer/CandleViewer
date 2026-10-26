@@ -115,6 +115,10 @@ class FixtureDoor:
         self.rest_transport: Final = _DoorTransport(self)
         self.private_ws_connect: Final[Callable[[str], Awaitable[PrivateSocket]]] = self._dial
 
+    def lane_rest_transport(self) -> httpx.AsyncBaseTransport:
+        """A new refusing transport for the order lane's loop at each call (#913 L1d)."""
+        return RefusingTransport()
+
     @property
     def armed(self) -> Armed | None:
         """The pair, once built; only `arm` sets it. Its request log lives for the process."""
