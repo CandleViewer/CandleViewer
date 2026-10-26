@@ -24,11 +24,12 @@ from one reduction frame, `--mutate-kinds` the undo line from one reduction-kind
 `--mutate-typed` the quoted typed-field label from the first destructive confirm, `--mutate-plain`
 turns the `drop` -> `archive_parquet` kind into a plain confirm, `--mutate-title` gives K7 K6's title,
 `--mutate-nothing` adds "Nothing is deleted." to K6's body, `--mutate-producer` writes the plain mark
-into the kinds frame's Producer cell. Exit 1 on a gated FAIL.
+into the kinds frame's Producer cell, `--mutate-applynow` removes the Apply-now qualifier from the
+lengthening confirm's copy row. Exit 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check]
   [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain | --mutate-title
-   | --mutate-nothing | --mutate-producer] [--extra F]
+   | --mutate-nothing | --mutate-producer | --mutate-applynow] [--extra F]
 """
 
 from __future__ import annotations
@@ -70,9 +71,9 @@ BANNED_COPY = (
     r"\b422\b",
     r"\b409\b",
 )
-# `14` :2753, byte-for-byte (the derived-stream rule in product terms).
+# `14` :2769, byte-for-byte (the derived-stream rule in product terms).
 SENTENCE_14 = "Bars can't be deleted before the ticks they came from are kept — adjust the tiers."
-# `24` :3764, the daily job; `22` :5083, the exemption; both quoted in the spec.
+# `24` :3866, the daily job; `22` :5239, the exemption; both quoted in the spec.
 SENTENCE_24 = "Daily retention job (03:00 UTC)"
 SENTENCE_22_EXEMPT = "pinned symbols are exempt"
 VIEW_AS = "Read-only while viewing as {user}."
@@ -97,7 +98,7 @@ EXAMPLE = {
     "long_days": 1000,
     "long_hot_days": 800,
 }
-# The absences (deferred capabilities drawn as absent, never as a lock): `22` :5086–5087.
+# The absences (deferred capabilities drawn as absent, never as a lock): `22` :5242–5243.
 ABSENCES = ("downsample", "pin", "applies_to_pinned")
 ABSENT_FIELDS = ("downsample_to", "max_disk_gb", "archive_path", "enabled")
 # element | fg | bg | role — every pair SCR-141 draws (spec section 15, rows in order).
@@ -186,67 +187,67 @@ BINDINGS = (
 # doc | line at the base | text the line must hold. A `14` line may sit lower by the pointer line.
 CITED_TABLE = """
 14 | 85 | **RBAC denies server-side; the UI presents.**
-14 | 2750 | ### SCR-141 — Admin: retention policy editor
-14 | 2752 | cold-tier migration age (QuestDB → Parquet), pin overrides
-14 | 2753 | retention ≥1 day; raw-tick retention ≤ bar retention
-14 | 2754 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
-14 | 2756 | every duration field states its unit
-14 | 2757 | the screen shows the job's queued/running/complete state
-14 | 2758 | `retention.default_changed` `{before, after}`
-14 | 2759 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
-22 | 691 | - code: retention_invalid_policy
-22 | 1046 | - recording:write
-22 | 4788 | operationId: updateRecordedSymbol
-22 | 4863 | operationId: pinRecordedSymbol
-22 | 4975 | operationId: getStorageUsage
-22 | 5033 | operationId: listRetentionPolicies
-22 | 5079 | operationId: setRetentionPolicies
-22 | 5083 | (per-symbol beats global); pinned symbols are exempt.
-22 | 5086 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
-22 | 5087 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
-22 | 5090 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
-22 | 5091 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
-22 | 5093 | Audited as `retention.change` (the set before and after), written before the new set is
-22 | 5100 | - name: apply_now
+14 | 2766 | ### SCR-141 — Admin: retention policy editor
+14 | 2768 | cold-tier migration age (QuestDB → Parquet), pin overrides
+14 | 2769 | retention ≥1 day; raw-tick retention ≤ bar retention
+14 | 2770 | CMP-008 NumericStepperInput, CMP-040 FormField, CMP-044 ConfirmDialog, CMP-065 FormSection, CMP-087 AdminLayout, CMP-093 AuditActionTrigger.
+14 | 2772 | every duration field states its unit
+14 | 2773 | the screen shows the job's queued/running/complete state
+14 | 2774 | `retention.default_changed` `{before, after}`
+14 | 2775 | the 'this will delete N GB covering dates X-Y' warning before applying a reduction
+22 | 710 | - code: retention_invalid_policy
+22 | 1069 | - recording:write
+22 | 4944 | operationId: updateRecordedSymbol
+22 | 5019 | operationId: pinRecordedSymbol
+22 | 5131 | operationId: getStorageUsage
+22 | 5189 | operationId: listRetentionPolicies
+22 | 5235 | operationId: setRetentionPolicies
+22 | 5239 | (per-symbol beats global); pinned symbols are exempt.
+22 | 5242 | `downsample`, `pin` and `applies_to_pinned: true` are `422 retention_invalid_policy` until
+22 | 5243 | the store holds their fields, as is a set where a stream derived from `trades` outlives it;
+22 | 5246 | starts one `retention_sweep` job: `409 job_running` while one is queued or running, and
+22 | 5247 | `409 conflict` while the retention scheduler is off (`CV_RETENTION_ENABLED`). A refused
+22 | 5249 | Audited as `retention.change` (the set before and after), written before the new set is
+22 | 5256 | - name: apply_now
 22 | 282 | answers `403 view_as_read_only` and changes nothing.
-22 | 11379 | (ADR-0004), so a restart loses every
-22 | 13934 | operationId: purgeRecordedData
-22 | 16052 | StreamKind:
-22 | 16068 | RetentionAction:
-22 | 17846 | RetentionPolicyInput:
-22 | 17851 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
-22 | 17859 | RetentionPolicy:
-22 | 20567 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
-21 | 2897 | market data is mainnet even for demo trading
-21 | 2903 | retention_days    integer,                              -- NULL → use retention_policies default
-21 | 2972 | #### 3.6.3 `retention_policies`
-21 | 3001 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
-21 | 3003 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
-21 | 3003 | the total horizon stays the stream's §7 total, never shorter than the hot window
-21 | 4482 | a `retention_purge` audit entry records symbol, stream, range and row count
-21 | 4496 | | `trades`                              | 30 d
-21 | 4497 | | `orderbook_deltas`                    | 7 d
-21 | 4501 | Irreplaceable (no REST history)
-21 | 4505 | Rebuildable from `trades` while trades exist
-21 | 4511 | | **Pinned symbol (any stream)**
-24 | 3752 | class RetentionRule(BaseModel):
-24 | 3764 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
-04 | 366 | A Manager (not the Owner) changes global retention policy
-04 | 924 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
-04 | 1137 | | `recording:write`                                  |  ✔(step-up for purge/retention)
-04 | 1183 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
+22 | 11767 | (ADR-0004), so a restart loses every
+22 | 14333 | operationId: purgeRecordedData
+22 | 16587 | StreamKind:
+22 | 16603 | RetentionAction:
+22 | 18382 | RetentionPolicyInput:
+22 | 18387 | retain_days: { type: integer, minimum: 1, maximum: 3650 }
+22 | 18395 | RetentionPolicy:
+22 | 21105 | status: { type: string, enum: [queued, running, succeeded, failed, cancelled] }
+21 | 2899 | market data is mainnet even for demo trading
+21 | 2905 | retention_days    integer,                              -- NULL → use retention_policies default
+21 | 2974 | #### 3.6.3 `retention_policies`
+21 | 3003 | Resolution order for a (symbol, stream): pinned symbol → infinite retention
+21 | 3005 | `retain_days` reads by `action`, through one mapping (`read_policy_row`)
+21 | 3005 | the total horizon stays the stream's §7 total, never shorter than the hot window
+21 | 4506 | a `retention_purge` audit entry records symbol, stream, range and row count
+21 | 4520 | | `trades`                              | 30 d
+21 | 4521 | | `orderbook_deltas`                    | 7 d
+21 | 4525 | Irreplaceable (no REST history)
+21 | 4529 | Rebuildable from `trades` while trades exist
+21 | 4535 | | **Pinned symbol (any stream)**
+24 | 3854 | class RetentionRule(BaseModel):
+24 | 3866 | Daily retention job (03:00 UTC): move hot→cold past `hot_days`
+04 | 368 | A Manager (not the Owner) changes global retention policy
+04 | 926 | | SR-099 | Retention jobs MUST honour pins, run dry-run-first with a report
+04 | 1139 | | `recording:write`                                  |  ✔(step-up for purge/retention)
+04 | 1185 | Pin a recording / change retention (add, update: with `pinned` or `retention_days`)
 11 | 4146 | Then it reports exactly what would be deleted, by symbol, range and size, before anything is removed
 11 | 4895 | Then a preview of the impact is shown and typed confirmation is required
 12 | 111 | | R-340 | `/admin/recorder` | Recorder & retention config
 13 | 440 | **Screens:** SCR-140, SCR-141, SCR-142, SCR-100, SCR-103, SCR-047
-20 | 884 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
+20 | 896 | | `CV_RECORDER_RETENTION_DAYS`     | int    | `30`
 15 | 119 | ### CMP-008 NumericStepperInput
-15 | 426 | ### CMP-040 FormField
-15 | 464 | ### CMP-044 ConfirmDialog
-15 | 659 | ### CMP-065 FormSection
-15 | 799 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 872 | ### CMP-087 AdminLayout (RBAC-gated shell)
-15 | 927 | ### CMP-093 AuditActionTrigger
+15 | 433 | ### CMP-040 FormField
+15 | 473 | ### CMP-044 ConfirmDialog
+15 | 671 | ### CMP-065 FormSection
+15 | 811 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 884 | ### CMP-087 AdminLayout (RBAC-gated shell)
+15 | 940 | ### CMP-093 AuditActionTrigger
 05 | 90 | ### 3.4 Focus management in dense layouts
 05 | 144 | ### 6.2 Layer 2 — ARIA live regions for streaming updates
 E09 | 39 | Has the **server** just refused this control's action or route
@@ -322,7 +323,7 @@ STREAM_TABLE = (
 # frame or kind | stage | before | after — each side "stream days action", pairs joined by ";". The
 # numbers are fixture keys ({seed_*} the `21` section 7 seed, {example_days} `22`'s override row, the
 # rest EXAMPLE). A side's total horizon is its days for `drop` and max(its days, the section 7 total)
-# for `archive_parquet` (`21` :3003); a change is a reduction when any pair's total shrinks.
+# for `archive_parquet` (`21` :3005); a change is a reduction when any pair's total shrinks.
 # `SCR-141/confirm-kinds` stands for every K row.
 DIFF_TABLE = """
 SCR-141/editing-dirty-lengthen | edit | trades {seed_trades} archive_parquet | trades {lengthen_to} archive_parquet
@@ -354,7 +355,11 @@ MUTATIONS = {
     "title": "share a title",
     "nothing": "says Nothing is deleted",
     "producer": "names the plain confirm",
+    "applynow": "lacks the Apply-now qualifier",
 }
+# "Nothing is deleted." on the lengthening confirm holds only while Apply now is unticked (`22`
+# :5246: a run started now still deletes what the current rules make eligible).
+APPLY_NOW_QUALIFIER = "true only while Apply now is unticked — with it ticked the body is"
 # frame | the derived strings its Shows cell must carry (the drawn sizes, gated where they are drawn)
 FRAME_SENTENCES = {
     "SCR-141/preview": ("preview_row", "preview_total"),
@@ -593,7 +598,7 @@ def fixture(facts: dict[str, Any]) -> dict[str, Any]:
     """The spec's worked examples, derived from the `22` storage example and the `21` section 7 seed.
 
     The reduction is the ticket's trades 30 -> 7 days WITH the action set to `drop`: under `22`
-    :5083-5085 a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner
+    :5239-5241 a lowered `retain_days` on an `archive_parquet` row only moves days to Parquet sooner
     (a tiering change) while its hot window stays at or under the section 7 total. The fallback size is `used_bytes` per
     symbol across all its streams; its range is clamped to the recorded history (start =
     generated_at - used_bytes / daily_growth_bytes), and when nothing predates the cut-off the
@@ -765,7 +770,7 @@ def horizon(text: str) -> float:
 
 
 def side_totals(side: str, totals: dict[str, str]) -> dict[str, float]:
-    """`21` :3003: the total is the days for `drop`, never shorter than the hot window otherwise."""
+    """`21` :3005: the total is the days for `drop`, never shorter than the hot window otherwise."""
     out: dict[str, float] = {}
     for pair in side.split(";"):
         stream, days, action = pair.split()
@@ -824,7 +829,7 @@ def gates(
     deck = section(spec, 14, 15)
     if SENTENCE_14 not in deck:
         bad.append(
-            "spec section 14: the `14` :2753 validation sentence is not in the copy deck byte-for-byte"
+            "spec section 14: the `14` :2769 validation sentence is not in the copy deck byte-for-byte"
         )
     if not facts["sentence_14_present"]:
         bad.append("`14`: the validation sentence is gone from the catalogue")
@@ -850,6 +855,23 @@ def gates(
             bad.append(
                 f"spec section 14: the {k} sentence is not in the copy deck: {sent[k][:48]!r}"
             )
+    # the Apply-now truth: the lengthening body's row carries the qualifier, the run-now body
+    # names it, and the lengthening frame's Trigger leaves Apply now unticked
+    lengthen = first(r"^(\| `retention\.confirm\.lengthen\.body` +\|.*)$", deck, MULTI)
+    if mode == "applynow":
+        lengthen = lengthen.replace(APPLY_NOW_QUALIFIER, "", 1)
+    if APPLY_NOW_QUALIFIER not in lengthen:
+        bad.append("spec section 14: retention.confirm.lengthen.body lacks the Apply-now qualifier")
+    now = first(r"^(\| `retention\.confirm\.plain\.body_now` +\|.*)$", deck, MULTI)
+    if "`retention.confirm.lengthen.body`" not in now:
+        bad.append(
+            "spec section 14: retention.confirm.plain.body_now does not cover the lengthening confirm"
+        )
+    trig = first(r"^\| `SCR-141/confirm-lengthen` +\| ([^|]*)\|", spec, MULTI)
+    if "Apply now unticked" not in trig:
+        bad.append(
+            "spec section 5: SCR-141/confirm-lengthen's Trigger does not leave Apply now unticked"
+        )
     for title in sent["kind_titles"].split(" · "):
         if title not in deck:
             bad.append(f"spec section 14: the kind title is not in the copy deck: {title!r}")
@@ -1229,7 +1251,7 @@ def main(argv: list[str]) -> int:
     numbers["validity_frames"] = sum("validity" in c[3] for c in all_rows if len(c) > 3)
     numbers["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
     numbers["kinds"] = count(r"^\| K\d +\|", section(spec, 5, 6))
-    numbers["checklist_items"] = count(r"^\| 14:2759 ", spec)
+    numbers["checklist_items"] = count(r"^\| 14:2775 ", spec)
     numbers["checklist_boxes_14"] = facts["checklist_boxes_14"]
     numbers["typed_kinds"] = sum(
         bool(v["reduction"]) for k, v in diff.items() if re.fullmatch(r"K\d+", k)
