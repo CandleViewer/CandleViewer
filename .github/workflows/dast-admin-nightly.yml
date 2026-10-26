@@ -14,7 +14,7 @@ name: dast-admin-nightly
 # E16-X02): each a 403 with its own `retention.purge` denial record. Phase B is the
 # passive and active scan; "The scans stayed signed in, and no new medium+ alert" requires the
 # session to stay authenticated (check_liveness.py) and no alert outside the baseline
-# (baseline_gate.py). Both roles run before a phase fails. The zap-admin-surface artefact holds
+# (baseline_gate.py). Every role runs before a phase fails. The zap-admin-surface artefact holds
 # the plans, ZAP's logs and reports and the API's log, uploaded only if no session value of the
 # run, and none of the passwords, keys and TOTP secrets it generated, reached them
 # (check_artefact_secrets.py).

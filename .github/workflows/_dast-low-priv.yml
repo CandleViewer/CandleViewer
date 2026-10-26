@@ -2,7 +2,8 @@ name: _dast-low-priv
 
 # #3991: one low-privilege ZAP nightly, called by dast-rules-nightly.yml (E35-X02, /rules*),
 # dast-market-nightly.yml (E12-X03, /market/klines and /market/bars), dast-drawings-nightly.yml
-# (E14-X03, /drawings*) and dast-recording-nightly.yml (E16-X02, /recording*, /admin/recorder*). It scans the profile's surface authenticated as a synthetic Viewer, or a
+# (E14-X03, /drawings*) and dast-recording-nightly.yml (E16-X02, /recording*,
+# /admin/recorder*). It scans the profile's surface authenticated as a synthetic Viewer, or a
 # Manager where the profile writes (`role`), with a real TOTP method and no MFA exception, against
 # a throwaway stack on this runner, never a live exchange, as dast-admin-nightly.yml does (#1026).
 # A profile with a `fixture` also has a synthetic Owner (a TOTP method too) whose rows are seeded
