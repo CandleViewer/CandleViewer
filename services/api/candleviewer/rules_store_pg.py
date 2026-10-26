@@ -85,16 +85,20 @@ _UPDATE_RULE = sa.text(
 
 # A rule covers an account when its ACTIVE version's `scope.account_ids` lists it or is empty
 # (`ScopeResolver.resolve`: no list means every granted account), whatever `scope.level`. A list
-# that is missing or not an array covers every account too (fail closed). `CASE`, not `OR`:
-# Postgres does not short-circuit `OR`, and `jsonb_array_length` raises on a non-array.
+# that is missing or not an array covers every account too, as does an element that is not a
+# readable account id (not a string, or not a UUID): fail closed. `CASE`, not `OR`: Postgres
+# does not short-circuit `OR`, and `jsonb_array_length` raises on a non-array. `pg_input_is_valid`
+# is Postgres 16+ (CI runs 16.4).
 _ARMED_ON = sa.text(
     "SELECT r.id::text AS id, r.name FROM rules r "
     "JOIN rule_versions v ON v.id = r.active_version_id "
     "WHERE r.mode = 'armed' AND r.deleted_at IS NULL AND CASE "
     "WHEN jsonb_typeof(v.ir #> '{scope,account_ids}') = 'array' "
     "THEN jsonb_array_length(v.ir #> '{scope,account_ids}') = 0 OR EXISTS ("
-    "SELECT 1 FROM jsonb_array_elements_text(v.ir #> '{scope,account_ids}') AS a(id) "
-    "WHERE lower(a.id) = lower(:account)) "
+    "SELECT 1 FROM jsonb_array_elements(v.ir #> '{scope,account_ids}') AS a(v) "
+    "WHERE jsonb_typeof(a.v) <> 'string' "
+    "OR NOT pg_input_is_valid(a.v #>> '{}', 'uuid') "
+    "OR (a.v #>> '{}')::uuid = CAST(:account AS uuid)) "
     "ELSE true END "
     "ORDER BY lower(r.name), r.id LIMIT :limit"
 )

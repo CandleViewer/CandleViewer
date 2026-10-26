@@ -26,11 +26,13 @@ from tests.integration.storage import test_rules_migration as _mig
 pytestmark = pytest.mark.integration
 pg_dsn = _mig.pg_dsn  # reuse the module-scoped Postgres 16 container fixture
 _FIX = Path(__file__).resolve().parents[2] / "fixtures/rule_ir/form_simple_0.json"
+_RUN = uuid.uuid4().hex[:8]
 
 
 def _ir(n: str) -> dict[str, object]:
     raw = json.loads(_FIX.read_text(encoding="utf-8"), parse_float=str)
     raw["conditions"]["right"]["const"] = n
+    raw["name"] = f"form-{_RUN}"  # re-runnable on a reused database
     raw["actions"][0]["params"] = {"channel": "ui", "severity": "info", "template": "x"}
     return dict(raw)
 
@@ -59,27 +61,30 @@ async def test_versions_dedupe_conflict_arm_and_delete_survive_a_reload(
     actor = Actor(uid, "s1", frozenset({"rules:write"}), is_owner=True)
     mgr = RulesManager(PostgresRuleStore(repo), default_registry())
     rid = (await mgr.create(_ir("1"), actor))["id"]
-    assert (await mgr.update(rid, _ir("2"), 1, actor))["version"]["version"] == 2
-    assert (await mgr.update(rid, _ir("2"), 2, actor))["created"] is False  # UNIQUE(rule, hash)
-    with pytest.raises(RuleError) as e:
-        await mgr.update(rid, _ir("3"), 1, actor)
-    assert e.value.status == 409
-    fresh = RulesManager(PostgresRuleStore(repo), default_registry())  # new process view
-    assert [v["version"] for v in await fresh.versions(rid)] == [2, 1]
-    await fresh.set_mode(rid, "simulate", actor, "k1")
-    active = (await fresh.get(rid, actor))["active_version_id"]
-    h = next(v["ir_hash"] for v in await fresh.versions(rid) if v["id"] == active)
-    await fresh.record_simulation(rid, h, 5, 0.0)
-    await fresh.set_mode(rid, "armed", actor, "k2")  # satisfies rule_armed_shape
-    again = RulesManager(PostgresRuleStore(repo), default_registry())
-    assert (await again.get(rid, actor))["mode"] == "armed"
-    with pytest.raises(RuleError) as d:
+    try:
+        assert (await mgr.update(rid, _ir("2"), 1, actor))["version"]["version"] == 2
+        assert (await mgr.update(rid, _ir("2"), 2, actor))["created"] is False  # UNIQUE(rule, hash)
+        with pytest.raises(RuleError) as e:
+            await mgr.update(rid, _ir("3"), 1, actor)
+        assert e.value.status == 409
+        fresh = RulesManager(PostgresRuleStore(repo), default_registry())  # new process view
+        assert [v["version"] for v in await fresh.versions(rid)] == [2, 1]
+        await fresh.set_mode(rid, "simulate", actor, "k1")
+        active = (await fresh.get(rid, actor))["active_version_id"]
+        h = next(v["ir_hash"] for v in await fresh.versions(rid) if v["id"] == active)
+        await fresh.record_simulation(rid, h, 5, 0.0)
+        await fresh.set_mode(rid, "armed", actor, "k2")  # satisfies rule_armed_shape
+        again = RulesManager(PostgresRuleStore(repo), default_registry())
+        assert (await again.get(rid, actor))["mode"] == "armed"
+        with pytest.raises(RuleError) as d:
+            await again.delete(rid, actor)
+        assert d.value.status == 409
+        await again.set_mode(rid, "disabled", actor, "k3")
         await again.delete(rid, actor)
-    assert d.value.status == 409
-    await again.set_mode(rid, "disabled", actor, "k3")
-    await again.delete(rid, actor)
-    with pytest.raises(RuleError):
-        await again.get(rid, actor)
+        with pytest.raises(RuleError):
+            await again.get(rid, actor)
+    finally:
+        _retire(pg_dsn, rid)
 
 
 async def test_conflict_after_restart_names_the_other_session(pg_dsn: str) -> None:
@@ -181,6 +186,16 @@ async def test_armed_on_two_account_rule_blocks_both_accounts(pg_dsn: str) -> No
     assert [_named(await rules.armed_on(x)) for x in (a, b)] == [[rule], [rule]]
 
 
+async def test_armed_on_matches_an_uppercase_stored_account_id(pg_dsn: str) -> None:
+    """A stored id in uppercase still names the account (UUID compare, not string compare)."""
+    a = uuid.uuid4()
+    ir = _scope_ir("account", ()) | {"scope": {"level": "account", "account_ids": [str(a).upper()]}}
+    with _mig._conn(pg_dsn) as c:
+        rid = _armed(c, _mig._user(c), "shout", level="global", ir=ir)
+    assert _named(await _store(pg_dsn).armed_on(a)) == [(rid, "shout")]
+    assert await _store(pg_dsn).armed_on(uuid.uuid4()) == ()
+
+
 async def test_armed_on_rule_listing_no_account_blocks_every_account(pg_dsn: str) -> None:
     """AC2: a rule that lists no account runs on every granted account, so it blocks any."""
     with _mig._conn(pg_dsn) as c:
@@ -228,13 +243,17 @@ async def test_armed_on_reads_the_active_version_not_the_first(pg_dsn: str) -> N
         {"conditions": {}, "actions": [], "scope": {"level": "symbol", "symbols": ["BTCUSDT"]}},
         {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": None}},
         {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": "x"}},
+        {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": [None]}},
+        {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": [123]}},
+        {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": ["nope"]}},
     ],
-    ids=["no-scope", "no-list", "null-list", "not-a-list"],
+    ids=["no-scope", "no-list", "null-list", "not-a-list", "null-item", "number-item", "bad-uuid"],
 )
 async def test_armed_on_rule_without_a_readable_account_list_fails_closed(
     pg_dsn: str, ir: dict[str, object]
 ) -> None:
-    """A version whose account list is missing or not an array blocks every account."""
+    """A version whose account list is missing, not an array, or holds an element that is not an
+    account id blocks every account."""
     with _mig._conn(pg_dsn) as c:
         rid = _armed(c, _mig._user(c), "unreadable", level="global", ir=ir)
     try:
