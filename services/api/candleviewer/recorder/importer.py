@@ -72,8 +72,24 @@ class ImportDiskBudgetExceeded(RuntimeError):
     code = "import_disk_budget"
 
 
+class ImportDiskPressure(RuntimeError):
+    """The recorder's disk budget is at AUTOSTOP or above, or its recording volume is refused
+    (`import_disk_pressure`)."""
+
+    code = "import_disk_pressure"
+
+
+class ImportRootMissing(RuntimeError):
+    """The cold root does not exist (`import_root_missing`); the import never creates it."""
+
+    code = "import_root_missing"
+
+
 #: `() -> (total_bytes, used_bytes)` of the cold volume (blocking; run off the loop).
 DiskUsage = Callable[[], tuple[int, int]]
+#: `() -> bytes the recorder's disk budget still admits` (an in-memory read, on the loop); it may
+#: refuse the import itself with a typed error.
+DiskRoom = Callable[[], int]
 
 
 def logger() -> structlog.stdlib.BoundLogger:
@@ -256,6 +272,7 @@ class BulkImporter:
         recorded: RecordedWindows,
         backlog_rows: Callable[[], int],
         disk_usage: DiskUsage | None,
+        room: DiskRoom | None,
         clock: Callable[[], datetime] = _utc_now,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         batch_rows: int = BATCH_ROWS,
@@ -268,6 +285,7 @@ class BulkImporter:
         self._clock = clock
         self._backlog = backlog_rows
         self._disk = disk_usage
+        self._room = room
         self._sleep = sleep
         self._batch_rows = batch_rows
         self._day_timeout_s = day_timeout_s
@@ -289,17 +307,20 @@ class BulkImporter:
             logger().info("archive_import_yielded", seconds=waited)
 
     async def _check_disk(self, next_bytes: int) -> None:
-        """Refuse if used + projected next file would exceed `MAX_DISK_USED_RATIO` (R-D3)."""
-        if self._disk is None:
-            return
-        total, used = await asyncio.to_thread(self._disk)
-        projected = used + int(next_bytes * DISK_PROJECTION_FACTOR)
-        if total <= 0 or projected > total * MAX_DISK_USED_RATIO:
+        """Refuse if used + projected next file would exceed `MAX_DISK_USED_RATIO` (R-D3), or if
+        the projected next file would exceed what the recorder's disk budget admits (`room`)."""
+        size = int(next_bytes * DISK_PROJECTION_FACTOR)
+        if self._disk is not None:
+            total, used = await asyncio.to_thread(self._disk)
+            if total <= 0 or used + size > total * MAX_DISK_USED_RATIO:
+                import_refused_total.labels(reason="disk_budget").inc()
+                raise ImportDiskBudgetExceeded(
+                    f"projected cold-volume use {(used + size) / max(1, total):.1%} exceeds "
+                    f"{MAX_DISK_USED_RATIO:.0%}"
+                )
+        if self._room is not None and size > self._room():
             import_refused_total.labels(reason="disk_budget").inc()
-            raise ImportDiskBudgetExceeded(
-                f"projected cold-volume use {projected / max(1, total):.1%} exceeds "
-                f"{MAX_DISK_USED_RATIO:.0%}"
-            )
+            raise ImportDiskBudgetExceeded("projected next file exceeds the disk budget's room")
 
     async def run(
         self, req: ImportRequest, progress: Callable[[float], None] = lambda _p: None
@@ -444,7 +465,9 @@ __all__ = [
     "ArchiveRangeInvalid",
     "BulkImporter",
     "ImportDiskBudgetExceeded",
+    "ImportDiskPressure",
     "ImportRequest",
+    "ImportRootMissing",
     "ImportSummary",
     "merge_windows",
     "split_overlap",

@@ -35,6 +35,7 @@ async def _import(root: Path, store: MemRecorderStore, svc: CoverageService) -> 
         ledger=FileImportLedger(reg),
         backlog_rows=lambda: 0,
         disk_usage=None,
+        room=None,
         recorded=svc.recorded_windows,
         clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
     ).run(ImportRequest("BTCUSDT", date(2026, 6, 1), date(2026, 6, 3)))
@@ -111,6 +112,7 @@ async def test_archive_rows_inside_a_recorder_gap_are_written_and_labelled_archi
         recorded=svc.recorded_windows,
         backlog_rows=lambda: 0,
         disk_usage=None,
+        room=None,
         clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
     ).run(ImportRequest("BTCUSDT", date(2026, 6, 1), date(2026, 6, 3)))
     # FakeArchive puts one row at h*H + 500 µs; only day-2 h10 lies inside the gap.

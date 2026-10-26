@@ -3,7 +3,8 @@
 RBAC server-side (forbidden role -> 403 + denied audit, no job), unauthenticated 401, IDOR
 (another actor's Idempotency-Key never resolves to their job; unknown job -> 404), key reuse
 with a different body -> 422, concurrent import -> 409, write-ahead audit before the job
-starts (symbol + range + actor), audit failure -> 503 and nothing runs.
+starts (symbol + range + actor), audit failure -> 503 and nothing runs; each disk refusal fails
+the job with its own code, audited as the failure's reason.
 """
 
 from __future__ import annotations
@@ -15,11 +16,18 @@ from datetime import date
 from typing import Any
 
 import httpx
+import pytest
 from fastapi import FastAPI
 
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.audit.models import AuditOutcome
+from candleviewer.recorder.importer import (
+    ImportDiskBudgetExceeded,
+    ImportDiskPressure,
+    ImportRootMissing,
+)
 from tests.unit.api._job_poll import mount_job_poll
 
 OWNER = {"recording:write", "admin:read"}
@@ -230,3 +238,37 @@ async def test_import_job_failure_reports_typed_reason_code() -> None:
     job_id = (await c.post("/admin/recorder/import", json=BODY, headers=_hdr())).json()["job_id"]
     body = await _poll(c, job_id, "failed")
     assert body["error"] == "import_ledger_corrupt"
+
+
+@pytest.mark.parametrize(
+    ("refusal", "code"),
+    [
+        (ImportRootMissing, "import_root_missing"),
+        (ImportDiskPressure, "import_disk_pressure"),
+        (ImportDiskBudgetExceeded, "import_disk_budget"),
+    ],
+    ids=["root-missing", "disk-pressure", "disk-budget"],
+)
+async def test_import_disk_refusal_fails_the_job_with_its_code_and_audits_it(
+    refusal: type[RuntimeError], code: str
+) -> None:
+    audit = _Audit()
+
+    async def refused(*_a: object) -> dict[str, object]:
+        raise refusal("refused by the disk guard")
+
+    app, store, res = FastAPI(), AdminJobStore(), _Resolver()
+    res.as_(OWNER)
+    app.include_router(make_recorder_admin_router(store, None, audit, res, import_runner=refused))
+    mount_job_poll(app, store, res)
+    c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+    r = await c.post("/admin/recorder/import", json=BODY, headers=_hdr())
+    assert r.status_code == 202
+    body = await _poll(c, r.json()["job_id"], "failed")
+    assert body["error"] == code and body["result"] is None
+    for _ in range(50):
+        if len(audit.calls) == 2:
+            break
+        await asyncio.sleep(0)
+    assert audit.calls[-1][1]["outcome"] is AuditOutcome.FAILURE
+    assert audit.calls[-1][1]["reason"] == code
