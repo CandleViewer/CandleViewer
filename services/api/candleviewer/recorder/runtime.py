@@ -142,10 +142,11 @@ class RecorderRuntime:
     def _log_unpersisted_gaps(self) -> None:
         """The writer was cut before it could save its gap windows (a stalled store), the only
         evidence of a hole in the recording (C-2.14): log each as its own stop would. No I/O."""
-        for (symbol, stream), (first, last) in self._writer.pending_gaps().items():
-            logger().critical(
-                "recorder_gap_unpersisted", symbol=symbol, stream=stream, start=first, end=last
-            )
+        for (symbol, stream), windows in self._writer.pending_gaps().items():
+            for first, last in windows:
+                logger().critical(
+                    "recorder_gap_unpersisted", symbol=symbol, stream=stream, start=first, end=last
+                )
 
     @property
     def startup_complete(self) -> bool:

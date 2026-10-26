@@ -430,7 +430,7 @@ async def test_a_stop_logs_a_task_that_ignores_its_cancel_past_its_share(rig: Ri
 
 @pytest.mark.parametrize(("stall", "logged"), [(True, True), (False, False)])
 async def test_a_cut_writer_stop_logs_unpersisted_gaps(rig: Rig, stall: bool, logged: bool) -> None:
-    rig.m.writer.pending_gaps.return_value = {("BTCUSDT", "trades"): (10, 20)}
+    rig.m.writer.pending_gaps.return_value = {("BTCUSDT", "trades"): [(10, 20)]}
     rig.m.writer.stop.side_effect = _hang if stall else None  # a stalled store: nothing is saved
     rig.m.sessions.stop.side_effect = OSError("pg down")  # a failing step that is not the writer's
     with capture_logs() as logs:

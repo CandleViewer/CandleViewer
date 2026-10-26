@@ -97,7 +97,7 @@ async def test_wal_full_drops_with_gap_row_and_one_critical_event_per_episode(
         await w.on_trade(trade(i))
     clock.advance(0.2)
     await w.pump("trades")
-    ((key, (first, last)),) = w.pending_gaps().items()
+    ((key, [(first, last)]),) = w.pending_gaps().items()
     assert key == ("BTCUSDT", "trades") and (first, last) == (T0 + 3, T0 + 6)
     (event,) = events.events
     assert event.severity == "critical" and event.details["symbol"] == "BTCUSDT"
