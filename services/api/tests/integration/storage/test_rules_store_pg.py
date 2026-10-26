@@ -246,8 +246,18 @@ async def test_armed_on_reads_the_active_version_not_the_first(pg_dsn: str) -> N
         {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": [None]}},
         {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": [123]}},
         {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": ["nope"]}},
+        {"conditions": {}, "actions": [], "scope": {"level": "account", "account_ids": [{}]}},
     ],
-    ids=["no-scope", "no-list", "null-list", "not-a-list", "null-item", "number-item", "bad-uuid"],
+    ids=[
+        "no-scope",
+        "no-list",
+        "null-list",
+        "not-a-list",
+        "null-item",
+        "number-item",
+        "bad-uuid",
+        "object-item",
+    ],
 )
 async def test_armed_on_rule_without_a_readable_account_list_fails_closed(
     pg_dsn: str, ir: dict[str, object]
