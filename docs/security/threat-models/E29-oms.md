@@ -886,7 +886,8 @@ reviewed by 2026-11-15: F-01 and F-03 in RSK-076, F-02 in RSK-077 (F-10, Medium,
 RSK-078, F-06 and F-08 in RSK-079, F-05 and F-09 in RSK-080, F-07 in RSK-081. D6 and D7 are queued on #2701 with them.
 
 **The environment lock's fencing grace (#913 L2, SEC-S3L2-01).** A holder whose Postgres session has ended learns it
-from its order lane's watchdog, which asks every 1 s within 5 s, so for up to 6 s it may still admit a new submit. A
+from its order lane's watchdog, which asks every 1 s within 5 s, so for up to 6 s, plus whatever delays its lane's tick
+(a stall past 10 s pages), it may still admit a new submit. A
 process that takes the lock waits those 6 s (`ENVIRONMENT_FENCE_GRACE_S`) before its startup sweep and its first admit,
 so the two never sweep or admit at once (`20-architecture.md` §6.2). What it leaves, for the Owner's sign-off with the
 rows above: a submit the first admitted before its fence runs to its own bounds while the second sweeps, any resume of
