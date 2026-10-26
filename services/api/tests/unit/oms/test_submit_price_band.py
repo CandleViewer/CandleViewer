@@ -79,7 +79,8 @@ async def test_band_limit_outside_is_refused_400_and_writes_nothing(
 ) -> None:
     refused = await _refused(rig, request_)
     assert _banded(refused) == ["price"]
-    [error] = refused.errors  # type: ignore[attr-defined]
+    assert isinstance(refused, OrderInvalid)
+    [error] = refused.errors
     assert "5%" in error.message and "60000" not in error.message + refused.detail
     assert rig.calls() == [] and rig.written() == (0, 0, 0, 0)
     assert rig.count("oms_submit_rejected_total", code="validation_failed") == 1
