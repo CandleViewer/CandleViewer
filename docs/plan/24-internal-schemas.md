@@ -4405,8 +4405,8 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       `key_rotated`, and hands B13's stop to a task the adapter owns; a stream on that key is
       refused afterwards (`AuthError`). The whole call is bounded at 2 s (the socket bound of 1 s
       plus 1 s). A close that overruns it answers no success: the call raises
-      `PrivateStreamCloseOverran` (a `TimeoutError`, fixed text, carrying the accounts still
-      closing) and never returns as a completed close, so the caller treats the revoke or
+      `PrivateStreamCloseOverran` (an `exchange/base` type, a `TimeoutError` with fixed text,
+      carrying the accounts still closing) and never returns as a completed close, so the caller treats the revoke or
       rotation step as not done and retries; the close itself keeps running (the registry owns its
       tasks) and a retry is idempotent, the tombstone standing. E27-S04 (#898) calls it on revoke, force-disable,
       mark-compromised and account-disable, and with `key_rotated` at the start of a rotation's
