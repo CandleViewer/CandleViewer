@@ -39,6 +39,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
 )
 from candleviewer.storage.repositories.recorded_stops import NewRecordedStop, RecordedStopRow
+from tests.unit.audit.audit_waits import virtual
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.order_rig import Pager
 from tests.unit.oms.test_stop_decision import fired, stop_row, tpsl_order
@@ -268,19 +269,25 @@ async def test_an_attach_that_finds_every_slot_taken_waits_for_one_within_its_wa
     await rig.idle()
 
 
+@virtual
 async def test_an_attach_waits_for_a_slot_no_longer_than_its_wait_and_an_entry_not_at_all() -> None:
     """SEC-S3H3A-02: with no slot freed the attach is refused once its wait is spent, nothing
-    started for it; an entry under the same load is refused at once, whatever wait it names."""
+    started for it; an entry under the same load is refused at once, whatever wait it names. On a
+    `VirtualTimeLoop` (C-13.7): the wait is 0.05 fake seconds, measured on the loop's clock."""
     rig = build()
     keys = await busy(rig)
+    loop = asyncio.get_running_loop()
+    began = loop.time()
     attach = asyncio.create_task(rig.gate.clear(keys[-1], wait_s=0.05, protective=True))
     entry = asyncio.create_task(rig.gate.clear(keys[-1], wait_s=5.0))
     await turns()
     assert entry.done() and not attach.done()
+    assert loop.time() == began  # the entry was refused without any time passing
     with pytest.raises(StopRequestPending):
         await entry
     with pytest.raises(StopRequestPending):
         await attach
+    assert loop.time() - began == pytest.approx(0.05)  # the attach waited its wait, no longer
     assert keys[-1] not in rig.gate._running and rig.venue.reads() == MAX_RESOLUTIONS
     rig.venue.open.set()
     await rig.idle()
