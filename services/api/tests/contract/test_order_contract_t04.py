@@ -985,6 +985,12 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
         _words(figures),
         'an announced interim, `DayRiskFigures` (`oms_interim_ports{port="risk_figures"}`',
         "It serves demo and testnet accounts only and refuses `live` at construction",
+        "The day's loss is the net closed P&L the venue reports, fees included and gains "
+        "offsetting losses, floored at 0, a reading E39-T01's counters keep",
+        "The recorded stop is the venue's native stop on the position or order (C-2.6), not the "
+        "OMS's own record",
+        "never the stop and cancel reserve (C-12.7), and a budget refusal is `figure_unknown`, "
+        "not a retry",
         "the cached committed-risk figure is dropped on every accepted send or amend on the "
         "account, so no two entries inside the cache window are sized against the same room, and "
         "two entries on one account whose size steps overlap are judged one after the other or "
