@@ -246,6 +246,55 @@ def test_the_fence_logs_the_age_it_judged_from_its_one_read_beside_its_bound() -
     ]
 
 
+class _Open:
+    """An order-entry gate that admits every account: only a fence refuses."""
+
+    def refusal(self, account_id: UUID) -> None:
+        return None
+
+
+@pytest.mark.parametrize(
+    ("stalled", "lost", "answer"),
+    [
+        (False, False, None),
+        (False, True, "returned OmsNotReady"),
+        (True, False, "raised"),
+        (True, True, "raised"),
+    ],
+    ids=["neither", "lost_lock_alone", "stall_alone", "both"],
+)
+def test_the_stall_fence_and_the_lost_locks_compose_either_refusing_alone(
+    stalled: bool, lost: bool, answer: str | None
+) -> None:
+    """20 Sec.6.2 on L4's re-base onto L2: `FencedSwitches` wraps the binding whose first refusal
+    is the environment lock's fence (#913 L2), so the two compose, either refusing a new submit on
+    its own: the lost lock's `OmsNotReady` returned, the stall fence's raised and logged. With
+    both, the stall fence is read first and the binding is not asked."""
+    now, asked = [100.0], list[str]()
+
+    def fenced() -> bool:
+        asked.append("lock")
+        return lost
+
+    binding = oms_wiring.TradingSwitchesBinding(
+        live_enabled=False, live_flag=lambda: False, kill_switch=oms_wiring.InterimKillSwitch(),
+        gate=_Open(), fenced=fenced,
+    )  # fmt: skip
+    switches = oms_wiring.FencedSwitches(binding, oms_wiring.ServingTick(clock=lambda: now[0]))
+    if stalled:
+        now[0] += 2 * oms_wiring.SERVING_STALE_S
+    with capture_logs() as logs:
+        try:
+            refused = switches.refusal(AccountId(ACC), "demo")
+        except OmsNotReady:
+            got: str | None = "raised"
+        else:
+            got = None if refused is None else f"returned {type(refused).__name__}"
+    assert got == answer
+    assert [e["event"] for e in logs] == ["oms_submit_fenced"] * stalled
+    assert asked == ([] if stalled else ["lock"])
+
+
 def _rejected(world: _World, account: UUID) -> None:
     """A rejection one of the serving loop's own signed calls met (the wallet reconciler's)."""
     world.standings.credential_rejected(account, Refusal.UNKNOWN_KEY)

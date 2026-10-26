@@ -158,13 +158,17 @@ class Accounts:
 
 @dataclass
 class Switches:
-    """`TradingSwitches`: `refuses` is its answer; `asked` counts the asks."""
+    """`TradingSwitches`: `refuses` is its answer, unless `raises` is set, which it raises as the
+    stall fence (`oms_wiring.FencedSwitches`) does; `asked` counts the asks."""
 
-    refuses: TradingDisabled | None = None
+    refuses: TradingDisabled | OmsNotReady | None = None
+    raises: OmsNotReady | None = None
     asked: int = 0
 
-    def refusal(self, account_id: UUID, environment: str) -> TradingDisabled | None:
+    def refusal(self, account_id: UUID, environment: str) -> TradingDisabled | OmsNotReady | None:
         self.asked += 1
+        if self.raises is not None:
+            raise self.raises
         return self.refuses
 
 
@@ -595,6 +599,31 @@ async def test_a_runtime_whose_lock_is_lost_is_503_at_step_3_never_audited_runs_
     assert answer.headers["retry-after"] == str(answer.json()["retry_after_seconds"])
     assert (world.audit.actions(), world.oms.tasks, world.oms.anchors.calls) == ([], [], [])
     assert world.rejected("oms_not_ready") == 1 and world.oms.state == "ok"
+
+
+@pytest.mark.parametrize("fence", ["stall_raises", "lock_returns"])
+async def test_a_fenced_step_10_is_a_counted_503_never_audited_and_binds_no_key(fence: str) -> None:
+    """SEC-S3L4-01 (the Fable lens at 8b626ef6; 24 Sec.8.4): step 10's `oms_not_ready`, the stall
+    fence's raised (`FencedSwitches`, #913 L4) or the lost lock's returned by the switches (#913
+    L2), is answered as step 3's is, `503 oms_not_ready` with `Retry-After`, counted and never
+    audited, as it decides nothing on the order: no task runs and no key is bound, so the same key
+    once the fence lifts is a first submission. A route that audits it fails here (mutant a6)."""
+    world = World()
+    switches = world.oms.route.switches
+    if fence == "stall_raises":
+        switches.raises = OmsNotReady()
+    else:
+        switches.refuses = OmsNotReady()
+    answer = await post(world)
+    assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
+    assert answer.headers["retry-after"] == str(answer.json()["retry_after_seconds"])
+    assert switches.asked == 1  # step 10 read them: the fence answered there, not step 3
+    assert (world.audit.actions(), world.oms.submission.submitted, world.oms.tasks) == ([], [], [])
+    assert world.rejected("oms_not_ready") == 1
+    switches.raises = switches.refuses = None
+    again = await post(world)
+    assert again.status_code == 202 and "idempotency-replayed" not in again.headers
+    assert len(world.oms.submission.submitted) == 1
 
 
 @pytest.mark.parametrize("meets", ["route", "anchors", "run"])
