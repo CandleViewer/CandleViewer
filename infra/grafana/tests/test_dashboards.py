@@ -228,3 +228,44 @@ def test_recorder_board_has_the_ticket_panels_env_filtered_with_the_disk_ladder(
     disk = next(p for p in panels if p["title"].startswith("Disk used"))["fieldConfig"]["defaults"]
     assert [s["value"] for s in disk["thresholds"]["steps"]] == [None, 0.8, 0.9, 0.95]
     assert disk["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+
+
+def test_the_trading_board_shows_the_profile_save_series() -> None:
+    """#906 (E28-T02 D3c): the Account profiles row draws D3b's save series and the catalogue's
+    refresh counter, each env-filtered and summed by result or rule only, never per account,
+    profile or principal; the save p95 draws its 1.5 s deadline and SCR-131's 2 s budget as
+    dashed lines."""
+    d = json.loads((G / "dashboards" / "trading.json").read_text("utf-8"))
+    at = next(i for i, p in enumerate(d["panels"]) if p["title"] == "Account profiles")
+    ours = []
+    for p in d["panels"][at + 1 :]:  # the row's panels, up to the next row
+        if p["type"] == "row":
+            break
+        ours.append(p)
+    sums_by = {
+        "cv_profile_saves_total": "result",
+        "cv_profile_validation_failures_total": "rule",
+        "cv_profile_save_seconds_bucket": "le",
+        "instruments_refresh_total": "result",
+    }
+    drawn = {}
+    for p in ours:
+        (expr,) = [t["expr"] for t in p["targets"]]
+        (metric,) = [m for m in sums_by if m in expr]
+        # the "(" before rate keeps irate( (or any other prefix) from passing
+        assert f'(rate({metric}{{env="$env"}}[$__rate_interval]))' in expr, expr
+        assert f"sum by ({sums_by[metric]}) (" in expr and expr.count("by (") == 1, expr
+        drawn[metric] = p
+    assert (len(ours), sorted(drawn)) == (4, sorted(sums_by))
+    # saves/s, refusals/s, the p95, refreshes/s: the p95 alone is in seconds
+    units = [p["fieldConfig"]["defaults"]["unit"] for p in ours]
+    assert units == ["ops", "ops", "s", "ops"]
+    assert all(m.removesuffix("_bucket") in lint.catalogue_names() for m in sums_by)
+    p95 = drawn["cv_profile_save_seconds_bucket"]
+    defaults = p95["fieldConfig"]["defaults"]
+    assert p95["targets"][0]["expr"].startswith("histogram_quantile(0.95, ")
+    assert defaults["unit"] == "s"
+    assert [s["value"] for s in defaults["thresholds"]["steps"]] == [None, 1.5, 2.0]
+    assert defaults["custom"]["thresholdsStyle"] == {"mode": "dashed"}
+    assert p95.get("description")
+    assert drawn["instruments_refresh_total"].get("description")

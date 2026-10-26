@@ -744,6 +744,202 @@
       ],
       "title": "API keys by rotation state (never disabled for age)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 51
+      },
+      "id": 19,
+      "panels": [],
+      "title": "Account profiles",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "id": 20,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (result) (rate(cv_profile_saves_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Profile saves/s by result",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "id": 21,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (rule) (rate(cv_profile_validation_failures_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{rule}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Refused profile saves/s by rule",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "A profile save's round trip in the router, from the handler's entry. The dashed lines: 1.5 s is the second validation pass's catalogue deadline, the longest a save waits for a catalogue refresh; 2 s is SCR-131's save budget, a cold refresh included.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              },
+              {
+                "color": "#E69F00",
+                "value": 1.5
+              },
+              {
+                "color": "#D55E00",
+                "value": 2.0
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 59
+      },
+      "id": 22,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(cv_profile_save_seconds_bucket{env=\"$env\"}[$__rate_interval])))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "title": "Profile save p95 (budget 2 s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cv-prometheus"
+      },
+      "description": "Instrument catalogue refreshes by result: ok, or error once its retries are spent. They run on the 12 h schedule, at start-up and on demand: a profile save that adds allow scope or moves a limit waits up to 1.5 s for one when the catalogue is over 15 minutes old or marked stale. timeout is a start-up fetch given up; throttled is an unknown-symbol lookup refused a refresh inside its cool-down, so none ran.",
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#0072B2",
+                "value": null
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 59
+      },
+      "id": 23,
+      "maxDataPoints": 500,
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cv-prometheus"
+          },
+          "expr": "sum by (result) (rate(instruments_refresh_total{env=\"$env\"}[$__rate_interval]))",
+          "legendFormat": "{{result}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Instrument catalogue refreshes/s by result",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",
