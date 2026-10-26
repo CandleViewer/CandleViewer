@@ -34,8 +34,8 @@ Severity: the `04-security-program.md` ladder. Status: **open** · **fixed** (on
 
 ### F-01 — no quota (Medium, open, #2727)
 
-- Reproduction: one Manager session loops `POST /drawings/batch` with 200 creates per call; every
-  call is 200 and nothing refuses the aggregate.
+- Reproduction: as already disclosed in the threat model (DR32, DR33, RR4); nothing beyond it is
+  restated here.
 - Evidence: threat model DR32, DR33, RR4; no quota code in `api/drawings.py`. The only pressure
   test is the idempotency cache's (`tests/drawings/test_drawings_abuse_exhaustion.py`
   `test_idempotency_pressure_evicts_the_oldest_key_of_the_flooding_user_only`). Owner: #2727; the
@@ -126,7 +126,7 @@ control character, trailing data) is `json_invalid` to the model too
   leading `^` dropped from the colour pattern (8 prefix-anchor failures); idempotency cache keyed
   without the user (the isolation test fails).
 - This pass: 19 mutants on the guards behind the new cases, each run against its own tests in a
-  scratch copy; 19 killed, 0 survived.
+  scratch copy; 19 killed, 0 survived (author-run, not committed).
 
 | Mutant                                                                     | Killed by                                       |
 | -------------------------------------------------------------------------- | ----------------------------------------------- |
