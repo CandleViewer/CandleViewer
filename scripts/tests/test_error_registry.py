@@ -54,6 +54,17 @@ def test_duplicate_code_rejected() -> None:
         generate.load_registry(MINI.replace("unknown_topic", "forbidden"))
 
 
+def test_generator_rejects_a_title_outside_the_bmp() -> None:
+    entries = generate.load_registry(MINI.replace("title: t", "title: '\U0001f600'", 1))
+    with pytest.raises(generate.RegistryError, match="BMP"):
+        generate.render_py(entries)
+
+
+def test_generator_keeps_a_bmp_title_as_a_valid_literal() -> None:
+    entries = generate.load_registry(MINI.replace("title: t", "title: '\u2014'", 1))
+    assert "\\u2014" in generate.render_py(entries)
+
+
 def test_ws_code_without_scope_rejected() -> None:
     with pytest.raises(generate.RegistryError, match="scope"):
         generate.load_registry(MINI.replace("scope: topic, ", ""))
