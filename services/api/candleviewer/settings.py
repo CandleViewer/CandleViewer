@@ -752,8 +752,7 @@ class Settings(BaseSettings):
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
     )
-    # #913 S4-S: the band around mid, else last, a limit entry's price or a trigger must lie in
-    # (22 `placeOrder`, 24 Sec.8.4 step 3a). No off value (C-4.14): a value outside is refused.
+    # #913 S4-S: the band (22 `placeOrder`, 24 Sec.8.4 step 3a); no off value (C-4.14).
     oms_price_band_pct: Decimal = Field(
         default=OMS_PRICE_BAND_DEFAULT,
         ge=OMS_PRICE_BAND_MIN,

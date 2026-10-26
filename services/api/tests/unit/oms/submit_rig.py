@@ -155,9 +155,8 @@ class Instruments:
 
 @dataclass
 class Prices:
-    """`ReferencePrices` answering one price for every symbol, `market` reading it as the mid
-    beside `last`; `refuse` raises instead. `asked` lists the reference reads, `read` the
-    market's."""
+    """`ReferencePrices` answering one price (`market`: as the mid beside `last`); `refuse` raises.
+    `asked` lists the reference reads, `read` the market's."""
 
     price: Px | None = REFERENCE
     refuse: BaseException | None = None

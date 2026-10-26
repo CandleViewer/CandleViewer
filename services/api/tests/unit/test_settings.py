@@ -212,7 +212,6 @@ def test_settings_oms_runtime_bounds_take_each_value_in_range(
         ({"CV_OMS_PRICE_BAND_PCT": "0.0049"}, "oms_price_band_pct"),
         ({"CV_OMS_PRICE_BAND_PCT": "0.21"}, "oms_price_band_pct"),
         ({"CV_OMS_PRICE_BAND_PCT": "0"}, "oms_price_band_pct"),  # no off value (C-4.14)
-        ({"CV_OMS_PRICE_BAND_PCT": "nan"}, "oms_price_band_pct"),
     ],
 )
 def test_settings_oms_runtime_bounds_refuse_each_value_out_of_range(

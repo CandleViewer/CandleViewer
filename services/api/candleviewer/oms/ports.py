@@ -357,8 +357,8 @@ class MarketReading:
 
 class ReferencePrices(Protocol):
     """The market's reference price a market order is measured from (24 Sec.9.3 step 2: the mid,
-    else the last price), or None when the market shows none; and the market read itself, mid and
-    last apart, under the same staleness and ticker demand (`market`); slice 3 binds the ticker."""
+    else the last price), or None when it shows none; `market` is the read itself, mid and last
+    apart, under the same staleness and demand; slice 3 binds the ticker."""
 
     async def reference_price(self, symbol: Symbol) -> Px | None: ...
 
