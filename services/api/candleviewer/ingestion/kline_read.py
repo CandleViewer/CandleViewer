@@ -23,6 +23,7 @@ which also bounds how far back one request can make the exchange page (security 
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -205,8 +206,10 @@ class KlineReadService:
                 taped = {r.ts_us for r in tape_rows}
                 if page is not None and min(taped) < boundary:
                     # Tape bars inside the cold range interleave with it: materialise the page
-                    # (minus the bars tape replaces) and merge as `read` does.
-                    cold_rows = list(page.without_ts(taped).rows())
+                    # (minus the bars tape replaces) and merge as `read` does. Off the loop,
+                    # as `read`'s rows are built in the reader's worker (~12 ms / 5 000 bars).
+                    rest = page.without_ts(taped)
+                    cold_rows = list(await asyncio.to_thread(rest.rows))
                     rows.extend(cold_rows)
                     cold_ids = set(map(id, cold_rows))
                     page = None

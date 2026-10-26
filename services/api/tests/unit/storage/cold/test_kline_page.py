@@ -332,3 +332,26 @@ def test_route_pages_equal_the_pre_2523_bytes_across_tiers_and_cursors(
     assert new == old
     bars = [b for body in new for b in orjson.loads(body)["bars"]]
     assert len(bars) == (40 if include_open == "true" else 40 - 10 - 5)
+
+
+class _ArrowFailingCursor:
+    """A cursor whose result fails in pyarrow, not DuckDB; it records `close()`."""
+
+    def __init__(self) -> None:
+        self.closed = 0
+
+    def execute(self, sql: str, params: object = None) -> _ArrowFailingCursor:
+        return self
+
+    def to_arrow_table(self) -> pa.Table:
+        raise pa.ArrowInvalid("injected")
+
+    def close(self) -> None:
+        self.closed += 1
+
+
+def test_page_closes_its_cursor_when_a_non_duckdb_error_escapes() -> None:
+    cur = _ArrowFailingCursor()
+    with pytest.raises(pa.ArrowInvalid):
+        kr._read_page(cur, ["x.parquet"], 0, 1, 10)  # type: ignore[arg-type]
+    assert cur.closed == 1
