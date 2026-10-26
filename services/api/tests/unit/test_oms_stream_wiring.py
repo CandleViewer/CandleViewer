@@ -23,6 +23,7 @@ from candleviewer import oms_stream_wiring as wiring
 from candleviewer.accounts.service import AccountHealthFeed
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import AccountRef, Order, PrivateKind
+from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import positions as position_stage
@@ -101,7 +102,8 @@ class World:
         ports |= dict.fromkeys(("snapshots", "accounts", "trading", "ports", "streams"), self)
         ports |= dict.fromkeys(("health", "hub", "serving", "credentials", "audit"), self)
         ports |= {"emitter": self, "pager": self, "metrics": self.metrics}
-        ports |= {"environment": "demo", "now": lambda: WALL, "offset_ms": lambda: self.offset}
+        ports |= {"environment": ProcessEnvironment.DEMO, "now": lambda: WALL}
+        ports |= {"offset_ms": lambda: self.offset, "wall_now": lambda: WALL}
         return build_stream_consumer(**(ports | over))
 
     def _hit(self, name: str) -> None:
@@ -247,6 +249,15 @@ def test_a_real_port_named_in_place_of_a_stand_in_is_announced_at_zero() -> None
     assert _gauge(world.metrics, INTERIM_PORTS_METRIC, port="reconciliation") == 0.0
     assert "reconciliation" not in [log.get("port") for log in logs]
     w.refuse_live(ProcessEnvironment.LIVE)  # a real pass and the projection: a live start runs
+    live = World().build(reconciliation=Real(), environment=ProcessEnvironment.LIVE)
+    assert isinstance(live, StreamWiring)
+
+
+def test_a_live_build_with_a_stand_in_that_refuses_live_is_refused() -> None:
+    with pytest.raises(ReconciliationUnavailable):  # never a consumer to start
+        World().build(environment=ProcessEnvironment.LIVE)
+    for env in (ProcessEnvironment.DEMO, ProcessEnvironment.TESTNET):
+        World().build(environment=env)
 
 
 # --- the lockout's stand-in and the exchange-placed records -------------------------------------
@@ -305,6 +316,17 @@ async def test_exchange_placed_records_write_exchange_placed_true_and_page() -> 
     assert world.pages[0][0] == "oms.stream_push"
 
 
+async def test_one_key_opened_undecided_then_decided_is_recorded_for_each_finding() -> None:
+    world = World()
+    lockout = world.build().stand_ins["foreign_order_lockout"]
+    assert isinstance(lockout, PagingForeignOrderLockout)
+    await lockout.open(A, finding="undecided", key="exec-7")  # `execution.fast`, then `execution`
+    await lockout.open(A, finding="execution", key="exec-7")
+    await lockout.open(A, finding="execution", key="exec-7")
+    findings = [fields["after_state"]["finding"] for _, fields in world.emitted]
+    assert findings == ["undecided", "execution"] and len(world.pages) == 2
+
+
 async def test_paged_keys_are_bounded_and_a_forgotten_one_pages_again() -> None:
     world = World()
     writer = wiring.NoIntentWriter(world, environment="demo")
@@ -322,6 +344,11 @@ async def test_a_failing_pager_never_unwinds_a_written_record() -> None:
         await lockout.open(A, finding="order", key="x2")
     assert world.emitted and "stream_pager_failed" in [log["event"] for log in logs]
     assert SENTINEL not in repr(logs)
+    del world.raises["page"]  # the lost page is not remembered: the next push pages, never less
+    await lockout.open(A, finding="order", key="x2")
+    assert world.trace == ["emit", "page", "emit", "page"] and len(world.pages) == 1
+    await lockout.open(A, finding="order", key="x2")
+    assert len(world.pages) == 1
 
 
 def test_system_actor_is_the_oms_wirings() -> None:
@@ -496,8 +523,27 @@ def test_wall_clock_reads_a_failed_offset_as_unmeasured_and_answers_microseconds
         assert clock() == WALL
     assert SENTINEL not in repr(logs)
     measured = ExchangeWallClock(lambda: 2, now=lambda: WALL)
+    assert [log["event"] for log in logs] == ["stream_wall_clock_unmeasured"]
     epoch = datetime(1970, 1, 1, tzinfo=UTC)
     assert measured.now_us() == (WALL - epoch) // timedelta(microseconds=1) + 2_000
+
+
+def test_wall_clock_reads_an_offset_past_the_critical_drift_as_unmeasured() -> None:
+    bound = inspect.signature(ClockGuard).parameters["hard_threshold_ms"].default
+    assert wiring.MAX_OFFSET_MS == bound  # one bound: the clock guard's critical drift
+    offset: list[int | None] = [bound, bound + 1, -(bound + 1), 10**15]
+    clock = ExchangeWallClock(lambda: offset.pop(0), now=lambda: WALL)
+    with capture_logs() as logs:
+        reads = [clock() for _ in range(4)]  # 10**15 ms would overflow a `timedelta`
+    assert reads == [WALL + timedelta(milliseconds=bound), WALL, WALL, WALL]
+    assert [log["event"] for log in logs] == ["stream_wall_clock_unmeasured"]
+    assert logs[0]["measured"] is True
+
+
+def test_the_compositions_wall_clock_reads_the_injected_host_time() -> None:
+    w = World().build(wall_now=lambda: WALL)
+    assert w.clock() == WALL + timedelta(milliseconds=250)
+    assert w.positions._clock() == WALL + timedelta(milliseconds=250)
 
 
 def test_wall_clock_default_is_the_hosts_aware_utc_time() -> None:
@@ -573,8 +619,11 @@ def test_metrics_catalogue_golden() -> None:
 class Owed:
     def __init__(self) -> None:
         self.age, self.error = 0.0, False
+        self.other: Exception | None = None
 
     def oldest_unhanded_age_s(self) -> float:
+        if self.other is not None:
+            raise self.other
         if self.error:
             raise RuntimeError("OrderedDict mutated during iteration")
         return self.age
@@ -598,6 +647,13 @@ def test_readiness_is_degraded_on_a_fault_or_an_owed_reading_past_its_bound() ->
     assert readiness.degraded() == "a position reading has been owed to protection too long"
     owed.error = True  # a read that meets the lane's write keeps the last age
     assert readiness.owed_age_s() == OWED_DEGRADED_S
+    owed.error, owed.other = False, ValueError(SENTINEL)  # any failure, never raised into /readyz
+    with capture_logs() as logs:
+        assert readiness.owed_age_s() == OWED_DEGRADED_S
+        assert readiness.degraded() == "a position reading has been owed to protection too long"
+    assert [log["error"] for log in logs] == ["ValueError", "ValueError"]
+    assert SENTINEL not in repr(logs)
+    owed.other = None
     fault.fault = "the consumer task ended"
     assert readiness.degraded() == "the private-stream consumer has faulted"
     assert w.readiness.degraded() is None and w.readiness.owed_age_s() == 0.0
@@ -676,6 +732,7 @@ async def test_no_position_protection_pages_an_sl_lost_once_per_episode_through_
         facade=rig, orders=rig, stops=rig, positions=rig, snapshots=rig, pager=rig,
         offset_ms=lambda: 0,
     )  # fmt: skip
+    assert w.clock() == WALL  # the host's time pinned, never the real one (C-13.7)
     lost = position()
     for _ in range(2):
         await w.positions.take(A, lost, routed(lost))
@@ -703,6 +760,7 @@ def _fits(
         facade=machines, orders=orders, stops=stops, positions=positions, snapshots=snapshots,
         accounts=cast(Any, None), trading=accounts, ports=router, streams=streams,
         health=health, hub=hub, serving=serving, credentials=credentials, audit=audit,
-        emitter=emitter, environment="demo", pager=cast(Any, None), metrics=metrics,
+        emitter=emitter, environment=ProcessEnvironment.DEMO, pager=cast(Any, None),
+        metrics=metrics,
         now=lambda: WALL, offset_ms=lambda: None,
     )  # fmt: skip

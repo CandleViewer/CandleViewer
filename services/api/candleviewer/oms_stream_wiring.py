@@ -36,9 +36,13 @@ into `oms_position_reading_owed_age_seconds`, degraded at `OWED_DEGRADED_S` (the
 Q7), with a detail that names no account (`/readyz` is anonymous).
 
 **The clock.** `ExchangeWallClock` is the projection's record clock and the consumer's: the host's
-aware UTC time plus the exchange clock's measured offset (server minus local,
-`Ingestion.clock_offset_ms`), 0 while unmeasured with one WARNING (ruling Q9). The successor's bind
-is stamped on the OMS's own clock (24 Sec.8.3 rule 7).
+aware UTC time plus the exchange clock's measured offset (server minus local), 0 while unmeasured,
+or past the clock guard's critical drift, with one WARNING (ruling Q9). The offset is read on the
+order lane, so its reader is `Ingestion.clock_offset_snapshot_ms` (`ClockGuard.offset_ms_snapshot`,
+#913 L1d CR-S3L1B-09), which changes nothing and answers None until the first measurement; never
+`Ingestion.clock_offset_ms`, whose host-step check writes the guard's state and spawns a resync on
+the calling loop, and which answers 0, never None, before a guard is attached. The successor's
+bind is stamped on the OMS's own clock (24 Sec.8.3 rule 7).
 
 Logs carry ids, a reason code or a class only (C-12.6).
 """
@@ -115,6 +119,9 @@ SYSTEM_ACTOR: Final = "system:oms"
 #: The keys the lockout's stand-in (and the exchange-placed records) remember having paged, the
 #: oldest forgotten past it: a forgotten key pages once more, never less (C-2.18).
 MAX_PAGED_KEYS: Final = 4096
+#: The clock guard's critical drift (`ingestion.clock.ClockGuard`'s default `hard_threshold_ms`; a
+#: test pins the two equal): a measured offset past it is read as unmeasured, never applied.
+MAX_OFFSET_MS: Final = 2_000
 #: 24 Sec.8.12, the 2026-10-25 ruling Q7: the `oms` check of `/readyz` is degraded while the
 #: oldest position reading owed to protection is this old, or older (the alert fires at 60 s).
 OWED_DEGRADED_S: Final = 120.0
@@ -309,11 +316,14 @@ class GuardedRejections:
             )
 
 
-def _page(pager: Pager, summary: str, machine_kind: str) -> None:
+def _page(pager: Pager, summary: str, machine_kind: str) -> bool:
+    """Whether the page was raised: a pager that raises loses the page, never its caller."""
     try:
         pager.raise_alert("page", summary, machine_kind=machine_kind)
-    except Exception as exc:  # the page is lost, never its caller
+    except Exception as exc:
         _log().critical("stream_pager_failed", summary=summary, error=type(exc).__name__)
+        return False
+    return True
 
 
 # --- the lockout's stand-in and the exchange-placed records (24 Sec.8.12, Sec.15.5) --------------
@@ -342,19 +352,22 @@ class NoIntentWriter:
 
 
 class _PagedOnce:
-    """Writes the record ahead, then pages P1, once per (account, key): a key paged already
-    changes nothing. A write that fails raises before any page, and the key is not remembered."""
+    """Writes the record ahead, then pages P1, once per (account, finding, key): one paged already
+    changes nothing, so a key first opened `undecided` and then decided (`execution`) is recorded
+    for each finding (24 Sec.8.12). A write that fails raises before any page, and a page that
+    fails, after its record, is not remembered either: the next push records and pages again, once
+    more and never less."""
 
     machine_kind: ClassVar[str]
 
     def __init__(self, writer: NoIntentWriter, pager: Pager, *, max_keys: int = MAX_PAGED_KEYS):
         self._writer, self._pager, self._max = writer, pager, max_keys
-        self._paged: OrderedDict[tuple[AccountId, str], None] = OrderedDict()
+        self._paged: OrderedDict[tuple[AccountId, Finding, str], None] = OrderedDict()
 
     async def _once(
         self, account_id: AccountId, finding: Finding, key: str, *, placed: bool
     ) -> None:
-        seen = (account_id, key)
+        seen = (account_id, finding, key)
         if seen in self._paged:
             return
         await self._writer.write(account_id, finding=finding, key=key, exchange_placed=placed)
@@ -366,7 +379,8 @@ class _PagedOnce:
             exchange_placed=placed,
         )  # fmt: skip
         summary = f"no OMS intent ({finding}, exchange_placed={placed}): account {account_id}"
-        _page(self._pager, summary, self.machine_kind)
+        if not _page(self._pager, summary, self.machine_kind):
+            self._paged.pop(seen, None)
 
 
 class PagingForeignOrderLockout(_PagedOnce, Interim):
@@ -467,10 +481,12 @@ class StreamReadiness:
 
     def owed_age_s(self) -> float:
         """The oldest owed reading's age, set on the gauge; read from another thread, a read that
-        meets the lane's write keeps the last age."""
+        fails (the lane's write met, or anything else) keeps the last age and is logged by its
+        class, never raised into `/readyz`."""
         try:
             self._age = self._positions.oldest_unhanded_age_s()
-        except RuntimeError:  # the projection's dict changed under the read: try at the next
+        except Exception as exc:  # try at the next read
+            _log().warning("stream_owed_age_unread", error=type(exc).__name__)
             return self._age
         self._gauge.set(self._age)
         return self._age
@@ -488,8 +504,9 @@ class StreamReadiness:
 
 class ExchangeWallClock:
     """`positions.WallClock`: the host's aware UTC time plus the exchange clock's measured offset
-    (server minus local, in ms); 0 while unmeasured, or while the read fails, with one WARNING
-    for each such run."""
+    (server minus local, in ms; bind `Ingestion.clock_offset_snapshot_ms`, never
+    `clock_offset_ms`, module docstring); 0 while unmeasured, while the read fails or while the
+    offset is past `MAX_OFFSET_MS`, with one WARNING for each such run."""
 
     def __init__(
         self, offset_ms: Callable[[], int | None],
@@ -510,10 +527,10 @@ class ExchangeWallClock:
             offset = self._offset_ms()
         except Exception:  # unread is unmeasured
             offset = None
-        if offset is None:
+        if offset is None or abs(offset) > MAX_OFFSET_MS:
             if not self._unmeasured:
                 self._unmeasured = True
-                _log().warning("stream_wall_clock_unmeasured")
+                _log().warning("stream_wall_clock_unmeasured", measured=offset is not None)
             return 0
         self._unmeasured = False
         return offset
@@ -584,7 +601,8 @@ class StreamWiring:
 
     def refuse_live(self, environment: ProcessEnvironment) -> None:
         """The live start-up self-checks, on the bindings as bound, before any wrapper (24
-        Sec.8.12): `NoReconciliation` and `NoPositionRows` each refuse a live start."""
+        Sec.8.12): `NoReconciliation` and `NoPositionRows` each refuse a live start.
+        `build_stream_consumer` runs them on its own environment before it returns."""
         refuse_live_without_reconciliation(environment, self.reconciliation)
         refuse_live_without_position_rows(environment, self.positions)
 
@@ -594,17 +612,22 @@ def build_stream_consumer(
     positions: PositionWrites, snapshots: SnapshotWrites, accounts: StreamedAccounts,
     trading: TradingAccounts, ports: Ports, streams: PrivateStreams, health: StreamEvidence,
     hub: SystemBroadcast, serving: Notify, credentials: CredentialRejections,
-    audit: KeyedAudit, emitter: AuditEmitter, environment: str, pager: Pager, metrics: Metrics,
-    now: Callable[[], datetime], offset_ms: Callable[[], int | None],
+    audit: KeyedAudit, emitter: AuditEmitter, environment: ProcessEnvironment, pager: Pager,
+    metrics: Metrics, now: Callable[[], datetime], offset_ms: Callable[[], int | None],
+    wall_now: Callable[[], datetime] = lambda: datetime.now(UTC),
     monotonic: Callable[[], float] = time.monotonic,
     reconciliation: ReconciliationRequests | None = None,
     handovers: ExecutionHandovers | None = None, readings: ProtectionReadings | None = None,
     lockout: ForeignOrderLockout | None = None,
 ) -> StreamWiring:  # fmt: skip
-    """The consumer and its parts, built and not started (module docstring). `now` is the OMS's
-    clock (the successor's bind); `offset_ms` the exchange clock's offset (`ExchangeWallClock`).
-    A stand-in a caller does not name is bound; each is announced, a real port at 0."""
-    writer = NoIntentWriter(emitter, environment=environment)
+    """The consumer and its parts, built and not started (module docstring). `environment` is the
+    process's: its records' `env`, and the live refusals, run here on the bindings as bound, so a
+    live process with a stand-in that refuses live never gets a consumer. `now` is the OMS's clock
+    (the successor's bind); `offset_ms` the exchange clock's offset, bound to
+    `Ingestion.clock_offset_snapshot_ms` and never `clock_offset_ms` (the lane reads it); `wall_now`
+    the host's aware UTC time (`ExchangeWallClock`). A stand-in a caller does not name is bound;
+    each is announced, a real port at 0."""
+    writer = NoIntentWriter(emitter, environment=environment.value)
     reconciliation = NoReconciliation() if reconciliation is None else reconciliation
     handovers = NoHandoverStore() if handovers is None else handovers
     readings = NoPositionProtection() if readings is None else readings
@@ -617,7 +640,7 @@ def build_stream_consumer(
     }
     for name, port in stand_ins.items():
         announce_interim_port(name, port, metrics=metrics)
-    counts, clock = StreamMetrics.bind(metrics), ExchangeWallClock(offset_ms)
+    counts, clock = StreamMetrics.bind(metrics), ExchangeWallClock(offset_ms, now=wall_now)
     projection = PositionProjection(
         orders=facade, positions=positions, snapshots=snapshots, readings=readings,
         counts=counts.position, pager=pager, stops=stops, order_rows=orders,
@@ -643,8 +666,10 @@ def build_stream_consumer(
         positions=projection, pushes=pushes, counts=counts.consumer, pager=pager,
         now_us=clock.now_us,
     )  # fmt: skip
-    return StreamWiring(
+    wired = StreamWiring(
         consumer, pushes, projection, recorded, successor, reconciliation,
         MappingProxyType(stand_ins), counts, StreamReadiness(consumer, projection, counts.owed),
         clock,
     )  # fmt: skip
+    wired.refuse_live(environment)
+    return wired
