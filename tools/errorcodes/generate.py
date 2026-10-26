@@ -110,6 +110,10 @@ def render_py(entries: list[dict[str, Any]]) -> str:
             surf = f'("{e["surface"][0]}",)'
         scope = json.dumps(e["scope"])
         ra = json.dumps(e["rest_analogue"])
+        # json.dumps escapes non-BMP text as a surrogate pair, which is not a valid Python string
+        # literal for that character, so a title must stay inside the Basic Multilingual Plane.
+        if any(ord(ch) > 0xFFFF for ch in str(e["title"])):
+            raise RegistryError(f"error title for {e['code']!r} must stay in the BMP")
         cc = "None" if e["close_code"] is None else str(e["close_code"])
         rt = "True" if e["retryable"] else "False"
         out.append(

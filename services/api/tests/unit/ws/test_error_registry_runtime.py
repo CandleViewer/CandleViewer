@@ -33,8 +33,11 @@ def test_build_ws_error_known_code_builds_frame() -> None:
 
 def test_internal_error_carries_only_its_catalogue_title() -> None:
     """No caller text reaches a client on `internal_error`: only the generic title."""
-    frame = build_ws_error("internal_error", message="boom: SELECT *", request_id="urn:x")
+    frame = build_ws_error(
+        "internal_error", message="boom: SELECT *", field="p.secret", request_id="urn:x"
+    )
     assert frame["p"]["message"] == ERROR_META[ErrorCode.INTERNAL_ERROR].title
+    assert "field" not in frame["p"]
     assert frame["p"]["request_id"] == "urn:x"
 
 

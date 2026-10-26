@@ -36,7 +36,8 @@ def build_ws_error(
     Raises ``UnknownErrorCode`` for a code that is not in the generated WS catalogue.
     ``message`` defaults to the code's catalogue title (``common#/$defs/error`` requires one).
     ``internal_error`` always carries only its generic title, plus ``request_id``: no caller
-    text, so no exception text, stack trace or SQL can reach a client through this path.
+    text and no ``field``, so no exception text, stack trace or SQL can reach a client through
+    this path.
     ``rs`` (a canonical session id) goes on the envelope beside ``ch`` only (§7.5, #3218).
     """
     try:
@@ -54,7 +55,7 @@ def build_ws_error(
         "retryable": meta.retryable,
         "close": close,
     }
-    if field is not None:
+    if field is not None and known is not ErrorCode.INTERNAL_ERROR:
         payload["field"] = field
     if request_id is not None:
         payload["request_id"] = request_id
