@@ -786,7 +786,7 @@ _IS_DEFAULT += " default first (setAccountDefaultProfile)."
 
 def _armed(*named: str, more: bool = False) -> str:
     listed = ", ".join(named) + (", and more" if more else "")
-    return f"Rules scoped to the account are armed: {listed}. Disarm them first."
+    return f"Armed rules cover the account: {listed}. Disarm them first."
 
 
 _TEN = [f'{rule.rule_id} "{rule.name}"' for rule in _RULES[:ARMED_SHOWN]]

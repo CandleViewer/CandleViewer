@@ -10,8 +10,10 @@ its own: it is stored per version in `rule_versions.backtest_summary`
 (`{"simulated": true, "fires": n, "hours": h}`), so "simulated on this exact ir_hash" is
 provable from the version row. `rules.armed_at/armed_by` satisfy `rule_armed_shape`.
 
-`PostgresArmedRules` binds the accounts port `ArmedRules` (#906 ruling B6): the armed rules that
-block deleting a profile of an account, read through `ix_rules_account`.
+`PostgresArmedRules` binds the accounts port `ArmedRules` (#906 ruling B6, #4563): the armed rules
+that block deleting a profile of an account, every rule whose active version's scope lists the
+account or lists none (24 §9.2). `rules.scope` and `rules.scope_account_id` are not read: they keep
+the first version's level and first account only.
 """
 
 from __future__ import annotations
@@ -81,10 +83,20 @@ _UPDATE_RULE = sa.text(
     "updated_at = now() WHERE id = CAST(:id AS uuid)"
 )
 
+# A rule covers an account when its ACTIVE version's `scope.account_ids` lists it or is empty
+# (`ScopeResolver.resolve`: no list means every granted account), whatever `scope.level`. A list
+# that is missing or not an array covers every account too (fail closed). `CASE`, not `OR`:
+# Postgres does not short-circuit `OR`, and `jsonb_array_length` raises on a non-array.
 _ARMED_ON = sa.text(
-    "SELECT id::text AS id, name FROM rules WHERE scope = 'account' "
-    "AND scope_account_id = CAST(:account AS uuid) AND mode = 'armed' AND deleted_at IS NULL "
-    "ORDER BY lower(name), id LIMIT :limit"
+    "SELECT r.id::text AS id, r.name FROM rules r "
+    "JOIN rule_versions v ON v.id = r.active_version_id "
+    "WHERE r.mode = 'armed' AND r.deleted_at IS NULL AND CASE "
+    "WHEN jsonb_typeof(v.ir #> '{scope,account_ids}') = 'array' "
+    "THEN jsonb_array_length(v.ir #> '{scope,account_ids}') = 0 OR EXISTS ("
+    "SELECT 1 FROM jsonb_array_elements_text(v.ir #> '{scope,account_ids}') AS a(id) "
+    "WHERE lower(a.id) = lower(:account)) "
+    "ELSE true END "
+    "ORDER BY lower(r.name), r.id LIMIT :limit"
 )
 
 
@@ -220,8 +232,13 @@ class PostgresRuleStore:
 
 
 class PostgresArmedRules:
-    """`ArmedRules` over the `rules` table: an account's live armed rules, one more than a refused
-    delete names, so it can say that there are more."""
+    """`ArmedRules` over `rules` and their active `rule_versions`: the live armed rules that cover
+    an account (its active version's `scope.account_ids` lists it, is empty, or is missing or
+    unreadable), one more than a refused delete names, so it can say that there are more.
+
+    Strict on protected `sys.*` rules: one armed with no account list would block every profile
+    delete until it is disarmed (none is today); it is not excluded, so a delete never goes
+    through under a rule that covers the account."""
 
     def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
         self._relational = relational
