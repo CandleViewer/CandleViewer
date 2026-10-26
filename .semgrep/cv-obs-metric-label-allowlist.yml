@@ -73,10 +73,16 @@ rules:
       #   recorded_stops}, a `Literal` in code; max_series=7.
       # reason (E42-T03, #837 Q5, cv_order_entry_refusals_total): the closed order-entry
       #   `RefusalReason` set (4 values, checked when a refusal is built); max_series=4.
-      # port (E29-T04, #913 ruling R4 and slice 3, oms_interim_ports): the six order-path ports an
-      #   interim may fill {sizer, stop_resolver, risk_gate, arm_records, kill_switch,
-      #   machine_event_sink} (`oms/ports.INTERIM_PORT_LABELS`), each set once at startup;
-      #   max_series=6.
+      # port (E29-T04, #913 ruling R4 and slice 3, oms_interim_ports): the eleven order-path ports
+      #   an interim may fill {sizer, stop_resolver, risk_gate, arm_records, kill_switch,
+      #   machine_event_sink, risk_figures, and E29-T05's reconciliation, execution_handovers,
+      #   protection_readings, foreign_order_lockout} (`oms/ports.INTERIM_PORT_LABELS`), each set
+      #   once at startup; max_series=11.
+      # stage, outcome, also (E29-T05, #848, oms_stream_outcomes_total): `stage` {consumer, push,
+      #   position} and `outcome` that stage's closed `Outcome` Literal (10, 28 and 20 values,
+      #   bound at build in `oms_stream_wiring.StageCounts`); no account; max_series=64.
+      # topic, also (E29-T05, #848, oms_stream_event_lag_seconds): a private row's kind, the five
+      #   `exchange.base.models.PrivateKind` values; no account; max_series=8.
       # code (E29-T04, #913, oms_submit_rejected_total): the problem code a refused order request
       #   was answered with, one of the closed `oms/errors.PROBLEMS` codes or `internal_error`
       #   (21, pinned by `test_submit.py`); never an exchange code or text; max_series=21.

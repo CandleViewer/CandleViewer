@@ -128,7 +128,13 @@ PORT_NAMES: Final[tuple[PortName, ...]] = get_args(PortName)
 #: persistence bundle serves it (20 Sec.6.2), the order path's figures (`OrderFigures`) until
 #: E39-T01 (#913 S4-S ruling Q1), and an `atr` stop's fallback until the E13 kernel port reaches
 #: `oms` (ruling Q6, `ATR_FALLBACK`). Their binders announce them (`announce_interim_port`).
-RuntimePortName = Literal["kill_switch", "machine_event_sink", "risk_figures", "atr"]
+#: The private-stream consumer's wiring (E29-T05, 24 Sec.8.12) adds its four stand-ins:
+#: `NoReconciliation` (E29-T06), `NoHandoverStore` as `ExecutionHandovers` (E29-T06),
+#: `NoPositionProtection` (E32-T02) and the lockout's paging stand-in (E39-T04).
+RuntimePortName = Literal[
+    "kill_switch", "machine_event_sink", "risk_figures", "atr", "reconciliation",
+    "execution_handovers", "protection_readings", "foreign_order_lockout",
+]  # fmt: skip
 #: `oms_interim_ports{port}`'s closed label set, one series each.
 INTERIM_PORT_LABELS: Final[tuple[PortName | RuntimePortName, ...]] = (
     *PORT_NAMES,
@@ -145,6 +151,15 @@ _ONLY_FIXED_QTY: Final = "A reduce-only order is sized by fixed_qty only."
 def _log() -> Any:
     """Resolve per call: a module-level logger pins a stale processor chain (#2008)."""
     return structlog.get_logger(__name__)
+
+
+class Interim:
+    """An interim port (R4): `port` is the slot it fills, `replaced_by` the ticket whose port
+    replaces it, and `serves` what it serves and refuses, for the startup log."""
+
+    port: ClassVar[PortName | RuntimePortName]
+    replaced_by: ClassVar[str]
+    serves: ClassVar[str]
 
 
 class OrderEffect(StrEnum):
@@ -562,11 +577,15 @@ class OrderHandovers(Protocol):
         ...
 
 
-class NoHandoverStore:
+class NoHandoverStore(Interim):
     """`OrderHandovers` and `ExecutionHandovers` until E29-T06's `oms_handovers` (S2-Q3's
     deviation): no hand-over can be recorded, so each is `HandoverUnavailable`, and an order whose
     id another order holds waits in `unknown`, where reconciliation meets the other order, instead
-    of `held`."""
+    of `held`. The consumer's wiring announces it as `execution_handovers`."""
+
+    port: ClassVar[RuntimePortName] = "execution_handovers"
+    replaced_by: ClassVar[str] = "E29-T06 (#914)"
+    serves: ClassVar[str] = "no hand-over is kept: each is handover_unavailable"
 
     async def hand_over_order(self, account_id: AccountId, order: Order) -> None:
         raise HandoverUnavailable("no hand-over store exists until E29-T06 (S2-Q3)")
@@ -682,11 +701,15 @@ class ReconciliationRequests(Protocol):
     ) -> None: ...
 
 
-class NoReconciliation:
+class NoReconciliation(Interim):
     """`ReconciliationRequests` until E29-T06 (24 Sec.8.12): each request is
     `ReconciliationUnavailable`, which the consumer logs, counts and pages once per episode
     (`oms_reconciliation_unavailable`), keeping `oms.account_resyncing` in force without holding
     order entry."""
+
+    port: ClassVar[RuntimePortName] = "reconciliation"
+    replaced_by: ClassVar[str] = "E29-T06 (#914)"
+    serves: ClassVar[str] = "no reconciliation pass: each request is refused and paged"
 
     async def request_reconciliation(self, account_id: AccountId, *, reason: ResyncReason) -> None:
         raise ReconciliationUnavailable("no reconciliation pass exists until E29-T06")
@@ -753,23 +776,18 @@ class ProtectionReadings(Protocol):
     async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None: ...
 
 
-class NoPositionProtection:
+class NoPositionProtection(Interim):
     """`ProtectionReadings` until E32-T02: no machine holds the position, so an `SL_LOST` is
     `ProtectionReadingsUnavailable`, which the consumer logs, counts and pages P1 on once per
     episode (C-2.6); an `SL_OBSERVED`, a flat position's included, asks for nothing."""
 
+    port: ClassVar[RuntimePortName] = "protection_readings"
+    replaced_by: ClassVar[str] = "E32-T02"
+    serves: ClassVar[str] = "no position-protection machine: a lost stop is refused and paged"
+
     async def take_reading(self, key: PositionKey, reading: ProtectionReading) -> None:
         if reading.event == "SL_LOST":
             raise ProtectionReadingsUnavailable("no position-protection machine until E32-T02")
-
-
-class Interim:
-    """An interim port (R4): `port` is the slot it fills, `replaced_by` the ticket whose port
-    replaces it, and `serves` what it serves and refuses, for the startup log."""
-
-    port: ClassVar[PortName | RuntimePortName]
-    replaced_by: ClassVar[str]
-    serves: ClassVar[str]
 
 
 class RequestQtySizer:
