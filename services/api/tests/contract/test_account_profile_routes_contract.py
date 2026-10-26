@@ -292,7 +292,7 @@ def test_the_texts_say_who_may_write_and_hide_out_of_grant_accounts() -> None:
     owner = "`accounts:write` is held by the Owner role alone, so no grant on an account gives a"
     assert f"{owner} Manager this write" in post  # R1S-08 (#4083)
     order = "so a Manager meets the step-up first and `403 forbidden` after one"
-    assert f"The write is path-gated, as the key routes are, {order}" in post  # 06:01Z, R1C-01
+    assert f"The write is path-gated, {order}" in post  # 06:01Z, R1C-01; #2304: no key-route claim
     # R1S-05: out of the caller's grants answers as missing, so a 404 is no existence oracle
     hidden = "outside the caller's grants"
     assert f"An account {hidden} is `404`, as one that does not exist is" in listed
