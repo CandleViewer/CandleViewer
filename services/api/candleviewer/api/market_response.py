@@ -266,6 +266,73 @@ def serialize_bars(rows: Sequence[BarRowLike], *, include_delta: bool) -> list[d
     return list(map(dict, map(zip, repeat(keys), zip(*cols, strict=True))))
 
 
+class EmittedBars(Protocol):
+    """Bars whose JSON is already emitted (`ingestion.kline_read.KlinePageLike`), ascending."""
+
+    def __len__(self) -> int: ...
+    def head(self, n: int) -> EmittedBars: ...
+    def last_ts_us(self) -> int: ...
+    def bars_json(self, suffix: bytes) -> bytes: ...
+
+
+#: What closes each kline bar with `include_delta` (BR-07 nulls), before its `}`.
+NULL_DELTA_SUFFIX: Final = b"".join(b',"' + k.encode() + b'":null' for k in _NULL_DELTA_KEYS)
+
+
+class BarSegments:
+    """One response page of bars as ascending segments (#2523 lever 4): emitted-JSON cold
+    pages and row lists. `json()` equals `orjson.dumps(serialize_bars(all rows))` minus the
+    brackets: each row list goes through `serialize_bars`, each page through its own join,
+    and a bar's bytes never depend on its neighbours."""
+
+    __slots__ = ("_n", "_segs")
+
+    def __init__(self) -> None:
+        self._segs: list[EmittedBars | list[BarRowLike]] = []
+        self._n = 0
+
+    def __len__(self) -> int:
+        return self._n
+
+    def add_page(self, page: EmittedBars) -> None:
+        if len(page):
+            self._segs.append(page)
+            self._n += len(page)
+
+    def add_rows(self, rows: Sequence[BarRowLike]) -> None:
+        if rows:
+            self._segs.append(list(rows))
+            self._n += len(rows)
+
+    def truncate(self, limit: int) -> None:
+        """Keep the oldest `limit` bars."""
+        kept: list[EmittedBars | list[BarRowLike]] = []
+        left = max(0, limit)
+        for seg in self._segs:
+            if left == 0:
+                break
+            part = seg[:left] if isinstance(seg, list) else seg.head(left)
+            kept.append(part)
+            left -= len(part)
+        self._segs, self._n = kept, sum(map(len, kept))
+
+    def last_ts_us(self) -> int:
+        """`ts` of the newest bar; the page must not be empty."""
+        seg = self._segs[-1]
+        return seg[-1].ts_us if isinstance(seg, list) else seg.last_ts_us()
+
+    def json(self, *, include_delta: bool) -> bytes:
+        suffix = NULL_DELTA_SUFFIX if include_delta else b""
+        return b",".join(
+            (
+                orjson.dumps(serialize_bars(seg, include_delta=include_delta))[1:-1]
+                if isinstance(seg, list)
+                else seg.bars_json(suffix)
+            )
+            for seg in self._segs
+        )
+
+
 def build_meta(
     *,
     count: int,
@@ -291,13 +358,24 @@ def build_meta(
 
 
 def kline_response(
-    *, symbol: str, interval: str, bar_type: str, bars: list[dict[str, object]],
-    meta: dict[str, object],
+    *, symbol: str, interval: str, bar_type: str, meta: dict[str, object],
+    bars: list[dict[str, object]] | None = None, bars_json: bytes | None = None,
 ) -> Response:  # fmt: skip
-    """200 `KlineResponse`, or `422 response_too_large` past the ceiling (never truncated)."""
-    body = orjson.dumps(
-        {"symbol": symbol, "interval": interval, "bar_type": bar_type, "bars": bars, "meta": meta}
-    )
+    """200 `KlineResponse`, or `422 response_too_large` past the ceiling (never truncated).
+
+    #2523 lever 4: `bars_json` is the bar array's already-serialised elements
+    (comma-joined objects, no brackets), spliced between the envelope's orjson pieces; the
+    bytes equal `orjson.dumps` of the same envelope with `bars` as dicts."""
+    if bars_json is None:
+        body = orjson.dumps(
+            {"symbol": symbol, "interval": interval, "bar_type": bar_type, "bars": bars or [],
+             "meta": meta}
+        )  # fmt: skip
+    else:
+        head = orjson.dumps({"symbol": symbol, "interval": interval, "bar_type": bar_type})
+        body = b"".join(
+            (head[:-1], b',"bars":[', bars_json, b'],"meta":', orjson.dumps(meta), b"}")
+        )
     if len(body) > RESPONSE_MAX_BYTES:
         return problem(
             422,
@@ -309,7 +387,10 @@ def kline_response(
 
 
 __all__ = [
+    "NULL_DELTA_SUFFIX",
     "BarRowLike",
+    "BarSegments",
+    "EmittedBars",
     "InvalidCursor",
     "build_meta",
     "cursor_scope",

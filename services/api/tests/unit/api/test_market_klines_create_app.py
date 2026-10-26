@@ -140,7 +140,7 @@ class _Service:
         self._reached = reached
         self._store = store
 
-    async def read(
+    async def read_page(
         self, symbol: str, interval: str, rng: Range, limit: int | None = None
     ) -> KlineRead:
         self._reached.service.append(symbol)

@@ -243,7 +243,7 @@ class TestGetKlinesReadService:
         from candleviewer.ingestion.kline_read import KlineRead
 
         class _Svc:
-            async def read(
+            async def read_page(
                 self, symbol: str, interval: str, rng: object, limit: int | None = None
             ) -> KlineRead:
                 rows = [_FakeRow(ts_us=0), _FakeRow(ts_us=60_000_000)]
@@ -388,7 +388,7 @@ class TestGetKlinesFutureWindow:
         asked: list[Range] = []
 
         class _Svc:
-            async def read(
+            async def read_page(
                 self, symbol: str, interval: str, rng: Range, limit: int | None = None
             ) -> KlineRead:
                 asked.append(rng)
