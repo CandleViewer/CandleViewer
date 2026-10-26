@@ -425,7 +425,8 @@ class InstrumentsRefreshScheduler:
         tiers: dict[str, tuple[RiskLimitTier, ...]] = {}
         if fetch is None:
             return tiers
-        pending = self._tier_set(parsed, await self._order_path_seed())
+        seed, seed_ok = await self._order_path_seed()
+        pending = self._tier_set(parsed, seed)
         self._tier_symbols = set(pending)
         budget_s = self._risk_limits_budget_s
         if self._starting:
@@ -454,24 +455,26 @@ class InstrumentsRefreshScheduler:
                 budget_s=budget_s,
                 unknown=len(pending) - len(tiers),
             )
-        self._tiers_incomplete = len(tiers) < len(pending)
+        self._tiers_incomplete = len(tiers) < len(pending) or not seed_ok
         self._tiers_streak = self._tiers_streak + 1 if self._tiers_incomplete else 0
         return tiers
 
-    async def _order_path_seed(self) -> list[str]:
+    async def _order_path_seed(self) -> tuple[list[str], bool]:
         """S4-S-c: the order path's symbols (`order_path_symbols`) in its rank order, within
-        `ORDER_PATH_SEED_TIMEOUT_S`; empty when none is wired or the read fails, logged by the
-        error's type only."""
+        `ORDER_PATH_SEED_TIMEOUT_S`, and whether the read succeeded. Empty and ok when none is
+        wired; empty and not ok when the read fails (logged by the error's type only), which
+        makes the tier refresh incomplete so the short retry applies."""
         read = self._order_path_symbols
         if read is None:
-            return []
+            return [], True
         since_us = self._now_us() - ORDER_PATH_WINDOW_S * 1_000_000
         try:
             async with asyncio.timeout(ORDER_PATH_SEED_TIMEOUT_S):
-                return list(dict.fromkeys(await read(since_us=since_us, limit=TIER_SYMBOLS_MAX)))
+                ranked = await read(since_us=since_us, limit=TIER_SYMBOLS_MAX)
+                return list(dict.fromkeys(ranked)), True
         except Exception as exc:  # a timeout too: this tick refreshes the symbols already held
             get_logger(__name__).warning("risk_limits_seed_failed", error=type(exc).__name__)
-            return []
+            return [], False
 
     def _tier_set(self, parsed: Mapping[str, Instrument], seed: list[str]) -> list[str]:
         """S4-S-c: the seed in its rank order, then the symbols already held, at most
@@ -670,7 +673,8 @@ class InstrumentsRefreshScheduler:
         """The refresh schedule: the TTL (+ up to 5 % jitter) after a successful refresh, and
         `retry_backoff_s` after a failed or abandoned one (#2599: a failed cold start used to
         wait the TTL, serving nothing; #2715: so after a failure during the TTL wait, too).
-        `stop()` cancels it; the cancellation propagates."""
+        An on-demand refresh does not change this wait. `stop()` cancels it; the cancellation
+        propagates."""
         ok, failures = startup_ok, 0
         while not self._stopping:
             if ok:

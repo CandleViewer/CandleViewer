@@ -72,11 +72,12 @@ async def test_order_path_symbols_adds_the_default_profiles_allowed_symbols_at_r
     await orders.create(_order(account, symbol=opened, state="accepted"), _event())
     _profile_symbols(pg_dsn, account, [allowed, shared, opened])
     _profile_symbols(pg_dsn, other, [shared])  # the same symbol twice: one row
-    wildcard_only = "W" + _symbol()
+    disabled_only = "W" + _symbol()
     _profile_symbols(pg_dsn, wild, None, all_symbols=True)
-    _profile_symbols(pg_dsn, off, [wildcard_only], enabled=False)  # disabled sizes nothing
+    _profile_symbols(pg_dsn, off, [disabled_only], enabled=False)  # disabled sizes nothing
     symbols = await SqlAlchemyOrderPathSymbols(rel)(since_us=0, limit=10_000)
     ours = [s for s in symbols if s in {opened, allowed, shared}]
     assert ours == [opened, allowed, shared]  # rank 0, then rank 2 by name, distinct
-    assert wildcard_only not in symbols  # a wildcard adds nothing; so does a disabled profile
+    assert disabled_only not in symbols  # a disabled profile sizes nothing
+    assert all(symbols) and "None" not in symbols  # a wildcard (NULL scope) adds no symbol
     assert len(symbols) == len(set(symbols))

@@ -203,9 +203,11 @@ class _Parking:
         await asyncio.Event().wait()
 
 
-async def _first_schedule_wait(fetch: _Fetch, start_timeout_s: float) -> float:
+async def _first_schedule_wait(
+    fetch: _Fetch, start_timeout_s: float, seed: _Seed | None = None
+) -> float:
     park = _Parking()
-    sched = _sched(fetch, _Seed("BTCUSDT"), sleep=park, random_fn=lambda: 0.0,
+    sched = _sched(fetch, seed or _Seed("BTCUSDT"), sleep=park, random_fn=lambda: 0.0,
                    start_timeout_s=start_timeout_s)  # fmt: skip
     await sched.start()
     try:
@@ -224,3 +226,35 @@ async def test_start_that_leaves_seeded_tiers_unknown_is_followed_by_a_short_ret
 
 async def test_start_that_reaches_every_seeded_tier_waits_the_ttl() -> None:
     assert await _first_schedule_wait(_Fetch(), 10.0) == 43_200.0
+
+
+async def test_start_with_a_failed_seed_read_is_followed_by_a_short_retry() -> None:
+    seed = _Seed("BTCUSDT")
+    seed.fail = True  # nothing is seeded, so no tier is pending: the read itself is the gap
+    assert await _first_schedule_wait(_Fetch(), 10.0, seed) == refresh_mod.TIERS_RETRY_S
+
+
+async def test_incomplete_refreshes_double_the_retry_and_a_complete_one_resets_it() -> None:
+    fetch, delays = _Fetch(), list[float]()
+    fetch.fail = True
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        if len(delays) == 3:
+            fetch.fail = False  # the next scheduled refresh reaches every tier
+        if len(delays) >= 4:
+            await asyncio.Event().wait()
+
+    sched = _sched(fetch, _Seed("BTCUSDT"), sleep=sleep, random_fn=lambda: 0.0)
+    await sched.start()
+    try:
+        for _ in range(100):
+            await asyncio.sleep(0)
+        assert delays[:4] == [
+            refresh_mod.TIERS_RETRY_S,  # streak 1
+            refresh_mod.TIERS_RETRY_S * 2,  # streak 2: 120 s
+            refresh_mod.TIERS_RETRY_S * 4,  # streak 3
+            43_200.0,  # a complete refresh reset the streak: the TTL
+        ]
+    finally:
+        await sched.stop()
