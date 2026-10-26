@@ -254,9 +254,15 @@ def make_recorder_purge_router(
             "include_pinned": body.include_pinned,
         }
         call = _Call(
-            body, _us(body.before), params, fingerprint, principal.user_id, key,
-            spent.challenge_id, common,
-        )  # fmt: skip
+            body=body,
+            before_us=_us(body.before),
+            params=params,
+            fingerprint=fingerprint,
+            actor=principal.user_id,
+            key=key,
+            challenge_id=spent.challenge_id,
+            common=common,
+        )
         anchored = await _lookup(anchors, call)
         if isinstance(anchored, JSONResponse):
             return anchored
@@ -376,11 +382,11 @@ def make_recorder_purge_router(
             try:
                 created = await anchors.create(anchor)
             except Exception as exc:
-                await _closed_unstarted(audit, job_id, window, common)
+                await _closed_unstarted(audit, job_id, window, common, "anchor_unavailable")
                 return _store_down(exc)
-            if not created:  # the key is held already (another process): nothing starts here
-                await _closed_unstarted(audit, job_id, window, common)
-                return _problem(409, "Conflict", "a purge job is already running", "job_running")
+            if not created:  # another request anchored the key first: nothing starts here
+                await _closed_unstarted(audit, job_id, window, common, "idempotency_key_held")
+                return await _raced(anchors, call)
         idem = (str(call.actor), call.key, call.fingerprint)
         try:
             job = jobs.submit(PURGE_JOB_KIND, idem, work, done, job_id=str(job_id))
@@ -388,16 +394,34 @@ def make_recorder_purge_router(
             return _problem(409, "Conflict", "a purge job is already running", "job_running")
         return JSONResponse(status_code=202, content={"job_id": job.id})
 
+    async def _raced(anchors: PurgeAnchorStore, call: _Call) -> JSONResponse:
+        """The answer when the insert found the key held: the anchor that won, re-read and judged
+        by the contract's rules (`before` first, then the body). The same body is that request's
+        purge, which it is starting: its job if this process knows it, else `409 job_running`,
+        the nearest code the contract gives this operation (it defines no `idempotency_in_flight`
+        here), never a second purge."""
+        answer = await _lookup(anchors, call)
+        if isinstance(answer, JSONResponse):
+            return answer
+        if not answer:  # the store reported the key held, then no row for it: an outage
+            return _store_down(RuntimeError("purge anchor vanished"))
+        return _problem(409, "Conflict", "a purge job is already running", "job_running")
+
     async def _closed_unstarted(
-        audit: _Emitter, job_id: uuid.UUID, window: dict[str, object], common: dict[str, object]
+        audit: _Emitter,
+        job_id: uuid.UUID,
+        window: dict[str, object],
+        common: dict[str, object],
+        reason: str,
     ) -> None:
-        """Close the intent record of a purge that never started (best effort: the 503 stands)."""
+        """Close the intent record of a purge that never started (best effort: the answer
+        stands)."""
         try:
             await audit.emit(
                 "retention.purge",
                 outcome=AuditOutcome.FAILURE,
                 severity=Severity.ERROR,
-                reason="anchor_unavailable",
+                reason=reason,
                 object_id=str(job_id),
                 after_state={"window": window, "result": {}},
                 **common,

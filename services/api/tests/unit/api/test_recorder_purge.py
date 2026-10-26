@@ -37,6 +37,7 @@ from candleviewer.recorder.retention import (
     RunReport,
     day_key,
 )
+from candleviewer.storage.repositories.purge_anchors import NewPurgeAnchor
 from tests.unit.api._job_poll import mount_job_poll
 from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
 from tests.unit.recorder._retention_fakes import NOW, NOW_US, T, World, day, manager
@@ -329,14 +330,19 @@ async def test_purge_idempotency_same_body_same_job_different_body_422() -> None
 
 
 async def test_purge_idempotency_key_never_crosses_actors_idor() -> None:
+    """Owner B's key is B's own: A's anchor, which another `before` would answer with
+    `idempotency_key_reuse` naming A's bound, is never read for B, and B anchors its own."""
     env = _Env()
-    env.backend.gate.clear()
     key = str(uuid.uuid4())
     a = await env.post(BODY, key)
+    assert a.status_code == 202
+    await env.wait(a.json()["job_id"])
+    created = env.anchors.creates
     env.res.as_(OWNER)  # a different user, same key
-    b = await env.post(BODY, key)
-    assert a.status_code == 202 and b.status_code == 409  # not A's job id
-    env.backend.gate.set()
+    b = await env.post(BODY | {"before": _iso(-60_000_000)}, key)
+    assert b.status_code == 202 and b.json()["job_id"] != a.json()["job_id"]
+    assert b.json().get("code") != "idempotency_key_reuse"
+    assert env.anchors.creates == created + 1 and len(env.anchors.rows) == 2
 
 
 async def test_purge_concurrent_is_409() -> None:
@@ -735,3 +741,62 @@ async def test_purge_without_an_anchor_store_is_503_before_the_gate() -> None:
     c = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
     r = await c.post(_PATH, json=BODY, headers={"Idempotency-Key": str(uuid.uuid4())})
     assert r.status_code == 503 and checks == []
+
+
+class _RacedAnchors(InMemoryPurgeAnchors):
+    """Another request anchors the key between this request's lookups and its insert, as a
+    concurrent purge on another process would: `create` finds the key held."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.racer: dict[str, Any] | None = None
+
+    async def create(self, anchor: Any) -> bool:
+        if self.racer is not None:
+            racer = NewPurgeAnchor(**({
+                "id": uuid.uuid4(), "created_by": anchor.created_by,
+                "client_ref": anchor.client_ref, "request_sha256": anchor.request_sha256,
+                "before_us": anchor.before_us,
+            } | self.racer))  # fmt: skip
+            self.rows[(anchor.created_by, anchor.client_ref)] = racer
+            self.racer = None
+        return await super().create(anchor)
+
+
+@pytest.mark.parametrize(
+    ("racer", "status", "code"),
+    [
+        ({"before_us": NOW_US - 1}, 409, "idempotency_key_reuse"),
+        ({"request_sha256": "0" * 64}, 422, "idempotency_key_reused"),
+        ({}, 409, "job_running"),
+    ],
+    ids=["other-before", "other-body", "same-body"],
+)
+async def test_purge_create_race_answers_from_the_anchor_that_won(
+    racer: dict[str, Any], status: int, code: str
+) -> None:
+    """The key held at the insert is re-read and answered by the contract's rules; the same
+    body's purge is the winner's, starting elsewhere (no `idempotency_in_flight` on this
+    operation, so `job_running`). Nothing starts here and the intent record is closed."""
+    anchors = _RacedAnchors()
+    env = _Env(anchors=anchors)
+    anchors.racer = racer
+    r = await env.post(BODY)
+    assert (r.status_code, r.json()["code"]) == (status, code)
+    if code == "idempotency_key_reuse":
+        assert r.json()["errors"][0]["message"] == f"anchored before is {_iso(-1)}"
+    assert env.jobs._jobs == {} and env.backend.runs == 0
+    closing = env.audit.calls[-1][1]
+    assert closing["outcome"].value == "failure" and closing["reason"] == "idempotency_key_held"
+
+
+async def test_purge_key_reported_held_but_unreadable_is_503_and_nothing_starts() -> None:
+    class _Lost(InMemoryPurgeAnchors):
+        async def create(self, anchor: Any) -> bool:
+            return False  # the insert saw the key held; the re-read then finds no row
+
+    env = _Env(anchors=_Lost())
+    r = await env.post(BODY)
+    assert r.status_code == 503 and r.json()["code"] == "store_unavailable"
+    assert env.jobs._jobs == {} and env.backend.runs == 0
+    assert env.audit.calls[-1][1]["reason"] == "idempotency_key_held"
