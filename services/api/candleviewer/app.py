@@ -333,6 +333,7 @@ from candleviewer.recorder.service import RecorderService
 from candleviewer.recorder.status import RecordingStatusCache
 from candleviewer.recorder_wiring import (
     ComposedRecorder,
+    LazyAnchorBooks,
     build_recorder,
     policy_config,
     questdb_sinks,
@@ -2738,6 +2739,7 @@ def create_app(
             bus=ctx.bus.bus, budget=app.state.disk_budget, invalidate=coverage_service.invalidate,
             topics=ctx.exchange_bybit.stream_for_topic, sinks=questdb_sinks(resolved),
             events=PgSystemEventWriter(health_pg, redact_details=system_event_redactor()),
+            books=LazyAnchorBooks(lambda: ctx.ingestion.books),  # #2223 seek anchors
         )  # fmt: skip
         runtime = recorder.runtime
         ctx.recorder.attach_runtime(runtime)

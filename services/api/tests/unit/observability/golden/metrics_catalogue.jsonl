@@ -283,6 +283,7 @@
 ["questdb_pgwire_discards_total", "counter", ["wire", "reason"], "live", "E12"]
 ["questdb_pgwire_lock_wait_seconds", "histogram", ["wire"], "live", "E12"]
 ["questdb_write_seconds", "histogram", [], "live", "E04"]
+["recorder_anchor_skipped_total", "counter", ["reason"], "live", "E16"]
 ["recorder_bytes_per_day", "gauge", ["symbol"], "live", "E16"]
 ["recorder_bytes_written_total", "counter", ["symbol", "stream"], "live", "E16"]
 ["recorder_disk_budget_breakdown_age_seconds", "gauge", [], "live", "E16"]

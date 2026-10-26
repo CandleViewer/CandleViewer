@@ -520,3 +520,25 @@ async def test_the_tick_runs_the_heal_after_the_policy_and_a_failing_heal_is_iso
     heal.assert_awaited_once()
     assert ("recorder_tick_failed", "heal") in [(e["event"], e.get("step")) for e in logs]
     assert rig.rt.health().status is HealthStatus.OK
+
+
+async def test_the_anchor_step_runs_every_tick_and_a_failing_one_skips_no_other() -> None:
+    """#2223: the periodic seek anchor is a tick step of the supervised runtime task, after the
+    policy and the sessions, bounded and isolated like them."""
+    rig = Rig(BOUNDS, lambda: 1.0)
+    anchors = AsyncMock(side_effect=[OSError("book down"), None])
+    rig.rt = RecorderRuntime(
+        policy=rig.m.policy, sessions=rig.m.sessions, writer=rig.m.writer, seed=rig.m.seed,
+        restore_b11=rig.m.restore, process_start_us=0, env="demo", clock=rig.clock,
+        sleep=rig.sleep, rng=lambda: 1.0, bounds=BOUNDS, anchors=anchors,
+    )  # fmt: skip
+    with capture_logs() as logs:
+        await rig.rt.start()
+        await rig.sleep.parked()  # tick 1: the anchor step raised
+        rig.sleep.go()
+        await rig.sleep.parked()  # tick 2 ran
+    await asyncio.wait_for(rig.rt.stop(0.4), 5)
+    assert anchors.await_count == 2 and rig.names.count("policy.tick") == 2
+    assert [(e["step"], e["error"]) for e in logs if e["event"] == "recorder_tick_failed"] == [
+        ("anchors", "OSError")
+    ]

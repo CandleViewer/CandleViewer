@@ -592,6 +592,8 @@ class Settings(BaseSettings):
     recorder_autostop_grace_s: int = Field(default=1800, ge=0)
     recorder_autorecord_enabled: bool = True
     recorder_max_symbols: int = Field(default=20, ge=1)
+    # #2223 (24 Sec.13.7): the periodic book seek anchor's cadence, at any book depth.
+    recorder_snapshot_interval_s: int = Field(default=60, ge=1, le=3600)
     # E16-T03: StreamWriter spill WAL (bounded; SR-096 — a volume separate from the backend).
     # Empty (default) = `<data dir>/recorder-wal`, data dir = parent of `parquet_root`.
     recorder_wal_dir: str = ""

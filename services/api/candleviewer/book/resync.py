@@ -51,6 +51,9 @@ class BookEngine:
         self.degraded = False
         self.last_u = 0
         self.last_good_ts_us: int | None = None
+        #: The last event applied to `book` (its snapshot, else its latest delta): the exchange
+        #: stamp of a periodic seek anchor (#2223). `None` while there is no book.
+        self.last_applied: BookSnapshot | BookDelta | None = None
         self.health_sink: HealthSink | None = None
         self._publish, self._resubscribe, self._now = publish, resubscribe, now_us
         self._buffer: deque[BookDelta] = deque()
@@ -88,6 +91,7 @@ class BookEngine:
             return
         self.last_u = ev.update_id
         self.last_good_ts_us = ev.ts_event
+        self.last_applied = ev
         if not self.muted:
             await self._publish(ev)
 
@@ -161,6 +165,7 @@ class BookEngine:
             await self._desync("bad_snapshot")
             return
         last_u = snap.update_id
+        applied: BookSnapshot | BookDelta = snap
         for d in self._buffer:  # INV-B14-d: strictly after snapshot seq
             if d.update_id <= last_u:
                 continue
@@ -172,11 +177,12 @@ class BookEngine:
             except BookError:
                 await self._desync("bad_replay")
                 return
-            last_u = d.update_id
+            last_u, applied = d.update_id, d
         self._buffer.clear()
         self._staged = None
         self._template = snap
         self.book, self.last_u, self.phase = book, last_u, BookPhase.LIVE
+        self.last_applied = applied
         self.last_good_ts_us = self._now()
         if not self.muted:
             await self.publish_current("subscribe" if self.resync_count == 0 else "resync")
@@ -196,6 +202,19 @@ class BookEngine:
             update={"bids": bids, "asks": asks, "update_id": self.last_u, "depth": n}
         )
 
+    def anchor_snapshot(self) -> BookSnapshot | None:
+        """The full live book stamped with the last applied event's exchange time and
+        sequence, only while LIVE: the recorder's periodic seek anchor (#2223, 24 Sec.13.7).
+        A seek re-applies the deltas recorded after that stamp, and the `(ts, symbol, depth)`
+        DEDUP key never lands on an older anchor."""
+        snap, last = self.live_snapshot(), self.last_applied
+        if snap is None or last is None:
+            return None
+        stamp = {"ts_event": last.ts_event, "ts_ingest": last.ts_ingest}
+        return snap.model_copy(
+            update=stamp | {"ts_match": last.ts_match, "cross_seq": last.cross_seq}
+        )
+
     async def publish_current(self, reason: str) -> None:
         """Publish the full current book as a `BookSnapshot` (+ LIVE status)."""
         if self.book is None or self._template is None:
@@ -210,7 +229,7 @@ class BookEngine:
 
     async def go_desynced(self) -> None:
         self.phase = BookPhase.DESYNCED
-        self.book = None
+        self.book, self.last_applied = None, None
         self.resync_count += 1
         now = self._now()
         self._resync_times.append(now)

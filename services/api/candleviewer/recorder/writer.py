@@ -559,6 +559,10 @@ class StreamWriter:
     def is_recording(self, symbol: str) -> bool:
         return symbol in self._active
 
+    def recorded(self) -> frozenset[str]:
+        """The effective set, for the periodic anchors (#2223)."""
+        return frozenset(self._active)
+
     def note_reconnect(self, symbol: str) -> None:
         self._ctr(symbol).reconnects += 1
 
@@ -585,6 +589,13 @@ class StreamWriter:
             self._last_update_id[ev.symbol] = ev.update_id
             await self._admit("orderbook_snapshots", ev.symbol, snapshot_records(ev))
 
+    async def on_book_anchor(self, ev: BookSnapshotLike) -> None:
+        """A periodic seek anchor (#2223, 24 Sec.13.7): the `orderbook_snapshots` lane, as an
+        exchange snapshot. It is not a received message, and it never moves the delta sequence
+        tracker: the bus may still hold deltas older than the book it was read from."""
+        if ev.symbol in self._active:
+            await self._admit("orderbook_snapshots", ev.symbol, snapshot_records(ev), counted=False)
+
     async def on_ticker(self, ev: TickerLike) -> None:
         if ev.symbol in self._active:
             await self._admit("tickers", ev.symbol, ticker_records(ev))
@@ -599,9 +610,12 @@ class StreamWriter:
             ctr = self._counters[symbol] = _Counters()
         return ctr
 
-    async def _admit(self, stream: Stream, symbol: str, records: list[WalRecord]) -> None:
+    async def _admit(
+        self, stream: Stream, symbol: str, records: list[WalRecord], *, counted: bool = True
+    ) -> None:
         """Never awaits I/O: the queue or the spill buffer, both drained by the lane's pump."""
-        self._ctr(symbol).received += 1
+        if counted:
+            self._ctr(symbol).received += 1
         if not records:
             return
         try:

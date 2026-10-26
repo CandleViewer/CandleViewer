@@ -31,7 +31,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 import structlog
 
@@ -300,6 +300,17 @@ class BookStream:
         if tb is None or at is None or tb.active.phase is not BookPhase.LIVE:
             return True
         return self._clock() - at >= BOOK_STALE_AFTER_S
+
+    def anchor(self, symbol: str) -> BookSnapshot | Literal["no_book", "not_live", "stale"]:
+        """#2223: the recorder's periodic seek anchor, the active tier's full book stamped with
+        its last applied frame, or why there is none (a stale book is not an anchor)."""
+        tb = self._books.get(symbol)
+        if tb is None:
+            return "no_book"
+        snap = tb.active.anchor_snapshot()
+        if snap is None:
+            return "not_live"
+        return "stale" if self.is_stale(symbol) else snap
 
     def phase(self, symbol: str) -> BookPhase | None:
         tb = self._books.get(symbol)
