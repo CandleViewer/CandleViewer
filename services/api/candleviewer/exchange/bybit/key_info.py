@@ -60,7 +60,7 @@ _PROBE_CODES: Final[Mapping[int, str]] = {
 }
 #: `KeyProbeError`, closed (SR-E27-08): every name `probe_error` returns; a test pins the enum.
 PROBE_ERRORS: Final = frozenset(
-    {*_PROBE_CODES.values(), "transport_error", "timeout", "exchange_unknown"}
+    {*_PROBE_CODES.values(), "transport_error", "timeout", "exchange_unknown", "vault_refused"}
 )
 #: Plausible exchange clock (ms): 2020-01-01 to 2100-01-01.
 _MS_MIN, _MS_MAX = 1_577_836_800_000, 4_102_444_800_000

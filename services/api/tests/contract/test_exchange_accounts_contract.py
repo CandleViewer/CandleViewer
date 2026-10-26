@@ -119,6 +119,7 @@ _PROBE_ERRORS = [
     "transport_error",
     "timeout",
     "exchange_unknown",
+    "vault_refused",
 ]
 #: D3 of #2417, round 2: only a credential the exchange no longer accepts makes a key dead.
 _DEAD_KEY_ERRORS = ("auth_error",)
@@ -137,6 +138,8 @@ _FAILED_READ_BAD_GATEWAY = (
     "service_unavailable",
     "exchange_unknown",
 )
+#: The vault refusing to sign: nothing was sent, so it is a 503 of its own, not an exchange answer.
+_FAILED_READ_VAULT = ("vault_refused",)
 #: The only key statuses a signed call may use (21-database-schema.md §3.2.3a, secrets/broker.py).
 _SIGNABLE_STATUSES = ("active", "rotating")
 _WARNINGS = ["key_expiring_soon", "clock_skew"]
@@ -897,8 +900,15 @@ def test_the_rules_apply_in_one_stated_order_a_successful_read_first_dead_last()
 
 def test_a_failed_read_names_the_answer_each_probe_error_gets_and_echoes_no_exchange_text() -> None:
     failed = _section("**A failed read.**")
-    assert set(_FAILED_READ_UNAVAILABLE) | set(_FAILED_READ_BAD_GATEWAY) == set(_FAILED_READ_ERRORS)
-    assert not set(_FAILED_READ_UNAVAILABLE) & set(_FAILED_READ_BAD_GATEWAY)
+    groups = (_FAILED_READ_UNAVAILABLE, _FAILED_READ_BAD_GATEWAY, _FAILED_READ_VAULT)
+    assert {error for group in groups for error in group} == set(_FAILED_READ_ERRORS)
+    assert sum(len(group) for group in groups) == len(_FAILED_READ_ERRORS)
+    assert (
+        "`vault_refused`, where the vault refused to sign and nothing was sent to the exchange, "
+        "also gives `503 exchange_unavailable` with `Retry-After`"
+    ) in failed
+    assert "the vault refused to sign; nothing was sent; retry" in failed
+    assert "never from the probe result. It has no `dead` branch" in failed
     assert (
         f"{_and(_FAILED_READ_UNAVAILABLE)}, where the exchange gave no answer, give "
         "`503 exchange_unavailable` with `Retry-After`"
@@ -1260,6 +1270,12 @@ def test_consequence_summary_is_served_by_the_409_and_by_its_up_front_read() -> 
     assert read["x-rbac"] == _op(_ACCOUNT, "patch")["x-rbac"]
     text = _text(_CONSEQUENCES, "get")
     assert "It has no side effects" in text
+    assert "writes no audit record of its own" in text
+    assert '"No audit record" means none of the route\'s own' in text
+    assert "`security.credential_borrowed`" in text
+    assert "`api_keys.last_used_at`" in text
+    assert "**The read.**" in _open_exposure()
+    assert "`security.credential_borrowed`" in _section("**The read.**")
     assert "A foreign account and an absent one get the same `404 not_found`, byte for byte" in text
     summary = _fold(_SCHEMAS["AccountConsequenceSummary"]["description"])
     assert "served in the `409 open_exposure` answer and by `getAccountConsequences`" in summary
