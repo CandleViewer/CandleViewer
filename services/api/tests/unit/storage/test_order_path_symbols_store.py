@@ -24,10 +24,13 @@ def test_symbols_statement_unions_open_positions_open_orders_and_recent_orders()
     sql = " ".join(
         str(stmt.compile(dialect=_ASYNCPG, compile_kwargs={"render_postcompile": True})).split()
     )
-    assert "FROM orders WHERE orders.state IN (" in sql and "orders.created_ts >= $1" in sql
-    assert "UNION SELECT positions.symbol AS symbol FROM positions WHERE positions.size > 0" in sql
+    assert "FROM orders WHERE orders.state IN (" in sql and "orders.created_ts >= $" in sql
+    assert "positions.symbol AS symbol, 0 AS prio FROM positions WHERE positions.size > 0" in sql
+    assert "CASE WHEN (orders.state IN (" in sql and "ELSE 1 END AS prio" in sql
     assert all(f"'{state}'" in sql for state in OPEN_STATES)
-    assert sql.endswith("ORDER BY anon_1.symbol LIMIT $2::INTEGER")
+    assert (
+        " GROUP BY anon_1.symbol ORDER BY min(anon_1.prio), anon_1.symbol LIMIT $" in sql
+    )  # positions and open orders ahead of the recent ones
     assert "exchange_account_id" not in sql and "SELECT *" not in sql  # symbols only
 
 
@@ -38,3 +41,11 @@ async def test_order_path_symbols_bad_limit_is_refused_before_any_statement(limi
     )
     with pytest.raises(ValueError, match="limit"):
         await store(since_us=0, limit=limit)
+
+
+def test_order_path_symbols_is_capped_at_one_second_where_the_app_binds_it() -> None:
+    store = SqlAlchemyOrderPathSymbols(
+        SqlAlchemyRelationalRepository("postgresql+asyncpg://u@localhost/x", "t"),
+        statement_timeout_ms=1000,
+    )
+    assert store._timeout == "1000"  # the server cancels before the 2 s asyncio bound

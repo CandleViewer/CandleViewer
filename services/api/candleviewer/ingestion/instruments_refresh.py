@@ -59,7 +59,7 @@ import asyncio
 import dataclasses
 import math
 import random
-from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -80,7 +80,7 @@ from candleviewer.ingestion.metrics import (
     instruments_catalogue_size,
     instruments_refresh_total,
 )
-from candleviewer.observability import spawn
+from candleviewer.observability import spawn, spawn_child
 
 _MIN_BACKOFF_S = 1.0
 _MAX_BACKOFF_S = 30.0
@@ -102,6 +102,11 @@ RISK_LIMITS_FETCH_TIMEOUT_S = 10.0
 RISK_LIMITS_REFRESH_BUDGET_S = 15.0
 #: S4-S-c (#913): the refreshed set holds at most this many symbols; the seed read asks no more.
 TIER_SYMBOLS_MAX = 100
+#: S4-S-c: the tier fetches of one refresh run this many at a time, so 100 symbols fit the budget.
+TIER_FETCH_CONCURRENCY = 4
+#: S4-S-c: after a refresh that left tiers unknown (budget spent, fetches failed), the next one
+#: comes after this long, doubling per such refresh in a row up to the TTL, not after the TTL.
+TIERS_RETRY_S = 60.0
 #: S4-S-c: a symbol with an order created this recently is seeded into the refresh (24 h).
 ORDER_PATH_WINDOW_S = 86_400
 #: S4-S-c: the seed read, at most this long; a late or failed read seeds nothing that tick.
@@ -147,11 +152,11 @@ class InstrumentsRepositoryLike(Protocol):
 
 class OrderPathSymbols(Protocol):
     """S4-S-c (#913): the symbols the order path needs tiers for: those of open positions and
-    open orders, and those with an order created at or after `since_us`, at most `limit`. The
-    composition root binds it over the order and position tables (M10), which this module never
-    imports (C-3.1)."""
+    open orders, and those with an order created at or after `since_us`, at most `limit`, the
+    first two kinds ahead of the third. The composition root binds it over the order and position
+    tables (M10), which this module never imports (C-3.1)."""
 
-    async def __call__(self, *, since_us: int, limit: int) -> Collection[str]: ...
+    async def __call__(self, *, since_us: int, limit: int) -> Sequence[str]: ...
 
 
 class BusPublisherLike(Protocol):
@@ -211,6 +216,8 @@ class InstrumentsRefreshScheduler:
         #: S-RL: the symbols each refresh re-fetches tiers for: the order path's (S4-S-c) and
         #: those fetched once on demand; catalogue symbols only, at most `TIER_SYMBOLS_MAX`.
         self._tier_symbols: set[str] = set()
+        #: S4-S-c: the last refresh fetched fewer tiers than it had symbols for; and how often so.
+        self._tiers_incomplete, self._tiers_streak = False, 0
         #: S4-S-c: `start()`'s refresh spends at most a quarter of its timeout on the tiers.
         self._starting = False
         #: S-RL: when a symbol's last tier fetch failed (the on-demand cooldown's start).
@@ -418,51 +425,62 @@ class InstrumentsRefreshScheduler:
         tiers: dict[str, tuple[RiskLimitTier, ...]] = {}
         if fetch is None:
             return tiers
-        self._tier_symbols = self._tier_set(parsed, await self._order_path_seed())
-        pending = sorted(self._tier_symbols)
+        pending = self._tier_set(parsed, await self._order_path_seed())
+        self._tier_symbols = set(pending)
         budget_s = self._risk_limits_budget_s
         if self._starting:
             budget_s = min(budget_s, self._start_timeout_s / 4)
+        gate = asyncio.Semaphore(TIER_FETCH_CONCURRENCY)
+
+        async def one(symbol: str) -> None:
+            async with gate:  # FIFO: the seeded symbols, first in `pending`, are fetched first
+                try:
+                    async with asyncio.timeout(RISK_LIMITS_FETCH_TIMEOUT_S):
+                        tiers[symbol] = tuple(await fetch(symbol))
+                except Exception as exc:  # the budget's cancellation is not an Exception
+                    self._tier_failed_us[symbol] = self._now_us()
+                    get_logger(__name__).warning(
+                        "risk_limits_fetch_failed", symbol=symbol, error=type(exc).__name__
+                    )
+
         try:
             async with asyncio.timeout(budget_s):
-                for symbol in pending:
-                    try:
-                        async with asyncio.timeout(RISK_LIMITS_FETCH_TIMEOUT_S):
-                            tiers[symbol] = tuple(await fetch(symbol))
-                    except Exception as exc:  # the budget's cancellation is not an Exception
-                        self._tier_failed_us[symbol] = self._now_us()
-                        get_logger(__name__).warning(
-                            "risk_limits_fetch_failed", symbol=symbol, error=type(exc).__name__
-                        )
+                async with asyncio.TaskGroup() as group:
+                    for symbol in pending:
+                        spawn_child(group, one(symbol), name="instruments-risk-limits-fetch")
         except TimeoutError:
             get_logger(__name__).warning(
                 "risk_limits_refresh_budget_spent",
                 budget_s=budget_s,
                 unknown=len(pending) - len(tiers),
             )
+        self._tiers_incomplete = len(tiers) < len(pending)
+        self._tiers_streak = self._tiers_streak + 1 if self._tiers_incomplete else 0
         return tiers
 
-    async def _order_path_seed(self) -> set[str]:
-        """S4-S-c: the order path's symbols (`order_path_symbols`), within
+    async def _order_path_seed(self) -> list[str]:
+        """S4-S-c: the order path's symbols (`order_path_symbols`) in its rank order, within
         `ORDER_PATH_SEED_TIMEOUT_S`; empty when none is wired or the read fails, logged by the
         error's type only."""
         read = self._order_path_symbols
         if read is None:
-            return set()
+            return []
         since_us = self._now_us() - ORDER_PATH_WINDOW_S * 1_000_000
         try:
             async with asyncio.timeout(ORDER_PATH_SEED_TIMEOUT_S):
-                return set(await read(since_us=since_us, limit=TIER_SYMBOLS_MAX))
+                return list(dict.fromkeys(await read(since_us=since_us, limit=TIER_SYMBOLS_MAX)))
         except Exception as exc:  # a timeout too: this tick refreshes the symbols already held
             get_logger(__name__).warning("risk_limits_seed_failed", error=type(exc).__name__)
-            return set()
+            return []
 
-    def _tier_set(self, parsed: Mapping[str, Instrument], seed: set[str]) -> set[str]:
-        """S4-S-c: the seed, then the symbols already held, at most `TIER_SYMBOLS_MAX`, and only
-        those the catalogue lists and not `closed`: a delisted symbol leaves, a failed one stays."""
+    def _tier_set(self, parsed: Mapping[str, Instrument], seed: list[str]) -> list[str]:
+        """S4-S-c: the seed in its rank order, then the symbols already held, at most
+        `TIER_SYMBOLS_MAX`, and only those the catalogue lists and not `closed`: a delisted
+        symbol leaves, a failed one stays. (A `closed` symbol that re-enters on demand is
+        dropped again at the next refresh.)"""
         listed = {symbol for symbol, i in parsed.items() if i.status != "closed"}
-        held = sorted((self._tier_symbols - seed) & listed)
-        return set([*sorted(seed & listed), *held][:TIER_SYMBOLS_MAX])
+        held = sorted((self._tier_symbols - set(seed)) & listed)
+        return [*(s for s in seed if s in listed), *held][:TIER_SYMBOLS_MAX]
 
     async def ensure_fresh(self, max_age_s: float, deadline_s: float) -> CatalogueSnapshot | None:
         """#906 (B8): the catalogue, fetched at most `max_age_s` ago and not marked stale, so the
@@ -658,6 +676,8 @@ class InstrumentsRefreshScheduler:
             if ok:
                 failures = 0
                 delay = self._ttl_seconds + self._ttl_seconds * 0.05 * self._random()
+                if self._tiers_incomplete:  # S4-S-c: seeded tiers still unknown: retry soon
+                    delay = min(delay, TIERS_RETRY_S * 2.0 ** min(self._tiers_streak - 1, 16))
                 if not await self._ttl_wait(delay):
                     ok = False  # an (on-demand) refresh failed meanwhile: retry soon
                     continue

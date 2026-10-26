@@ -160,7 +160,7 @@ async def test_hanging_tier_fetches_never_hold_the_catalogue_swap_past_the_budge
     snap = sched.snapshot()
     assert snap is not None and snap is not before and snap.get("BTCUSDT") is not None
     assert snap.risk_limit_tiers("BTCUSDT") is None and snap.risk_limit_tiers("ETHUSDT") is None
-    assert fetch.calls == ["BTCUSDT"]  # the budget ran out on the first; ETHUSDT stays unknown
+    assert sorted(fetch.calls) == ["BTCUSDT", "ETHUSDT"]  # both in flight; the budget cancels both
 
 
 async def test_a_symbol_joins_the_refresh_on_success_and_stays_after_repeated_failures() -> None:

@@ -19,17 +19,30 @@ _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 
 def symbols_statement(since: datetime, limit: int) -> sa.Select[Any]:
     """The distinct symbols of open positions, open orders and orders created at or after
-    `since`, the open states rendered as literals as `list_open_statement`'s are."""
+    `since`, the open states rendered as literals as `list_open_statement`'s are. Positions and
+    open orders rank ahead of the recent ones, then by symbol, so a `limit` drops the recent
+    ones first. The recent-orders arm has no index on `created_ts` (a carry for the next
+    `orders` migration)."""
     o, p = orders.c, positions.c
     states: sa.BindParameter[Any] = sa.bindparam(
         "open", sorted(OPEN_STATES), expanding=True, literal_execute=True
     )
-    by_order = sa.select(o.symbol.label("symbol")).where(
+    rank = sa.case(
+        (o.state.in_(states), sa.literal_column("0")), else_=sa.literal_column("1")
+    ).label("prio")
+    by_order = sa.select(o.symbol.label("symbol"), rank).where(
         sa.or_(o.state.in_(states), o.created_ts >= since)
     )
-    by_position = sa.select(p.symbol.label("symbol")).where(p.size > sa.literal_column("0"))
+    by_position = sa.select(p.symbol.label("symbol"), sa.literal_column("0").label("prio")).where(
+        p.size > sa.literal_column("0")
+    )
     both = sa.union(by_order, by_position).subquery()
-    return sa.select(both.c.symbol).order_by(both.c.symbol).limit(limit)
+    return (
+        sa.select(both.c.symbol)
+        .group_by(both.c.symbol)
+        .order_by(sa.func.min(both.c.prio), both.c.symbol)
+        .limit(limit)
+    )
 
 
 class SqlAlchemyOrderPathSymbols(CappedStore):

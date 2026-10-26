@@ -25,6 +25,7 @@ class _Seed:
     def __init__(self, *held: str, created: Collection[tuple[str, int]] = ()) -> None:
         self.held, self.created, self.asks = set(held), created, list[tuple[int, int]]()
         self.fail = self.hang = False
+        self.ranked: list[str] | None = None  # the port's rank order, when a test sets one
 
     async def __call__(self, *, since_us: int, limit: int) -> Collection[str]:
         self.asks.append((since_us, limit))
@@ -32,6 +33,8 @@ class _Seed:
             await asyncio.Event().wait()
         if self.fail:
             raise ConnectionError("postgres down")
+        if self.ranked is not None:
+            return self.ranked[:limit]
         return sorted(self.held | {s for s, at in self.created if at >= since_us})[:limit]
 
 
@@ -127,3 +130,79 @@ async def test_start_seeded_tiers_never_hold_the_startup_refresh_past_its_timeou
         assert snap is not None and snap.stale_since_us is None and fetch.calls == ["BTCUSDT"]
     finally:
         await sched.stop()
+
+
+async def test_refresh_fetches_the_seed_in_its_rank_order_before_the_symbols_held(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(refresh_mod, "TIER_FETCH_CONCURRENCY", 1)
+    fetch, seed = _Fetch(), _Seed()
+    sched = _sched(fetch, seed)
+    await sched.refresh_now()
+    await sched.ensure_risk_limits("ETHUSDT")  # held from a detail-route visit
+    seed.ranked = ["SOLUSDT", "BTCUSDT"]  # positions and open orders first, not by name
+    await sched.refresh_now()
+    assert fetch.calls == ["ETHUSDT", "SOLUSDT", "BTCUSDT", "ETHUSDT"]
+
+
+async def test_refresh_set_cap_keeps_the_rank_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(refresh_mod, "TIER_SYMBOLS_MAX", 2)
+    fetch, seed = _Fetch(), _Seed()
+    seed.ranked = ["SOLUSDT", "ETHUSDT", "BTCUSDT"]  # the port honours `limit`; the cap holds too
+    await _sched(fetch, seed).refresh_now()
+    assert sorted(fetch.calls) == ["ETHUSDT", "SOLUSDT"]
+
+
+async def test_refresh_fetches_tiers_concurrently_within_the_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(refresh_mod, "TIER_FETCH_CONCURRENCY", 2)
+    running = peak = 0
+    plain = _Fetch()
+
+    async def fetch(symbol: str) -> Any:
+        nonlocal running, peak
+        running += 1
+        peak = max(peak, running)
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        running -= 1
+        return await plain(symbol)
+
+    sched = _sched(fetch, _Seed("BTCUSDT", "ETHUSDT", "SOLUSDT"))  # type: ignore[arg-type]
+    await sched.refresh_now()
+    assert peak == 2 and sorted(plain.calls) == ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+
+
+class _Parking:
+    """Fake schedule `sleep`: records each delay and parks until `stop()` cancels the task."""
+
+    def __init__(self) -> None:
+        self.delays: list[float] = []
+
+    async def __call__(self, delay: float) -> None:
+        self.delays.append(delay)
+        await asyncio.Event().wait()
+
+
+async def _first_schedule_wait(fetch: _Fetch, start_timeout_s: float) -> float:
+    park = _Parking()
+    sched = _sched(fetch, _Seed("BTCUSDT"), sleep=park, random_fn=lambda: 0.0,
+                   start_timeout_s=start_timeout_s)  # fmt: skip
+    await sched.start()
+    try:
+        for _ in range(20):
+            await asyncio.sleep(0)
+        return park.delays[0]
+    finally:
+        await sched.stop()
+
+
+async def test_start_that_leaves_seeded_tiers_unknown_is_followed_by_a_short_retry() -> None:
+    fetch = _Fetch()
+    fetch.hang = True  # the quarter-budget is spent before the symbol answers
+    assert await _first_schedule_wait(fetch, 0.4) == refresh_mod.TIERS_RETRY_S
+
+
+async def test_start_that_reaches_every_seeded_tier_waits_the_ttl() -> None:
+    assert await _first_schedule_wait(_Fetch(), 10.0) == 43_200.0

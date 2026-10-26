@@ -35,12 +35,13 @@ async def test_order_path_symbols_reads_positions_open_orders_and_the_last_24_ho
     rel: SqlAlchemyRelationalRepository, pg_dsn: str
 ) -> None:
     orders, account = SqlAlchemyOrderStore(rel), _account(pg_dsn)
-    held, opened, recent, old = _symbol(), _symbol(), _symbol(), _symbol()
+    held, opened, old = "Z" + _symbol(), "Y" + _symbol(), _symbol()
+    recent = "A" + _symbol()  # sorts first by name, so only the rank puts it last
     now = datetime.now(UTC)
     await SqlAlchemyPositionStore(rel, clock=lambda: now).upsert(
         PositionState(exchange_account_id=account, symbol=held, size=Decimal("0.010"))
     )
-    await orders.create(_order(account, symbol=opened, state="new"), _event())
+    await orders.create(_order(account, symbol=opened, state="accepted"), _event())
     for symbol, hours in ((recent, 23), (old, 25)):
         done = await orders.create(_order(account, symbol=symbol, state="filled"), _event())
         _sql(pg_dsn, "UPDATE orders SET created_ts = now() - make_interval(hours => %s) "
@@ -48,5 +49,7 @@ async def test_order_path_symbols_reads_positions_open_orders_and_the_last_24_ho
     since_us = int((now - timedelta(hours=24)).timestamp() * 1_000_000)
     symbols = await SqlAlchemyOrderPathSymbols(rel)(since_us=since_us, limit=10_000)
     assert {held, opened, recent} <= set(symbols) and old not in symbols
-    assert list(symbols) == sorted(set(symbols))  # distinct, in symbol order
+    assert len(symbols) == len(set(symbols))  # distinct
+    ours = [symbol for symbol in symbols if symbol in {held, opened, recent}]
+    assert ours == [opened, held, recent]  # positions and open orders, then recent, by name
     assert len(await SqlAlchemyOrderPathSymbols(rel)(since_us=since_us, limit=2)) == 2

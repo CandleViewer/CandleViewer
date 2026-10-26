@@ -3347,7 +3347,7 @@ def wire_instrument_catalogue(
         publish=_publish,
         fetch_risk_limits=fetch_risk_limits,
         order_path_symbols=(
-            SqlAlchemyOrderPathSymbols(relational)
+            SqlAlchemyOrderPathSymbols(relational, statement_timeout_ms=1000)
             if ctx.settings.storage_backend == "real"
             else None
         ),

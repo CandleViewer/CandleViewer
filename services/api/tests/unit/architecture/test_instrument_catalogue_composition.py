@@ -72,7 +72,7 @@ def test_deployed_app_attaches_the_catalogue_when_it_talks_to_the_exchange(
     assert closers.count("BybitRestClient.aclose") == int(attached or public_ws)
     if attached:  # S4-S-c (#913): the order path's symbols seed the tiers, over the same pool
         seed = ingestion.instruments._order_path_symbols
-        assert isinstance(seed, SqlAlchemyOrderPathSymbols)
+        assert isinstance(seed, SqlAlchemyOrderPathSymbols) and seed._timeout == "1000"
         assert seed._relational in [getattr(c, "__self__", None) for c in ingestion._closers]
 
 
