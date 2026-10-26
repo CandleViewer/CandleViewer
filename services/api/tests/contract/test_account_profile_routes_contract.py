@@ -659,7 +659,7 @@ def test_a_profile_and_the_binding_name_the_accounts_environment() -> None:
 #: D4: every existing test the E28 model's cells credit to #906's slices and routes, by name.
 _CREDITED = (
     "test_every_mounted_dangerous_write_route_is_gated",
-    "test_a_profile_write_without_step_up_is_403_and_audited_before_the_handler",
+    "test_a_profile_write_without_step_up_is_403_and_audited_by_its_handler",
     "test_profile_write_without_step_up_is_403_and_changes_nothing",
     "test_cell_outcome_matches_matrix",
     "test_every_disallowed_profile_write_cell_is_403_audited_and_changes_nothing",
