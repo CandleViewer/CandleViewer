@@ -931,8 +931,7 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     `tests/unit/credentials_m2/test_degraded_wiring.py`."""
     if settings.storage_backend != "real":
         return build_secrets_service(audit=audit)
-    dsn = settings.pg_dsn.get_secret_value()
-    relational = SqlAlchemyRelationalRepository(dsn, "secrets")
+    relational = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "secrets")
     audit_row = secrets_audit_row(settings.environment.value)
     store = SqlAlchemyCredentialStore(relational, audit_row=audit_row)  # #2266: in-tx records
     # #3505: a KEK re-wrap run counts this environment's auth keyring rows.
@@ -944,7 +943,9 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
         connections: int,
     ) -> tuple[SqlAlchemyCredentialStore, Callable[[], Awaitable[None]]]:
         # #913 L1d (Q10): the order lane's credential reads, over a small lazy pool of their own,
-        # which M2 alone builds on the lane's loop, holds and releases after its signing closes
+        # which M2 alone builds on the lane's loop, holds, and frees once its signing closes. The
+        # DSN is unwrapped here, at the call: the closure keeps `settings`, never the plaintext.
+        dsn = settings.pg_dsn.get_secret_value()
         pool = SqlAlchemyRelationalRepository(
             dsn, "oms-secrets", pool_size=connections, max_overflow=0
         )
