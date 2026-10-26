@@ -15,6 +15,12 @@ docs/research/
 **/_generated/
 # Backlog/board tooling scripts, repo-internal and not shipped (#1778 B5)
 docs/plan/backlog/_tools/
+# Design audit tools: lane-run scripts executed locally with `python -I`, never deployed and never
+# imported by services/api, apps/ or packages/; no cv-* rule includes them by path, and the tree-wide
+# rules lose only offline scripts with no network, key or exchange use. One is over 1 MB and trips
+# Semgrep's per-rule timeouts on slow runners, which the gate rightly refuses as a partial scan
+# (#4614). CodeQL (python) keeps scanning them; Bandit never did (`-r services/api/...`).
+/docs/design/_tools/
 # Rule-test fixtures intentionally contain violations; they are scanned explicitly by tools/ci/check_semgrep_rule_tests.py (#1778 B5)
 /.semgrep/tests/
 # YAML rule-test fixture lives outside the config dir so `--config .semgrep` validates (#2066); same treatment
