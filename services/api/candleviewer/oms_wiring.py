@@ -1091,8 +1091,8 @@ class ServedTierRequests:
     there, a symbol already waiting adding nothing. A request past that is counted `full`, and
     one the catalogue drops is counted by its reason (`full`, `stopped`); none raises into its
     caller. A request the closed serving loop cannot take is not this counter's: `Serving`
-    counts it (`oms_lane_notices_failed_total{lost}`), and the runtime's stop ends the wait
-    (`close`)."""
+    counts it (`oms_lane_notices_failed_total{lost}`); that symbol stays waiting, so a repeat
+    request for it adds nothing until the runtime's stop ends the wait (`close`)."""
 
     def __init__(self, catalogue: InstrumentCatalogue, serving: Serving, metrics: Metrics) -> None:
         self._catalogue, self._serving = catalogue, serving

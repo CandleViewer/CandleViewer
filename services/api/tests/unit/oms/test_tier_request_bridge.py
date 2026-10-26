@@ -129,6 +129,7 @@ def test_a_closed_serving_loop_is_counted_by_the_serving_bridge_and_never_raises
     bridge.request_tiers("BTCUSDT")  # never raises into its caller
     assert _lost(metrics) == 1 and _dropped(metrics, "stopped") == 0
     assert catalogue.calls == []
+    assert bridge._pending == {"BTCUSDT"}  # it waits until `close`; a repeat adds nothing
 
 
 async def test_close_clears_the_symbols_still_waiting() -> None:
