@@ -131,7 +131,8 @@ async def account_fixture_guard(
     """#2893 S8, for the lifespan before any module starts: the dev package's boot guard refuses
     boot (`AccountFixtureRefused`) while the database holds a key the stub must never answer for;
     a pass logs a warning and (S12b) builds `fixture`'s transport and socket on `gate`, which
-    until then refuse everything. Unset, it imports nothing and returns None."""
+    until then refuse everything; without both, it refuses boot. Unset, it imports nothing and
+    returns None."""
     if settings.account_fixture is None:
         return None
     guard: Callable[

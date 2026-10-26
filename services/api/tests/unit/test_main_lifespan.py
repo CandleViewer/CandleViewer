@@ -15,11 +15,12 @@ import asyncio
 import os
 import re
 import threading
-from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from structlog.testing import capture_logs
@@ -34,9 +35,10 @@ from candleviewer.audit.service import AuditService
 from candleviewer.main import _lifespan
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment, FeedMode, Settings
-from cvdev.account_fixture import boot, wiring
+from cvdev.account_fixture import boot, guards
 from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.boot import StoredKey
+from cvdev.account_fixture.wiring import NOT_BUILDABLE
 from tests._account_fixtures import PACK_ROOT
 
 
@@ -331,24 +333,42 @@ async def test_lifespan_stops_every_module_when_the_test_clock_audit_is_cancelle
     assert (ctx.storage.stopped, ctx.audit.stopped, ctx.ws.stopped) == (True, True, True)
 
 
-def _fixture_app(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, audit: object
-) -> tuple[FastAPI, SimpleNamespace]:
-    """The harness with the fixture on (#2893 S8) and the checkout's pack."""
+_FixtureApp = Callable[[object], tuple[FastAPI, SimpleNamespace]]
+
+
+@pytest.fixture
+def fixture_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[_FixtureApp]:
+    """The harness with the fixture on (#2893 S8) and the checkout's pack, left as `create_app()`
+    leaves it (S12b): the door on `app.state`, a real read-only gate on the context, a fresh
+    once-a-process build. A built pair's request log lives for the process in production; here
+    it is closed once the test ends."""
     for name in [n for n in os.environ if n.upper().startswith("CV_")]:
         monkeypatch.delenv(name)
     monkeypatch.setattr(account_pack, "PACK_ROOT", PACK_ROOT)  # the guard's and the build's
-    app, ctx = FastAPI(), _fake_ctx()
-    ctx.settings = Settings(
-        environment=Environment.DEMO,
-        feed=FeedMode.SYNTHETIC,
-        account_fixture="compliant",
-        account_fixture_dir=str(tmp_path / "state"),
-        metrics_enabled=False,
-    )
-    ctx.audit = audit
-    app.state.app_context = ctx
-    return app, ctx
+    monkeypatch.setattr(guards, "BUILD_ONCE", threading.Lock())
+    (tmp_path / "state").mkdir(mode=0o700)
+    apps: list[FastAPI] = []
+
+    def _make(audit: object) -> tuple[FastAPI, SimpleNamespace]:
+        app, ctx = FastAPI(), _fake_ctx()
+        ctx.settings = Settings(
+            environment=Environment.DEMO,
+            feed=FeedMode.SYNTHETIC,
+            account_fixture="compliant",
+            account_fixture_dir=str(tmp_path / "state"),
+            metrics_enabled=False,
+        )
+        ctx.audit, ctx.oms_read_only_gate = audit, ReadOnlyGate()
+        app.state.app_context = ctx
+        app.state.account_fixture = build_account_fixture(ctx.settings)
+        apps.append(app)
+        return app, ctx
+
+    yield _make
+    for app in apps:
+        armed = getattr(getattr(app.state, "account_fixture", None), "armed", None)
+        if armed is not None:
+            armed.transport.log.close()
 
 
 def _modules(ctx: SimpleNamespace) -> list[_FakeModule]:
@@ -362,13 +382,13 @@ class _AuditAfterStart(_FakeAudit):
 
 
 async def test_a_refused_boot_starts_no_module(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_app: _FixtureApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     async def _a_live_key(settings: Settings) -> Sequence[StoredKey]:
         return [StoredKey(env="live", key_id_last4="Ab12")]
 
     monkeypatch.setattr(boot, "read_stored_keys", _a_live_key)
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit())
+    app, ctx = fixture_app(_FakeAudit())
 
     with pytest.raises(AccountFixtureRefused, match=re.escape("1 outside demo (live 1)")):
         await _lifespan(app).__aenter__()
@@ -378,11 +398,11 @@ async def test_a_refused_boot_starts_no_module(
 
 
 async def test_the_lifespan_decides_before_any_module_starts_and_records_after(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_app: _FixtureApp, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """With an audit writer, as on the real backend (the read is faked): the guard reads before
     any module starts, and its record is written once they run, before serving."""
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _AuditAfterStart())
+    app, ctx = fixture_app(_AuditAfterStart())
     started_at_read: list[bool] = []
 
     async def _read(settings: Settings) -> Sequence[StoredKey]:
@@ -396,11 +416,11 @@ async def test_the_lifespan_decides_before_any_module_starts_and_records_after(
 
 
 async def test_on_the_fake_backend_the_warning_is_the_only_record(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_app: _FixtureApp,
 ) -> None:
     """The real fake-backend path: no key is stored and `AuditService` has no writer (`is_active`
     is False and `writer` raises), so the guard passes with its warning and nothing is written."""
-    app, ctx = _fixture_app(tmp_path, monkeypatch, AuditService())
+    app, ctx = fixture_app(AuditService())
 
     with capture_logs() as logs:
         async with _lifespan(app):
@@ -413,9 +433,9 @@ async def test_on_the_fake_backend_the_warning_is_the_only_record(
 
 
 async def test_a_failed_boot_record_stops_every_module_and_raises(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_app: _FixtureApp,
 ) -> None:
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit(failure=RuntimeError("audit down")))
+    app, ctx = fixture_app(_FakeAudit(failure=RuntimeError("audit down")))
 
     with pytest.raises(RuntimeError, match="audit down"):
         await _lifespan(app).__aenter__()
@@ -424,18 +444,44 @@ async def test_a_failed_boot_record_stops_every_module_and_raises(
 
 
 async def test_a_passed_guard_builds_the_fixture_pair_on_the_process_gate(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    fixture_app: _FixtureApp,
 ) -> None:
     """#2893 S12b: as `create_app()` leaves it, the door on `app.state`, the gate on the context."""
-    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit())
-    (tmp_path / "state").mkdir(mode=0o700)
-    monkeypatch.setattr(wiring, "_ONCE", threading.Lock())
-    app.state.account_fixture = build_account_fixture(ctx.settings)
-    ctx.oms_read_only_gate = ReadOnlyGate()
+    app, ctx = fixture_app(_FakeAudit())
 
     async with _lifespan(app):
         armed = app.state.account_fixture.armed
         assert armed is not None and armed.transport._gate is ctx.oms_read_only_gate
+
+
+async def test_switched_on_without_its_handle_the_boot_is_refused_and_nothing_runs(
+    fixture_app: _FixtureApp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Security review M-1: the switch on and no door on `app.state` would leave the adapter on
+    its real transport and socket, so boot is refused before the guard reads a key, with no
+    module started, nothing built, no request sent and no boot record."""
+    sent: list[httpx.Request] = []
+    reads: list[Settings] = []
+
+    async def _send(transport: httpx.AsyncHTTPTransport, request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise AssertionError("no request leaves a refused boot")
+
+    async def _read(settings: Settings) -> Sequence[StoredKey]:
+        reads.append(settings)
+        return []
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", _send)
+    monkeypatch.setattr(boot, "read_stored_keys", _read)
+    app, ctx = fixture_app(_FakeAudit())
+    del app.state.account_fixture
+
+    with pytest.raises(AccountFixtureRefused, match=re.escape(NOT_BUILDABLE)):
+        await _lifespan(app).__aenter__()
+
+    assert not [m for m in _modules(ctx) if m.started]
+    assert (ctx.mesh_self_check.run_once_calls, ctx.audit.actions) == (0, [])
+    assert (sent, reads, os.listdir(tmp_path / "state")) == ([], [], [])
 
 
 async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_stops() -> None:
