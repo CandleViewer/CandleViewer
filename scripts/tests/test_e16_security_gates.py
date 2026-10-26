@@ -49,6 +49,9 @@ async def export_symbol(table, symbol: str, archive_path: str) -> None:
     target = Path(archive_path) / f"{symbol}.parquet"
     pq.write_table(table, target)
 '''
+# The same defect with the unchecked path held in a local named like a registry-resolved target:
+# a variable name is no proof of where the path came from.
+PLANTED_RENAMED = PLANTED.replace("target", "dest")
 CLEAN = '''"""A Parquet write through the registry-resolved partition directory."""
 import pyarrow.parquet as pq
 
@@ -135,7 +138,10 @@ def test_rule_is_clean_on_production_tree(rule: str) -> None:
 
 
 @needs_semgrep
-def test_a_planted_unvalidated_parquet_write_fails_the_scan(tmp_path: Path) -> None:
+@pytest.mark.parametrize("planted_source", [PLANTED, PLANTED_RENAMED], ids=["target", "dest"])
+def test_a_planted_unvalidated_parquet_write_fails_the_scan(
+    tmp_path: Path, planted_source: str
+) -> None:
     recorder = tmp_path / "services" / "api" / "candleviewer" / "recorder"
     recorder.mkdir(parents=True)
     clean_file = "services/api/candleviewer/recorder/clean_export.py"
@@ -145,7 +151,7 @@ def test_a_planted_unvalidated_parquet_write_fails_the_scan(tmp_path: Path) -> N
     assert clean.returncode == 0, clean.stdout + clean.stderr
     assert json.loads(clean.stdout)["paths"]["scanned"] == [clean_file]  # scanned, and quiet
 
-    (tmp_path / planted_file).write_text(PLANTED, encoding="utf-8")
+    (tmp_path / planted_file).write_text(planted_source, encoding="utf-8")
     planted = _scan_error(WRITE_RULE, tmp_path, clean_file, planted_file)
     assert planted.returncode == 1, planted.stderr
     found = [(r["path"], r["start"]["line"]) for r in json.loads(planted.stdout)["results"]]

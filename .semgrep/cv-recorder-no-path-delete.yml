@@ -18,10 +18,18 @@ rules:
       - pattern: os.remove(...)
       - pattern: shutil.rmtree(...)
       - pattern: os.rmdir(...)
+      - pattern: os.removedirs(...)
       - pattern: $P.rmdir()
       - pattern: shutil.move(...)
       - pattern: os.rename(...)
       - pattern: os.replace(...)
+      # Path.rename/replace only on a value typed as a Path: an untyped `.replace(...)` is far
+      # more often str.replace or a dataclass/model copy.
+      - patterns:
+          - pattern-either:
+              - pattern: $P.rename(...)
+              - pattern: $P.replace(...)
+          - metavariable-type: { metavariable: $P, types: [pathlib.Path] }
     paths:
       include:
         - "services/api/candleviewer/recorder/**"

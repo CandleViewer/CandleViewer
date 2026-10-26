@@ -15,6 +15,8 @@ def planted(root):
 async def planted_async(root):
     await asyncio.create_subprocess_exec("du", root)  # ruleid: cv-recorder-no-subprocess
     await asyncio.create_subprocess_shell(f"df {root}")  # ruleid: cv-recorder-no-subprocess
+    await asyncio.subprocess.create_subprocess_exec("du", root)  # ruleid: cv-recorder-no-subprocess
+    await asyncio.subprocess.create_subprocess_shell(f"df {root}")  # ruleid: cv-recorder-no-subprocess
 
 
 def good(root):

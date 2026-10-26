@@ -3,7 +3,8 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      Directory- or partition-level destruction (`DROP PARTITION`, `DROP TABLE`, `TRUNCATE`,
+      Directory- or partition-level destruction (`DROP PARTITION`, `DETACH PARTITION`,
+      `DROP TABLE`, `TRUNCATE TABLE`, in any letter case;
       shutil.rmtree, os.rmdir/removedirs) outside the audited retention sites. Recorded data is
       deleted only in storage/cold/retention_ops.py (the reaper's cold delete) and
       storage/cold/rolloff_ops.py (the hot drop after a verified export), each behind
@@ -18,11 +19,14 @@ rules:
       - pattern: os.removedirs(...)
       - pattern: $P.rmdir()
       # SQL text in code, not in a comment or a docstring line: the line is not a comment and
-      # holds no triple quote. Accepted blind spots: a multi-line docstring body naming the
-      # statement, and SQL written inside a one-line triple-quoted string; `# nosemgrep` with a
-      # reason is the escape.
-      - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bDROP\s+(PARTITION|TABLE)\b'
-      - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bTRUNCATE\s+TABLE\b'
+      # holds no triple quote; matched in any letter case. A bare `TRUNCATE` (no `TABLE`) is not
+      # matched: the word is common in prose and QuestDB spells the statement `TRUNCATE TABLE`.
+      # Accepted blind spots: a multi-line docstring body naming the statement, SQL written
+      # inside a one-line triple-quoted string, and a statement split across lines or string
+      # fragments; `# nosemgrep: <rule-id>` with a reason is the escape.
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\b(DROP|DETACH)\s+PARTITION\b'
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bDROP\s+TABLE\b'
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bTRUNCATE\s+TABLE\b'
     paths:
       include:
         - "services/api/candleviewer/**"
@@ -30,7 +34,6 @@ rules:
       exclude:
         - "services/api/candleviewer/storage/cold/retention_ops.py"
         - "services/api/candleviewer/storage/cold/rolloff_ops.py"
-        - "services/api/candleviewer/recorder/wal.py" # its own runs dir, rebuilt on a torn run
         - "services/api/candleviewer/observability/support_bundle.py" # its own temp work dir
         - "services/api/candleviewer/migrations/**" # Alembic downgrades and append-only triggers
         - "services/api/candleviewer/storage/questdb/runner.py" # schema bootstrap docstring

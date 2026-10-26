@@ -223,6 +223,7 @@ class SpillWal:
         if (self.runs_dir / _READY).exists():
             recovered = _tree_bytes(self.runs_dir)
         else:
+            # nosemgrep: cv-recorder-destructive-outside-retention reason=own-runs-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
             shutil.rmtree(self.runs_dir, ignore_errors=True)  # torn run build: rebuilt
             recovered = 0
         recovered += _tree_bytes(self.spill_path) + _tree_bytes(self.replay_path)
@@ -294,9 +295,11 @@ class SpillWal:
 
     def _discard_runs(self) -> None:
         self._budget.used -= _tree_bytes(self.runs_dir)
+        # nosemgrep: cv-recorder-destructive-outside-retention reason=own-runs-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
         shutil.rmtree(self.runs_dir, ignore_errors=True)
 
     def _build_runs(self) -> ReplayPrep:
+        # nosemgrep: cv-recorder-destructive-outside-retention reason=own-runs-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
         shutil.rmtree(self.runs_dir, ignore_errors=True)
         self.runs_dir.mkdir(mode=0o700)
         size = self.replay_path.stat().st_size

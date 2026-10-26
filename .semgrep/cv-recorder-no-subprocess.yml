@@ -24,6 +24,8 @@ rules:
           - metavariable-regex: { metavariable: $F, regex: "^(exec|spawn)[a-z]*$" }
       - pattern: asyncio.create_subprocess_exec(...)
       - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: asyncio.subprocess.create_subprocess_exec(...)
+      - pattern: asyncio.subprocess.create_subprocess_shell(...)
       - pattern: pty.spawn(...)
     paths:
       include:

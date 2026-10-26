@@ -3,8 +3,8 @@ rules:
     languages: [python]
     severity: ERROR
     message: >-
-      Filesystem write (Parquet writer, open for write, write_bytes/write_text) on a path that is
-      not derived from the cold-layout registry (DatasetRegistry / ColdPaths) or the recorder's
+      Filesystem write (Parquet writer, open/os.open for write, write_bytes/write_text) on a path
+      that is not derived from the cold-layout registry (DatasetRegistry / ColdPaths) or the recorder's
       own WAL directory. A write path built from unvalidated components can land outside the
       recording volume (path traversal, SR-097). Build every path from validated components
       through DatasetRegistry.resolve_partition.
@@ -32,18 +32,38 @@ rules:
               - metavariable-regex:
                   metavariable: $MODE
                   regex: "^[wax]"
+          - patterns:
+              - pattern: open($P, mode="$MODE", ...)
+              - metavariable-regex:
+                  metavariable: $MODE
+                  regex: "^[wax]"
+          - patterns:
+              - pattern: $P.open(mode="$MODE", ...)
+              - metavariable-regex:
+                  metavariable: $MODE
+                  regex: "^[wax]"
+          # A low-level open with a write flag; O_RDWR stays out, so an fsync-only open is quiet.
+          - patterns:
+              - pattern: os.open($P, <... os.$FLAG ...>, ...)
+              - metavariable-regex:
+                  metavariable: $FLAG
+                  regex: "^O_(WRONLY|CREAT|APPEND|TRUNC)$"
       - metavariable-regex:
           metavariable: $P
-          # Allowed path roots: the registry's ColdPaths fields, a registry-resolved target
-          # (`dest`/`tmp_path` of the atomic writer), the recorder WAL's own directory members, a
-          # temp name next to a registry path, and `self._path(...)` (closed-charset ledger and
-          # checkpoint names). A heuristic: the roots are matched as substrings of the path
-          # expression, so an unchecked path that merely contains one (`user_dir / "tmp"`) passes;
-          # the runtime containment checks and the dynamic review stay the backstop.
-          regex: '^(?!.*(paths\.|partition_dir|manifests_dir|\.root\b|registry|wal_dir|runs_dir|replay_path|spill_path|corrupt_dir|_meta\(|self\.tmp_path|self\.dest|self\.path\b|self\._path\b|self\._dir\b|\bdest\b|\btmp\b|staged|sidecar)).*$'
+          # Allowed path roots: the registry's ColdPaths fields, the atomic writer's own
+          # registry-resolved attributes (`self.dest`/`self.tmp_path`), the recorder WAL's own
+          # directory members, a temp name next to a registry path, and `self._path(...)`
+          # (closed-charset ledger and checkpoint names). A bare local `dest`/`tmp` is not a root:
+          # any unchecked path can be held in a variable of that name. A heuristic: the roots are
+          # matched as substrings of the path expression, so an unchecked path that merely
+          # contains one (`user_dir / "staged"`) passes; the runtime containment checks and the
+          # dynamic review stay the backstop.
+          regex: '^(?!.*(paths\.|partition_dir|manifests_dir|\.root\b|registry|wal_dir|runs_dir|replay_path|spill_path|corrupt_dir|_meta\(|self\.tmp_path|self\.dest|self\.path\b|self\._path\b|self\._dir\b|staged|sidecar)).*$'
     paths:
       include:
         - "services/api/candleviewer/recorder/**"
         - "services/api/candleviewer/storage/cold/**"
         - "services/api/candleviewer/*wiring.py"
         - "**/cv-recorder-fs-write-unvalidated-path*"
+      exclude:
+        - "services/api/candleviewer/recorder/wal.py" # its own WAL directory (named in the message)

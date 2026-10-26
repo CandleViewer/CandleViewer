@@ -273,6 +273,7 @@ class ColdExporter:
                     source="questdb",
                 )
                 if writer is None:
+                    # nosemgrep: cv-recorder-fs-write-unvalidated-path reason=dest-from-partition-dir owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
                     writer = AtomicParquetWriter(
                         dest,
                         batch.schema,

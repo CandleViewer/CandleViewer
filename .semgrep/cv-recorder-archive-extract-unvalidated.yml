@@ -17,6 +17,9 @@ rules:
           - pattern: tarfile.open(...).extractall(...)
           - pattern: tarfile.open(...).extract(...)
           - pattern: tarfile.TarFile(...).extractall(...)
+          - pattern: tarfile.TarFile(...).extract(...)
+          - pattern: tarfile.TarFile.open(...).extractall(...)
+          - pattern: tarfile.TarFile.open(...).extract(...)
           - pattern: zipfile.ZipFile(...).extractall(...)
           - pattern: zipfile.ZipFile(...).extract(...)
           - pattern: shutil.unpack_archive(...)
@@ -32,6 +35,25 @@ rules:
                     ...
               - pattern: $Z.$M(...)
               - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  with tarfile.TarFile.open(...) as $T:
+                    ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  $T = tarfile.TarFile.open(...)
+                  ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          # A handle passed in with its type annotated.
+          - patterns:
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+              - metavariable-type:
+                  metavariable: $T
+                  types: [tarfile.TarFile, zipfile.ZipFile]
           - patterns:
               - pattern-inside: |
                   $T = tarfile.open(...)

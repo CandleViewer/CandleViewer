@@ -9,7 +9,18 @@ def planted(key, root):
     os.remove(root)  # ruleid: cv-recorder-no-path-delete
     shutil.rmtree(root)  # ruleid: cv-recorder-no-path-delete
     os.replace(root, root + ".old")  # ruleid: cv-recorder-no-path-delete
+    os.removedirs(root)  # ruleid: cv-recorder-no-path-delete
+
+
+def planted_typed(part: Path, target: Path):
+    part.rename(target)  # ruleid: cv-recorder-no-path-delete
+    part.replace(target)  # ruleid: cv-recorder-no-path-delete
 
 
 async def good(cold, symbol, stream, key):
     return await cold.delete(symbol, stream, key)  # ok: cv-recorder-no-path-delete
+
+
+def good_untyped_replace(name: str, record):
+    label = name.replace("-", "_")  # ok: cv-recorder-no-path-delete
+    return label, record.replace(name=label)  # ok: cv-recorder-no-path-delete
