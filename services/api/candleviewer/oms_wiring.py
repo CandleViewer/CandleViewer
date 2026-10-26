@@ -43,7 +43,13 @@ from candleviewer.domain.events import Instrument
 from candleviewer.domain.order_entry import OrderEntryCheck, OrderEntryRefusal
 from candleviewer.domain.primitives import AccountId, Environment, GroupId, Px, Symbol
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
-from candleviewer.exchange.base.models import AccountRef, RateHeadroom, RateLane, TickerEvent
+from candleviewer.exchange.base.models import (
+    AccountRef,
+    RateHeadroom,
+    RateLane,
+    RiskLimitTier,
+    TickerEvent,
+)
 from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.metrics import BoundedMetric, Metrics
@@ -58,6 +64,7 @@ from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.cancel_all_fold import CancelAllSpacer
 from candleviewer.oms.clock_halt import ClockHalt
 from candleviewer.oms.commands import NEVER_SENT_ALERT, OmsCommandPort
+from candleviewer.oms.day_figures import DayRiskFigures, Tiers
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     AuditNotDurable,
@@ -426,6 +433,8 @@ class ClockHealthBinding:
 class CatalogueReading(Protocol):
     def get(self, symbol: str) -> Instrument | None: ...
 
+    def risk_limit_tiers(self, symbol: str) -> Sequence[RiskLimitTier] | None: ...
+
 
 class InstrumentCatalogue(Protocol):
     """`ingestion.instruments_refresh.InstrumentsRefreshScheduler`'s read (24 Sec.1.3), and its
@@ -434,6 +443,17 @@ class InstrumentCatalogue(Protocol):
     def snapshot(self) -> CatalogueReading | None: ...
 
     def request_tiers(self, symbol: str) -> Literal["full", "stopped"] | None: ...
+
+
+def _tiers(catalogue: InstrumentCatalogue | None) -> Tiers:
+    """A symbol's risk-limit tiers from the catalogue's snapshot, read in place (no fetch on the
+    lane); None with no catalogue, no snapshot, or tiers not fetched yet."""
+
+    def tiers(symbol: Symbol) -> Sequence[RiskLimitTier] | None:
+        snapshot = None if catalogue is None else catalogue.snapshot()
+        return None if snapshot is None else snapshot.risk_limit_tiers(symbol)
+
+    return tiers
 
 
 class InstrumentsBinding:
@@ -1999,7 +2019,10 @@ class OmsRuntime:
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
             # S4-S-b3: built and announced; S4-S-b2 hands it to the size step (24 Sec.9.3.6)
-            figures = NoDayFigures()
+            figures = NoDayFigures() if env not in _NOT_LIVE else DayRiskFigures(
+                env, port_for=router.port_for, tiers=_tiers(ingestion.instruments),
+                now=self._now, monotonic=self._monotonic,
+            )  # fmt: skip
             announce_interim_port("risk_figures", figures, metrics=metrics)
             clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
             halt = ClockHalt(ClockHealthBinding(clock), monotonic=self._monotonic, metrics=metrics)
