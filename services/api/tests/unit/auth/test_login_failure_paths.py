@@ -171,6 +171,10 @@ def _lockouts() -> float:
     return float(REGISTRY.get_sample_value("auth_lockouts_total") or 0.0)
 
 
+def _floor_missed() -> float:
+    return float(REGISTRY.get_sample_value("auth_login_failure_floor_missed_total") or 0.0)
+
+
 async def test_login_unknown_and_wrong_password_make_the_same_calls(real_hash: str) -> None:
     unknown_service, _, unknown = _world(real_hash, verdict=False)
     wrong_service, _, wrong = _world(real_hash, verdict=False)
@@ -324,6 +328,40 @@ async def test_login_slow_failure_is_not_held_further(real_hash: str, identifier
     await _failed_login(service, identifier)
 
     assert time.now == pytest.approx(slow)
+    assert not [e for e in events if e[0] == "sleep"]
+
+
+@pytest.mark.parametrize("identifier", ["ghost", "basiltt"])
+async def test_login_slow_failure_is_counted_as_not_held(real_hash: str, identifier: str) -> None:
+    service, _, _, _ = _timed_world(real_hash, verdict=False, work_s=_FLOOR_S + 0.5)
+    before = _floor_missed()
+
+    await _failed_login(service, identifier)
+
+    assert _floor_missed() == before + 1
+
+
+async def test_login_held_failure_and_success_are_not_counted_as_not_held(real_hash: str) -> None:
+    held, _, _, _ = _timed_world(real_hash, verdict=False, work_s=0.01)
+    success, _, _, _ = _timed_world(real_hash, verdict=True, work_s=_FLOOR_S + 0.5)
+    before = _floor_missed()
+
+    await _failed_login(held, "basiltt")
+    await success.login(
+        LoginRequest(identifier="basiltt", password="stored-password"), source_ip="10.0.0.1"
+    )
+
+    assert _floor_missed() == before
+
+
+async def test_login_without_a_floor_counts_nothing_as_not_held(real_hash: str) -> None:
+    service, _, events, _ = _timed_world(real_hash, verdict=False, work_s=0.01)
+    service._failure_floor_s = 0.0
+    before = _floor_missed()
+
+    await _failed_login(service, "basiltt")
+
+    assert _floor_missed() == before
     assert not [e for e in events if e[0] == "sleep"]
 
 

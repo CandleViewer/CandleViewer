@@ -132,7 +132,11 @@ async def _world() -> AsyncIterator[_World]:
     repo, hasher, clock = FakeUserRepository(), Hasher(pepper="p"), _Clock()
     repo.add(make_user(password_hash=await hasher.hash(_RIGHT)))
     login = LoginService(
-        repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000), clock=clock
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
+        clock=clock,
+        failure_floor=timedelta(0),
     )
     audit, auth, app = _Audit(), _Auth(login), FastAPI()
     app.include_router(make_auth_router(auth, audit, csrf=_CSRF_CODEC), prefix="")  # type: ignore[arg-type]

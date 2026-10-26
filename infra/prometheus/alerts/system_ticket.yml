@@ -171,6 +171,18 @@ groups:
         annotations:
           summary: "Account lockout occurred"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authlockouts"
+      - alert: AuthLoginFailureFloorMissed
+        # #4648: a failed sign-in that took longer than the minimum failed sign-in time before its
+        # response was due is returned without the wait, and counted. Any in 10m is a ticket:
+        # failed sign-ins were not all held to the same minimum time.
+        expr: sum by (env) (increase(auth_login_failure_floor_missed_total[10m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "Failed sign-ins took longer than the minimum failed sign-in time"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed"
       - alert: AuthDisabledUserSessionRevoked
         # #3029 (SR-029, SR-125): a live session of a disabled or deleted user that no disable
         # revoked, found and revoked on use: the counter moves once per revoked row. A ticket, not

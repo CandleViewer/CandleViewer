@@ -295,6 +295,15 @@ groups:
         annotations:
           summary: "Expected metric auth_lockouts_total is not emitted"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
+      - alert: ExpectedMetricMissingAuthLoginFailureFloorMissedTotal
+        expr: absent(auth_login_failure_floor_missed_total)
+        for: 15m
+        labels:
+          severity: ticket
+          component: alerting
+        annotations:
+          summary: "Expected metric auth_login_failure_floor_missed_total is not emitted"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-expectedmetricmissing"
       - alert: ExpectedMetricMissingAuthzDeniedTotal
         expr: absent(authz_denied_total)
         for: 15m

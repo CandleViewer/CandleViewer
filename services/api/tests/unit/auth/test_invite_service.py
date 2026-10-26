@@ -445,7 +445,10 @@ async def test_abandoned_enrolment_cannot_sign_in_through_real_login() -> None:
         )
     )
     login = LoginService(
-        users, Hasher(pepper="p"), per_ip_throttle=PerIpLoginThrottle(max_attempts=1000)
+        users,
+        Hasher(pepper="p"),
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
+        failure_floor=timedelta(0),
     )
     for pw in (GOOD_PW, ""):
         with pytest.raises(InvalidCredentials):

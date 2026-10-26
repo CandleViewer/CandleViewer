@@ -364,6 +364,29 @@ tests:
     exp_alerts: []
 - interval: 1m
   input_series:
+  - series: auth_login_failure_floor_missed_total{env="live"}
+    values: 0+0x10 1+0x10
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthLoginFailureFloorMissed
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        component: auth
+        env: live
+      exp_annotations:
+        summary: Failed sign-ins took longer than the minimum failed sign-in time
+        runbook_url: docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed
+- interval: 1m
+  input_series:
+  - series: auth_login_failure_floor_missed_total{env="live"}
+    values: 0+0x20
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: AuthLoginFailureFloorMissed
+    exp_alerts: []
+- interval: 1m
+  input_series:
   - series: auth_recovery_codes_used_total{env="live"}
     values: 0+0x10 1+0x10
   alert_rule_test:

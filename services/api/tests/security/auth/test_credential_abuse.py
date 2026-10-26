@@ -15,7 +15,7 @@ from argon2 import extract_parameters
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
-from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
+from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LOGIN_FAILURE_FLOOR, LoginService
 from candleviewer.auth.models import LoginRequest, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
@@ -34,11 +34,16 @@ WARMUP = 10
 
 
 async def _world(
-    *, throttle: int = 10**9, clock: Clock | None = None
+    *, throttle: int = 10**9, clock: Clock | None = None, floor: timedelta = timedelta(0)
 ) -> tuple[LoginService, FakeUserRepository, Hasher]:
+    """No failure floor by default: AC-ENUM-03 measures the two arms' own work, which the floor
+    would pad to one deadline, and the other cases need no wait. The floor's case passes it."""
     repo, hasher = FakeUserRepository(), Hasher(pepper="p")
     repo.add(make_user(password_hash=await hasher.hash(PW)))
-    kw: dict[str, object] = {"per_ip_throttle": PerIpLoginThrottle(max_attempts=throttle)}
+    kw: dict[str, object] = {
+        "per_ip_throttle": PerIpLoginThrottle(max_attempts=throttle),
+        "failure_floor": floor,
+    }
     if clock is not None:
         kw["clock"] = clock
     return LoginService(repo, hasher, **kw), repo, hasher  # type: ignore[arg-type]
@@ -122,7 +127,12 @@ async def test_ac_enum_01_uniform_error_for_unknown_and_wrong_password() -> None
 async def test_ac_enum_02_disabled_user_revealed_only_after_correct_password() -> None:
     repo, hasher = FakeUserRepository(), Hasher(pepper="p")
     repo.add(make_user(password_hash=await hasher.hash(PW), status=UserStatus.DISABLED))
-    svc = LoginService(repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9))
+    svc = LoginService(
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9),
+        failure_floor=timedelta(0),
+    )
     with pytest.raises(InvalidCredentials):
         await svc.login(LoginRequest(identifier="basiltt", password=BAD), source_ip="3.3.3.3")
     with pytest.raises(AccountDisabled):
@@ -331,3 +341,16 @@ async def test_ac_enum_03_timing_unknown_vs_wrong_password_500_samples(  # SR-01
     )
     assert first == SAMPLES - first, "arm order not counterbalanced"
     assert failures == [], "; ".join(failures)
+
+
+async def test_failed_sign_in_with_the_default_floor_returns_no_sooner_than_the_floor() -> None:
+    """#4648, with the service's own defaults (the real monotonic clock and wait): an unknown
+    identifier and a wrong password each return no sooner than `LOGIN_FAILURE_FLOOR` after the
+    attempt started. The fake-clock cases are in `tests/unit/auth/test_login_failure_paths.py`."""
+    _, repo, hasher = await _world()
+    svc = LoginService(repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9))
+    for ident in ("ghost", "basiltt"):
+        t0 = time.monotonic()
+        with pytest.raises(InvalidCredentials):
+            await svc.login(LoginRequest(identifier=ident, password=BAD), source_ip="4.4.4.4")
+        assert time.monotonic() - t0 >= LOGIN_FAILURE_FLOOR.total_seconds()

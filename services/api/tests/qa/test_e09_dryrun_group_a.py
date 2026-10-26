@@ -26,6 +26,7 @@ fabricated pass.
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -133,7 +134,10 @@ def test_e09_tc_a07_unknown_user_and_wrong_password_are_indistinguishable() -> N
     password_hash = asyncio.run(hasher.hash("correct-horse-battery-staple"))
     repo.add(make_user(username="manager-with-grants", password_hash=password_hash))
     login_service = LoginService(
-        repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=1000)
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
+        failure_floor=timedelta(0),
     )
 
     app = FastAPI()

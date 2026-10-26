@@ -5,7 +5,7 @@ the counter's own semantics are in `tests/unit/auth/test_login_lockout_metric.py
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -40,6 +40,7 @@ async def _client() -> httpx.AsyncClient:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
+        failure_floor=timedelta(0),
     )
     app = FastAPI()
     auth: Any = _Auth(login)

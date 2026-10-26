@@ -43,7 +43,7 @@ from pydantic import BaseModel, ConfigDict
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
-from candleviewer.auth.metrics import auth_lockouts_total
+from candleviewer.auth.metrics import auth_lockouts_total, auth_login_failure_floor_missed_total
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.throttle import PerIpLoginThrottle
@@ -61,10 +61,10 @@ LOCKOUT_DURATION = timedelta(minutes=15)
 MFA_CHALLENGE_TTL = timedelta(minutes=5)
 
 #: #4648: a failed sign-in returns no sooner than this after the attempt started. It is set
-#: well above the time a normal failure takes at the default Argon2id parameters, the store's
-#: failure write included, so every failure normally waits out the same deadline; a failure that
-#: is already slower is never held longer. A successful sign-in is never held.
-LOGIN_FAILURE_FLOOR = timedelta(milliseconds=250)
+#: well above the time a normal failure takes, so every failure normally waits out the same
+#: deadline; a failure that is already slower is never held longer, and is counted
+#: (`auth_login_failure_floor_missed_total`). A successful sign-in is never held.
+LOGIN_FAILURE_FLOOR = timedelta(milliseconds=500)
 
 Clock = Callable[[], datetime]
 MonotonicClock = Callable[[], float]
@@ -158,11 +158,14 @@ class LoginService:
 
     async def _hold_failure(self, started: float) -> None:
         """Wait until the failure floor has passed since *started*. Bounded by the floor
-        itself, and no wait at all when the attempt already took longer."""
+        itself, and no wait at all when the attempt already took longer: that attempt is
+        counted, so a failure returned without the wait is never silent."""
         remaining = started + self._failure_floor_s - self._monotonic()
         wait = min(remaining, self._failure_floor_s)
         if wait > 0:
             await self._sleep(wait)
+        elif self._failure_floor_s > 0:
+            auth_login_failure_floor_missed_total.inc()
 
     async def _check_credentials(
         self, request: LoginRequest, *, source_ip: str

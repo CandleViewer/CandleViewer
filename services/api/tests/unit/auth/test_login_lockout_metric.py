@@ -41,7 +41,11 @@ async def _service() -> tuple[LoginService, _Clock]:
     repo, hasher = FakeUserRepository(), Hasher(pepper="test-pepper")
     repo.add(make_user(password_hash=await hasher.hash(PASSWORD)))
     service = LoginService(
-        repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000), clock=clock
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
+        clock=clock,
+        failure_floor=timedelta(0),
     )
     return service, clock
 
