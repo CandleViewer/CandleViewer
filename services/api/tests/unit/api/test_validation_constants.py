@@ -14,17 +14,31 @@ from typing import Annotated, Any, Literal
 import pytest
 from fastapi import FastAPI, Query
 from fastapi.testclient import TestClient
-from pydantic import UUID4
+from pydantic import UUID4, BaseModel, Field
 
+from candleviewer.api import error_redaction
 from candleviewer.api.error_redaction import CONSTANT_MESSAGES, install_error_redaction
 
-#: Letters no probed parser reads (exponent, duration unit, inf/nan, boolean), digits shifted by 5.
+#: Maps digits and some letters (not those a parser reads: exponent, unit, inf/nan, boolean), so any
+#: message that depends on the value differs from its twin's; that is the point.
 _TWIN = str.maketrans("GJKQVXZgjkqvz0123456789", "QXZGJKVqvzgjk5678901234")
 _VALUES = ("G0kz-JQX-vvjg", "2026-13-45", "9" * 40, "zq-12345678-1234-1234-1234", "1" * 31 + "Kj")
 
 
 class _Side(enum.Enum):
     BUY = "buy"
+
+
+class _Cat(BaseModel):
+    kind: Literal["cat"]
+
+
+class _Dog(BaseModel):
+    kind: Literal["dog"]
+
+
+class _Pet(BaseModel):
+    pet: Annotated[_Cat | _Dog, Field(discriminator="kind")]
 
 
 def _app() -> FastAPI:
@@ -51,6 +65,10 @@ def _app() -> FastAPI:
     ) -> dict[str, Any]:
         return {}
 
+    @app.post("/probe-body")
+    async def probe_body(body: _Pet) -> dict[str, Any]:
+        return {}
+
     return app
 
 
@@ -64,6 +82,12 @@ def _messages(value: str) -> dict[tuple[str, str], str]:
     return {(e["field"], e["rule"]): e["message"] for e in resp.json()["errors"]}
 
 
+def _body_messages(value: str) -> dict[tuple[str, str], str]:
+    resp = _CLIENT.post("/probe-body", json={"pet": {"kind": value}})
+    assert resp.status_code == 422
+    return {(e["field"], e["rule"]): e["message"] for e in resp.json()["errors"]}
+
+
 @pytest.mark.parametrize("value", _VALUES)
 def test_validation_message_input_characters_never_change_it(value: str) -> None:
     sent, twin = _messages(value), _messages(value.translate(_TWIN))
@@ -71,7 +95,22 @@ def test_validation_message_input_characters_never_change_it(value: str) -> None
     assert {k: m for k, m in sent.items() if twin[k] != m} == {}
 
 
+def test_validation_message_union_tag_never_quotes_the_tag() -> None:
+    twin = "G0kz-JQX-vvjg".translate(_TWIN)
+    sent, other = _body_messages("G0kz-JQX-vvjg"), _body_messages(twin)
+    assert sent == other
+    assert list(sent.values()) == [CONSTANT_MESSAGES["union_tag_invalid"]]
+
+
+def test_validation_message_union_tag_differed_before_the_constant(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(error_redaction, "CONSTANT_MESSAGES", {})
+    assert _body_messages("G0kz-JQX-vvjg") != _body_messages("G0kz-JQX-vvjg".translate(_TWIN))
+
+
 def test_validation_message_uuid_parsing_is_the_constant() -> None:
     found = _messages("G0kz-JQX-vvjg")
     assert found[("path.item_id", "uuid_parsing")] == "Input should be a valid UUID."
-    assert set(CONSTANT_MESSAGES) == {"uuid_parsing"}  # closed: a new entry needs a probe here
+    # closed: a new entry needs a probe here
+    assert set(CONSTANT_MESSAGES) == {"uuid_parsing", "union_tag_invalid"}

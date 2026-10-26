@@ -26,8 +26,15 @@ def _log() -> Any:
 _PROBLEM = "application/problem+json"
 _BASE = "https://candleviewer.local/errors/"
 #: Constant validation messages (C-12.6), keyed by pydantic error type: the types whose `msg`
-#: quotes the input itself. Closed list, pinned by `tests/unit/api/test_validation_constants.py`.
-CONSTANT_MESSAGES: dict[str, str] = {"uuid_parsing": "Input should be a valid UUID."}
+#: quotes the input itself. Closed list, pinned by `tests/unit/api/test_validation_constants.py`,
+#: which proves the path, query and body scalar types and the discriminated union it probes.
+#: `value_error`, `assertion_error`, `json_invalid` and `url_parsing` carry author-controlled
+#: text; no mounted FastAPI-parsed body model interpolates the input today, and the raw-body
+#: routes (drawings, workspaces) answer through their own `format_errors`.
+CONSTANT_MESSAGES: dict[str, str] = {
+    "uuid_parsing": "Input should be a valid UUID.",
+    "union_tag_invalid": "Input tag does not match any of the expected tags.",
+}
 
 
 def _problem(status: int, code: str, title: str, **extra: Any) -> JSONResponse:
