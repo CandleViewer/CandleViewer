@@ -32,7 +32,11 @@ hand-off, this tool and the ticket's board PNGs, nothing else (G-UNTOUCHED).
    their PR numbers and touch the cited files; a late pin (LATE_PINS: E33-D04, merged after the
    base) is an ancestor of the branch instead, and cites into its files (`Exx-Dyy-handoff`:line
    names a hand-off) are read at its sha. An HTML comment is read over the whole text, closed by
-   `-->` or `--!>` as a browser closes it (or by the end of the text), never line by line.
+   `-->` or `--!>` as a browser closes it (or by the end of the text), never line by line. Two
+   known limits, accepted (#4576 round 2): a `<!--` inside a code span or a fence is read as a
+   comment here although a browser renders it as text, and an unclosed `<!--` (say above §3.2)
+   hides the rest of the rendered text; G-VALUE (an HTML comment that is no marker FAILs) is the
+   guard for both, with G-SEC-PIN where the hidden text holds a pinned clause.
 3. **Gates (RULED comment 6399392172).** Every table row, bullet, prose sentence and heading of
    the spec and the hand-off is read, fenced copy-ready blocks included, after normalising (HTML
    comments, soft hyphens and zero-width characters dropped, NFKC, markup stripped, dashes to
@@ -220,6 +224,12 @@ MAX_BOARDS = 10  # RULED BQ-15: at most ten boards, seven dark and three light t
 LIGHT_BOARDS = 3
 SPEC_LINE_BUDGET = 600  # RULED BQ-1: the spec's line budget
 SUMMARY_LINES = 10
+# the boards as drawn (§0): the Penpot file and page by name, ids in UUID form, PNGs under IMG_REL
+PENPOT_FILE = "E29-D04 boards"
+PENPOT_PAGE = "E29-D04 DS contributions and motion"
+IMG_REL = "docs/design/E29/img/"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN_CELL = re.compile(r"drawn: \[(E29-D04-(\d\d)-([a-z0-9-]+)\.png)\]\(img/\1\)")
 
 # the load-bearing fragments the tool's constants and gates rest on: (cite id, line, text)
 CITED: tuple[tuple[str, int, str], ...] = (
@@ -1232,7 +1242,7 @@ MO_ID = r"Mo-\d+"
 
 
 def boards(spec: str) -> list[dict[str, str]]:
-    rows = table_with(section(spec, "0. Planned boards"), "#", "Board")
+    rows = table_with(section(spec, "0. Boards"), "#", "Board")
     return [r for r in rows if re.fullmatch(r"\d\d", col(r, "#").strip())]
 
 
@@ -1903,7 +1913,7 @@ CHECK_BOX = ("[x]", "[ ]", "N/A")
 def checklist_problems(t: Texts) -> list[str]:
     """Hand-off §B: the thirteen lines present in order, every box `[x]`, `[ ]` or N/A; Sign-off
     open on every entry with the owner mark (an approval only the owner gives); the Penpot line
-    open while §0's boards are PENDING."""
+    open while a §0 board is PENDING and ticked once every board is drawn."""
     block = section(t.hand, "§B ")
     if not block:
         return []  # a missing §B is G-HANDOFF's
@@ -1922,6 +1932,8 @@ def checklist_problems(t: Texts) -> list[str]:
         pending_boards = any("PENDING" in col(b, "Status") for b in boards(t.spec))
         if line == "Final Penpot link" and pending_boards and set(boxes) != {"[ ]"}:
             bad.append("§B Final Penpot link is ticked while §0's boards are PENDING")
+        if line == "Final Penpot link" and not pending_boards and set(boxes) != {"[x]"}:
+            bad.append("§B Final Penpot link is open while §0's boards are drawn")
     return bad
 
 
@@ -1990,12 +2002,47 @@ NUMBER_WORDS = {
 }  # fmt: skip
 
 
+def board_problems(spec: str) -> list[str]:
+    """§0 as drawn: the prose names the Penpot file, the page and the page id; each board has one
+    board id in UUID form (all distinct) and the Status `drawn: [PNG](img/PNG)`, the PNG named
+    `E29-D04-NN-<slug>.png` after its own row and present in the working tree."""
+    block = section(spec, "0. Boards")
+    bad: list[str] = []
+    page = re.search(
+        rf"Penpot file `{re.escape(PENPOT_FILE)}`, page `{re.escape(PENPOT_PAGE)}`,"
+        rf" page id `{UUID}`",
+        block,
+    )
+    if page is None:
+        bad.append("§0 does not name the Penpot file, the page and its page id")
+    seen: set[str] = set()
+    for b in boards(spec):
+        n = col(b, "#").strip()
+        bid = re.fullmatch(rf"`({UUID})`", col(b, "Board id").strip())
+        if bid is None:
+            bad.append(f"board {n}: the board id is not one UUID in a code span")
+        elif bid[1] in seen:
+            bad.append(f"board {n}: board id {bid[1]} is used twice")
+        else:
+            seen.add(bid[1])
+        name = re.fullmatch(r"`E29-D04 / (\d\d) ([a-z0-9-]+)`", col(b, "Board").strip())
+        drawn = DRAWN_CELL.fullmatch(col(b, "Status").strip())
+        if drawn is None:
+            bad.append(f"board {n} is not `drawn: [PNG](img/PNG)`")
+        elif name is None or (drawn[2], drawn[3]) != (name[1], name[2]):
+            bad.append(f"board {n}: {drawn[1]} is not named after the board")
+        elif not (ROOT / IMG_REL / drawn[1]).is_file():
+            bad.append(f"board {n}: {IMG_REL}{drawn[1]} is missing")
+    return bad
+
+
 def g_boards(t: Texts) -> list[str]:
     """RULED BQ-15: at most ten boards, light twins at most a third, each the twin of a dark
-    board; numbered 01…n; every board PENDING; any board count in the text is the table's."""
+    board; numbered 01…n; every board drawn (board_problems); any board count in the text is the
+    table's."""
     bd = boards(t.spec)
     bad: list[str] = []
-    rows = table_with(section(t.spec, "0. Planned boards"), "#", "Board")
+    rows = table_with(section(t.spec, "0. Boards"), "#", "Board")
     bad += [f"§0 row {col(r, '#')!r} is not a board number" for r in rows if r not in bd]
     if len(bd) > MAX_BOARDS:
         bad.append(f"{len(bd)} boards > {MAX_BOARDS}")
@@ -2012,7 +2059,7 @@ def g_boards(t: Texts) -> list[str]:
         m = re.search(r"light twin of (\d\d)", col(b, "Draws"))
         if m is None or m[1] not in dark:
             bad.append(f"board {col(b, '#')} is not the light twin of a dark board")
-    bad += [f"board {col(b, '#')} is not PENDING" for b in bd if "PENDING" not in col(b, "Status")]
+    bad += board_problems(t.spec)
     for name, text in (("spec", t.spec), ("hand-off", t.hand)):
         for m in re.finditer(
             r"\b(\w+) (?:planned |penpot |drawn |dark )?boards\b", norm_text(text)
@@ -4054,6 +4101,9 @@ def g_sec_pin(t: Texts) -> list[str]:
 # C-4): a `disabled` flag named for CMP-079's `allowed` (§2.1), a `toggle` applying the mode on
 # each arrow key (§2.5) and a changed word in hand-off A-5.3 FAIL only G-SEC-PIN and G-TEXT-PIN.
 # Under default-deny that is the design: a re-pin is a reviewed diff, never a side effect.
+# The round-1 fold of #4576 joined the `Numbers.` paragraph onto the `Key.` paragraph of the
+# spec's preamble (one block, re-pinned then); the boards PR re-pinned §0, the Status line, the
+# Deviations, §8.2's G-BOARDS row, §9 and hand-off §B's Penpot line and Q-18.
 TEXT_DOCS = ("spec", "hand-off")
 TEXT_PATH_SEP = " › "
 TEXT_PIN_WIDTH = 96
@@ -4543,7 +4593,9 @@ GATE_RULES: dict[str, str] = {
     "G-OWNER": "the owner-level rows marked; §B's Sign-off never ticked (BQ-2, BQ-10 to BQ-12)",
     "G-AC": "AC1, AC3 and DoD 1-2 met as copy-ready A-rows (BQ-2)",
     "G-CROW": "every departure has its C-row (BQ-2, BQ-5, BQ-9 to BQ-12)",
-    "G-BOARDS": "at most ten boards, at most three light twins (BQ-15)",
+    "G-BOARDS": (
+        "at most ten boards, at most three light twins; each drawn with its id and PNG (BQ-15)"
+    ),
     "G-BUDGET": "the spec at most 600 lines, §9 at most ten (BQ-1)",
     "G-HANDOFF": "one hand-off, §A to §F (BQ-1)",
     "G-UNTOUCHED": "`15` and `16` byte-identical; the branch changes its three files only (BQ-2)",
@@ -5376,12 +5428,26 @@ def first(_r: dict[str, str]) -> bool:
 
 
 def eleven(text: str, v: Values) -> str:
-    row = "| 11 | `E29-D04 / 11 extra-light` | light twin of 05 | PENDING: drawn in the boards PR |"
-    return add_row("0. Planned boards", ("#", "Board"), row)(text, v)
+    png = "E29-D04-11-extra-light.png"
+    bid = "`00000000-0000-4000-8000-000000000011`"
+    row = (
+        f"| 11 | `E29-D04 / 11 extra-light` | light twin of 05 | {bid} | drawn: [{png}](img/{png})"
+    )
+    row += " |"
+    return add_row("0. Boards", ("#", "Board"), row)(text, v)
 
 
 def board_07(r: dict[str, str]) -> bool:
     return col(r, "#").strip() == "07"
+
+
+def board_n(n: str) -> Callable[[dict[str, str]], bool]:
+    return lambda r: col(r, "#").strip() == n
+
+
+def renamed_10(cell: str) -> str:
+    """Board 10 renamed in its Board and Status cells alike: only its PNG goes missing."""
+    return cell.replace("flatten-confirm-light", "flatten-confirm-x-light")
 
 
 LONG_REASON = '"Stale — new orders stay locked until the owner of the account resolves the lock."'
@@ -5650,7 +5716,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M16.1",
         "G-VALUE",
         "condition",
-        spec=sub_in("0. Planned boards", "audit:count.boards=10 -->", "audit:count.boards=11 -->"),
+        spec=sub_in("0. Boards", "audit:count.boards=10 -->", "audit:count.boards=11 -->"),
     ),
     Mutation(
         "M16.2", "G-VALUE", "condition", spec=prose_at("5. ", "The tag sits 16 px from the edge.")
@@ -5712,16 +5778,45 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-15",
         spec=chain(
             edit_row(
-                "0. Planned boards",
+                "0. Boards",
                 ("#", "Board"),
                 board_07,
                 "Board",
                 to("`E29-D04 / 07 motion-reduced-twins-light`"),
             ),
-            edit_row(
-                "0. Planned boards", ("#", "Board"), board_07, "Draws", to("light twin of 06")
-            ),
+            edit_row("0. Boards", ("#", "Board"), board_07, "Draws", to("light twin of 06")),
         ),
+    ),
+    # M24.3 to M24.6 — the boards as drawn: a missing PNG, a board id's form, a PNG-less drawn
+    # board, the page id gone
+    Mutation(
+        "M24.3",
+        "G-BOARDS",
+        "BQ-15 (a PNG missing)",
+        spec=chain(
+            edit_row("0. Boards", ("#", "Board"), board_n("10"), "Board", renamed_10),
+            edit_row("0. Boards", ("#", "Board"), board_n("10"), "Status", renamed_10),
+        ),
+    ),
+    Mutation(
+        "M24.4",
+        "G-BOARDS",
+        "BQ-15 (a board id's form)",
+        spec=edit_row(
+            "0. Boards", ("#", "Board"), board_n("03"), "Board id", lambda c: c[:24] + "`"
+        ),
+    ),
+    Mutation(
+        "M24.5",
+        "G-BOARDS",
+        "BQ-15 (drawn, no PNG)",
+        spec=edit_row("0. Boards", ("#", "Board"), board_n("05"), "Status", to("drawn")),
+    ),
+    Mutation(
+        "M24.6",
+        "G-BOARDS",
+        "BQ-15 (the page id gone)",
+        spec=sub_in("0. Boards", ", page id `c2f70ddd-", ", page `c2f70ddd-"),
     ),
     Mutation("M25.1", "G-BUDGET", "BQ-1", spec=overrun),
     Mutation(
@@ -6724,8 +6819,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M21.3",
         "G-OWNER",
-        "BQ-15 (§B Penpot ticked)",
-        hand=line_edit("| Final Penpot link", "[ ]", "[x]"),
+        "BQ-15 (§B Penpot open while drawn)",
+        hand=line_edit("| Final Penpot link", "[x]", "[ ]"),
     ),
     Mutation("M21.4", "G-OWNER", "BQ-2 (§B any case)", hand=line_edit("| Sign-off", "[ ]", "[X]")),
     Mutation(
@@ -7163,18 +7258,30 @@ SEC_PIN_TXT = r"""
   rows, read-only behind `guard.mismatch.row` (D02:145), and keeps a Cancel's own order-kind and
   in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`,
   `blotter.amend_in_flight`).
-§ spec ‖ 0. Planned boards (PENDING; ten: seven dark, thr
+@ prose
+  **The lock glyph.** `icon / locked` is a local component of the `E29-D04 boards` file (Lucide
+  `lock`, on the grid and at the stroke of the DS icon set), not a library instance: the boards
+  draw from primitives and the file's own token sets, imported with
+  `docs/design/_tools/penpot_token_sets.py`, and use no shared library (the per-set Penpot files
+  ruling; orchestrator-approved).
+§ spec ‖ 0. Boards (drawn; ten: seven dark, three light t
 @ row 02 ‖ Draws
   `CMP-115/*`: the fifteen statuses, each glyph + word; the amend moments (editing, pending,
   unconfirmed, rejected); the native-stop row
 @ row 03 ‖ Board
   `E29-D04 / 03 pnl-badge-numerics`
+@ row 03 ‖ Status
+  drawn: [E29-D04-03-pnl-badge-numerics.png](img/E29-D04-03-pnl-badge-numerics.png)
 @ row 04 ‖ Board
   `E29-D04 / 04 flatten-confirm`
 @ row 04 ‖ Draws
   `CMP-123/*`: default, holding, armed, the typed word on LIVE, busy, the T2 frames, offline
+@ row 04 ‖ Status
+  drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png)
 @ row 10 ‖ Board
   `E29-D04 / 10 flatten-confirm-light`
+@ row 10 ‖ Status
+  drawn: [E29-D04-10-flatten-confirm-light.png](img/E29-D04-10-flatten-confirm-light.png)
 § spec ‖ 1. Inputs and decisions
 @ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Row (cited)
   D01 D7 (D01:274); D02 gap 13 (D02:622 "a Live flatten needs hold and typed")
@@ -9601,10 +9708,10 @@ RULED_PIN_TXT = r"""
 @ ¶1 prose 1
   "**Ticket:** E29-D04 (#823) · **Epic:** E29 · **Status:** Draft, **text-first** — this file is t
   he design-system spec; [E29-D04-handoff.md](E29-D04-handoff.md) carries every copy-ready row; th
-  e ten Penpot boards of §0 are **PENDING** (drawn in the boards PR, which carries the line that c
-  ompletes #823). **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-2
-  5): the owner's `approved` comment on #823 stands in for \"Design-system team accepted ownership
-  ; CDO sign-off recorded\"; nothing here claims that approval."
+  e ten Penpot boards of §0 are **drawn** (in the boards PR, which completes #823; the text PR #45
+  76 is merged). **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-25
+  ): the owner's `approved` comment on #823 stands in for \"Design-system team accepted ownership;
+   CDO sign-off recorded\"; nothing here claims that approval."
 @ ¶2 prose 1
   "**Scope** (the ticket): the five catalogued components SCR-063 and SCR-078 introduce or extend
    — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge, CMP-123 FlattenAllButton and CMP-1
@@ -9890,67 +9997,92 @@ RULED_PIN_TXT = r"""
    in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`, `bl
   otter.amend_in_flight`). All are merged D02 wording (D02:145, :345, :421), not a new gate, and n
   one is the account's state."
+@ ¶5 item 0
+  "5. **The lock glyph.** `icon / locked` is a local component of the `E29-D04 boards` file (Lucid
+  e `lock`, on the grid and at the stroke of the DS icon set), not a library instance: the boards
+   draw from primitives and the file's own token sets, imported with `docs/design/_tools/penpot_to
+  ken_sets.py`, and use no shared library (the per-set Penpot files ruling; orchestrator-approved)
+  ."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 0.
-§  Planned boards (PENDING; ten: seven dark, three light twins)#1"]
+§  Boards (drawn; ten: seven dark, three light twins)#1"]
 @ ¶0 heading 1
-  "## 0. Planned boards (PENDING; ten: seven dark, three light twins)"
+  "## 0. Boards (drawn; ten: seven dark, three light twins)"
 @ ¶1 prose 1
-  "Page `E29-D04 DS contributions and motion`, created by name at the boards step, its id recorded
-   then. Boards are `E29-D04 / NN slug`; exports go to `docs/design/E29/img/E29-D04-NN-<slug>.png`
-   at 1×, pinned to the boards PR's head; the D01 and D02 exports in that folder stay untouched. 1
-  0 <!-- audit:count.boards=10 --> boards, 3 <!-- audit:count.boards-light=3 --> of them light twi
-  ns (at most a third; RULED BQ-15). The frame ids are §2's and §3's."
+  "Penpot file `E29-D04 boards`, page `E29-D04 DS contributions and motion`, page id `c2f70ddd-ba7
+  e-8136-8008-d9166ddaa5cc`. Boards are `E29-D04 / NN slug`, each exported at 1× to `docs/design/E
+  29/img/E29-D04-NN-<slug>.png` (the Status column), pinned to the boards PR's head; the D01 and D
+  02 exports in that folder stay untouched. The dark boards export through the file's dark theme a
+  nd the light twins through its light theme. 10 <!-- audit:count.boards=10 --> boards, 3 <!-- aud
+  it:count.boards-light=3 --> of them light twins (at most a third; RULED BQ-15). The frame ids ar
+  e §2's and §3's."
 @ ¶2 row 1
   "| #   | Board                                         | Draws
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                  | Status
-                            |"
+                                                                  | Board id
+                                 | Status
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+      |"
 @ ¶3 row 0
   "| --- | --------------------------------------------- | ---------------------------------------
   ------------------------------------------------------------------------------------------------
-  ----------------------------- | ------------------------------- |"
+  ----------------------------- | -------------------------------------- | -----------------------
+  ---------------------------------------------------------------------------------- |"
 @ ¶4 row 0
   "| 01  | `E29-D04 / 01 positions-row-states`           | `CMP-114/*`: the row states, the liq ti
   ers, the protection chip, the row markers, the group header and totals rows, the \"Updates pause
-  d\" chip, the Closed today line | PENDING: drawn in the boards PR |"
+  d\" chip, the Closed today line | `451a7777-ea42-802d-8008-d926fea7f704` | drawn: [E29-D04-01-po
+  sitions-row-states.png](img/E29-D04-01-positions-row-states.png)                     |"
 @ ¶5 row 0
   "| 02  | `E29-D04 / 02 order-row-lifecycle`            | `CMP-115/*`: the fifteen statuses, each
    glyph + word; the amend moments (editing, pending, unconfirmed, rejected); the native-stop row
-                                 | PENDING: drawn in the boards PR |"
+                                 | `451a7777-ea42-802d-8008-d929909a45f6` | drawn: [E29-D04-02-ord
+  er-row-lifecycle.png](img/E29-D04-02-order-row-lifecycle.png)                       |"
 @ ¶6 row 0
   "| 03  | `E29-D04 / 03 pnl-badge-numerics`             | `CMP-116/*`: the bar variant, null R, f
   ee paid and funding received, provisional and divergent; the greyscale and deuteranopia strips
-                                  | PENDING: drawn in the boards PR |"
+                                  | `451a7777-ea42-802d-8008-d92ba58b22da` | drawn: [E29-D04-03-pn
+  l-badge-numerics.png](img/E29-D04-03-pnl-badge-numerics.png)                         |"
 @ ¶7 row 0
   "| 04  | `E29-D04 / 04 flatten-confirm`                | `CMP-123/*`: default, holding, armed, t
   he typed word on LIVE, busy, the T2 frames, offline
-                                                                             | PENDING: drawn in t
-  he boards PR |"
+                                                                             | `451a7777-ea42-802d
+  -8008-d92c5507506f` | drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png
+  )                               |"
 @ ¶8 row 0
   "| 05  | `E29-D04 / 05 mode-toggle-and-account-filter` | `CMP-129/*`: the display variant and th
   e toggle with its confirm (§2.5's frames); `CMP-105/*`: the filter picker and its chips
-                                         | PENDING: drawn in the boards PR |"
+                                         | `451a7777-ea42-802d-8008-d92d7704e084` | drawn: [E29-D0
+  4-05-mode-toggle-and-account-filter.png](img/E29-D04-05-mode-toggle-and-account-filter.png) |"
 @ ¶9 row 0
   "| 06  | `E29-D04 / 06 motion-storyboard`              | `motion/*`: frame 0 and the last frame
    of each §3.2 row on opacity or a transform; the state swap at frame 0
-                                                           | PENDING: drawn in the boards PR |"
+                                                           | `93d416aa-5e4d-8056-8008-d96b07eca380
+  ` | drawn: [E29-D04-06-motion-storyboard.png](img/E29-D04-06-motion-storyboard.png)
+                             |"
 @ ¶10 row 0
   "| 07  | `E29-D04 / 07 motion-reduced-twins`           | `motion/*-reduce`: the `prefers-reduced
   -motion` twin of every board-06 frame, at frame 0
-                                                                               | PENDING: drawn in
-   the boards PR |"
+                                                                               | `93d416aa-5e4d-80
+  56-8008-d96c145d9c93` | drawn: [E29-D04-07-motion-reduced-twins.png](img/E29-D04-07-motion-reduc
+  ed-twins.png)                     |"
 @ ¶11 row 0
   "| 08  | `E29-D04 / 08 positions-row-states-light`     | light twin of 01
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `451a7777-ea42-802d-8008-d93091c3767e` |
+   drawn: [E29-D04-08-positions-row-states-light.png](img/E29-D04-08-positions-row-states-light.pn
+  g)         |"
 @ ¶12 row 0
   "| 09  | `E29-D04 / 09 order-row-lifecycle-light`      | light twin of 02
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `451a7777-ea42-802d-8008-d9342fad7032` |
+   drawn: [E29-D04-09-order-row-lifecycle-light.png](img/E29-D04-09-order-row-lifecycle-light.png)
+             |"
 @ ¶13 row 0
   "| 10  | `E29-D04 / 10 flatten-confirm-light`          | light twin of 04
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `451a7777-ea42-802d-8008-d9375ee59a02` |
+   drawn: [E29-D04-10-flatten-confirm-light.png](img/E29-D04-10-flatten-confirm-light.png)
+                     |"
 @ ¶14 prose 1
   "**Specified (drawn on request)** (each fully specified in §2 and §3, named here, not drawn unde
   r the board cap): the light cells of boards 03, 05, 06 and 07; the high-contrast cells of every
@@ -12746,10 +12878,10 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                                                             |"
 @ ¶10 row 0
-  "| G-BOARDS         | at most ten boards, at most three light twins (BQ-15)
-                                                                | M24.1 · M24.2
+  "| G-BOARDS         | at most ten boards, at most three light twins; each drawn with its id and
+   PNG (BQ-15)                              | M24.1 · M24.2 · M24.3 · M24.4 · M24.5 · M24.6
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                                  |"
+                                                  |"
 @ ¶11 row 0
   "| G-BUDGET         | the spec at most 600 lines, §9 at most ten (BQ-1)
                                                                     | M25.1 · M25.2
@@ -12916,8 +13048,8 @@ RULED_PIN_TXT = r"""
 @ ¶0 heading 1
   "## 9. Summary for #823 (at most ten lines)"
 @ ¶1 item 1
-  "- Text-first PR 1 of 2 (`Refs #823`): this spec, the hand-off and the gate tool; the ten boards
-   of §0 are PENDING for the boards PR, which completes #823."
+  "- Text-first PR 1 of 2 (#4576, merged): this spec, the hand-off and the gate tool; PR 2 draws t
+  he ten boards of §0 and completes #823."
 @ ¶2 item 0
   "- Four entries are written whole (CMP-114, CMP-115, CMP-116, CMP-129), three amended field by f
   ield (CMP-123, CMP-049, CMP-209) and one reused by contract (CMP-105); hand-off §C holds them co
@@ -12942,8 +13074,8 @@ RULED_PIN_TXT = r"""
   ver gated by a state key (RULED BQ-13); §5 measures 27 <!-- audit:count.pairs=27 --> gated pairs
    and 2 <!-- audit:count.pairs-measured=2 --> measured ones in three themes."
 @ ¶8 item 0
-  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 217 <!-- audit:count.mutations=2
-  17 --> mutations, and every figure here is its `--json`."
+  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 221 <!-- audit:count.mutations=2
+  21 --> mutations, and every figure here is its `--json`."
 § ["spec", "(end)#1"]
 @ ¶0 end 1
   ""
@@ -13062,13 +13194,12 @@ RULED_PIN_TXT = r"""
   ------------------------------------------------------------------------------------------------
   -------------- |"
 @ ¶4 row 0
-  "| Final Penpot link                           | [ ]     | [ ]     | [ ]     | [ ]           | [
-   ]     | [ ]           | [ ]           | PENDING: boards 01 to 05 and their light twins 08 to 10
-   on spec §0's page, drawn in the boards PR, which ticks this line; CMP-049 through boards 01 and
-   02
+  "| Final Penpot link                           | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | drawn: boards 01 to 05 and their light twins 08 to 10 o
+  n spec §0's page (page id `c2f70ddd-ba7e-8136-8008-d9166ddaa5cc`), each board id and PNG in spec
+   §0; CMP-049 through boards 01 and 02
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-              |"
+                                                                            |"
 @ ¶5 row 0
   "| Variants × States                           | [x]     | [x]     | [x]     | [x]           | [
   x]     | [x]           | [x]           | spec §2.1 to §2.5's frame tables, §2.6's three filter f
@@ -14132,9 +14263,9 @@ RULED_PIN_TXT = r"""
   ount; spec §2.4 draws the field with its copy open. Owner: E29-D03's owner, the copy deck's."
 @ ¶19 item 0
   "- **Q-18** The contract gaps the entries carry without shaping them (spec §7.3), each with its
-   owner there; and the boards: this ticket's are PENDING (spec §0), E29-D03's are PENDING by name
-   (#4472), and E29-D06 packages the hand-off after E29-D05 (`docs/plan/backlog/E29.json` E29-D06)
-  . Owners: as spec §7.3 names them; E29-D06."
+   owner there; and the boards: this ticket's are drawn (spec §0), E29-D03's are PENDING by name (
+  #4472), and E29-D06 packages the hand-off after E29-D05 (`docs/plan/backlog/E29.json` E29-D06).
+   Owners: as spec §7.3 names them; E29-D06."
 @ ¶20 item 0
   "- **Q-19** D03 CR-8 asks for `color.text.primary` on `color.status.success.subtle`, the recover
   ed summary of SCR-152 (D03:396), to be registered in `tools/contrast/pairs.mjs`; the pair is D03
