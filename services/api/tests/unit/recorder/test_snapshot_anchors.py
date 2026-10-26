@@ -171,12 +171,14 @@ async def test_snapshot_anchors_a_live_book_idle_for_30_s_is_anchored_after_its_
     anchors, books, writer, sink, _store, clock = await rig(tmp_path)
     last = wall(clock) - 30 * S  # Bybit sends nothing while the book does not change
     books.books["BTCUSDT"] = snapshot(5).model_copy(update={"ts_event": last})
+    slot = wall(clock)
 
     await anchors.tick()
     clock.advance(1)
 
     (row,) = await flushed_anchors(writer, sink)
-    assert last < cast(int, row["ts"]) <= wall(clock)
+    assert row["ts"] == anchor_ts(last, slot)  # the slot less the margin, not just after `last`
+    assert cast(int, row["ts"]) > last + 1
     assert row["update_id"] == 5  # the book is unchanged since: valid at the slot
 
 

@@ -3,7 +3,8 @@
 Every `interval_s` (`CV_RECORDER_SNAPSHOT_INTERVAL_S`, default 60 s, at any book depth) the
 recorder writes the full maintained book of each recorded symbol as an `orderbook_snapshot` row
 (`source='synthetic'`, 21-database-schema.md §4.3), so a seek finds an anchor no more than one
-interval before its target (E26-K01). A symbol's first LIVE book in this session is anchored at
+interval plus `STAMP_MARGIN_US` (5 s) before its target (E26-K01): a quiet book is stamped up to
+the margin before its slot. A symbol's first LIVE book in this session is anchored at
 the first tick that sees it, not a whole interval later.
 
 * Same path as the deltas: `StreamWriter.on_book_anchor` queues the row on the
@@ -57,7 +58,9 @@ def anchor_ts(last_applied_us: int, slot_wall_us: int) -> int:
     re-delivers a delta the anchor holds) and, for a quiet book, the slot less
     `STAMP_MARGIN_US`, so it stays within one interval of the slot. Exchange stamps are whole
     milliseconds, so the anchor is moved off one: its `(ts, symbol, depth)` key can never equal
-    an exchange snapshot's, and it stays before the next delta (at least 1 ms later)."""
+    an exchange snapshot's, and it stays before the next delta, assuming the exchange never pushes
+    two book frames in the same millisecond (Bybit's push cadence is 10 to 200 ms); if it did, a
+    seek would see a sequence gap at the second and resync, never apply a wrong book."""
     ts = max(last_applied_us + 1, slot_wall_us - STAMP_MARGIN_US)
     return ts + 1 if ts % _MS_US == 0 else ts
 
