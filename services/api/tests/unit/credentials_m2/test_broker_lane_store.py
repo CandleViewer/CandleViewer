@@ -53,6 +53,13 @@ class _Writer:
         raise AssertionError("M2 writes no keyed record")
 
 
+class _Failing(_Writer):
+    """A lane writer whose durable append fails, as one that lost its database does."""
+
+    async def emit(self, action: str, **columns: Any) -> None:
+        raise RuntimeError("the lane's audit writer is down")
+
+
 class _Pools:
     """The root's lane store factory: hands out a store (the rig's lane side), noting the bound
     M2 asks for and the thread, and each dispose of the pool: its thread, and whether the lane's
@@ -139,6 +146,18 @@ def test_the_lane_binding_builds_its_own_bounded_store_on_the_lane_and_counts_it
     )  # fmt: skip
     rig.lane.run(signing.aclose())
     assert (pools.released, _pools_in_use()) == ([(on_lane, True)], before)
+
+
+def test_a_failing_lane_writer_refuses_the_signing_with_only_the_read_done(rig: _Rig) -> None:
+    """Major 1 (C-2.9): `admin.wiring`'s lane sink never swallows its writer's error: a lane
+    writer that fails the write-ahead record refuses the signing `audit_unavailable`, with only
+    the store read done and nothing decrypted."""
+    signing = _bound(rig, _Pools(rig.sides["lane"]), _Failing())
+    logged = len(rig.log)
+    with pytest.raises(CredentialUnavailable, match=r"^audit_unavailable$"):
+        rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
+    assert rig.log[logged:] == [("lane", "get")]
+    rig.lane.run(signing.aclose())
 
 
 def test_aclose_alone_frees_the_pool_on_the_lane_once_closed_and_the_gauge_falls(
