@@ -401,7 +401,7 @@ class StreamPushes:
         """`event` to the row, its outcome counted; an unknown one is delivered once more (24
         Sec.8.2)."""
         for _ in (1, 2):
-            outcome = await self._send(ctx, order_id, event, payload, ok)
+            outcome = await self._attempt(ctx, order_id, event, payload, ok)
             if outcome is not None:
                 self._counts.count(outcome)
                 return outcome
@@ -409,7 +409,7 @@ class StreamPushes:
         self._counts.count("unknown_twice")
         return "unknown_twice"
 
-    async def _send(
+    async def _attempt(
         self, ctx: _Ctx, order_id: UUID, event: Sent, payload: Mapping[str, Any], ok: Outcome
     ) -> Outcome | None:  # None: the facade's outcome is unknown
         try:
