@@ -7,6 +7,7 @@ access outside `tmp_path` (Constitution C-13.5/C-13.7).
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -82,6 +83,25 @@ def _reset_structlog_state() -> Iterator[None]:
 
     yield
     reset_logging()
+
+
+@pytest.fixture
+def real_startup_freeze() -> None:
+    """Ask for it to run the lifespan's real heap freeze: see `_stub_startup_freeze`."""
+
+
+@pytest.fixture(autouse=True)
+def _stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """#3641: `main._lifespan` collects, then freezes, the heap of the whole process once startup
+    completes. In a test process that is a full collection of everything the run holds so far, 0.2
+    to 1 s every time a test starts the lifespan: slow, and enough to use up a test's own time
+    bound (`test_key_import`'s 1 s, which spans the boot). What it freezes is not what those tests
+    check, so they run a no-op; a test about the freeze itself asks for `real_startup_freeze`. Only
+    a `candleviewer.main` the run has already imported is patched, so no test pays for an import it
+    did not make."""
+    main = sys.modules.get("candleviewer.main")
+    if main is not None and "real_startup_freeze" not in request.fixturenames:
+        monkeypatch.setattr(main, "freeze_startup_heap", lambda: None)
 
 
 @pytest.hookimpl(wrapper=True)

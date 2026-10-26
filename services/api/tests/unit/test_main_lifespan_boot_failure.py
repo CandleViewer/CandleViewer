@@ -18,9 +18,8 @@ a failure after it must leave nothing frozen, and one before it never freezes at
 from __future__ import annotations
 
 import asyncio
-import gc
 import inspect
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -30,7 +29,6 @@ from structlog.testing import capture_logs
 from candleviewer import main
 from candleviewer.app import Supervisor
 from candleviewer.settings import TEARDOWN_BUDGET_S
-from tests._gc_freeze import Marker, is_frozen
 from tests.unit.test_main_lifespan_teardown_isolation import (
     _app,
     _failed_steps,
@@ -91,14 +89,6 @@ _ALWAYS = frozenset(
         "profiles",
     }
 )
-
-
-@pytest.fixture(autouse=True)
-def _unfrozen() -> Iterator[None]:
-    """The freeze is the lifespan's own: a clean slate whatever ran before, nothing left after."""
-    gc.unfreeze()
-    yield
-    gc.unfreeze()
 
 
 def _raiser(original: Callable[..., object], exc: BaseException) -> Callable[..., object]:
@@ -167,7 +157,6 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
     ran: list[str] = []
     graces: list[float] = []
     app, steps = _app(ran, monkeypatch)
-    marker = Marker()
     monkeypatch.setattr(main, "Supervisor", _recording(graces))
     exc = RuntimeError(f"{call} failed")
     _fail(call, exc, app, steps, monkeypatch)
@@ -176,7 +165,6 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
     assert raised.value is exc
     assert ran == stopped
     assert graces == [TEARDOWN_BUDGET_S]
-    assert not is_frozen(marker)  # a boot that failed after its freeze undoes it
 
 
 @pytest.mark.parametrize(

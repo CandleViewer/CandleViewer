@@ -518,7 +518,7 @@ async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_s
 
 
 @pytest.fixture
-def clean_freeze() -> Iterator[None]:
+def clean_freeze(real_startup_freeze: None) -> Iterator[None]:
     """The freeze is the test's own: a clean slate whatever ran before, nothing left after."""
     gc.unfreeze()
     yield
