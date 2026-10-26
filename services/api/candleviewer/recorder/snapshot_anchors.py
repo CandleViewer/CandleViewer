@@ -12,8 +12,8 @@ the first tick that sees it, not a whole interval later.
   while the lane spills, and while the disk gate drops the symbol.
 * Source: an injected `AnchorBooks`. The recorder may not import `book` or `ingestion`
   (CONSTITUTION §3), so the composition root adapts the ingestion `BookStream`; no new edge.
-  A LIVE book is anchored however long it has been quiet: Bybit sends nothing while a book does
-  not change, and the feed watchdog takes a dead feed out of LIVE.
+  A LIVE book is anchored however long it has been quiet: the exchange sends nothing while a
+  book does not change, and the feed watchdog takes a dead feed out of LIVE.
 * Stamp (`anchor_ts`): the book holds every delta up to its last applied event, so the anchor is
   stamped after that event and no later than any delta it lacks: a seek from it re-applies
   exactly the deltas after it, and a quiet book's anchor stays inside the replay's lookback.
@@ -43,7 +43,7 @@ NoAnchor = Literal["no_book", "not_live"]
 DEFAULT_INTERVAL_S: Final = 60
 #: How far a quiet book's anchor is stamped before the slot's wall-clock time: the bound on a
 #: frame still in flight (network, dispatch lane) plus the local clock's lead on the exchange's
-#: (Bybit's default `recv_window`). A delta the book lacks was stamped by the exchange after it.
+#: (its default receive window). A delta the book lacks was stamped by the exchange after it.
 STAMP_MARGIN_US: Final = 5_000_000
 _MS_US: Final = 1_000
 
@@ -59,7 +59,7 @@ def anchor_ts(last_applied_us: int, slot_wall_us: int) -> int:
     `STAMP_MARGIN_US`, so it stays within one interval of the slot. Exchange stamps are whole
     milliseconds, so the anchor is moved off one: its `(ts, symbol, depth)` key can never equal
     an exchange snapshot's, and it stays before the next delta, assuming the exchange never pushes
-    two book frames in the same millisecond (Bybit's push cadence is 10 to 200 ms); if it did, a
+    two book frames in the same millisecond (its push cadence is 10 to 200 ms); if it did, a
     seek would see a sequence gap at the second and resync, never apply a wrong book."""
     ts = max(last_applied_us + 1, slot_wall_us - STAMP_MARGIN_US)
     return ts + 1 if ts % _MS_US == 0 else ts
