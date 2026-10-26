@@ -29,7 +29,10 @@ hand-off, this tool and the ticket's board PNGs, nothing else (G-UNTOUCHED).
    `origin/main`). A cite followed by a quoted fragment, and every Table A Old cell, is looked up
    whole: on its line it passes, once elsewhere it WARNs (moved), nowhere or more than once off
    its line it FAILs (gone, ambiguous). The merged-sha pins are ancestors of the base, carry
-   their PR numbers and touch the cited files.
+   their PR numbers and touch the cited files; a late pin (LATE_PINS: E33-D04, merged after the
+   base) is an ancestor of the branch instead, and cites into its files (`Exx-Dyy-handoff`:line
+   names a hand-off) are read at its sha. An HTML comment is read over the whole text, closed by
+   `-->` or `--!>` as a browser closes it (or by the end of the text), never line by line.
 3. **Gates (RULED comment 6399392172).** Every table row, bullet, prose sentence and heading of
    the spec and the hand-off is read, fenced copy-ready blocks included, after normalising (HTML
    comments, soft hyphens and zero-width characters dropped, NFKC, markup stripped, dashes to
@@ -68,9 +71,10 @@ hand-off, this tool and the ticket's board PNGs, nothing else (G-UNTOUCHED).
    on disk, each section still holding a placeholder filled from FIXTURE (so the skeleton is
    exercised whole; `--fixture HEADING` prints a block). The baseline must have no FAIL. Every
    mutation of MUTATIONS is applied in memory, values frozen at the baseline: it must add
-   exactly one distinct FAIL, from the gate it names, and every gate has at least one; the
-   semantic mutations run against a pin table re-rendered from the mutated text (the gate holds
-   even after a careless re-pin), the pin mutations against the baseline's own pins. Restore is
+   exactly one distinct FAIL, from the gate it names (a hidden-comment mutation one more from
+   each gate of its `also`), and every gate has at least one; the semantic mutations run against
+   a pin table re-rendered from the mutated text (the gate holds even after a careless re-pin),
+   the pin mutations against the baseline's own pins. Restore is
    proven by sha256 of the in-memory baseline and of every file on disk, and by a final audit of
    the baseline with no FAIL. The disk is never written.
 
@@ -178,7 +182,10 @@ PINS: dict[str, tuple[str, str]] = {
     "1e6c15a1a": ("#3920", "docs/design/E39/E39-D01.md"),
     "e0bf7db3e": ("#3926", "docs/design/E42/E42-D02.md"),
     "9b5c0d8bf": ("#4193", "docs/design/E42/E42-D04.md"),
+    "db6a6ad1f": ("#4528", "docs/design/E33/E33-D04"),
 }
+# pins merged after the base, ancestors of the branch: cites into their paths are read at the pin
+LATE_PINS = ("db6a6ad1f",)
 # sha → the document it pins: a document id named next to it must be this one
 PIN_DOC = {
     "9da45ae35": "d01",
@@ -202,10 +209,11 @@ PIN_DOC = {
     "1e6c15a1a": "e39 d01",
     "e0bf7db3e": "e42 d02",
     "9b5c0d8bf": "e42 d04",
+    "db6a6ad1f": "e33 d04",
 }
 DOC_IDS = (
     r"\b(e29 d01|e29 d02|e29 d03|e30 d04|e30 d02|e09 d09|e09 d08|e39 d03|e39 d01|e05 d02|e11 d06"
-    r"|e17 d01|e33 d03|e42 d02|e42 d04|d01|d02|d03)\b"
+    r"|e17 d01|e33 d03|e33 d04|e42 d02|e42 d04|d01|d02|d03)\b"
 )
 HAND_PINS = ("9da45ae35", "c4270ba93", "75a33c164", "a59ba382b")
 MAX_BOARDS = 10  # RULED BQ-15: at most ten boards, seven dark and three light twins
@@ -423,12 +431,17 @@ def plan(nn: str) -> str:
     return at_base(rel)
 
 
+def cite_rev(rel: str) -> str:
+    """The revision a cite into `rel` is read at: a late pin's sha for its paths, else the base."""
+    return next((sha for sha in LATE_PINS if rel.startswith(PINS[sha][1])), BASE)
+
+
 def cite_path(cid: str) -> str | None:
     if re.fullmatch(r"\d{2}", cid):
         return plan_rel(cid)
     if cid in CITE_FILES:
         return CITE_FILES[cid]
-    m = re.fullmatch(r"(E\d{2})-D\d{2}", cid)
+    m = re.fullmatch(r"(E\d{2})-D\d{2}(?:-handoff)?", cid)
     if m:
         return f"docs/design/{m[1]}/{cid}.md"
     if "/" in cid:
@@ -609,8 +622,12 @@ def bullet(block: str, label: str) -> str:
 _DASHES = re.compile(r"[\u2010-\u2015\u2212-]")
 _MARKUP = re.compile(r"[*`]")
 _LINK = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+# an HTML comment as a browser ends it, read over the whole text (never line by line): at the
+# first `-->` or `--!>` (HTML5), at once for `<!-->` and `<!--->`, and at the end of the text when
+# it is never closed
+COMMENT = re.compile(r"<!--(?:-?>|.*?--!?>|.*\Z)", re.DOTALL)
 # hidden in rendered markdown: HTML comments (markers included), soft hyphens, zero-width
-_HIDDEN = re.compile(r"<!--.*?-->|[\u00ad\u200b-\u200d\u2060\ufeff]", re.DOTALL)
+_HIDDEN = re.compile(COMMENT.pattern + r"|[\u00ad\u200b-\u200d\u2060\ufeff]", re.DOTALL)
 _EMPH = re.compile(r"(?<!\w)_+|_+(?!\w)")
 QUOTED = re.compile(r'"[^"\n]*"|“[^”\n]*”')
 CODE = re.compile(r"`[^`\n]*`")
@@ -1631,11 +1648,11 @@ def marker_problems(name: str, text: str, values: Values) -> list[str]:
             prev = m.end()
         for m in FILL.finditer(CODE.sub("", line)):
             bad.append(f"{name}:{i} {{{{audit:{m[1]}}}}} is not filled (--fill)")
-        for m in re.finditer(r"<!--(.*?)-->", line):
-            if not MARKER.fullmatch(m[0]):
-                bad.append(
-                    f"{name}:{i} a comment that is no audit marker hides text from every gate"
-                )
+    lines = text.split("\n")
+    for m in COMMENT.finditer(text):
+        i = text.count("\n", 0, m.start()) + 1
+        if not PLACEHOLDER.match(lines[i - 1]) and not MARKER.fullmatch(m[0]):
+            bad.append(f"{name}:{i} a comment that is no audit marker hides text from every gate")
     bad += [f"{name} {h}: a figure typed by hand" for h in bare_figures(text)]
     return bad
 
@@ -1643,7 +1660,7 @@ def marker_problems(name: str, text: str, values: Values) -> list[str]:
 # ---------------------------------------------------------------------------- cites (G-CITE)
 
 CITE = re.compile(
-    r"(?:`(?P<a>[A-Za-z0-9._/-]+)`|(?P<b>\b(?:D01|D02|D03|PRIM|E\d\d-D\d\d)\b)) ?"
+    r"(?:`(?P<a>[A-Za-z0-9._/-]+)`|(?P<b>\b(?:D01|D02|D03|PRIM|E\d\d-D\d\d(?:-handoff)?)\b)) ?"
     r":(?P<first>\d+(?:[–-]\d+)?)(?P<more>(?:, :\d+(?:[–-]\d+)?)*)"
     r'(?: "(?P<frag>[^"\n]+)")?'
 )
@@ -1682,9 +1699,10 @@ def cite_problems(texts: dict[str, str], fetch: Fetch) -> tuple[list[str], list[
             cid = m["a"] or m["b"]
             refs = [m["first"], *re.findall(r":(\d+(?:[–-]\d+)?)", m["more"])]
             rel = cite_path(cid)
-            base = lines_of(BASE, rel) if rel else None
+            rev = cite_rev(rel) if rel else BASE
+            base = lines_of(rev, rel) if rel else None
             if rel is None or base is None:
-                fails.append(f"{name} `{cid}`:{refs[0]} no such file at {BASE}")
+                fails.append(f"{name} `{cid}`:{refs[0]} no such file at {rev}")
                 continue
             head = lines_of(HEAD, rel)
             for ref in refs:
@@ -1694,7 +1712,7 @@ def cite_problems(texts: dict[str, str], fetch: Fetch) -> tuple[list[str], list[
                         continue
                     done.add((cid, n))
                     if n < 1 or n > len(base) or not base[n - 1].strip():
-                        fails.append(f"{name} `{cid}`:{n} is missing or blank at {BASE}")
+                        fails.append(f"{name} `{cid}`:{n} is missing or blank at {rev}")
                     elif head is not None and (n > len(head) or head[n - 1] != base[n - 1]):
                         warns.append(f"[G-CITE] `{cid}`:{n} drifted at {HEAD}")
             if m["frag"]:
@@ -1762,7 +1780,12 @@ def pin_claims(clause: str) -> list[str]:
 def pin_facts() -> tuple[str, ...]:
     bad: list[str] = []
     for sha, (pr, path) in PINS.items():
-        if not git_ok("merge-base", "--is-ancestor", sha, BASE):
+        if sha in LATE_PINS:
+            if git_ok("merge-base", "--is-ancestor", sha, BASE):
+                bad.append(f"`{sha}` is an ancestor of {BASE}: no late pin")
+            elif not git_ok("merge-base", "--is-ancestor", sha, "HEAD"):
+                bad.append(f"`{sha}` is not an ancestor of the branch")
+        elif not git_ok("merge-base", "--is-ancestor", sha, BASE):
             bad.append(f"`{sha}` is not an ancestor of {BASE}")
         if pr not in git_out("log", "-1", "--format=%s", sha):
             bad.append(f"`{sha}` is not {pr}")
@@ -3637,8 +3660,8 @@ def g_a11y(t: Texts) -> list[str]:
     for head in A11Y_ENTRIES:
         if pending(t.spec, head):
             continue
-        block = section(t.spec, head)
-        if not block:
+        block = visible(section(t.spec, head))
+        if not block.strip():
             bad.append(f"§{head.split(' ')[0]} is missing")
             continue
         for label in A11Y_LINES:
@@ -3649,7 +3672,7 @@ def g_a11y(t: Texts) -> list[str]:
     for head in A11Y_HAND:
         if pending(t.hand, head):
             continue
-        line = bullet(section(t.hand, head), "A11y")
+        line = bullet(visible(section(t.hand, head)), "A11y")
         bad += [f"{head} A11y has no {lab[:-1]}" for lab in A11Y_LINES if lab not in line]
         for lab in A11Y_LINES:
             part = re.split(r"(?:Keyboard|Accessible name|Live region):", line.split(lab, 1)[-1])[0]
@@ -3891,8 +3914,10 @@ def text_clauses(name: str, text: str) -> list[Clause]:
         para.clear()
 
     lines = text.split("\n")
+    # comments dropped over the whole text (one may span lines), its line count kept
+    shown = _HIDDEN.sub(lambda m: "\n" * m[0].count("\n"), text).split("\n")
     for num, raw in enumerate(lines, 1):
-        line = _HIDDEN.sub("", raw)
+        line = shown[num - 1]
         stripped = line.strip()
         if PLACEHOLDER.match(raw):
             flush()
@@ -4025,6 +4050,10 @@ def g_sec_pin(t: Texts) -> list[str]:
 # G-TEXT-PIN runs after every other gate, so a breach a lexicon or a semantic gate reads reports
 # that gate's code first. It FAILs, by location: changed, moved, duplicated, deleted, unpinned (a
 # new block), a new heading and a blank-line change (a squeeze or an added blank line).
+# Some paraphrases are closed by the pins alone, with no semantic gate behind them (text round 1,
+# C-4): a `disabled` flag named for CMP-079's `allowed` (§2.1), a `toggle` applying the mode on
+# each arrow key (§2.5) and a changed word in hand-off A-5.3 FAIL only G-SEC-PIN and G-TEXT-PIN.
+# Under default-deny that is the design: a re-pin is a reviewed diff, never a side effect.
 TEXT_DOCS = ("spec", "hand-off")
 TEXT_PATH_SEP = " › "
 TEXT_PIN_WIDTH = 96
@@ -4301,7 +4330,8 @@ def repin_ruled(spec: str, hand: str) -> int:
     if old_table == new_table:
         print("--repin-ruled: RULED_PIN_TXT already holds the text; nothing written")
         return 0
-    path.write_text(src[: start + len(TEXT_PIN_BEGIN)] + new_table + src[end:], encoding="utf-8")
+    new_src = src[: start + len(TEXT_PIN_BEGIN)] + new_table + src[end:]
+    path.write_text(new_src, encoding="utf-8", newline="\n")
     diff = unified_diff(
         old_table.split("\n"),
         new_table.split("\n"),
@@ -4736,6 +4766,22 @@ def line_edit(prefix: str, old: str, new: str) -> Edit:
     return run
 
 
+def hide_line(head: str, prefix: str) -> Edit:
+    """Wrap the first line of the section `head` that starts with `prefix` in an HTML comment
+    opened and closed on lines of their own (a required line hidden from a reader)."""
+
+    def run(text: str, _v: Values) -> str:
+        block = section(text, head)
+        out = block.split("\n")
+        for i, ln in enumerate(out):
+            if ln.startswith(prefix):
+                out[i] = f"<!--\n{ln}\n-->"
+                return text.replace(block, "\n".join(out), 1)
+        return text
+
+    return run
+
+
 def chain(*edits: Edit) -> Edit:
     def run(text: str, v: Values) -> str:
         for e in edits:
@@ -4879,6 +4925,7 @@ def para_squeezed(prefix: str) -> Edit:
 
 
 SPEC_PARA = "What each ticket item traces to"
+LIVE_HOLD_ALONE = "On LIVE the flatten confirm is a hold alone, with no typed word."
 HAND_PARA = "Each item names its owner"
 
 
@@ -4897,6 +4944,7 @@ class Mutation:
     first: str = ""  # a gate that must FAIL before G-TEXT-PIN (both pin tables at the baseline)
     says: str = ""  # words the gate's FAIL must hold (the FAIL kind a G-TEXT-PIN mutation proves)
     names: Callable[[tuple[str, ...]], tuple[str, ...]] | None = None  # the branch's changed paths
+    also: tuple[str, ...] = ()  # gates that must FAIL with it, one FAIL each (a hidden comment)
 
 
 # ---------------------------------------------------------------------------- the fixture
@@ -5709,6 +5757,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         "G-CITE",
         "condition",
         hand=edit_row("C.5 Table A", ("Field", "Old"), first, "Old", appended(" (edited)")),
+    ),
+    Mutation(
+        "M29.3",
+        "G-CITE",
+        "condition (a cite into a late pin, read at its sha)",
+        hand=sub_in("C.5 Table A", "`E33-D04-handoff`:131", "`E33-D04-handoff`:9999"),
     ),
     Mutation(
         "M30",
@@ -6603,6 +6657,47 @@ MUTATIONS: tuple[Mutation, ...] = (
         "condition (any case)",
         spec=prose_at("3.4 ", "A closed row lingers for 3 MIN."),
     ),
+    # text round 1 M-1: a comment is read over the whole text, closed by `-->` or `--!>`
+    Mutation(
+        "M16.10",
+        "G-VALUE",
+        "condition (a comment across lines)",
+        spec=prose_at("3.3 ", "<!-- a shimmer,\ndrawn after all -->"),
+    ),
+    Mutation(
+        "M16.11",
+        "G-VALUE",
+        "condition (a `--!>` close: the sentence after it is read)",
+        spec=prose_at("2.4 ", f"<!-- a note --!>\n{LIVE_HOLD_ALONE}"),
+        also=("G-FLATTEN",),
+    ),
+    Mutation(
+        "M16.12",
+        "G-VALUE",
+        "condition (a comment hiding a required line)",
+        spec=hide_line("2.1 ", "- **Live region:**"),
+        also=("G-A11Y",),
+    ),
+    Mutation(
+        "M16.13",
+        "G-VALUE",
+        "condition (a comment across lines, the hand-off)",
+        hand=prose_at("§F ", "<!-- a shimmer,\ndrawn after all -->"),
+    ),
+    Mutation(
+        "M16.14",
+        "G-VALUE",
+        "condition (a `--!>` close, the hand-off)",
+        hand=prose_at("C.5 Table A", f"<!-- a note --!>\n{LIVE_HOLD_ALONE}"),
+        also=("G-FLATTEN",),
+    ),
+    Mutation(
+        "M16.15",
+        "G-VALUE",
+        "condition (a comment hiding a required line, the hand-off)",
+        hand=hide_line("C.4 A-4", "- **A11y**"),
+        also=("G-A11Y",),
+    ),
     # delta r1 m1 (R04): a token run more than once
     Mutation(
         "M1.11",
@@ -6857,7 +6952,13 @@ def selftest(
                 undo()
         new = [x for x in fails if x not in base_fails]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
-        hit = bool(named) and len(new) == 1 and mu.says in named[0]
+        tags = {f"[{g}]" for g in (mu.gate, *mu.also)}
+        hit = (
+            bool(named)
+            and len(new) == len(tags)
+            and {x.split(" ", 1)[0] for x in new} == tags
+            and mu.says in named[0]
+        )
         if mu.first:
             # its own gate's code first, the pin last, nothing between but the security pin
             ok_tags = (f"[{mu.first}]", "[G-SEC-PIN]", f"[{mu.gate}]")
@@ -6944,8 +7045,8 @@ def main(argv: list[str]) -> int:
     if args.fill:
         spec, unknown = fill(spec, values)
         hand, unknown_h = fill(hand, values)
-        (ROOT / SPEC_REL).write_text(spec, encoding="utf-8")
-        (ROOT / HAND_REL).write_text(hand, encoding="utf-8")
+        (ROOT / SPEC_REL).write_text(spec, encoding="utf-8", newline="\n")
+        (ROOT / HAND_REL).write_text(hand, encoding="utf-8", newline="\n")
         for u in unknown + unknown_h:
             print(f"FAIL --fill: no value for {{{{audit:{u}}}}}")
         values, extra = compute(spec)
@@ -6986,9 +7087,10 @@ SEC_PIN_TXT = r"""
   than `motion.duration.normal` on a data row.
 @ prose
   **Key.** `NN`:line = `docs/plan/NN-*.md`; `D01`:line, `D02`:line and `D03`:line =
-  `docs/design/E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md`; `PRIM`:line =
-  `packages/ui/tokens/primitives.tokens.json`; `T` = the ticket text (#823: `T Scope`, `T AC1` to
-  `T AC3`, `T DoD`, `T Tech`, `T a11y`, `T Perf`).
+  `docs/design/E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md` and
+  `Exx-Dyy-handoff`:line its hand-off; `PRIM`:line = `packages/ui/tokens/primitives.tokens.json`;
+  `T` = the ticket text (#823: `T Scope`, `T AC1` to `T AC3`, `T DoD`, `T Tech`, `T a11y`, `T
+  Perf`).
 @ prose
   **Numbers.** Every token, motion, distance, contrast and count figure carries an `audit` marker
   (an HTML comment `NAME=VALUE`) that `docs/design/_tools/e29_d04_ds_motion_audit.py` re-derives
@@ -7039,8 +7141,8 @@ SEC_PIN_TXT = r"""
 @ row BQ-7 ‖ Question
   CMP-123: the flatten confirm specified once
 @ row BQ-7 ‖ Built here
-  §2.4: a composite, hold and typed on LIVE, composing E33-D04 A-6 (PENDING, by name); E30, E31
-  and E39 reference it
+  §2.4: a composite, hold and typed on LIVE, composing E33-D04 A-6 (`E33-D04-handoff`:57); E30,
+  E31 and E39 reference it
 @ row BQ-8 ‖ Built here
   §2.5: the read-only `display` variant, with no control role and no T2, and arrow-browsing never
   writes; §2.6
@@ -7055,6 +7157,12 @@ SEC_PIN_TXT = r"""
 § spec ‖ Deviations (recorded, not hidden)
 @ heading
   ## Deviations (recorded, not hidden)
+@ prose
+  **BQ-13's exits.** The default names "the two drawn exceptions" on exits (offline with REST
+  unreachable; a Manager under the kill switch); §4.2 draws three, adding the other environment's
+  rows, read-only behind `guard.mismatch.row` (D02:145), and keeps a Cancel's own order-kind and
+  in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`,
+  `blotter.amend_in_flight`).
 § spec ‖ 0. Planned boards (PENDING; ten: seven dark, thr
 @ row 02 ‖ Draws
   `CMP-115/*`: the fifteen statuses, each glyph + word; the amend moments (editing, pending,
@@ -7431,10 +7539,10 @@ SEC_PIN_TXT = r"""
   CMP-044's rule names "the object's own name", here the account label (`15`:476), and D02 routes
   the bulk words to D03's deck ("CLOSE", D02:349).
 @ prose
-  Composition with E33-D04 A-6 (PENDING, by name): A-5.1 replaces the Purpose's "`hold` or
-  `typed`" choice with this composite and appends after E33-D04 A-6.1's sentence, whichever lands
-  first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-op; the route
-  names stay E39-D03 C9's.
+  Composition with E33-D04 A-6 (`E33-D04-handoff`:57): A-5.1 replaces the Purpose's "`hold` or
+  `typed`" choice with this composite and appends after E33-D04 A-6.1's sentence
+  (`E33-D04-handoff`:130), whichever lands first, and A-5.5 is E33-D04 A-6.2's own replacement
+  (`E33-D04-handoff`:131), so the second to land is a no-op; the route names stay E39-D03 C9's.
 @ head 1
   Environment
 @ head 2
@@ -8629,7 +8737,7 @@ SEC_PIN_TXT = r"""
 @ prose
   A-1 to A-4 are the whole entries of CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge
   and CMP-129 PositionModeToggle (hand-off C.1 to C.4); A-5 (CMP-123 FlattenAllButton, A-5.1 to
-  A-5.8, composing E33-D04 A-6, PENDING, by name), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7
+  A-5.8, composing E33-D04 A-6, `E33-D04-handoff`:57), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7
   (CMP-105 AccountMultiSelect, A-7.1 to A-7.6) and A-8 (CMP-209 RightRail, one row; DR-7) are Old
   → New rows (hand-off C.5); the `16` block is a new block (hand-off C.6), its recipe owner
   E05-D03 (#3174).
@@ -8995,10 +9103,10 @@ SEC_PIN_TXT = r"""
 @ heading
   ### C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field
 @ prose
-  A-5 composes with E33-D04 A-6 (PENDING, by name; RULED BQ-7): A-5.1 replaces the Old Purpose's
-  "`hold` or `typed`" choice with the composite and appends after E33-D04 A-6.1's sentence,
-  whichever lands first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a
-  no-op.
+  A-5 composes with E33-D04 A-6 (`E33-D04-handoff`:57; RULED BQ-7): A-5.1 replaces the Old
+  Purpose's "`hold` or `typed`" choice with the composite and appends after E33-D04 A-6.1's
+  sentence (`E33-D04-handoff`:130), whichever lands first, and A-5.5 is E33-D04 A-6.2's own
+  replacement (`E33-D04-handoff`:131), so the second to land is a no-op.
 @ prose
   A "new bullet" row inserts the bullet after the line its Old cell sits on.
 @ head 1
@@ -9083,8 +9191,8 @@ SEC_PIN_TXT = r"""
 @ row A-5.5 ‖ Old (verbatim)
   `color.status.danger`.
 @ row A-5.5 ‖ New
-  `color.status.danger.default`. (The same replacement as E33-D04 A-6.2, PENDING: whichever lands
-  first applies and the other is then a no-op.)
+  `color.status.danger.default`. (The same replacement as E33-D04 A-6.2, `E33-D04-handoff`:131:
+  whichever lands first applies and the other is then a no-op.)
 @ row A-5.6 ‖ A
   A-5.6
 @ row A-5.6 ‖ Component
@@ -9438,8 +9546,8 @@ SEC_PIN_TXT = r"""
 @ prose
   Owner: the owner, who rules OQ-R with E39-D03's owner.
 @ prose
-  - **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
-  first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first,
+  - **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (`E33-D04-handoff`:57): whichever
+  lands first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first,
   A-6.1's Old cell no longer matches the Purpose it quotes, and A-6.1 is re-based on A-5.1's New.
 @ prose
   Owner: E29-T09, after the owner's approval (owner approval pending (#2701)).
@@ -9520,23 +9628,23 @@ RULED_PIN_TXT = r"""
    its boards #4402 (`05aa6fba1`), the last change to its text, where its line numbers are read; E
   39-D01 #3920 (`1e6c15a1a`); E42-D02 #3926 (`e0bf7db3e`); E42-D04 #4193 (`9b5c0d8bf`); E05-D02 sl
   ice 1 #3914 (`7c804aacc`), slice 2 #4290 (`c899241c8`), slice 3 #4322 (`3a2fc5c29`) and slice 4
-   #4414 (`04a8caa95`), each a merged text whose owner approval is pending. Unmerged work is named
-   only, PENDING: E33-D04 (#988), the E29-D03 boards (#4472) and E05-D03 (#3174). `15`, `16`, `05`
-  , `14` and `packages/ui/tokens` are read at the base; `15` and `16` stay byte-identical to it (R
-  ULED BQ-2)."
+   #4414 (`04a8caa95`), each a merged text whose owner approval is pending; E33-D04 #4528 (`db6a6a
+  d1f`), merged after the base, its lines read at that merge sha. Unmerged work is named only, PEN
+  DING: the E29-D03 boards (#4472) and E05-D03 (#3174). `15`, `16`, `05`, `14` and `packages/ui/to
+  kens` are read at the base; `15` and `16` stay byte-identical to it (RULED BQ-2)."
 @ ¶5 prose 1
   "**Key.** `NN`:line = `docs/plan/NN-*.md`; `D01`:line, `D02`:line and `D03`:line = `docs/design/
-  E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md`; `PRIM`:line = `packages/ui/token
-  s/primitives.tokens.json`; `T` = the ticket text (#823: `T Scope`, `T AC1` to `T AC3`, `T DoD`,
-   `T Tech`, `T a11y`, `T Perf`). **D04-An** = a copy-ready amendment (hand-off §C), **D04-Cn** a
-   contradiction (§7.2), **D04-Gn** a contract gap (§7.3), **DR-n** a drift-ledger row (§7.4), **M
-  o-n** a motion row (§3.2), **Mn** a gate mutation (§8.2), **BQ-n** a ruled question."
+  E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md` and `Exx-Dyy-handoff`:line its ha
+  nd-off; `PRIM`:line = `packages/ui/tokens/primitives.tokens.json`; `T` = the ticket text (#823:
+   `T Scope`, `T AC1` to `T AC3`, `T DoD`, `T Tech`, `T a11y`, `T Perf`). **D04-An** = a copy-read
+  y amendment (hand-off §C), **D04-Cn** a contradiction (§7.2), **D04-Gn** a contract gap (§7.3),
+   **DR-n** a drift-ledger row (§7.4), **Mo-n** a motion row (§3.2), **Mn** a gate mutation (§8.2)
+  , **BQ-n** a ruled question. **Numbers.** Every token, motion, distance, contrast and count figu
+  re carries an `audit` marker (an HTML comment `NAME=VALUE`) that `docs/design/_tools/e29_d04_ds_
+  motion_audit.py` re-derives from its `--json` under `--check` (RULED BQ-16); no figure with a un
+  it is typed by hand. Ids, copy fixtures inside double quotes and `file`:line cites are not measu
+  rements."
 @ ¶6 prose 1
-  "**Numbers.** Every token, motion, distance, contrast and count figure carries an `audit` marker
-   (an HTML comment `NAME=VALUE`) that `docs/design/_tools/e29_d04_ds_motion_audit.py` re-derives
-   from its `--json` under `--check` (RULED BQ-16); no figure with a unit is typed by hand. Ids, c
-  opy fixtures inside double quotes and `file`:line cites are not measurements."
-@ ¶7 prose 1
   "**Fixtures.** Every example uses the fixture accounts Main, Sub-1 and Sub-2 and shows LIVE, as
    D02's boards do; E29 runs on DEMO until R4, where the same frames carry DEMO with identical cop
   y (D03:46). No key material, signature, full order id or real balance appears in this file, the
@@ -9701,9 +9809,10 @@ RULED_PIN_TXT = r"""
                                                                    |"
 @ ¶10 row 0
   "| BQ-7  | CMP-123: the flatten confirm specified once                    | §2.4: a composite, h
-  old and typed on LIVE, composing E33-D04 A-6 (PENDING, by name); E30, E31 and E39 reference it
+  old and typed on LIVE, composing E33-D04 A-6 (`E33-D04-handoff`:57); E30, E31 and E39 reference
+   it
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                     |"
+                                                 |"
 @ ¶11 row 0
   "| BQ-8  | CMP-129 and the CMP-105 reuse contract                         | §2.5: the read-only
    `display` variant, with no control role and no T2, and arrow-browsing never writes; §2.6
@@ -9774,6 +9883,13 @@ RULED_PIN_TXT = r"""
   "3. **The ticket's motion words.** \"pending shimmer\" and \"correction flash\" are read through
    RULED BQ-10 and BQ-9: pending carries no loop, and the correction highlight is one opacity over
   lay (§3.2)."
+@ ¶4 item 0
+  "4. **BQ-13's exits.** The default names \"the two drawn exceptions\" on exits (offline with RES
+  T unreachable; a Manager under the kill switch); §4.2 draws three, adding the other environment'
+  s rows, read-only behind `guard.mismatch.row` (D02:145), and keeps a Cancel's own order-kind and
+   in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`, `bl
+  otter.amend_in_flight`). All are merged D02 wording (D02:145, :345, :421), not a new gate, and n
+  one is the account's state."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 0.
 §  Planned boards (PENDING; ten: seven dark, three light twins)#1"]
 @ ¶0 heading 1
@@ -9964,8 +10080,8 @@ RULED_PIN_TXT = r"""
   "| E39-D03 C9 and C14 (E39-D03:383, :388); E33-D03 D03-A2 (E33-D03:309)         | CMP-123's data
    contract; the one-gate reading of FLATTEN ALL; a CMP-123 sentence routed to E33-D04
                                                                                           | A-5.6;
-   §2.4 and D04-C9; A-5.1 composes with E33-D04 A-6 (PENDING, by name)
-                                                 |"
+   §2.4 and D04-C9; A-5.1 composes with E33-D04 A-6 (`E33-D04-handoff`:57)
+                                             |"
 @ ¶20 prose 1
   "**Rules stated once.** R-1: tokens by name, none added, never `motion.duration.slow` on a data
    row (RULED BQ-12). R-2: every word is its owner's, cited and never redefined, and a key that is
@@ -10539,10 +10655,10 @@ RULED_PIN_TXT = r"""
   te reading of FLATTEN ALL meets this composite in D04-C9; the word for `account` is its copy own
   er's and stays open (hand-off Q-17): CMP-044's rule names \"the object's own name\", here the ac
   count label (`15`:476), and D02 routes the bulk words to D03's deck (\"CLOSE\", D02:349). Compos
-  ition with E33-D04 A-6 (PENDING, by name): A-5.1 replaces the Purpose's \"`hold` or `typed`\" ch
-  oice with this composite and appends after E33-D04 A-6.1's sentence, whichever lands first, and
-   A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-op; the route names sta
-  y E39-D03 C9's."
+  ition with E33-D04 A-6 (`E33-D04-handoff`:57): A-5.1 replaces the Purpose's \"`hold` or `typed`\
+  " choice with this composite and appends after E33-D04 A-6.1's sentence (`E33-D04-handoff`:130),
+   whichever lands first, and A-5.5 is E33-D04 A-6.2's own replacement (`E33-D04-handoff`:131), so
+   the second to land is a no-op; the route names stay E39-D03 C9's."
 @ ¶2 row 1
   "| Environment | Confirm
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12210,10 +12326,10 @@ RULED_PIN_TXT = r"""
 @ ¶1 prose 1
   "A-1 to A-4 are the whole entries of CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge a
   nd CMP-129 PositionModeToggle (hand-off C.1 to C.4); A-5 (CMP-123 FlattenAllButton, A-5.1 to A-5
-  .8, composing E33-D04 A-6, PENDING, by name), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7 (CMP-105
-   AccountMultiSelect, A-7.1 to A-7.6) and A-8 (CMP-209 RightRail, one row; DR-7) are Old → New ro
-  ws (hand-off C.5); the `16` block is a new block (hand-off C.6), its recipe owner E05-D03 (#3174
-  )."
+  .8, composing E33-D04 A-6, `E33-D04-handoff`:57), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7 (CMP-
+  105 AccountMultiSelect, A-7.1 to A-7.6) and A-8 (CMP-209 RightRail, one row; DR-7) are Old → New
+   rows (hand-off C.5); the `16` block is a new block (hand-off C.6), its recipe owner E05-D03 (#3
+  174)."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
 §  Rows: A, C, G and the drift ledger › 7.2 Contradictions (C-rows)#1"]
 @ ¶0 heading 1
@@ -12434,11 +12550,11 @@ RULED_PIN_TXT = r"""
   r`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-              | b     | `color.status.danger.default` (A-5.5; the same row as E33-D04 A-6.2, PENDI
-  NG: whichever lands first applies it)
+              | b     | `color.status.danger.default` (A-5.5; the same row as E33-D04 A-6.2, `E33-
+  D04-handoff`:131: whichever lands first applies it)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                                           | E29-T
-  09 (A-5.5)                                     | corrected |"
+                                                                             | E29-T09 (A-5.5)
+                                       | corrected |"
 @ ¶7 row 0
   "| DR-4  | `15`:1245; D02:219–220 (`75a33c164`)                    | CMP-114 `color.status.warni
   ng` / `color.status.danger`
@@ -12597,14 +12713,13 @@ RULED_PIN_TXT = r"""
 @ ¶3 row 0
   "| G-VALUE          | every figure is a marker the tool re-derives (condition)
                                                              | M16.1 · M16.2 · M16.3 · M16.4 · M16
-  .5 · M16.6 · M16.7 · M16.8 · M16.9
-  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                          |"
+  .5 · M16.6 · M16.7 · M16.8 · M16.9 · M16.10 · M16.11 · M16.12 · M16.13 · M16.14 · M16.15
+                                                                    |"
 @ ¶4 row 0
   "| G-CITE           | cites, quoted fragments and Table A's Old cells hold at the base (conditio
-  n)                                       | M29.1 · M29.2
+  n)                                       | M29.1 · M29.2 · M29.3
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                                  |"
+                                                                          |"
 @ ¶5 row 0
   "| G-PIN            | merged texts at their merge shas (condition)
                                                                          | M30
@@ -12827,8 +12942,8 @@ RULED_PIN_TXT = r"""
   ver gated by a state key (RULED BQ-13); §5 measures 27 <!-- audit:count.pairs=27 --> gated pairs
    and 2 <!-- audit:count.pairs-measured=2 --> measured ones in three themes."
 @ ¶8 item 0
-  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 210 <!-- audit:count.mutations=2
-  10 --> mutations, and every figure here is its `--json`."
+  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 217 <!-- audit:count.mutations=2
+  17 --> mutations, and every figure here is its `--json`."
 § ["spec", "(end)#1"]
 @ ¶0 end 1
   ""
@@ -12855,67 +12970,69 @@ RULED_PIN_TXT = r"""
 @ ¶1 row 1
   "| A   | Component                  | Form
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                      | Placement in `15`
+                                                          | Placement in `15`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                     |"
+                                                                   |"
 @ ¶2 row 0
   "| --- | -------------------------- | ----------------------------------------------------------
-  --------------------------------------------------------------------------------------------- |
-   -----------------------------------------------------------------------------------------------
-  -------------------------------------------------------------------- |"
+  ------------------------------------------------------------------------------------------------
+  - | --------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------- |"
 @ ¶3 row 0
   "| A-1 | CMP-114 PositionsGrid      | the whole entry (§C.1)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                    | in place of `15`:1240–1272
+                                        | in place of `15`:1240–1272
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                            |"
+                                                          |"
 @ ¶4 row 0
   "| A-2 | CMP-115 OrderRow           | the whole entry (§C.2)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                    | in place of `15`:1274–1298
+                                        | in place of `15`:1274–1298
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                            |"
+                                                          |"
 @ ¶5 row 0
   "| A-3 | CMP-116 PnLBadge           | the whole entry (§C.3)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                    | in place of `15`:1300–1309
+                                        | in place of `15`:1300–1309
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                            |"
+                                                          |"
 @ ¶6 row 0
   "| A-4 | CMP-129 PositionModeToggle | the whole entry (§C.4)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                    | in place of `15`:1474–1481
+                                        | in place of `15`:1474–1481
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶7 row 0
+  "| A-5 | CMP-123 FlattenAllButton   | Old → New by field (§C.5), composing E33-D04 A-6 (`E33-D04
+  -handoff`:57): whichever lands first applies the shared Tokens row, and the other is then a no-o
+  p | in place, field by field, `15`:1403–1411
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                             |"
-@ ¶7 row 0
-  "| A-5 | CMP-123 FlattenAllButton   | Old → New by field (§C.5), composing E33-D04 A-6 (PENDING,
-   by name): whichever lands first applies the shared Tokens row, and the other is then a no-op |
-   in place, field by field, `15`:1403–1411
-  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                              |"
 @ ¶8 row 0
   "| A-6 | CMP-049 Table              | Old → New by field (§C.5): the base contract for both cons
-  umers                                                                                         |
-   in place, field by field, `15`:524–533
+  umers
+                                                                                               | i
+  n place, field by field, `15`:524–533
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                |"
+                                              |"
 @ ¶9 row 0
   "| A-7 | CMP-105 AccountMultiSelect | Old → New by field (§C.5): the filter use's reuse contract
-  , no new variant                                                                              |
-   in place, field by field, `15`:1089–1100
+  , no new variant
+                                                                                    | in place, fi
+  eld by field, `15`:1089–1100
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                              |"
+                                            |"
 @ ¶10 row 0
   "| A-8 | CMP-209 RightRail          | Old → New, one field (§C.5): its drawer motion, the shippe
-  d pair of Mo-6 (spec §2.8.8; DR-7)                                                            |
-   in place, `15`:2489
+  d pair of Mo-6 (spec §2.8.8; DR-7)
+                                                                  | in place, `15`:2489
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                   |"
+                                                                 |"
 @ ¶11 row 0
   "| —   | the `16` block             | a new block (§C.6); its recipe owner is E05-D03 (#3174)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-   | after `16` §7.1 (`16`:185–204), numbered §7.n, the next free number when E29-T09 applies it:
-   §7.2 is claimed by E33-D04 §C.8 (PENDING) and by E42-D04 (E42-D04:882) |"
+       | after `16` §7.1 (`16`:185–204), numbered §7.n, the next free number when E29-T09 applies
+   it: §7.2 is claimed by E33-D04 §C.8 (`E33-D04-handoff`:135) and by E42-D04 (E42-D04:882) |"
 @ ¶12 prose 1
   "E29-T09 pastes each block verbatim after the owner's approval (RULED BQ-2; owner approval pendi
   ng (#2701)), keeping every value and dropping its `audit` marker. The routed components of spec
@@ -13093,11 +13210,11 @@ RULED_PIN_TXT = r"""
    drawn on request. \"On request\" cells are fully specified in spec §2 and §3 and listed under s
   pec §0's \"Specified (drawn on request)\"."
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval)#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed)#1"]
 @ ¶0 heading 1
-  "## §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the owne
-  r's approval)"
+  "## §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approved)
+  "
 @ ¶1 prose 1
   "Whole entries C.1 to C.4 in `15` §0.1's order as `15`'s trading entries apply it (Tier · Purpos
   e, Props, Variants, States, A11y, Tokens, API sketch, Data contract, Storybook, Tests, Motion sp
@@ -13106,8 +13223,8 @@ RULED_PIN_TXT = r"""
    at its `15` line; the `16` block is C.6. E29-T09 replaces an entry from its heading to its last
    bullet, keeps each figure and drops its `audit` marker."
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.1 A-1 — CMP-114 PositionsGrid#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.1 A-1 — CMP-114 PositionsGrid#1"]
 @ ¶0 heading 1
   "### C.1 A-1 — CMP-114 PositionsGrid"
 @ ¶1 prose 1
@@ -13195,8 +13312,8 @@ RULED_PIN_TXT = r"""
    **Design (DS spec):** [E29-D04.md](../design/E29/E29-D04.md) §2.1 (E29-D04; owner approval pend
   ing).\n```"
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.2 A-2 — CMP-115 OrderRow#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.2 A-2 — CMP-115 OrderRow#1"]
 @ ¶0 heading 1
   "### C.2 A-2 — CMP-115 OrderRow"
 @ ¶1 prose 1
@@ -13261,8 +13378,8 @@ RULED_PIN_TXT = r"""
   hing animates per tick; each `prefers-reduced-motion` twin is instant.\n- **Design (DS spec):**
    [E29-D04.md](../design/E29/E29-D04.md) §2.2 (E29-D04; owner approval pending).\n```"
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.3 A-3 — CMP-116 PnLBadge#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.3 A-3 — CMP-116 PnLBadge#1"]
 @ ¶0 heading 1
   "### C.3 A-3 — CMP-116 PnLBadge"
 @ ¶1 prose 1
@@ -13303,8 +13420,8 @@ RULED_PIN_TXT = r"""
   ew text is the change at frame 0.\n- **Design (DS spec):** [E29-D04.md](../design/E29/E29-D04.md
   ) §2.3 (E29-D04; owner approval pending).\n```"
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.4 A-4 — CMP-129 PositionModeToggle#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.4 A-4 — CMP-129 PositionModeToggle#1"]
 @ ¶0 heading 1
   "### C.4 A-4 — CMP-129 PositionModeToggle"
 @ ¶1 prose 1
@@ -13337,15 +13454,16 @@ RULED_PIN_TXT = r"""
   2, Mo-8), the same under `prefers-reduced-motion`.\n- **Design (DS spec):** [E29-D04.md](../desi
   gn/E29/E29-D04.md) §2.5 (E29-D04; owner approval pending).\n```"
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field#1"]
 @ ¶0 heading 1
   "### C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field"
 @ ¶1 prose 1
-  "A-5 composes with E33-D04 A-6 (PENDING, by name; RULED BQ-7): A-5.1 replaces the Old Purpose's
-   \"`hold` or `typed`\" choice with the composite and appends after E33-D04 A-6.1's sentence, whi
-  chever lands first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-
-  op. A \"new bullet\" row inserts the bullet after the line its Old cell sits on."
+  "A-5 composes with E33-D04 A-6 (`E33-D04-handoff`:57; RULED BQ-7): A-5.1 replaces the Old Purpos
+  e's \"`hold` or `typed`\" choice with the composite and appends after E33-D04 A-6.1's sentence (
+  `E33-D04-handoff`:130), whichever lands first, and A-5.5 is E33-D04 A-6.2's own replacement (`E3
+  3-D04-handoff`:131), so the second to land is a no-op. A \"new bullet\" row inserts the bullet a
+  fter the line its Old cell sits on."
 @ ¶2 row 1
   "| A     | Component | Field (`15`:line)                              | Old (verbatim)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -13435,8 +13553,8 @@ RULED_PIN_TXT = r"""
   "| A-5.5 | CMP-123   | Tokens (`15`:1408)                             | `color.status.danger`.
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                                                          | `color.
-  status.danger.default`. (The same replacement as E33-D04 A-6.2, PENDING: whichever lands first a
-  pplies and the other is then a no-op.)
+  status.danger.default`. (The same replacement as E33-D04 A-6.2, `E33-D04-handoff`:131: whichever
+   lands first applies and the other is then a no-op.)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -13444,7 +13562,7 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                  |"
+                                    |"
 @ ¶9 row 0
   "| A-5.6 | CMP-123   | Data contract (`15`:1409)                      | Bybit `/v5/order/cancel-
   all` + market-close per position
@@ -13691,15 +13809,14 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                          |"
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
-§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
-§ wner's approval) › C.6 The `16` block (copy-ready; recipe owner E05-D03 (#3174); applied by E29-
-§ T09)#1"]
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them once approv
+§ ed) › C.6 The `16` block (copy-ready; recipe owner E05-D03 (#3174); applied by E29-T09)#1"]
 @ ¶0 heading 1
   "### C.6 The `16` block (copy-ready; recipe owner E05-D03 (#3174); applied by E29-T09)"
 @ ¶1 prose 1
   "One block for `16`, placed after §7.1 (`16`:185–204) and titled §7.n: `16` §7.2 is already clai
-  med by E33-D04 §C.8 (PENDING) and by E42-D04's Appendix A, so E29-T09 numbers it when it applies
-   the block, keeping each value and dropping its marker."
+  med by E33-D04 §C.8 (`E33-D04-handoff`:135) and by E42-D04's Appendix A, so E29-T09 numbers it w
+  hen it applies the block, keeping each value and dropping its marker."
 @ ¶2 fence 1
   "```markdown\n### 7.n Blotter row motion (E29-D04; PROPOSED until the owner's approval)\n\nSpec:
    `docs/design/E29/E29-D04.md` §3 (the motion table §3.2, the state swaps §3.3, the flash §3.5, o
@@ -13989,14 +14106,14 @@ RULED_PIN_TXT = r"""
   n (OQ-R, D02:667), stays open; CMP-123 cites it and decides nothing (spec §2.4). Owner: the owne
   r, who rules OQ-R with E39-D03's owner."
 @ ¶13 item 0
-  "- **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
-   first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first, A-6.1
-  's Old cell no longer matches the Purpose it quotes, and A-6.1 is re-based on A-5.1's New. Owner
-  : E29-T09, after the owner's approval (owner approval pending (#2701))."
+  "- **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (`E33-D04-handoff`:57): whichever la
+  nds first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first, A-
+  6.1's Old cell no longer matches the Purpose it quotes, and A-6.1 is re-based on A-5.1's New. Ow
+  ner: E29-T09, after the owner's approval (owner approval pending (#2701))."
 @ ¶14 item 0
   "- **Q-13** The `16` block takes the next free §7.n when it is applied, since §7.2 is claimed by
-   E33-D04 §C.8 (PENDING) and by E42-D04 (E42-D04:882). Owner: E05-D03 (#3174) as recipe owner; E2
-  9-T09 applies it."
+   E33-D04 §C.8 (`E33-D04-handoff`:135) and by E42-D04 (E42-D04:882). Owner: E05-D03 (#3174) as re
+  cipe owner; E29-T09 applies it."
 @ ¶15 item 0
   "- **Q-14** CMP-116's `digits` variant waits for E05-D02 E1's text tokens (spec §5's register; O
   Q-C, D02:652); the accent bar carries the hue until then. Owner: the E05 token lane."
