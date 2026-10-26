@@ -2,8 +2,8 @@
 
 `PrivateStreams` is the adapter's registry of private streams, one per account, at most
 `MAX_STREAMS`, all drawing on the adapter's one `ConnectionBudget` (C-12.7). It serves the loop of
-its first `open` (#913 L1d-2a, D6). `open(account)` refuses before anything is signed, dialled or
-built: a call from any other loop, another environment's account, a `key_ref` that is no
+its first stream's `open` (#913 L1d-2a, D6). `open(account)` refuses before anything is signed,
+dialled or built: a call from any other loop, another environment's account, a `key_ref` that is no
 `api_keys` id, a key its `KeyTombstones` holds (closed by a revoke or rotation, or marked by three
 `auth` refusals; the adapter shares one table with every registry it builds), an account that has
 a stream, and a stream past the cap (`RateBudgetExceededError`, `reason` `stream_cap`). Then it
@@ -211,7 +211,8 @@ class PrivateStreamCloseOverran(TimeoutError):
     not done, so its caller answers no success, and a retry waits for the same close, which runs
     on meanwhile in the registry's tasks. A `TimeoutError`, so E27-S04 (#898) catches it without
     importing the adapter (C-2.2); its text is fixed and `accounts` names the streams still
-    closing."""
+    closing. A retry names only the streams whose close it starts, none of these, so `accounts`
+    is the audit's source for them."""
 
     def __init__(self, accounts: tuple[AccountId, ...]) -> None:
         super().__init__("the key's private streams are still closing")
@@ -224,7 +225,9 @@ class KeyTombstones:
     key either way). The adapter holds one and shares it, by reference, with every registry it
     builds (RC-G8B-03): a key closed before any registry existed, or through another one, is
     refused by all of them. Only an operator's `reopen` clears a mark; a closed key stays
-    closed."""
+    closed. It takes no lock: the serving loop owns it, as it owns the registries over it, and
+    makes every write but one, a mis-wired `close_private_streams` from another loop, which still
+    records its key here, fail-safe, before the registry refuses the call and pages."""
 
     def __init__(self) -> None:
         self._closed: OrderedDict[str, ClosedReason] = OrderedDict()
@@ -925,8 +928,8 @@ class PrivateStreams:
     """The adapter's private streams, one per account (24 §14.2 rule 13), built by
     `ExchangeBybitService` for its environment, on its connector and its connection budget, over
     its `KeyTombstones` (else a table of its own), refusing a stream on a key the table holds. It
-    owns the tasks it hands off (a closed stream's B13 stop), and serves the loop of its first
-    `open` (D6, #913 L1d-2a)."""
+    owns the tasks it hands off (a closed stream's B13 stop), and serves the loop of the `open`
+    that creates its first stream (D6, #913 L1d-2a)."""
 
     def __init__(
         self,
@@ -961,8 +964,8 @@ class PrivateStreams:
         self.tombstones = tombstones if tombstones is not None else KeyTombstones()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._shut = False
-        #: D6: the loop of its first `open`, taken under the lock so two loops never both take
-        #: it, and when a refusal from another loop last paged (`_on_its_loop`).
+        #: D6: the loop of its first stream's `open`, taken under the lock so two loops never both
+        #: take it, and when a refusal from another loop last paged (`_on_its_loop`).
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_lock = threading.Lock()
         self._wrong_loop_paged_at: float | None = None
@@ -974,11 +977,13 @@ class PrivateStreams:
     async def open(
         self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
     ) -> PrivateStream:
-        """The account's stream; every refusal comes before anything is signed, dialled or built,
-        a call from any loop but the registry's own first (`_on_its_loop`). `clock_offset_ms` is
-        the exchange clock's offset (exchange minus host, ms), `None` while unmeasured, as `auth`
-        signs on it and ruling 10 counts only on a measured one."""
-        self._on_its_loop(binds=True)
+        """The account's stream. Every refusal comes before anything is signed, dialled or built,
+        and a call from any loop but the registry's own is refused first (`_on_its_loop`). The
+        open that creates the registry's first stream binds its loop, after every refusal, so a
+        refused one binds none. `clock_offset_ms` is the exchange clock's offset (exchange minus
+        host, ms), `None` while unmeasured, as `auth` signs on it and ruling 10 counts only on a
+        measured one."""
+        self._on_its_loop()
         if self._shut:
             raise RuntimeError("the private streams are shut down")
         if account.environment != self.environment:
@@ -994,6 +999,7 @@ class PrivateStreams:
                 "the private stream cap is reached; nothing was opened", reason="stream_cap"
             )
             raise self._refused(capped)
+        self._on_its_loop(binds=True)  # a loop that took it meanwhile refuses this one here
         conn = _PrivateConn(self, account, key_id, clock_offset_ms)
         self._conns[account.account_id] = conn
         bybit_private_ws_streams.set(len(self._conns))
@@ -1034,10 +1040,10 @@ class PrivateStreams:
         B13's stop is a task this registry owns (it is not awaited here). Each close runs in a
         task this registry owns, so a caller cancelled meanwhile leaves no stream stopped with its
         socket open, and a stream already closing for another reason, or ended, is waited for,
-        not named. The call returns within `KEY_CLOSE_BOUND_S`: past it, it pages and raises
-        `PrivateStreamCloseOverran` with the accounts still closing, whose closes run on, and a
-        retry waits for those same closes (ruling Q6). A call from another loop, and a `key_ref`
-        that is no `api_keys` id (`ValueError`), are refused before anything is done."""
+        not named. Past `KEY_CLOSE_BOUND_S` it pages and raises `PrivateStreamCloseOverran` while
+        the closes run on (ruling Q6; the retry is 24 §14.2 rule 13's). A call from another loop,
+        and a `key_ref` that is no `api_keys` id (`ValueError`), are refused before anything is
+        done."""
         self._on_its_loop()
         self.tombstones.close(key_ref, reason)
         conns = [c for c in self._conns.values() if c.key_ref == key_ref]
@@ -1067,12 +1073,13 @@ class PrivateStreams:
         return self.tombstones.reopen(key_ref)
 
     def _on_its_loop(self, *, binds: bool = False) -> None:
-        """D6 (#913 L2; ruling Q5): the registry serves the loop of its first `open`, which
-        `binds` it under the lock, so two loops never both take it. An `open` or a `close_key`
-        from any other loop is refused (`RuntimeError`) before anything is signed, dialled, built
-        or closed: M2's binding would refuse that loop's `auth` as the key's own fault
-        (`key_unusable`). The first refusal of each `WRONG_LOOP_PAGE_S` window, on the injected
-        clock, pages: a wiring defect."""
+        """D6 (#913 L2; ruling Q5): the registry serves the loop of the `open` that creates its
+        first stream, which `binds` it under the lock, after every refusal, so two loops never
+        both take it and a refused `open` takes none. An `open` or a `close_key` from any other
+        loop is refused (`RuntimeError`) before anything is signed, dialled, built or closed:
+        M2's binding would refuse that loop's `auth` as the key's own fault (`key_unusable`).
+        The first refusal of each `WRONG_LOOP_PAGE_S` window, on the injected clock, pages: a
+        wiring defect."""
         running = asyncio.get_running_loop()
         with self._loop_lock:
             if binds and self._loop is None:

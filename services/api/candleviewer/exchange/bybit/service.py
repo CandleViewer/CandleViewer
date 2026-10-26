@@ -388,7 +388,7 @@ class ExchangeBybitService:
         self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
     ) -> PrivateStream:
         """#913 L1d-2a: the account's private stream (24 §14.1, §14.2 rule 13) from the adapter's
-        one registry, which serves the loop it is first opened on: the serving loop, whose M2
+        one registry, which serves the loop its first stream opens on: the serving loop, whose M2
         binding signs each dial's `auth` (ruling Q2 (b)). The order lane's bridge (L1d-2b) calls
         it there. Refused with no signing capability wired (`RuntimeError`), as `trading_port` is;
         the registry's own refusals come before anything is signed, dialled or built.
@@ -403,10 +403,10 @@ class ExchangeBybitService:
         force-disable, mark-compromised or account-disable returns, and with `key_rotated` at the
         start of a rotation's overlap (the consumer then subscribes with the new key). The key is
         tombstoned first, here, whether or not a registry exists yet, so every registry the
-        adapter builds refuses it (RC-G8B-03). The call returns within `CLOSE_TIMEOUT_S` plus
-        1 s: past that it pages and raises `PrivateStreamCloseOverran`, a `TimeoutError`, while
-        the close runs on, so its caller answers no success, and a retry waits for the same
-        close. M2 refuses a destroyed key's next `auth` borrow either way (24 §14.2 rule 13)."""
+        adapter builds refuses it (RC-G8B-03). Past `KEY_CLOSE_BOUND_S` it pages and raises
+        `PrivateStreamCloseOverran` while the close runs on. Any exception means the close is not
+        done; what its caller answers and audits, and what a retry names, are 24 §14.2 rule 13's.
+        M2 refuses a destroyed key's next `auth` borrow either way."""
         self._tombstones.close(key_ref, reason)
         streams = self._private_streams
         return () if streams is None else await streams.close_key(key_ref, reason=reason)
