@@ -242,7 +242,9 @@ async def test_incomplete_refreshes_double_the_retry_and_a_complete_one_resets_i
         delays.append(delay)
         if len(delays) == 3:
             fetch.fail = False  # the next scheduled refresh reaches every tier
-        if len(delays) >= 4:
+        if len(delays) == 4:
+            fetch.fail = True  # then one more incomplete refresh: the streak starts over
+        if len(delays) >= 5:
             await asyncio.Event().wait()
 
     sched = _sched(fetch, _Seed("BTCUSDT"), sleep=sleep, random_fn=lambda: 0.0)
@@ -250,11 +252,12 @@ async def test_incomplete_refreshes_double_the_retry_and_a_complete_one_resets_i
     try:
         for _ in range(100):
             await asyncio.sleep(0)
-        assert delays[:4] == [
+        assert delays[:5] == [
             refresh_mod.TIERS_RETRY_S,  # streak 1
             refresh_mod.TIERS_RETRY_S * 2,  # streak 2: 120 s
             refresh_mod.TIERS_RETRY_S * 4,  # streak 3
-            43_200.0,  # a complete refresh reset the streak: the TTL
+            43_200.0,  # a complete refresh: the TTL
+            refresh_mod.TIERS_RETRY_S,  # and it reset the streak: 60 s again, not 480
         ]
     finally:
         await sched.stop()
