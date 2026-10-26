@@ -17,7 +17,14 @@ var ADMIN = /^\/((admin|users)(\/[^?]*)?|me)([?].*)?$/;
 var RULES = /^\/(rules(\/[^?]*)?|schemas\/rule-ir\.json|me)([?].*)?$/;
 var MARKET = /^\/(market\/(klines|bars)(\/[^?]*)?|me)([?].*)?$/;
 var DRAWINGS = /^\/(drawings(\/[^?]*)?|me)([?].*)?$/;
-var SURFACES = { admin: ADMIN, rules: RULES, market: MARKET, drawings: DRAWINGS };
+var RECORDING = /^\/((recording|admin\/recorder)(\/[^?]*)?|me)([?].*)?$/;
+var SURFACES = {
+  admin: ADMIN,
+  rules: RULES,
+  market: MARKET,
+  drawings: DRAWINGS,
+  recording: RECORDING,
+};
 var PROFILE = System.getenv("ZAP_PROFILE") || "admin";
 var SURFACE = Object.prototype.hasOwnProperty.call(SURFACES, PROFILE) ? SURFACES[PROFILE] : null;
 // A dot segment in the path, `.` or `..` (a URI may also write a dot as `%2e`), never in the

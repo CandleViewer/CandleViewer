@@ -1,0 +1,92 @@
+# E16-X02 (#494): the OWASP ZAP plan for /recording* and /admin/recorder*, as a synthetic Viewer
+# or Manager with a real TOTP method, on the throwaway CI stack of _dast-low-priv.yml (called by
+# dast-recording-nightly.yml, one job per role), never a live exchange. security/zap/nightly_plans.py
+# writes the plan from it, importing the contract cut to this surface; role_session.js
+# (ZAP_PROFILE=recording) adds the role's session from the environment. No credential is written.
+env:
+  contexts:
+    - name: recording-api
+      urls: ["${ZAP_TARGET}/recording", "${ZAP_TARGET}/admin/recorder"]
+      includePaths:
+        - "${ZAP_TARGET}/recording([/?].*)?"
+        - "${ZAP_TARGET}/admin/recorder([/?].*)?"
+  parameters:
+    failOnError: true
+    failOnWarning: false
+    progressToStdout: true
+jobs:
+  - type: script # the role's session, from the environment (security/zap/role_session.js)
+    parameters:
+      action: add
+      type: httpsender
+      engine: "ECMAScript : Graal.js"
+      name: cv-role-session
+      source: /zap/wrk/security/zap/role_session.js # the checkout, mounted at /zap/wrk
+  - type: requestor
+    name: session-live-before-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200 # a 401 here fails the run: an unauthenticated scan is no clean scan
+  # The destructive paths, refused to both roles before the scan (matrix.yaml): the Viewer lacks
+  # recording:write, a Manager's purge is owner-only (capability 9a) and a pin needs `recorder`
+  # step-up. RBAC and owner-only come before the body is read, so a mismatched confirmation is
+  # refused the same way. Any other status fails the run (check_liveness.py, `requestors: 3`).
+  - type: requestor
+    name: purge-and-pin-refused-for-this-role
+    requests:
+      - url: "${ZAP_TARGET}/admin/recorder/purge"
+        method: POST
+        headers:
+          - "Content-Type: application/json"
+          - "Idempotency-Key: 6f1c2b7e-0000-4000-8000-000000000494"
+        data: '{"symbol":"BTCUSDT","confirm_symbol":"BTCUSDT","reason":"zap purge refusal probe"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/admin/recorder/purge"
+        method: POST
+        headers:
+          - "Content-Type: application/json"
+          - "Idempotency-Key: 6f1c2b7e-0000-4000-8000-000000000495"
+        data: '{"symbol":"BTCUSDT","confirm_symbol":"ETHUSDT","reason":"zap mismatch probe"}'
+        responseCode: 403
+      - url: "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin"
+        method: PUT
+        headers:
+          - "Content-Type: application/json"
+          - "Idempotency-Key: 6f1c2b7e-0000-4000-8000-000000000496"
+        data: '{"pinned":true}'
+        responseCode: 403
+  - type: openapi
+    parameters:
+      apiFile: /zap/wrk/docs/plan/22-api-openapi.yaml # replaced by the cut recording-openapi.yaml
+      context: recording-api
+      targetUrl: "${ZAP_TARGET}"
+  # The import, at most 2 minutes of passive wait and at most 8 of active scan stay inside the
+  # 12-minute access token (ADR-0020), so the after-scan /me still holds the scan's live bearer.
+  - type: passiveScan-wait
+    parameters: { maxDuration: 2 }
+  - type: activeScan
+    parameters:
+      context: recording-api
+      maxScanDurationInMins: 8
+    policyDefinition: # the admin profile's injection set (.zap/admin-surface.yaml)
+      defaultStrength: Medium
+      defaultThreshold: "Off"
+      rules:
+        - { id: 40018, name: SQL injection, strength: High, threshold: Low }
+        - { id: 40012, name: Cross-site scripting (reflected), strength: Medium, threshold: Low }
+        - { id: 40014, name: Cross-site scripting (persistent), strength: Medium, threshold: Low }
+        - { id: 90020, name: Remote OS command injection, strength: Medium, threshold: Low }
+        - { id: 6, name: Path traversal, strength: Medium, threshold: Low }
+        - { id: 90035, name: Server-side template injection, strength: Medium, threshold: Low }
+  - type: requestor
+    name: session-live-after-scan
+    requests:
+      - url: "${ZAP_TARGET}/me"
+        method: GET
+        responseCode: 200
+  # One file name for both roles: each runs on its own runner, and the artefact names the role.
+  - type: report
+    parameters:
+      { template: traditional-json, reportDir: /zap/wrk/zap-reports, reportFile: recording }
+    risks: [high, medium, low, info]

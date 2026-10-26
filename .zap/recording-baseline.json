@@ -1,0 +1,4 @@
+{
+  "$comment": "E16-X02 (#494): accepted ZAP alerts for /recording* and /admin/recorder* (the recording nightly, .zap/recording.yaml, Viewer and Manager). The nightly fails on any High/Medium alert NOT listed here (key = pluginId + method + path without query). Every entry needs reason, owner and review (<= 180 days, 04-security-program.md §16.2). Empty at merge: additions are a reviewed PR, never a workflow edit.",
+  "accepted": []
+}

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """#3991: the low-privilege ZAP nightlies' plans, each importing the contract cut to its surface.
 
-For a profile (`rules`, `market`, `drawings`) this writes, from the profile's template:
+For a profile (`rules`, `market`, `drawings`, `recording`) this writes, from the profile's template:
 
 - `<profile>-openapi.yaml`: the contract cut to the profile's paths and every component they
   reach through `$ref`. ZAP's import resolves each schema in full, so a `$ref` that closes a
@@ -18,7 +18,7 @@ bearer (the synthetic Viewer's, or the Manager's for `drawings`) and SR-041 CSRF
 environment and adds them to each request to the surface `ZAP_PROFILE` names: no token is written
 here. Stdlib and PyYAML only.
 
-Usage: nightly_plans.py --profile {market,rules,drawings} --out DIR
+Usage: nightly_plans.py --profile {drawings,market,recording,rules} --out DIR
 
 `--out` is a relative directory without `..`: ZAP mounts the checkout at /zap/wrk, so the plan
 must sit inside it to be read there (an absolute or climbing path is refused).
@@ -44,6 +44,7 @@ PROFILES: dict[str, tuple[Path, tuple[str, ...]]] = {
     "market": (REPO_ROOT / ".zap/market-data.yaml", ("/market/klines", "/market/bars")),
     "rules": (REPO_ROOT / ".zap/rules-low-priv.yaml", ("/rules", "/schemas/rule-ir.json")),
     "drawings": (REPO_ROOT / ".zap/e14-drawings.yaml", ("/drawings",)),
+    "recording": (REPO_ROOT / ".zap/recording.yaml", ("/recording", "/admin/recorder")),
 }
 #: A profile's fixture: the rows its examples aim at (E14-X03).
 SEEDS: dict[str, Path] = {"drawings": REPO_ROOT / ".zap/e14-drawings-seed.json"}

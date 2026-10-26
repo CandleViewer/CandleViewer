@@ -16,6 +16,12 @@ For each synthetic role (`manager`, `viewer`) this writes, from the template
   ZAP's import resolves every schema in full, and the contract's recursive condition tree passes
   its nesting limit, so the scan imports only what it scans.
 
+The Owner's plan is fixed, not drawn from the matrix, which allows the Owner (E16-X02, #494): an
+Owner signed in with password and TOTP holds no `recorder` step-up, so each purge in
+`security/zap/owner-purge-denials.yaml` is refused 403 and audited as a `retention.purge` denial
+(its `action`, which `check_admin_denials.py` then requires). It writes `owner-denials.yaml` and
+`owner-requests.json` only: the Owner never scans.
+
 The expected statuses come from `matrix.yaml` alone (Security-owned, reviewed); nothing here
 restates them. A Manager is `manager_without_grant` (the synthetic one holds no grant), so the
 rows the matrix allows a Manager (`GET /admin/audit`, recorder compact and import) are not in
@@ -52,6 +58,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 MATRIX = REPO_ROOT / "services/api/tests/contract/rbac/matrix.yaml"
 TEMPLATE = REPO_ROOT / ".zap/admin-surface.yaml"
+#: Each role whose refusals are a fixed list, not the matrix's, and that list.
+FIXED: dict[str, Path] = {"owner": REPO_ROOT / "security/zap/owner-purge-denials.yaml"}
 CONTRACT = REPO_ROOT / "docs/plan/22-api-openapi.yaml"
 #: Each synthetic role and the matrix actor it is.
 ROLES: dict[str, str] = {"manager": "manager_without_grant", "viewer": "viewer"}
@@ -132,6 +140,28 @@ def denial_requests(matrix: dict[str, Any], role: str, target: str) -> list[dict
                 "recorded": recorded,
                 "deviation": why or None,
                 "body": None if body is None else json.dumps(body),
+                "correlation_id": str(uuid.uuid4()),
+            }
+        )
+    return found
+
+
+def fixed_requests(plan: dict[str, Any], target: str) -> list[dict[str, Any]]:
+    """A fixed plan's requests, as `denial_requests` writes them, each with the audit `action`
+    its denial record must name, and a fresh correlation id each."""
+    found: list[dict[str, Any]] = []
+    for entry in plan["requests"]:
+        method, path = str(entry["operation"]).split(" ", 1)
+        found.append(
+            {
+                "operation": entry["operation"],
+                "method": method,
+                "url": target + path,
+                "expected": int(entry["expected"]),
+                "recorded": True,
+                "deviation": None,
+                "action": entry["action"],
+                "body": json.dumps(entry["json"]),
                 "correlation_id": str(uuid.uuid4()),
             }
         )
@@ -247,6 +277,14 @@ def main(argv: list[str] | None = None) -> int:
         ):
             (args.out / name).write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
         print(f"admin_requests: {role}: {len(requests)} refused operations planned")
+    for role, path in FIXED.items():
+        requests = fixed_requests(yaml.safe_load(path.read_text(encoding="utf-8")), target)
+        (args.out / f"{role}-requests.json").write_text(json.dumps(requests, indent=1) + "\n")
+        plan = denial_plan(template, role, requests)
+        (args.out / f"{role}-denials.yaml").write_text(
+            yaml.safe_dump(plan, sort_keys=False), encoding="utf-8"
+        )
+        print(f"admin_requests: {role}: {len(requests)} fixed refusals planned")
     return 0
 
 
