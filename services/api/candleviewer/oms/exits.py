@@ -332,8 +332,9 @@ class InFlightGuard:
 
 @dataclass(frozen=True, slots=True)
 class ExitCaller:
-    """Who asks, as the route admitted them: the accounts the principal reaches
-    (`auth.scopes.account_scope`), its records' actor (C-2.9) and the request's correlation id."""
+    """Who asks, as the route admitted them: the accounts the principal reaches (the route's
+    `scope_for_target`: its own, narrowed to the target's trade grants for a protective write in
+    a live view-as context), its records' actor (C-2.9) and the request's correlation id."""
 
     scope: AccountScope
     actor: SubmitActor

@@ -6,7 +6,9 @@ routes").
 orchestrator's ruling of 2026-10-24 19:43Z):
 
 - `exit_caller`: who asks, as the exit service takes it (`oms.exits.ExitCaller`): the accounts the
-  principal reaches, its records' actor and the request's correlation id;
+  principal reaches, its records' actor and the request's correlation id. Under view-as a
+  protective write's accounts are those the target's trade grants allow as well
+  (`scope_for_target`), and in the hold the viewer's own; the viewer stays the actor;
 - `exit_refusals`: `oms_exit_refused_total{operation,code}` (20 Sec.12.1, ruling Q14), the one
   counter every exit refusal is counted in, the unaudited `501` and `oms_not_ready` included;
 - `run_claimed`: step 9's in-flight guard around step 11's run. The principal's key is claimed for
@@ -45,9 +47,8 @@ from fastapi.responses import JSONResponse, Response
 
 from candleviewer.api.order_acceptance import order_body
 from candleviewer.api.order_admission import submit_actor
-from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.order_principal import TradingPrincipal, scope_for_target
 from candleviewer.api.order_problems import internal_instance, order_problem
-from candleviewer.auth.scopes import account_scope
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import BoundedMetric, Metrics
@@ -101,10 +102,12 @@ def exit_refusals(metrics: Metrics) -> BoundedMetric:
 
 
 def exit_caller(principal: TradingPrincipal, request: Request) -> ExitCaller:
-    """The exit service's caller: the principal's accounts (`auth.scopes.account_scope`), its
-    records' actor (`submit_actor`) and the request's correlation id."""
+    """The exit service's caller: the accounts a write may touch (`scope_for_target`: the
+    principal's own, narrowed to the target's trade grants for a protective write in a live
+    view-as context, 22 "View-as session" and 24 Sec.8.4 step 4), its records' actor
+    (`submit_actor`, the viewer under view-as) and the request's correlation id."""
     return ExitCaller(
-        scope=account_scope(principal.snapshot),
+        scope=scope_for_target(principal.snapshot, principal.target),
         actor=submit_actor(principal, request),
         request_id=current_request_uuid(),
     )

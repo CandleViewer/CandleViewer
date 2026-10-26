@@ -2460,6 +2460,7 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
             metrics=metrics_facade,
             auth=ctx.auth,
+            protective=protective_writes,
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
