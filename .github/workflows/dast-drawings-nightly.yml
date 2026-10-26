@@ -9,6 +9,10 @@ name: dast-drawings-nightly
 # Gate: the scan stays signed in, no High/Medium alert outside .zap/e14-drawings-baseline.json
 # (security/zap/baseline_gate.py), and that check. Nightly and by hand, never per-PR; never a live
 # exchange; no repository secret.
+# E14-X02 (#474): `abuse-packs` re-runs the drawings abuse-case packs
+# (services/api/tests/drawings/test_drawings_abuse_*.py, recorded fixtures and in-memory fakes, no
+# network) so a regression is caught the night it lands even where no PR touched the drawings
+# paths. They also run per-PR in `py`; findings: qa/security/e14-abuse-cases.md.
 on:
   schedule:
     - cron: "57 3 * * *"
@@ -27,3 +31,25 @@ jobs:
       artifact: zap-drawings
       role: manager
       fixture: .zap/e14-drawings-seed.json
+
+  abuse-packs:
+    name: drawings-abuse-packs
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+      - name: uv sync --frozen
+        working-directory: services/api
+        run: uv sync --frozen --all-groups
+      - name: E14-X02 drawings abuse packs (IDOR, mass assignment, exhaustion, stored XSS, signals)
+        working-directory: services/api
+        run: uv run pytest tests/drawings/test_drawings_abuse_*.py --no-cov -p no:cacheprovider
