@@ -238,8 +238,11 @@ def _cut(text: str) -> str:
     """`text`, or, when it is longer than `_CUT_LEN`, its start and its last lines (up to
     `_TAIL_MAX` characters), `_MAX_SCAN_LEN` characters in all, joined by `_TRUNCATED` (#415).
 
-    The start is cut before a run that the cut would split, so no cut part of a value stays. Only
-    the character at the cut is read forward, so a cut costs the same for a run of any length.
+    The start is cut before a run that the cut would split, so no cut part of a value stays, and it
+    never ends in a backslash (#4653): a cut inside an escape (a line break or a tab, as the
+    bundle's buffer writes them) would leave its backslash before the marker, where the two read as
+    a label's value, and a second pass would change the text. Only the character at the cut is read
+    forward, so a cut costs the same for a run of any length.
     """
     if len(text) <= _CUT_LEN:
         return text
@@ -248,7 +251,7 @@ def _cut(text: str) -> str:
     end = _MAX_SCAN_LEN - len(tail)
     if _CUT_RUN.match(text, end, end + 1) and (split := _CUT_RUN.match(text[end - 1 :: -1])):
         end -= split.end()
-    return text[:end] + _TRUNCATED + tail
+    return text[:end].rstrip("\\") + _TRUNCATED + tail
 
 
 #: #3865 (SR-E29-16): the correlation key (ADR-0006 rule 1). Both §8.3 forms hold a key-shape
