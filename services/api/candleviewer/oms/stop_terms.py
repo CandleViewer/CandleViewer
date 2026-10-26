@@ -10,15 +10,15 @@ never a change of terms. `differs` says whether a term it names is another than 
 by value.
 
 `PendingTerms` is the coalescing (the orchestrator's 2026-10-25 ruling Q2): one pending slot per
-row, the latest terms winning, at most one send per row each `TERMS_MIN_INTERVAL_S` on the
-monotonic clock. The caller sends a slot before any other push of that order (`take`), and at the
-account's next row or `heartbeat` status once the row's interval has passed (`next_due`, one at a
-time, at most `MAX_FLUSH_TERMS` a flush), so a row's terms pushes never send more than one a second
-and no timer runs. The slots are kept by account, so finding one account's due slots never walks
-another's (C-2.20). At most `MAX_PENDING_TERMS` slots wait: a slot the cap evicts is answered to be
-sent, never dropped. A slot a later push names only some terms of keeps the terms that push does
-not name (`carried`). The terms are the row's record of what the exchange holds; the exchange
-holds the stop (C-2.6).
+row, the latest terms (by the venue's time, `older_than`) winning, at most one send per row each
+`TERMS_MIN_INTERVAL_S` on the monotonic clock. The caller sends a slot before any other push of that
+order (`take`), and at the account's next row or `heartbeat` status once the row's interval has
+passed (`next_due`, one at a time, at most `MAX_FLUSH_TERMS` a flush), so a row's terms pushes never
+send more than one a second and no timer runs. The slots are kept by account, so finding one
+account's due slots never walks another's (C-2.20). At most `MAX_PENDING_TERMS` slots wait: a slot
+the cap evicts is answered to be sent, never dropped. A slot a later push names only some terms of
+keeps the terms that push does not name (`carried`). The terms are the row's record of what the
+exchange holds; the exchange holds the stop (C-2.6).
 """
 
 from __future__ import annotations
@@ -85,6 +85,14 @@ def differs(
     value."""
     now = held(row) if terms is None else terms
     return any(now.get(key) != value for key, value in ({**(kept or {}), **_named(order)}).items())
+
+
+def older_than(order: Order, ts_event: TsUs, pending: Mapping[str, object]) -> bool:
+    """`order` changed, by the venue's own time (`push_time_ms`), before the terms the `pending`
+    payload waits to send: the latest terms win by that time, never by arrival (the S7a review's
+    1), so an out-of-order older push neither drops nor replaces them."""
+    stamp = pending.get("updated_time")
+    return isinstance(stamp, int) and push_time_ms(order, ts_event) < stamp
 
 
 def terms_payload(

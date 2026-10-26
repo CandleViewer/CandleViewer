@@ -230,6 +230,35 @@ async def test_pending_terms_cap_sends_the_evicted_never_drops_it() -> None:
 
 
 @pytest.mark.parametrize("status", [None, "Triggered"], ids=["coalesced", "at_once"])
+@pytest.mark.parametrize("trigger", ["94000", "91000"], ids=["rows_own", "other"])
+async def test_an_older_push_neither_drops_nor_replaces_newer_pending_terms(
+    trigger: str, status: str | None
+) -> None:
+    """The S7a Fable review's 1: the latest terms win by the venue's time, never by arrival. A
+    push older than the pending slot's terms, showing the row's own terms or others, sends no
+    terms and leaves the slot to be sent; its own event still goes to the facade (its watermark)."""
+    rig = stop_rig()
+    base = push_time_ms(order(), ts_event=0)  # the venue stamp the fixture carries
+    await rig.run(moved(triggerPrice="93000"))
+    await rig.run(moved(triggerPrice="92000", updatedTime=str(base + 20)))  # waits
+    over = {} if status is None else {"orderStatus": status}
+    await rig.run(moved(triggerPrice=trigger, updatedTime=str(base + 10), **over))
+    assert sent(rig)[1:] == ([] if status is None else [("TRIGGERED", None, None)])
+    assert "terms_older" in rig.counts
+    rig.now += stop_terms.TERMS_MIN_INTERVAL_S
+    await flush(rig)
+    assert sent(rig)[-1] == ("TERMS_CHANGED", "92000", "0.5")
+
+
+def test_older_than_judges_only_a_stamped_pending_payload() -> None:
+    shown = order()
+    stamp = push_time_ms(shown, ts_event=0)
+    assert stop_terms.older_than(shown, 0, {"updated_time": stamp + 1})
+    assert not stop_terms.older_than(shown, 0, {"updated_time": stamp})
+    assert not stop_terms.older_than(shown, 0, {})
+
+
+@pytest.mark.parametrize("status", [None, "Triggered"], ids=["coalesced", "at_once"])
 async def test_a_push_naming_only_some_terms_keeps_the_pending_slots_others(
     status: str | None,
 ) -> None:
@@ -350,6 +379,18 @@ async def test_fill_over_the_row_as_loaded_reads_even_after_flushed_pending_term
     await rig.run(fill("0.6"))
     assert [q for _, _, q in sent(rig)] == expected and rig.calls.count("order") == 1
     assert ("terms_before_fill_unread" in rig.counts) is unread
+
+
+async def test_fill_over_terms_that_reduced_the_row_reads_the_order_first() -> None:
+    """The S7a Fable review's 2: a pending slot that reduced the quantity is sent before the fill,
+    so the fill fits on those terms, never on the row as loaded: 0.5 reduced to 0.3, then (its
+    push not yet here) raised to 0.4, and a fill of 0.4 reads the order and sends 0.4 first."""
+    rig = stop_rig(shown=order(qty="0.4", triggerPrice="93000"))
+    await rig.run(moved(triggerPrice="93000"))
+    await rig.run(moved(qty="0.3", triggerPrice="93000"))  # waits
+    await rig.run(fill("0.4"))
+    assert [q for _, _, q in sent(rig)] == ["0.5", "0.3", "0.4", "0.4"]
+    assert rig.calls.count("order") == 1 and "terms_before_fill_unread" not in rig.counts
 
 
 @pytest.mark.parametrize(
