@@ -165,13 +165,14 @@ def test_export_states_the_adr_0039_rule(rule: str) -> None:
 
 def test_export_is_served_with_no_501_and_its_checks_in_one_order() -> None:
     """#889 S10b replaced the `501` with the route: the operation declares none, and states its
-    checks in this order, the idempotency lookup before every refusal that follows validation."""
+    checks in this order, the idempotency lookup before every refusal that follows validation.
+    #2304 slice 3b: the step-up follows authentication, RBAC and validation, never before."""
     export = SPEC["paths"]["/admin/audit/export"]["post"]
     assert set(export["responses"]) == {"202", "401", "403", "409", "422", "429", "503"}
     assert "Not implemented yet" not in _EXPORT and "not_implemented" not in _EXPORT
     order = _EXPORT.split("**Order of the checks**", 1)[1].split("**Who.**", 1)[0]
     cues = [
-        "`403 step_up_required`", "`401`", "`403` (`code: forbidden`)", "validation (`422`",
+        "`401`", "`403` (`code: forbidden`)", "validation (`422`", "`403 step_up_required`",
         "the idempotency lookup", "`503 signing_unavailable`;", "rate limit (`429`)",
         "single-flight (`409 conflict`)", "the write-ahead request record and the `202`",
     ]  # fmt: skip
@@ -179,6 +180,7 @@ def test_export_is_served_with_no_501_and_its_checks_in_one_order() -> None:
     assert at == sorted(at)
     assert "the `429` and the two `409`s (`conflict` and `idempotency_key_reuse`) are" in order
     assert "Only an export whose job is created counts toward the hourly rate" in order
+    assert "so a caller these checks refuse is never challenged" in order
 
 
 def test_export_is_unavailable_too_while_its_directory_takes_no_hard_links() -> None:

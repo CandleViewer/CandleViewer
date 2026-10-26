@@ -121,14 +121,15 @@ export interface paths {
      *     the job succeeds its `result` is an `AuditExportResult`.
      *
      *     **Order of the checks** (#889 S10b, which replaced the `501` this operation answered until
-     *     then). For an authenticated session the step-up guard runs first, before the operation
-     *     and before RBAC: until the session holds an `audit` step-up the call is refused with
-     *     `403 step_up_required` (`action_class: audit`), whatever the caller's role. The operation
-     *     then answers `401` when the request is not authenticated and `403` (`code: forbidden`) for
-     *     anyone but the Owner; as on every audit operation, `503 store_unavailable` comes first
-     *     among these when the audit backend is unavailable. No body is parsed before these checks,
-     *     so a malformed body never changes those answers. Then, in this order: validation (`422`,
-     *     the `Idempotency-Key` too when one is sent); the idempotency lookup, which answers the
+     *     then; #2304). The operation answers `401` when the request is not authenticated and `403`
+     *     (`code: forbidden`) for anyone but the Owner; as on every audit operation, `503
+     *     store_unavailable` comes first among these when the audit backend is unavailable. No body
+     *     is parsed before these checks, so a malformed body never changes those answers. Then, in
+     *     this order: validation (`422`, the `Idempotency-Key` too when one is sent); the `audit`
+     *     step-up, so a caller these checks refuse is never challenged (`POST /auth/step-up`,
+     *     Challenges): until the session holds one the call is refused with `403 step_up_required`
+     *     (`action_class: audit`), whose `action_summary` restates the validated window; the
+     *     idempotency lookup, which answers the
      *     same key and body with the stored `202` (`Idempotency-Replayed: true`) and another body
      *     with `409 idempotency_key_reuse`, before any refusal below; `503 signing_unavailable`;
      *     the per-user rate limit (`429`); single-flight (`409 conflict`); then the write-ahead
@@ -2636,7 +2637,7 @@ export interface paths {
     put?: never;
     /**
      * Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
-     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, as the key routes are, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). An account of another environment than this server's is `404`, as a missing one is, on every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`. The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
+     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). An account of another environment than this server's is `404`, as a missing one is, on every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`. The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
      */
     post: operations["createAccountProfile"];
     delete?: never;
