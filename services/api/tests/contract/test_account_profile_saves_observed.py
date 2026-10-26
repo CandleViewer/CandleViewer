@@ -55,6 +55,10 @@ class Rig:
     now: list[float]
 
 
+async def _elevated(_request: Any, _text: Any) -> None:
+    """A live `risk_caps` window (#2304 slice 3c): the step-up's own answers are no save."""
+
+
 @pytest.fixture(scope="module")
 def _rig() -> Iterator[Rig]:
     with pytest.MonkeyPatch.context() as mp:  # undone however the module ends
@@ -63,7 +67,8 @@ def _rig() -> Iterator[Rig]:
         measures = SaveMeasures.bound(metrics, clock=lambda: now[0])
         app = FastAPI()
         app.include_router(make_profile_writes_router(
-            w.writes, w.world.audit, w.world.resolver, replays=w.replays, measures=measures
+            w.writes, w.world.audit, w.world.resolver, replays=w.replays, measures=measures,
+            elevation=_elevated,
         ))  # fmt: skip
         saves = dataclasses.replace(w, world=dataclasses.replace(w.world, client=TestClient(app)))
         yield Rig(w, saves, metrics, now)

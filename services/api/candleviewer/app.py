@@ -180,6 +180,7 @@ from candleviewer.api.step_up import (
     require_session_elevation,
     step_up_port,
 )
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.users import (
@@ -1984,12 +1985,16 @@ def create_app(
             user_purge=users_purge,
         )
     )
+    # #2304 slice 3c: the invite writes demand `users` in their handlers, after RBAC and the body
+    # or the target's lookup (`user_role_store` reads a re-issue's).
     app.include_router(
         make_invites_router(
             ctx.auth,
             _LazyAuditEmitter(ctx.audit),
             owner_resolver,
             audit_ready=_audit_ready(ctx.audit),
+            elevation=request_elevation(ctx.auth, "users"),
+            users=user_role_store,
         )
     )
     # E42-T09 (#2649): `GET`/`PATCH /users/{userId}` and the admin view of a user's sessions; a
@@ -2334,10 +2339,11 @@ def create_app(
     )
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
-    # #906 D2: the profile writes and the default binding's move, Owner only and path-gated with
-    # `risk_caps` (SR-E28-02), each audited ahead of its commit; a relaxing one notifies the Owner
-    # in its transaction (SR-E28-01), and the second pass reads this environment's catalogue
-    # (C-2.11). After the account health wiring: the save's sizing warnings read its wallet cache.
+    # #906 D2: the profile writes and the default binding's move, Owner only and handler-gated
+    # with `risk_caps` (SR-E28-02, #2304 slice 3c), each audited ahead of its commit; a relaxing
+    # one notifies the Owner in its transaction (SR-E28-01), and the second pass reads this
+    # environment's catalogue (C-2.11). After the account health wiring: the save's sizing
+    # warnings read its wallet cache.
     warnings = SaveTimeFigures(
         account_health.wallets, lambda: ctx.ingestion.instruments, lambda: ctx.ingestion.tickers
     )
@@ -2348,6 +2354,7 @@ def create_app(
             profiles_resolver,
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
             measures=SaveMeasures.bound(metrics_facade),  # each save counted and timed (D3b)
+            elevation=request_elevation(ctx.auth, "risk_caps"),  # after the checks (#2304)
         )
     )
     # #895 (E27-S01): `listExchangeAccounts` and `createExchangeAccount` over the M13 store built
@@ -2361,6 +2368,7 @@ def create_app(
             environment=resolved.environment.value,
             statuses=AccountStatusReader(account_health, account_health.wallets),
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
+            elevation=keys_elevation,  # the create's `keys`, after its shape rules (#2304)
         )
     )
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and
@@ -2726,11 +2734,18 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
         )
     )
-    # The retention policy set, replaced whole behind the `recorder` step-up; `apply_now` runs
-    # one sweep through the admin jobs (409 while `retention_enabled` is off).
+    # The retention policy set, replaced whole behind the `recorder` step-up, which the handler
+    # demands after the body (#2304 slice 3c); `apply_now` runs one sweep through the admin jobs
+    # (409 while `retention_enabled` is off).
     app.state.retention_policies = (
         SqlAlchemyRetentionPolicies(_kb_pg) if _kb_pg is not None else None
     )
+
+    async def _recording_elevation(
+        session_id: uuid.UUID | None, text: ChallengeText | None
+    ) -> JSONResponse | None:
+        return await require_session_elevation(ctx.auth, session_id, "recorder", text)
+
     app.include_router(
         make_recording_retention_router(
             lambda: app.state.retention_policies,
@@ -2739,6 +2754,7 @@ def create_app(
             resolved.retention_enabled,
             audit_resolver,
             _LazyAuditEmitter(ctx.audit),
+            elevation=_recording_elevation,
         )
     )
     # The recording status, computed once a second (the WS runtime starts and stops it):
@@ -2779,9 +2795,6 @@ def create_app(
         register_recorder_probe(health_registry, ctx.recorder.health)
     app.state.recorder = recorder
     bind_recording_runtime(app.state, recorder, recorder_config)
-
-    async def _recording_elevation(session_id: uuid.UUID | None) -> JSONResponse | None:
-        return await require_session_elevation(ctx.auth, session_id, "recorder")
 
     app.include_router(
         make_recording_writes_router(

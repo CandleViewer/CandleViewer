@@ -8,7 +8,7 @@ from collections.abc import Callable, Iterator
 from contextlib import redirect_stdout
 from datetime import timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import structlog
@@ -17,6 +17,7 @@ from fastapi.testclient import TestClient
 from prometheus_client import REGISTRY
 
 from candleviewer.api.invites import _AUDIT_DOWN, make_invites_router
+from candleviewer.api.step_up import request_elevation
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.invite_service import INVITE_TTL, InviteService, hash_token
 from candleviewer.auth.scopes import PrincipalSnapshot
@@ -57,6 +58,17 @@ class _SessionAuth(_InvAuth):
 _SESSION = uuid.UUID(int=4174)
 
 
+class _Statuses:
+    """`UserRoleStore.get_status` over the fake repo: `invited` while a row of the user is."""
+
+    def __init__(self, repo: FakeRepo) -> None:
+        self.repo = repo
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        rows = [r for r in self.repo.rows.values() if r.user_id == user_id]
+        return None if not rows else rows[-1].user_status.value
+
+
 class _Resolver:
     def __init__(self, snap: PrincipalSnapshot) -> None:
         self.snap = snap
@@ -76,7 +88,11 @@ async def _setup(
         roles=frozenset({role}),
         permissions=frozenset({Permission.USERS_WRITE}) if role == "owner" else frozenset(),
     )
-    router = make_invites_router(auth(svc), em, _Resolver(snap), audit_ready=lambda: audit_ok)
+    gate = request_elevation(c.app.state.step_up_auth, "users")  # type: ignore[attr-defined]
+    router = make_invites_router(
+        auth(svc), em, _Resolver(snap), audit_ready=lambda: audit_ok, elevation=gate,
+        users=_Statuses(repo),
+    )  # fmt: skip
     c.app.include_router(router)  # type: ignore[attr-defined]
     return c, em, seed, clock, repo, svc
 
@@ -472,3 +488,122 @@ async def test_bootstrap_redemption_logs_no_token_or_password_through_the_real_r
     out = json_logs()
     assert '"event":"probe"' in out.replace(" ", "")
     assert tok not in out and spare not in out and GOOD_PW not in out
+
+
+# -- #2304 slice 3c: the invite writes gate in their handlers -----------------------------------
+
+
+def _challenges(em: _Emitter) -> int:
+    return em.actions().count("auth.step_up_required")
+
+
+@pytest.mark.parametrize(
+    ("body", "status"),
+    [({**_BODY, "roles": ["manager"]}, 422), ({**_BODY, "nickname": "x"}, 422), ([], 400)],
+    ids=["role", "unknown-field", "not-an-object"],
+)
+async def test_an_unelevated_owners_invalid_invite_is_refused_never_challenged(
+    body: Any, status: int
+) -> None:
+    c, em, _, _, repo, _ = await _setup()
+    r = c.post("/users", headers=_H, json=body)
+    assert r.status_code == status and "challenge_id" not in r.json()
+    assert _challenges(em) == 0 and not repo.rows
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [("POST", "/users"), ("POST", "/users/{}/invite"), ("DELETE", "/users/{}/invite")],
+    ids=["createUser", "reissueInvite", "revokeInvite"],
+)
+async def test_an_unelevated_non_owner_invite_write_is_the_audited_403_never_a_challenge(
+    method: str, path: str
+) -> None:
+    c, em, _, _, repo, _ = await _setup(role="viewer")
+    r = c.request(method, path.format(uuid.uuid4()), headers=_H, json=_BODY)
+    assert (r.status_code, r.json()["code"]) == (
+        403,
+        "forbidden",
+    ) and "challenge_id" not in r.json()
+    assert "rbac.denied" in em.actions() and _challenges(em) == 0 and not repo.rows
+
+
+@pytest.mark.parametrize("method", ["POST", "DELETE"], ids=["reissueInvite", "revokeInvite"])
+async def test_an_unelevated_owners_missing_invite_is_the_404_never_a_challenge(
+    method: str,
+) -> None:
+    c, em, seed, clock, _, _ = await _setup()
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 201
+    clock.now += timedelta(minutes=5, seconds=1)  # the window ended: only the 404 is left
+    for target in (uuid.uuid4(), uuid.UUID(int=0)):
+        r = c.request(method, f"/users/{target}/invite", headers=_H)
+        assert r.status_code == 404 and "challenge_id" not in r.json()
+    assert _challenges(em) == 0
+
+
+async def test_a_revoked_invite_is_the_404_of_a_revoke_and_a_challenge_of_a_reissue() -> None:
+    """A revoke needs a pending invite and a re-issue an `invited` user (22): after a revoke
+    the user stays invited, so a re-issue is challenged while a second revoke is the 404."""
+    c, _em, seed, clock, _, _ = await _setup()
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 201
+    uid = c.get("/users/invites", headers=_H).json()["items"][0]["user_id"]
+    assert c.delete(f"/users/{uid}/invite", headers=_H).status_code == 200
+    clock.now += timedelta(minutes=5, seconds=1)
+    assert c.delete(f"/users/{uid}/invite", headers=_H).status_code == 404
+    again = c.post(f"/users/{uid}/invite", headers=_H)
+    assert (again.status_code, again.json()["action_summary"]) == (
+        403, f"Reissue the invite link of user {uid}",
+    )  # fmt: skip
+
+
+async def test_an_unelevated_owners_invite_is_challenged_naming_no_username_or_email() -> None:
+    c, _em, _, _, repo, _ = await _setup()
+    sent = {**_BODY, "display_name": "SENTINEL-free-text"}
+    r = c.post("/users", headers=_H, json=sent)
+    body = r.json()
+    assert (r.status_code, body["code"], body["action_class"]) == (403, "step_up_required", "users")
+    assert body["action_summary"] == "Invite a new user as viewer (MFA required)"
+    assert not [word for word in ("ann@example.com", "annie", "SENTINEL") if word in r.text]
+    assert not repo.rows
+
+
+async def test_an_unelevated_owners_revoke_is_challenged_naming_the_user_by_id() -> None:
+    c, _em, seed, clock, repo, _ = await _setup()
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 201
+    uid = c.get("/users/invites", headers=_H).json()["items"][0]["user_id"]
+    clock.now += timedelta(minutes=5, seconds=1)
+    r = c.delete(f"/users/{uid}/invite", headers=_H)
+    assert (r.status_code, r.json()["action_summary"]) == (
+        403, f"Revoke the pending invite of user {uid}",
+    )  # fmt: skip
+    assert "annie" not in r.text and len(repo.rows) == 1
+    assert not any(row.revoked_at for row in repo.rows.values())
+
+
+async def test_an_invite_resent_after_the_window_ends_is_challenged_never_answered() -> None:
+    """The invite keeps no answer to replay: the identical re-send after the window is the
+    challenge, never the store's `409` for the email the first send took."""
+    c, _em, seed, clock, repo, _ = await _setup()
+    _elevate(c, seed, clock)
+    assert c.post("/users", headers=_H, json=_BODY).status_code == 201
+    clock.now += timedelta(minutes=5, seconds=1)
+    again = c.post("/users", headers=_H, json=_BODY)
+    assert (again.status_code, again.json()["code"]) == (403, "step_up_required")
+    assert len(repo.rows) == 1
+
+
+async def test_an_invite_write_wired_without_its_step_up_fails_closed() -> None:
+    c, em, seed, clock, user = await _build(gated_stub=False)
+    repo = FakeRepo()
+    svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
+    snap = PrincipalSnapshot(user_id=user, roles=frozenset({"owner"}),
+                             permissions=frozenset({Permission.USERS_WRITE}))  # fmt: skip
+    auth = cast(Any, _InvAuth(svc))  # a structural fake with no session read, as `_setup`'s
+    router = make_invites_router(auth, em, _Resolver(snap), audit_ready=lambda: True)
+    c.app.include_router(router)  # type: ignore[attr-defined]
+    _elevate(c, seed, clock)
+    r = c.post("/users", headers=_H, json=_BODY)
+    assert (r.status_code, r.json()["code"]) == (503, "service_unavailable") and not repo.rows

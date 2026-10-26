@@ -313,7 +313,7 @@ async def test_the_policys_records_through_the_route_carry_the_request_and_the_a
     the request the middleware bound and the session's user."""
     caller, app = _Caller(), FastAPI()
 
-    async def elevated(_session: Any) -> None:
+    async def elevated(_session: Any, _text: Any = None) -> None:
         return None
 
     app.include_router(make_recording_writes_router(lambda: env.c, caller, caller, elevated,

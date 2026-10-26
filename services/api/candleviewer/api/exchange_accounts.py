@@ -1,13 +1,16 @@
 """The account routes (E27-S01 backend, #895): `listExchangeAccounts`, `createExchangeAccount`.
 
-`createExchangeAccount`: the path guard asks for the `keys` step-up first (SR-E27-02), FastAPI
-checks the closed body (the shared `422`, no value echoed); then the session (401), `accounts:write`
-(C-12.4, the Owner's alone: a 403 audited as `rbac.denied`, `503 audit_unavailable` when that
-record cannot be written), the store (503 on the fake backend), the optional `Idempotency-Key`
-(a key that is no UUID is `422`; the replay of the caller's own `201`, or `409
-idempotency_key_reuse` for another body). The shape rules run before the database: a `sub` names
-its parent, a `main` none, and the account's environment is the process's (C-2.11: an account
-of another environment could never hold a key here). The store's live-owner gate refusing an Owner
+`createExchangeAccount`: FastAPI checks the closed body (the shared `422`, no value echoed); then
+the session (401), `accounts:write` (C-12.4, the Owner's alone: a 403 audited as `rbac.denied`,
+`503 audit_unavailable` when that record cannot be written), the store (503 on the fake backend),
+the optional `Idempotency-Key` (a key that is no UUID is `422`). The shape rules run before the
+database: a `sub` names its parent, a `main` none, and the account's environment is the process's
+(C-2.11: an account of another environment could never hold a key here), and a sub's parent is
+read (missing, not a `main` or of another environment: `422`). Only then the `keys`
+step-up (SR-E27-02; `HANDLER_GATED_ROUTES`, #2304 slice 3c; unwired: 503), its challenge naming
+the exchange, environment, kind, UID and a sub's parent, never the label; then the replay of the
+caller's own `201`, or `409 idempotency_key_reuse` for another body, so a kept answer is never
+read back without a live window. The store's live-owner gate refusing an Owner
 is a 403, audited. `accounts.create` is written ahead of the commit, in the insert's transaction
 (C-2.9): a record not written is `503 audit_unavailable`, with nothing stored. A taken UID or label
 is `409 conflict`, as is a sub past its parent's cap (the 6th; the store locks the parent and counts
@@ -37,6 +40,7 @@ from fastapi.responses import JSONResponse, Response
 
 from candleviewer.accounts.errors import (
     AccountConflictError,
+    AccountNotFoundError,
     AccountRuleError,
     AccountScopeDeniedError,
     AccountsError,
@@ -57,6 +61,8 @@ from candleviewer.api.idempotency import (
 from candleviewer.api.profile_audit import Emitter
 from candleviewer.api.profiles import problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import register_account_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
@@ -229,9 +235,11 @@ def make_exchange_accounts_router(
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     new_id: Callable[[], uuid.UUID] = uuid.uuid4,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
+    elevation: RequestElevation | None = None,
 ) -> APIRouter:  # fmt: skip
     """The two routes over `accounts` (`None`, the fake backend: 503) for the process's
-    `environment`; `resolver=None` (no identity wired): 501 for every call."""
+    `environment`; `resolver=None` (no identity wired): 501 for every call. `elevation` demands
+    the create's `keys` step-up (None: 503, nothing registered)."""
     router = APIRouter(tags=["exchange-accounts"])
     cache = IdempotencyCache() if replays is None else replays
 
@@ -276,6 +284,24 @@ def make_exchange_accounts_router(
         held = next((a.label for a in page.items if a.exchange_uid == body.exchange_uid), None)
         return plain if held is None else _UID_TAKEN.format(label=held)
 
+    async def parent_of(
+        store: AccountsRepository, principal: PrincipalSnapshot,
+        body: api.CreateExchangeAccountRequest,
+    ) -> None:  # fmt: skip
+        """A sub's parent, the create's one target, read before the step-up (#2304): missing,
+        deleted, not a `main` or of another environment is the `422` the store's rule answers
+        after it, which it still checks under its lock."""
+        if body.parent_account_id is None:
+            return
+        try:
+            parent = await store.get_account(OwnerScope(principal.user_id), body.parent_account_id)
+        except AccountNotFoundError:
+            parent = None
+        if parent is None or parent.kind is not AccountKind.MAIN or parent.env.value != environment:
+            msg = "The parent is not a live main account of this environment."
+            raise _Refused("The account was not registered.",
+                           ("parent_account_id", "parent_unavailable", msg))  # fmt: skip
+
     @router.post("/exchange-accounts", status_code=201)  # nosem: no-raw-account-id reason=owner-only-create-OwnerScope-live-owner-gate-in-SQL-SR-051-and-accounts.create-written-ahead-#895 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def create_exchange_account(
         request: Request, body: api.CreateExchangeAccountRequest
@@ -298,13 +324,28 @@ def make_exchange_accounts_router(
         sent = json.dumps(body.model_dump(mode="json"), sort_keys=True).encode()
         digest = request_fingerprint(request.method, request.url.path, sent)
         try:
-            if (hit := replay(cache, owner, key, digest)) is not None:
-                return hit
             _shape(body, environment)
-        except IdempotencyKeyReuse:
-            return problem("idempotency_key_reuse", "The key was used for another request.")
+            await parent_of(store, principal, body)
         except _Refused as exc:
             return _validation(exc)
+        except AccountScopeDeniedError:  # the store's live-owner gate (SR-051)
+            await _not_owner(
+                NamesSession(audit, auth, request), principal, Permission.ACCOUNTS_WRITE,
+                Scope.NONE, request,
+            )  # fmt: skip
+            return _forbidden(Permission.ACCOUNTS_WRITE)
+        except Exception as exc:  # mapped, or raised as a defect
+            return _unavailable(exc)
+        restated = register_account_text(
+            body.exchange, body.environment, body.kind, body.exchange_uid, body.parent_account_id
+        )
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            return refused  # after RBAC and the shape rules (#2304): nothing kept or stored
+        try:
+            if (hit := replay(cache, owner, key, digest)) is not None:
+                return hit
+        except IdempotencyKeyReuse:
+            return problem("idempotency_key_reuse", "The key was used for another request.")
 
         async def created(account: ExchangeAccount) -> None:
             after = {

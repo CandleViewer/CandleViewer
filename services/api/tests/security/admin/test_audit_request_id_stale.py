@@ -44,13 +44,14 @@ def test_a_step_up_challenge_carries_the_id_the_middleware_bound(
     assert unnamed == []
 
 
-def test_the_sweep_challenges_a_handler_gate_and_a_path_gate() -> None:
-    """The QA's route `POST /admin/keys/kek-rewrap`, which the read-only/step-up guard gates by
-    path (as it gates `PUT /recording/retention-policies`, the QA's other route, which this world
-    does not mount), and a route its handler gates (`POST /admin/recorder/purge`) are among the
-    challenged cells, so the sweep cannot pass vacuously. Both refusals reach
-    `StepUpService.record_pending`, which carries the id (`tests/unit/auth/test_step_up_b16.py`)."""
+def test_the_sweep_challenges_the_handler_gates_and_no_path_gate_is_left() -> None:
+    """The QA's routes, `POST /admin/keys/kek-rewrap` and `PUT /recording/retention-policies`
+    (which this world does not mount), were path-gated; since #2304 slices 3b and 3c every
+    mounted step-up route is gated by its handler. The re-wrap and a route that always was
+    (`POST /admin/recorder/purge`) are among the challenged cells, so the sweep cannot pass
+    vacuously. Each refusal reaches `StepUpService.record_pending`, which carries the id
+    (`tests/unit/auth/test_step_up_b16.py`)."""
     keys = {op.key for op, _ in CELLS}
     assert {"POST /admin/keys/kek-rewrap", "POST /admin/recorder/purge"} <= keys
     gates = {gate.where for op, _ in CELLS if (gate := cells.gate_of(op.key)) is not None}
-    assert {"path", "handler"} <= gates
+    assert gates == {"handler"}

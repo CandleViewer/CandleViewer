@@ -174,6 +174,97 @@ def export_audit_text(from_ts: datetime, to_ts: datetime, *, compress: bool) -> 
     return ChallengeText(f"Export the audit log from {span}{tail}")
 
 
+# -- The invite, recorder, profile and account routes' templates (#2304 slice 3c) ----------------
+# As above: each route validates its request, then RBAC, then its target's lookup, then composes
+# one of these. A user, a profile and a recorded entry are named by their identifiers, an account
+# by `account_reference`, a symbol only when it is a contract symbol. Free text (a username, an
+# email, a display name, a profile's or a new account's label) is never an argument.
+
+#: The only enum values these templates restate, read from the generated contract models
+#: (22 `CreateUserRequest.roles`, `CreateExchangeAccountRequest.exchange|environment|kind`).
+_INVITE_ROLES = frozenset(
+    get_args(get_args(api.CreateUserRequest.model_fields["roles"].annotation)[0])
+)
+_NEW_ACCOUNT = api.CreateExchangeAccountRequest.model_fields
+_EXCHANGES = frozenset(get_args(_NEW_ACCOUNT["exchange"].annotation))
+_ACCOUNT_ENVIRONMENTS = frozenset(get_args(_NEW_ACCOUNT["environment"].annotation))
+_ACCOUNT_KINDS = frozenset(get_args(_NEW_ACCOUNT["kind"].annotation))
+_SYMBOL = re.compile(r"[A-Z0-9]{2,20}USDT")
+_PROFILE_VERBS = {
+    "create": "Create a risk profile for account {account}",
+    "replace": "Replace risk profile {profile} of account {account}",
+    "delete": "Delete risk profile {profile} of account {account}",
+    "default": "Make risk profile {profile} the default of account {account}",
+}
+
+
+def _restated(value: str, allowed: frozenset[str], what: str) -> str:
+    if value not in allowed:
+        raise ValueError(f"a challenge restates a contract {what} only")
+    return value
+
+
+def invite_user_text(roles: Iterable[str], *, mfa_required: bool) -> ChallengeText:
+    """`createUser`: the invited role and whether the account must enrol a second factor; the
+    username, email and display name are never restated."""
+    named = ", ".join(sorted(_restated(role, _INVITE_ROLES, "role") for role in roles))
+    mfa = "required" if mfa_required else "not required"
+    return ChallengeText(f"Invite a new user as {named} (MFA {mfa})")
+
+
+def reissue_invite_text(user_id: object) -> ChallengeText:
+    """`reissueInvite`: the open invites of the user end and a new link is minted."""
+    return ChallengeText(f"Reissue the invite link of user {user_id}")
+
+
+def revoke_invite_text(user_id: object) -> ChallengeText:
+    """`revokeInvite`: the user's pending invite ends."""
+    return ChallengeText(f"Revoke the pending invite of user {user_id}")
+
+
+def retention_policies_text(policies: int, *, apply_now: bool) -> ChallengeText:
+    """`setRetentionPolicies`: the replacement set's size, and the sweep `apply_now` starts."""
+    noun = "policy" if policies == 1 else "policies"
+    tail = ", then sweep now" if apply_now else ""
+    return ChallengeText(f"Replace the retention policy set with {int(policies)} {noun}{tail}")
+
+
+def pin_symbol_text(
+    symbol: str, entry_id: object, *, pinned: bool, retention_days: int | None
+) -> ChallengeText:
+    """`pinRecordedSymbol`: the recorded entry (its symbol when it is a contract symbol, else its
+    id), the pin or the unpin, and an unpin's retention."""
+    named = symbol if _SYMBOL.fullmatch(symbol) else f"entry {entry_id}"
+    if pinned:
+        return ChallengeText(f"Pin the recording of {named} (keep forever)")
+    kept = "" if retention_days is None else f", keeping {int(retention_days)} days"
+    return ChallengeText(f"Unpin the recording of {named}{kept}")
+
+
+def profile_write_text(verb: str, account: str, profile_id: object = None) -> ChallengeText:
+    """The four profile writes (`verb`: create, replace, delete, default) on the account named by
+    `account_reference`; a profile by its id, never its name."""
+    return ChallengeText(_PROFILE_VERBS[verb].format(account=account, profile=profile_id))
+
+
+def register_account_text(
+    exchange: str, environment: str, kind: str, exchange_uid: str, parent: object = None
+) -> ChallengeText:
+    """`createExchangeAccount`: the exchange, environment, kind and UID registered, and a sub's
+    parent by its id; the new account's label is never restated, and no key is part of it."""
+    if not _EXCHANGE_UID.fullmatch(exchange_uid):
+        raise ValueError("an account is registered under a numeric UID")
+    what = " ".join(
+        (
+            _restated(kind, _ACCOUNT_KINDS, "kind"),
+            _restated(environment, _ACCOUNT_ENVIRONMENTS, "environment"),
+            _restated(exchange, _EXCHANGES, "exchange"),
+        )
+    )
+    under = "" if parent is None else f" under account {parent}"
+    return ChallengeText(f"Register a {what} account, UID {exchange_uid}{under}")
+
+
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
 _ES_PLAIN_LOW, _ES_PLAIN_HIGH = -6, 21
 #: An IEEE-754 double holds every integer up to 2**53 exactly; beyond it a JSON integer is not
@@ -282,11 +373,18 @@ __all__ = [
     "disable_user_text",
     "export_audit_text",
     "import_key_text",
+    "invite_user_text",
     "kek_rewrap_text",
     "mfa_reset_text",
+    "pin_symbol_text",
+    "profile_write_text",
     "quote_label",
     "raw_request_target",
+    "register_account_text",
+    "reissue_invite_text",
     "request_fingerprint",
+    "retention_policies_text",
+    "revoke_invite_text",
     "revoke_session_text",
     "rotate_signing_key_text",
     "set_roles_text",

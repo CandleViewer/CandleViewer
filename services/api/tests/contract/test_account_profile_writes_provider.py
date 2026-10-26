@@ -398,20 +398,132 @@ def test_a_body_over_its_cap_is_413_before_it_is_parsed(
     assert caps == [MAX_PROFILE_BODY_BYTES] * 2
 
 
-@_EACH
-def test_profile_write_without_step_up_is_403_and_changes_nothing(w: Writes, write: Write) -> None:
-    """SR-E28-02, the route's half: never the handler. The guard's (B16's `auth.step_up_required`
-    record) is `test_profile_step_up_gate.py`'s; the pack's step-up stand-in records nothing."""
+#: #2304 slice 3c: GRANTED as `account_reference` names it (`account_row`'s label and UID).
+_GRANTED_REF = "'fx' (demo, UID 1000001)"
+_RESTATED = {
+    "createAccountProfile": f"Create a risk profile for account {_GRANTED_REF}",
+    "updateAccountProfile": f"Replace risk profile {ALT} of account {_GRANTED_REF}",
+    "deleteAccountProfile": f"Delete risk profile {ALT} of account {_GRANTED_REF}",
+    "setAccountDefaultProfile": f"Make risk profile {ALT} the default of account {_GRANTED_REF}",
+}
+
+
+def _unelevated(w: Writes, write: Write, actor: str = "owner", **kw: Any) -> Any:
+    """`send` from a session holding no live `risk_caps` window."""
     w.world.step_up.elevated = False
     try:
-        sent = [send(w, write, actor) for actor in ("owner", "manager_with_grant")]
+        return send(w, write, actor, **kw)
     finally:
         w.world.step_up.elevated = True
-    want = (403, "step_up_required", "risk_caps")
-    for resp in sent:
-        got = answered(resp, write)
-        assert (resp.status_code, got["code"], got["action_class"]) == want
-    assert (w.rows.seen, w.world.audit.records, _new(w)) == ([], [], [])
+
+
+@_EACH
+def test_profile_write_without_step_up_is_403_and_changes_nothing(w: Writes, write: Write) -> None:
+    """SR-E28-02, #2304 slice 3c: the handler demands `risk_caps` once the write is admitted and
+    checked, so the Owner is challenged with the write restated (the profile by its id, never its
+    name), a Manager is refused by RBAC first, and nothing is stored or recorded as a save. The
+    B16 record is the real service's (`test_profile_step_up_gate.py`); this stand-in writes none."""
+    named = {**(write.body or {}), "name": "SENTINEL"} if write in (CREATE, REPLACE) else write.body
+    challenged = _unelevated(w, write, body=named)
+    got = answered(challenged, write)
+    assert (challenged.status_code, got["code"], got["action_class"]) == (
+        403, "step_up_required", "risk_caps",
+    )  # fmt: skip
+    assert (got["action_summary"], got["target"]) == (_RESTATED[write.name], None)
+    assert "SENTINEL" not in challenged.text and "Alt" not in got["action_summary"]
+    assert (w.world.audit.records, _new(w), w.rows.hooks, w.limits.calls) == ([], [], [], 0)
+    refused = _unelevated(w, write, "manager_with_grant")
+    assert (refused.status_code, answered(refused, write)["code"]) == (403, "forbidden")
+    assert [r["action"] for r in w.world.audit.records] == ["rbac.denied"]
+
+
+@_EACH
+def test_an_unelevated_owners_missing_account_is_the_404_never_a_challenge(
+    w: Writes, write: Write
+) -> None:
+    for at in (uuid.uuid4(), FOREIGN):  # missing, or another environment's (C-2.11)
+        resp = _unelevated(w, write, at=at)
+        assert (resp.status_code, answered(resp, write)["code"]) == (404, "not_found")
+    assert (w.world.audit.records, _new(w)) == ([], [])
+
+
+@pytest.mark.parametrize("write", [REPLACE, DELETE, MOVE], ids=["replace", "delete", "move"])
+def test_an_unelevated_owners_missing_profile_is_the_404_never_a_challenge(
+    w: Writes, write: Write
+) -> None:
+    missing = uuid.uuid4()
+    body = {"profile_id": str(missing)} if write is MOVE else None
+    tags = [f'W/"{missing}:2"'] if write is not MOVE else None
+    resp = _unelevated(w, write, profile=missing, body=body, tags=tags)
+    assert (resp.status_code, answered(resp, write)["code"]) == (404, "not_found")
+    assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
+
+
+@pytest.mark.parametrize("write", [REPLACE, DELETE, MOVE], ids=["replace", "delete", "move"])
+def test_an_unelevated_owners_stale_or_missing_tag_is_refused_never_challenged(
+    w: Writes, write: Write
+) -> None:
+    stale = f'W/"{GRANTED}:default:9"' if write is MOVE else f'W/"{ALT}:9"'
+    for tags, status in (([stale], 412), ([], 428)):
+        resp = _unelevated(w, write, tags=tags)
+        assert resp.status_code == status and "challenge_id" not in resp.json()
+    assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
+
+
+@pytest.mark.parametrize(
+    ("write", "body"),
+    [
+        (CREATE, {**_RISK, "require_native_stop": False}),
+        (REPLACE, {**_ALT, "require_native_stop": False}),
+        (MOVE, {"profile_id": "not-a-uuid"}),
+        (CREATE, {**_RISK, "colour": "red"}),
+    ],
+    ids=["create-native-stop", "replace-native-stop", "move-body", "create-extra"],
+)
+def test_an_unelevated_owners_invalid_body_is_the_422_never_a_challenge(
+    w: Writes, write: Write, body: dict[str, Any]
+) -> None:
+    resp = _unelevated(w, write, body=body)
+    assert (resp.status_code, answered(resp, write)["code"]) == (422, "validation_failed")
+    assert (_new(w), w.rows.hooks, w.limits.calls) == ([], [], 0)
+
+
+def test_an_unelevated_owners_blocked_delete_is_the_409_never_a_challenge(w: Writes) -> None:
+    w.rules.armed[GRANTED] = [ArmedRule(uuid.uuid4(), "Breakout")]
+    resp = _unelevated(w, DELETE)
+    assert (resp.status_code, answered(resp, DELETE)["code"]) == (409, "conflict")
+    assert (_new(w), w.rows.hooks) == ([], [])
+
+
+@_EACH
+def test_a_kept_answer_is_read_back_only_behind_a_live_window(w: Writes, write: Write) -> None:
+    """#2304 slice 3c: the key's stored answer is read after the step-up, so once the window
+    ends the same request is challenged (even a delete whose profile is gone), never answered
+    from the store; after a new step-up it is the replay. One write, one set of records."""
+    key = str(uuid.uuid4())
+    first = send(w, write, key=key)
+    assert 200 <= first.status_code < 300, first.text
+    records = len(w.world.audit.records)
+    again = _unelevated(w, write, key=key)
+    assert (again.status_code, again.json()["code"]) == (403, "step_up_required")
+    assert again.json()["action_summary"] == _RESTATED[write.name]
+    assert "idempotency-replayed" not in again.headers
+    replayed = send(w, write, key=key)
+    assert (replayed.status_code, replayed.content) == (first.status_code, first.content)
+    assert replayed.headers["idempotency-replayed"] == "true"
+    assert len(w.world.audit.records) == records
+
+
+@_EACH
+def test_a_profile_write_wired_without_its_step_up_fails_closed(
+    w: Writes, write: Write, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    app = FastAPI()
+    app.include_router(make_profile_writes_router(w.writes, w.world.audit, w.world.resolver))
+    monkeypatch.setattr(w.world, "client", TestClient(app, client=("127.0.0.1", 50000)))
+    resp = send(w, write)
+    assert (resp.status_code, resp.json()["code"]) == (503, "service_unavailable")
+    assert (_new(w), w.rows.hooks) == ([], [])
 
 
 @_EACH
@@ -960,9 +1072,10 @@ def test_a_move_needs_the_bindings_current_tag(w: Writes) -> None:
     """The 07:10Z ruling, B1: 428 without `If-Match`; 412 for anything but one weak tag of this
     binding (`*`, a list, two headers, the strong form, `w/`, a profile's tag, another account's
     binding tag, version 0, past 19 digits), refused before the store is asked, and for a stale
-    version, which the store finds under the account's lock before it reads the profile (0d-3):
-    a stale tag naming a missing profile is 412, and after A to B to A the first tag is still
-    stale. B1 comes before B2: a refused body is 428 with no tag and 412 with `*` (D2-6 R1C-03).
+    version, which the route compares before its step-up (#2304 slice 3c) and the store again
+    under the account's lock, each before it reads the profile (0d-3): a stale tag naming a
+    missing profile is 412, and after A to B to A the first tag is still stale. B1 comes before
+    B2: a refused body is 428 with no tag and 412 with `*` (D2-6 R1C-03).
     A refusal changes nothing and records nothing."""
     g = f"{GRANTED}:default"
     forms = [
@@ -978,7 +1091,7 @@ def test_a_move_needs_the_bindings_current_tag(w: Writes) -> None:
     said = {(status, problem["code"], problem["detail"]) for status, problem in refused}
     assert said == {(412, "version_conflict", _STALE_BINDING)}
     assert [r.status_code for r in unread] == [428, 412]
-    assert (len(w.rows.hooks), w.world.audit.records, _new(w)) == (len(stale), [], [])
+    assert (w.rows.hooks, w.world.audit.records, _new(w)) == ([], [], [])
     there, read = send(w, MOVE), _binding_read(w)
     back = send(w, MOVE, body={"profile_id": str(DEFAULT)}, tags=[read.headers["etag"]])
     again = send(w, MOVE, body={"profile_id": str(DEFAULT)})  # the first tag, `:1`

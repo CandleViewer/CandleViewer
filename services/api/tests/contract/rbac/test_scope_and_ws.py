@@ -511,6 +511,14 @@ _BEFORE_THE_GATE = {
     # #2304 slice 3b: the account is read before the step-up, through the import flow, which the
     # fake backend lacks; `test_create_api_key_provider.py` reaches the gate.
     ("POST", "/exchange-accounts/{uid}/keys"): (503, "store_unavailable"),
+    # #2304 slice 3c: the invite writes check the body (the matrix's sends none a create admits)
+    # or their target before the step-up; `test_invites_router.py` and the deployed composition
+    # (`test_owner_routes_composition.py`) reach the gate. The account create reads its store
+    # first, which the fake backend lacks; `test_exchange_accounts_provider.py` reaches its gate.
+    ("POST", "/users"): (422, None),
+    ("POST", "/users/{uid}/invite"): (404, None),
+    ("DELETE", "/users/{uid}/invite"): (404, None),
+    ("POST", "/exchange-accounts"): (503, "store_unavailable"),
 }
 
 

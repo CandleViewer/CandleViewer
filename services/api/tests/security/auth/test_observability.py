@@ -179,14 +179,15 @@ def test_obs_csrf_refusals_are_alertable_and_an_idor_probe_is_audited_and_scrape
 def test_obs_rbac_denial_is_audited_and_counted_on_the_scraped_registry(
     stack: Stack,
 ) -> None:  # AC-AUTHZ-01/07 over HTTP (U19)
-    manager, seed = stack.principal("manny", "manager")
+    manager, _seed = stack.principal("manny", "manager")
     body = {"email": "x@example.com", "username": "xavier", "roles": ["viewer"]}
-    assert stack.client.post("/users", headers=manager, json=body).status_code == 403
-    assert stack.step_up(manager, seed).status_code == 200
     permission = Permission.USERS_WRITE.value
     counted = stack.scraped("authz_denied_total", permission=permission)
+    # #2304 slice 3c: the invite's RBAC comes before its step-up, so an un-elevated Manager is
+    # refused (and recorded) at once, never challenged.
     denied = stack.client.post("/users", headers=manager, json=body)
     assert (denied.status_code, denied.json()["code"]) == (403, "forbidden")
+    assert _rows(stack, "auth.step_up_required") == []
     ((reason, outcome, severity),) = _rows(stack, "rbac.denied")
     assert reason.startswith(f"{denied.json()['reason']}:users:write")  # names permission
     assert (outcome, severity) == ("denied", "warning")

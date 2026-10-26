@@ -1,10 +1,13 @@
 """`listRetentionPolicies` and `setRetentionPolicies` (E16-T08, #492): read with `recording:read`;
-replace with `recording:write` behind the path-gated `recorder` step-up (`api.step_up`, 04 row 9).
+replace with `recording:write` behind the `recorder` step-up (04 row 9), which the handler demands
+(`HANDLER_GATED_ROUTES`, #2304 slice 3c).
 
-The PUT is checked in order: session (401), permission (403, audited), `Idempotency-Key` (a
-replay, or 409 for another body), body (422 `validation_failed`, unknown fields too), the Q5
-mapping and the validator (422 `retention_invalid_policy`), store (503), `apply_now` (409 with
-retention off, 409 `job_running`). Then `retention.change` is written with the set before and
+The PUT is checked in order: session (401), permission (403, audited), `Idempotency-Key` and
+`apply_now` (422), body (422 `validation_failed`, unknown fields too), the Q5 mapping and the
+validator (422 `retention_invalid_policy`), store (503), `apply_now` with retention off (409), then
+the step-up (unwired: 503), its challenge restating the set's size and `apply_now`; only then the
+replay (or 409 for another body), so a kept answer is never read back without a live window, and
+`job_running` (409). Then `retention.change` is written with the set before and
 after, BEFORE the set is replaced in one transaction (C-2.9): if it cannot be written the answer
 is 503 `audit_unavailable` and nothing changes. `apply_now` reserves its one `retention_sweep`
 job first and lets it run only once the new set is stored; a refused request cancels it. That
@@ -47,6 +50,8 @@ from candleviewer.api.idempotency import (
     request_fingerprint,
 )
 from candleviewer.api.recorder_admin import JOB_KIND, AdminJobStore, Job, JobConflict, logger
+from candleviewer.api.recording_writes import Elevation
+from candleviewer.api.step_up_challenge import retention_policies_text
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.recorder.retention import (
@@ -156,8 +161,10 @@ def make_recording_retention_router(
     audit: common.Emitter,
     *,
     idempotency: IdempotencyCache | None = None,
+    elevation: Elevation | None = None,
 ) -> APIRouter:
-    """`policies` is `None` until its store exists (503); `sweeper` runs an `apply_now` pass."""
+    """`policies` is `None` until its store exists (503); `sweeper` runs an `apply_now` pass;
+    `elevation` demands the PUT's `recorder` step-up (None: 503, nothing changes)."""
     router = APIRouter(tags=["recording"], route_class=common.ProblemRoute)
     cache = IdempotencyCache() if idempotency is None else idempotency
     held = asyncio.Lock()  # one PUT at a time, from reading the set before to storing the new one
@@ -189,12 +196,6 @@ def make_recording_retention_router(
         owner, now = str(p.user_id), apply_now == "true"
         digest = request_fingerprint("PUT", f"{_PATH}?apply_now={apply_now}", raw)
         try:
-            if (hit := replay(cache, owner, key, digest)) is not None:
-                return hit
-        except IdempotencyKeyReuse:
-            code = ErrorCode.IDEMPOTENCY_KEY_REUSE
-            raise common.Problem(409, code, "The key was first used with another body.") from None
-        try:
             body = _SetIn.model_validate_json(raw or b"{}")
         except ValidationError as exc:  # bounded, input-free field errors
             raise bad("Invalid policy set.", errors=format_errors(exc)) from None
@@ -204,6 +205,17 @@ def make_recording_retention_router(
             raise common.Problem(409, ErrorCode.CONFLICT, "The retention scheduler is off.")
         if now and run is None:
             raise common.unavailable()
+        if elevation is None:  # a wiring fault: the set stays gated (C-2.21)
+            raise common.unavailable()
+        restated = retention_policies_text(len(body.items), apply_now=now)
+        if (refused := await elevation(p.session_id, restated)) is not None:
+            return refused  # after RBAC and the body (#2304): nothing is kept or changed
+        try:
+            if (hit := replay(cache, owner, key, digest)) is not None:
+                return hit
+        except IdempotencyKeyReuse:
+            code = ErrorCode.IDEMPOTENCY_KEY_REUSE
+            raise common.Problem(409, code, "The key was first used with another body.") from None
         async with held:
             try:  # a same-key twin may have been stored while this one waited for the lock
                 if (hit := replay(cache, owner, key, digest)) is not None:

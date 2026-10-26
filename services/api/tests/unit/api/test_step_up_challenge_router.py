@@ -26,6 +26,7 @@ from structlog.testing import capture_logs
 from candleviewer.api.step_up import (
     make_read_only_guard,
     make_step_up_router,
+    request_elevation,
     require_elevation_for,
     require_session_elevation,
 )
@@ -169,9 +170,13 @@ async def _world() -> _World:
     def _sid(request: Request) -> str:
         return str(sessions[request.headers["authorization"].removeprefix("Bearer ")].id)
 
+    users_gate = request_elevation(auth, "users")
+
     @app.post("/users/{uid}/invite")
-    async def roles(uid: str) -> dict[str, bool]:
-        return {"ok": True}
+    async def roles(uid: str, request: Request) -> Any:
+        """A grace-class write gated in its handler, as the invite re-issue is (#2304 slice 3c)."""
+        text = ChallengeText(f"Reissue the invite link of user {uid}")
+        return await users_gate(request, text) or {"ok": True}
 
     @app.post("/trading/kill-switch")
     async def kill_switch(request: Request) -> Any:
