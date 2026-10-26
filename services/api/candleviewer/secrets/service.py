@@ -916,7 +916,9 @@ def mint_loop_signing(
             await io.aclose(bound_s)
             if broker is not None:
                 broker._leave(io)
-            pool, free = free, None  # first the close, so no signing reads a freed store
+            # The close came first, so no signing starts a read now; one already reading is
+            # refused at the fence, and its checked-out connection outlives the dispose.
+            pool, free = free, None  # claimed before the await: a second close frees nothing
             if pool is None:
                 return
             try:
