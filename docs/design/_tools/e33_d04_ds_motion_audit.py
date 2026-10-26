@@ -2,7 +2,7 @@
 """E33-D04 (#988) audit: the emulated-algo design-system contributions and the motion spec.
 
 Standalone, offline, stdlib only; it executes no repo code. It reads, AS TEXT at the pinned
-base `965cf14090` (`git show`): the token JSON (`themes.json` layering: dark = primitives +
+base `8d2c9c0192` (`git show`): the token JSON (`themes.json` layering: dark = primitives +
 semantic-dark, light = + semantic-light, hc = + semantic-hc), `theme.css`,
 `tools/contrast/pairs.mjs` and `encodings.json`, the plan texts `05`, `14`, `15`, `16`, `23`, `24`,
 `28`, the ticket JSON, the merged E33-D02 / E33-D03 / H03 / E05-D02 slice 4 / E09-D08 / E30-D04 /
@@ -13,8 +13,8 @@ and `16` (which must equal the base).
 1. **Values.** Every `{{KIND:key}}` outside a code span is COMPUTED (MOTION, BUDGET, CONTRAST,
    DIST, COUNT): durations and easings from the primitives, the cadence, flash, loop and skeleton
    constants parsed from the cited texts, contrast by the WCAG 2.x formula per theme, CVD as CIE76
-   ΔE after the Brettel / Viénot projection of `cvd_simulate.py` (ported verbatim; G-CVD-PORT
-   re-reads its constants) for every two state fills and every two glyph colours per simulation
+   ΔE after the simulation of `cvd_simulate.py` (Brettel / Viénot for protanopia and deuteranopia,
+   Machado 2009 for tritanopia; ported verbatim; G-CVD-PORT re-reads its constants) for every two state fills and every two glyph colours per simulation
    and theme (`--json` `cvd`), greyscale as the CIELAB L* gap, and the counts from the spec's own
    tables. `--fill` writes `VALUE<!--=KIND:key-->`; `--check` re-derives every anchored value and
    FAILs on a difference, a missing anchor, a `{{` left outside a code span, or a hand-typed
@@ -58,14 +58,20 @@ and `16` (which must equal the base).
    subject, a negation chain, a rate in words or fps, a cite's own sub-clause, the tag
    suppressed), M-125 to M-135 the round-3 residuals (a falsity frame, the following sample, the
    countdown renamed, every bar by place, a never-animates item); a lexicon mutation must trip
-   its gate on its own (G-RULED-PIN's line is set aside for it), a pin mutation G-RULED-PIN only.
+   its gate on its own and print exactly one FAIL, as `--check` prints it (no FAIL line is set
+   aside): G-RULED-PIN's findings in a section a lexicon FAIL names (a section ref, an id, a code
+   span or a claim excerpt of that section) print as NOTEs, never dropped, and turn back into a
+   FAIL once the lexicon FAIL is fixed (M-151 asserts the NOTE); a pin mutation trips G-RULED-PIN.
 5. **Pins (G-RULED-PIN; the orchestrator's rulings on the delta record at `4e4da2d4` and on the
    out-of-span residuals).** The lexicon gates are the first line; the backstop is a default-deny
    pin set in RULED_PIN_TXT (`e33_d04_ruled_pins.txt`, committed) over EVERY unit of both docs
    (spec and hand-off): each heading, table row, rule line, bullet and sentence, by doc, region
    (heading path plus occurrence `#n`), location (`row <id>`, `s<k>` for the k-th sentence,
    `rule <k>`, `heading`, `shape`) and exact text (NFKC, whitespace collapsed; an anchored value is
-   cut to its anchor, which G-ANCHOR re-derives). Each region also pins its line shape, blank lines
+   cut to its anchor, which G-ANCHOR re-derives). A sentence also pins its line form `«…»`: whether
+   it opens its line, the line's list marker (`¶` a paragraph) and its leading indentation (a
+   row's indentation too), so a sentence moved across a blank line or a demoted bullet FAILs
+   (M-152). Each region also pins its line shape, blank lines
    included, so squeezing blank lines to make room under G-BUDGET changes a pin. `--repin-ruled`
    writes it, deliberately and only with every value filled; `--check` never re-pins. A unit
    changed, moved, duplicated, deleted or added FAILs by its location; a repeated heading is a
@@ -74,7 +80,11 @@ and `16` (which must equal the base).
    each (M-137 to M-150): a motion row, its reduce twin, a state row, an affordance row, the
    never-animates list, a countdown row, a drift row, a T2 / exit cell, a ruled sentence, a new
    heading, a new unit outside the old spans, a duplicated section, a shadow copy, squeezed blank
-   lines.
+   lines; M-151 / M-152 the boards-PR carries (one FAIL per lexicon-caught form, the line form);
+   M-153 to M-155 the boards PR itself: G-BOARDS reads each §0 Status cell against its PNG's
+   header and §0's sha256 against the committed board script, and G-UNTOUCHED admits, besides
+   this ticket's four files, only the ten board PNGs §0 names, `sheets/e33-d04/` and
+   `sheets/MANIFEST.sha256` (changed paths against BASE, untracked included).
 
 Usage (from the repo root):
   uv run --no-project python docs/design/_tools/e33_d04_ds_motion_audit.py --check [--fill] [--json]
@@ -92,6 +102,7 @@ import hashlib
 import json
 import math
 import re
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -101,11 +112,28 @@ from itertools import combinations
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "965cf14090"  # every cite was read here (the spec's Inputs line)
+BASE = "8d2c9c0192"  # every cite was read here (the spec's Inputs line; #4528 read 965cf14090)
+# the CMP ids were derived at #4528's base; once that text merged, its own ids (and E33-D05's
+# citations of them) read as claimed at any later base, so the ledger stays at the allocation base
+ID_BASE = "965cf14090"
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 
 SPEC_REL = "docs/design/E33/E33-D04.md"
+# the boards PR: the committed board script set and the ticket's own paths (G-UNTOUCHED, G-BOARDS)
+BOARD_SCRIPT = "docs/design/_tools/sheets/e33-d04/e33-d04-board.js.txt"  # the r2 script §0 names
+OWN_PATHS = (
+    "docs/design/E33/E33-D04.md",
+    "docs/design/E33/E33-D04-handoff.md",
+    "docs/design/_tools/e33_d04_ds_motion_audit.py",
+    "docs/design/_tools/e33_d04_ruled_pins.txt",
+)
+OWN_SHEETS = re.compile(r"docs/design/_tools/sheets/(?:e33-d04/[A-Za-z0-9._-]+|MANIFEST\.sha256)")
+DRAWN_CELL = re.compile(
+    r"drawn \((?P<r>r[12])\): board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>[^`]+)` \((?P<w>\d+) × (?P<h>\d+)\)"
+)
+R1_BOARDS = ("03", "09")  # kept as the r1 drawings; r2 redrew the other eight
 HAND_REL = "docs/design/E33/E33-D04-handoff.md"
 P15_REL = "docs/plan/15-component-catalogue.md"
 P16_REL = "docs/plan/16-design-system-brief.md"
@@ -212,23 +240,23 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("H03", 90, "Algos — Emulated — run by CandleViewer"),
     ("H03", 110, "determinate width change"),
     ("H03", 112, "`motion.shimmer`"),
-    ("15", 268, "track `color.surface.hover`"),
-    ("15", 316, "content at 0 ms"),
-    ("15", 1344, "local state machine"),
-    ("15", 1408, "`color.status.danger`."),
-    ("15", 2656, "`detector: DetectorId`"),
-    ("16", 175, "No flashing content exceeding 3 times per second"),
-    ("16", 178, "`normal` scale+fade"),
-    ("16", 182, "`slow` looping shimmer"),
-    ("16", 199, "value-change emphasis"),
-    ("16", 183, "in-app override"),
-    ("16", 195, "a stale cell never animates"),
-    ("23", 824, "never throttled"),
-    ("14", 1613, "coalesced to 2 Hz"),
+    ("15", 269, "track `color.surface.hover`"),
+    ("15", 317, "content at 0 ms"),
+    ("15", 1354, "local state machine"),
+    ("15", 1418, "`color.status.danger`."),
+    ("15", 2677, "`detector: DetectorId`"),
+    ("16", 177, "No flashing content exceeding 3 times per second"),
+    ("16", 180, "`normal` scale+fade"),
+    ("16", 184, "`slow` looping shimmer"),
+    ("16", 201, "value-change emphasis"),
+    ("16", 185, "in-app override"),
+    ("16", 197, "a stale cell never animates"),
+    ("23", 826, "never throttled"),
+    ("14", 1624, "coalesced to 2 Hz"),
     ("05", 113, "clock/check/x/slash"),
     ("05", 206, "single low-amplitude cross-fade"),
     ("05", 208, "No content flashes more than 3 times per second"),
-    ("24", 2780, "class AlgoState"),
+    ("24", 2848, "class AlgoState"),
     ("SL", 41, '"color.status.warning.strong"'),
     ("SL", 44, '"color.status.danger.strong"'),
     ("SD", 410, '"radius.dialog"'),
@@ -802,8 +830,10 @@ def show_ratio(r: float) -> str:
     return f"{r:.4f}:1" if near else f"{r:.2f}:1"
 
 
-# The Brettel (1997) / Viénot projection of `docs/research/_tools/cvd_simulate.py`, ported verbatim
-# (G-CVD-PORT re-reads these constants from that file at the base).
+# The Brettel (1997) / Viénot projection (protanopia, deuteranopia) and the Machado, Oliveira &
+# Fernandes (2009) tritanopia matrix (linear RGB) of `docs/research/_tools/cvd_simulate.py`, ported
+# verbatim (G-CVD-PORT re-reads these constants from that file at the base; the boards PR's base
+# carries the Machado tritan row that replaced the earlier LMS projection row).
 RGB_TO_LMS = (
     (17.8824, 43.5161, 4.11935),
     (3.45565, 27.1554, 3.86714),
@@ -817,8 +847,19 @@ LMS_TO_RGB = (
 PROJECTIONS: dict[str, tuple[float, ...]] = {
     "protanopia": (0.0, 2.02344, -2.52581, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
     "deuteranopia": (1.0, 0.0, 0.0, 0.494207, 0.0, 1.24827, 0.0, 0.0, 1.0),
-    "tritanopia": (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.395913, 0.801109, 0.0),
 }
+TRITAN_MACHADO: tuple[float, ...] = (
+    1.255528,
+    -0.076749,
+    -0.178779,
+    -0.078411,
+    0.930809,
+    0.147602,
+    0.004733,
+    0.691367,
+    0.303900,
+)
+LINEAR_RGB_SIMS: dict[str, tuple[float, ...]] = {"tritanopia": TRITAN_MACHADO}
 
 
 def matvec(flat: tuple[float, ...], v: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -840,8 +881,11 @@ def linear_to_srgb(c: float) -> float:
 
 def simulate(hex6: str, deficiency: str) -> str:
     lin = tuple(srgb_to_linear(v) for v in rgb(hex6))
-    lms = matvec(flat3(RGB_TO_LMS), (lin[0], lin[1], lin[2]))
-    lin2 = matvec(flat3(LMS_TO_RGB), matvec(PROJECTIONS[deficiency], lms))
+    if deficiency in LINEAR_RGB_SIMS:
+        lin2 = matvec(LINEAR_RGB_SIMS[deficiency], (lin[0], lin[1], lin[2]))
+    else:
+        lms = matvec(flat3(RGB_TO_LMS), (lin[0], lin[1], lin[2]))
+        lin2 = matvec(flat3(LMS_TO_RGB), matvec(PROJECTIONS[deficiency], lms))
     return "#" + "".join(f"{max(0, min(255, round(linear_to_srgb(c)))):02X}" for c in lin2)
 
 
@@ -1383,6 +1427,53 @@ def cite_gates(texts: dict[str, str], fetch: Fetch) -> tuple[list[str], list[str
             hits = [i + 1 for i, ln in enumerate(base or []) if frag in ln]
             fails.append(f'`{cid}`:{n} "{frag[:40]}" not on the line at {BASE} (found {hits[:4]})')
     return one("G-CITE", fails), warns, len(done) + len(CITED)
+
+
+def cited_lines(texts: dict[str, str]) -> dict[str, set[int]]:
+    """Every line a cite reads, per file: a range `a–b` is every line from a to b."""
+    out: dict[str, set[int]] = {}
+    for text in texts.values():
+        for m in CITE_GROUP.finditer(text):
+            cid = m["a"] or m["b"]
+            rel = cite_path(cid)
+            if rel is None:
+                continue
+            refs = [m["first"], *re.findall(r":(\d+(?:[–-]\d+)?)", m["more"])]
+            for ref in refs:
+                ends = [int(x) for x in re.split(r"[–-]", ref)]
+                out.setdefault(rel, set()).update(range(ends[0], ends[-1] + 1))
+    for cid, n, _frag in CITED:
+        rel = cite_path(cid)
+        if rel is not None:
+            out.setdefault(rel, set()).add(n)
+    return out
+
+
+def version_gates(texts: dict[str, str], fetch: Fetch) -> list[str]:
+    """G-VERSION: a cited line (every line of every cited range) changed on `origin/main` since
+    BASE is a FAIL, never a WARN; an unresolvable `origin/main` or merge-base is a FAIL."""
+    if not git_ok("rev-parse", "--verify", "--quiet", f"{HEAD}^{{commit}}"):
+        return one("G-VERSION", [f"{HEAD} does not resolve: the drift is unread"])
+    if not git_out("merge-base", BASE, HEAD).strip():
+        return one("G-VERSION", [f"no merge-base of {BASE} and {HEAD}: the drift is unread"])
+    bad: list[str] = []
+    for rel, nums in sorted(cited_lines(texts).items()):
+        base_t, head_t = fetch(BASE, rel), fetch(HEAD, rel)
+        if base_t is None:
+            continue  # G-CITE FAILs a file that is not there at BASE
+        base = base_t.split("\n")
+        if head_t is None:
+            bad.append(f"{rel} is gone at {HEAD}")
+            continue
+        head = head_t.split("\n")
+        moved = [
+            n
+            for n in sorted(nums)
+            if n <= len(base) and (n > len(head) or head[n - 1] != base[n - 1])
+        ]
+        if moved:
+            bad.append(f"{rel} changed at {HEAD} in cited lines {moved[:6]}")
+    return one("G-VERSION", bad)
 
 
 # ---------------------------------------------------------------------------- the gates
@@ -2170,6 +2261,75 @@ def g_never(t: Texts) -> list[str]:
     return one("G-NEVER", bad)
 
 
+# the permission / hedge words of a ruled "never" sentence turned into a "may"
+PERMIT = (
+    r"(?:may|can|could|might|optionally|also|sometimes|allowed to|free to|permitted to"
+    r"|is fine to|ok to)"
+)
+HIDING = (
+    r"(?:collaps\w*|hid(?:e|es|den|ing)|omit\w*|omission|drop(?:s|ped|ping)?|elid\w*"
+    r"|suppress\w*|remov(?:e|es|ed|ing)|skip(?:s|ped|ping)?|fold(?:s|ed|ing)?|tuck\w*)"
+)
+COLOUR_SUBJ = r"(?:colou?rs?|fills?|hues?|tints?)"
+CARRY = r"(?:carry|carries|carried|signal\w*|convey\w*|encod\w*|mark\w*|show\w*|stand\w*)"
+# a negation or a prohibition in front of the permission ("may not", "must not") makes no claim
+COLOUR_PERMIT = (
+    rf"\b{COLOUR_SUBJ}\b(?:\s+\S+){{0,4}}?\s+\b{PERMIT}\b(?:\s+\S+){{0,5}}?\s+\b{CARRY}\b"
+    rf"(?:\s+\S+){{0,6}}?\s+\b(?:alone|only|by itself|solely)\b"
+    rf"|\b{PERMIT}\b(?:\s+\S+){{0,4}}?\s+\b{COLOUR_SUBJ}\b(?:\s+\S+){{0,5}}?\s+\b{CARRY}\b"
+    rf"(?:\s+\S+){{0,6}}?\s+\b(?:alone|only|by itself|solely)\b"
+)
+EMU_SUBJ = (
+    r"\b(?:the )?(?:emulation|emulated(?: (?:tags?|badges?|chips?|pills?|affordances?))?"
+    r"|affordances?|three part affordance|tags?)\b"
+)
+EMU_PERMIT = (
+    rf"{EMU_SUBJ}(?:\s+\S+){{0,5}}?\s+\b(?:{PERMIT}\b(?:\s+\S+){{0,4}}?\s+)?"
+    rf"\b(?:be\s+|get\s+|is\s+|are\s+)?{HIDING}\b"
+)
+EMU_ALLOWED_HIDE = r"\bhost whose caption\b|\bthe row variant\b|\bnever\b"
+LIVE_BAR = (
+    r"\b(?:also|additionally|optionally|may be|can be|is)\s+(?:\S+\s+){0,3}?"
+    r"(?:an? )?(?:polite |assertive )?live region\b"
+    r"|\b(?:may|can|could|might|optionally)\b(?:\s+\S+){0,3}?\s+(?:be|act as|serve as)"
+    r"\s+(?:an? )?(?:polite |assertive )?live region\b"
+    r"|\brole[= ]+\W*(?:status|log|alert)\b|\baria live\b[^.;|]{0,12}\b(?:polite|assertive)\b"
+)
+BAR_SUBJ = r"\b(?:the bar|progress ?bar|cmp 023|the label|status label|cmp 246)\b"
+
+
+def g_colour_alone(t: Texts) -> list[str]:
+    """R-1 (never colour alone): no table cell or sentence lets colour carry a state alone, in
+    any hedged form ("may", "can", "optionally", "also" … "alone" / "only")."""
+    bad = [] if "Never colour alone" in t.spec else ["R-1 is gone"]
+    bad += [f"claim: {c!r}" for c in claims(swept(t), COLOUR_PERMIT)]
+    return one("G-COLOUR-ALONE", bad)
+
+
+def g_emu_hidden(t: Texts) -> list[str]:
+    """R-7 (the emulation is never hidden): no cell or sentence lets the emulation (the tag, the
+    three-part affordance) be collapsed, hidden or omitted, on dense rows or anywhere else; the
+    one host the spec allows (a CMP-049 caption naming the tag) is G-EMULATED's."""
+    bad = [] if "The emulation is never hidden" in t.spec else ["R-7 is gone"]
+    owned = set(  # G-EMULATED's own forms stay its FAIL (one FAIL per form)
+        claims(swept(t), EMU_OFF, near=r"\bemulated\b", unless=EMU_ALLOWED)
+    )
+    bad += [
+        f"claim: {c!r}"
+        for c in claims(swept(t), EMU_PERMIT, unless=EMU_ALLOWED_HIDE, affirmed=True)
+        if c not in owned
+    ]
+    return one("G-EMU-HIDDEN", bad)
+
+
+def g_live_region(t: Texts) -> list[str]:
+    """CMP-023 (the bar, spec §4.5) and the label are never a live region: a sentence that makes
+    either one, "also" or "optionally" included, is a claim."""
+    bad = [] if "never a live region" in section(t.spec, "4.5") else ["§4.5 drops the ruling"]
+    bad += [f"claim: {c!r}" for c in claims(swept(t), LIVE_BAR, near=BAR_SUBJ)]
+    return one("G-LIVE-REGION", bad)
+
+
 def g_q1(t: Texts) -> list[str]:
     """BQ-9: case 1's Cancel T2 is D03's merged decision, cited, not re-decided."""
     q1 = bullet(section(t.spec, "13.3 Open questions"), "D04-Q1")
@@ -2255,9 +2415,10 @@ def cmp_ids(text: str) -> set[int]:
 
 @functools.lru_cache(maxsize=1)
 def id_ledger() -> tuple[int, frozenset[int]]:
-    """`15`'s highest id and the ids above it merged design specs already claim."""
-    top = max(cmp_ids(at_base(P15_REL)))
-    grep = cmp_ids(git_out("grep", "-ohE", r"CMP-[0-9]{3}", BASE, "--", "docs/design"))
+    """`15`'s highest id and the ids above it merged design specs already claim, at ID_BASE (the
+    allocation base); G-ONE-ENTRY also checks that `15` at BASE gives neither id elsewhere."""
+    top = max(cmp_ids(git_show(ID_BASE, P15_REL) or at_base(P15_REL)))
+    grep = cmp_ids(git_out("grep", "-ohE", r"CMP-[0-9]{3}", ID_BASE, "--", "docs/design"))
     claimed: set[int] = set()
     while top + len(claimed) + 1 in grep:  # the contiguous run above `15` (not a placeholder id)
         claimed.add(top + len(claimed) + 1)
@@ -2278,6 +2439,11 @@ def g_one_entry(t: Texts) -> list[str]:
         bad.append(f"§3 is not CMP-{label} AlgoStateLabel")
     if not section(t.spec, f"5. CMP-{shell} AlgoBuilderShell"):
         bad.append(f"§5 is not CMP-{shell} AlgoBuilderShell")
+    for n, name in ((shell, "AlgoBuilderShell"), (label, "AlgoStateLabel")):
+        for where, text in (("at the base", at_base(P15_REL)), ("on disk", t.p15)):
+            taken = re.search(rf"^### CMP-{n} (.*)$", text, MULTI)
+            if taken and not taken[1].startswith(name):
+                bad.append(f"`15` {where} gives CMP-{n} to {taken[1][:40]!r}")
     if "Atom" not in bullet(section(t.hand, "C.2 A-2"), "Tier"):
         bad.append("A-2 Tier is not Atom")
     tier = rf"cmp {label}\s+(?:algostatelabel\s+)?\(?(?:is\s+)?(?:an?\s+)?(?:molecule|organism)"
@@ -2552,7 +2718,52 @@ def g_untouched(t: Texts) -> list[str]:
     if t.p16 != at_base(P16_REL):
         bad.append("`16` differs from the base")
     bad += [f"{n} changed on the branch" for n in t.diff_names if n in (P15_REL, P16_REL)]
+    own = own_pngs(t.spec)
+    bad += [
+        f"{n} is not this ticket's path"
+        for n in sorted({*t.diff_names, *EXTRA_PATHS})
+        if n not in (P15_REL, P16_REL)
+        and n not in OWN_PATHS
+        and n not in own
+        and not OWN_SHEETS.fullmatch(n)
+    ]
     return one("G-UNTOUCHED", bad)
+
+
+# a self-test lever: paths pretended changed (never set outside `selftest`)
+EXTRA_PATHS: list[str] = []
+
+
+def own_pngs(spec: str) -> frozenset[str]:
+    """The ten PNGs §0's board rows name (`E33-D04 / NN slug`); any other path is not this
+    ticket's (the boards PR admits these, `sheets/e33-d04/` and `sheets/MANIFEST.sha256`)."""
+    out = set()
+    for row in boards(spec):
+        slug = re.fullmatch(rf"`E33-D04 / {row[0]} ([a-z0-9-]+)`", row[1])
+        if slug:
+            out.add(f"docs/design/E33/img/E33-D04-{row[0]}-{slug[1]}.png")
+    return frozenset(out)
+
+
+def png_size(rel: str) -> tuple[int, int] | None:
+    """Width and height from a working-tree PNG's IHDR, else None."""
+    path = ROOT / rel
+    head = path.read_bytes()[:24] if path.is_file() else b""
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return int(w), int(h)
+
+
+def drawn_cell_ok(row: list[str]) -> bool:
+    """A §0 Status cell reads `drawn (rN): board id `<uuid>`, `<its export path>` (W × H)`: the
+    path its own slug names, W × H its PNG header, r1 only for the boards kept from r1."""
+    slug = re.fullmatch(rf"`E33-D04 / {row[0]} ([a-z0-9-]+)`", row[1])
+    m = DRAWN_CELL.fullmatch(row[-1])
+    if not slug or not m or m["r"] != ("r1" if row[0] in R1_BOARDS else "r2"):
+        return False
+    want = f"docs/design/E33/img/E33-D04-{row[0]}-{slug[1]}.png"
+    return m["png"] == want and png_size(want) == (int(m["w"]), int(m["h"]))
 
 
 def g_boards(t: Texts) -> list[str]:
@@ -2574,7 +2785,11 @@ def g_boards(t: Texts) -> list[str]:
     used = {r.get("Board", "") for r in register(t.spec)}
     bad += [f"frame on board {u} not in §0" for u in sorted(used - set(nums))]
     bad += [f"board {n} draws no §9.2 frame" for n in nums if n not in used]
-    bad += [f"board {b[0]} is not PENDING" for b in bd if not b[-1].startswith("PENDING")]
+    bad += [f"board {b[0]}: Status is not its drawn PNG" for b in bd if not drawn_cell_ok(b)]
+    script = ROOT / BOARD_SCRIPT
+    sha = hashlib.sha256(script.read_bytes()).hexdigest() if script.exists() else "missing"
+    if f"r2, sha256 `{sha}`" not in section(t.spec, "0. Artefacts"):
+        bad.append(f"§0 does not name {BOARD_SCRIPT}'s sha256")
     named = {b[1].strip("`") for b in bd}
     for text in swept(t):
         for m in re.finditer(r"E33-D04 / (\d+\w*) [a-z0-9-]+", text):
@@ -2762,7 +2977,10 @@ PIN_DOCS: tuple[str, ...] = ("spec", "hand")  # every unit of both docs; no span
 PIN_ALLOW: tuple[tuple[str, str], ...] = ()  # (region prefix, a unit regex) allowed unpinned
 HEADING = re.compile(r"^(#+) (.*)$")
 PIN_SENT = re.compile(r"s\d+")
+LINE_FORM = re.compile(r"^(\s*)((?:[-*+]|\d+[.)])(?=\s))?")
+FORM_TAG = re.compile(r"^«[^»]*» ")
 Unit = tuple[str, str, str, str]  # (doc, region, loc, text)
+Finding = tuple[str, str, str, str]  # (message, doc + region ("" when global), loc, unit text)
 
 
 def pin_norm(text: str) -> str:
@@ -2788,6 +3006,21 @@ def unvalued(line: str, values: Values) -> str:
         parts += [part(line[pos : c.start()]), c[0]]
         pos = c.end()
     return "".join(parts) + part(line[pos:])
+
+
+def form_tag(raw: str, first: bool) -> str:
+    """A sentence's line form: `^` when it opens its line (`+` when it continues one), the line's
+    bullet marker (`¶` for a paragraph) and its leading indentation (`:n`, when not zero), so a
+    sentence moved across a line or a blank line, a demoted bullet or a re-indented line FAILs."""
+    m = LINE_FORM.match(raw)
+    indent = len(m[1].expandtabs(4)) if m else 0
+    form = (m[2] if m and m[2] else "¶") + (f":{indent}" if indent else "")
+    return f"«{'^' if first else '+'}{form}» "
+
+
+def bare(text: str) -> str:
+    """A pinned sentence without its line-form tag."""
+    return FORM_TAG.sub("", text, count=1)
 
 
 def region_label(region: str) -> str:
@@ -2833,13 +3066,15 @@ def doc_units(doc: str, text: str, values: Values) -> list[Unit]:
             rid = row_key(split_row(ln)[0]) or "(blank)"
             seen[rid] = seen.get(rid, 0) + 1
             loc = f"row {rid}" + (f"#{seen[rid]}" if seen[rid] > 1 else "")
-            out.append((doc, region, loc, " | ".join(pin_norm(c) for c in split_row(ln))))
+            pad = len(ln) - len(ln.lstrip(" "))
+            row = " | ".join(pin_norm(c) for c in split_row(ln))
+            out.append((doc, region, loc, f"«:{pad}» {row}" if pad else row))
         else:
             shape += "p"
-            for s in FULL_STOP.split(ln.strip()):
-                if s.strip():
-                    k += 1
-                    out.append((doc, region, f"s{k}", pin_norm(s)))
+            parts = [x for x in FULL_STOP.split(ln.strip()) if x.strip()]
+            for n, x in enumerate(parts):
+                k += 1
+                out.append((doc, region, f"s{k}", form_tag(ln, n == 0) + pin_norm(x)))
     close()
     return out
 
@@ -2875,77 +3110,95 @@ def allowed(region: str, text: str) -> bool:
     return any(region.startswith(r) and re.search(p, text) for r, p in PIN_ALLOW)
 
 
-def prose_problems(where: str, region: str, was: list[str], now: list[str]) -> list[str]:
-    """A region's sentences in order: a replaced one is changed, an inserted one is unpinned (or
-    moved / duplicated when its text is pinned), a dropped one deleted."""
-    bad: list[str] = []
+def prose_problems(where: str, region: str, was: list[str], now: list[str]) -> list[Finding]:
+    """A region's sentences in order: a replaced one is changed (re-formed when only its line form
+    moved: its line, bullet or indentation), an inserted one is unpinned (or moved / duplicated
+    when its text is pinned), a dropped one deleted."""
+    bad: list[Finding] = []
     ops = difflib.SequenceMatcher(None, was, now, autojunk=False).get_opcodes()
     for op, i1, i2, j1, j2 in ops:
         if op == "equal":
             continue
         if op == "replace":
-            for j in range(j1, j1 + min(i2 - i1, j2 - j1)):
-                bad.append(f"{where} s{j + 1} changed: {now[j][:60]!r}")
+            for i, j in zip(range(i1, i2), range(j1, j2), strict=False):
+                kind = (
+                    "re-formed (its line, form or indent)"
+                    if bare(was[i]) == bare(now[j])
+                    else "changed"
+                )
+                bad.append(
+                    (f"{where} s{j + 1} {kind}: {now[j][:60]!r}", region, f"s{j + 1}", now[j])
+                )
             i1, j1 = i1 + min(i2 - i1, j2 - j1), j1 + min(i2 - i1, j2 - j1)
         for j in range(j1, j2) if op != "delete" else ():
             txt = now[j]
             if txt in was:
                 kind = "duplicated" if now.count(txt) > was.count(txt) else "moved"
-                bad.append(f"{where} s{j + 1} {kind}: {txt[:60]!r}")
+                bad.append((f"{where} s{j + 1} {kind}: {txt[:60]!r}", region, f"s{j + 1}", txt))
             elif not allowed(region, txt):
-                bad.append(f"{where} s{j + 1} is unpinned (new): {txt[:60]!r}")
+                msg = f"{where} s{j + 1} is unpinned (new): {txt[:60]!r}"
+                bad.append((msg, region, f"s{j + 1}", txt))
         for i in range(i1, i2) if op != "insert" else ():
             if was[i] not in now:
-                bad.append(f"{where} s{i + 1} deleted: {was[i][:60]!r}")
+                bad.append(
+                    (f"{where} s{i + 1} deleted: {was[i][:60]!r}", region, f"s{i + 1}", was[i])
+                )
     return bad
 
 
-def loc_map(where: str, units: list[Unit], bad: list[str]) -> dict[str, str]:
+def loc_map(where: str, units: list[Unit], bad: list[Finding]) -> dict[str, str]:
     """{location: text}; a repeated location FAILs (the first copy is kept, never overwritten)."""
     out: dict[str, str] = {}
     for u in units:
         if u[2] in out:
-            bad.append(f"{where} {u[2]} repeated (a duplicated location): {u[3][:60]!r}")
+            msg = f"{where} {u[2]} repeated (a duplicated location): {u[3][:60]!r}"
+            bad.append((msg, u[1], u[2], u[3]))
         else:
             out[u[2]] = u[3]
     return out
 
 
-def row_problems(where: str, region: str, was: list[Unit], now: list[Unit]) -> list[str]:
+def row_problems(where: str, region: str, was: list[Unit], now: list[Unit]) -> list[Finding]:
     """A region's heading, shape, rules and rows by location: changed, deleted, duplicated, moved,
     unpinned."""
-    bad: list[str] = []
+    bad: list[Finding] = []
     old_t, new_t = loc_map(where, was, bad), loc_map(where, now, bad)
     for loc, txt in new_t.items():
         if loc not in old_t:
             if txt in old_t.values():
-                bad.append(f"{where} {loc} duplicated: {txt[:60]!r}")
+                bad.append((f"{where} {loc} duplicated: {txt[:60]!r}", region, loc, txt))
             elif not allowed(region, txt):
-                bad.append(f"{where} {loc} is unpinned (new): {txt[:60]!r}")
+                bad.append((f"{where} {loc} is unpinned (new): {txt[:60]!r}", region, loc, txt))
         elif old_t[loc] != txt and loc != "shape":
-            bad.append(f"{where} {loc} changed: {txt[:60]!r}")
+            bad.append((f"{where} {loc} changed: {txt[:60]!r}", region, loc, txt))
     bad += [
-        f"{where} {loc} deleted: {txt[:60]!r}" for loc, txt in old_t.items() if loc not in new_t
+        (f"{where} {loc} deleted: {txt[:60]!r}", region, loc, txt)
+        for loc, txt in old_t.items()
+        if loc not in new_t
     ]
     kept = [loc for loc in new_t if loc in old_t]
     if kept != [loc for loc in old_t if loc in new_t]:
         moved = next(
             a for a, b in zip(kept, [x for x in old_t if x in new_t], strict=True) if a != b
         )
-        bad.append(f"{where} {moved} moved (the row order changed)")
+        bad.append((f"{where} {moved} moved (the row order changed)", region, "", ""))
     return bad
 
 
-def pin_problems(pinned: tuple[Unit, ...], current: list[Unit]) -> list[str]:
+def pin_problems(pinned: tuple[Unit, ...], current: list[Unit]) -> list[Finding]:
     """Compare per region, then the regions themselves (a new heading is an unpinned region, a
-    repeated one a duplicated region)."""
-    bad: list[str] = []
+    repeated one a duplicated region). Each finding carries its region, location and the unit's
+    current text, so a lexicon FAIL on the same location demotes it (`demoted`)."""
     old_r = list(dict.fromkeys((u[0], u[1]) for u in pinned))
     new_r = list(dict.fromkeys((u[0], u[1]) for u in current))
     runs = [(u[0], u[1]) for n, u in enumerate(current) if n == 0 or current[n - 1][:2] != u[:2]]
-    bad += [f"{d} region '{region_label(r)}' repeated" for d, r in new_r if runs.count((d, r)) > 1]
-    bad += [
-        f"{d} region '{region_label(r)}' deleted or renamed"
+    out: list[Finding] = [
+        (f"{d} region '{region_label(r)}' repeated", f"{d} {r}", "region", "")
+        for d, r in new_r
+        if runs.count((d, r)) > 1
+    ]
+    out += [
+        (f"{d} region '{region_label(r)}' deleted or renamed", f"{d} {r}", "region", "")
         for d, r in old_r
         if (d, r) not in new_r
     ]
@@ -2953,38 +3206,124 @@ def pin_problems(pinned: tuple[Unit, ...], current: list[Unit]) -> list[str]:
         if (d, r) not in old_r:
             dup = not r.endswith("#1") and (d, r.rsplit("#", 1)[0] + "#1") in old_r
             kind = "duplicated (a repeated heading)" if dup else "unpinned (new)"
-            bad.append(f"{d} region '{region_label(r)}' is {kind}")
+            out.append((f"{d} region '{region_label(r)}' is {kind}", f"{d} {r}", "region", ""))
     common = [x for x in new_r if x in old_r]
     if common != [x for x in old_r if x in new_r]:
-        bad.append("a pinned region moved (the heading order changed)")
+        out.append(("a pinned region moved (the heading order changed)", "", "", ""))
     for d, r in common:
         where = f"{d} '{region_label(r)}'"
         was = [u for u in pinned if (u[0], u[1]) == (d, r)]
         now = [u for u in current if (u[0], u[1]) == (d, r)]
-        bad += row_problems(
+        mine = row_problems(
             where,
             r,
             [u for u in was if not PIN_SENT.fullmatch(u[2])],
             [u for u in now if not PIN_SENT.fullmatch(u[2])],
         )
-        bad += prose_problems(
+        mine += prose_problems(
             where,
             r,
             [u[3] for u in was if PIN_SENT.fullmatch(u[2])],
             [u[3] for u in now if PIN_SENT.fullmatch(u[2])],
         )
+        out += [(m, f"{d} {reg}", loc, txt) for m, reg, loc, txt in mine]
         shape = [[u[3] for u in x if u[2] == "shape"] for x in (was, now)]
         if shape[0] != shape[1]:  # last, so a unit-level finding leads the line
-            bad.append(f"{where} shape changed (the line structure, blank lines included)")
-    return bad
+            msg = f"{where} shape changed (the line structure, blank lines included)"
+            out.append((msg, f"{d} {r}", "shape", ""))
+    return out
 
 
-def g_ruled_pin(t: Texts) -> list[str]:
-    """The backstop: every unit of both docs equals its pin, at its location; nothing is new."""
+QUOTED_EXCERPT = re.compile(r"'((?:[^'\\]|\\.)*)'|\"((?:[^\"\\]|\\.)*)\"")
+LEX_TOKENS = (
+    r"`[^`]+`"  # a code span: a token, key, sha or path
+    r"|§[A-Z0-9]+(?:\.[0-9]+)*|\b[A-Z]\.[0-9]+\b"  # a section: §3.6, §F, C.8
+    r"|\b[A-Z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)+\b|\bAC[0-9]+\b"  # an id: D04-Q1, CR-E1, CMP-247
+    r"|#[0-9]+\b|\b[0-9a-f]{8,}\b|\b[0-9]{6,}\b|\b[A-Z0-9]{2,}:[0-9]+\b"  # PR, sha, comment, cite
+    r"|\b[A-Z]{5,}\b"  # a ruled mark: RULED, PROPOSED, CONFIRMED
+)
+DOC_WIDE = {"G-BUDGET": "spec"}  # a gate whose FAIL is the whole document's (the line budget)
+
+
+def lexicon_names(line: str, region: str, hay: str, rows: set[str]) -> bool:
+    """The lexicon FAIL `line` names the location `region` (doc + heading path): a section ref of
+    its heading path, a row id of its findings (`rows`), or a token or a claim excerpt (24
+    characters of it running on) found in the region's text (the current units and the pinned
+    text of its findings, `hay`)."""
+    tag, _, body = line.partition("] ")
+    if DOC_WIDE.get(tag.lstrip("[")) == region.split(" ", 1)[0]:
+        return True
+    heads = [h.lstrip("#") for h in region.split(" ", 1)[-1].rsplit("#", 1)[0].split(" › ")]
+    low, flat = (hay + "\n" + " › ".join(heads)).lower(), norm_text(hay)
+    for m in re.finditer(LEX_TOKENS, body):
+        tok = m[0].strip("`").lstrip("-")
+        if tok.startswith("§") or re.fullmatch(r"[A-Z]\.[0-9]+", tok):
+            ref = re.escape(tok.lstrip("§"))
+            if any(re.match(rf"§?{ref}[ .]", h) for h in heads):
+                return True
+        elif m[0].startswith("`") and tok.lower() in low:
+            return True
+        elif re.search(
+            rf"(?<![a-z0-9]){'[- ]'.join(map(re.escape, tok.lower().split('-')))}(?![a-z0-9])", low
+        ):
+            return True  # an id, never inside a longer one; `DR 17` is DR-17
+    for rid in rows:
+        if (
+            len(rid) > 1
+            and re.search(r"\d", rid)
+            and re.search(rf"(?<![\w-]){re.escape(rid)}(?![\w-])", body)
+        ):
+            return True
+    for m in QUOTED_EXCERPT.finditer(body):
+        x = (m[1] or m[2] or "").strip()
+        if len(x) >= 8 and (x in flat or any(x[i : i + 24] in flat for i in range(len(x) - 23))):
+            return True
+    return False
+
+
+def demoted(
+    findings: list[Finding], lexicon: list[str], current: dict[str, list[str]]
+) -> tuple[list[str], list[str]]:
+    """(FAIL, NOTE): the location is the region (a section of one doc). Every finding in a region
+    a lexicon FAIL names is a NOTE, so a lexicon-caught form prints one FAIL; a NOTE is printed,
+    never dropped, and returns as a FAIL once the lexicon FAIL is fixed (the exit stays 1)."""
+    hay: dict[str, list[str]] = {}
+    for _m, reg, _l, txt in findings:
+        if reg:
+            hay.setdefault(reg, list(current.get(reg, []))).append(txt)
+    rows: dict[str, set[str]] = {}
+    for _m, reg, loc, _t in findings:
+        if loc.startswith("row "):
+            rows.setdefault(reg, set()).add(loc[4:].split("#")[0])
+    named = {
+        r
+        for r, h in hay.items()
+        if any(lexicon_names(x, r, "\n".join(h), rows.get(r, set())) for x in lexicon)
+    }
+    return (
+        [f[0] for f in findings if f[1] not in named],
+        [f[0] for f in findings if f[1] in named],
+    )
+
+
+def g_ruled_pin(t: Texts, lexicon: list[str]) -> tuple[list[str], list[str]]:
+    """The backstop: every unit of both docs equals its pin, at its location; nothing is new. A
+    finding at a location a lexicon gate already FAILs is demoted to a NOTE (`demoted`)."""
     pinned = read_pins()
     if pinned is None:
-        return one("G-RULED-PIN", [f"no {RULED_PIN_TXT}; run --repin-ruled deliberately"])
-    return one("G-RULED-PIN", pin_problems(pinned, ruled_units(t.spec, t.hand, t.values)))
+        return one("G-RULED-PIN", [f"no {RULED_PIN_TXT}; run --repin-ruled deliberately"]), []
+    found = pin_problems(pinned, ruled_units(t.spec, t.hand, t.values))
+    if not found:
+        return [], []
+    current: dict[str, list[str]] = {}
+    for u in ruled_units(t.spec, t.hand, {}):  # the units with their values, per region
+        current.setdefault(f"{u[0]} {u[1]}", []).append(bare(u[3]))
+    fails, notes = demoted(
+        found, [x for x in lexicon if not x.startswith("[G-RULED-PIN]")], current
+    )
+    return one("G-RULED-PIN", fails), [
+        f"[G-RULED-PIN] demoted, a lexicon gate FAILs there: {x}" for x in notes
+    ]
 
 
 def g_ac(t: Texts) -> list[str]:
@@ -3193,15 +3532,13 @@ def g_contrast(t: Texts) -> list[str]:
 def g_cvd_port(t: Texts) -> list[str]:
     """The ported Brettel constants equal `cvd_simulate.py` at the base."""
     src = at_base(CVD_REL)
-    nums = [
-        float(x)
-        for x in re.findall(
-            r"-?\d+\.\d+(?:e-?\d+)?", src[src.index("RGB_TO_LMS = (") : src.index("def matvec")]
-        )
-    ]
+    num = r"-?\d+\.\d+(?:e-?\d+)?"
+    spans = (("RGB_TO_LMS = (", "def matvec"), ("TRITAN_MACHADO = (", "LINEAR_RGB_SIMS ="))
+    nums = [float(x) for a, b in spans for x in re.findall(num, src[src.index(a) : src.index(b)])]
     mine = [*flat3(RGB_TO_LMS), *flat3(LMS_TO_RGB)]
     for sim in SIMS:
-        mine += [x for x in PROJECTIONS[sim]]
+        mine += [x for x in PROJECTIONS.get(sim, ())]
+    mine += list(TRITAN_MACHADO)
     port = [x for x in mine if x not in (0.0, 1.0)]
     src_nums = [x for x in nums if x not in (0.0, 1.0)]
     return one(
@@ -3260,17 +3597,17 @@ def g_c15(t: Texts) -> list[str]:
 
 
 def g_dr14(t: Texts) -> list[str]:
-    """DR-14 (comment 6401561066): class (a) CONFIRMED by the `16`:178 cite; FO H21 stays the
+    """DR-14 (comment 6401561066): class (a) CONFIRMED by the `16`:180 cite; FO H21 stays the
     owner's."""
     d = drift_rows(t.hand).get("DR-14", {})
     rep = d.get("Replacement", "")
     bad: list[str] = []
-    if "`16`:178" not in rep:
+    if "`16`:180" not in rep:
         return []  # no confirmed cite at all: G-DRIFT's FAIL, not a second one
     if d.get("Class") != "a":
         bad.append("DR-14 is not class (a)")
-    if "CONFIRMED" not in rep or RULED_1442 not in rep or "`16`:178" not in rep:
-        bad.append("DR-14 is not marked CONFIRMED by the `16`:178 cite")
+    if "CONFIRMED" not in rep or RULED_1442 not in rep or "`16`:180" not in rep:
+        bad.append("DR-14 is not marked CONFIRMED by the `16`:180 cite")
     if "H21 stays with the owner" not in rep:
         bad.append("DR-14 decides FO H21")
     return one("G-DR14", bad)
@@ -3285,33 +3622,36 @@ def g_mutlist(t: Texts) -> list[str]:
     )
 
 
+# G-RULED-PIN runs last, in `audit`, reading these gates' FAILs (a lexicon-caught form: one FAIL)
 GATES: tuple[Callable[[Texts], list[str]], ...] = (
     g_triad, g_encode, g_word_leads, g_twin, g_twin16, g_reduce_instant, g_instant, g_nofade,
-    g_banner, g_step, g_cadence, g_easing, g_motion_tokens, g_loop, g_focused, g_countdown,
-    g_tween, g_never, g_dialog, g_q1, g_tier, g_kind, g_reduce_source, g_cr, g_one_entry, g_resume,
-    g_halted, g_t2, g_exits, g_tag, g_tagname, g_emulated, g_afford, g_untouched, g_boards,
-    g_budget,
-    g_drift, g_drift_scope, g_pin, g_ruled, g_ac, g_crow, g_owner, g_stories, g_handoff,
-    g_cmp118, g_a11y, g_token, g_contrast, g_cvd_port, g_q3, g_c15, g_dr14, g_mutlist,
-    g_ruled_pin,
+    g_banner, g_step, g_cadence, g_easing, g_motion_tokens, g_loop, g_focused, g_countdown, g_tween,
+    g_never, g_dialog, g_colour_alone, g_emu_hidden, g_live_region, g_q1, g_tier, g_kind,
+    g_reduce_source, g_cr, g_one_entry, g_resume, g_halted,
+    g_t2, g_exits, g_tag, g_tagname, g_emulated, g_afford, g_untouched, g_boards, g_budget, g_drift,
+    g_drift_scope, g_pin, g_ruled, g_ac, g_crow, g_owner, g_stories, g_handoff, g_cmp118, g_a11y,
+    g_token, g_contrast, g_cvd_port, g_q3, g_c15, g_dr14, g_mutlist,
 )  # fmt: skip
 
 
 def audit(
     t: Texts, fetch: Fetch, spec_keys: set[str], hand_keys: set[str]
-) -> tuple[list[str], list[str], int]:
+) -> tuple[list[str], list[str], int, list[str]]:
     fails: list[str] = []
     fails += anchor_gates("spec", t.spec, t.values, spec_keys)
     fails += anchor_gates("hand-off", t.hand, t.values, hand_keys)
     cf, warns, n = cite_gates({"spec": t.spec, "hand-off": t.hand}, fetch)
     fails += cf
+    fails += version_gates({"spec": t.spec, "hand-off": t.hand}, fetch)
     fails += one("G-PIN", list(pin_facts())) if pin_facts() else []
     for gate in GATES:
         fails += gate(t)
+    pin_fails, notes = g_ruled_pin(t, fails)
+    fails += pin_fails
     merged: dict[str, list[str]] = {}
     for f in fails:
         merged.setdefault(f.split("]")[0] + "]", []).append(f.split("] ", 1)[1])
-    return [f"{k} {'; '.join(v)}" for k, v in merged.items()], warns, n
+    return [f"{k} {'; '.join(v)}" for k, v in merged.items()], warns, n, notes
 
 
 # ---------------------------------------------------------------------------- mutations
@@ -3475,6 +3815,22 @@ def drop_line(prefix: str) -> Callable[[list[str]], list[str]]:
     return lambda lines: [ln for ln in lines if not ln.startswith(prefix)]
 
 
+def join_up(prefix: str) -> Callable[[list[str]], list[str]]:
+    """Move the first sentence of the paragraph after the list item `prefix` up across the blank
+    line, onto the item's line (order and text kept; the sentence is promoted into the item)."""
+
+    def run(lines: list[str]) -> list[str]:
+        i = next((n for n, ln in enumerate(lines) if ln.startswith(prefix)), None)
+        if i is None or i + 2 >= len(lines) or lines[i + 1]:
+            return lines
+        first, *rest = FULL_STOP.split(lines[i + 2], maxsplit=1)
+        if not rest:
+            return lines
+        return [*lines[:i], f"{lines[i]} {first}", "", rest[0], *lines[i + 3 :]]
+
+    return run
+
+
 def crlf(text: str) -> str:
     return text.replace("\n", "\r\n")
 
@@ -3503,12 +3859,72 @@ def shadow(head: str, fn: Callable[[str], str] | None = None) -> Edit:
     return run
 
 
+def pushed(lst: list[str], item: str) -> Callable[[], Callable[[], None]]:
+    """Push `item` onto a tool-state lever; the undo pops it (G-UNTOUCHED, M-155)."""
+
+    def run() -> Callable[[], None]:
+        lst.append(item)
+
+        def undo() -> None:
+            lst.pop()
+
+        return undo
+
+    return run
+
+
 def nudge_projection() -> Callable[[], None]:
     """Move one ported Brettel constant by 1e-4 (G-CVD-PORT); returns the undo."""
     sim = SIMS[0]
     old = PROJECTIONS[sim]
     PROJECTIONS[sim] = (old[0], old[1] * 1.0001, *old[2:])
     return lambda: PROJECTIONS.__setitem__(sim, old)
+
+
+def fake_head() -> Callable[[Fetch], Fetch]:
+    """A fake `origin/main` with an interior line of a cited range edited; BASE reads stay real."""
+
+    def wrap(fetch: Fetch) -> Fetch:
+        rel, line = interior_cite()
+
+        def run(rev: str, path: str) -> str | None:
+            text = fetch(rev, path)
+            if rev != HEAD or path != rel or text is None:
+                return text
+            lines = text.split("\n")
+            lines[line - 1] += " (edited upstream)"
+            return "\n".join(lines)
+
+        return run
+
+    return wrap
+
+
+def moved_head() -> Callable[[], Callable[[], None]]:
+    """HEAD names a ref that does not resolve; the undo puts the real one back."""
+
+    def run() -> Callable[[], None]:
+        global HEAD
+        old = HEAD
+        HEAD = "origin/no-such-branch"
+
+        def undo() -> None:
+            global HEAD
+            HEAD = old
+
+        return undo
+
+    return run
+
+
+def interior_cite() -> tuple[str, int]:
+    """A file and an interior line of a cited range (not an endpoint) in the spec, as read now."""
+    for m in CITE_GROUP.finditer((ROOT / SPEC_REL).read_text(encoding="utf-8")):
+        a, _, b = m["first"].replace("-", "–").partition("–")
+        rel = cite_path(m["a"] or m["b"])
+        if b and rel and int(b) - int(a) >= 2:
+            return rel, int(a) + 1
+    raise SystemExit("FAIL selftest: the spec cites no range of three lines or more")
 
 
 @dataclass(frozen=True)
@@ -3520,6 +3936,9 @@ class Mutation:
     hand: Edit | None = None
     p15: Callable[[str], str] | None = None
     patch: Callable[[], Callable[[], None]] | None = None  # moves tool state; returns the undo
+    note: bool = False  # the pin finding at the lexicon gate's location must print as a NOTE
+    head: Callable[[Fetch], Fetch] | None = None  # wraps the fetch: a fake `origin/main`
+    collateral: str = ""  # a gate tag the edit trips as a side effect (not counted as new)
 
 
 MUTATIONS: tuple[Mutation, ...] = (
@@ -4055,7 +4474,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-97",
         "G-BOARDS",
         "BQ-18",
-        spec=line_edit("## 0. Artefacts", "ten planned boards", "eleven planned boards"),
+        spec=line_edit("## 0. Artefacts", "ten boards", "eleven boards"),
     ),
     Mutation(
         "M-98",
@@ -4064,8 +4483,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=add_row_after(
             "0. Artefacts",
             "10",
-            "| 11a | `E33-D04 / 10 builder-shell-light` | light twin of 05"
-            " | PENDING: drawn in the boards PR |",
+            "| 11a | `E33-D04 / 10 builder-shell-light` | light twin of 05 | drawn (r2) |",
         ),
     ),
     Mutation(
@@ -4461,6 +4879,89 @@ MUTATIONS: tuple[Mutation, ...] = (
         "blank lines squeezed (room made under G-BUDGET)",
         spec=squeezed(None, 3),
     ),
+    # the boards-PR carries: one FAIL per lexicon-caught form (the pin finding a NOTE), and the
+    # line form pinned (a sentence moved across a blank line, a bullet demoted or promoted)
+    Mutation(
+        "M-151",
+        "G-COUNTDOWN",
+        "a lexicon-caught form prints one FAIL; its pin finding is a NOTE",
+        spec=line_edit(
+            "- **R-3 Cadence.**", "(§7.1).", "(§7.1). The countdown pulses on each new second."
+        ),
+        note=True,
+    ),
+    Mutation(
+        "M-152",
+        "G-RULED-PIN",
+        "a sentence moved across a blank line into a list item (its line form changed)",
+        spec=in_lines("2. The emulated affordance", join_up("3. **The CMP-158")),
+    ),
+    # the boards PR: each §0 Status cell against its PNG, the board script's sha256, the paths
+    Mutation(
+        "M-153",
+        "G-BOARDS",
+        "BQ-18",
+        spec=line_edit("| 01  | `E33-D04 / 01", "(2220 × 1842)", "(2220 × 1843)"),
+    ),
+    Mutation(
+        "M-154",
+        "G-BOARDS",
+        "BQ-18",
+        spec=line_edit("Page `E33-D04 DS contributions", "r2, sha256 `85f1", "r2, sha256 `85f2"),
+    ),
+    Mutation(
+        "M-155",
+        "G-UNTOUCHED",
+        "BQ-2",
+        patch=pushed(EXTRA_PATHS, "docs/design/E33/img/E33-D04-11-extra.png"),
+    ),
+    # the confirmation round: a cited range read line by line against `origin/main`, three ruled
+    # sentences turned into "may", a CMP id taken in the working-tree `15`
+    Mutation(
+        "M-156",
+        "G-VERSION",
+        "a cited line (the interior of a range) edited at a fake origin/main is a FAIL",
+        head=fake_head(),
+    ),
+    Mutation(
+        "M-157",
+        "G-VERSION",
+        "an origin/main that does not resolve is a FAIL, never a skipped check",
+        patch=moved_head(),
+    ),
+    Mutation(
+        "M-158",
+        "G-COLOUR-ALONE",
+        "R-1: Never colour alone",
+        spec=line_edit(
+            "- **R-1 Never colour alone.**",
+            "(`16`:162;",
+            "Colour may carry a state alone (`16`:162;",
+        ),
+    ),
+    Mutation(
+        "M-159",
+        "G-EMU-HIDDEN",
+        "R-7: The emulation is never hidden",
+        spec=line_edit(
+            "- **R-7 The emulation is never hidden.**",
+            "(§4.3).",
+            "(§4.3). The tag may be collapsed on dense rows.",
+        ),
+    ),
+    Mutation(
+        "M-160",
+        "G-LIVE-REGION",
+        "CMP-023: the bar is never a live region",
+        spec=sub_in("4.5 A11y", "never a live region", "also a live region"),
+    ),
+    Mutation(
+        "M-161",
+        "G-ONE-ENTRY",
+        "BQ-7: a CMP id another entry holds in the working-tree `15`",
+        p15=lambda text: text + "\n### CMP-245 SomethingElse (planted)\n",
+        collateral="G-UNTOUCHED",
+    ),
 )
 
 
@@ -4474,7 +4975,10 @@ def digest(paths: tuple[Path, ...]) -> list[str]:
 
 
 def diff_names() -> tuple[str, ...]:
-    return tuple(n for n in git_out("diff", "--name-only", BASE).split("\n") if n)
+    """Paths changed against BASE (the merge-base): committed, staged, working tree or untracked."""
+    names = git_out("diff", "--name-only", BASE).split("\n")
+    names += git_out("ls-files", "--others", "--exclude-standard").split("\n")
+    return tuple(n for n in names if n)
 
 
 def selftest(
@@ -4488,7 +4992,7 @@ def selftest(
     skeys, hkeys = text_keys(spec), text_keys(hand)
     names = diff_names()
     base_t = Texts(spec_f, hand_f, p15, p16, values, names)
-    base_fails, base_warns, _ = audit(base_t, git_fetch, skeys, hkeys)
+    base_fails, base_warns, _, _ = audit(base_t, git_fetch, skeys, hkeys)
     lines = [f"baseline (filled in memory): {len(base_fails)} FAIL, {len(base_warns)} WARN"]
     lines += [f"  baseline FAIL {x[:160]}" for x in base_fails]
     ok = not base_fails
@@ -4497,29 +5001,34 @@ def selftest(
         s = mu.spec(spec_f, values) if mu.spec else spec_f
         h = mu.hand(hand_f, values) if mu.hand else hand_f
         q = mu.p15(p15) if mu.p15 else p15
-        if (s, h, q) == (spec_f, hand_f, p15) and mu.patch is None:
+        if (s, h, q) == (spec_f, hand_f, p15) and mu.patch is None and mu.head is None:
             ok = False
             lines.append(f"  {mu.mid} [{mu.gate}] NOT APPLIED (the target text moved)")
             continue
         undo = mu.patch() if mu.patch else None
+        notes: list[str] = []
         try:
-            fails, _w, _ = audit(Texts(s, h, q, p16, values, names), git_fetch, skeys, hkeys)
+            t = Texts(s, h, q, p16, values, names)
+            fails, _w, _, notes = audit(
+                t, mu.head(git_fetch) if mu.head else git_fetch, skeys, hkeys
+            )
         except SystemExit as exc:
             fails = [str(exc)]
         finally:
             if undo:
                 undo()
+        # exactly one FAIL, as `--check` prints it: a lexicon gate's pin finding is a NOTE there
         new = [x for x in fails if x not in base_fails]
-        if mu.gate != "G-RULED-PIN":  # a lexicon gate must trip on its own; the pins back it up
-            new = [x for x in new if not x.startswith("[G-RULED-PIN]")]
+        new = [x for x in new if not (mu.collateral and x.startswith(f"[{mu.collateral}]"))]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
-        hit = bool(named) and len(new) == 1
+        hit = bool(named) and len(new) == 1 and (bool(notes) or not mu.note)
         restored = digest_texts(spec_f, hand_f, p15, p16) == pristine and digest(paths) == on_disk
         restored = restored and not g_cvd_port(base_t)  # tool state put back
         ok = ok and hit and restored
         first = (named or new or ["nothing new"])[0][:120]
         lines.append(
             f"  {mu.mid} [{mu.gate}] {'ok' if hit else 'MISSED'} ({len(new)} new"
+            f"{f', {len(notes)} NOTE' if notes else ''}"
             f"{'' if restored else ', NOT RESTORED'}) — {first}"
         )
         if not hit:
@@ -4560,7 +5069,7 @@ def main(argv: list[str]) -> int:
             print(f"FAIL --repin-ruled: {len(left)} unfilled placeholders; run --fill first")
             return 1
         units = ruled_units(spec, hand, compute(spec, hand)[0])
-        (ROOT / RULED_PIN_TXT).write_text(write_pins(units), encoding="utf-8")
+        (ROOT / RULED_PIN_TXT).write_text(write_pins(units), encoding="utf-8", newline="\n")
         print(f"--repin-ruled: {len(units)} units pinned in {RULED_PIN_TXT}")
         return 0
     if args.selftest:
@@ -4573,8 +5082,8 @@ def main(argv: list[str]) -> int:
     if args.fill:
         spec, unknown = fill(spec, values)
         hand, unknown_h = fill(hand, values)
-        spec_path.write_text(spec, encoding="utf-8")
-        hand_path.write_text(hand, encoding="utf-8")
+        spec_path.write_text(spec, encoding="utf-8", newline="\n")
+        hand_path.write_text(hand, encoding="utf-8", newline="\n")
         for u in unknown + unknown_h:
             print(f"FAIL --fill: no value for {{{{{u}}}}}")
         values, extra, matrix = compute(spec, hand)
@@ -4588,7 +5097,7 @@ def main(argv: list[str]) -> int:
         )
         return 0
     t = Texts(spec, hand, p15, p16, values, diff_names())
-    fails, warns, n = audit(t, git_fetch, skeys, hkeys)
+    fails, warns, n, notes = audit(t, git_fetch, skeys, hkeys)
     if args.json:
         doc: dict[str, object] = {
             "values": values,
@@ -4596,15 +5105,17 @@ def main(argv: list[str]) -> int:
             "contrast": matrix,
             "cvd": cvd_doc(extra),
         }
-        doc.update({"fails": fails, "warnings": warns, "cites": n})
+        doc.update({"fails": fails, "warnings": warns, "notes": notes, "cites": n})
         print(json.dumps(doc, ensure_ascii=False, indent=1))
     else:
         print(f"## E33-D04 audit of {SPEC_REL} (+ the hand-off) at base {BASE}")
-        print(f"values computed: {len(values)}; cites checked: {n}; gates: {len(GATES) + 3}")
+        print(f"values computed: {len(values)}; cites checked: {n}; gates: {len(GATES) + 5}")
         print(f"stories: {extra.get('stories.arithmetic')}; spec line budget {SPEC_LINE_BUDGET}")
         print("\n".join(f"WARN {w}" for w in warns))
+        if notes:
+            print("\n".join(f"NOTE {x}" for x in notes))
         print("\n".join(f"FAIL {x}" for x in fails) or "OK — every gate passed")
-        print(f"summary: {len(fails)} FAIL, {len(warns)} WARN")
+        print(f"summary: {len(fails)} FAIL, {len(warns)} WARN, {len(notes)} NOTE")
     return 1 if fails else 0
 
 
