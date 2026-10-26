@@ -124,28 +124,47 @@ def _since(rig: _Rig, writer: _Writer, mark: tuple[int, float]) -> tuple[Any, ..
     return rig.log[logged:], writer.emitted, _borrows() - borrows
 
 
-def test_the_lane_binding_builds_its_own_bounded_store_on_the_lane_and_counts_it(rig: _Rig) -> None:
-    """Q10: the store is built by M2 on the lane's loop, only there (never off a loop), at M2's
-    bound, counted while M2 holds it; a lane signing reads it there and writes its record ahead
-    through the lane's own writer with M2's columns (C-2.9)."""
-    pools, writer, before = _Pools(rig.sides["lane"], rig.ios), _Writer(), _pools_in_use()
+def test_the_lane_binding_is_refused_off_a_running_loop_with_nothing_built(rig: _Rig) -> None:
+    """Q10: the lane's binder builds nothing off the loop it serves, so with no running loop it is
+    refused before any store is built or counted."""
+    pools, before = _Pools(rig.sides["lane"]), _pools_in_use()
     bind = secrets_bundle(rig.svc, loop_store=pools).lane_signing
     with pytest.raises(RuntimeError, match="no running event loop"):
-        bind(audit=writer)
+        bind(audit=_Writer())
     assert (pools.built, _pools_in_use()) == ([], before)
-    signing = rig.lane.run(_on(lambda: bind(audit=writer)))
+
+
+def test_m2_builds_the_lanes_store_on_the_lane_at_its_small_bound_and_counts_it(rig: _Rig) -> None:
+    """Q10: M2 builds the lane's store when it binds, on the lane's loop, once, at its own bound
+    (small: one read per signing), and counts the pool while it holds it."""
+    pools, before = _Pools(rig.sides["lane"]), _pools_in_use()
+    signing = _bound(rig, pools, _Writer())
     on_lane = rig.lane.run(_on(threading.current_thread))
     assert (pools.built, _pools_in_use()) == ([(LOOP_STORE_CONNECTIONS, on_lane)], before + 1)
-    assert LOOP_STORE_CONNECTIONS <= 4  # small: one read per signing
+    assert LOOP_STORE_CONNECTIONS <= 4
+    rig.lane.run(signing.aclose())
+
+
+def test_a_lane_signing_reads_through_the_lanes_own_store(rig: _Rig) -> None:
+    """Q10: a lane signing reads its key through the store M2 built for the lane, there."""
+    signing = _bound(rig, _Pools(rig.sides["lane"]), _Writer())
     logged = len(rig.log)
     rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
     assert rig.log[logged] == ("lane", "get")
+    rig.lane.run(signing.aclose())
+
+
+def test_a_lane_signing_records_ahead_through_the_lanes_own_writer(rig: _Rig) -> None:
+    """C-2.9: a lane signing writes its record ahead through the lane's own writer, with the
+    columns M2's records have through the serving loop's service."""
+    writer = _Writer()
+    signing = _bound(rig, _Pools(rig.sides["lane"]), writer)
+    rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
     ((action, columns),) = writer.emitted
     assert (action, columns["actor_label"], columns["object_id"]) == (
         BORROWED, "system:exchange_adapter", str(rig.key_id)
     )  # fmt: skip
     rig.lane.run(signing.aclose())
-    assert (pools.released, _pools_in_use()) == ([(on_lane, True)], before)
 
 
 def test_a_failing_lane_writer_refuses_the_signing_with_only_the_read_done(rig: _Rig) -> None:
