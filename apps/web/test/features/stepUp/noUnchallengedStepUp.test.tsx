@@ -10,6 +10,7 @@ import { join, relative, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { RouterProvider, createMemoryRouter } from "react-router";
+import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import { ROUTE_MANIFEST } from "../../../src/routes/manifest";
 import { buildRoutes } from "../../../src/routes/tree";
@@ -75,6 +76,21 @@ function stubServer(): void {
   );
 }
 
+/** The router inside the provider the app wraps it in (`App.tsx`), so every route renders as in the app. */
+function mountRouter(router: ReturnType<typeof createMemoryRouter>): ReturnType<typeof render> {
+  return render(
+    <PreferencesProvider>
+      <RouterProvider router={router} />
+    </PreferencesProvider>,
+  );
+}
+
+/** The route rendered its own element: nothing reached the route error boundary. */
+function expectNoRouteError(router: ReturnType<typeof createMemoryRouter>, id: string): void {
+  expect(router.state.errors, id).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Something went wrong" }), id).toBeNull();
+}
+
 /** Every step-up named a challenge the server had issued before it was sent. */
 function expectEveryStepUpChallenged(): void {
   for (const { challengeId, issuedBefore } of wire.stepUps) {
@@ -106,8 +122,9 @@ describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
       const router = createMemoryRouter(buildRoutes(), {
         initialEntries: [entry.path.replace(/:[a-zA-Z]+/g, "x")],
       });
-      const view = render(<RouterProvider router={router} />);
+      const view = mountRouter(router);
       await act(async () => undefined);
+      expectNoRouteError(router, entry.id);
       expect(screen.queryByRole("alertdialog"), entry.id).not.toBeInTheDocument();
       expect(screen.queryByRole("dialog"), entry.id).not.toBeInTheDocument();
       expect(screen.queryByLabelText("Authenticator code"), entry.id).not.toBeInTheDocument();
@@ -119,7 +136,7 @@ describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
 
   it("invite flow: the one step-up names the challenge the server issued", async () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin/users/new"] });
-    render(<RouterProvider router={router} />);
+    mountRouter(router);
     fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "annie" } });
     expect(wire.stepUps).toEqual([]);
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
@@ -133,16 +150,18 @@ describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
     expect(wire.stepUps).toHaveLength(1);
     expect(wire.stepUps[0]?.challengeId).toBe(wire.issued[0]);
     expectEveryStepUpChallenged();
+    expectNoRouteError(router, "R-303");
   });
 
   it("invite flow, cancelled: no step-up is posted at all", async () => {
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/admin/users/new"] });
-    render(<RouterProvider router={router} />);
+    mountRouter(router);
     fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "annie" } });
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Not sent"));
     expect(wire.stepUps).toEqual([]);
+    expectNoRouteError(router, "R-303");
   });
 
   it("source: only the challenge gate sends POST /auth/step-up", () => {
