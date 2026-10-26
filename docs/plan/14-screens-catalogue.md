@@ -626,6 +626,7 @@ Drag preview                Drop zones
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.10 (Penpot page `E15-D02`, board 17; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] rename, default symbol/interval, environment binding, autosave toggle and sharing (owner) drawn [ ] 'this workspace is pinned to LIVE' warning drawn [ ] unsaved-changes handling [ ] delete-workspace confirmation path
 - **Design (hi-fi):** [E15-D08.md](../design/E15/E15-D08.md) (E15-D08; owner approval pending; text-first, the Penpot boards follow; the settings modal with only its stored fields live: the name, open on startup, the per-device autosave opt-in, Export… and the typed Delete… with its last-workspace T2 reason; the unstored fieldsets as planned insets, each waiting for its contract; no environment control, as a workspace never stores one; the name validation with its error summary, the save states and the discard prompt; Penpot page by name + id in the spec).
+- **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §2 (E15-D09; owner approval pending; text-first, the boards follow in a second PR: Export… in its three places, never gated; the export preview's Included and Excluded lists; the file name with its format version; the completion).
 
 ### SCR-026 — Workspace import
 
@@ -638,6 +639,7 @@ Drag preview                Drop zones
 - **Analytics/audit:** `layout.imported`, `layout.import_rejected` with `{reason}` (analytics).
 - **Wireframes (E15-D02):** every state at 1920×1080 and 1280×800, greyscale, in [E15-D02.md](../design/E15/E15-D02.md) §5.11 (Penpot page `E15-D02`, board 18; the exports in `docs/design/E15/img/`; heuristic; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] file-picker and drag-drop paths [ ] version-mismatch state ('exported from a newer version - 2 panels will be dropped') [ ] preview of what will be imported before applying [ ] rejection state for malformed or oversized files [ ] import never carries credentials or account bindings (verified in copy)
+- **Design (hi-fi):** [E15-D09.md](../design/E15/E15-D09.md) §3–§5 (E15-D09; owner approval pending; text-first, the boards follow in a second PR: the import dialog, the five check steps, the preview table with drops and remaps first, the six rejections with no Import verb, the report, T2 view-as first and the keyboard path).
 
 ### SCR-027 — Floating panel window (Electron)
 
