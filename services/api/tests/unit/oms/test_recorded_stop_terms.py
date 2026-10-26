@@ -229,6 +229,60 @@ async def test_pending_terms_cap_sends_the_evicted_never_drops_it() -> None:
     ]
 
 
+@pytest.mark.parametrize("status", [None, "Triggered"], ids=["coalesced", "at_once"])
+async def test_a_push_naming_only_some_terms_keeps_the_pending_slots_others(
+    status: str | None,
+) -> None:
+    """The fold of the S7a security lens's 1: a later push showing no quantity (0) and the row's
+    trigger drops only the trigger the slot named, never the quantity it was waiting to send."""
+    rig = stop_rig()
+    await rig.run(moved(triggerPrice="93000"))
+    await rig.run(moved(qty="0.7"))  # waits: the row's terms were just sent
+    over = {} if status is None else {"orderStatus": status, "triggerPrice": "92000"}
+    await rig.run(moved(qty="0", **over))
+    if status is None:
+        rig.now += stop_terms.TERMS_MIN_INTERVAL_S
+        await flush(rig)
+        assert sent(rig)[1:] == [("TERMS_CHANGED", "94000", "0.7")]
+    else:
+        assert sent(rig)[1:] == [("TERMS_CHANGED", "92000", "0.7"), ("TRIGGERED", None, None)]
+
+
+async def test_flush_sends_at_most_max_flush_terms_and_leaves_the_rest_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fold of the S7a code lens's 3: a backlog holds the account's loop for at most
+    `MAX_FLUSH_TERMS` sends a flush; the rest wait for its next row or heartbeat."""
+    rig = TwoRows()
+    monkeypatch.setattr("candleviewer.oms.stream_push.MAX_FLUSH_TERMS", 1)
+    for trigger in ("93000", "92000"):
+        for xid in (XID, "x-other"):
+            await rig.run(moved(triggerPrice=trigger, orderId=xid))
+    rig.now += stop_terms.TERMS_MIN_INTERVAL_S
+    await flush(rig)
+    assert [(oid, body["trigger_price"]) for oid, _, body in rig.pushed[2:]] == [(ROW.id, "92000")]
+    await flush(rig)
+    assert [(oid, body["trigger_price"]) for oid, _, body in rig.pushed[3:]] == [
+        (OTHER.id, "92000")
+    ]
+
+
+def test_pending_terms_next_due_looks_only_at_that_accounts_slots() -> None:
+    """The fold of the S7a code lens's 2: slots are kept by account (C-2.20)."""
+    pending: PendingTerms[str] = PendingTerms()
+    a, b = (ACCOUNT_A, UUID(int=1)), (ACCOUNT_B, UUID(int=2))
+    for key in (b, a):
+        pending.sent(key, 0.0)
+        assert pending.offer(key, str(key[1]), 0.5) == (None, None)
+    assert pending._slots.keys() == {ACCOUNT_A, ACCOUNT_B} and len(pending) == 2
+    assert pending.next_due(ACCOUNT_A, 0.9) is None  # not a second yet
+    assert (
+        pending.next_due(ACCOUNT_A, 1.0) == str(a[1]) and pending.next_due(ACCOUNT_A, 1.0) is None
+    )
+    assert pending._slots.keys() == {ACCOUNT_B} and pending.peek(b) == str(b[1])
+    assert pending.take(b) == str(b[1]) and len(pending) == 0 and not pending._slots
+
+
 def test_pending_terms_forgets_sends_past_the_interval_and_the_cap() -> None:
     pending: PendingTerms[str] = PendingTerms(cap=2, sent_cap=2)
     keys = [(ACCOUNT_A, UUID(int=n)) for n in range(3)]
@@ -251,12 +305,34 @@ async def test_fill_over_the_rows_quantity_reads_the_order_and_sends_terms_first
     assert rig.calls.count("order") == 1 and rig.counts == ["terms", "paired"]
 
 
-async def test_fill_over_quantity_after_flushed_pending_terms_reads_nothing() -> None:
+async def test_fill_fitting_the_row_as_loaded_after_flushed_pending_terms_reads_nothing() -> None:
     rig = stop_rig()
     await rig.run(moved(triggerPrice="93000"))
     await rig.run(moved(qty="0.7"))
+    await rig.run(fill("0.4"))
+    assert [q for _, _, q in sent(rig)] == ["0.5", "0.7", "0.4"] and "order" not in rig.calls
+
+
+@pytest.mark.parametrize(
+    ("shown", "expected", "unread"),
+    [("0.7", ["0.5", "0.7", "0.6"], False), ("0.8", ["0.5", "0.7", "0.8", "0.6"], False),
+     (None, ["0.5", "0.7", "0.6"], True)],
+    ids=["read_agrees", "read_larger", "read_failed"],
+)  # fmt: skip
+async def test_fill_over_the_row_as_loaded_reads_even_after_flushed_pending_terms(
+    shown: str | None, expected: list[str], unread: bool
+) -> None:
+    """The fold of the S7a code lens's 1: the facade answers a step it ignored as stale, or one
+    B1 recorded as `terms_refused`, as one it took, so the pending quantity never decides the
+    fill. The read's terms are sent unless they are the ones just sent; with no read, counted."""
+    rig = stop_rig(shown=None if shown is None else order(qty=shown, triggerPrice="93000"))
+    if shown is None:
+        rig.raises["order"] = RuntimeError("x")
+    await rig.run(moved(triggerPrice="93000"))
+    await rig.run(moved(qty="0.7", triggerPrice="93000"))
     await rig.run(fill("0.6"))
-    assert [q for _, _, q in sent(rig)] == ["0.5", "0.7", "0.6"] and "order" not in rig.calls
+    assert [q for _, _, q in sent(rig)] == expected and rig.calls.count("order") == 1
+    assert ("terms_before_fill_unread" in rig.counts) is unread
 
 
 @pytest.mark.parametrize(

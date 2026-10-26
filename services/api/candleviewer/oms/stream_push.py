@@ -9,9 +9,10 @@ row as to any other, then the record hook runs (`after_bind`); with no row, noth
 next pass reads the order afresh, and a fill is handed over undecided). A recorded stop's row takes
 its order's changed terms first (S7a, `oms.stop_terms`): an order push's at most once a second, the
 latest winning, sent before any other push of that order and by `flush` at the account's next row
-or `heartbeat`; a fill over the row's quantity sends them first, or reads the order and sends its
-terms, else is delivered anyway and counted. It raises nothing but `CancelledError`. Ids only in
-logs (C-12.6). Nothing here imports the facade or the statechart.
+or `heartbeat`; a fill sends them first, and one over the row's quantity as loaded reads the order
+and sends its terms unless the row took them already, else is delivered anyway and counted. It
+raises nothing but `CancelledError`. Ids only in logs (C-12.6). Nothing here imports the facade or
+the statechart.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ import asyncio
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
-from decimal import Decimal
 from functools import partial
 from typing import Any, Final, Literal, Protocol
 from uuid import UUID
@@ -57,7 +57,16 @@ from .pairing import (
 )  # fmt: skip
 from .ports import ExecutionHandovers, Finding, ForeignOrderLockout
 from .push_mapping import ForPairing, exec_payload, push_payload
-from .stop_terms import PendingTerms, TermsKey, differs, terms_payload
+from .stop_terms import (
+    MAX_FLUSH_TERMS,
+    PendingTerms,
+    TermsKey,
+    carried,
+    differs,
+    held,
+    terms_of,
+    terms_payload,
+)
 
 HANDOVER_BOUND_S: Final = 5.0  # 24 Sec.8.12: one bound, all of a push's reads
 PORT_TIMEOUT_S: Final = 5.0  # the lockout, the hand-over, the records (C-2.18)
@@ -299,9 +308,17 @@ class StreamPushes:
 
     async def flush(self, account_id: AccountId) -> None:
         """The account's pending terms whose row sent none in the last second (24 Sec.8.12), at
-        its next row or `heartbeat` status (`StreamConsumer`). Raises nothing but
-        `CancelledError`."""
-        for slot in self._pending.due(account_id, self._now()):
+        its next row or `heartbeat` status (`StreamConsumer`): at most `MAX_FLUSH_TERMS`, the rest
+        waiting for the next, so a backlog never holds the account's loop for more than that many
+        sends. Each slot is taken only as it is sent. Raises nothing but `CancelledError`.
+
+        A slot waiting across a resync is sent after it: the facade's watermark, carried to the
+        rebuilt machine, refuses it when a later push was taken, and reconciliation writes no
+        recorded stop's terms in E29-T05 (E29-T06 owns that)."""
+        for _ in range(MAX_FLUSH_TERMS):
+            slot = self._pending.next_due(account_id, self._now())
+            if slot is None:
+                return
             await self._send_terms(slot)
 
     async def _deliver(self, ctx: _Ctx, row: OrderRow, *, held: bool) -> None:
@@ -323,10 +340,14 @@ class StreamPushes:
 
     async def _terms_step(self, ctx: _Ctx, row: OrderRow, order: Order, *, at_once: bool) -> None:
         """An order push to a recorded stop's row: its changed terms, at once before the push's
-        own event (an end or a trigger), else coalesced (`oms.stop_terms`). A push showing the
-        row's terms drops a pending slot: the latest terms win."""
+        own event (an end or a trigger), else coalesced (`oms.stop_terms`). The latest terms win:
+        a push showing the row's terms drops a pending slot, and one naming only some terms keeps
+        the slot's others (`carried`)."""
         key: TermsKey = (ctx.account_id, row.id)
-        payload = terms_payload(order, row, ctx.ts_event) if differs(order, row) else None
+        waiting = self._pending.peek(key)
+        kept = carried(None if waiting is None else waiting.payload, order, row)
+        changed = differs(order, row, kept)
+        payload = terms_payload(order, row, ctx.ts_event, kept) if changed else None
         if payload is None or at_once:
             self._pending.take(key)
             if payload is not None:
@@ -341,24 +362,28 @@ class StreamPushes:
 
     async def _before_fill(self, ctx: _Ctx, row: OrderRow, fill: Execution) -> None:
         """A fill of a recorded stop's row (24 Sec.8.12 "A fill before its terms"): the row's
-        pending terms first; a fill still over the row's quantity less its fills reads the order
-        within what is left of the hand-over bound and sends its terms when it shows a larger
-        quantity. Else the fill is delivered anyway, counted: B1's fill guard refuses it and the
-        facade's `FAULT` quarantines the row for E29-T06. Never dropped, never held."""
-        qty = row.qty
+        pending terms first. The facade answers a step it ignored as stale, or one B1 recorded as
+        `terms_refused`, as it answers one it took, so the pending terms never decide the fill: a
+        fill over the row's quantity as loaded, less its fills, reads the order within what is left
+        of the hand-over bound and, when it shows a larger quantity, sends its terms unless they
+        are the ones just sent. Else the fill is delivered anyway, counted: B1's fill guard refuses
+        it and the facade's `FAULT` quarantines the row for E29-T06. Never dropped, never held."""
+        terms = held(row)
         pending = self._pending.take((ctx.account_id, row.id))
         if pending is not None and await self._send_terms(pending):
-            qty = Decimal(str(pending.payload.get("qty", qty)))
-        if fill.qty <= qty - row.cum_exec_qty:
+            terms |= terms_of(pending.payload)  # sent, and the exchange's read must agree
+        if fill.qty <= row.qty - row.cum_exec_qty:
             return
         a, xid = ctx.account_id, fill.exchange_order_id
         order = await self._read(partial(self._fills.order_of, a, xid, fill.symbol), ctx.deadline)
-        payload = None
-        if isinstance(order, Order) and order.exchange_order_id == xid and order.qty > qty:
+        if isinstance(order, Order) and order.exchange_order_id == xid and order.qty > row.qty:
+            if not differs(order, row, terms=terms):  # the terms just sent are the order's
+                return
             payload = terms_payload(order, row, ctx.ts_event)
-        if payload is None or not await self._send_terms(_Terms(ctx, row.id, payload)):
-            _log().warning("stream_terms_before_fill_unread", **self._ids(ctx))
-            self._counts.count("terms_before_fill_unread")
+            if payload is not None and await self._send_terms(_Terms(ctx, row.id, payload)):
+                return
+        _log().warning("stream_terms_before_fill_unread", **self._ids(ctx))
+        self._counts.count("terms_before_fill_unread")
 
     async def _send_terms(self, slot: _Terms) -> bool:
         """`TERMS_CHANGED` to the slot's row, its send noted for the interval; True when taken."""
