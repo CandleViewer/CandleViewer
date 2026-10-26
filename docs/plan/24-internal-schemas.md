@@ -4414,7 +4414,7 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       account's active key is switched to the new key before the `key_rotated` close, so the
       consumer's resubscribe after that close signs with the new key; a resubscribe on the retired
       key would be refused with `AuthError`. (The retired key stays signable for in-flight requests
-      through the overlap, `rotating`; the switch is about which key a new stream or read picks.)
+      through the overlap, `rotating`; the switch is about which key a new stream picks.)
       M2 is the backstop: a
       destroyed key's next `auth` borrow is refused (`key_unusable`).
     - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one

@@ -2759,7 +2759,8 @@ paths:
         writes no audit record of its own (a `403` is still recorded as `rbac.denied`). "No
         audit record" means none of the route's own: the read signs its exchange calls with the
         account's signable keys, so M2 writes its write-ahead `security.credential_borrowed`
-        record for each signed call and touches `api_keys.last_used_at`. Those are the credential
+        record for each signed call and touches `api_keys.last_used_at` (best-effort, at most once
+        a minute per key). Those are the credential
         layer's records (C-2.9); the read neither adds nor suppresses them. It holds
         the permission and scope of the disable it precedes (`updateExchangeAccount`); the Owner
         holds both. A foreign account and an absent one get the same `404 not_found`, byte for
@@ -14916,7 +14917,8 @@ components:
 
         **The read.** The exposure is read with signed exchange calls, so each signable key's
         calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
-        and touches `api_keys.last_used_at`, whichever operation asked. Those are the credential
+        and touches `api_keys.last_used_at` (best-effort, at most once a minute per key),
+        whichever operation asked. Those are the credential
         layer's records (C-2.9), not the operation's own.
 
         **Unknown exposure.** The exposure is read from the exchange for each request with the
@@ -14980,11 +14982,11 @@ components:
         it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
         `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
         fail both ways give the `503`. `vault_refused`, where the vault refused to sign and
-        nothing was sent to the exchange, also gives `503 exchange_unavailable` with
+        nothing was sent for the refused call, also gives `503 exchange_unavailable` with
         `Retry-After`, and counts with the `503` group when keys answer differently: the vault
         refused to sign; nothing was sent; retry. A key that is no longer eligible (revoked
         meanwhile, or refused by the C-2.8 re-check) is dropped from the probe set by the
-        registry, so convergence comes from the account's key list and never from the probe
+        key registry (its key status), so convergence comes from the account's key list and never from the probe
         result. It has no `dead` branch. A refusal caused by an audit write that could not
         complete clears on its own, so the `Retry-After` is honest. Neither answer echoes exchange text: `Problem.exchange`
         holds `ret_code` only
@@ -17468,7 +17470,7 @@ components:
         general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and
         `10010` into an auth error. `vault_refused`: the vault (M2) refused to sign with the key
         (a key version it cannot serve, the withdrawal re-check, a key revoked meanwhile, an audit
-        write that could not complete); nothing was sent to the exchange. It is a result of the
+        write that could not complete); nothing was sent for the refused call. It is a result of the
         exposure read (`getAccountConsequences`, `updateExchangeAccount`, `revokeApiKey`,
         `deleteExchangeAccount`). No exchange error text, header, URL or request fragment is
         echoed.

@@ -904,8 +904,8 @@ def test_a_failed_read_names_the_answer_each_probe_error_gets_and_echoes_no_exch
     assert {error for group in groups for error in group} == set(_FAILED_READ_ERRORS)
     assert sum(len(group) for group in groups) == len(_FAILED_READ_ERRORS)
     assert (
-        "`vault_refused`, where the vault refused to sign and nothing was sent to the exchange, "
-        "also gives `503 exchange_unavailable` with `Retry-After`"
+        "`vault_refused`, where the vault refused to sign and nothing was sent for the refused "
+        "call, also gives `503 exchange_unavailable` with `Retry-After`"
     ) in failed
     assert "the vault refused to sign; nothing was sent; retry" in failed
     assert "never from the probe result. It has no `dead` branch" in failed
