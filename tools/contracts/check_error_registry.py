@@ -72,10 +72,13 @@ def check(markdown: str, openapi_text: str, generated: dict[Path, str] | None) -
         if ra is not None and ra not in rest:
             errors.append(f"dangling rest_analogue: {e['code']} -> {ra} (no such REST code)")
     if generated is not None:
-        fresh = {
-            generate.OUT_PY: generate.render_py(entries),
-            generate.OUT_TS: generate.render_ts(entries),
-        }
+        try:
+            fresh = {
+                generate.OUT_PY: generate.render_py(entries),
+                generate.OUT_TS: generate.render_ts(entries),
+            }
+        except generate.RegistryError as exc:
+            return [*errors, f"registry: {exc}"]
         for path, text in fresh.items():
             if generated.get(path) != text:
                 errors.append(f"generated file not byte-identical to regeneration: {path}")
