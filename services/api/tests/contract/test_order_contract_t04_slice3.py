@@ -299,6 +299,32 @@ def test_a_new_holder_waits_out_the_fence_and_a_fenced_runtime_admits_nothing_ne
     )
 
 
+def test_the_e29_model_gives_the_fencing_grace_an_owner_a_ticket_and_a_review_date() -> None:
+    """CR-S3L2X-07: §12.2's fencing-grace residual carries what the table's rows carry: its level,
+    its owner, its ticket and a review date."""
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    residuals = _between(
+        threat.read_text(encoding="utf-8"), "### 12.2 Accepted residual risks", "### 12.3"
+    )
+    grace = residuals.split("**The environment lock's fencing grace (#913 L2, SEC-S3L2-01).**")[1]
+    assert (
+        "Like the rows above it has a level, an owner, a ticket and a review date: Low; Owner/PO; "
+        "E29-T04;" in grace
+    )
+    assert re.search(r"review by \d{4}-\d{2}-\d{2}", grace)
+
+
+def test_20_says_a_dead_lane_keeps_the_environments_lock_until_the_process_exits() -> None:
+    """CR-S3L2X-07: nothing on a lane that has died can release the lock, so 20 says it is held
+    until the process exits, a second process refused until then."""
+    assert (
+        "A lane that has died keeps the lock until the process exits: its watchdog ticks no more, "
+        "and the stop's release, a call on that lane, is refused, so nothing ends the lock's "
+        "session before the exit does, and a second process is refused until then (CR-S3L2X-07)."
+        in _RUNTIME
+    )
+
+
 def test_20_pages_a_lane_with_no_reader_and_an_unanswered_lock_and_closes_a_raced_compose() -> None:
     """SEC-S3L2-04 to -06 (the Fable lens at 864fa082): 20 says the serving loop reads the lane's
     state itself, a heartbeat's end pages, the unanswered lock pages once while the asking goes

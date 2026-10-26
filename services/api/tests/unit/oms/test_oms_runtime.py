@@ -917,45 +917,80 @@ async def test_a_lane_that_has_not_ticked_within_its_bound_reads_degraded_and_pa
     assert world.pager.calls == ["oms_lane_stalled"] * 2
 
 
-@pytest.mark.parametrize("lost", ["released", "unanswered"])
-async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the_exits_open(
-    lost: str,
-) -> None:
-    """Ruling 3 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-03): on its tick the watchdog
-    finds the lock's session no longer holds the key, or cannot tell: it pages once and the `oms`
-    check reads `degraded`; every new submit is refused `oms_not_ready`, the route's task and the
-    pipeline's own entry alike; the exit routes' state stays `ok`, so a cancel still runs to the
-    venue (C-2.6, C-2.21), and the watchdog asks no more."""
+#: The Owner the lost-lock tests cancel as: the exits stay open (ruling 3).
+_FENCED_OWNER = UUID(int=0x0E)
+#: How the watchdog finds the lock lost: its session no longer holds the key, or cannot tell.
+LOST = pytest.mark.parametrize("lost", ["released", "unanswered"])
+
+
+@asynccontextmanager
+async def lock_lost(lost: str) -> AsyncIterator[tuple[World, OmsRuntime]]:
+    """Ruling 3 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-03): a runtime ready after a
+    crash, its Owner seeded, whose watchdog then finds on its tick that the lock's session no
+    longer holds the key (`released`) or cannot tell (`unanswered`): two ticks, the loss and one
+    more. Before the loss the `oms` check is `ok`, the lock was asked once, and the composed
+    switches, B1's `SEND`'s too, refuse nothing."""
     world = World()
     await crashed(world)
     for flag in world.flags:
         flag.read()
-    owner = UUID(int=0x0E)
-    actor = SubmitActor(user_id=owner, role="owner")
-    caller = ExitCaller(OwnerScope(owner), actor)
-    world.store.seed_owner(owner)
+    world.store.seed_owner(_FENCED_OWNER)
     async with started(world.runtime()) as runtime:
         await runtime.wait_ready()
         await settle()
         assert (runtime.readiness, world.lock.confirms) == ("ok", 1)
-        switches = runtime._composed().route.switches  # the composed ones, B1's `SEND`'s too
-        assert switches.refusal(cr.ACCOUNT, "demo") is None
+        assert runtime._composed().route.switches.refusal(cr.ACCOUNT, "demo") is None
         if lost == "released":
             world.lock.confirmed = False
         else:
             world.lock.unconfirmed = StorageTierUnavailable("no answer")
-        for _ in range(2):  # two ticks: one loss, one page
+        for _ in range(2):  # two ticks: the loss, and one more
             world.beats.tick()
             await settle()
+        yield world, runtime
+
+
+@LOST
+async def test_a_lost_lock_reads_degraded_pages_once_and_its_watchdog_asks_no_more(
+    lost: str,
+) -> None:
+    """Ruling 3 (CR-S3L2X-06, one behaviour): once the lock is lost the `oms` check reads
+    `degraded`, paged once, and the watchdog asks no more, while the state the exit routes read
+    stays `ok`."""
+    async with lock_lost(lost) as (world, runtime):
         assert (runtime.state, runtime.readiness, _oms_state(runtime)) == (
             "ok", "degraded", "degraded"
         )  # fmt: skip
+    assert world.pager.calls == ["oms_environment_lock_lost"] and world.lock.confirms == 2
+
+
+@LOST
+async def test_a_lost_lock_refuses_every_new_submit_oms_not_ready(lost: str) -> None:
+    """Ruling 3 (CR-S3L2X-06, one behaviour): the route's task and the pipeline's own entry alike
+    are refused `oms_not_ready`."""
+    async with lock_lost(lost) as (_, runtime):
         with pytest.raises(OmsNotReady):
             runtime.run(asyncio.sleep(0))
         with pytest.raises(OmsNotReady):
             await runtime.submission.submit(cast(Any, None), cast(Any, None))
-        # SEC-S3L2-02: a submitter on the lane, past the route and `OnLane`, meets the switches
+
+
+@LOST
+async def test_a_lost_lock_is_the_composed_switches_refusal(lost: str) -> None:
+    """SEC-S3L2-02 (CR-S3L2X-06, one behaviour): a submitter on the lane, past the route and
+    `OnLane`, meets the composed switches, B1's `SEND`'s too: `OmsNotReady`."""
+    async with lock_lost(lost) as (_, runtime):
+        switches = runtime._composed().route.switches
         assert type(switches.refusal(cr.ACCOUNT, "demo")) is OmsNotReady
+
+
+@LOST
+async def test_a_lost_lock_leaves_the_exits_open_so_a_cancel_runs_to_the_venue(lost: str) -> None:
+    """Ruling 3 (CR-S3L2X-06, one behaviour): no exit is blocked (C-2.6, C-2.21): the crash's sent
+    entry is cancelled, accepted."""
+    actor = SubmitActor(user_id=_FENCED_OWNER, role="owner")
+    caller = ExitCaller(OwnerScope(_FENCED_OWNER), actor)
+    async with lock_lost(lost) as (_, runtime):
         await runtime._composed().machines.settled(
             cr.ACCOUNT, SENDING.id, leaving="submitting", timeout_s=10
         )
@@ -965,7 +1000,6 @@ async def test_a_lost_lock_fences_every_new_submit_and_pages_once_and_leaves_the
             scoped.order, actor=actor, reason="user", request_id=None
         )
         assert (cancelled.kind, cancelled.status) == ("accepted", 202)
-    assert world.pager.calls == ["oms_environment_lock_lost"] and world.lock.confirms == 2
 
 
 async def test_a_new_holder_waits_out_the_fencing_grace_before_its_sweep_and_first_admit() -> None:
@@ -1046,6 +1080,33 @@ async def test_the_serving_loops_watch_pages_a_dead_lane_with_no_reader() -> Non
         assert world.pager.calls == ["oms_lane_died"]
 
 
+async def test_a_watch_that_ends_on_an_error_is_logged_critical_and_paged() -> None:
+    """SEC-S3L2-04 (CR-S3L2X-02): the serving loop's watch ended other than by the stop's cancel
+    leaves a dead or wedged lane unpaged until something reads the state: logged CRITICAL by its
+    error's class and paged at once."""
+    world = World()
+
+    async def broken(seconds: float) -> None:
+        raise RuntimeError("the watch broke")
+
+    with capture_logs() as logs:
+        async with started(world.runtime(watch=broken)):
+            await settle()
+            assert world.pager.calls == ["oms_lane_watch_ended"]
+    ended = [(e["log_level"], e["error"]) for e in logs if e["event"] == "oms_lane_watch_ended"]
+    assert ended == [("critical", "RuntimeError")]
+
+
+async def test_the_stop_cancels_the_serving_loops_watch() -> None:
+    """SEC-S3L2-04 (CR-S3L2X-02): the watch runs from the start to the stop, which cancels it, so
+    no read of a stopped runtime's state follows."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        watch = runtime._watching
+        assert watch is not None and not watch.done()
+    assert watch.cancelled() and runtime._watching is None
+
+
 async def test_a_heartbeat_that_ends_on_an_error_is_logged_critical_and_paged() -> None:
     """SEC-S3L2-04: a heartbeat that ends other than by its stop's cancel leaves the lane unticked
     and its lock unwatched: logged CRITICAL by its error's class and paged at once, before any
@@ -1083,6 +1144,21 @@ async def test_the_fifth_unanswered_ask_of_the_lock_pages_once_and_the_asking_go
     assert asked == ["warning"] * (SWEEP_MAX_FAILURES - 1) + ["critical", "warning"]
     assert world.pager.calls == ["oms_environment_lock_unanswered"]
     assert len(world.lock.wired) == SWEEP_MAX_FAILURES + 2  # every ask, the held one last
+
+
+async def test_the_asked_again_locks_backoff_doubles_to_the_sweeps_ceiling_and_stays_there() -> (
+    None
+):
+    """CR-S3L2-02 (CR-S3L2X-04; 20 Sec.6.2): between the asks of a lock Postgres cannot answer the
+    runtime sleeps the sweep's backoff, 1 s doubling to 30 s, then 30 s each time."""
+    world = World()
+    world.lock.fails = [StorageTierUnavailable("out") for _ in range(7)]
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime()) as runtime:
+        await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
+    assert SWEEP_RETRY_S == (1.0, 30.0)
+    assert world.clock.slept == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
 
 
 async def test_a_stop_that_begins_as_the_composition_ends_takes_and_closes_what_it_composed(
@@ -1157,10 +1233,87 @@ async def test_a_start_cancelled_as_its_composition_ends_closes_what_was_handed_
         b01._ATTEMPTS = saved
 
 
+async def test_a_start_a_stop_overtook_as_its_composition_ended_spawns_nothing() -> None:
+    """SEC-S3L2-05 (CR-S3L2X-02): a stop that begins as the start's own composition hands its
+    parts over takes and closes them before the start resumes, so the start spawns neither the
+    startup task nor the serving loop's watch: nothing is asked again or swept after the stop."""
+    world, stops = World(), list[asyncio.Task[None]]()
+
+    def beat(lock: Any, pager: Any) -> Heart:  # the composition's last step: a stop begins
+        stops.append(asyncio.ensure_future(runtime.stop()))
+        return world.heartbeat(lock, pager)
+
+    runtime = world.runtime(heartbeat=beat)
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    try:
+        await runtime.start()
+        await asyncio.wait_for(stops[0], 10)  # a bound on the test
+        assert (runtime._startup, runtime._watching) == (None, None)
+        assert world.log == [*STARTED, *STOPPED] and len(world.lock.wired) == 1
+    finally:
+        b01._ATTEMPTS = saved
+
+
+async def test_what_the_asked_again_composition_meets_once_a_stop_began_is_the_stops() -> None:
+    """SEC-S3L2-05 (CR-S3L2X-02): once a stop has begun, a failure the lock's asked-again
+    composition then meets, the stop's cancel or its stopped lane, ends the startup task
+    cancelled: nothing fails closed or pages."""
+    world = World()
+    world.lock.fails = [StorageTierUnavailable("out")]  # the startup task composes again
+
+    def stopped(lock: Any, pager: Any) -> Heart:  # a stop begun, then its lane stopped under it
+        runtime._stopping = True
+        raise LaneStopped("the order lane is not running")
+
+    runtime = world.runtime(heartbeat=stopped)
+    saved, b01._ATTEMPTS = b01._ATTEMPTS, OrderedDict()
+    try:
+        with capture_logs() as logs:
+            await runtime.start()
+            startup = runtime._startup
+            assert startup is not None
+            await until(startup.done)
+        assert startup.cancelled() and (failed_closed(logs), world.pager.calls) == ([], [])
+        await runtime.stop()
+    finally:
+        b01._ATTEMPTS = saved
+
+
 def test_the_heartbeats_bounds_fit_a_tick_and_a_probe_and_a_lanes_own_read() -> None:
     """Ruling 2: a stall reads only past a tick and the watchdog's bound, so a slow probe is not a
     wedged lane, and within a lane read's own bound (`HOP_TIMEOUT_S`)."""
     assert LANE_TICK_S + ENVIRONMENT_LOCK_TIMEOUT_S < LANE_STALE_S <= HOP_TIMEOUT_S
+
+
+async def test_a_watchdog_probe_that_never_answers_is_a_lock_lost_at_its_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """CR-S3L2-03 (CR-S3L2X-04): the watchdog asks within `ENVIRONMENT_LOCK_TIMEOUT_S`, 5 s (20
+    Sec.6.2), so a session that never answers is a lock lost at that bound, logged CRITICAL as a
+    timeout and paged once, never a tick that waits on it for good. The bound is made 0 here, so
+    it passes at once, on the loop's own clock."""
+    assert ENVIRONMENT_LOCK_TIMEOUT_S == 5.0
+    monkeypatch.setattr(oms_wiring, "ENVIRONMENT_LOCK_TIMEOUT_S", 0.0)
+
+    class Silent(Lock):
+        async def confirm(self) -> bool:
+            self.confirms += 1
+            await asyncio.Event().wait()  # the session never answers
+            return True
+
+    lock, beats, pager = Silent(), Beats(), Pager()
+    heart = LaneHeartbeat(lock, pager, clock=beats.clock, wait=beats.wait)
+    with capture_logs() as logs:
+        beating = asyncio.ensure_future(heart.run())
+        try:
+            await until(lambda: heart.fenced)
+        finally:
+            beating.cancel()
+            await asyncio.wait({beating})
+    lost = [(e["log_level"], e["error"]) for e in logs if e["event"] == "oms_environment_lock_lost"]
+    assert (lost, pager.calls, lock.confirms) == (
+        [("critical", "TimeoutError")], ["oms_environment_lock_lost"], 1
+    )  # fmt: skip
 
 
 def test_the_environments_lock_key_is_its_namespace_and_name_outside_any_hashtext_key() -> None:

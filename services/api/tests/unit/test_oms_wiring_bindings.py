@@ -175,6 +175,16 @@ def test_a_lost_environment_lock_is_the_switches_first_refusal_oms_not_ready(
     assert _switches(lost=False)[0].refusal(ACCOUNT, environment) is None
 
 
+@pytest.mark.parametrize(("live", "flag"), [(False, True), (True, False), (False, False)])
+def test_the_lock_held_is_asked_before_live_trading_enabled(live: bool, flag: bool) -> None:
+    """SEC-S3L2-02 (CR-S3L2X-03): the first refusal wins, the environment's lock held first and
+    live trading enabled after it, so a live order on a fenced runtime is `OmsNotReady` with
+    either live precondition off, never `TradingDisabled`, and nothing else is asked."""
+    binding, kill, entry = _switches(live=live, flag=flag, lost=True)
+    refused = binding.refusal(ACCOUNT, "live")
+    assert type(refused) is OmsNotReady and (kill.asked, entry.asked) == ([], [])
+
+
 def test_switches_run_the_kill_switch_before_the_gate_and_the_first_refusal_wins() -> None:
     b18 = TradingDisabled()
     binding, kill, entry = _switches(b18=b18, gate=_GATE)

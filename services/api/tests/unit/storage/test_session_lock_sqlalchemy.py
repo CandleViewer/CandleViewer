@@ -3,16 +3,18 @@ session advisory locks as Postgres does: `pg_try_advisory_lock` never waits and 
 goes with the session. One holder per key; a lock not got keeps nothing; a held one sets its
 session's keepalives (CR-S3L2-03); `confirm` answers whether the session still holds it; a release
 ends its session whatever the unlock did, after the pool's dispose too (CR-S3L2-06); a lock that
-cannot be asked, or whose ask is cut short, keeps nothing and says only so (CR-S3L2-05). The real
-statements run in `tests/integration/oms/test_environment_lock_pg.py`."""
+cannot be asked, or whose ask is cut short, keeps nothing and says so (CR-S3L2-05), naming the
+cause's class and SQLSTATE alone (CR-S3L2X-04). The real statements run in
+`tests/integration/oms/test_environment_lock_pg.py`."""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, cast
 
 import pytest
+from sqlalchemy import exc as sa_exc
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -37,6 +39,7 @@ class Server:
     def __init__(self) -> None:
         self.holders: dict[int, Connection] = {}
         self.fail: str | None = None  # the statement that fails next
+        self.error: Callable[[str], Exception] = RuntimeError  # how it fails, its text given
         self.hang: str | None = None  # the statement that never answers, once it has run
         self.connect_hangs = False  # the pool gives no connection
 
@@ -69,7 +72,7 @@ class Connection:
         self.calls.append(kind)
         server = self.server
         if self.ended or server.fail == kind:
-            raise RuntimeError(f"server text that must not leave: {dict(params)}")
+            raise server.error(f"server text that must not leave: {dict(params)}")
         if kind == "try":
             got = server.holders.setdefault(params["key"], self) is self
             answer: object = got
@@ -160,7 +163,7 @@ async def test_a_held_lock_sets_its_sessions_keepalives_and_a_refused_one_none()
 
 async def test_a_lock_whose_keepalives_fail_ends_its_session_and_holds_nothing() -> None:
     """CR-S3L2-03: never held without its keepalives: the session that took the lock ends, and the
-    lock with it, and the failure says only that it could not be asked."""
+    lock with it, and the failure says only that it could not be asked, and its cause's class."""
     server = Server()
     server.fail, engine = "keepalive", Engine(server)
     lock = _lock(engine)
@@ -180,6 +183,59 @@ async def test_a_lock_whose_statement_fails_keeps_nothing_and_says_so_without_se
         await lock.acquire()
     assert "server text" not in str(failed.value) and failed.value.__cause__ is None
     assert engine.opened[0].calls == ["try", "invalidate", "close"] and not lock.held
+
+
+class Refused(Exception):
+    """A driver's error as asyncpg raises it: a SQLSTATE (57P01, `admin_shutdown`), and the server's
+    text."""
+
+    sqlstate = "57P01"
+
+
+def _wrapped(text: str) -> sa_exc.OperationalError:
+    """SQLAlchemy's wrap of a driver's error, as an async connection's `execute` raises it."""
+    return sa_exc.OperationalError("SELECT pg_try_advisory_lock($1)", {}, Refused(text))
+
+
+@pytest.mark.parametrize(
+    ("error", "named"),
+    [(RuntimeError, "RuntimeError"), (_wrapped, "OperationalError, sqlstate 57P01")],
+)
+async def test_a_refused_ask_names_its_causes_class_and_sqlstate_never_its_text(
+    error: Callable[[str], Exception], named: str
+) -> None:
+    """CR-S3L2X-04: an ask that fails is `StorageTierUnavailable` naming the cause's class, and its
+    SQLSTATE when it carries one, never the server's text (C-12.6)."""
+    server = Server()
+    server.fail, server.error = "try", error
+    with pytest.raises(StorageTierUnavailable) as failed:
+        await _lock(Engine(server)).acquire()
+    assert str(failed.value) == f"the session lock could not be asked ({named})"
+
+
+@pytest.mark.parametrize("unanswered", ["connection", "statement"])
+async def test_an_ask_the_pool_or_the_statement_never_answers_names_the_timeout(
+    unanswered: str,
+) -> None:
+    """CR-S3L2X-04: a pool that gives no connection within `timeout_s`, or a statement that gives
+    no answer, is named as a timeout."""
+    server = Server()
+    server.connect_hangs, server.hang = unanswered == "connection", "try"
+    with pytest.raises(StorageTierUnavailable) as failed:
+        await asyncio.wait_for(_lock(Engine(server), timeout_s=0.0).acquire(), BOUND_S)
+    assert str(failed.value) == "the session lock could not be asked (TimeoutError)"
+
+
+async def test_a_probe_that_fails_names_its_causes_class_never_its_text() -> None:
+    """CR-S3L2X-04: the watchdog's probe on a session that cannot answer is `StorageTierUnavailable`
+    naming the cause's class, never the server's text."""
+    server = Server()
+    lock = _lock(Engine(server))
+    assert await lock.acquire()
+    server.fail = "held"
+    with pytest.raises(StorageTierUnavailable) as failed:
+        await lock.confirm()
+    assert str(failed.value) == "the session lock could not be confirmed (RuntimeError)"
 
 
 async def test_a_lock_the_pool_gives_no_connection_in_time_is_unavailable() -> None:

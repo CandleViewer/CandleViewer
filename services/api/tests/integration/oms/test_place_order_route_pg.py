@@ -45,7 +45,7 @@ from candleviewer.exchange.base.models import FeeRate, PlaceOrderRequest, RiskLi
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.ports import Profiles
-from candleviewer.oms_wiring import OmsAudit, OmsRuntime, pg_stores
+from candleviewer.oms_wiring import LaneHeartbeat, OmsAudit, OmsRuntime, pg_stores
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
@@ -65,7 +65,7 @@ from tests.unit.api.test_orders_route import BODY, KEY
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.order_rig import Pager
-from tests.unit.oms.test_oms_runtime import Flag, Port, Writer, started
+from tests.unit.oms.test_oms_runtime import Beats, Flag, Port, Writer, started
 
 pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # C6's database for this module
@@ -122,7 +122,7 @@ def _owner(user: UUID) -> SimpleNamespace:
 @dataclass
 class World:
     """One test's account, Owner and venue, and what its processes share: the audit log, the
-    pager, the WAL's path and the database."""
+    pager, the WAL's path, the database, and the beats the lane's heartbeat ticks on."""
 
     dsn: str  # the superuser's: the assertions read the rows through it
     account: AccountId
@@ -132,6 +132,7 @@ class World:
     writer: Writer = field(default_factory=Writer)
     pager: Pager = field(default_factory=Pager)
     retrying: asyncio.Event = field(default_factory=asyncio.Event)
+    beats: Beats = field(default_factory=Beats)
     port: Port = field(init=False)
     body: dict[str, Any] = field(init=False)
 
@@ -159,6 +160,12 @@ class World:
     async def unfenced(self, seconds: float) -> None:
         """The fencing grace once the lock is held (SEC-S3L2-01), passed at once: no other process
         held it, and the backoff above waits for good."""
+
+    def heartbeat(self, lock: Any, pager: Any) -> LaneHeartbeat:
+        """The lane's heartbeat on the world's beats, which no test ticks (CR-S3L2X-05): its first
+        tick asks the lock, and no other follows, so a cut the test makes once the runtime is
+        ready never meets the watchdog's ask, which would fence the runtime first."""
+        return LaneHeartbeat(lock, pager, clock=self.beats.clock, wait=self.beats.wait)
 
     def creates(self, since: int = 0) -> list[PlaceOrderRequest]:
         sent = [call.request for call in self.port.calls[since:] if call.method == "place_order"]
@@ -196,7 +203,8 @@ class _Listed(dict[str, Any]):
 
 def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> OmsRuntime:
     """A process's runtime over the database at `dsn`, as E4's: the clock guard measured, the
-    flag views read, the account and its key read in memory, and the catalogue composed."""
+    flag views read, the account and its key read in memory, the catalogue composed, and the lane's
+    heartbeat on the world's beats."""
     settings = Settings(
         storage_backend="real", pg_dsn=SecretStr(dsn), machine_event_wal_path=str(world.wal)
     )
@@ -234,7 +242,7 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
             audit=lambda _alarm: world.writer,
         ),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
-        fencing=world.unfenced,
+        fencing=world.unfenced, heartbeat=world.heartbeat,
     )  # fmt: skip
 
 
@@ -242,10 +250,11 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
 async def _serving(
     world: World, *, dsn: str = "", profiles: Profiles | None = None, ready: bool = True
 ) -> AsyncIterator[httpx.AsyncClient]:
-    """One API process until the block ends, when its facade settles and it goes down:
-    `POST /orders` mounted over its OMS runtime, which is ready unless `ready` is False. Its own
-    pools, both on `dsn` (the OMS stores', and the profile cache's unless `profiles` stands in),
-    metrics and 24 h record; the venue, the audit log and the pager are the world's."""
+    """One API process until the block ends, when its facade, once composed, settles and it goes
+    down: `POST /orders` mounted over its OMS runtime, which is ready unless `ready` is False, and
+    then composed nothing to settle (CR-S3L2X-01). Its own pools, both on `dsn` (the OMS stores',
+    and the profile cache's unless `profiles` stands in), metrics and 24 h record; the venue, the
+    audit log and the pager are the world's."""
     metrics = Metrics("demo")
     process_dsn = dsn or c6._login(world.dsn, "cv_app")
     pool = SqlAlchemyRelationalRepository(process_dsn, "place-order-route-it")
@@ -265,12 +274,13 @@ async def _serving(
             if ready:
                 await asyncio.wait_for(runtime.wait_ready(), _READY_BOUND_S)
             yield client
-            parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
-            async with asyncio.timeout(_READY_BOUND_S):  # the facade's turns settle (`Rig.settle`)
-                for _ in range(4):
-                    for _ in range(32):
-                        await asyncio.sleep(0)
-                    await parts.lane.call(parts.machines.idle())
+            if ready:  # composed: a runtime never ready here composed nothing (CR-S3L2X-01)
+                parts = runtime._composed()  # the facade's tasks are the order lane's (CV-C13)
+                async with asyncio.timeout(_READY_BOUND_S):  # its turns settle (`Rig.settle`)
+                    for _ in range(4):
+                        for _ in range(32):
+                            await asyncio.sleep(0)
+                        await parts.lane.call(parts.machines.idle())
     finally:
         await pool.dispose()
 
