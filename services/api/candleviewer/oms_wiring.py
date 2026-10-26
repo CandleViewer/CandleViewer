@@ -1473,13 +1473,17 @@ def _causes(error: BaseException) -> list[BaseException]:
 
 def _sweep_audit(audit: OmsAudit) -> Callable[[tuple[SweptStop, ...]], Awaitable[None]]:
     """`void_orphans`' write-ahead hook: each voided stop's record, `sl.modified` or `tp.modified`
-    with `unplaced_entry_swept`, as `system:oms`, its ids only (21 Sec.3.3.11, C-2.9)."""
+    with `unplaced_entry_swept`, as `system:oms`, its ids only (21 Sec.3.3.11, C-2.9). Its key
+    names the reason, `unplaced_entry_swept:<stop id>`, as the stop gate's voids do: an entry's
+    take-profit request and an amend's request hold `<stop id>` under the same action, and a void
+    keyed the same would be deduped against it and lost (#4560)."""
 
     async def write_ahead(swept: tuple[SweptStop, ...]) -> None:
         for stop in swept:
             detail = {"order_id": str(stop.order_id), "kind": stop.kind, "source": "entry_attach"}
+            name = f"{SWEEP_REASON}:{stop.id}"
             record = KeyedRecord(
-                _SWEPT[stop.kind], str(stop.id), stop.exchange_account_id, "recorded_stop",
+                _SWEPT[stop.kind], name, stop.exchange_account_id, "recorded_stop",
                 stop.id, "success", "warning", SWEEP_REASON, None, detail,
             )  # fmt: skip
             await audit.write(record)
