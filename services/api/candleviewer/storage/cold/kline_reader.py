@@ -399,42 +399,32 @@ def _read_rows(
 # rebuilt through `_num` in Python. `typed` is false when any emitted column is not the type
 # the text form assumes; the whole page then takes the lever-3 row path. The window, dedup,
 # LIMIT and pushdown are `_READ_SQL`'s.
-#: `bool(None)` is False, as `_read_rows` builds `confirmed`.
-_CONFIRMED = "coalesce(TRY_CAST(confirmed AS BOOLEAN), false)"
-_BAR_JSON = (
-    "'{\"t\":\"' || strftime(make_timestamp(t_us), '%Y-%m-%dT%H:%M:%S') || "
-    "CASE WHEN t_us % 1000000 = 0 THEN '' "
-    "ELSE '.' || lpad(CAST(((t_us % 1000000) + 1000000) % 1000000 AS VARCHAR), 6, '0') END "
-    '|| \'+00:00","o":"\' || o_t || \'","h":"\' || h_t || \'","l":"\' || l_t '
-    '|| \'","c":"\' || c_t || \'","v":"\' || v_t || \'","turnover":"\' || tv_t '
-    '|| \'","confirm":\' || CASE WHEN ' + _CONFIRMED + " THEN 'true' ELSE 'false' END"
-)
-_ALL_TEXT = "o_t || h_t || l_t || c_t || v_t || tv_t"
+# One literal, assembled by the interpreter and never at run time: every runtime value is a
+# bound `$` parameter. `bool(None)` is False and a blank source reads "parquet", as `_read_rows`
+# builds them; `confirm` is `coalesce(TRY_CAST(confirmed AS BOOLEAN), false)` in both places.
 _PAGE_SQL = (
-    "WITH r AS ("
-    "SELECT epoch_us(ts) AS t_us, confirmed, source, open, high, low, close, volume, turnover, "
-    "CAST(open AS VARCHAR) AS o_t, CAST(high AS VARCHAR) AS h_t, CAST(low AS VARCHAR) AS l_t, "
-    "CAST(close AS VARCHAR) AS c_t, CAST(volume AS VARCHAR) AS v_t, "
-    "CAST(turnover AS VARCHAR) AS tv_t, "
-    "typeof(open) = 'DOUBLE' AND typeof(high) = 'DOUBLE' AND typeof(low) = 'DOUBLE' "
-    "AND typeof(close) = 'DOUBLE' AND typeof(volume) = 'DOUBLE' "
-    "AND typeof(turnover) = 'DOUBLE' AND typeof(confirmed) = 'BOOLEAN' "
-    "AND typeof(source) = 'VARCHAR' AS typed "
-    "FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
-    "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
-    "QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) = 1 "
-    "ORDER BY ts DESC LIMIT $n) "
-    # `bool(None)` is False and a blank source reads "parquet", as `_read_rows` builds them.
-    "SELECT t_us AS ts, " + _CONFIRMED + " AS confirmed, "
-    "CASE WHEN source IS NULL OR CAST(source AS VARCHAR) = '' THEN 'parquet' "
-    "ELSE CAST(source AS VARCHAR) END AS source, "
-    "open, high, low, close, volume, turnover, typed, "
-    "o_t AS __cv_txt_open, h_t AS __cv_txt_high, l_t AS __cv_txt_low, "
-    "c_t AS __cv_txt_close, v_t AS __cv_txt_volume, tv_t AS __cv_txt_turnover, "
-    + _BAR_JSON
-    + " AS body, "
-    + f"({_ALL_TEXT}) IS NULL OR regexp_matches({_ALL_TEXT}, '[en]') AS odd "
-    + "FROM r ORDER BY t_us"
+    "WITH r AS (SELECT epoch_us(ts) AS t_us, confirmed, source, open, high, low, close, "
+    "volume, turnover, CAST(open AS VARCHAR) AS o_t, CAST(high AS VARCHAR) AS h_t, "
+    "CAST(low AS VARCHAR) AS l_t, CAST(close AS VARCHAR) AS c_t, CAST(volume AS VARCHAR) "
+    "AS v_t, CAST(turnover AS VARCHAR) AS tv_t, typeof(open) = 'DOUBLE' AND typeof(high) = "
+    "'DOUBLE' AND typeof(low) = 'DOUBLE' AND typeof(close) = 'DOUBLE' AND typeof(volume) = "
+    "'DOUBLE' AND typeof(turnover) = 'DOUBLE' AND typeof(confirmed) = 'BOOLEAN' AND "
+    "typeof(source) = 'VARCHAR' AS typed FROM read_parquet($files, hive_partitioning = "
+    "false, union_by_name = true) WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < "
+    "make_timestamptz($hi::BIGINT) QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) "
+    "= 1 ORDER BY ts DESC LIMIT $n) SELECT t_us AS ts, coalesce(TRY_CAST(confirmed AS "
+    "BOOLEAN), false) AS confirmed, CASE WHEN source IS NULL OR CAST(source AS VARCHAR) = "
+    "'' THEN 'parquet' ELSE CAST(source AS VARCHAR) END AS source, open, high, low, close, "
+    "volume, turnover, typed, o_t AS __cv_txt_open, h_t AS __cv_txt_high, l_t AS "
+    "__cv_txt_low, c_t AS __cv_txt_close, v_t AS __cv_txt_volume, tv_t AS "
+    "__cv_txt_turnover, '{\"t\":\"' || strftime(make_timestamp(t_us), '%Y-%m-%dT%H:%M:%S') || "
+    "CASE WHEN t_us % 1000000 = 0 THEN '' ELSE '.' || lpad(CAST(((t_us % 1000000) + "
+    '1000000) % 1000000 AS VARCHAR), 6, \'0\') END || \'+00:00","o":"\' || o_t || \'","h":"\' || '
+    'h_t || \'","l":"\' || l_t || \'","c":"\' || c_t || \'","v":"\' || v_t || \'","turnover":"\' '
+    '|| tv_t || \'","confirm":\' || CASE WHEN coalesce(TRY_CAST(confirmed AS BOOLEAN), '
+    "false) THEN 'true' ELSE 'false' END AS body, (o_t || h_t || l_t || c_t || v_t || "
+    "tv_t) IS NULL OR regexp_matches(o_t || h_t || l_t || c_t || v_t || tv_t, '[en]') AS "
+    "odd FROM r ORDER BY t_us"
 )
 _BAR_KEYS = ("o", "h", "l", "c", "v", "turnover")  # `serialize_bar`'s keys for `_NUM_COLS`
 
