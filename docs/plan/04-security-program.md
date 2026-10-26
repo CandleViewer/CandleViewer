@@ -233,7 +233,7 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | O11 | Elevation of privilege | XSS payload uses the live session to place orders silently                                  | L   | H   | **High**     | SR-112 CSP, SR-043 arm toggle + per-session live-trading confirmation, SR-025 step-up re-auth                                          | Low      |
 
 **E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01, Approved 2026-10-20)
-re-derives O1-O11 above for the E29 order path, not yet mounted, live WS trade included: 54 rows (OM-S01..OM-E08;
+re-derives O1-O11 above for the E29 order path, mounted since #913 slices 3 and 4, live WS trade included: 54 rows (OM-S01..OM-E08;
 OM-E07, a KILL that stops nothing, added by E29-T03 after the approval, OM-D10 to OM-D12 and OM-E08, the order
 lane's, by #913 slice 3, and OM-T05b and OM-D13, the cancel-all fold's, by #913 slice 4), 6 inherent Critical and 25
 High. Main
