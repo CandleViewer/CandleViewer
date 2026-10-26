@@ -439,6 +439,22 @@ async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge(
     assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason="#2304 route slice: the path-gated middleware (`make_read_only_guard`, the `users` row "
+    "of `DANGEROUS_ROUTES`) challenges the first send before the handler's self-reset refusal; "
+    "remove this marker when the route slice gates behind the route's own checks",
+)
+async def test_owner_self_reset_without_elevation_is_403_forbidden_never_a_challenge() -> None:
+    """No step-up cures a self-reset, so even the first, un-elevated send is refused, not
+    challenged: a challenge would ask for a code that cannot make the request succeed."""
+    c, em, _seed, _clock, owner = await _build()
+    r = c.post(f"/users/{owner}/mfa/reset", headers=_H)
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
+
+
 async def _reset_client(w: _World, positions: Any = None) -> TestClient:
     """The owner TOTP reset route over `w`'s service, the owner holding a live `users` window."""
     assert w.step_up(action_class="users").status_code == 200
