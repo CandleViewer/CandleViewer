@@ -47,10 +47,10 @@ Design notes tying back to the ticket's Gherkin:
   first fetch: the window fails closed, as a reader of `None` must (the sizer's
   `figure_unknown`), and is never served a guessed ladder. Bounds: a refresh spends at most
   `RISK_LIMITS_REFRESH_BUDGET_S` on all the tier fetches together (the symbols it does not reach
-  stay unknown), so the catalogue swap never waits on the tiers longer; a symbol joins the
-  refreshed set only after its first successful fetch and leaves it after
-  `RISK_LIMITS_MAX_FAILURES` consecutive failed ones; after a failed fetch the on-demand path
-  waits `on_demand_cooldown_s` before it calls the venue for that symbol again.
+  stay unknown), so the catalogue swap never waits on the tiers longer; after a failed fetch the
+  on-demand path waits `on_demand_cooldown_s` before it calls the venue for that symbol again.
+- S4-S-c (#913): each refresh seeds the refreshed set from `order_path_symbols`, so the order
+  path's symbols get tiers without a detail-route visit, after a restart too (`_tier_set`).
 """
 
 from __future__ import annotations
@@ -59,7 +59,7 @@ import asyncio
 import dataclasses
 import math
 import random
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -100,9 +100,12 @@ RISK_LIMITS_FETCH_TIMEOUT_S = 10.0
 #: S-RL: all of one catalogue refresh's tier fetches together, at most this long, so the catalogue
 #: swap never waits on the tiers longer; the symbols the loop does not reach stay unknown.
 RISK_LIMITS_REFRESH_BUDGET_S = 15.0
-#: S-RL: a symbol leaves the refreshed set after this many consecutive refreshes whose tier fetch
-#: for it failed or did not run (budget spent); its next demand adds it back.
-RISK_LIMITS_MAX_FAILURES = 3
+#: S4-S-c (#913): the refreshed set holds at most this many symbols; the seed read asks no more.
+TIER_SYMBOLS_MAX = 100
+#: S4-S-c: a symbol with an order created this recently is seeded into the refresh (24 h).
+ORDER_PATH_WINDOW_S = 86_400
+#: S4-S-c: the seed read, at most this long; a late or failed read seeds nothing that tick.
+ORDER_PATH_SEED_TIMEOUT_S = 2.0
 
 
 def retry_backoff_s(failures: int, rand: float) -> float:
@@ -140,6 +143,15 @@ class InstrumentsRepositoryLike(Protocol):
     async def mark_stale(self, *, stale_since_us: int) -> None: ...
 
     async def load_all(self) -> Sequence[Mapping[str, Any]]: ...
+
+
+class OrderPathSymbols(Protocol):
+    """S4-S-c (#913): the symbols the order path needs tiers for: those of open positions and
+    open orders, and those with an order created at or after `since_us`, at most `limit`. The
+    composition root binds it over the order and position tables (M10), which this module never
+    imports (C-3.1)."""
+
+    async def __call__(self, *, since_us: int, limit: int) -> Collection[str]: ...
 
 
 class BusPublisherLike(Protocol):
@@ -190,16 +202,17 @@ class InstrumentsRefreshScheduler:
         on_demand_timeout_s: float = ON_DEMAND_TIMEOUT_S,
         fetch_risk_limits: RiskLimitsFetcher | None = None,
         risk_limits_budget_s: float = RISK_LIMITS_REFRESH_BUDGET_S,
+        order_path_symbols: OrderPathSymbols | None = None,
     ) -> None:
         self._fetch_instruments_info = fetch_instruments_info
         self._fetch_risk_limits = fetch_risk_limits
         self._risk_limits_budget_s = risk_limits_budget_s
-        #: S-RL: the symbols whose tiers were fetched once on demand; each refresh re-fetches
-        #: them. Only catalogue symbols join (`ensure_risk_limits`), so the set and the two maps
-        #: below are bounded by the catalogue.
+        self._order_path_symbols = order_path_symbols
+        #: S-RL: the symbols each refresh re-fetches tiers for: the order path's (S4-S-c) and
+        #: those fetched once on demand; catalogue symbols only, at most `TIER_SYMBOLS_MAX`.
         self._tier_symbols: set[str] = set()
-        #: S-RL: consecutive refreshes whose tier fetch failed (or did not run), per symbol.
-        self._tier_failures: dict[str, int] = {}
+        #: S4-S-c: `start()`'s refresh spends at most a quarter of its timeout on the tiers.
+        self._starting = False
         #: S-RL: when a symbol's last tier fetch failed (the on-demand cooldown's start).
         self._tier_failed_us: dict[str, int] = {}
         self._repository = repository
@@ -254,7 +267,7 @@ class InstrumentsRefreshScheduler:
                 )
             )
         warm = self.cache.current()
-        loaded = False
+        loaded, self._starting = False, True
         try:
             async with asyncio.timeout(self._start_timeout_s):
                 await self.refresh_now()
@@ -274,6 +287,8 @@ class InstrumentsRefreshScheduler:
             get_logger(__name__).warning(
                 "instruments_startup_refresh_timeout", timeout_s=self._start_timeout_s
             )
+        finally:
+            self._starting = False
         self._stopping = False
         self._task = spawn(self._run_periodic(startup_ok=loaded), name="instruments-refresh")
 
@@ -367,8 +382,8 @@ class InstrumentsRefreshScheduler:
                     return known
                 fetched = True
                 tiers = tuple(await self._fetch_risk_limits(symbol))
-                self._tier_symbols.add(symbol)
-                self._tier_failures.pop(symbol, None)
+                if len(self._tier_symbols) < TIER_SYMBOLS_MAX:
+                    self._tier_symbols.add(symbol)
                 self._tier_failed_us.pop(symbol, None)
                 self.cache.swap(
                     dataclasses.replace(snap, risk_limits={**snap.risk_limits, symbol: tiers})
@@ -393,19 +408,23 @@ class InstrumentsRefreshScheduler:
     async def _refresh_risk_limits(
         self, parsed: Mapping[str, Instrument]
     ) -> dict[str, tuple[RiskLimitTier, ...]]:
-        """S-RL: re-fetch every refreshed symbol still in the catalogue, within one overall
-        `risk_limits_budget_s`. A symbol whose fetch fails, or that the budget does not reach,
-        is left out (unknown, fail closed; the previous ladder is not kept) and does not fail the
-        catalogue refresh; after `RISK_LIMITS_MAX_FAILURES` such refreshes in a row it leaves the
-        refreshed set.
+        """S-RL: re-fetch every refreshed symbol, seeded first (S4-S-c, `_tier_set`), within one
+        overall `risk_limits_budget_s` (a quarter of `start_timeout_s` at most in `start()`). A
+        symbol whose fetch fails, or that the budget does not reach, is left out (unknown, fail
+        closed; the previous ladder is not kept), stays in the set for the next refresh, and does
+        not fail the catalogue refresh.
         """
         fetch = self._fetch_risk_limits
         tiers: dict[str, tuple[RiskLimitTier, ...]] = {}
         if fetch is None:
             return tiers
-        pending = sorted(self._tier_symbols & parsed.keys())
+        self._tier_symbols = self._tier_set(parsed, await self._order_path_seed())
+        pending = sorted(self._tier_symbols)
+        budget_s = self._risk_limits_budget_s
+        if self._starting:
+            budget_s = min(budget_s, self._start_timeout_s / 4)
         try:
-            async with asyncio.timeout(self._risk_limits_budget_s):
+            async with asyncio.timeout(budget_s):
                 for symbol in pending:
                     try:
                         async with asyncio.timeout(RISK_LIMITS_FETCH_TIMEOUT_S):
@@ -418,20 +437,32 @@ class InstrumentsRefreshScheduler:
         except TimeoutError:
             get_logger(__name__).warning(
                 "risk_limits_refresh_budget_spent",
-                budget_s=self._risk_limits_budget_s,
+                budget_s=budget_s,
                 unknown=len(pending) - len(tiers),
             )
-        for symbol in pending:
-            if symbol in tiers:
-                self._tier_failures.pop(symbol, None)
-                continue
-            failures = self._tier_failures.get(symbol, 0) + 1
-            if failures >= RISK_LIMITS_MAX_FAILURES:
-                self._tier_symbols.discard(symbol)
-                self._tier_failures.pop(symbol, None)
-            else:
-                self._tier_failures[symbol] = failures
         return tiers
+
+    async def _order_path_seed(self) -> set[str]:
+        """S4-S-c: the order path's symbols (`order_path_symbols`), within
+        `ORDER_PATH_SEED_TIMEOUT_S`; empty when none is wired or the read fails, logged by the
+        error's type only."""
+        read = self._order_path_symbols
+        if read is None:
+            return set()
+        since_us = self._now_us() - ORDER_PATH_WINDOW_S * 1_000_000
+        try:
+            async with asyncio.timeout(ORDER_PATH_SEED_TIMEOUT_S):
+                return set(await read(since_us=since_us, limit=TIER_SYMBOLS_MAX))
+        except Exception as exc:  # a timeout too: this tick refreshes the symbols already held
+            get_logger(__name__).warning("risk_limits_seed_failed", error=type(exc).__name__)
+            return set()
+
+    def _tier_set(self, parsed: Mapping[str, Instrument], seed: set[str]) -> set[str]:
+        """S4-S-c: the seed, then the symbols already held, at most `TIER_SYMBOLS_MAX`, and only
+        those the catalogue lists and not `closed`: a delisted symbol leaves, a failed one stays."""
+        listed = {symbol for symbol, i in parsed.items() if i.status != "closed"}
+        held = sorted((self._tier_symbols - seed) & listed)
+        return set([*sorted(seed & listed), *held][:TIER_SYMBOLS_MAX])
 
     async def ensure_fresh(self, max_age_s: float, deadline_s: float) -> CatalogueSnapshot | None:
         """#906 (B8): the catalogue, fetched at most `max_age_s` ago and not marked stale, so the

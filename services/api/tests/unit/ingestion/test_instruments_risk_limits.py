@@ -15,10 +15,7 @@ from candleviewer.exchange.base.instruments import InstrumentsFetchResult
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.exchange.bybit.instruments import parse_instruments
 from candleviewer.exchange.bybit.risk_limits import order_tiers, parse_risk_limit_page
-from candleviewer.ingestion.instruments_refresh import (
-    RISK_LIMITS_MAX_FAILURES,
-    InstrumentsRefreshScheduler,
-)
+from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
 from tests._corpus import rest
 
 _NOW = 1_700_000_000_000_000
@@ -166,7 +163,7 @@ async def test_hanging_tier_fetches_never_hold_the_catalogue_swap_past_the_budge
     assert fetch.calls == ["BTCUSDT"]  # the budget ran out on the first; ETHUSDT stays unknown
 
 
-async def test_a_symbol_joins_the_refresh_on_success_and_leaves_after_repeated_failures() -> None:
+async def test_a_symbol_joins_the_refresh_on_success_and_stays_after_repeated_failures() -> None:
     fetch, clock = _Fetch(), _Clock()
     sched = _sched(fetch, clock=clock)
     await sched.refresh_now()
@@ -178,11 +175,9 @@ async def test_a_symbol_joins_the_refresh_on_success_and_leaves_after_repeated_f
     clock.us += 61_000_000  # past the cooldown
     assert await sched.ensure_risk_limits("BTCUSDT") == _tiers("BTCUSDT")
     fetch.fail = True
-    for _ in range(RISK_LIMITS_MAX_FAILURES):
+    for _ in range(4):
         await sched.refresh_now()
-    assert fetch.calls == ["BTCUSDT"] * (2 + RISK_LIMITS_MAX_FAILURES)
-    await sched.refresh_now()  # dropped: no further upstream call
-    assert len(fetch.calls) == 2 + RISK_LIMITS_MAX_FAILURES
+    assert fetch.calls == ["BTCUSDT"] * 6  # S4-S-c: retried on every refresh, never dropped
 
 
 async def test_ensure_risk_limits_is_unknown_without_a_catalogue_symbol_or_fetcher() -> None:

@@ -24,6 +24,9 @@ from candleviewer.settings import FeedMode, Settings
 from candleviewer.storage.repositories.instruments_sqlalchemy import (
     SqlAlchemyInstrumentsRepository,
 )
+from candleviewer.storage.repositories.order_path_symbols_sqlalchemy import (
+    SqlAlchemyOrderPathSymbols,
+)
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests._corpus import rest
 from tests.contract.rbac.rbac_harness import bearer, build_world
@@ -67,6 +70,10 @@ def test_deployed_app_attaches_the_catalogue_when_it_talks_to_the_exchange(
     public_ws = bool(overrides.get("ingestion_ws_enabled"))
     assert closers.count("SqlAlchemyRelationalRepository.dispose") == int(attached)
     assert closers.count("BybitRestClient.aclose") == int(attached or public_ws)
+    if attached:  # S4-S-c (#913): the order path's symbols seed the tiers, over the same pool
+        seed = ingestion.instruments._order_path_symbols
+        assert isinstance(seed, SqlAlchemyOrderPathSymbols)
+        assert seed._relational in [getattr(c, "__self__", None) for c in ingestion._closers]
 
 
 def test_live_feed_and_public_ws_share_one_public_rest_client(
@@ -125,6 +132,7 @@ def test_deployed_instruments_routes_serve_a_seeded_catalogue() -> None:
             fetch_instruments=_recorded_page,
             relational=SqlAlchemyRelationalRepository("postgresql+asyncpg://u@localhost/x", "t"),
         )
+        assert scheduler._order_path_symbols is None  # the fake backend: nothing seeds the tiers
         asyncio.run(scheduler.refresh_now())
         listed = world.client.get("/instruments", headers=bearer("viewer"))
         one = world.client.get("/instruments/BTCUSDT", headers=bearer("viewer"))
