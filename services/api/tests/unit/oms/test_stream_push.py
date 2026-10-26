@@ -27,7 +27,6 @@ from candleviewer.oms.errors import (
     ReconcileAnomaly,
 )
 from candleviewer.oms.push_mapping import push_time_ms, route
-from candleviewer.oms.stream_push import NoRecordedStopStream
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import (
@@ -78,16 +77,16 @@ def _record(**over: Any) -> RecordedStopRow:
 
 
 HANDED_OVER = "handover:False"
-NOT_BOUND = RecordedStopNotBindable()
+STOP_ROW = order_row(state="submitted")  # the recorded stop's materialised row
+ENDED_STOP = STOP | {"orderStatus": "Cancelled"}  # an order push that sends an event
 
 
 def _stop_rig(**kw: Any) -> Rig:
-    """A stop-claiming push whose recorded-stop write is refused; the refusal clears the live
-    record, so what the stores hold after it is no record."""
-    rig = Rig(raises={"take": NOT_BOUND} | kw.pop("raises", {}), answers={"stops": (_record(),)})
-    rig.answers["on_take"] = lambda: rig.answers.update(stops=())
-    rig.answers |= kw
-    return rig
+    """A stop-claiming push matched to its record, whose seam fails with `failure`; the stores
+    then hold `found` bound to the order (step 1's read found none)."""
+    failure, found = kw.pop("failure", RuntimeError("x")), kw.pop("found", STOP_ROW)
+    answers = {"stops": (_record(),), "bound": [None, found]}
+    return Rig(raises={"take": failure}, answers=answers, **kw)
 
 
 def _fill_of_a_stop(rig: Rig) -> PrivateEvent:
@@ -283,77 +282,136 @@ async def test_handle_logs_name_neither_the_pushes_link_id_nor_its_trigger_price
     assert link() not in str(logs) and "94000" not in str(logs)
 
 
-async def test_handle_stand_in_counts_pending_and_opens_nothing() -> None:
-    rig = Rig(answers={"stops": (_record(),)})
-    await rig.run(event("order", orderId=XID, **STOP), stops=NoRecordedStopStream(rig))
-    assert rig.counts == ["stop_pending_s6"] and rig.opened == [] and rig.taken == []
-
-
 async def test_handle_recorded_stop_decision_reaches_the_seam() -> None:
     rig = Rig(answers={"stops": (_record(),)})
     await rig.run(event("order", orderId=XID, **STOP), stops=rig)
     assert len(rig.taken) == 1 and rig.taken[0].record == _record()
 
 
-@pytest.mark.parametrize("failure", [RecordedStopNotBindable(), StorageQueryFailed("23505")])
-async def test_handle_refused_stop_write_rereads_and_acts_on_what_is_found(
+async def test_handle_recorded_stops_row_takes_the_push_then_the_record_hook_runs() -> None:
+    """S6b: the row the seam answers takes the push as any row does, then `after_bind`."""
+    rig = Rig(answers={"stops": (_record(),), "take": STOP_ROW})
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    [(oid, name, body)] = rig.pushed
+    assert (oid, name, body["exchange_order_id"]) == (UUID(int=1), "REMOTE_CANCELLED", XID)
+    assert rig.calls[-3:] == ["take", "push", "after_bind"] and rig.counts == ["paired"]
+
+
+async def test_handle_recorded_stops_fill_goes_to_the_row_the_seam_answers() -> None:
+    """Pairing step 3 on a fill's order read: the fill applies to the materialised row."""
+    rig = Rig(answers={"stops": (_record(),), "take": STOP_ROW})
+    fill = _fill_of_a_stop(rig)
+    await rig.run(fill)
+    [(oid, name, body)] = rig.pushed
+    assert (oid, name, body["exec_id"]) == (UUID(int=1), "EXEC", _exec_id(fill))
+    assert rig.opened == [] and not any(c.startswith("handover") for c in rig.calls)
+
+
+async def test_handle_recorded_stop_push_with_no_event_sends_nothing_but_runs_the_hook() -> None:
+    rig = Rig(answers={"stops": (_record(),), "take": STOP_ROW})
+    await rig.run(event("order", orderId=XID, **STOP))
+    assert rig.pushed == [] and rig.calls[-2:] == ["take", "after_bind"]
+
+
+async def test_handle_recorded_stop_with_no_row_decides_nothing_for_an_order_push() -> None:
+    """None found: the next pass reads the order afresh; the record is OMS intent, so no
+    lockout opens and nothing is sent."""
+    rig = Rig(answers={"stops": (_record(),)})
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.opened == [] and rig.pushed == [] and rig.counts == ["undecided"]
+    assert "after_bind" not in rig.calls
+
+
+async def test_handle_recorded_stop_with_no_row_hands_a_fill_over_undecided() -> None:
+    rig = Rig(answers={"stops": (_record(),)})
+    await rig.run(_fill_of_a_stop(rig))
+    assert HANDED_OVER in rig.calls and rig.opened == [] and rig.pushed == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [RuntimeError("x"), TimeoutError(), RecordedStopNotBindable(), StorageQueryFailed("23505")],
+    ids=["failed", "timeout", "not_bindable", "unique_violation"],
+)
+async def test_handle_seam_that_raises_rereads_and_the_found_row_takes_the_push(
     failure: Exception,
 ) -> None:
-    rig = Rig(raises={"take": failure}, answers={"stops": (_record(),)})
-    rig.answers["on_take"] = lambda: rig.answers.update(bound=order_row())
-    await rig.run(event("order", orderId=XID, **(STOP | {"orderStatus": "Cancelled"})))
-    assert "for_exchange_order" in rig.calls and rig.pushed[0][0] == UUID(int=1)
-    assert rig.counts == ["paired"] and rig.taken[0].record == _record()
+    """C-2.6: a protecting stop's order push whose seam fails is never dropped: the row its
+    order's id reads now takes it (24 Sec.8.12: nothing acts on the failed write)."""
+    rig = _stop_rig(failure=failure)
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.pushed[0][0] == UUID(int=1) and rig.counts == ["paired"]
+    assert rig.calls[rig.calls.index("take") :] == ["take", "bound", "push", "after_bind"]
 
 
-async def test_handle_second_recorded_stop_decision_is_not_retried() -> None:
-    rig = Rig(raises={"take": NOT_BOUND}, answers={"stops": (_record(),)})
-    await rig.run(event("order", orderId=XID, **STOP))
-    assert len(rig.taken) == 1 and rig.counts == ["stop_unbindable"] and rig.opened == []
+async def test_handle_seam_overrunning_its_bound_rereads_and_the_found_row_takes_the_push(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(stream_push, "STOP_TAKE_BOUND_S", 0.0)
+    rig = _stop_rig(hang={"take"})
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.pushed[0][0] == UUID(int=1) and rig.counts == ["paired"]
 
 
-async def test_handle_reread_finding_a_record_of_the_order_is_intent_not_a_foreign_order() -> None:
-    rig = _stop_rig(for_exchange_order=(_record(exchange_order_id=XID),))
-    await rig.run(event("order", orderId=XID, **STOP))
-    assert rig.opened == [] and rig.counts == ["stop_unbindable"]
+async def test_handle_reread_runs_on_its_own_deadline_not_the_pushs() -> None:
+    """A seam that spent the push's 5 s (and more) never starves its re-read."""
+    rig = _stop_rig()
+    rig.answers["on_take"] = lambda: setattr(rig, "now", rig.now + 100.0)
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.pushed[0][0] == UUID(int=1)
+
+
+async def test_handle_seam_failure_whose_reread_finds_nothing_decides_nothing() -> None:
+    rig = _stop_rig(found=None)
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.opened == [] and rig.pushed == [] and rig.counts == ["undecided"]
 
 
 @pytest.mark.parametrize(
     "stray",
-    [
-        {"exchange_account_id": ACCOUNT_B},
-        {"exchange_order_id": "other"},
-        {"exchange_order_id": None},
-    ],
-    ids=["another-account", "another-order", "no-order"],
+    [{"exchange_account_id": ACCOUNT_B}, {"exchange_order_id": "other"}],
+    ids=["another-account", "another-order"],
 )
-async def test_handle_reread_answering_a_record_that_is_not_the_orders_still_locks(
+async def test_handle_seam_failure_whose_reread_answers_another_row_delivers_nothing(
     stray: dict[str, Any],
 ) -> None:
-    rig = _stop_rig(for_exchange_order=(_record(**({"exchange_order_id": XID} | stray)),))
-    await rig.run(event("order", orderId=XID, **STOP))
-    assert rig.opened == [("order", XID)] and rig.counts == ["no_intent"]
+    """A store defect's answer is not the push's row (C-12.4): nothing is sent to it."""
+    rig = _stop_rig(found=order_row(**({"state": "submitted"} | stray)))
+    with capture_logs() as logs:
+        await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.pushed == [] and rig.opened == [] and rig.counts == ["undecided"]
+    assert any(e["event"] == "stream_recorded_stop_foreign_row" for e in logs)
 
 
-async def test_handle_reread_finding_no_record_leaves_no_intent_and_opens_the_lockout() -> None:
+async def test_handle_seam_failure_whose_reread_fails_hands_a_fill_over_undecided() -> None:
     rig = _stop_rig()
-    await rig.run(event("order", orderId=XID, **STOP))
-    assert rig.opened == [("order", XID)] and rig.counts == ["no_intent"]
-
-
-async def test_handle_failed_reread_hands_the_fill_over_undecided_with_no_re_pair_reads() -> None:
-    rig = _stop_rig(raises={"for_exchange_order": RuntimeError("x")})
+    rig.answers["on_take"] = lambda: rig.raises.update(bound=RuntimeError("x"))
     await rig.run(_fill_of_a_stop(rig))
     after = rig.calls[rig.calls.index("take") + 1 :]
-    assert after == ["for_exchange_order", HANDED_OVER] and rig.opened == []
+    assert after == ["bound", HANDED_OVER] and rig.opened == [] and rig.pushed == []
 
 
-async def test_handle_reread_runs_under_the_pushs_deadline_not_a_fresh_one() -> None:
-    rig = _stop_rig()
-    rig.answers["on_take"] = lambda: setattr(rig, "now", rig.now + 100.0)  # the write spent it
-    await rig.run(_fill_of_a_stop(rig))
-    after = rig.calls[rig.calls.index("take") + 1 :]
-    assert after == [HANDED_OVER] and rig.opened == []
+async def test_handle_record_hook_failure_is_counted_and_raises_nothing() -> None:
+    rig = Rig(answers={"stops": (_record(),), "take": STOP_ROW}, raises={"after_bind": OSError()})
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.counts == ["paired", "after_bind_failed"]
+
+
+async def test_handle_hung_record_hook_is_cut_by_its_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(stream_push, "PORT_TIMEOUT_S", 0.0)
+    rig = Rig(answers={"stops": (_record(),), "take": STOP_ROW}, hang={"after_bind"})
+    await rig.run(event("order", orderId=XID, **ENDED_STOP))
+    assert rig.counts == ["paired", "after_bind_failed"]
+
+
+async def test_handle_cancel_during_the_seam_propagates_with_no_reread_or_delivery() -> None:
+    rig = _stop_rig(hang={"take"})
+    task = asyncio.create_task(rig.run(event("order", orderId=XID, **ENDED_STOP)))
+    await _stalled(rig)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert rig.calls[-1] == "take" and rig.pushed == [] and rig.opened == []
 
 
 async def test_handle_unknown_outcome_is_delivered_once_more() -> None:
@@ -437,12 +495,3 @@ async def test_handle_hung_handover_is_cut_by_its_bound_and_the_lockout_opens(
     await rig.run(fill)
     assert rig.counts[0] == "handover_unavailable"
     assert rig.opened == [("undecided", _exec_id(fill))]
-
-
-async def test_handle_hung_recorded_stop_take_is_cut_by_its_bound_and_counted(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(stream_push, "PORT_TIMEOUT_S", 0.0)
-    rig = Rig(answers={"stops": (_record(),)}, hang={"take"})
-    await rig.run(event("order", orderId=XID, **STOP))
-    assert rig.counts == ["stop_unbindable"] and rig.opened == []

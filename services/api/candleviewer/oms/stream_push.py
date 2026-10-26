@@ -2,8 +2,12 @@
 code on the hot-path contract (C-2.20): `StreamPushes.handle` pairs one order row or trade execution
 (`oms.pairing`) under ONE 5 s deadline across all its reads, on the monotonic clock, then sends the
 paired row's B1 event through `PushTarget` (the facade's `push`), or opens the lockout for a push no
-row or record takes, hands an undecided fill over, or leaves it to reconciliation. It raises nothing
-but `CancelledError`. Ids only in logs (C-12.6). Nothing here imports the facade or the statechart.
+row or record takes, hands an undecided fill over, or leaves it to reconciliation. A push matched
+to a recorded stop (step 3) goes to `RecordedStopStream` (S6b), outside the 5 s hand-over bound: it
+answers the order's row, materialised or found by its exchange id, and the push is delivered to that
+row as to any other, then the record hook runs (`after_bind`); with no row, nothing is decided (the
+next pass reads the order afresh, and a fill is handed over undecided). It raises nothing but
+`CancelledError`. Ids only in logs (C-12.6). Nothing here imports the facade or the statechart.
 """
 
 from __future__ import annotations
@@ -20,12 +24,8 @@ import structlog
 
 from candleviewer.domain.primitives import AccountId, TsUs
 from candleviewer.exchange.base.models import Execution, Order, PrivateEvent
-from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import OrderRow
-from candleviewer.storage.repositories.recorded_stops import (
-    RecordedStopNotBindable,
-    RecordedStopRow,
-)
+from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
 
 from .errors import (
     IllegalTransition,
@@ -56,12 +56,16 @@ from .push_mapping import ForPairing, exec_payload, push_payload
 HANDOVER_BOUND_S: Final = 5.0  # 24 Sec.8.12: one bound, all of a push's reads
 PORT_TIMEOUT_S: Final = 5.0  # the lockout, the hand-over, the records (C-2.18)
 PUSH_TIMEOUT_S: Final = 30.0  # the facade's 5 s ports, B1's 10 s write-ahead and FOLLOWS = 4
+#: `recorded_stop_stream.TAKE_BUDGET_S`: the account and link reads, the 30 s materialise (24
+#: Sec.8.12, Q5) and the two read-backs; the seam's own bounds end it first.
+STOP_TAKE_BOUND_S: Final = 4 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
 PAGED_ORDERS: Final = 1024  # the order ids a full buffer paged on, the oldest forgotten
 
 type Outcome = Literal[
     "paired", "held", "anomaly", "buffer_full", "refused", "unknown", "unknown_twice",
     "not_loaded", "no_intent", "exchange_placed", "undecided", "pairing_refused",
-    "lockout_failed", "handover_unavailable", "stop_pending_s6", "stop_unbindable", "unmapped",
+    "lockout_failed", "handover_unavailable", "stop_materialised", "stop_found", "stop_undecided",
+    "after_bind_failed", "unmapped", "stop_qty_refused", "stop_no_position",
 ]  # fmt: skip
 type Decision = ToRow | WaitOnRow | ToRecordedStop | NoIntent | Undecided
 type Event = Literal["EXEC", "TRIGGERED", "EXPIRE", "REMOTE_CANCELLED"]
@@ -84,9 +88,6 @@ class StreamReads(Protocol):  # the order and recorded-stop stores' reads
     async def live_for_key(
         self, account_id: UUID, symbol: str, position_idx: int
     ) -> tuple[RecordedStopRow, ...]: ...
-    async def for_exchange_order(
-        self, account_id: UUID, xid: str
-    ) -> tuple[RecordedStopRow, ...]: ...
 
 
 class FillOrders(Protocol):
@@ -96,12 +97,15 @@ class FillOrders(Protocol):
 
 
 class RecordedStopStream(Protocol):
-    """S6's: materialise the recorded stop's row and let it take the push."""
+    """`oms.recorded_stop_stream`'s: the recorded stop's order's row, materialised with its
+    record's bind or found by the order's exchange id, or None; then the record hook."""
 
     async def take(
-        self, account_id: UUID, decision: ToRecordedStop, push: Order | Execution,
+        self, account_id: AccountId, decision: ToRecordedStop, push: Order | Execution,
         event: Event | None, ts_event: TsUs,
-    ) -> None: ...  # fmt: skip
+    ) -> OrderRow | None: ...  # fmt: skip
+
+    async def after_bind(self, account_id: AccountId, decision: ToRecordedStop) -> None: ...
 
 
 class NoIntentRecords(Protocol):
@@ -118,21 +122,6 @@ class Pager(Protocol):  # structurally the statechart's `Pager`, which the hot-p
     def raise_alert(
         self, severity: Literal["page", "alert"], summary: str, *, machine_kind: str
     ) -> None: ...
-
-
-class NoRecordedStopStream:
-    """`RecordedStopStream` until S6: the record is OMS intent, so it opens nothing; S8 never binds
-    it."""
-
-    def __init__(self, counts: PushCounts) -> None:
-        self._counts = counts
-
-    async def take(
-        self, account_id: UUID, decision: ToRecordedStop, push: Order | Execution,
-        event: Event | None, ts_event: TsUs,
-    ) -> None:  # fmt: skip
-        _log().warning("stream_recorded_stop_pending", account_id=str(account_id))
-        self._counts.count("stop_pending_s6")
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +151,7 @@ class StreamPushes:
         if r.unmapped:  # paired for detection only: no B1 event is sent for it
             _log().warning("stream_unmapped_status", **self._ids(ctx))
             self._counts.count("unmapped")
-        await self._dispatch(ctx, await self._decide(ctx, deadline), deadline, retry=True)
+        await self._dispatch(ctx, await self._decide(ctx, deadline))
 
     async def _decide(self, ctx: _Ctx, deadline: float) -> Decision | None:
         push, reads = ctx.route.push, Reads()
@@ -203,20 +192,15 @@ class StreamPushes:
         except Exception:  # a failure, or the bound: never a CancelledError
             return NoAnswer.FAILED
 
-    async def _dispatch(
-        self, ctx: _Ctx, d: Decision | None, deadline: float, *, retry: bool
-    ) -> None:
+    async def _dispatch(self, ctx: _Ctx, d: Decision | None) -> None:
         push = ctx.route.push
         match d:
             case None:
                 return
             case ToRow(row) | WaitOnRow(row):
                 await self._deliver(ctx, row, held=isinstance(d, WaitOnRow))
-            case ToRecordedStop() if retry:
-                await self._take_recorded_stop(ctx, d, deadline)
-            case ToRecordedStop():  # a second one is not retried: the write was refused once
-                _log().error("stream_recorded_stop_unbindable", **self._ids(ctx))
-                self._counts.count("stop_unbindable")
+            case ToRecordedStop():
+                await self._take_recorded_stop(ctx, d)
             case NoIntent():
                 await self._open(ctx, d.finding, d.key, placed=d.exchange_placed)
                 if isinstance(push, Execution):
@@ -229,43 +213,43 @@ class StreamPushes:
                     self._counts.count("undecided")  # fail closed until T06 keeps it (plan R2)
                     await self._open(ctx, "undecided", push.exec_id, placed=False)
 
-    async def _take_recorded_stop(self, ctx: _Ctx, d: ToRecordedStop, deadline: float) -> None:
+    async def _take_recorded_stop(self, ctx: _Ctx, d: ToRecordedStop) -> None:
+        """The recorded stop's order's row takes the push, then the record hook runs (24 Sec.8.12
+        step 3, Sec.8.3 rule 7). A seam that raised or overran its bound decided nothing, so the
+        row is read again here; with no row the push is left undecided, never dropped (C-2.6)."""
         r = ctx.route
         try:
-            await self._bounded(self._stops.take(ctx.account_id, d, r.push, r.event, ctx.ts_event))
-        except (RecordedStopNotBindable, StorageQueryFailed) as exc:
-            # The AC (LANE-46): act on what the stores hold now, never on the refused write.
-            _log().warning(
-                "stream_recorded_stop_refused", kind=type(exc).__name__, **self._ids(ctx)
+            row = await self._bounded(
+                self._stops.take(ctx.account_id, d, r.push, r.event, ctx.ts_event),
+                STOP_TAKE_BOUND_S,
             )
-            found = await self._read(
-                partial(self._reads.for_exchange_order, ctx.account_id, d.order.exchange_order_id),
-                deadline,
-            )
-            _log().info("stream_recorded_stop_reread", rows=_count(found), **self._ids(ctx))
-            again: Decision | None
-            if found is NoAnswer.FAILED:  # nothing found: decide nothing
-                again = Undecided(empty_read=False) if isinstance(r.push, Execution) else None
-            else:
-                again = await self._decide(ctx, deadline)
-                if isinstance(again, NoIntent) and self._records_of(ctx, d, found):
-                    again = ToRecordedStop(d.record, d.order)  # a record of this order is intent
-            await self._dispatch(ctx, again, deadline, retry=False)
-        except Exception as exc:
+        except Exception as exc:  # a defect or the bound: what the write did is unknown
             _log().error("stream_recorded_stop_failed", kind=type(exc).__name__, **self._ids(ctx))
-            self._counts.count("stop_unbindable")
+            row = await self._reread(ctx)
+        if row is None:
+            await self._dispatch(ctx, Undecided(empty_read=False))
+            return
+        await self._deliver(ctx, row, held=False)
+        try:  # the hook runs again at the key's next applied position row
+            await self._bounded(self._stops.after_bind(ctx.account_id, d))
+        except Exception as exc:
+            _log().warning("stream_after_bind_failed", kind=type(exc).__name__, **self._ids(ctx))
+            self._counts.count("after_bind_failed")
 
-    @staticmethod
-    def _records_of(ctx: _Ctx, d: ToRecordedStop, found: object) -> tuple[RecordedStopRow, ...]:
-        """The records the re-read answered that are this account's, bound to this order: a store
-        defect's answer for another is not OMS intent, so the lockout stands (C-12.4)."""
-        xid = d.order.exchange_order_id
-        rows = found if isinstance(found, tuple) else ()
-        return tuple(
-            r
-            for r in rows
-            if r.exchange_account_id == ctx.account_id and r.exchange_order_id == xid
+    async def _reread(self, ctx: _Ctx) -> OrderRow | None:
+        """The row bound to the push's order, on a deadline of its own; None when none is, the read
+        failed, or it answered a row that is not the push's (a store defect, C-12.4)."""
+        a, push = ctx.account_id, ctx.route.push
+        found = await self._read(
+            partial(self._reads.get_by_exchange_order_id, a, push.exchange_order_id),
+            self._now() + PORT_TIMEOUT_S,
         )
+        if not isinstance(found, OrderRow):
+            return None
+        if (found.exchange_account_id, found.exchange_order_id) != (a, push.exchange_order_id):
+            _log().error("stream_recorded_stop_foreign_row", **self._ids(ctx))
+            return None
+        return found
 
     async def _open(self, ctx: _Ctx, finding: Finding, key: str, *, placed: bool) -> None:
         """The lockout (or, for an exchange-placed push, its audit and page): first, bounded."""
@@ -296,7 +280,7 @@ class StreamPushes:
 
     async def _deliver(self, ctx: _Ctx, row: OrderRow, *, held: bool) -> None:
         r = ctx.route
-        if r.event is None:  # a status no event follows: S6 adds TERMS_CHANGED here
+        if r.event is None:  # a status no event follows: S7 adds TERMS_CHANGED here
             return
         link = row.order_link_id
         payload = (
@@ -361,7 +345,3 @@ class StreamPushes:
         push = ctx.route.push
         ids = {"account_id": str(ctx.account_id), "exchange_order_id": push.exchange_order_id}
         return ids | ({"exec_id": push.exec_id} if isinstance(push, Execution) else {})
-
-
-def _count(found: object) -> int:
-    return len(found) if isinstance(found, tuple) else -1

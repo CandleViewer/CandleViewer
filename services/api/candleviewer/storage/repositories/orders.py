@@ -239,6 +239,10 @@ class NewOrder:
         require_lifecycle(self.lifecycle_state, self.state)
 
 
+#: The position side an order of each side closes: a recorded stop's TP/SL order is on the side
+#: opposite its record's `position_side` (24 Sec.8.8 rule 6), which its first bind checks again.
+CLOSED_BY: Final[Mapping[OrderSide, OrderSide]] = MappingProxyType({"Buy": "Sell", "Sell": "Buy"})
+
 #: The sides a recorded stop's row binds (`recorded_stops.kind`), each the purpose of its TP/SL
 #: order's materialised row (24 Sec.8.3 rule 7).
 RecordedStopKind = Literal["stop_loss", "take_profit"]

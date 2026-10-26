@@ -94,6 +94,7 @@ from candleviewer.storage.repositories.exchange_payload import (
 )
 from candleviewer.storage.repositories.executions import OrderFill
 from candleviewer.storage.repositories.orders import (
+    CLOSED_BY,
     EVENT_FIELDS,
     MAX_EVENT_PAGE,
     OPEN_STATES,
@@ -418,8 +419,10 @@ def lock_entry_stops_statement(account_id: UUID, order_id: UUID) -> sa.Select[An
 def first_bind_statement(order: NewOrder, binds: RecordedStopBind) -> sa.Update:
     """The record's first bind (24 Sec.8.3 rule 7; `trg_rs_guard` admits the one bind), run after
     its order's insert in that transaction: the account's row `binds` names, of the order's key
-    (symbol, `position_idx`) and side, live, holding no id and never released, while no row of the
-    account holds the order's id (one holder, never two). Scoped by `recorded_stops`' account."""
+    (symbol, `position_idx`) and side, on the position the order closes (`position_side` the
+    opposite of the order's side, defence in depth for the caller's match), live, holding no id
+    and never released, while no row of the account holds the order's id (one holder, never two).
+    Scoped by `recorded_stops`' account."""
     rs, other = recorded_stops.c, recorded_stops.alias("held")
     held: sa.Select[Any] = sa.select(sa.literal_column("1")).where(
         other.c.exchange_account_id == order.exchange_account_id,
@@ -437,6 +440,7 @@ def first_bind_statement(order: NewOrder, binds: RecordedStopBind) -> sa.Update:
         sa.type_coerce(rs.symbol, sa.Text) == order.symbol,  # no DOMAIN operator class
         rs.position_idx == order.position_idx,
         rs.kind == binds.kind,
+        rs.position_side == CLOSED_BY[order.side],
         ~sa.exists(held),
     )
     return stmt.values(exchange_order_id=order.exchange_order_id).returning(rs.id)

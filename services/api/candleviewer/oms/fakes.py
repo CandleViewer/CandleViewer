@@ -664,14 +664,15 @@ class InMemoryOrderStore:
     def _first_bind(self, order: port.NewOrder, binds: port.RecordedStopBind) -> RecordedStopRow:
         """The record's first bind after its order's insert, uncommitted
         (`orders_sqlalchemy.first_bind_statement`), or `RecordedStopNotBindable`: the account's
-        record of the order's key and side, live, unbound and never released, while no row of the
-        account holds the order's id."""
+        record of the order's key and side, on the position the order closes, live, unbound and
+        never released, while no row of the account holds the order's id."""
         stop = self._stops.get(binds.record_id)
         key = (order.exchange_account_id, order.symbol, order.position_idx, binds.kind)
         holds = (order.exchange_account_id, order.exchange_order_id)
         if (
             stop is None
             or (stop.exchange_account_id, stop.symbol, stop.position_idx, stop.kind) != key
+            or stop.position_side != port.CLOSED_BY[order.side]
             or stop.status not in LIVE_STOP_STATUSES
             or stop.exchange_order_id is not None
             or stop.released_at is not None

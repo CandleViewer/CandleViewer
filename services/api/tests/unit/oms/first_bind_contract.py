@@ -130,17 +130,19 @@ class FirstBindContract:
 
     @pytest.mark.parametrize(
         "other",
-        ["account", "symbol", "position_idx", "kind", "missing"],
+        ["account", "symbol", "position_idx", "kind", "side", "missing"],
     )
     async def test_materialise_create_refuses_another_accounts_or_keys_record_and_writes_nothing(
         self, h: Harness, other: str
     ) -> None:
         """The record must be the account's (C-12.4) and of the order's key and side, as the
-        caller matched it; a record id the table does not hold binds nothing either."""
+        caller matched it, on the position the order closes (`side`: a sell order never binds a
+        short position's record, the security lens's F1); a record id the table does not hold
+        binds nothing either."""
         (account, _), (theirs, _) = h.new_account(), h.new_account()
         others: dict[str, dict[str, Any]] = {
             "account": {}, "symbol": {"symbol": "ETHUSDT"}, "position_idx": {"position_idx": 1},
-            "kind": {"kind": "take_profit"}, "missing": {},
+            "kind": {"kind": "take_profit"}, "side": {"position_side": "Sell"}, "missing": {},
         }  # fmt: skip
         over = others[other]
         stop = await live_stop(h, theirs if other == "account" else account, **over)
