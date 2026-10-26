@@ -314,3 +314,25 @@ tests:
               runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
               summary: "The recorder write gate is closed (disk-pressure level 3)."
               tracker: "#567"
+  # Seek anchors (#2223): no_book keeps rising from 1 m, so the 10 m hold fires it at 11 m, not 10 m;
+  # late rises the whole time and never fires; error rises for 5 m only and stays silent.
+  - interval: 1m
+    input_series:
+      - series: 'recorder_anchor_skipped_total{env="demo",reason="no_book"}'
+        values: "0+1x20"
+      - series: 'recorder_anchor_skipped_total{env="demo",reason="late"}'
+        values: "0+1x20"
+      - series: 'recorder_anchor_skipped_total{env="demo",reason="error"}'
+        values: "0+1x5 5+0x15"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RecorderAnchorSkipped
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: RecorderAnchorSkipped
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo, reason: no_book }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderanchorskipped"
+              summary: "Book seek anchors keep being skipped for reason no_book."
+              tracker: "#2223"

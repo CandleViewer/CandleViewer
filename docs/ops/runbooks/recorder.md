@@ -146,6 +146,28 @@ A stale sample closes the gate even on a healthy disk: see `RecorderDiskBudgetSa
 
 **Do not** bypass the write gate or delete recorded data by hand to reopen it.
 
+<a id="alert-recorderanchorskipped"></a>
+
+## RecorderAnchorSkipped
+
+**Symptom.** `recorder_anchor_skipped_total{reason}` has risen for 10 minutes for a reason other
+than `late`. No data is lost (the deltas are still recorded), but replay seeks fall back an
+interval for each skipped anchor. Severity: Ticket. Tracker: #2223.
+
+1. Read the `reason` label on the alert; `late` is expected and never alerts.
+2. Map it: `no_book` = no book for the symbol; `not_live` = the feed is not live (resync or
+   reconnect); `error` = building or writing the anchor raised (API logs); `timeout` = the anchor
+   did not finish in time; `gated` = the write gate is closed; `spilling` = the writer lane is spilling.
+3. For `gated` or `spilling`, check `recorder_disk_pressure_level` and `recorder_spill_bytes`.
+
+**Remediation.** `gated`: follow [RecorderWriteGateClosed](#alert-recorderwritegateclosed).
+`spilling`: follow [RecorderSpilling](#alert-recorderspilling). `no_book` and `not_live`: check
+**CV / Ingestion** for the symbol's book and resync state; they clear when the feed is live.
+`error` and `timeout`: read the API logs for the anchor failure and fix the cause.
+
+**Do not** treat a skip as a gap or backfill rows for it; the existing gap markers cover any
+missing deltas.
+
 ## Related signals
 
 Disk: `DiskHigh` (80 %, `CV_DISK_WARN_PCT`) and `DiskCritical` (95 %, `CV_DISK_HALT_PCT`) in

@@ -18,11 +18,12 @@ RUNBOOK = ROOT / "docs/ops/runbooks/recorder.md"
 #: RetentionStale and `recorder_up` wait for their series to enter the metrics catalogue.
 REQUIRED = {"RecorderSilentStop", "RecorderMessagesDropped", "RecorderSpilling"}
 REQUIRED |= {"RecorderGapBurst", "RollOffWatermarkLag"}
-#: Disk-budget sampling (#4581) and the write gate (#567).
+#: Disk-budget sampling (#4581), the write gate (#567) and skipped seek anchors (#2223).
 TRACKERS = {
     "RecorderDiskBudgetSampleStale": "#4581",
     "RecorderDiskPressureAutostop": "#4581",
     "RecorderWriteGateClosed": "#567",
+    "RecorderAnchorSkipped": "#2223",
 }
 REQUIRED |= set(TRACKERS)
 

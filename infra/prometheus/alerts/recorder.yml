@@ -84,3 +84,13 @@ groups:
           runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
           summary: "The recorder write gate is closed (disk-pressure level 3)."
           tracker: "#567"
+      # Seek anchors (#2223): a skip loses no data, so only a reason other than `late` that keeps
+      # rising for 10 minutes matters. `late` is the expected skip and is excluded.
+      - alert: RecorderAnchorSkipped
+        expr: sum by (env, reason) (increase(recorder_anchor_skipped_total{reason!="late"}[5m])) > 0
+        for: 10m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderanchorskipped"
+          summary: "Book seek anchors keep being skipped for reason {{ $labels.reason }}."
+          tracker: "#2223"
