@@ -70,6 +70,9 @@ def test_alert_rules_resolve_to_runbook_anchors_and_policy_severities() -> None:
     # E27-T02: KekUnavailable links the KEK custody runbook.
     kek = (ROOT / "docs" / "ops" / "runbooks" / "kek-custody.md").read_text(encoding="utf-8")
     anchors |= set(re.findall(r'<a id="([^"]+)"', kek))
+    # E16-T09 (#567): the recorder alert set links the recorder runbook.
+    rec = (ROOT / "docs" / "ops" / "runbooks" / "recorder.md").read_text(encoding="utf-8")
+    anchors |= set(re.findall(r'<a id="([^"]+)"', rec))
     rules = list((ROOT / "infra" / "prometheus" / "alerts").glob("*.y*ml"))
     assert rules, "no alert rule files found"
     bad: list[str] = []

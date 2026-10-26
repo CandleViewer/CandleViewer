@@ -211,3 +211,20 @@ def test_trading_board_shows_account_health_wallet_freshness_and_key_age() -> No
     lined = [p for p in ours if len(p["fieldConfig"]["defaults"]["thresholds"]["steps"]) > 1]
     styles = [p["fieldConfig"]["defaults"]["custom"]["thresholdsStyle"] for p in lined]
     assert styles and all(style == {"mode": "dashed"} for style in styles)
+
+
+def test_recorder_board_has_the_ticket_panels_env_filtered_with_the_disk_ladder() -> None:
+    """#567 (E16-T09): each listed panel reads its series env-filtered; the disk panel draws the
+    80 / 90 / 95 % ladder as dashed lines."""
+    d = json.loads((G / "dashboards" / "recorder.json").read_text("utf-8"))
+    panels = [p for p in d["panels"] if "targets" in p]
+    exprs = [" ".join(t["expr"] for t in p["targets"]) for p in panels]
+    for metric in ("recorder_bytes_written_total", "recorder_rows_total", "ingest_lag_seconds",
+                   "trade_writes_dropped_total", "recorder_write_backlog_rows", "recorder_spill_bytes",
+                   "disk_used_ratio", "recorder_projected_full_timestamp", "trade_gaps_total",
+                   "recorder_watermark_lag_days"):  # fmt: skip
+        assert any(metric in e for e in exprs), metric
+    assert all(e.count('env="$env"') == e.count("{") for e in exprs)
+    disk = next(p for p in panels if p["title"].startswith("Disk used"))["fieldConfig"]["defaults"]
+    assert [s["value"] for s in disk["thresholds"]["steps"]] == [None, 0.8, 0.9, 0.95]
+    assert disk["custom"]["thresholdsStyle"] == {"mode": "dashed"}
