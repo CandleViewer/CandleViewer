@@ -60,3 +60,23 @@ def test_the_rolloff_job_holds_the_pg_advisory_lock_over_the_apps_relational_eng
     assert job is not None  # the real backend builds it (a `None` repo would build nothing)
     assert isinstance(job._lock, PgAdvisoryRunLock)
     assert job._lock._engine is app.state.kline_boundary_pg.engine
+
+
+class _IngestionBooks:
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def anchor(self, symbol: str) -> str:
+        self.asked.append(symbol)
+        return "not_live"
+
+
+def test_the_apps_recorder_anchors_read_the_ingestion_books_lazily(app: Any) -> None:
+    """#2223: the book stream is attached after the recorder is composed, so it is read per call."""
+    ingestion = app.state.app_context.ingestion
+    anchors_books = app.state.recorder.anchors._books
+    ingestion.books = None
+    assert anchors_books.anchor("BTCUSDT") == "no_book"  # nothing attached yet: counted, no error
+    books = _IngestionBooks()
+    ingestion.books = books  # attached after the build
+    assert anchors_books.anchor("BTCUSDT") == "not_live" and books.asked == ["BTCUSDT"]

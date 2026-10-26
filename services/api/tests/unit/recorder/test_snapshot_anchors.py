@@ -248,6 +248,47 @@ async def test_snapshot_anchors_skipped_book_counts_the_reason_and_writes_no_gap
     assert store.gaps == []  # no data is lost: the deltas are still recorded (§13.7)
 
 
+async def test_snapshot_anchors_a_gated_lane_counts_the_gated_reason_and_writes_no_gap_row(
+    tmp_path: Path,
+) -> None:
+    anchors, books, writer, sink, store, clock = await rig(tmp_path)
+    writer._gate = DiskGate(halted=lambda: True, position_open=lambda _s: False)
+    books.books["BTCUSDT"] = snapshot(1)
+    before = skipped("gated")
+
+    await anchors.tick()
+    clock.advance(INTERVAL)
+    await anchors.tick()
+    clock.advance(1)
+    await writer.flush_gaps()
+
+    assert skipped("gated") == before + 1
+    assert await flushed_anchors(writer, sink) == []
+    assert store.gaps == []
+
+
+async def test_snapshot_anchors_a_spilling_lane_counts_the_spilling_reason_and_writes_no_gap_row(
+    tmp_path: Path,
+) -> None:
+    anchors, books, writer, sink, store, clock = await rig(tmp_path)
+    sink.down.add("orderbook_snapshots")
+    await writer.on_book_snapshot(snapshot(1))
+    clock.advance(1)
+    await writer.pump("orderbook_snapshots")  # the flush fails: the lane spills
+    assert writer.is_spilling("orderbook_snapshots")
+    books.books["BTCUSDT"] = snapshot(2)
+    before = skipped("spilling")
+
+    await anchors.tick()
+    clock.advance(INTERVAL)
+    await anchors.tick()
+    clock.advance(1)
+    await writer.flush_gaps()
+
+    assert skipped("spilling") == before + 1
+    assert store.gaps == []
+
+
 async def test_snapshot_anchors_a_raising_book_source_is_an_error_skip_and_others_still_anchor(
     tmp_path: Path,
 ) -> None:
@@ -459,3 +500,14 @@ def test_settings_snapshot_interval_defaults_to_60_s_and_refuses_zero() -> None:
     assert Settings().recorder_snapshot_interval_s == 60
     with pytest.raises(ValueError, match="recorder_snapshot_interval_s"):
         Settings(recorder_snapshot_interval_s=0)
+
+
+@pytest.mark.parametrize(("value", "accepted"), [(3600, True), (3601, False)])
+def test_settings_snapshot_interval_accepts_the_ceiling_and_refuses_above_it(
+    value: int, accepted: bool
+) -> None:
+    if accepted:
+        assert Settings(recorder_snapshot_interval_s=value).recorder_snapshot_interval_s == value
+    else:
+        with pytest.raises(ValueError, match="recorder_snapshot_interval_s"):
+            Settings(recorder_snapshot_interval_s=value)
