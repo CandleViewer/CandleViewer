@@ -12112,7 +12112,10 @@ paths:
         against the live challenge: `challenge_id`, when sent, must name it. A step-up for a
         no-grace class (named by the live challenge or by `action_class`) must send it: without
         it, or without a live challenge, the answer is `400`, so `action_class` alone never
-        elevates a no-grace class. Audit: `auth.step_up_required` records the `challenge_id`;
+        elevates a no-grace class. The `200` echoes the consumed `challenge_id` (additive,
+        defence in depth), so a client can tell which refused request the grant answers; it is
+        omitted when no challenge was consumed and is never a challenge the grant did not use.
+        Audit: `auth.step_up_required` records the `challenge_id`;
         `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a
         no-grace class; `auth.step_up_mismatch` records the bound and the refused request's
         fingerprints. No audit record carries `action_summary`, `target`, a request body, the
@@ -12277,7 +12280,44 @@ paths:
                     type: ["string", "null"]
                     format: date-time
                     description: End of the grace window shown in the dialog; null for no-grace classes.
+                  challenge_id:
+                    type: string
+                    format: uuid
+                    description: >
+                      The `challenge_id` of the challenge this step-up consumed (#2304, additive,
+                      C-6.3). Present when the step-up answered a live challenge, which is always
+                      the case for a no-grace class and for a grace class that sent `challenge_id`
+                      or had a live challenge. A client uses it to tell which refused request the
+                      grant answers. Absent when no challenge was consumed (a grace class named by
+                      `action_class` with no live challenge); the server never echoes a challenge
+                      the grant did not consume.
                   tokens: { $ref: "#/components/schemas/TokenBundle" }
+              examples:
+                noGraceWithChallenge:
+                  summary: A no-grace class; echoes the challenge the one-shot grant consumed
+                  value:
+                    elevated_until: "2026-10-15T12:01:00Z"
+                    action_class: killswitch
+                    single_use: true
+                    step_up_expires_at: null
+                    challenge_id: "0193f2bb-7a10-7c3e-9d55-2b6f4c1a8e01"
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 900
+                graceWithoutChallenge:
+                  summary: A grace class named by `action_class` with no live challenge; no `challenge_id`
+                  value:
+                    elevated_until: "2026-10-15T12:05:00Z"
+                    action_class: users
+                    single_use: false
+                    step_up_expires_at: "2026-10-15T12:05:00Z"
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 900
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

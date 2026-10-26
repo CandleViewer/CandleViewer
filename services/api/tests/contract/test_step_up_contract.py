@@ -167,3 +167,32 @@ def test_step_up_ignores_idempotency_keys_like_every_token_minting_operation(
     """A replay layer must never store or replay a response that carries a token bundle."""
     step_up = spec["paths"]["/auth/step-up"]["post"]
     assert step_up["x-idempotency"] == spec["paths"][minting]["post"]["x-idempotency"] == "ignored"
+
+
+def test_step_up_ok_declares_the_optional_consumed_challenge_id(spec: dict[str, Any]) -> None:
+    """#2304 (additive, C-6.3): `challenge_id` is an optional uuid, never required."""
+    body = _body(spec, "/auth/step-up")
+    member = body["properties"]["challenge_id"]
+    assert (member["type"], member["format"]) == ("string", "uuid")
+    assert "challenge_id" not in body["required"]
+    text = _flat(member["description"])
+    assert "the challenge this step-up consumed" in text
+    assert "never echoes a challenge the grant did not consume" in text
+    assert "The `200` echoes the consumed `challenge_id`" in _flat(
+        spec["paths"]["/auth/step-up"]["post"]["description"]
+    )
+
+
+def test_step_up_ok_examples_conform_and_show_both_shapes(spec: dict[str, Any]) -> None:
+    examples = _ok(spec, "/auth/step-up")["content"]["application/json"]["examples"]
+    assert set(examples) == {"noGraceWithChallenge", "graceWithoutChallenge"}
+    for example in examples.values():
+        _validator(spec).validate(example["value"])
+    assert examples["noGraceWithChallenge"]["value"]["single_use"] is True
+    assert "challenge_id" in examples["noGraceWithChallenge"]["value"]
+    assert "challenge_id" not in examples["graceWithoutChallenge"]["value"]
+
+
+def test_step_up_ok_rejects_a_challenge_id_that_is_not_a_uuid(spec: dict[str, Any]) -> None:
+    with pytest.raises(ValidationError, match="is not a 'uuid'"):
+        _validator(spec).validate({**_granted(spec), "challenge_id": "not-a-uuid"})
