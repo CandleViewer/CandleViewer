@@ -52,6 +52,7 @@ from candleviewer.secrets import (
     ExportSigner,
     KcvStore,
     LoopSigning,
+    LoopStoreFactory,
     RotationRunning,
     SecretsError,
     SecretsLifecycle,
@@ -79,18 +80,13 @@ SecretsHandle = SecretsLifecycle
 SecretsMeta = SecretsMetadata
 #: The order lane's loop signing (#913 L3b), so the lane's wiring names no `secrets` type.
 LoopSigningHandle = LoopSigning
-#: #913 L1d: the borrower a `LoopSigningHandle` signs with, as the adapter's `lane_trading_port`
-#: takes it, so the lane's wiring names no `secrets` type either.
-LoopSigningBorrower = CredentialBorrower
-#: #913 L1d: the root's factory of the lane's own credential store, which only M2 calls
-#: (`mint_loop_signing`): the store over a pool of its own, at M2's bound, and its release.
-LoopStores = Callable[[int], tuple[CredentialStore, Callable[[], Awaitable[None]]]]
 
 
 class LaneAuditWriter(Protocol):
-    """`AuditWriter`'s durable appends, as the order lane holds its own (#913 L1d) and the OMS's
-    `AuditWriterPort` is: L2's lane writer or, until it lands, the OMS's hop to the serving loop's
-    writer, never that writer itself. M2 writes its records ahead through `emit` (C-2.9)."""
+    """`AuditWriter.emit`, the durable append M2 writes its records ahead through (C-2.9), as the
+    order lane holds its own writer (#913 L1d): L2's lane writer or, until it lands, the OMS's hop
+    to the serving loop's writer, never that writer itself. Each parameter is the writer's, of its
+    kind and with its default."""
 
     async def emit(
         self,
@@ -102,15 +98,13 @@ class LaneAuditWriter(Protocol):
         session_id: uuid.UUID | None = None,
         object_kind: str | None = None,
         object_id: str | None = None,
-        outcome: Any = ...,
-        severity: Any = ...,
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        severity: Severity = Severity.INFO,
         reason: str | None = None,
         after_state: dict[str, Any] | None = None,
         request_id: uuid.UUID | None = None,
-        env: Any = None,
+        env: ExchangeEnv | None = None,
     ) -> None: ...
-
-    async def emit_keyed(self, action: str, name: str, **fields: Any) -> None: ...
 
 
 class LaneSigningBinder(Protocol):
@@ -147,7 +141,6 @@ __all__ = [
     "LaneAuditWriter",
     "LaneNotWired",
     "LaneSigningBinder",
-    "LoopSigningBorrower",
     "LoopSigningHandle",
     "MachineEventSinkHandle",
     "MachineEventSinkMetrics",
@@ -281,7 +274,7 @@ def build_secrets_service(
     auth_keys: AuthKeyStore | None = None,
     export_keys: ExportKeyStore | None = None,
     *,
-    loop_store: LoopStores | None = None,
+    loop_store: LoopStoreFactory | None = None,
 ) -> SecretsBundle:
     """Construct M2 once and split it into narrow capabilities. No I/O; the KEK is loaded in
     `start()`. Without an injected store (fake backend) every credential op fails closed. A KEK
@@ -305,7 +298,7 @@ def _serving_writer(audit: object) -> object:
 
 
 def secrets_bundle(
-    svc: SecretsService, *, serving: object = None, loop_store: LoopStores | None = None
+    svc: SecretsService, *, serving: object = None, loop_store: LoopStoreFactory | None = None
 ) -> SecretsBundle:
     """Every capability of `svc`, each minted here: `build_secrets_service`'s, and a test's that
     builds a service of its own. `serving` is the serving loop's audit service: bound to that
