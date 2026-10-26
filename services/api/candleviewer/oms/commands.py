@@ -1150,9 +1150,11 @@ class OmsCommandPort:
         by: float | None = None,
     ) -> None:
         """The request's answer on its rows: `answered`, or `refused`, each void audited ahead
-        (`sl.modified`, or `tp.modified` for a take-profit side) with `reason`. A settle that fails
-        leaves the rows in flight, for the complete read (21 Sec.3.3.11), and is logged: the
-        exchange's answer stands."""
+        (`sl.modified`, or `tp.modified` for a take-profit side) with `reason`. A void's key names
+        the reason, `<reason>:<row id>`, as the stop gate's and the sweep's do: an amend's request
+        holds `<row id>` under the same action, and a void keyed the same would be deduped
+        against it and lost (#4587). A settle that fails leaves the rows in flight, for the
+        complete read (21 Sec.3.3.11), and is logged: the exchange's answer stands."""
         ids = [row.id for row in recorded]
         account_id, at = recorded[0].exchange_account_id, _at(self._now_us())
         try:
@@ -1161,9 +1163,12 @@ class OmsCommandPort:
                 return
             voided = {**detail, "error_code": error_code}
             records = [
-                _stop_record(_MODIFIED[row.kind], row, "denied", "warning", reason, voided)
+                _stop_record(
+                    _MODIFIED[row.kind], row, "denied", "warning", reason, voided,
+                    name=f"{reason}:{row.id}",
+                )
                 for row in recorded
-            ]
+            ]  # fmt: skip
 
             async def void(_rows: tuple[RecordedStopRow, ...]) -> None:
                 for record in records:
@@ -1638,13 +1643,15 @@ def _stop_record(
     reason: str,
     detail: Mapping[str, str | None],
     actor: SubmitActor | None = None,
+    *,
+    name: str | None = None,
 ) -> KeyedRecord:
-    """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11); it
-    names the row's own principal (`actor_user_id`), with the role when the request's `actor` is
-    given (C-2.9)."""
+    """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11), or
+    `name` when given (a void's, `<reason>:<row id>`); it names the row's own principal
+    (`actor_user_id`), with the role when the request's `actor` is given (C-2.9)."""
     return KeyedRecord(
         action=action,
-        name=str(row.id),
+        name=str(row.id) if name is None else name,
         account_id=row.exchange_account_id,
         object_kind="recorded_stop",
         object_id=row.id,
