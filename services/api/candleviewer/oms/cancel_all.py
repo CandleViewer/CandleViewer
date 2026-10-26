@@ -1,7 +1,7 @@
 """`cancelAllOrders`'s service (E29-T04 #913 slice 4, S4-E; 22 `cancelAllOrders`; the
 orchestrator's Q1, Q6 and Q12 rulings and S4-A's counting rules): per-order B1 cancels across the
-accounts a request names, never the venue's own cancel-all (S4-F's, for the unrestricted request
-only).
+accounts a request names, folded into the venue's own cancel-all only for an unrestricted request
+on a symbol the venue's call would cover (S4-F, 24 Sec.8.7; the 21:11Z ruling).
 
 Each step before the next:
 
@@ -22,7 +22,13 @@ Each step before the next:
    none of its orders is sent a cancel.
 3. **The cancels.** One `cancel_admitted` per selected order with reason `cancel_all`, each written
    ahead and audited `orders.cancel` by the exit service (Q12): at most `accounts_at_once` accounts
-   at a time, one order at a time on each. Under 04 Sec.7.2.2 row 14 a Manager's cancel-all covers
+   at a time, one order at a time on each, in the order read. An unrestricted request (no
+   intents, `exclude_reduce_only: false`) may fold one symbol's cancels (S4-F, `folds`): when the
+   symbol has at least `FOLD_MIN` selected orders and the fold port's `poll`-lane read, at its
+   first order's turn, shows every plain order resting there selected, that symbol's orders are
+   commanded together there, each still written ahead, and meet one venue `cancel-all` at the
+   port (`cancel_all_coalescer`); any other order, or a fold the port refuses, goes one at a time.
+   Under 04 Sec.7.2.2 row 14 a Manager's cancel-all covers
    every order of a granted trade account, so no order is checked for its creator (Q6 binds the
    single-order routes). Every selected order of an account is sent its cancel, whatever an earlier
    one's outcome, and one account's failure never undoes another's cancels.
@@ -43,16 +49,20 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Sequence
+from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass
 from typing import Final, Protocol, cast
 from uuid import UUID
 
 import structlog
 
+from candleviewer.domain.primitives import AccountId, Symbol
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability import spawn_child
+from candleviewer.oms.cancel_all_fold import FoldRefused
 from candleviewer.oms.exits import CancelReason, ExitOutcome
-from candleviewer.oms.ports import SubmitActor
+from candleviewer.oms.ports import SubmitActor, TradingAccounts
 from candleviewer.oms.recovery import FINALS
 from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import AccountScope
@@ -64,9 +74,10 @@ from candleviewer.storage.repositories.orders import (
 )
 
 __all__ = [
-    "ACCOUNTS_AT_ONCE", "DEADLINE_S", "EXCHANGE_UNAVAILABLE", "READ_TIMEOUT_S", "REASON",
-    "SELECTABLE", "STORE_UNAVAILABLE", "TIMEOUT", "AccountCancels", "AccountError", "CancelAll",
-    "CancelAllOutcome", "CancelAllRequest", "Exits", "OrderReads", "ScopedAccounts", "selected",
+    "ACCOUNTS_AT_ONCE", "DEADLINE_S", "EXCHANGE_UNAVAILABLE", "FOLD_MIN", "READ_TIMEOUT_S",
+    "REASON", "SELECTABLE", "STORE_UNAVAILABLE", "TIMEOUT", "AccountCancels", "AccountError",
+    "CancelAll", "CancelAllOutcome", "CancelAllRequest", "Exits", "Fold", "Folds", "OrderReads",
+    "ScopedAccounts", "selected", "unrestricted",
 ]  # fmt: skip
 
 #: Each touched order's `orders.cancel` reason (Q12).
@@ -79,6 +90,9 @@ ACCOUNTS_AT_ONCE: Final = 5
 DEADLINE_S: Final = 20.0
 #: Each account's `list_open` bound (the scope's is the exit service's own).
 READ_TIMEOUT_S: Final = 2.0
+#: The fewest selected orders of one symbol a fold takes: one alone gains nothing from the venue's
+#: call and would spend its UID's second of cancel-all, so it is cancelled by its own command.
+FOLD_MIN: Final = 2
 #: An account whose orders could not be read: none of its orders is sent a cancel.
 STORE_UNAVAILABLE: Final = "store_unavailable"
 #: An order whose cancel met a transport fault: its outcome is not known, left to B1, never re-sent.
@@ -165,6 +179,32 @@ class Exits(Protocol):
     ) -> ExitOutcome: ...
 
 
+class Fold(Protocol):
+    """An open fold's join, as the service reads it: a member that will not arrive leaves it."""
+
+    def leave(self, link: str) -> None: ...
+
+
+class Folds(Protocol):
+    """The venue cancel-all fold's port (S4-F, `cancel_all_coalescer.CancelAllCoalescer`)."""
+
+    async def coverage(
+        self, account: AccountRef, symbol: Symbol, members: Collection[str]
+    ) -> bool: ...
+
+    def fold(
+        self, account: AccountRef, symbol: Symbol, members: Collection[str]
+    ) -> AbstractContextManager[Fold]:
+        """The members' fold while the block runs; `FoldRefused`, raised entering it, when one
+        of them is already in another open fold."""
+        ...
+
+
+def unrestricted(request: CancelAllRequest) -> bool:
+    """Whether the request may fold (24 Sec.8.7): every intent, reduce-only orders included."""
+    return not request.intents and request.exclude_reduce_only is False
+
+
 def selected(rows: Iterable[OrderRow], request: CancelAllRequest) -> tuple[OrderRow, ...]:
     """Step 2's filter over one account's open orders, in the order read (oldest first)."""
     return tuple(
@@ -175,6 +215,14 @@ def selected(rows: Iterable[OrderRow], request: CancelAllRequest) -> tuple[Order
         and (not request.intents or row.intent in request.intents)
         and not (request.exclude_reduce_only and row.reduce_only)
     )
+
+
+def _foldable(rows: Iterable[OrderRow]) -> dict[str, list[OrderRow]]:
+    """Each symbol with at least `FOLD_MIN` of `rows`, its rows in the order read."""
+    groups: dict[str, list[OrderRow]] = {}
+    for row in rows:
+        groups.setdefault(row.symbol, []).append(row)
+    return {symbol: group for symbol, group in groups.items() if len(group) >= FOLD_MIN}
 
 
 def _failure(outcome: ExitOutcome) -> AccountError | None:
@@ -251,6 +299,7 @@ class CancelAll:
         reads: OrderReads,
         exits: Exits,
         *,
+        folds: tuple[Folds, TradingAccounts] | None = None,
         accounts_at_once: int = ACCOUNTS_AT_ONCE,
         deadline_s: float = DEADLINE_S,
         read_timeout_s: float = READ_TIMEOUT_S,
@@ -258,6 +307,7 @@ class CancelAll:
         if isinstance(accounts_at_once, bool) or accounts_at_once < 1:
             raise ValueError("accounts_at_once must be at least 1")
         self._reads, self._exits, self._accounts_at_once = reads, exits, accounts_at_once
+        self._folds = folds
         self._deadline_s = _bound("deadline_s", deadline_s)
         self._read_timeout_s = _bound("read_timeout_s", read_timeout_s)
 
@@ -291,19 +341,96 @@ class CancelAll:
         )
 
     async def _work(self, run: _Run, account: UUID) -> None:
-        """One account: its read, then each selected order's cancel in turn."""
+        """One account: its read, then each selected order's cancel in turn, in the order read.
+        Where a fold may apply, a symbol with at least `FOLD_MIN` selected orders is read for
+        coverage at its first order's turn, and, covered, its orders go together there."""
         tally = run.tallies[account]
         async with run.gate:
             rows = await self._selected(account, run.request)
             if rows is None:
                 tally.error = AccountError(STORE_UNAVAILABLE, retryable=True)
+            groups = _foldable(rows or ())
+            port = await self._fold_port(account, run.request) if groups else None
+            folded: set[str] = set()
             for row in rows or ():
-                tally.count(
-                    await self._exits.cancel_admitted(
-                        row, actor=run.actor, reason=REASON, request_id=run.request_id
-                    )
-                )
+                if row.symbol in folded:
+                    continue  # cancelled with its fold, at its first order's turn
+                group = groups.pop(row.symbol, None)
+                if port is not None and group is not None:
+                    if await self._covered(port, row.symbol, group):
+                        folded.add(row.symbol)
+                        for outcome in await self._folded(run, port, row.symbol, group):
+                            tally.count(outcome)
+                        continue
+                tally.count(await self._cancel(run, row))
             tally.finished = True
+
+    async def _cancel(self, run: _Run, row: OrderRow) -> ExitOutcome:
+        return await self._exits.cancel_admitted(
+            row, actor=run.actor, reason=REASON, request_id=run.request_id
+        )
+
+    async def _fold_port(
+        self, account: UUID, request: CancelAllRequest
+    ) -> tuple[Folds, AccountRef] | None:
+        """The fold port with the account as the venue knows it, for an unrestricted request;
+        else, or when the account cannot be read in time, None: per-order cancels. A read that
+        answers another account's ref is a defect, as the command port's would be (SR-E27-21):
+        nothing is read or sent with it, and the account stays on per-order cancels."""
+        if self._folds is None or not unrestricted(request):
+            return None
+        folds, accounts = self._folds
+        try:
+            async with asyncio.timeout(self._read_timeout_s):
+                ref = await accounts.trading_account(AccountId(account))
+        except Exception as exc:  # no venue account read: the per-order path, its own refusals
+            _log().warning("oms_cancel_all_fold_account_unread", failure=type(exc).__name__)
+            return None
+        if ref.account_id != account:  # no identifier logged: the mismatch is the signal
+            _log().warning("oms_cancel_all_fold_account_mismatch")
+            return None
+        return folds, ref
+
+    async def _covered(
+        self, port: tuple[Folds, AccountRef], symbol: str, group: Sequence[OrderRow]
+    ) -> bool:
+        """The fold port's coverage read, bounded; a read past the bound is no proof of it."""
+        (folds, ref), links = port, [row.order_link_id for row in group]
+        try:
+            async with asyncio.timeout(self._read_timeout_s):
+                return await folds.coverage(ref, Symbol(symbol), links)
+        except TimeoutError:
+            _log().warning("oms_cancel_all_coverage_late")
+            return False
+
+    async def _folded(
+        self, run: _Run, port: tuple[Folds, AccountRef], symbol: str, group: Sequence[OrderRow]
+    ) -> list[ExitOutcome]:
+        """One symbol's orders commanded together inside their fold (the 21:11Z ruling, Q2): each
+        member that finishes leaves it, so a member refused before its send never holds the
+        others. A fold the port refuses (`FoldRefused`: an order already meets another request's
+        fold) runs the orders in turn instead, as it is raised entering the fold."""
+        (folds, ref), links = port, [row.order_link_id for row in group]
+        stack = ExitStack()
+        try:
+            join = stack.enter_context(folds.fold(ref, Symbol(symbol), links))
+        except FoldRefused:
+            _log().warning("oms_cancel_all_fold_refused", symbol=symbol)
+            return [await self._cancel(run, row) for row in group]
+
+        async def member(row: OrderRow) -> ExitOutcome:
+            try:
+                return await self._cancel(run, row)
+            finally:
+                join.leave(row.order_link_id)
+
+        with stack:
+            async with asyncio.TaskGroup() as members:
+                tasks = [
+                    spawn_child(members, member(row), name="oms-cancel-all-fold-member")
+                    for row in group
+                ]
+        return [task.result() for task in tasks]
 
     async def _selected(
         self, account: UUID, request: CancelAllRequest

@@ -53,16 +53,16 @@ PROTECTIVE_WRITES: Final[Mapping[str, tuple[tuple[str, str], str]]] = MappingPro
 class ProtectiveWrites:
     """The protective writes' registry and its tripwire.
 
-    One of the six handlers is mounted, `cancelAllOrders` (E29-T04, #913 slice 4); E39-S03 mounts
-    `setKillSwitch`, E29-T07 `amendOrder` and `setPositionTpSl`, E34-S03 `amendTradeGroup`, and
-    E29-T04 `cancelOrder`. Each handler registers its operation as it is mounted
-    (`register`). It then decides view-as itself, after validation and before it asks for a
-    step-up (#3223 item 4, option a). A request with any non-protective component is refused
-    `view_as_read_only`, or `view_as_expired` in a hold, before any effect, binds no key and
-    writes its refusal record (`ViewAsRefusalRecorder.refuse_operation`); a cancel has none, as
-    every cancel is a risk-reducing exit (C-2.6; 22 "View-as session", Protective writes).
-    The write runs as the viewer and is admitted only when both the viewer's own RBAC and the
-    target's allow it; in the hold it runs in the viewer's own scope.
+    One of the six handlers is registered, `cancelAllOrders` (E29-T04, #913 slice 4); E39-S03
+    mounts `setKillSwitch`, E29-T07 `amendOrder` and `setPositionTpSl`, E34-S03 `amendTradeGroup`,
+    and E29-T04 registers `cancelOrder`, whose handler is mounted already. Each handler registers
+    its operation as it is mounted (`register`). It then decides view-as itself, after validation
+    and before it asks for a step-up (#3223 item 4, option a). A request with any non-protective
+    component is refused `view_as_read_only`, or `view_as_expired` in a hold, before any effect,
+    binds no key and writes its refusal record (`ViewAsRefusalRecorder.refuse_operation`); a cancel
+    has none, as every cancel is a risk-reducing exit (C-2.6; 22 "View-as session", Protective
+    writes). The write runs as the viewer and is admitted only when both the viewer's own RBAC and
+    the target's allow it; in the hold it runs in the viewer's own scope.
 
     The contract makes engaging the kill switch on an account set (`engaged: true`,
     `scope: accounts`) protective, and refuses its release and `scope: global`. Any default

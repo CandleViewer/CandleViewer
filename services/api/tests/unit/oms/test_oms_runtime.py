@@ -35,6 +35,7 @@ from candleviewer.exchange.base.models import AccountRef, Position, RateLane
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest
+from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.commands import OmsCommandPort
 from candleviewer.oms.errors import (
     AccountScopeDenied,
@@ -355,6 +356,25 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
     assert [world.gauge(name) for name in (*INTERIMS, "machine_event_sink")] == [1.0] * 6
     assert world.log == ["sink.start", "sink.stop", "pool.release"] and port.closed
     assert not b01.ports_wired()
+
+
+async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serving_hop() -> None:
+    """CR-S4F-09 (S4-F): the OMS reaches the venue through the cancel-all fold port the wiring
+    builds. The router routes the environment to it, so the submit pipeline and B1's command
+    port meet it, and cancel-all's fold port is that same instance. It wraps the served port, so
+    the folds run on the order lane, before the hop to the serving loop; its calls still out at
+    the stop end once the machines have stopped."""
+    world = World()
+    async with started(world.runtime()) as runtime:
+        parts = runtime._composed()
+        folds = parts.submission._router.port_for("demo")
+        assert isinstance(folds, CancelAllCoalescer)
+        assert isinstance(folds._inner, oms_wiring.ServedPort)
+        commands = cast(OmsCommandPort, parts.exits._d.commands)
+        assert commands._router.port_for("demo") is folds
+        assert parts.cancel_all._folds is not None and parts.cancel_all._folds[0] is folds
+        names = [name for name, _ in parts.closers]
+        assert names.index("cancel_all_folds") == names.index("machines") + 1
 
 
 @pytest.mark.parametrize(

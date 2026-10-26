@@ -172,6 +172,7 @@ from candleviewer.storage.repositories.recorded_stops import (
     StopKind,
 )
 
+from .cancel_all_coalescer import unfolded
 from .classify import REDUCING_INTENTS
 from .clock_halt import ClockHalt
 from .errors import (
@@ -1254,7 +1255,8 @@ class OmsCommandPort:
             exchange_order_id=row.exchange_order_id,
         )
         try:
-            ack = await self._venue_gated(account, port.cancel_order(request), by=by)
+            call = port.cancel_order(request)  # a KILL's never waits on a cancel-all fold
+            ack = await self._venue_gated(account, unfolded(call) if kill else call, by=by)
         except RateBudgetExceededError as exc:
             _log().warning("oms_cancel_rate_refused", order_link_id=link, kill=kill)
             code, wait = OmsErrorCode.RATE_BUDGET_EXCEEDED.value, retry_after(exc.retry_after_s)

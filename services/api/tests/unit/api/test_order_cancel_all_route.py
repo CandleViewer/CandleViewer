@@ -80,6 +80,14 @@ _RESULT = Draft202012Validator(
 )
 #: A first `200` the 24 h record holds for the key under another body's fingerprint.
 _OTHER_BODY = StoredResponse("0" * 64, 200, b"{}", None)
+_SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
+#: 22's `InternalError` example: the redacted `500` its text says every exit route answers.
+[_FAULT_BODY] = [
+    shown["value"]
+    for shown in _SPEC["components"]["responses"]["InternalError"]["content"][
+        "application/problem+json"
+    ]["examples"].values()
+]
 
 
 def _row(n: int, account: UUID = ACCOUNT, **over: Any) -> OrderRow:
@@ -675,13 +683,16 @@ async def test_a_stop_begun_after_step_3_answers_not_ready_and_frees_the_key() -
 
 
 async def test_a_run_that_raises_answers_500_pages_and_keeps_nothing() -> None:
+    """The redacted `500` (22 `InternalError`, its example as it stands), paged once by the
+    fault's class; nothing kept, and the in-flight key free again (N1, S4-E's delta 4)."""
     world = World()
     world.oms.broken = True
     answer = await post(world, "owner", {})
-    assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
+    assert (answer.status_code, answer.json()) == (500, _FAULT_BODY)
     assert world.pager.pages == [f"{EXIT_FAULT_PAGE}:ExceptionGroup"]  # one page by its class
     assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is None
     assert world.refused("internal_error") == 1
+    assert not isinstance(world.oms.exits.guard.claim(USER, "cancel_all", KEY), ExitOutcome)
 
 
 async def test_a_lane_stopped_after_the_scope_answers_not_ready_unpaged_and_frees_the_key() -> None:

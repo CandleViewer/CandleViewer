@@ -486,10 +486,10 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
     """#3085, #913: `create_app`'s own wiring of the view-as guard's `permissions=`, `identity=`
     and `denials=`, which the unit tests (`test_view_as_gate.py`) build by hand. An Owner viewing
     a Viewer, who holds no `orders:write`, sends a cancel whose handler has registered
-    (`cancelOrder` is not mounted yet, so the case registers it as its route will): `403
-    forbidden` before any handler, counted, and one `rbac.denied` naming the Owner, the Owner's
-    session and address as the actor and the Viewer as the object, and the refused operation (22
-    "View-as session")."""
+    (`cancelOrder`'s handler is mounted but not registered yet, so the case registers it as its
+    route will): `403 forbidden` before any handler, counted, and one `rbac.denied` naming the
+    Owner, the Owner's session and address as the actor and the Viewer as the object, and the
+    refused operation (22 "View-as session")."""
     admin.elevate(["users"])  # the start's step-up class
     owner, viewer = admin.actors["owner"], admin.actors["viewer"]
     start = {"json": {"target_user_id": str(viewer.user_id), "reason": "cancel check"}}
