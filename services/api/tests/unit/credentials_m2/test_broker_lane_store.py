@@ -213,13 +213,13 @@ def test_the_self_check_does_nothing_on_its_loop_and_refuses_off_it_or_once_clos
     error rate); on another loop, or once closed, it is `signing_loop_mismatch`, as a signing
     there would be, before anything is read."""
     logged, borrows = len(rig.log), _borrows()
-    rig.lane.run(_on(rig.signing.self_check))
+    rig.lane.run(rig.signing.self_check())
     for refused_on in ("serving", "closed"):
         if refused_on == "closed":
             rig.lane.run(rig.signing.aclose())
         on = rig.serving if refused_on == "serving" else rig.lane
         with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
-            on.run(_on(rig.signing.self_check))
+            on.run(rig.signing.self_check())
     assert (rig.log[logged:], _borrows()) == ([], borrows)
 
 

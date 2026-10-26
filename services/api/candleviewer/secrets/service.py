@@ -219,7 +219,7 @@ class LoopSigning:
         self,
         borrower: CredentialBorrower,
         close: Callable[[], Awaitable[None]],
-        check: Callable[[], None],
+        check: Callable[[], Awaitable[None]],
     ) -> None:
         self.borrower, self.__close, self.__check = borrower, close, check
 
@@ -231,11 +231,11 @@ class LoopSigning:
         Idempotent."""
         await self.__close()
 
-    def self_check(self) -> None:
+    async def self_check(self) -> None:
         """On its own loop, what M2's loop check answers a signing there, with nothing read,
         recorded, decrypted or counted as a borrow: `signing_loop_mismatch` on another loop or once
         closed, so a wiring fault fails the lane's start, never an order's signing (#913 L1d)."""
-        self.__check()
+        await self.__check()
 
 
 class SecretsLifecycleFacade:
@@ -919,7 +919,7 @@ def mint_loop_signing(
                 raise
             m.credential_loop_pools.dec()
 
-        def check() -> None:
+        async def check() -> None:
             broker = service._broker  # degraded: every signing is refused before the loop check
             if broker is not None:
                 broker._bound(io, caller_module)
