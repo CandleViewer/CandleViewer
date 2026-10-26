@@ -878,7 +878,8 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
         f"So the OMS ticks on the serving loop every {tick:g} s (`SERVING_TICK_S`), a stamp the "
         f"lane reads in place, and once the last tick is over {stale:g} s old, twice that "
         "(`SERVING_STALE_S`), new submits and risk-increasing amends are refused `oms_not_ready` "
-        "(`FencedSwitches`: the route's step 10, the pipeline's switches, a re-send, and the exit "
+        "(`FencedSwitches`: the route's step 10, the pipeline's switches and its unsent-order "
+        "refusal, a re-send, and the exit "
         "service's gate read for a risk-increasing amend, which meets the gate as a submit does: "
         "SR-E28-27, C-2.21), until the serving loop ticks again, never as time passes.",
         "The fence never holds a protective amend, a cancel, cancel-all, a stop attach or a KILL, "
