@@ -564,9 +564,11 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/trading/kill-switch", "killswitch"),  # E39: release only
     ("POST", "/session/environment", "live_enablement"),  # E44: to live only
     ("PUT", "/rules/{ruleId}/mode", "live_enablement"),  # E35-S01: arming a live-scoped rule
-    # E16-T06: irreversible purge. The handler checks RBAC, then owner-only (capability 9a),
-    # THEN step-up, so a non-owner gets the audited `purge_owner_only`, not a step-up prompt.
-    ("POST", "/admin/recorder/purge", "recorder"),
+    # E16-T06: irreversible purge, the no-grace `recorder_purge` class. The handler checks RBAC,
+    # then owner-only (capability 9a), then the body, THEN spends one fresh code bound to the
+    # request it validated, so a non-owner gets the audited `purge_owner_only`, not a step-up
+    # prompt; its write-ahead `retention.purge` record names the spent grant's `challenge_id`.
+    ("POST", "/admin/recorder/purge", "recorder_purge"),
     # restoreBackup (04 §7.2.2 row 52, #2751), no-grace and irreversible. A no-grace grant is
     # bound to the request its handler validated (#2304), which a path alone cannot name, so a
     # path-gated no-grace class fails closed: the handler gates it after RBAC and validation, with

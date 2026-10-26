@@ -242,14 +242,7 @@ def _text(op: dict[str, Any]) -> str:
 _FIELD_NOT_CLASS: dict[str, frozenset[str]] = {"getMe": frozenset({"accounts"})}
 #: Contract first (C-6.1): a class an operation's text names before its route slice registers
 #: it. E27-S04's revoke slice (#898) adds revoke's `accounts` row for `flatten_first`.
-_DOCUMENTED_AHEAD: dict[str, frozenset[str]] = {
-    "revokeApiKey": frozenset({"accounts"}),
-    # E16-T06's route slice (#490) moves the purge's handler row to `recorder_purge`.
-    "purgeRecordedData": frozenset({"recorder_purge"}),
-}
-#: The other side of a `_DOCUMENTED_AHEAD` move: a class the registry still gates an operation
-#: with after its contract text moved it to another class, until the route slice lands the move.
-_REGISTERED_BEHIND: dict[str, frozenset[str]] = {"purgeRecordedData": frozenset({"recorder"})}
+_DOCUMENTED_AHEAD: dict[str, frozenset[str]] = {"revokeApiKey": frozenset({"accounts"})}
 
 
 def _documented_classes(op: dict[str, Any]) -> frozenset[str]:
@@ -397,16 +390,12 @@ def test_registered_classes_are_the_documented_classes() -> None:
         for key, op in _contract_operations().items()
         if (registered := _registered_classes(*key))
         and (documented := _documented_or_pinned_classes(op))
-        and registered - _REGISTERED_BEHIND.get(op["operationId"], frozenset())
-        != documented - _DOCUMENTED_AHEAD.get(op["operationId"], frozenset())
+        and registered != documented - _DOCUMENTED_AHEAD.get(op["operationId"], frozenset())
     }
     assert drift == {}
     for operation_id, ahead in _DOCUMENTED_AHEAD.items():  # a landed class leaves the list
         key, op = _operation(operation_id)
         assert ahead <= _documented_classes(op) and not ahead & _registered_classes(*key)
-    for operation_id, behind in _REGISTERED_BEHIND.items():  # a landed move leaves the list
-        key, op = _operation(operation_id)
-        assert behind <= _registered_classes(*key) and not behind & _documented_classes(op)
 
 
 def test_allow_listed_operations_name_no_step_up_class() -> None:
@@ -636,9 +625,13 @@ def test_delete_backup_is_handler_gated_because_its_grant_binds_one_request() ->
 
 
 def test_recorder_purge_is_handler_gated_not_middleware_gated() -> None:
-    """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check."""
+    """E16-T06 review (a): middleware step-up would pre-empt the handler's owner-only check. Its
+    class is the no-grace `recorder_purge`: each purge spends one fresh code bound to the request
+    its handler validated, which a path cannot name; the `recorder` grace class never gates it."""
     assert dangerous_action_class("POST", "/admin/recorder/purge") is None
-    assert ("POST", "/admin/recorder/purge", "recorder") in HANDLER_GATED_ROUTES
+    assert ("POST", "/admin/recorder/purge", "recorder_purge") in HANDLER_GATED_ROUTES
+    assert ("POST", "/admin/recorder/purge", "recorder") not in HANDLER_GATED_ROUTES
+    assert "recorder_purge" in NO_GRACE_ACTION_CLASSES
     assert not _ungated("POST", "/admin/recorder/purge")
 
 
@@ -724,7 +717,7 @@ _RECORDING_WRITES: dict[str, tuple[str, str | None]] = {
     # A stop keeps the pin and refuses purge_data=true (#492 rulings Q3, Q4): row 8 only. 22
     # agrees: removeRecordedSymbol names no step-up (add, PATCH and pin each name `recorder`).
     "removeRecordedSymbol": ("allow-listed", None),
-    "purgeRecordedData": ("handler", "recorder"),  # row 9a, owner-only before step-up
+    "purgeRecordedData": ("handler", "recorder_purge"),  # row 9a, owner-only, no-grace step-up
     "addRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
     "compactRecorder": ("allow-listed", None),  # row 51
     "importTradeArchive": ("allow-listed", None),  # row 51

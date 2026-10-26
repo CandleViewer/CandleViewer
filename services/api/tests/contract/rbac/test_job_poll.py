@@ -14,7 +14,12 @@ from tests.contract.rbac.rbac_harness import World, bearer, user_id_of
 from tests.unit.api.test_audit_exports import manifest
 
 _KEY = "00000000-0000-4000-8000-0000000000b8"
-_PURGE = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
+_PURGE = {
+    "symbol": "BTCUSDT",
+    "confirm_symbol": "BTCUSDT",
+    "reason": "free disk",
+    "before": "2026-10-20T12:00:00Z",
+}
 _EXPORT = "00000000-0000-4000-8000-0000000000ba"
 
 

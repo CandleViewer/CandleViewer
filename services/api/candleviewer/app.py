@@ -172,8 +172,10 @@ from candleviewer.api.session_backstop_audit import SessionBackstopAudit
 from candleviewer.api.session_snapshot import SessionSnapshotResolver
 from candleviewer.api.sessions import AuditEmitter, make_session_router
 from candleviewer.api.step_up import (
+    SpentGrant,
     make_read_only_guard,
     make_step_up_router,
+    require_bound_elevation,
     require_session_elevation,
     step_up_port,
 )
@@ -343,7 +345,11 @@ from candleviewer.replay.sessions_service import (
     ReplaySessionService,
     WindowCoverage,
 )
-from candleviewer.retention_wiring import build_compactor, build_retention_manager
+from candleviewer.retention_wiring import (
+    build_compactor,
+    build_purge_anchors,
+    build_retention_manager,
+)
 from candleviewer.risk.service import RiskService
 from candleviewer.rolloff_wiring import build_rolloff_job
 from candleviewer.rules.manager import Actor
@@ -2632,14 +2638,23 @@ def create_app(
             audit=_LazyAuditEmitter(ctx.audit),
         )
     )  # fmt: skip
-    # E16-T06: retention manager (real backend only) + the owner purge (step-up `recorder`).
+    # E16-T06: retention manager (real backend only) + the owner purge (one fresh no-grace
+    # `recorder_purge` code per purge, bound to the request; its key anchored durably).
     retention_manager = build_retention_manager(resolved, _LazyAuditEmitter(ctx.audit), _kb_pg)
     app.state.retention_manager = retention_manager
 
-    async def _purge_elevation(request: Request, action_class: str) -> JSONResponse | None:
+    async def _purge_elevation(
+        request: Request, action_class: str, fingerprint: str
+    ) -> JSONResponse | SpentGrant:
         principal = await audit_resolver.resolve(request) if audit_resolver else None
         session_id = None if principal is None else principal.session_id
-        return await require_session_elevation(ctx.auth, session_id, action_class)
+        return await require_bound_elevation(
+            ctx.auth,
+            session_id,
+            action_class,
+            fingerprint=fingerprint,
+            emitter=_LazyAuditEmitter(ctx.audit),
+        )
 
     app.include_router(
         make_recorder_purge_router(
@@ -2648,6 +2663,7 @@ def create_app(
             _LazyAuditEmitter(ctx.audit),
             audit_resolver,
             _purge_elevation,
+            anchors=build_purge_anchors(resolved, _kb_pg),
         )
     )
     # E16-T08 (#492): the recorded-set reads, over the stored rows of the settings' env (C-2.11)

@@ -290,10 +290,16 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
     guard of the Q8 ruling, as slice 2a's revision ships it (SR-E29-05's pattern)."""
     table = _SCHEMA_DOC.split("#### 3.3.10 `idempotency_anchors`", 1)[1].split("### 3.4 ")[0]
     assert "CONSTRAINT ux_ia_principal_ref UNIQUE (created_by, operation, client_ref)" in table
-    [listed] = re.findall(r"ia_operation CHECK \(operation IN \(([^)]*)\)\)", table)
+    # The first block is the table as 0043 creates it; the third, 0052's, admits the purge's own
+    # anchor (`purgeRecordedData`, E16-T06), which is no order operation.
+    first = table.split("```sql")[1].split("```", 1)[0]
+    [listed] = re.findall(r"ia_operation CHECK \(operation IN \(([^)]*)\)\)", first)
     operations = [name.strip("'") for name in listed.split(",")]
     assert operations == ["placeOrder", "closePosition", "reversePosition", "closeAllPositions"]
     assert set(operations) <= set(_OPS)
+    rest = table.split(first, 1)[1]
+    [later] = re.findall(r"ia_operation CHECK \(operation IN \(([^)]*)\)\)", rest)
+    assert later.split(",") == [*listed.split(","), "'purgeRecordedData'"]
     assert "(operation <> 'placeOrder' OR num_nonnulls(trade_group_id, order_id) = 1)" in table
     assert not _missing(
         _words(table),

@@ -74,8 +74,8 @@ GRACE_WINDOW = timedelta(minutes=5)
 FAILURE_CAP = 3
 #: Ticket: read-only downgrade lasts 5 minutes.
 READONLY_WINDOW = timedelta(minutes=5)
-#: `recorder` (04 §7.2.2 rows 9 and 9a): retention and pin changes (#2738) and the
-#: irreversible recorded-data purge (E16-T06); a grace class.
+#: `recorder` (04 §7.2.2 row 9): retention and pin changes (#2738); a grace class.
+#: `recorder_purge` (04 §7.2.2 row 9a, E16-T06): the irreversible recorded-data purge, no-grace.
 #: #2751 (SR-025): `audit` gates the audit-log export, `backups` a backup's restore, download-link
 #: issue or delete.
 #: #3083 (AD-F01, 04 §7.2.2 row 46): `flags` gates a feature-flag write that is neither a
@@ -88,14 +88,15 @@ ACTION_CLASSES = frozenset(
         "killswitch",
         "risk_caps",
         "recorder",
+        "recorder_purge",
         "flags",
         "audit",
         "backups",
     }
 )
 #: Ticket "No-grace list": always a fresh code. `backups`: a restore, download-link issue or delete
-#: cannot be undone.
-NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"})
+#: cannot be undone; nor can `recorder_purge`'s purge of recorded data.
+NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups", "recorder_purge"})
 #: `PositionStateProvider.source` when no position store exists yet.
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.

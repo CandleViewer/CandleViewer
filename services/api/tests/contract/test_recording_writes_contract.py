@@ -124,6 +124,14 @@ def test_each_update_and_stop_answer_is_its_declared_response(world: World) -> N
     assert world.client.delete(btc, headers=owner).status_code == 204
 
 
+#: A valid `purgeRecordedData` body, so an allowed purge is refused for nothing but its handler's
+#: later checks (the harness backend reads every symbol as pinned: nothing is planned).
+_PURGE = {
+    "symbol": "BTCUSDT",
+    "confirm_symbol": "BTCUSDT",
+    "reason": "free disk",
+    "before": "2026-10-20T12:00:00Z",
+}
 _NINE = {  # actor -> (read, write, purge); allow = past authorisation (the handler may refuse)
     "owner": ("allow", "allow", "allow"),
     "manager_with_grant": ("allow", "allow", "403"),
@@ -139,7 +147,11 @@ def test_the_nine_rbac_cases_owner_manager_viewer_against_read_write_and_purge(
     answers = (
         world.client.get(_LIST, headers=headers),
         world.client.delete(absent, headers=headers),
-        world.client.post("/admin/recorder/purge", json={}, headers=headers),
+        world.client.post(
+            "/admin/recorder/purge",
+            json=_PURGE,
+            headers={**headers, "Idempotency-Key": str(uuid.uuid4())},
+        ),
     )
     seen = tuple({401: "401", 403: "403"}.get(r.status_code, "allow") for r in answers)
     assert seen == _NINE[actor]

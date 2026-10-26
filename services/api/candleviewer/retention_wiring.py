@@ -60,6 +60,8 @@ from candleviewer.storage.cold.retention_ops import (
 from candleviewer.storage.cold.watermarks import FileWatermarkStore
 from candleviewer.storage.models import StreamKind
 from candleviewer.storage.questdb.wiring import LazyPgWire
+from candleviewer.storage.repositories.purge_anchors import PurgeAnchorStore
+from candleviewer.storage.repositories.purge_anchors_sqlalchemy import SqlAlchemyPurgeAnchorStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.replay_sessions import ALL_REPLAY_STREAMS
 from candleviewer.storage.repositories.replay_sessions_sqlalchemy import (
@@ -341,6 +343,16 @@ class _Cold:
 
     async def delete(self, symbol: str, stream: StreamKind, key: str) -> bool:
         return await self._s.delete(symbol, stream, key)
+
+
+def build_purge_anchors(
+    settings: Settings, relational: SqlAlchemyRelationalRepository | None
+) -> PurgeAnchorStore | None:
+    """The purge's durable idempotency anchors (`idempotency_anchors`, 0052): only on the `real`
+    storage backend, as the retention manager; `None` answers a purge with 503 (fail closed)."""
+    if settings.storage_backend != "real" or relational is None:
+        return None
+    return SqlAlchemyPurgeAnchorStore(relational)
 
 
 def build_retention_manager(

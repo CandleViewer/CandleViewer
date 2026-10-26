@@ -451,7 +451,12 @@ def test_self_service_routes_reject_a_target_user_query_parameter(
 
 #: A valid `POST /admin/recorder/purge` body (22-api-openapi.yaml `purgeRecordedData`), so the
 #: call can only be refused for who sends it or for the missing step-up, never as malformed.
-_PURGE_BODY = {"symbol": "BTCUSDT", "confirm_symbol": "BTCUSDT", "reason": "free disk"}
+_PURGE_BODY = {
+    "symbol": "BTCUSDT",
+    "confirm_symbol": "BTCUSDT",
+    "reason": "free disk",
+    "before": "2026-10-20T12:00:00Z",
+}
 #: A valid `createApiKey` body (#836): refused only for who sends it or the missing step-up.
 _IMPORT_BODY = {"api_key": "k" * 18, "api_secret": "s" * 36}
 #: Purge, key import and the signing-key rotation also require an `Idempotency-Key`; the other

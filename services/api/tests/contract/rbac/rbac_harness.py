@@ -75,6 +75,7 @@ from candleviewer.ws.lifecycle import ConnectRateLimiter
 from tests.csrf_helpers import csrf_headers
 from tests.unit.admin._backup_fakes import row
 from tests.unit.admin._link_fakes import Reader
+from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
 
 MATRIX_PATH = Path(__file__).with_name("matrix.yaml")
 #: A stored-hash placeholder for seeded users; nothing in the pack ever verifies a password.
@@ -752,6 +753,8 @@ def build_world(mp: pytest.MonkeyPatch, *, bars_state_root: Path | None = None) 
     # route is mounted either way, so give it the call-recording stand-in (never plans/deletes).
     purge_backend = _PurgeBackend()
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge_backend)
+    # ... and an in-memory stand-in for its durable idempotency anchors (Postgres-only too).
+    mp.setattr(appmod, "build_purge_anchors", lambda *_a, **_k: InMemoryPurgeAnchors())
     # E42-T05 BK-10: a catalogue and artefact store stand-in, so the link issue reaches its gate.
     mp.setattr(appmod, "build_admin_backups", lambda *_a, **_k: BackupCatalogue(_Backups()))
     mp.setattr(appmod, "build_backup_downloads", _backup_downloads)

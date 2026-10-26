@@ -146,10 +146,20 @@ OWN_GUARD: dict[str, OwnGuard] = {
 }
 
 _START = "POST /admin/view-as"
-#: Requests that reach a handler-gated route's step-up gate. The matrix's empty bodies reach the
-#: purge and download-link gates, which both gate before reading a body; a flag write is gated
-#: under its row lock after validation, so its cell writes an ordinary all-roles flag.
+#: Requests that reach a handler-gated route's step-up gate. The matrix's empty body reaches the
+#: download-link gate, which gates before reading a body; the purge validates its body and key
+#: first (its no-grace grant binds that request), and a flag write is gated under its row lock
+#: after validation, so their cells send a valid request (an ordinary all-roles flag).
 GATE_REQUESTS: dict[str, dict[str, Any]] = {
+    "POST /admin/recorder/purge": {
+        "json": {
+            "symbol": "BTCUSDT",
+            "confirm_symbol": "BTCUSDT",
+            "reason": "E16-T06 RBAC cell",
+            "before": "2026-10-20T12:00:00Z",
+        },
+        "headers": {"Idempotency-Key": "00000000-0000-4000-8000-0000000000c1"},
+    },
     "PUT /admin/feature-flags/{flagKey}": {
         "path": {"flagKey": "rules.graph_editor"},
         "json": {"value": False, "reason": "E42-X03 RBAC cell"},

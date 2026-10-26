@@ -115,9 +115,11 @@ def test_an_outcome_the_table_would_refuse_is_refused(over: dict[str, Any], rule
 
 
 def test_the_row_allow_list_never_reads_the_key_or_the_fingerprint() -> None:
+    """Nor a purge's bound (`before_us`, 0052): the purge route reads its own anchors through
+    `purge_anchors.py`, and no order anchor carries one (`ia_bound`)."""
     table = [c.name for c in models.idempotency_anchors.columns]
     assert list(mod.ANCHOR_FIELDS) == [
-        c for c in table if c not in ("client_ref", "request_sha256")
+        c for c in table if c not in ("client_ref", "request_sha256", "before_us")
     ]
     assert [f.name for f in fields(AnchorRow)] == [*mod.ANCHOR_FIELDS, "body_matches"]
 

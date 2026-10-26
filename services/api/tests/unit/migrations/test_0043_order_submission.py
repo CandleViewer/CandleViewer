@@ -26,9 +26,15 @@ _ORDERS = "3.3.4 `orders`"
 _ANCHORS = "3.3.10 `idempotency_anchors`"
 _STOPS = "3.3.11 `recorded_stops`"
 #: (heading, n-th ```sql block, the number of blocks the section holds): the revision's blocks.
-_BLOCKS = ((_ORDERS, 2, 3), (_ANCHORS, 0, 2), (_ANCHORS, 1, 2), (_STOPS, 0, 2), (_STOPS, 1, 2))
+_BLOCKS = ((_ORDERS, 2, 3), (_ANCHORS, 0, 3), (_ANCHORS, 1, 3), (_STOPS, 0, 2), (_STOPS, 1, 2))
 _BLOCK_IDS = ["provenance", "anchors", "anchor-guard", "stops", "stop-guard"]
 _TABLES = {t.name: t for t in (models.idempotency_anchors, models.recorded_stops)}
+#: What a later revision changed in a table this one creates, pinned by that revision's own test:
+#: `0052_ia_purge_anchor` (`test_0052_ia_purge_anchor.py`, Sec.3.3.10's third block) adds
+#: `before_us` and `ia_bound` and replaces `ia_operation`.
+_LATER_COLUMNS: dict[str, frozenset[str]] = {"idempotency_anchors": frozenset({"before_us"})}
+_LATER_CHECKS: dict[str, frozenset[str]] = {"idempotency_anchors": frozenset({"ia_bound"})}
+_REPLACED_CHECKS: dict[str, frozenset[str]] = {"idempotency_anchors": frozenset({"ia_operation"})}
 #: (function, trigger, table) of each guard, in the order the revision creates them.
 _GUARDS = (
     ("ia_write_once", "trg_ia_write_once", "idempotency_anchors"),
@@ -99,7 +105,7 @@ def test_revision_chains_onto_its_parent() -> None:
     assert f"{_PREV} -> {_REV}" in _alembic("history", "-r", f"{_PREV}:{_REV}")
 
 
-@pytest.mark.parametrize(("heading", "count"), [(_ORDERS, 3), (_ANCHORS, 2), (_STOPS, 2)])
+@pytest.mark.parametrize(("heading", "count"), [(_ORDERS, 3), (_ANCHORS, 3), (_STOPS, 2)])
 def test_each_section_holds_the_fences_the_parity_test_walks(heading: str, count: int) -> None:
     """The verbatim test walks the fences by index: one more would go unchecked."""
     assert _section(heading).count("```sql") == count
@@ -310,7 +316,8 @@ def _create_index(ix: Index) -> str:
 def test_models_mirror_the_doc_columns_keys_checks_and_indexes(table: Table) -> None:
     """The `migrations` job autogenerate-diffs the DB against `db.models`; names, nullability,
     defaults, CHECK bodies and partial predicates, which it does not diff, are pinned here."""
-    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns]
+    later = _LATER_COLUMNS.get(table.name, frozenset())
+    got = [(c.name, bool(c.nullable), _default(c)) for c in table.columns if c.name not in later]
     assert got == _doc_columns(table.name)
     doc_fks = re.findall(
         r"^  (\w+)\s+uuid(?: NOT NULL)? REFERENCES (\w+)\(id\) ON DELETE (RESTRICT)",
@@ -322,9 +329,13 @@ def test_models_mirror_the_doc_columns_keys_checks_and_indexes(table: Table) -> 
     }
     assert fks == set(doc_fks) and fks
     checks = _checks(table)
-    assert set(checks) == set(re.findall(r"CONSTRAINT (\w+)\s+CHECK", _doc_table(table.name)))
+    added = _LATER_CHECKS.get(table.name, frozenset())
+    doc_checks = set(re.findall(r"CONSTRAINT (\w+)\s+CHECK", _doc_table(table.name)))
+    assert set(checks) - added == doc_checks
+    replaced = _REPLACED_CHECKS.get(table.name, frozenset())
     for name, body in checks.items():
-        assert _norm(f"CONSTRAINT {name} CHECK ({body})") in _up(), name
+        if name not in added | replaced:
+            assert _norm(f"CONSTRAINT {name} CHECK ({body})") in _up(), name
     for ix in table.indexes:
         assert _create_index(ix) in _up(), ix.name
 
