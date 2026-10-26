@@ -5,8 +5,9 @@ the only backpressure: a row is fed to account health as evidence first, then th
 pending terms are flushed (S7a), then its work is done (a pairing push, a position, a wallet), and
 each status has its Sec.8.12 effect, a `heartbeat` flushing those terms too. Every await is
 bounded, the stream is closed on every exit, and a cancel is never swallowed. Loop-agnostic: it
-never hops, and treats `AccountHealthFeed` and `AccountNotices` as synchronous and non-blocking.
-Ids only in logs and no figure of a wallet in any (C-12.6).
+never hops, and treats `StreamEvidence` (account health's feed) and `AccountNotices` as synchronous
+and non-blocking. Ids only in logs and no figure of a wallet in any (C-12.6). The composition root
+(`oms_stream_wiring`) binds it; a live start refuses `NoReconciliation` and `NoPositionRows`.
 """
 
 from __future__ import annotations
@@ -20,7 +21,6 @@ from typing import Any, Final, Literal, Protocol, cast
 import structlog
 from pydantic import ValidationError
 
-from candleviewer.accounts.service import AccountHealthFeed
 from candleviewer.accounts.wallet import WalletSnapshot
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.models import (
@@ -32,8 +32,10 @@ from candleviewer.exchange.base.models import (
 )
 from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
+from candleviewer.settings import Environment as ProcessEnvironment
+from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 
-from .errors import OrderRefused, ReconciliationUnavailable
+from .errors import OrderRefused, ProtectionReadingsUnavailable, ReconciliationUnavailable
 from .ports import (
     AccountNotices,
     CredentialRejections,
@@ -50,7 +52,8 @@ STREAM_SILENCE_S: Final = 30.0  # no row or status this long: the socket is dead
 STOP_TIMEOUT_S: Final = 2.0  # inside 20 Sec.6.2's 15 s grace
 POSITION_TAKE_TIMEOUT_S: Final = 50.0  # a protection reading crosses the facade's 30 s push (Q1)
 UNREADABLE_AFTER: Final = 4  # failed refreshes in a row: the consumer is not doing its job
-MAX_FUTURE_SKEW_US: Final = 5_000_000  # 24 Sec.14.2 rule 10, as `positions.MAX_FUTURE_SKEW`
+#: 24 Sec.14.2 rule 10: the store's `MAX_FUTURE_SKEW`, in us, derived and never copied (one owner)
+MAX_FUTURE_SKEW_US: Final = MAX_FUTURE_SKEW // timedelta(microseconds=1)
 
 type Outcome = Literal[
     "refresh_failed", "defect", "silence", "resolve_refused", "reconciliation_unavailable",
@@ -66,6 +69,15 @@ def _log() -> Any:
 
 class ConsumerCounts(Protocol):
     def count(self, outcome: Outcome) -> None: ...  # sync; S8 binds a catalogue series
+
+
+class StreamEvidence(Protocol):
+    """The three calls of account health's `AccountHealthFeed` the consumer makes (24 Sec.8.12):
+    synchronous and non-blocking; what each answers is never read."""
+
+    def ws_heartbeat(self, account_id: AccountId) -> object: ...
+    def ws_dropped(self, account_id: AccountId) -> object: ...
+    def wallet_pushed(self, account_id: AccountId, snapshot: WalletSnapshot) -> object: ...
 
 
 class PrivateStreams(Protocol):
@@ -94,6 +106,17 @@ class NoPositionRows:
         _log().debug("stream_position_pending", account_id=str(account_id))
 
 
+def refuse_live_without_position_rows(
+    environment: ProcessEnvironment, positions: PositionRows
+) -> None:
+    """The live start-up self-check of the position seam (S5b carry I-4), beside
+    `ports.refuse_live_without_reconciliation`, run on the binding as bound: a live process with
+    `NoPositionRows` would project no position and hand on no protection reading (C-2.6), so it is
+    `ProtectionReadingsUnavailable`. The environment compares by value."""
+    if environment == ProcessEnvironment.LIVE and isinstance(positions, NoPositionRows):
+        raise ProtectionReadingsUnavailable("a live process needs the position projection")
+
+
 @dataclass(slots=True)
 class _Session:
     ref: AccountRef
@@ -103,7 +126,7 @@ class _Session:
 class StreamConsumer:
     def __init__(
         self, *, accounts: StreamedAccounts, trading: TradingAccounts, streams: PrivateStreams,
-        health: AccountHealthFeed, reconciliation: ReconciliationRequests,
+        health: StreamEvidence, reconciliation: ReconciliationRequests,
         notices: AccountNotices, credentials: CredentialRejections, positions: PositionRows,
         pushes: RowPushes, counts: ConsumerCounts, pager: Pager, now_us: Callable[[], int],
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,

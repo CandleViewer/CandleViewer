@@ -8,7 +8,12 @@ property, bar the four below: the composition root's `account_health_wiring` (th
 call to the runtime, which hands it to the monitor and the cache), the wallet reconciler (a REST
 success is evidence, `rest_ok`), `app.py`, which attaches the feed to the accounts service, and the
 private-WS consumer (E29-T05, #848), which feeds heartbeat, dropped and wallet evidence and reads
-nothing else. Any other reader of the feed is a reviewed edit to `ALLOWED`.
+nothing else. The consumer's composition root, `oms_stream_wiring.py` (E29-T05 S8a), names those
+same three, and only them: its `ServedEvidence` hands each call the consumer makes, as it is made,
+to the feed on the serving loop (`Serving.notify`), whose monitor and wallet cache are that loop's;
+it originates no evidence of its own, never names `rest_ok` (the consumer's protocol,
+`stream_consumer.StreamEvidence`, has none) and never reads the feed's property (S8b passes the
+feed in). Any other reader of the feed is a reviewed edit to `ALLOWED`.
 
 A module names one when an attribute of that name appears, call or not: a reference kept in a
 variable feeds as well as a call.
@@ -29,6 +34,7 @@ ALLOWED: dict[str, frozenset[str]] = {
     "accounts/wallet.py": frozenset({"rest_ok"}),
     "app.py": frozenset({FEED}),
     "oms/stream_consumer.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
+    "oms_stream_wiring.py": frozenset({"ws_heartbeat", "ws_dropped", "wallet_pushed"}),
 }
 
 

@@ -166,6 +166,9 @@ OMS_WRITE_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 
 #: Members per cancel-all fold (#913 S4-F): a fold takes two or more, the venue's call at most its
 #: 500-order cap; an edge sits on the proposed cap of 32 (E29-oms.md section 12.2).
 CANCEL_ALL_FOLD_BUCKETS: Final = (2, 4, 8, 16, 32, 64, 128, 256, 500)
+#: The private-stream consumer's backlog (E29-T05, 24 Sec.8.12): a row's ingest to its handling,
+#: 1 ms to the 30 s silence bound; edges at the 5 s hand-over bound and the 15 s refresh.
+OMS_STREAM_LAG_BUCKETS: Final = (0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1.0, 5.0, 15.0, 30.0)
 #: Order submit click→ack, p99 ≤ 500 ms.
 SUBMIT_BUCKETS: Final = (0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.75, 1.0, 2.0, 5.0)
 #: Audit page: edges at the SCR-135 filter round trip (0.4 s p95), the US-ADMIN-009 first
@@ -2759,14 +2762,16 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("port",),
         "Order-path ports served by an interim implementation (#913 ruling R4; slice 3), set once "
         "at startup: 1 per interim port (stop_resolver, risk_gate, arm_records, kill_switch, "
-        "machine_event_sink, risk_figures, atr), 0 per real one. The interim risk gate and arm "
-        "records refuse every live order, and risk_figures at 1 on live refuses every live "
-        "entry (503 sizing_unavailable); atr: an atr stop is the profile's fallback offset; "
-        "the interim kill switch admits.",
+        "machine_event_sink, risk_figures, atr; and the private-stream consumer's stand-ins, "
+        "E29-T05: reconciliation, execution_handovers, protection_readings, "
+        "foreign_order_lockout), 0 per real one. The interim risk gate and arm records refuse "
+        "every live order, and risk_figures at 1 on live refuses every live entry (503 "
+        "sizing_unavailable); atr: an atr stop is the profile's fallback offset; the interim "
+        "kill switch admits.",
         "> 0 on env=live (dashboard)",
         _P,
         "E29",
-        max_series=7,
+        max_series=11,
     ),
     _s(
         "oms_submit_rejected_total",
@@ -2933,6 +2938,46 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
         CANCEL_ALL_FOLD_BUCKETS,
         max_series=2,
+    ),
+    _s(
+        "oms_stream_event_lag_seconds",
+        "histogram",
+        "seconds",
+        ("topic",),
+        "The private-stream consumer's backlog (E29-T05, 24 Sec.8.12): a row's lag from its ingest "
+        "(the host's clock, so never negative) to its handling, by the row's kind (order, "
+        "execution, execution_fast, position, wallet); no account label.",
+        "dashboard",
+        _P,
+        "E29",
+        OMS_STREAM_LAG_BUCKETS,
+        max_series=8,
+    ),
+    _s(
+        "oms_stream_outcomes_total",
+        "counter",
+        "outcomes",
+        ("stage", "outcome"),
+        "What the private-stream consumer counts (E29-T05, 24 Sec.8.12): stage consumer, push or "
+        "position, and outcome one of that stage's closed Outcome set (oms.stream_consumer, "
+        "oms.stream_push, oms.positions); no account label.",
+        "dashboard",
+        _P,
+        "E29",
+        max_series=64,
+    ),
+    _s(
+        "oms_position_reading_owed_age_seconds",
+        "gauge",
+        "seconds",
+        (),
+        "The age of the oldest position reading owed to protection (E29-T05, 24 Sec.8.12): not "
+        "handed on, held as dated ahead of the store's clock, or evicted from that hold; 0 while "
+        "none is. At 120 s the oms check of /readyz is degraded.",
+        ">= 60s (page; C-2.6)",
+        _P,
+        "E29",
+        max_series=1,
     ),
     _s(
         "bybit_clock_drift_ms",
