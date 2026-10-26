@@ -1146,8 +1146,6 @@ def make_user_admin_router(
     async def disable(
         user_id: uuid.UUID,
         principal: PrincipalSnapshot,
-        body: api.UpdateUserRequest,
-        shown: dict[str, Any],
         *,
         acknowledged: bool,
         expected: str | None,
@@ -1157,7 +1155,7 @@ def make_user_admin_router(
         and nothing else: the route refused another field it would change before the step-up
         (#2304). UL3-T1:
         an `If-Match` is judged again in the cascade's own transaction, on the user read under
-        its lock, so a change committed since `shown` was read is 412 with nothing done."""
+        its lock, so a change committed since the route's read is 412 with nothing done."""
         if store is None or user_disable is None:
             return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no disable service wired")
 
@@ -1234,8 +1232,6 @@ def make_user_admin_router(
             return await disable(
                 user_id,
                 principal,
-                body,
-                shown,
                 acknowledged=acknowledged,
                 expected=expected,
                 session=session,
