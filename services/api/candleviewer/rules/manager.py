@@ -637,7 +637,7 @@ class RulesManager:
         if expected_version != row.latest_version:
             self._metric("rule_save_conflicts_total", {})
             raise RuleError(
-                409,
+                412,
                 "version_conflict",
                 f"Another editor (session {row.last_session}) saved version "
                 f"{row.latest_version} since you opened this rule. "

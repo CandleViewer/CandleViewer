@@ -181,7 +181,7 @@ def test_update_creates_version_and_conflict_names_session() -> None:
     r = e.c.put(f"/rules/{rid}", json={"ir": _ir("2")}, headers={"If-Match": '"1"'})
     assert r.status_code == 200 and r.json()["version"]["version"] == 2
     stale = e.c.put(f"/rules/{rid}", json={"ir": _ir("3")}, headers={"If-Match": "1"})
-    assert stale.status_code == 409
+    assert stale.status_code == 412
     body = stale.json()
     assert body["code"] == "version_conflict" and body["session"] == "s1"
     assert body["action"] == "reload_and_reapply"
