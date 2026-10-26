@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useState, type FormEvent, type JSX } from "react";
-import { StepUpGate } from "../../routes/StepUpGate";
-import { inviteApi, type CreatedInvite, type PendingInvite } from "./inviteApi";
+import { StepUpChallengeGate } from "../stepUp/StepUpChallengeGate";
+import {
+  inviteApi,
+  readResult,
+  type ApiResult,
+  type CreatedInvite,
+  type PendingInvite,
+  type StepUpHold,
+} from "./inviteApi";
+
+/** A refused call waiting on its step-up, and what to do with the answer to its re-send. */
+interface PendingStepUp {
+  readonly hold: StepUpHold;
+  readonly onAnswer: (res: ApiResult<CreatedInvite>) => void;
+}
 
 /** SCR-123 Admin: invite user (R-303). Link is shown once; only revoke/re-issue afterwards. */
 export function AdminInviteScreen(): JSX.Element {
@@ -8,7 +21,7 @@ export function AdminInviteScreen(): JSX.Element {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
-  const [needsStepUp, setNeedsStepUp] = useState(false);
+  const [stepUp, setStepUp] = useState<PendingStepUp | null>(null);
   const [created, setCreated] = useState<CreatedInvite | null>(null);
   const [copied, setCopied] = useState(false);
   const [pending, setPending] = useState<readonly PendingInvite[]>([]);
@@ -30,19 +43,30 @@ export function AdminInviteScreen(): JSX.Element {
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
     setError(null);
-    setNeedsStepUp(false);
+    setStepUp(null);
     if (!/^[a-z0-9._-]{3,32}$/.test(username)) {
       setError("Username must be 3-32 characters of a-z, 0-9, dot, underscore or dash.");
       return;
     }
-    const res = await inviteApi.create({ username, email, roles: [role] });
-    if (res.ok && res.data) {
-      show(res.data);
-      return;
-    }
-    if (res.status === 403 && res.code === "step_up_required") setNeedsStepUp(true);
+    onCreateAnswer(await inviteApi.create({ username, email, roles: [role] }));
+  }
+
+  function onCreateAnswer(res: ApiResult<CreatedInvite>): void {
+    if (res.ok && res.data) show(res.data);
+    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: onCreateAnswer });
     else if (res.status === 409) setError("That email or username is already in use.");
     else setError("The invitation could not be created.");
+  }
+
+  function reissued(res: ApiResult<CreatedInvite>): void {
+    if (res.ok && res.data) show(res.data);
+    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: reissued });
+    else setError("The invitation could not be re-issued.");
+  }
+
+  async function onResent(pending: PendingStepUp, response: Response): Promise<void> {
+    setStepUp(null);
+    pending.onAnswer(await readResult<CreatedInvite>(response, pending.hold.held));
   }
 
   async function copy(): Promise<void> {
@@ -52,9 +76,9 @@ export function AdminInviteScreen(): JSX.Element {
   }
 
   async function reissue(userId: string): Promise<void> {
-    const res = await inviteApi.reissue(userId);
-    if (res.ok && res.data) show(res.data);
-    else setError("The invitation could not be re-issued.");
+    setError(null);
+    setStepUp(null);
+    reissued(await inviteApi.reissue(userId));
   }
 
   async function revoke(userId: string): Promise<void> {
@@ -71,7 +95,16 @@ export function AdminInviteScreen(): JSX.Element {
         The invitee also needs a Tailscale ACL grant before the link will open. Link delivery is
         manual: copy it and send it yourself.
       </p>
-      {needsStepUp ? <StepUpGate redirectTo="/admin/users/new" /> : null}
+      {stepUp ? (
+        <StepUpChallengeGate
+          key={stepUp.hold.challenge.challengeId}
+          challenge={stepUp.hold.challenge}
+          held={stepUp.hold.held}
+          onResent={(response) => void onResent(stepUp, response)}
+          readBack={refresh}
+          outcomeWhere="Pending invitations"
+        />
+      ) : null}
       <form onSubmit={(event) => void onSubmit(event)}>
         <label htmlFor="inv-username">Username</label>
         <input id="inv-username" value={username} onChange={(e) => setUsername(e.target.value)} />
