@@ -236,3 +236,22 @@ def test_reworded_titles_keep_their_meaning_and_the_md_row() -> None:
     assert titles["exchange_rate_limited"].startswith("The exchange's per-UID rate budget is exhausted")
     assert titles["unsupported_symbol"] == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
     assert f"{titles['unsupported_symbol']}." in MD
+
+
+def test_request_level_use_of_invalid_options_and_the_wide_frame_malformed_title() -> None:
+    # #2553: `invalid_options` also refuses a malformed sub/unsub/ctl/resync, with no `ch`;
+    # `frame_malformed` is §3.6's code for any malformed inbound frame, not only binary bodies.
+    titles = _titles()
+    assert titles["invalid_options"] == (
+        "Subscription option out of range, of the wrong type, or an unknown key; also a "
+        "request-level refusal of a sub, unsub, ctl or resync whose shape breaks the schema, "
+        "with no ch"
+    )
+    assert titles["frame_malformed"] == (
+        "Malformed inbound frame: not valid JSON or MessagePack, or a binary body inconsistent "
+        "with its header"
+    )
+    flat = " ".join(MD.split())
+    assert "Also a request-level refusal: a `sub`, `unsub`, `ctl` or `resync`" in flat
+    assert "no `ch`" in flat
+    assert "not valid JSON or MessagePack, or a binary body inconsistent with its header (§3.6)" in flat

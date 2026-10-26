@@ -4,9 +4,11 @@ in depth), and never one it did not consume. Omitted when no challenge was consu
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 
+from candleviewer.auth.step_up import CHALLENGE_WINDOW
 from tests.unit.api.test_step_up_challenge_router import _RELEASE, _world
 
 
@@ -54,3 +56,21 @@ async def test_200_never_echoes_a_challenge_the_grant_did_not_consume() -> None:
     w.send(_RELEASE)
     stale = w.step_up(challenge_id=str(uuid.uuid4()))
     assert stale.status_code == 400 and "challenge_id" not in stale.json()
+
+
+async def test_200_omits_an_expired_live_challenge() -> None:
+    w = await _world()
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
+    w.clock.now += CHALLENGE_WINDOW + timedelta(seconds=1)
+    ok = w.step_up(action_class="users")
+    assert ok.status_code == 200
+    assert "challenge_id" not in ok.json()
+
+
+async def test_echoed_challenge_is_consumed() -> None:
+    w = await _world()
+    challenge_id = w.send(_RELEASE).json()["challenge_id"]
+    assert w.step_up(challenge_id=challenge_id).json()["challenge_id"] == challenge_id
+    again = w.step_up(challenge_id=challenge_id)
+    assert again.status_code == 400
+    assert again.json()["errors"][0]["rule"] == "challenge_expired"
