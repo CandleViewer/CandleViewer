@@ -1,9 +1,9 @@
-"""#913 L1d-1 (rulings Q5 and Q10; C-2.7, C-2.9, C-3.2): the order lane's own credential store lives
+"""#913 L1d-0 (rulings Q5 and Q10; C-2.7, C-2.9, C-3.2): the order lane's own credential store lives
 inside M2. The lane's binder (`SecretsBundle.lane_signing`) takes the lane's own audit writer and
-has M2 build the store on the lane's loop, over a small pool of its own that M2 alone holds,
-counts and releases after the signing closes; the start-up self-check proves the binding with
-nothing read, recorded, decrypted or counted as a borrow. On L3b's two-loop rig: bounded waits,
-no sleeps, fixed vectors."""
+has M2 build the store on the lane's loop, over a small pool of its own that M2 alone holds and
+counts, and frees when the signing closes; the start-up self-check proves the binding and reads
+the lane's store once, with nothing recorded, decrypted or counted as a borrow. On L3b's two-loop
+rig: bounded waits, no sleeps, fixed vectors."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from candleviewer.admin.wiring import build_audit_service, build_secrets_service
 from candleviewer.audit.service import AuditService
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import CredentialUnavailable, SigningLoopMismatch
-from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS
+from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS, SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
@@ -84,6 +84,28 @@ def _borrows() -> float:
 def _bound(rig: _Rig, pools: _Pools, writer: _Writer) -> Any:
     bind = secrets_bundle(rig.svc, loop_store=pools).lane_signing
     return rig.lane.run(_on(lambda: bind(audit=writer)))
+
+
+class _Down:
+    """A lane store over a pool that cannot connect: each read raises, as a refused dial does."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    async def get(self, key_id: Any, env: str) -> None:
+        self.reads += 1
+        raise ConnectionRefusedError("the lane's pool cannot connect")
+
+
+def _mark(rig: _Rig) -> tuple[int, float]:
+    return len(rig.log), _borrows()
+
+
+def _since(rig: _Rig, writer: _Writer, mark: tuple[int, float]) -> tuple[Any, ...]:
+    """What happened since `mark`: the lane's store and sink calls and any decrypt the rig
+    logged, the records the lane's writer appended, and the borrows counted."""
+    logged, borrows = mark
+    return rig.log[logged:], writer.emitted, _borrows() - borrows
 
 
 def test_the_lane_binding_builds_its_own_bounded_store_on_the_lane_and_counts_it(rig: _Rig) -> None:
@@ -205,22 +227,86 @@ def test_a_destroy_on_the_serving_loop_fences_the_lanes_own_store_binding(rig: _
     rig.lane.run(signing.aclose())
 
 
-def test_the_self_check_does_nothing_on_its_loop_and_refuses_off_it_or_once_closed(
+def test_the_self_check_reads_one_absent_row_through_the_lanes_store_and_nothing_more(
     rig: _Rig,
 ) -> None:
-    """Q5: on its own loop the start-up self-check reads, records, decrypts and counts nothing (a
-    nil key borrowed would count `cv_credential_borrow_total{result="error"}`, an operator's
-    error rate); on another loop, or once closed, it is `signing_loop_mismatch`, as a signing
-    there would be, before anything is read."""
-    logged, borrows = len(rig.log), _borrows()
-    rig.lane.run(rig.signing.self_check())
-    for refused_on in ("serving", "closed"):
-        if refused_on == "closed":
-            rig.lane.run(rig.signing.aclose())
-        on = rig.serving if refused_on == "serving" else rig.lane
-        with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
-            on.run(rig.signing.self_check())
-    assert (rig.log[logged:], _borrows()) == ([], borrows)
+    """M-2 (Q5): with M2 up, the start-up self-check reads a key no row holds, once, through the
+    lane's own store, so its pool must connect for the lane to start; the missing row passes, and
+    nothing is recorded, decrypted or counted as a borrow (a nil key borrowed would count
+    `cv_credential_borrow_total{result="error"}`, an operator's error rate)."""
+    writer = _Writer()
+    signing, mark = _bound(rig, _Pools(rig.sides["lane"]), writer), _mark(rig)
+    rig.lane.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([("lane", "get")], [], 0)
+
+
+def test_the_self_check_on_another_loop_is_refused_before_anything_is_read(rig: _Rig) -> None:
+    """M-2: off its loop, `signing_loop_mismatch`, as a signing there would be: nothing done."""
+    writer = _Writer()
+    signing, mark = _bound(rig, _Pools(rig.sides["lane"]), writer), _mark(rig)
+    with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
+        rig.serving.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([], [], 0)
+
+
+def test_the_self_check_after_aclose_is_refused_before_anything_is_read(rig: _Rig) -> None:
+    """M-2: once closed, `signing_loop_mismatch`, as a signing would be: nothing done."""
+    writer = _Writer()
+    signing = _bound(rig, _Pools(rig.sides["lane"]), writer)
+    rig.lane.run(signing.aclose())
+    mark = _mark(rig)
+    with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
+        rig.lane.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([], [], 0)
+
+
+def _degraded(rig: _Rig, writer: _Writer) -> Any:
+    """A lane binding of an M2 with no broker (degraded: every signing is `kek_unavailable`)."""
+    bind = secrets_bundle(SecretsService(), loop_store=_Pools(rig.sides["lane"])).lane_signing
+    return rig.lane.run(_on(lambda: bind(audit=writer)))
+
+
+def test_the_self_check_while_m2_is_degraded_still_refuses_another_loop(rig: _Rig) -> None:
+    """M-2 (a): the loop check needs no broker, so a mis-wired lane fails its start while M2 is
+    degraded too, from the binding's own I/O, with nothing done."""
+    writer = _Writer()
+    signing, mark = _degraded(rig, writer), _mark(rig)
+    with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
+        rig.serving.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([], [], 0)
+
+
+def test_the_self_check_while_m2_is_degraded_reads_nothing_on_its_loop(rig: _Rig) -> None:
+    """M-2 (b), degraded: nothing signs until the restart that binds the lane again (M2 starts
+    before the OMS and publishes its broker only in `start()`), so there is no read to prove."""
+    writer = _Writer()
+    signing, mark = _degraded(rig, writer), _mark(rig)
+    rig.lane.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([], [], 0)
+
+
+def test_a_lane_store_that_raises_fails_the_self_check_store_unavailable(rig: _Rig) -> None:
+    """M-2 (b): a read that fails is M2's store outage, `store_unavailable`, as on a signing."""
+    store, writer = _Down(), _Writer()
+    signing, mark = _bound(rig, _Pools(store), writer), _mark(rig)
+    with pytest.raises(CredentialUnavailable, match=r"^store_unavailable$"):
+        rig.lane.run(signing.self_check())
+    assert (store.reads, _since(rig, writer, mark)) == (1, ([], [], 0))
+
+
+def test_a_lane_store_that_stalls_past_the_bound_fails_the_self_check_store_unavailable(
+    rig: _Rig,
+) -> None:
+    """M-2 (b): the read is bounded as every lane read is (M2's `io_timeout_s`; 0 here, so a read
+    that waits at all is past it, with no time passing): a stall is `store_unavailable`."""
+    writer, lane = _Writer(), rig.sides["lane"]
+    signing = _bound(rig, _Pools(lane), writer)
+    lane.park("get")  # never released: only the bound ends the read
+    rig.broker._timeout = 0.0
+    mark = _mark(rig)
+    with pytest.raises(CredentialUnavailable, match=r"^store_unavailable$"):
+        rig.lane.run(signing.self_check())
+    assert _since(rig, writer, mark) == ([("lane", "get")], [], 0)
 
 
 @pytest.mark.parametrize("given", ["service", "writer"])
