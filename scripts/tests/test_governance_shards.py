@@ -225,13 +225,13 @@ def test_an_empty_shard_fails_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gs.main(["2", "2"]) == 1
 
 
-def test_governance_runs_the_checks_four_test_shards_and_an_aggregate() -> None:
+def test_governance_runs_the_checks_five_test_shards_and_an_aggregate() -> None:
     doc = _workflow()
     jobs = doc["jobs"]
     assert list(jobs) == ["governance-checks", "governance-tests", "governance"]
     assert jobs["governance-tests"]["strategy"] == {
         "fail-fast": False,
-        "matrix": {"shard": [1, 2, 3, 4], "total": [4]},
+        "matrix": {"shard": [1, 2, 3, 4, 5], "total": [5]},
     }
     assert (
         jobs["governance-tests"]["name"]
