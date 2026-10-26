@@ -16,6 +16,8 @@ __all__ = ["RiskTier", "lowest_tier_rate"]
 
 
 class RiskTier(Protocol):
+    """The tier shape read here; keeps `accounts` free of an `exchange.base` import (C-3.4: ADR)."""
+
     @property
     def risk_limit_value(self) -> Decimal: ...
 
