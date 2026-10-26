@@ -853,6 +853,9 @@ def make_step_up_router(
             )
         except SessionReadOnly as exc:
             return readonly_problem(exc)
+        # The challenge the grant consumed (#2304, defence in depth); `grant.challenge_id` is
+        # set only from the live challenge the step-up answered, so none means none consumed.
+        consumed = {} if grant.challenge_id is None else {"challenge_id": str(grant.challenge_id)}
         return JSONResponse(
             status_code=200,
             content={
@@ -862,6 +865,7 @@ def make_step_up_router(
                 "step_up_expires_at": (
                     None if grant.single_use else grant.elevated_until.isoformat()
                 ),
+                **consumed,
             },
         )
 

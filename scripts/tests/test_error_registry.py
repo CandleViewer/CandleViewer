@@ -231,8 +231,48 @@ def test_registry_titles_carry_no_exchange_brand() -> None:
 
 def test_reworded_titles_keep_their_meaning_and_the_md_row() -> None:
     titles = _titles()
-    assert titles["unsupported_category"] == "Only the exchange's USDT linear perpetuals are supported in v1"
+    assert (
+        titles["unsupported_category"]
+        == "Only the exchange's USDT linear perpetuals are supported in v1"
+    )
     assert titles["exchange_error"] == "The exchange returned a non-zero refusal code"
-    assert titles["exchange_rate_limited"].startswith("The exchange's per-UID rate budget is exhausted")
-    assert titles["unsupported_symbol"] == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
+    assert titles["exchange_rate_limited"].startswith(
+        "The exchange's per-UID rate budget is exhausted"
+    )
+    assert (
+        titles["unsupported_symbol"]
+        == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
+    )
     assert f"{titles['unsupported_symbol']}." in MD
+
+
+def test_request_level_use_of_invalid_options_and_the_wide_frame_malformed_title() -> None:
+    # #2553: `invalid_options` also refuses a malformed sub/unsub or a ctl/resync naming a bad
+    # `ch`, `rs` or `sub_id`, with no `ch`; `frame_malformed` is §3.6's code for a malformed
+    # inbound frame, and §7.7's for a resync with no `ch` or a `p` that is no object.
+    titles = _titles()
+    assert titles["invalid_options"] == (
+        "Subscription option out of range, of the wrong type, or an unknown key; also a "
+        "request-level refusal of a malformed `sub` or `unsub`, or a `ctl` or `resync` naming a "
+        "bad `ch` or `rs`, or a `resync` naming a bad `sub_id`, with no `ch`"
+    )
+    assert titles["frame_malformed"] == (
+        "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack, a frame of "
+        "the wrong kind for the connection's subprotocol, a binary body inconsistent with its "
+        "header, or a resync with no ch, a p that is not an object, an unknown reason, or a "
+        "last_seq that is neither an integer nor null"
+    )
+    flat = " ".join(MD.split())
+    assert (
+        "Also a request-level refusal: a malformed `sub` or `unsub`, or a `ctl` or `resync` "
+        "naming a bad `ch` or `rs`, or a `resync` naming a bad `sub_id`, gets it with no `ch`"
+    ) in flat
+    assert "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack" in flat
+    assert (
+        "an unknown `reason`, or a `last_seq` that is neither an integer nor `null` (§7.7)" in flat
+    )
+    assert "A `resync` is answered with `err` alone, no strike." in flat
+    assert (
+        "Each of the rest counts a strike; the third closes with `bye` `bad_client` and `4400`"
+        in flat
+    )

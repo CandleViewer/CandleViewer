@@ -812,6 +812,9 @@ x-error-codes:
 # error slug the product can emit. 23-ws-protocol.md §10.2 is generated/asserted from
 # the union of `x-error-codes` (entries with `ws` in `surface`) and this block.
 # `close_code` is the RFC 6455 close code used when `close: true`.
+# `frame_malformed`'s `close_code` is legacy metadata: a malformed frame never closes by itself —
+# a malformed `resync` is answered with `err` alone; each other one is a strike, and the third
+# closes with `bye bad_client` and `4400`.
 # -----------------------------------------------------------------------------
 x-error-codes-ws:
   - code: protocol_violation
@@ -823,7 +826,11 @@ x-error-codes-ws:
     scope: connection
     retryable: false
     close_code: 1002
-    title: Binary body inconsistent with its header
+    title: >-
+      Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack, a frame of the
+      wrong kind for the connection's subprotocol, a binary body inconsistent with its header, or
+      a resync with no ch, a p that is not an object, an unknown reason, or a last_seq that is
+      neither an integer nor null
   - code: unsupported_protocol
     scope: connection
     retryable: false
@@ -870,7 +877,10 @@ x-error-codes-ws:
   - code: invalid_options
     scope: topic
     retryable: false
-    title: Subscription option out of range, of the wrong type, or an unknown key
+    title: >-
+      Subscription option out of range, of the wrong type, or an unknown key; also a request-level
+      refusal of a malformed `sub` or `unsub`, or a `ctl` or `resync` naming a bad `ch` or `rs`, or a
+      `resync` naming a bad `sub_id`, with no `ch`
     rest_analogue: validation_failed
   - code: encoding_unsupported
     scope: topic
@@ -12112,7 +12122,10 @@ paths:
         against the live challenge: `challenge_id`, when sent, must name it. A step-up for a
         no-grace class (named by the live challenge or by `action_class`) must send it: without
         it, or without a live challenge, the answer is `400`, so `action_class` alone never
-        elevates a no-grace class. Audit: `auth.step_up_required` records the `challenge_id`;
+        elevates a no-grace class. The `200` echoes the consumed `challenge_id` (additive,
+        defence in depth), so a client can tell which refused request the grant answers; it is
+        omitted when no challenge was consumed and is never a challenge the grant did not use.
+        Audit: `auth.step_up_required` records the `challenge_id`;
         `auth.step_up_granted` records it too, plus the bound request's SHA-256 fingerprint for a
         no-grace class; `auth.step_up_mismatch` records the bound and the refused request's
         fingerprints. No audit record carries `action_summary`, `target`, a request body, the
@@ -12277,7 +12290,44 @@ paths:
                     type: ["string", "null"]
                     format: date-time
                     description: End of the grace window shown in the dialog; null for no-grace classes.
+                  challenge_id:
+                    type: string
+                    format: uuid
+                    description: >
+                      The `challenge_id` of the challenge this step-up consumed (#2304, additive,
+                      C-6.3). Present when the step-up answered a live challenge, which is always
+                      the case for a no-grace class and for a grace class that sent `challenge_id`
+                      or had a live challenge. A client uses it to tell which refused request the
+                      grant answers. Absent when no challenge was consumed (a grace class named by
+                      `action_class` with no live challenge); the server never echoes a challenge
+                      the grant did not consume.
                   tokens: { $ref: "#/components/schemas/TokenBundle" }
+              examples:
+                noGraceWithChallenge:
+                  summary: A no-grace class; echoes the challenge the one-shot grant consumed
+                  value:
+                    elevated_until: "2026-10-15T12:01:00Z"
+                    action_class: killswitch
+                    single_use: true
+                    step_up_expires_at: null
+                    challenge_id: "0193f2bb-7a10-7c3e-9d55-2b6f4c1a8e01"
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 900
+                graceWithoutChallenge:
+                  summary: A grace class named by `action_class` with no live challenge; no `challenge_id`
+                  value:
+                    elevated_until: "2026-10-15T12:05:00Z"
+                    action_class: users
+                    single_use: false
+                    step_up_expires_at: "2026-10-15T12:05:00Z"
+                    tokens:
+                      access_token: "<JWT — example placeholder>"
+                      token_type: Bearer
+                      expires_in: 600
+                      refresh_expires_in: 900
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }

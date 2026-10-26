@@ -162,6 +162,8 @@ def test_a_connection_fault_is_counted_as_internal_error() -> None:
         code = _closed(ws)
     assert (bye["p"]["reason"], code) == ("internal_error", 1011)
     assert _closes("internal_error") == before + 1
+    # #2553: a fault's `bye` carries the stock text, never the fault's own text.
+    assert bye["p"]["message"] == "internal error"
 
 
 def test_a_fault_after_a_close_counts_under_both_reasons() -> None:
