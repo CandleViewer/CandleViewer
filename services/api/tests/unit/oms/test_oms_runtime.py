@@ -2080,6 +2080,14 @@ async def test_a_stalled_serving_loop_refuses_a_submit_at_its_switches_recorded_
     `oms_not_ready` at that step before it is raised (C-2.9), nothing persisted or sent."""
     world, tick = World(), StalledTick()
     world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    price = entry().price  # #4575: step 3a reads the market and bands the limit before sizing
+    quote = SimpleNamespace(bid1_price=price, ask1_price=price, last_price=price)
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: quote,
+        is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None,
+        release=lambda _consumer, _symbol: None,
+    )
     await crashed(world)
     async with started(world.runtime(serving_tick=lambda: tick)) as runtime:
         for flag in world.flags:
