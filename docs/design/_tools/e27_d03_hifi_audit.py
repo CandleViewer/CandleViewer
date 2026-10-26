@@ -109,8 +109,10 @@ it (BQ-16 is the scope):
    next sentence that opens on "it", "this" or "which", and runs K4 on the hand-off; r6b reads bare
    lower-case "cancel" as an exit where it is the subject of a state verb ("cancel is ...").
 7g. The loading state, pinned default-deny (r6b): a clause of the spec or the hand-off that names
-   the confirm where the load is named ("load" in any form, "the load", "During the load", "while
-   it reads", "still reading", "Reading what") - a table cell with its whole row, a prose sentence
+   the confirm (or, r6c, "[Revoke key ...]", "[Delete ...]", "[Disable ...]", "the Revoke button")
+   where the load is named ("load" in any form, "the load", "During the load", "while it reads",
+   "still reading", "Reading what"; r6c: "fetched", "the summary is pending", "before the summary
+   arrives") - a table cell with its whole row, a prose sentence
    with the one before it, a heading or a fenced line on its own - or a prose sentence that opens
    on "it", "this" or "which" after such a sentence, is a load-state clause, and every one must
    equal, in document order, its entry of LOAD_STATE_PINS. No state-word list exists: "enabled",
@@ -157,7 +159,8 @@ the hand-off (``exit-state``), the revision marker with a gated exit in a table 
 (``exit-state`` and ``k9.exit``), and the confirm drawn while the summary loads in the hand-off's
 table and prose (``k4.loading``): each raises its own codes and none but the pins' beside them,
 and a neutral sentence at each of those sites raises none of the three. Then 7g's (r6b): the lens's
-seven loading forms and six fresh paraphrases, each in lower, Title and UPPER case, on frame 49, in
+seven loading forms, six fresh paraphrases and (r6c) five name and load forms of the round-6b
+lens, each in lower, Title and UPPER case, on frame 49, in
 section 11's SCR-129 row, in the hand-off's opening prose and in its first table (``load-state``;
 ``k4.loading`` and the pins beside it), and bare "cancel is unresponsive" at the six exit sites
 (``exit-state``); a neutral edit at each of the ten sites raises none of the loading or exit codes.
@@ -2850,7 +2853,9 @@ def exit_state_gate(spec: str, handoff: str, out: Out) -> None:
 # LOAD_STATE_PINS entry (section, row and column or "prose", exact text). There is no list of bad
 # states: "enabled", "active", "live", "clickable", "ready" fail as "disabled" does. The load is
 # named by "load" in any form ("loads", "loading", "loaded", "the load", "During the load"),
-# "while it reads", "still reading" or "Reading what"; the confirm by CONFIRM_NOUN. A table cell
+# "while it reads", "still reading" or "Reading what" (r6c: "fetched", "the summary is pending",
+# "before the summary arrives"); the confirm by LOAD_CONFIRM (CONFIRM_NOUN, a bracketed destructive
+# label, "the Revoke button"). A table cell
 # that names the confirm is read with its whole row (frame 53's Class cell with its name, a deck
 # row's Where cell with its key); a prose sentence that names the confirm is read with the
 # sentence before it in the same section ("The summary loads. The confirm is enabled."), and one
@@ -2865,7 +2870,17 @@ def exit_state_gate(spec: str, handoff: str, out: Out) -> None:
 # quote the forms the tool refuses.
 LOAD_NAME = re.compile(
     r"\bload(?:s|ing|ed)?\b|\bwhile (?:it|the [\w-]+) reads?\b|\b(?:still|while) reading\b"
-    r"|\breading what\b",
+    r"|\breading what\b|\b(?:summary|consequences|it) (?:is |are )?(?:still )?(?:pending|in flight)\b"
+    r"|\bfetch(?:es|ed|ing)?\b|\bawait(?:s|ed|ing)? (?:it|the [\w-]+)\b"
+    r"|\b(?:before|until|till) (?:it|the [\w-]+) (?:arrives|has arrived|returns|has returned|is back)\b",
+    re.IGNORECASE,
+)
+# r6c: the confirm is named by CONFIRM_NOUN or by what it is: a bracketed destructive label
+# ("[Revoke key ...]", "[Delete ...]", "[Disable ...]") or "the Revoke button" / "the Revoke key
+# control" (and Delete's and Disable's); "[Cancel]" and "Cancel" stay exits.
+LOAD_CONFIRM = re.compile(
+    r"(?<!\bto )\[?\bconfirm\b|\[(?:revoke|delete|disable)\b"
+    r"|\b(?:revoke|delete|disable)(?: key)? (?:button|control)s?\b",
     re.IGNORECASE,
 )
 LOAD_PRONOUN = re.compile(r"[(\"'`* ]*(?:(?:and|but|so) +)?(?:it|this|which)\b", re.IGNORECASE)
@@ -2886,7 +2901,7 @@ def load_state_clauses(name: str, text: str) -> list[Clause]:
     last_hit = last_load = False
     for clause in clauses:
         section, where, body, num = clause
-        names = CONFIRM_NOUN.search(body) is not None
+        names = LOAD_CONFIRM.search(body) is not None
         load = LOAD_NAME.search(body) is not None
         if where.startswith("row "):
             hit = names and rows[(section, num)]
@@ -5448,7 +5463,9 @@ def exit_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
 
 # r6b: §7g's own list. The lens's seven loading forms (the confirm "enabled" while the summary
 # loads, in a semicolon part, after a "When" or "During the load" opener, after "and" and in the
-# sentence after the load) and six fresh paraphrases, each in lower, Title and UPPER case, on
+# sentence after the load), six fresh paraphrases and r6c's five (the confirm named "the Revoke
+# button" or "[Revoke key ...]", the load named "before ... arrives", "pending" or "fetched"), each
+# in lower, Title and UPPER case, on
 # frame 49 (whose row names no load), in a cell of section 11's SCR-129 row that names no confirm,
 # in the hand-off's opening prose and in a cell of its first table: no word list may pass them
 # (``load-state``; ``k4.loading`` and the pins beside them where their words or text are hit).
@@ -5469,6 +5486,12 @@ LOAD_FORMS = (
     "The confirm is live before the summary has loaded.",
     "Throughout the load the confirm is pressable.",
     "The confirm is available while loading. It takes a press.",
+    # r6c: the round-6b lens's name and load gaps
+    "The Revoke button is enabled while the summary loads.",
+    "[Revoke key ...e5f6] is enabled while loading.",
+    "Before the summary arrives the confirm is enabled.",
+    "The summary is pending; the confirm is enabled.",
+    "While the consequences are fetched, the confirm is enabled.",
 )
 F49_END = 'focus returns to "Actions for sub_002 · LIVE".'
 ROW11_LOAD = "SCR-129 disable, delete, revoke"
