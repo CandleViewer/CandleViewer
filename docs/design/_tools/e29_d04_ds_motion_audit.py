@@ -27,12 +27,16 @@ hand-off, this tool and the ticket's board PNGs, nothing else (G-UNTOUCHED).
 2. **Cites.** Every `NN`:line, `D01`/`D02`/`D03`/`PRIM`:line, `Exx-Dyy`:line and `path`:line
    resolves at the base (FAIL when the line is gone or blank; WARN when it drifted at
    `origin/main`). A cite followed by a quoted fragment, and every Table A Old cell, is looked up
-   whole: on its line it passes, once elsewhere it WARNs (moved), nowhere or more than once off
-   its line it FAILs (gone, ambiguous). The merged-sha pins are ancestors of the base, carry
-   their PR numbers and touch the cited files; a late pin (LATE_PINS: E33-D04, merged after the
-   base) is an ancestor of the branch instead, and cites into its files (`Exx-Dyy-handoff`:line
-   names a hand-off) are read at its sha. An HTML comment is read over the whole text, closed by
-   `-->` or `--!>` as a browser closes it (or by the end of the text), never line by line.
+   whole: on its line it passes, once elsewhere it WARNs (moved), nowhere or more than once off its
+   line it FAILs (gone, ambiguous). The merged-sha pins are ancestors of the base, carry their PR
+   numbers and touch the cited files; a late pin (LATE_PINS: E33-D04 and the E29-D03 boards, merged
+   after the base) is an ancestor of the branch instead, and cites into its files
+   (`Exx-Dyy-handoff`:line names a hand-off) are read at its sha. An HTML comment is read over the
+   whole text, closed by `-->` or `--!>` as a browser closes it (or by the end of the text), never
+   line by line. Two known limits, accepted (#4576 round 2): a `<!--` inside a code span or a fence
+   is read as a comment here although a browser renders it as text, and an unclosed `<!--` (say
+   above §3.2) hides the rest of the rendered text; G-VALUE (an HTML comment that is no marker
+   FAILs) is the guard for both, with G-SEC-PIN where the hidden text holds a pinned clause.
 3. **Gates (RULED comment 6399392172).** Every table row, bullet, prose sentence and heading of
    the spec and the hand-off is read, fenced copy-ready blocks included, after normalising (HTML
    comments, soft hyphens and zero-width characters dropped, NFKC, markup stripped, dashes to
@@ -183,9 +187,12 @@ PINS: dict[str, tuple[str, str]] = {
     "e0bf7db3e": ("#3926", "docs/design/E42/E42-D02.md"),
     "9b5c0d8bf": ("#4193", "docs/design/E42/E42-D04.md"),
     "db6a6ad1f": ("#4528", "docs/design/E33/E33-D04"),
+    "af18afb25": ("#4472", "docs/design/E29/E29-D03.md"),
 }
 # pins merged after the base, ancestors of the branch: cites into their paths are read at the pin
-LATE_PINS = ("db6a6ad1f",)
+LATE_PINS = ("db6a6ad1f", "af18afb25")
+# boards merges pinned by their text path (they re-pinned the text, which is read at their sha)
+BOARD_PINS = ("af18afb25",)
 # sha → the document it pins: a document id named next to it must be this one
 PIN_DOC = {
     "9da45ae35": "d01",
@@ -210,6 +217,7 @@ PIN_DOC = {
     "e0bf7db3e": "e42 d02",
     "9b5c0d8bf": "e42 d04",
     "db6a6ad1f": "e33 d04",
+    "af18afb25": "d03",
 }
 DOC_IDS = (
     r"\b(e29 d01|e29 d02|e29 d03|e30 d04|e30 d02|e09 d09|e09 d08|e39 d03|e39 d01|e05 d02|e11 d06"
@@ -220,6 +228,12 @@ MAX_BOARDS = 10  # RULED BQ-15: at most ten boards, seven dark and three light t
 LIGHT_BOARDS = 3
 SPEC_LINE_BUDGET = 600  # RULED BQ-1: the spec's line budget
 SUMMARY_LINES = 10
+# the boards as drawn (§0): the Penpot file and page by name, ids in UUID form, PNGs under IMG_REL
+PENPOT_FILE = "E29-D04 boards"
+PENPOT_PAGE = "E29-D04 DS contributions and motion"
+IMG_REL = "docs/design/E29/img/"
+UUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+DRAWN_CELL = re.compile(r"drawn: \[(E29-D04-(\d\d)-([a-z0-9-]+)\.png)\]\(img/\1\)")
 
 # the load-bearing fragments the tool's constants and gates rest on: (cite id, line, text)
 CITED: tuple[tuple[str, int, str], ...] = (
@@ -238,9 +252,9 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("D02", 590, "**Components by id:**"),
     ("D02", 617, "No catalogued component for the pending tag"),
     ("D02", 622, "a Live flatten needs hold and typed"),
-    ("D03", 46, "E29 runs on Bybit"),
-    ("D03", 401, "the correction highlight is E29-D04's motion item"),
-    ("D03", 613, "| Item "),
+    ("D03", 65, "E29 runs on Bybit"),
+    ("D03", 422, "the correction highlight is E29-D04's motion item"),
+    ("D03", 635, "| Item "),
     ("15", 41, "Test requirement baseline"),
     ("15", 192, "one sweep per 1,200 ms, stopped at 5 s"),
     ("15", 476, "default 800 ms, PROPOSED `motion.duration.hold-confirm`"),
@@ -294,7 +308,7 @@ CITED_VALUES: dict[str, tuple[str, int, str]] = {
     "cited.15.virtualized-rows": ("15", 527, r"default true above (\d+) rows"),
     "cited.d01.virtualise-rows": ("D01", 284, r"Virtualise at ≥(\d+ \d{3}) rows"),
     "cited.d02.fixture-rows": ("D02", 142, r"on a (\d+)-row fixture"),
-    "cited.d03.fixture-fills": ("D03", 72, r"a ([\d,]+)-fill fixture"),
+    "cited.d03.fixture-fills": ("D03", 91, r"a ([\d,]+)-fill fixture"),
 }
 # §5's pairs: name → (fg, bg, role); a bg "X over Y" is X at the `16` §7.1 flash peak over Y
 PAIRS: dict[str, tuple[str, str, str]] = {
@@ -436,6 +450,15 @@ def cite_rev(rel: str) -> str:
     return next((sha for sha in LATE_PINS if rel.startswith(PINS[sha][1])), BASE)
 
 
+def at_cite(rel: str) -> str:
+    """`rel` at the revision its cites are read at (`cite_rev`)."""
+    rev = cite_rev(rel)
+    text = git_show(rev, rel)
+    if text is None:
+        raise SystemExit(f"FAIL parse: {rel} is not readable at {rev}")
+    return text
+
+
 def cite_path(cid: str) -> str | None:
     if re.fullmatch(r"\d{2}", cid):
         return plan_rel(cid)
@@ -451,9 +474,9 @@ def cite_path(cid: str) -> str | None:
 
 def base_line(cid: str, n: int) -> str:
     rel = cite_path(cid)
-    lines = at_base(rel).split("\n") if rel else []
+    lines = at_cite(rel).split("\n") if rel else []
     if not 1 <= n <= len(lines):
-        raise SystemExit(f"FAIL parse: {cid}:{n} is past the end at {BASE}")
+        raise SystemExit(f"FAIL parse: {cid}:{n} is past the end at {cite_rev(rel or '')}")
     return lines[n - 1]
 
 
@@ -1232,7 +1255,7 @@ MO_ID = r"Mo-\d+"
 
 
 def boards(spec: str) -> list[dict[str, str]]:
-    rows = table_with(section(spec, "0. Planned boards"), "#", "Board")
+    rows = table_with(section(spec, "0. Boards"), "#", "Board")
     return [r for r in rows if re.fullmatch(r"\d\d", col(r, "#").strip())]
 
 
@@ -1358,8 +1381,8 @@ def tiers_and_b8() -> tuple[tuple[str, ...], tuple[str, ...]]:
 @functools.lru_cache(maxsize=1)
 def row_markers() -> tuple[str, ...]:
     """The row markers the merged texts draw: D02's "Verifying" (D02:414) and every marker of
-    D03 §5.4's table (D03:327–344), the first quoted string of its Row marker column."""
-    d03 = at_base(CITE_FILES["D03"])
+    D03 §5.4's table (D03:348–365), the first quoted string of its Row marker column."""
+    d03 = at_cite(CITE_FILES["D03"])
     out = ["Verifying"]
     for r in table_with(section(d03, "5.4 Correction lines"), "Category", "Row marker"):
         m = re.search(r'"([^"]+)"', col(r, "Row marker"))
@@ -1370,11 +1393,11 @@ def row_markers() -> tuple[str, ...]:
 
 @functools.lru_cache(maxsize=1)
 def inventory() -> tuple[str, ...]:
-    """Every CMP id SCR-063 and SCR-078 name: `14`:1479 and :1743, D02:590, D03:615–617."""
+    """Every CMP id SCR-063 and SCR-078 name: `14`:1479 and :1743, D02:590, D03:637–639."""
     ids: set[str] = set()
     for cid, n in (("14", 1479), ("14", 1743), ("D02", 590)):
         ids |= {f"CMP-{x}" for x in re.findall(r"CMP-(\d{3})", base_line(cid, n))}
-    for n in (615, 616, 617):
+    for n in (637, 638, 639):
         cell = split_row(base_line("D03", n))[2]
         ids |= {f"CMP-{x}" for x in re.findall(r"(?<![\d-])(\d{3})(?!\d)", cell)}
     return tuple(sorted(ids))
@@ -1723,9 +1746,10 @@ def cite_problems(texts: dict[str, str], fetch: Fetch) -> tuple[list[str], list[
                     warns.append(f'[G-CITE] `{cid}`:{refs[0]} "{m["frag"][:40]}" moved')
     for cid, n, frag in CITED:
         rel = cite_path(cid)
-        base = lines_of(BASE, rel) if rel else None
+        rev = cite_rev(rel) if rel else BASE
+        base = lines_of(rev, rel) if rel else None
         if base is None or lookup(base, n, frag) != "ok":
-            fails.append(f'the tool\'s `{cid}`:{n} "{frag[:40]}" is not on its line at {BASE}')
+            fails.append(f'the tool\'s `{cid}`:{n} "{frag[:40]}" is not on its line at {rev}')
     p15 = (fetch(BASE, P15_REL) or "").split("\n")
     hand = texts.get("hand-off", "")
     for r in table_a(hand):
@@ -1758,7 +1782,7 @@ def pin_claims(clause: str) -> list[str]:
                 bad.append(f"`{sha}` is neither a pin nor the base")
             continue
         pr, path = PINS[pin]
-        role = "boards" if path.endswith("img/") else "text"
+        role = "boards" if path.endswith("img/") or pin in BOARD_PINS else "text"
         before = norm_text(clause[start : m.start()])
         prm = re.search(r"#(\d{3,5})\W{0,4}$", clause[: m.start()])
         if prm and f"#{prm[1]}" != pr:
@@ -1903,7 +1927,7 @@ CHECK_BOX = ("[x]", "[ ]", "N/A")
 def checklist_problems(t: Texts) -> list[str]:
     """Hand-off §B: the thirteen lines present in order, every box `[x]`, `[ ]` or N/A; Sign-off
     open on every entry with the owner mark (an approval only the owner gives); the Penpot line
-    open while §0's boards are PENDING."""
+    open while a §0 board is PENDING and ticked once every board is drawn."""
     block = section(t.hand, "§B ")
     if not block:
         return []  # a missing §B is G-HANDOFF's
@@ -1922,6 +1946,8 @@ def checklist_problems(t: Texts) -> list[str]:
         pending_boards = any("PENDING" in col(b, "Status") for b in boards(t.spec))
         if line == "Final Penpot link" and pending_boards and set(boxes) != {"[ ]"}:
             bad.append("§B Final Penpot link is ticked while §0's boards are PENDING")
+        if line == "Final Penpot link" and not pending_boards and set(boxes) != {"[x]"}:
+            bad.append("§B Final Penpot link is open while §0's boards are drawn")
     return bad
 
 
@@ -1990,12 +2016,47 @@ NUMBER_WORDS = {
 }  # fmt: skip
 
 
+def board_problems(spec: str) -> list[str]:
+    """§0 as drawn: the prose names the Penpot file, the page and the page id; each board has one
+    board id in UUID form (all distinct) and the Status `drawn: [PNG](img/PNG)`, the PNG named
+    `E29-D04-NN-<slug>.png` after its own row and present in the working tree."""
+    block = section(spec, "0. Boards")
+    bad: list[str] = []
+    page = re.search(
+        rf"Penpot file `{re.escape(PENPOT_FILE)}`, page `{re.escape(PENPOT_PAGE)}`,"
+        rf" page id `{UUID}`",
+        block,
+    )
+    if page is None:
+        bad.append("§0 does not name the Penpot file, the page and its page id")
+    seen: set[str] = set()
+    for b in boards(spec):
+        n = col(b, "#").strip()
+        bid = re.fullmatch(rf"`({UUID})`", col(b, "Board id").strip())
+        if bid is None:
+            bad.append(f"board {n}: the board id is not one UUID in a code span")
+        elif bid[1] in seen:
+            bad.append(f"board {n}: board id {bid[1]} is used twice")
+        else:
+            seen.add(bid[1])
+        name = re.fullmatch(r"`E29-D04 / (\d\d) ([a-z0-9-]+)`", col(b, "Board").strip())
+        drawn = DRAWN_CELL.fullmatch(col(b, "Status").strip())
+        if drawn is None:
+            bad.append(f"board {n} is not `drawn: [PNG](img/PNG)`")
+        elif name is None or (drawn[2], drawn[3]) != (name[1], name[2]):
+            bad.append(f"board {n}: {drawn[1]} is not named after the board")
+        elif not (ROOT / IMG_REL / drawn[1]).is_file():
+            bad.append(f"board {n}: {IMG_REL}{drawn[1]} is missing")
+    return bad
+
+
 def g_boards(t: Texts) -> list[str]:
     """RULED BQ-15: at most ten boards, light twins at most a third, each the twin of a dark
-    board; numbered 01…n; every board PENDING; any board count in the text is the table's."""
+    board; numbered 01…n; every board drawn (board_problems); any board count in the text is the
+    table's."""
     bd = boards(t.spec)
     bad: list[str] = []
-    rows = table_with(section(t.spec, "0. Planned boards"), "#", "Board")
+    rows = table_with(section(t.spec, "0. Boards"), "#", "Board")
     bad += [f"§0 row {col(r, '#')!r} is not a board number" for r in rows if r not in bd]
     if len(bd) > MAX_BOARDS:
         bad.append(f"{len(bd)} boards > {MAX_BOARDS}")
@@ -2012,7 +2073,7 @@ def g_boards(t: Texts) -> list[str]:
         m = re.search(r"light twin of (\d\d)", col(b, "Draws"))
         if m is None or m[1] not in dark:
             bad.append(f"board {col(b, '#')} is not the light twin of a dark board")
-    bad += [f"board {col(b, '#')} is not PENDING" for b in bd if "PENDING" not in col(b, "Status")]
+    bad += board_problems(t.spec)
     for name, text in (("spec", t.spec), ("hand-off", t.hand)):
         for m in re.finditer(
             r"\b(\w+) (?:planned |penpot |drawn |dark )?boards\b", norm_text(text)
@@ -4054,6 +4115,9 @@ def g_sec_pin(t: Texts) -> list[str]:
 # C-4): a `disabled` flag named for CMP-079's `allowed` (§2.1), a `toggle` applying the mode on
 # each arrow key (§2.5) and a changed word in hand-off A-5.3 FAIL only G-SEC-PIN and G-TEXT-PIN.
 # Under default-deny that is the design: a re-pin is a reviewed diff, never a side effect.
+# The round-1 fold of #4576 joined the `Numbers.` paragraph onto the `Key.` paragraph of the
+# spec's preamble (one block, re-pinned then); the boards PR re-pinned §0, the Status line, the
+# Deviations, §8.2's G-BOARDS row, §9 and hand-off §B's Penpot line and Q-18.
 TEXT_DOCS = ("spec", "hand-off")
 TEXT_PATH_SEP = " › "
 TEXT_PIN_WIDTH = 96
@@ -4543,7 +4607,9 @@ GATE_RULES: dict[str, str] = {
     "G-OWNER": "the owner-level rows marked; §B's Sign-off never ticked (BQ-2, BQ-10 to BQ-12)",
     "G-AC": "AC1, AC3 and DoD 1-2 met as copy-ready A-rows (BQ-2)",
     "G-CROW": "every departure has its C-row (BQ-2, BQ-5, BQ-9 to BQ-12)",
-    "G-BOARDS": "at most ten boards, at most three light twins (BQ-15)",
+    "G-BOARDS": (
+        "at most ten boards, at most three light twins; each drawn with its id and PNG (BQ-15)"
+    ),
     "G-BUDGET": "the spec at most 600 lines, §9 at most ten (BQ-1)",
     "G-HANDOFF": "one hand-off, §A to §F (BQ-1)",
     "G-UNTOUCHED": "`15` and `16` byte-identical; the branch changes its three files only (BQ-2)",
@@ -4968,7 +5034,7 @@ FIX_STATES_114 = """
 | `CMP-114/sl-naked-unrecoverable` | `naked_unrecoverable` | "NO SL — owner paged" | ! | `color.status.danger.subtle` | Mo-8 | — | 01 |
 | `CMP-114/sl-frozen` | `amend_lock.frozen` | "· frozen" | — | `color.surface.raised` | Mo-8 | — | 01 |
 
-Row markers, each a tag in the status cell (D02:414; D03:327–344): "Verifying", "Stop put back", "SL auto-attached", "Corrected", "Updated from Bybit", "Rejected — not found on Bybit", "Gone from Bybit", "Rejected — history expired", "Unknown — checking", "Untracked — not placed by CandleViewer", "Anomaly", "Held — owner review", "Unpaired fill", "Stop restored", "Stop not restored", "Tighter stop kept", "Untracked stop — not placed by CandleViewer".
+Row markers, each a tag in the status cell (D02:414; D03:348–365): "Verifying", "Stop put back", "SL auto-attached", "Corrected", "Updated from Bybit", "Rejected — not found on Bybit", "Gone from Bybit", "Rejected — history expired", "Unknown — checking", "Untracked — not placed by CandleViewer", "Anomaly", "Held — owner review", "Unpaired fill", "Stop restored", "Stop not restored", "Tighter stop kept", "Untracked stop — not placed by CandleViewer".
 
 - **Keyboard:** A treegrid with one roving stop: arrows move between cells, `Enter` or `F2` edits, `Space` selects and `Escape` cancels an edit (D02:447).
 - **Accessible name:** In a mixed view the environment leads, then symbol, side, size, account and the status word (D02:222).
@@ -5208,7 +5274,7 @@ The environment is the text pill "LIVE" or "DEMO" with a `color.env.live` or `co
 | `rbac.view_as` | "Read-only while viewing as {user}." | registered | E09-D09 | §4.1 |
 | `rbac.permission` | "Your role can't change positions." | registered | E09-D09 | §4.1 |
 | `rbac.account_read_only` | "You can view this account, not trade it." | registered | E09-D09 | §4.1 |
-| `recon.stale` | "Stale — new orders locked until the owner resolves it." | PROPOSED | E29-D03 (D03:311), for E09-D09's owner | §4.1 |
+| `recon.stale` | "Stale — new orders locked until the owner resolves it." | PROPOSED | E29-D03 (D03:332), for E09-D09's owner | §4.1 |
 """,
     "7. ": """
 A-rows are the hand-off's §C; the C-rows, G-rows and the drift ledger follow.
@@ -5376,12 +5442,26 @@ def first(_r: dict[str, str]) -> bool:
 
 
 def eleven(text: str, v: Values) -> str:
-    row = "| 11 | `E29-D04 / 11 extra-light` | light twin of 05 | PENDING: drawn in the boards PR |"
-    return add_row("0. Planned boards", ("#", "Board"), row)(text, v)
+    png = "E29-D04-11-extra-light.png"
+    bid = "`00000000-0000-4000-8000-000000000011`"
+    row = (
+        f"| 11 | `E29-D04 / 11 extra-light` | light twin of 05 | {bid} | drawn: [{png}](img/{png})"
+    )
+    row += " |"
+    return add_row("0. Boards", ("#", "Board"), row)(text, v)
 
 
 def board_07(r: dict[str, str]) -> bool:
     return col(r, "#").strip() == "07"
+
+
+def board_n(n: str) -> Callable[[dict[str, str]], bool]:
+    return lambda r: col(r, "#").strip() == n
+
+
+def renamed_10(cell: str) -> str:
+    """Board 10 renamed in its Board and Status cells alike: only its PNG goes missing."""
+    return cell.replace("flatten-confirm-light", "flatten-confirm-x-light")
 
 
 LONG_REASON = '"Stale — new orders stay locked until the owner of the account resolves the lock."'
@@ -5650,7 +5730,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M16.1",
         "G-VALUE",
         "condition",
-        spec=sub_in("0. Planned boards", "audit:count.boards=10 -->", "audit:count.boards=11 -->"),
+        spec=sub_in("0. Boards", "audit:count.boards=10 -->", "audit:count.boards=11 -->"),
     ),
     Mutation(
         "M16.2", "G-VALUE", "condition", spec=prose_at("5. ", "The tag sits 16 px from the edge.")
@@ -5712,16 +5792,45 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-15",
         spec=chain(
             edit_row(
-                "0. Planned boards",
+                "0. Boards",
                 ("#", "Board"),
                 board_07,
                 "Board",
                 to("`E29-D04 / 07 motion-reduced-twins-light`"),
             ),
-            edit_row(
-                "0. Planned boards", ("#", "Board"), board_07, "Draws", to("light twin of 06")
-            ),
+            edit_row("0. Boards", ("#", "Board"), board_07, "Draws", to("light twin of 06")),
         ),
+    ),
+    # M24.3 to M24.6 — the boards as drawn: a missing PNG, a board id's form, a PNG-less drawn
+    # board, the page id gone
+    Mutation(
+        "M24.3",
+        "G-BOARDS",
+        "BQ-15 (a PNG missing)",
+        spec=chain(
+            edit_row("0. Boards", ("#", "Board"), board_n("10"), "Board", renamed_10),
+            edit_row("0. Boards", ("#", "Board"), board_n("10"), "Status", renamed_10),
+        ),
+    ),
+    Mutation(
+        "M24.4",
+        "G-BOARDS",
+        "BQ-15 (a board id's form)",
+        spec=edit_row(
+            "0. Boards", ("#", "Board"), board_n("03"), "Board id", lambda c: c[:24] + "`"
+        ),
+    ),
+    Mutation(
+        "M24.5",
+        "G-BOARDS",
+        "BQ-15 (drawn, no PNG)",
+        spec=edit_row("0. Boards", ("#", "Board"), board_n("05"), "Status", to("drawn")),
+    ),
+    Mutation(
+        "M24.6",
+        "G-BOARDS",
+        "BQ-15 (the page id gone)",
+        spec=sub_in("0. Boards", ", page id `c2f70ddd-", ", page `c2f70ddd-"),
     ),
     Mutation("M25.1", "G-BUDGET", "BQ-1", spec=overrun),
     Mutation(
@@ -5750,7 +5859,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         ),
     ),
     Mutation(
-        "M29.1", "G-CITE", "condition", spec=line_edit("**Fixtures.**", "(D03:46)", "(D03:9999)")
+        "M29.1", "G-CITE", "condition", spec=line_edit("**Fixtures.**", "(D03:65)", "(D03:9999)")
     ),
     Mutation(
         "M29.2",
@@ -6724,8 +6833,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     Mutation(
         "M21.3",
         "G-OWNER",
-        "BQ-15 (§B Penpot ticked)",
-        hand=line_edit("| Final Penpot link", "[ ]", "[x]"),
+        "BQ-15 (§B Penpot open while drawn)",
+        hand=line_edit("| Final Penpot link", "[x]", "[ ]"),
     ),
     Mutation("M21.4", "G-OWNER", "BQ-2 (§B any case)", hand=line_edit("| Sign-off", "[ ]", "[X]")),
     Mutation(
@@ -7098,7 +7207,7 @@ SEC_PIN_TXT = r"""
 @ prose
   **Fixtures.** Every example uses the fixture accounts Main, Sub-1 and Sub-2 and shows LIVE, as
   D02's boards do; E29 runs on DEMO until R4, where the same frames carry DEMO with identical copy
-  (D03:46).
+  (D03:65).
 @ prose
   No key material, signature, full order id or real balance appears in this file, the hand-off or
   a board.
@@ -7163,18 +7272,33 @@ SEC_PIN_TXT = r"""
   rows, read-only behind `guard.mismatch.row` (D02:145), and keeps a Cancel's own order-kind and
   in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`,
   `blotter.amend_in_flight`).
-§ spec ‖ 0. Planned boards (PENDING; ten: seven dark, thr
+@ prose
+  **The lock glyph.** `icon / locked` is a local component of the `E29-D04 boards` file (Lucide
+  `lock`, on the grid and at the stroke of the DS icon set), not a library instance: the boards
+  draw from primitives and the file's own token sets, imported with
+  `docs/design/_tools/penpot_token_sets.py`, and use no shared library (the per-set Penpot files
+  ruling; orchestrator-approved).
+@ prose
+  Boards round 1 redrew all ten: the component now keeps only the Lucide `lock` glyph, without the
+  SVG import's base fill layer and without a clip, so it reads as a lock at the export size.
+§ spec ‖ 0. Boards (drawn; ten: seven dark, three light t
 @ row 02 ‖ Draws
   `CMP-115/*`: the fifteen statuses, each glyph + word; the amend moments (editing, pending,
   unconfirmed, rejected); the native-stop row
 @ row 03 ‖ Board
   `E29-D04 / 03 pnl-badge-numerics`
+@ row 03 ‖ Status
+  drawn: [E29-D04-03-pnl-badge-numerics.png](img/E29-D04-03-pnl-badge-numerics.png)
 @ row 04 ‖ Board
   `E29-D04 / 04 flatten-confirm`
 @ row 04 ‖ Draws
   `CMP-123/*`: default, holding, armed, the typed word on LIVE, busy, the T2 frames, offline
+@ row 04 ‖ Status
+  drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png)
 @ row 10 ‖ Board
   `E29-D04 / 10 flatten-confirm-light`
+@ row 10 ‖ Status
+  drawn: [E29-D04-10-flatten-confirm-light.png](img/E29-D04-10-flatten-confirm-light.png)
 § spec ‖ 1. Inputs and decisions
 @ row D01 D7 (D01:274); D02 gap 13 (D02:622 "a ‖ Row (cited)
   D01 D7 (D01:274); D02 gap 13 (D02:622 "a Live flatten needs hold and typed")
@@ -7193,7 +7317,7 @@ SEC_PIN_TXT = r"""
   CMP-028's tone; CMP-105 as a filter picker; CMP-129's read-only display; CMP-019
 @ row D03 CR-1, CR-3, CR-6, CR-8, CR-9 and CR- ‖ Asked of E29-D04
   CMP-028's account line; CMP-239's states; the drawer motion names; registering
-  `color.text.primary` on `color.status.success.subtle` (D03:396); CMP-099's CSV form; CMP-079's
+  `color.text.primary` on `color.status.success.subtle` (D03:417); CMP-099's CSV form; CMP-079's
   reason keys
 @ row D02 OQ-C, OQ-L, OQ-R and OQ-S (D02:652, ‖ Asked of E29-D04
   coloured digits; the row form of `guard.mismatch`; `Ctrl+Shift+F`; 2b on a text SplitButton
@@ -7948,11 +8072,11 @@ SEC_PIN_TXT = r"""
   `rowgroup` (D02:142); `stickyFirstColumn?: boolean|number` (`true` pins the first column,
   E11-D04's ask; a number pins that many leading columns, SCR-063's select, Env, Account and
   Symbol) and `stickyLastColumn?` (the actions column, D02:170); a `detail` line under a row,
-  opened by `→` and closed by `←` (D03:130, :445).
+  opened by `→` and closed by `←` (D03:149, :466).
 @ prose
   Windowing stays on from 50 rows, so D01 D8's 1,000 rows (D01:284) and D03 CR-4's default sit
   inside it; the two budgets become the variant's tests: the roles, levels and indices on a 500
-  -row fixture (D02:142) and a 1,000 -row window painted with no per-row layout read (D03:72).
+  -row fixture (D02:142) and a 1,000 -row window painted with no per-row layout read (D03:91).
 @ prose
   - **Accessible name:** The caption names the table; a row is named by its `rowheader` cell (the
   Symbol in SCR-063, D02:142) with its level and position; a totals row by its label ("LIVE
@@ -7961,11 +8085,11 @@ SEC_PIN_TXT = r"""
 @ prose
   - **2.8.1 CMP-028 Callout (D03 CR-1).** Answered by the entry as it stands: `live?: "off"`
   mounts the account line with no live role, the slot's shared regions its only voices, and
-  `actions?` takes Details, Review and Resolve… (`15`:314, :317; D03:472); the Purpose already
+  `actions?` takes Details, Review and Resolve… (`15`:314, :317; D03:493); the Purpose already
   names CMP-074 (`15`:313).
 @ prose
-  The reconciling, desync and locked lines are the info, warning and danger tones (D03:393–395);
-  Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:220).
+  The reconciling, desync and locked lines are the info, warning and danger tones (D03:414–416);
+  Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:239).
 @ prose
   - **2.8.2 CMP-078 StaleDataShade (D03 CR-2; D02 gap 12).** The grid-row variant exists
   (`15`:803); the delta is an account scope and a reason line that names the account once ("Not up
@@ -7989,7 +8113,7 @@ SEC_PIN_TXT = r"""
   - **2.8.6 CMP-075 EnvBadgeLocal (D02 gap 7).** A compact per-row pill: "LIVE" or "DEMO" in
   `color.text.primary` on `color.surface.raised` with a `color.env.live` or `color.env.demo`
   border, LIVE in `font.weight.bold`, `type.ui.caption` and `radius.badge`, never colour alone
-  (D02:516; D03:392); its 16 px height waits for a token (D02:619).
+  (D02:516; D03:413); its 16 px height waits for a token (D02:619).
 @ prose
   In a row the pill is `aria-hidden`, as the row's name already leads with its environment.
 @ prose
@@ -8004,10 +8128,10 @@ SEC_PIN_TXT = r"""
 @ prose
   - **2.8.9 CMP-099 PrintExportBar (D03 CR-9).** SCR-078 uses the CSV form, `formats: ["csv"]`;
   running is CMP-038's busy form (`aria-busy`, the label kept), never T2; the file's first line is
-  the watermark naming the exporting identity, the accounts and the time (D03:181; D03:79).
+  the watermark naming the exporting identity, the accounts and the time (D03:200; D03:98).
 @ prose
   The record stays a contract gap: an export reaches no server, so SR-098's audit record waits for
-  G7's path (D03:478; D02:605).
+  G7's path (D03:499; D02:605).
 @ prose
   A change request to E05's owner for the progress line and the watermark.
 @ prose
@@ -8016,7 +8140,7 @@ SEC_PIN_TXT = r"""
   Registered keys bind as they stand: `rbac.*`, `notice.*`, `inflight.*`, `panel.*` and E30-D02's
   `frozen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`.
 @ prose
-  `recon.*` (D03:311), `blotter.*`, `guard.mismatch.row`, `feed.*` and the `sl.note` sentence of a
+  `recon.*` (D03:332), `blotter.*`, `guard.mismatch.row`, `feed.*` and the `sl.note` sentence of a
   Cancel stay PROPOSED with their owners until E09-D09's owner registers them (§6; RULED BQ-13);
   no string is redefined here.
 § spec ‖ 2.9 Consumed components (reuse only)
@@ -8108,7 +8232,7 @@ SEC_PIN_TXT = r"""
 @ prose
   Nothing animates per tick or per price update (D02:465 "Never per tick"): ages and the "Last
   update" counter repaint as text at most once a second (D02:272), the NO SL timer swaps its
-  digits as text, the account line and the row markers change only on a notice (D03:477), and no
+  digits as text, the account line and the row markers change only on a notice (D03:498), and no
   tab carries a count (D02:158).
 § spec ‖ 4. T2, view-as and environment on the components
 @ heading
@@ -8119,7 +8243,7 @@ SEC_PIN_TXT = r"""
   branches on what the session carries, never on a role name (E09-D09:34).
 @ prose
   The T2 anatomy is E09-D09's, stated once in each merged spec and only pointed to here
-  (E09-D09:49; D02:429; D03:208): `aria-disabled="true"`, never the `disabled` attribute, so the
+  (E09-D09:49; D02:429; D03:227): `aria-disabled="true"`, never the `disabled` attribute, so the
   control stays in the Tab order and the roving grid; the reason node in the DOM at mount, named
   by `aria-describedby` and swapped in place (E09-D09:236); the CMP-019 `lock` named "Not
   available" leading the label (2a) or badging the control (2b); the label in
@@ -8141,17 +8265,17 @@ SEC_PIN_TXT = r"""
   the tooltip and the accessible name (D02:149).
 @ prose
   A reason never repeats the account, which is named once, in its header marker and line
-  (D03:321).
+  (D03:342).
 @ prose
   A Manager's rows, filter options, headings, totals, footer and CSV watermark name and count only
-  the Manager's own accounts and legs (D02:92; D03:76).
+  the Manager's own accounts and legs (D02:92; D03:95).
 @ prose
   After `403 account_scope_denied` the refused control is T2 `rbac.account`, sticky until the next
   `permission_change` or `GET /me` re-read, and the page echoes only an id the client itself sent
   (E09-D09:55, :158).
 @ prose
   No `ret_msg` and no server `message` reach the DOM; a rejected amend shows D02's own line, and
-  the exchange's text lives only behind the audited diagnostics (D02:152; D03:78, :80).
+  the exchange's text lives only behind the audited diagnostics (D02:152; D03:97, :99).
 @ prose
   E09-D09's security statement holds for every entry, density, theme and story: "Every treatment
   in this document is presentation.
@@ -8241,7 +8365,7 @@ SEC_PIN_TXT = r"""
 @ row "Edit price", "Edit trigger" and a quant ‖ Renders
   2a under the editor; a T2 cell keeps its value with no glyph among the numerals
 @ row "Edit price", "Edit trigger" and a quant ‖ Source
-  D02:345, :149; D03:208; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01),
+  D02:345, :149; D03:227; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01),
   `blotter.amend_in_flight` (E29-D03), §6
 @ row "Cancel ▾" (the primary) ‖ Control
   "Cancel ▾" (the primary)
@@ -8275,7 +8399,7 @@ SEC_PIN_TXT = r"""
 @ row "Edit qty" lowering the quantity; a reco ‖ Renders
   2a under the editor; 2b on the take-profit row, repeated as its menu item's second line
 @ row "Edit qty" lowering the quantity; a reco ‖ Source
-  D02:345, :431, :435; D03:208, :222
+  D02:345, :431, :435; D03:227, :241
 @ row "Close selected" and "Close all in view… ‖ Control
   "Close selected" and "Close all in view…" (CMP-114); "Cancel selected" and "Cancel all in view…"
   (CMP-115)
@@ -8336,7 +8460,7 @@ SEC_PIN_TXT = r"""
 @ row "Resolve…" on the account line ‖ Renders
   2a, the reason beside it
 @ row "Resolve…" on the account line ‖ Source
-  D03:220, :321
+  D03:239, :342
 @ row the row checkbox ‖ Control
   the row checkbox
 @ row the row checkbox ‖ Component
@@ -8358,7 +8482,7 @@ SEC_PIN_TXT = r"""
   - **Exits keep their legs and nothing more.** Cancel, close and its items, the bulk closes and
   cancels, Flatten account…, a quantity cut and a recorded take-profit's edit and Cancel are never
   gated by a state key or `rbac.env`: in every account state of D02 §10.2 and §10.3, and under the
-  kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:82).
+  kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:101).
 @ prose
   The drawn exceptions are two account states and one environment: offline with REST unreachable,
   where every write is T2 (D02:333, :431); a Manager's closes and Flatten account… under the kill
@@ -8376,7 +8500,7 @@ SEC_PIN_TXT = r"""
   ordinary stop order's through `amendOrder`, an attach and a re-stamp — is never T2 by view-as,
   by the kill switch, by a lockout or by a `recon.*` state: it takes the session's permission and
   trade grant, under view-as the target's, and a loosen is refused inline for every role,
-  E32-D01's `sl.loosen.refused` (D02:435; D03:222; C-2.6).
+  E32-D01's `sl.loosen.refused` (D02:435; D03:241; C-2.6).
 @ prose
   SL/TP… and `Enter` into SCR-064 never take view-as, the kill switch, a lockout, a `recon.*`
   state or a pending TP/SL write, because they only open SCR-064, which applies those gates
@@ -8391,8 +8515,8 @@ SEC_PIN_TXT = r"""
   filter lists the assigned accounts only (D02:375; RULED BQ-8).
 @ prose
   Export CSV builds its file client-side, a read that stays T1; should G7's path become a
-  write-method operation, it takes `rbac.view_as` alone, in 2b in the drawer's title bar (D03:181,
-  :519).
+  write-method operation, it takes `rbac.view_as` alone, in 2b in the drawer's title bar (D03:200,
+  :540).
 @ prose
   **Nothing is hidden.** A Viewer sees every control, each write T2 with its reason (`14`:85;
   D02:433); hiding belongs to admin navigation alone (E09-D09:44).
@@ -8404,7 +8528,7 @@ SEC_PIN_TXT = r"""
   held behind an amend ("Cancelling…"), an account loading, its Flatten account… included, and an
   export running take CMP-001's loading state, `aria-busy="true"` with the ⟳ glyph leading the
   label, no `lock`, no reason node and no CMP-079; a second press does nothing (D02:341, :345,
-  :353, :388; D03:181).
+  :353, :388; D03:200).
 @ prose
   "Close all in view…" and "Cancel all in view…" leave the toolbar while nothing is in view
   (D02:380), and the mandatory Columns read "Always shown" as helper text, with no `lock` and no
@@ -8495,21 +8619,21 @@ SEC_PIN_TXT = r"""
   vocabularies E09-D09 registers beside them, E39-D01's and E17-D01's (E09-D09:85; D02:431).
 @ prose
   A PROPOSED key carries its owner on its row, here and in §4.1, and binds no T2 until its owner
-  registers it, because CMP-079's `reason` is a key of E09-D09's vocabulary (`15`:814; D03:536).
+  registers it, because CMP-079's `reason` is a key of E09-D09's vocabulary (`15`:814; D03:557).
 @ prose
   A PROPOSED reason is one data-free sentence of at most sixty characters with a full stop
   (E09-D09:85); `sl.note`'s sentence keeps its owner's words.
 @ prose
   D02 §10.2 and §10.3 still print `blotter.reconciling`, `blotter.verifying`,
   `blotter.stale_locked` and `blotter.locked_after_kill` (D02:408–410, :422); D03 replaced them
-  with the `recon.*` keys (D03:552), so the entries bind `recon.*` alone, and the merged D02 text
+  with the `recon.*` keys (D03:573), so the entries bind `recon.*` alone, and the merged D02 text
   is its owner's to correct, never edited here (hand-off §F).
 @ prose
-  D03's fifth key, `recon.reduce`, sits on SCR-060's Submit alone (D03:319), on no component of
+  D03's fifth key, `recon.reduce`, sits on SCR-060's Submit alone (D03:340), on no component of
   this spec.
 @ prose
   No reason names an account, a symbol, a price or a count, and none restates a registered string
-  in other words (E09-D09:85; D03:321).
+  in other words (E09-D09:85; D03:342).
 @ head 1
   Key
 @ head 2
@@ -8556,7 +8680,7 @@ SEC_PIN_TXT = r"""
 @ row `rbac.owner_only` with the verb "resolve ‖ String
   "Only the owner can resolve the lock."
 @ row `rbac.owner_only` with the verb "resolve ‖ Status
-  PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:321)
+  PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:342)
 @ row `rbac.owner_only` with the verb "resolve ‖ Owner
   E29-D03, for E09-D09's owner
 @ row `rbac.owner_only` with the verb "resolve ‖ Used on
@@ -8653,9 +8777,9 @@ SEC_PIN_TXT = r"""
   paused."; "Stale — new orders locked until the owner resolves it."; "After the kill switch — new
   orders locked until resolved."
 @ row `recon.reconciling`, `recon.desync`, `re ‖ Status
-  PROPOSED (D03:315–318)
+  PROPOSED (D03:336–339)
 @ row `recon.reconciling`, `recon.desync`, `re ‖ Owner
-  E29-D03, for E09-D09's owner (D03:536)
+  E29-D03, for E09-D09's owner (D03:557)
 @ row `recon.reconciling`, `recon.desync`, `re ‖ Used on
   §4.1: every new-exposure control of an account that is reconciling, being verified, on a stale
   lock or on the lock the kill switch leaves
@@ -8686,7 +8810,7 @@ SEC_PIN_TXT = r"""
 @ row `blotter.close_in_flight` ‖ String
   "A close for this position is already in flight."
 @ row `blotter.close_in_flight` ‖ Status
-  PROPOSED (D02:341); named for E29-D03, which registers none (D03:311)
+  PROPOSED (D02:341); named for E29-D03, which registers none (D03:332)
 @ row `blotter.close_in_flight` ‖ Owner
   E29-D03, the D02 and D03 author, for E09-D09's owner
 @ row `blotter.close_in_flight` ‖ Used on
@@ -8774,10 +8898,10 @@ SEC_PIN_TXT = r"""
   `closeAllPositions` states neither the order of its close and cancel nor that a failed close
   keeps its stop (D02:620): A-5.6 names the routes and shapes neither
 @ row D04-G5 ‖ Gap
-  CSV export has no endpoint, permission, audit action or size limit (D03:519, G7): CMP-099's
+  CSV export has no endpoint, permission, audit action or size limit (D03:540, G7): CMP-099's
   export writes no server record yet
 @ row D04-G6 ‖ Gap
-  No route for "Resolve…" and no server refusal while reconciling or desync (D03:522, G10):
+  No route for "Resolve…" and no server refusal while reconciling or desync (D03:543, G10):
   CMP-028's Resolve… is drawn "pending route", and the `recon.*` pause binds this client only
 @ row D04-G7 ‖ Gap
   CMP-211 offers a `group` scope (`15`:2505) and CMP-123 has none; SCR-063 draws Flatten account…
@@ -8790,7 +8914,7 @@ SEC_PIN_TXT = r"""
   (D02:669, OQ-T): the `rbac.env` leg on "Edit price" follows E17-D01 until it rules
 @ row D04-G9 ‖ Gap
   `position.reversed`, `grid.exported` and `order.diagnostics_viewed` are not in `24` §15.5
-  (D02:620; `14`:1478; D03:521, G9): Reverse…, Export CSV and the diagnostics read emit no
+  (D02:620; `14`:1478; D03:542, G9): Reverse…, Export CSV and the diagnostics read emit no
   registered audit action yet
 § spec ‖ 7.4 Drift ledger (RULED BQ-12; owner approval pe
 @ head 6
@@ -8807,7 +8931,7 @@ SEC_PIN_TXT = r"""
   `blotter.locked_after_kill`, which D03 superseded, and the five `blotter.*` names D02 leaves to
   E29-D03, registered nowhere (D02:341, :345, :431)
 @ row DR-12 ‖ Replacement (exact)
-  `recon.reconciling`, `recon.desync`, `recon.stale` and `recon.killlock` (D03:552) in place of
+  `recon.reconciling`, `recon.desync`, `recon.stale` and `recon.killlock` (D03:573) in place of
   the four, bound alone here (§6); the five registered or replaced by their owner, the Old → New
   pair in hand-off Q-2
 § spec ‖ 8.1 Ticket, stories and screens
@@ -9483,20 +9607,20 @@ SEC_PIN_TXT = r"""
   spec §4.2 are the only T2 on an exit (D02:412).
 § hand-off ‖ §F Open items
 @ prose
-  - **Q-1** The `recon.*` keys (D03:315–319) wait for E09-D09's owner to register them beside
-  E30-D02's (D03:536, :619); until then they stay PROPOSED on every row that names them, and
+  - **Q-1** The `recon.*` keys (D03:336–340) wait for E09-D09's owner to register them beside
+  E30-D02's (D03:557, :641); until then they stay PROPOSED on every row that names them, and
   CMP-079 cannot carry them (`15`:814).
 @ prose
   Owner: E09-D09's owner, with E29-D03 as the vocabulary owner.
 @ prose
   - **Q-2** The five `blotter.*` keys D02 names for E29-D03 (D02:341, :345, :431) are registered
-  nowhere, since D03 registers only `recon.*` (D03:311); D02's four superseded keys still print at
-  D02:408–410 and :422 (D03:552).
+  nowhere, since D03 registers only `recon.*` (D03:332); D02's four superseded keys still print at
+  D02:408–410 and :422 (D03:573).
 @ prose
   The copy-ready pair for that author (spec DR-12): in D02 §10.2 and §10.3, `blotter.reconciling`
   → `recon.reconciling`, `blotter.verifying` → `recon.desync`, `blotter.stale_locked` →
   `recon.stale` and `blotter.locked_after_kill` → `recon.killlock`, each with D03's string
-  (D03:315–318).
+  (D03:336–339).
 @ prose
   Owner: the E29-D02 and E29-D03 author, to register or replace them with E09-D09's owner and to
   correct the merged D02 text.
@@ -9514,11 +9638,11 @@ SEC_PIN_TXT = r"""
 @ prose
   Owner: E32-D01's owner.
 @ prose
-  - **Q-6** The verb "resolve the lock" for `rbac.owner_only` (D03:321), and Resolve…'s route,
-  which G10 records as missing (D03:522).
+  - **Q-6** The verb "resolve the lock" for `rbac.owner_only` (D03:342), and Resolve…'s route,
+  which G10 records as missing (D03:543).
 @ prose
   Owners: E09-D09's owner for the verb; D03's §11.1 owners, E29-T05, E29-T06, E29-T07 and E45, for
-  the route (D03:619).
+  the route (D03:641).
 @ prose
   - **Q-7** CMP-129's open-positions reason: a key and its string, asked of E30-D02's owner (RULED
   BQ-8); until it is registered the toggle's T2 frames show `rbac.view_as` and `rbac.owner_only`
@@ -9537,7 +9661,7 @@ SEC_PIN_TXT = r"""
   Owner: E39-D01's owner (OD-11).
 @ prose
   - **Q-10** CSV export for a Viewer (OQ-G, D02:656), and SR-098's identity watermark and audit
-  record, which need G7's server path (D03:519, :619).
+  record, which need G7's server path (D03:540, :641).
 @ prose
   Owners: the owner for OQ-G; E29-S04 for the record.
 @ prose
@@ -9575,6 +9699,14 @@ SEC_PIN_TXT = r"""
   Owner: E29-T09, with E29-D03's owner and the `/tools/` owners.
 @ prose
   Owner: E29-T09, which applies A-6, with E05's owner.
+@ prose
+  So a hovered item on an overlay surface (CMP-123's ⋯ menu item, any CMP-041 item) draws
+  pixel-identical to its default in light (board 10, `CMP-123/hover`).
+@ prose
+  Owner: E05's owner (the semantic-light set), for a light hover value distinct from overlay or a
+  ruling that overlay surfaces take another hover token.
+@ prose
+  Owner: E30-D02's owner, with E29-D03's owner as the copy deck's.
 @ head 2
   Owner
 @ row CMP-078 StaleDataShade (spec §2.8.2) ‖ Change
@@ -9601,10 +9733,10 @@ RULED_PIN_TXT = r"""
 @ ¶1 prose 1
   "**Ticket:** E29-D04 (#823) · **Epic:** E29 · **Status:** Draft, **text-first** — this file is t
   he design-system spec; [E29-D04-handoff.md](E29-D04-handoff.md) carries every copy-ready row; th
-  e ten Penpot boards of §0 are **PENDING** (drawn in the boards PR, which carries the line that c
-  ompletes #823). **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-2
-  5): the owner's `approved` comment on #823 stands in for \"Design-system team accepted ownership
-  ; CDO sign-off recorded\"; nothing here claims that approval."
+  e ten Penpot boards of §0 are **drawn** (in the boards PR, which completes #823; the text PR #45
+  76 is merged). **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-25
+  ): the owner's `approved` comment on #823 stands in for \"Design-system team accepted ownership;
+   CDO sign-off recorded\"; nothing here claims that approval."
 @ ¶2 prose 1
   "**Scope** (the ticket): the five catalogued components SCR-063 and SCR-078 introduce or extend
    — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge, CMP-123 FlattenAllButton and CMP-1
@@ -9614,24 +9746,25 @@ RULED_PIN_TXT = r"""
   r than `motion.duration.normal` on a data row."
 @ ¶3 prose 1
   "**Start.** `blocked_by` E29-D02 (#735) and E29-D03 (#822): D02 text #4114 (`c4270ba93`) and boa
-  rds #4330 (`75a33c164`); D03 text #4307 (`a59ba382b`), its boards #4472 **PENDING**, named only.
-   The work starts on the orchestrator's deviation ruling of 2026-10-25 on #823 (D03's binding tex
-  t is merged). The rows D01, D02 and D03 address to E29-D04 are inputs cited by id and answered i
-  n §1, never re-decided."
+  rds #4330 (`75a33c164`); D03 text #4307 (`a59ba382b`) and boards #4472 (`af18afb25`, merged afte
+  r the base). The work starts on the orchestrator's deviation ruling of 2026-10-25 on #823 (D03's
+   binding text is merged). The rows D01, D02 and D03 address to E29-D04 are inputs cited by id an
+  d answered in §1, never re-decided."
 @ ¶4 prose 1
   "**Inputs pinned.** Base `origin/main` `6fc8aacc6`: every `file`:line below was re-read there wi
   th `git show`. Merged texts at their merge shas: E29-D01 #3899 (`9da45ae35`); E29-D02 and E29-D0
-  3 as above, D02's line numbers being its boards merge's (#4330, `75a33c164`), the last change to
-   its text; E30-D04 #4271 (`ca7d61fa1`); E09-D09 #3953 (`baccf724a`); E39-D03 #4175 (`0beb67563`)
-  ; E09-D08 #4073 (`c99ad48d7`); E11-D06 #3957 (`16661c7bd`); E17-D01 #3905 (`da7b0f8a9`), its tex
-  t last touched by #4102 (`c31b67c22`); E30-D02 #3923 (`f798a64e6`); E33-D03 #4375 (`88839ea33`),
-   its boards #4402 (`05aa6fba1`), the last change to its text, where its line numbers are read; E
-  39-D01 #3920 (`1e6c15a1a`); E42-D02 #3926 (`e0bf7db3e`); E42-D04 #4193 (`9b5c0d8bf`); E05-D02 sl
-  ice 1 #3914 (`7c804aacc`), slice 2 #4290 (`c899241c8`), slice 3 #4322 (`3a2fc5c29`) and slice 4
-   #4414 (`04a8caa95`), each a merged text whose owner approval is pending; E33-D04 #4528 (`db6a6a
-  d1f`), merged after the base, its lines read at that merge sha. Unmerged work is named only, PEN
-  DING: the E29-D03 boards (#4472) and E05-D03 (#3174). `15`, `16`, `05`, `14` and `packages/ui/to
-  kens` are read at the base; `15` and `16` stay byte-identical to it (RULED BQ-2)."
+  3 as above, the line numbers of each read at the last change to its text, its boards merge: D02
+   boards #4330 (`75a33c164`) and D03 boards #4472 (`af18afb25`, merged after the base, its lines
+   read at that merge sha); E30-D04 #4271 (`ca7d61fa1`); E09-D09 #3953 (`baccf724a`); E39-D03 #417
+  5 (`0beb67563`); E09-D08 #4073 (`c99ad48d7`); E11-D06 #3957 (`16661c7bd`); E17-D01 #3905 (`da7b0
+  f8a9`), its text last touched by #4102 (`c31b67c22`); E30-D02 #3923 (`f798a64e6`); E33-D03 #4375
+   (`88839ea33`), its boards #4402 (`05aa6fba1`), the last change to its text, where its line numb
+  ers are read; E39-D01 #3920 (`1e6c15a1a`); E42-D02 #3926 (`e0bf7db3e`); E42-D04 #4193 (`9b5c0d8b
+  f`); E05-D02 slice 1 #3914 (`7c804aacc`), slice 2 #4290 (`c899241c8`), slice 3 #4322 (`3a2fc5c29
+  `) and slice 4 #4414 (`04a8caa95`), each a merged text whose owner approval is pending; E33-D04
+   #4528 (`db6a6ad1f`), merged after the base, its lines read at that merge sha. Unmerged work is
+   named only, PENDING: E05-D03 (#3174). `15`, `16`, `05`, `14` and `packages/ui/tokens` are read
+   at the base; `15` and `16` stay byte-identical to it (RULED BQ-2)."
 @ ¶5 prose 1
   "**Key.** `NN`:line = `docs/plan/NN-*.md`; `D01`:line, `D02`:line and `D03`:line = `docs/design/
   E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md` and `Exx-Dyy-handoff`:line its ha
@@ -9647,7 +9780,7 @@ RULED_PIN_TXT = r"""
 @ ¶6 prose 1
   "**Fixtures.** Every example uses the fixture accounts Main, Sub-1 and Sub-2 and shows LIVE, as
    D02's boards do; E29 runs on DEMO until R4, where the same frames carry DEMO with identical cop
-  y (D03:46). No key material, signature, full order id or real balance appears in this file, the
+  y (D03:65). No key material, signature, full order id or real balance appears in this file, the
    hand-off or a board."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › Acc
 § eptance-criteria trace (#823)#1"]
@@ -9890,67 +10023,98 @@ RULED_PIN_TXT = r"""
    in-flight-write reasons (`sl.note`, `blotter.held`, `blotter.untracked`, `blotter.unknown`, `bl
   otter.amend_in_flight`). All are merged D02 wording (D02:145, :345, :421), not a new gate, and n
   one is the account's state."
+@ ¶5 item 0
+  "5. **The lock glyph.** `icon / locked` is a local component of the `E29-D04 boards` file (Lucid
+  e `lock`, on the grid and at the stroke of the DS icon set), not a library instance: the boards
+   draw from primitives and the file's own token sets, imported with `docs/design/_tools/penpot_to
+  ken_sets.py`, and use no shared library (the per-set Penpot files ruling; orchestrator-approved)
+  . Boards round 1 redrew all ten: the component now keeps only the Lucide `lock` glyph, without t
+  he SVG import's base fill layer and without a clip, so it reads as a lock at the export size. Tw
+  o steps are set live in Penpot before export, as no token holds their values: board 03's simulat
+  ed strip fills (#878787, #787878, #9F905E, #81744B; `docs/design/_tools/cvd_sim.py`) and board 0
+  6's Mo-3 / Mo-4 frame-0 overlay opacity, at §3.5's peak. Two open items the boards surfaced are
+   hand-off Q-21 (light `color.surface.hover` = `color.surface.overlay`, board 10) and Q-22 (board
+   05's confirmLabel, marked OPEN, not invented)."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 0.
-§  Planned boards (PENDING; ten: seven dark, three light twins)#1"]
+§  Boards (drawn; ten: seven dark, three light twins)#1"]
 @ ¶0 heading 1
-  "## 0. Planned boards (PENDING; ten: seven dark, three light twins)"
+  "## 0. Boards (drawn; ten: seven dark, three light twins)"
 @ ¶1 prose 1
-  "Page `E29-D04 DS contributions and motion`, created by name at the boards step, its id recorded
-   then. Boards are `E29-D04 / NN slug`; exports go to `docs/design/E29/img/E29-D04-NN-<slug>.png`
-   at 1×, pinned to the boards PR's head; the D01 and D02 exports in that folder stay untouched. 1
-  0 <!-- audit:count.boards=10 --> boards, 3 <!-- audit:count.boards-light=3 --> of them light twi
-  ns (at most a third; RULED BQ-15). The frame ids are §2's and §3's."
+  "Penpot file `E29-D04 boards`, page `E29-D04 DS contributions and motion`, page id `c2f70ddd-ba7
+  e-8136-8008-d9166ddaa5cc`. Boards are `E29-D04 / NN slug`, each exported at 1× to `docs/design/E
+  29/img/E29-D04-NN-<slug>.png` (the Status column), pinned to the boards PR's head; the D01 and D
+  02 exports in that folder stay untouched. The dark boards export through the file's dark theme a
+  nd the light twins through its light theme. 10 <!-- audit:count.boards=10 --> boards, 3 <!-- aud
+  it:count.boards-light=3 --> of them light twins (at most a third; RULED BQ-15). The frame ids ar
+  e §2's and §3's."
 @ ¶2 row 1
   "| #   | Board                                         | Draws
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                  | Status
-                            |"
+                                                                  | Board id
+                                 | Status
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+      |"
 @ ¶3 row 0
   "| --- | --------------------------------------------- | ---------------------------------------
   ------------------------------------------------------------------------------------------------
-  ----------------------------- | ------------------------------- |"
+  ----------------------------- | -------------------------------------- | -----------------------
+  ---------------------------------------------------------------------------------- |"
 @ ¶4 row 0
   "| 01  | `E29-D04 / 01 positions-row-states`           | `CMP-114/*`: the row states, the liq ti
   ers, the protection chip, the row markers, the group header and totals rows, the \"Updates pause
-  d\" chip, the Closed today line | PENDING: drawn in the boards PR |"
+  d\" chip, the Closed today line | `bf8d3fa3-1246-80f3-8008-d9b610605583` | drawn: [E29-D04-01-po
+  sitions-row-states.png](img/E29-D04-01-positions-row-states.png)                     |"
 @ ¶5 row 0
   "| 02  | `E29-D04 / 02 order-row-lifecycle`            | `CMP-115/*`: the fifteen statuses, each
    glyph + word; the amend moments (editing, pending, unconfirmed, rejected); the native-stop row
-                                 | PENDING: drawn in the boards PR |"
+                                 | `bf8d3fa3-1246-80f3-8008-d9917b771807` | drawn: [E29-D04-02-ord
+  er-row-lifecycle.png](img/E29-D04-02-order-row-lifecycle.png)                       |"
 @ ¶6 row 0
   "| 03  | `E29-D04 / 03 pnl-badge-numerics`             | `CMP-116/*`: the bar variant, null R, f
   ee paid and funding received, provisional and divergent; the greyscale and deuteranopia strips
-                                  | PENDING: drawn in the boards PR |"
+                                  | `bf8d3fa3-1246-80f3-8008-d993dade32ae` | drawn: [E29-D04-03-pn
+  l-badge-numerics.png](img/E29-D04-03-pnl-badge-numerics.png)                         |"
 @ ¶7 row 0
   "| 04  | `E29-D04 / 04 flatten-confirm`                | `CMP-123/*`: default, holding, armed, t
   he typed word on LIVE, busy, the T2 frames, offline
-                                                                             | PENDING: drawn in t
-  he boards PR |"
+                                                                             | `bf8d3fa3-1246-80f3
+  -8008-d998dc401645` | drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png
+  )                               |"
 @ ¶8 row 0
   "| 05  | `E29-D04 / 05 mode-toggle-and-account-filter` | `CMP-129/*`: the display variant and th
   e toggle with its confirm (§2.5's frames); `CMP-105/*`: the filter picker and its chips
-                                         | PENDING: drawn in the boards PR |"
+                                         | `bf8d3fa3-1246-80f3-8008-d99a239643d5` | drawn: [E29-D0
+  4-05-mode-toggle-and-account-filter.png](img/E29-D04-05-mode-toggle-and-account-filter.png) |"
 @ ¶9 row 0
   "| 06  | `E29-D04 / 06 motion-storyboard`              | `motion/*`: frame 0 and the last frame
    of each §3.2 row on opacity or a transform; the state swap at frame 0
-                                                           | PENDING: drawn in the boards PR |"
+                                                           | `bf8d3fa3-1246-80f3-8008-d99b011bffe0
+  ` | drawn: [E29-D04-06-motion-storyboard.png](img/E29-D04-06-motion-storyboard.png)
+                             |"
 @ ¶10 row 0
   "| 07  | `E29-D04 / 07 motion-reduced-twins`           | `motion/*-reduce`: the `prefers-reduced
   -motion` twin of every board-06 frame, at frame 0
-                                                                               | PENDING: drawn in
-   the boards PR |"
+                                                                               | `bf8d3fa3-1246-80
+  f3-8008-d99c3c847ff7` | drawn: [E29-D04-07-motion-reduced-twins.png](img/E29-D04-07-motion-reduc
+  ed-twins.png)                     |"
 @ ¶11 row 0
   "| 08  | `E29-D04 / 08 positions-row-states-light`     | light twin of 01
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `bf8d3fa3-1246-80f3-8008-d99d9ed7527c` |
+   drawn: [E29-D04-08-positions-row-states-light.png](img/E29-D04-08-positions-row-states-light.pn
+  g)         |"
 @ ¶12 row 0
   "| 09  | `E29-D04 / 09 order-row-lifecycle-light`      | light twin of 02
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `bf8d3fa3-1246-80f3-8008-d9a667a1c7f9` |
+   drawn: [E29-D04-09-order-row-lifecycle-light.png](img/E29-D04-09-order-row-lifecycle-light.png)
+             |"
 @ ¶13 row 0
   "| 10  | `E29-D04 / 10 flatten-confirm-light`          | light twin of 04
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | PENDING: drawn in the boards PR |"
+                                                       | `bf8d3fa3-1246-80f3-8008-d9b2d1b4f597` |
+   drawn: [E29-D04-10-flatten-confirm-light.png](img/E29-D04-10-flatten-confirm-light.png)
+                     |"
 @ ¶14 prose 1
   "**Specified (drawn on request)** (each fully specified in §2 and §3, named here, not drawn unde
   r the board cap): the light cells of boards 03, 05, 06 and 07; the high-contrast cells of every
@@ -9995,7 +10159,7 @@ RULED_PIN_TXT = r"""
   4, CMP-123's composite, defined once (RULED BQ-7; A-5)
                                                                   |"
 @ ¶6 row 0
-  "| D01 D2 (D01:170); D02:525; D03:401; D03 CR-10                                | the status, ti
+  "| D01 D2 (D01:170); D02:525; D03:422; D03 CR-10                                | the status, ti
   er and tag glyph names, proposed for E29-D04
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                   | §2.8.7: a CMP-019 registration request, drawn meanwhile as tex
@@ -10058,13 +10222,13 @@ RULED_PIN_TXT = r"""
             | §2.8.1; §2.6; §2.5 (RULED BQ-8); §2.8.7
                                                                                     |"
 @ ¶16 row 0
-  "| D03 CR-1, CR-3, CR-6, CR-8, CR-9 and CR-11 (D03:536)                         | CMP-028's acco
+  "| D03 CR-1, CR-3, CR-6, CR-8, CR-9 and CR-11 (D03:557)                         | CMP-028's acco
   unt line; CMP-239's states; the drawer motion names; registering `color.text.primary` on `color.
-  status.success.subtle` (D03:396); CMP-099's CSV form; CMP-079's reason keys | §2.8.1; §2.8.3; §2
+  status.success.subtle` (D03:417); CMP-099's CSV form; CMP-079's reason keys | §2.8.1; §2.8.3; §2
   .8.8 (A-8; DR-7, DR-8); routed, no entry here binding the pair (hand-off Q-19); §2.8.9; §2.8.10
    and §6 |"
 @ ¶17 row 0
-  "| D03:401 \"the correction highlight is E29-D04's motion item\"; D03:619         | the correcti
+  "| D03:422 \"the correction highlight is E29-D04's motion item\"; D03:641         | the correcti
   on highlight
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                                     | Mo-4 (§3.2)
@@ -10132,7 +10296,7 @@ RULED_PIN_TXT = r"""
    D02:146; the LIVE block, then the DEMO block, D02:441); the narrow dock at 360 <!-- audit:cited
   .d02.narrow-dock-px=360 --> px (D02:469). The panel states are D02 §10.1's, named, their copy D0
   2's and D03's (D02:386–400). The row markers, each a tag in the status cell in its owner's words
-   (D02:414; D03:327–344): \"Verifying\", \"Stop put back\", \"SL auto-attached\", \"Corrected\",
+   (D02:414; D03:348–365): \"Verifying\", \"Stop put back\", \"SL auto-attached\", \"Corrected\",
    \"Updated from Bybit\", \"Rejected — not found on Bybit\", \"Gone from Bybit\", \"Rejected — hi
   story expired\", \"Unknown — checking\", \"Untracked — not placed by CandleViewer\", \"Anomaly\"
   , \"Held — owner review\", \"Unpaired fill\", \"Stop restored\", \"Stop not restored\", \"Tighte
@@ -10293,7 +10457,7 @@ RULED_PIN_TXT = r"""
                                               | Mo-8   | —                 | 01    |"
 @ ¶25 row 0
   "| `CMP-114/marker-corrected`         | a correction marker, kept until the account's line is di
-  smissed (D03:226)                                                      | \"Corrected\"
+  smissed (D03:245)                                                      | \"Corrected\"
                                                                     | `flag`
                                              | the tag on `color.status.info.subtle`
                                                  | Mo-4   | —                 | 01    |"
@@ -10551,13 +10715,13 @@ RULED_PIN_TXT = r"""
   "`15` today (`15`:1300–1309): `value: number`, `format` abs, pct or r, and `size`; an A11y line
    that puts an `aria-label` on the value, which CMP-020 rules out on a generic element (`15`:238)
   ; a Tokens line naming two text colours and a font name that are not shipped (`15`:1305). Gap: D
-  02 gap 4 (D02:613) and D03 CR-5 (D03:536). Proposal (hand-off A-3; RULED BQ-6): the digits in `c
+  02 gap 4 (D02:613) and D03 CR-5 (D03:557). Proposal (hand-off A-3; RULED BQ-6): the digits in `c
   olor.text.primary` with `type.num.*`, the sign as text, `+` or U+2212, and the hue on a 2 <!-- a
   udit:cited.d02.accent-bar-px=2 --> px accent bar through CMP-020's `colorBySign` (`15`:239; D02:
   147); `variant: \"bar\"` is the grid default and `digits` (coloured digits) waits for E05-D02 E1
   's text-safe pair (`docs/design/E05/E05-D02-data-display.md`:228–232; D02:652). Props: `value` a
-  s a decimal string, `format` adds `currency`, `currency?`, `direction?` paid or received (D03:12
-  5), `provisional?` and `divergent?` (D02:248, :252), and `size`. The badge has no motion of its
+  s a decimal string, `format` adds `currency`, `currency?`, `direction?` paid or received (D03:14
+  4), `provisional?` and `divergent?` (D02:248, :252), and `size`. The badge has no motion of its
    own: the host cell's Mo-3 wraps it (`docs/design/E05/E05-D02-data-display.md`:712)."
 @ ¶2 row 1
   "| Frame                        | State
@@ -10589,12 +10753,12 @@ RULED_PIN_TXT = r"""
   top price\"        | —                  | `color.surface.raised`                   | —      | —
      | 03    |"
 @ ¶8 row 0
-  "| `CMP-116/fee-paid`           | a fee paid (D03:125)
+  "| `CMP-116/fee-paid`           | a fee paid (D03:144)
                                                                | \"−3.49 USDT\", read as \"fee pai
   d 3.49 USDT\"         | —                  | `color.sell.default` (the accent bar)    | —      |
    —   | 03    |"
 @ ¶9 row 0
-  "| `CMP-116/funding-received`   | funding received (D03:125)
+  "| `CMP-116/funding-received`   | funding received (D03:144)
                                                          | \"+0.84 USDT\", read as \"funding recei
   ved 0.84 USDT\" | —                  | `color.buy.default` (the accent bar)     | —      | —   |
    03    |"
@@ -10869,17 +11033,17 @@ RULED_PIN_TXT = r"""
   cited.15.virtualized-rows=50 --> rows, and a Purpose that names PositionsGrid as CMP-107, which
    is OrderTicket (`15`:526, :1114). Gap: E05-D02 G12 holds treegrid rows and the pinned column ou
   t of the base until E29-D04 writes one contract for both consumers (`docs/design/E05/E05-D02-for
-  m-controls.md`:393–402): SCR-063 and SCR-078 (D02:610; D03:536 CR-4) and E11-D04's chart table.
+  m-controls.md`:393–402): SCR-063 and SCR-078 (D02:610; D03:557 CR-4) and E11-D04's chart table.
    Proposal (hand-off A-6): a `treegrid` variant, implied by `treegrid: true`, whose rows carry `l
   evel` (outermost first) and, when they hold others, `expanded`, with totals in a trailing `rowgr
   oup` (D02:142); `stickyFirstColumn?: boolean|number` (`true` pins the first column, E11-D04's as
   k; a number pins that many leading columns, SCR-063's select, Env, Account and Symbol) and `stic
   kyLastColumn?` (the actions column, D02:170); a `detail` line under a row, opened by `→` and clo
-  sed by `←` (D03:130, :445). Windowing stays on from 50 <!-- audit:cited.15.virtualized-rows=50 -
+  sed by `←` (D03:149, :466). Windowing stays on from 50 <!-- audit:cited.15.virtualized-rows=50 -
   -> rows, so D01 D8's 1,000 <!-- audit:cited.d01.virtualise-rows=1000 --> rows (D01:284) and D03
    CR-4's default sit inside it; the two budgets become the variant's tests: the roles, levels and
    indices on a 500 <!-- audit:cited.d02.fixture-rows=500 -->-row fixture (D02:142) and a 1,000 <!
-  -- audit:cited.d03.fixture-fills=1000 -->-row window painted with no per-row layout read (D03:72
+  -- audit:cited.d03.fixture-fills=1000 -->-row window painted with no per-row layout read (D03:91
   ). The base has no row motion: a consumer that inserts or removes live rows takes Mo-1 and Mo-2
    (§3.2)."
 @ ¶2 item 1
@@ -10900,15 +11064,15 @@ RULED_PIN_TXT = r"""
 @ ¶0 heading 1
   "### 2.8 The routed components (deltas and change requests, never redefinitions)"
 @ ¶1 prose 1
-  "The components D02 §15 and D03 §11.2 route to E29-D04 beyond the six above (D02:608–622; D03:53
-  6), each answered by a delta or a change request to its owner, cited; no entry is redefined here
+  "The components D02 §15 and D03 §11.2 route to E29-D04 beyond the six above (D02:608–622; D03:55
+  7), each answered by a delta or a change request to its owner, cited; no entry is redefined here
   ."
 @ ¶2 item 1
   "- **2.8.1 CMP-028 Callout (D03 CR-1).** Answered by the entry as it stands: `live?: \"off\"` mo
   unts the account line with no live role, the slot's shared regions its only voices, and `actions
-  ?` takes Details, Review and Resolve… (`15`:314, :317; D03:472); the Purpose already names CMP-0
+  ?` takes Details, Review and Resolve… (`15`:314, :317; D03:493); the Purpose already names CMP-0
   74 (`15`:313). The reconciling, desync and locked lines are the info, warning and danger tones (
-  D03:393–395); Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:220). Delta: three
+  D03:414–416); Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:239). Delta: three
    Storybook stories, AccountLineReconciling, AccountLineDesync and AccountLineLocked, a change re
   quest to E05's owner."
 @ ¶3 item 0
@@ -10916,7 +11080,7 @@ RULED_PIN_TXT = r"""
   3); the delta is an account scope and a reason line that names the account once (\"Not up to dat
   e · as of 14:02:11 UTC\", D02:398), a change request to the owners of E17-D02 and E08-D11. Its T
   okens line names an alias that is not shipped (`15`:806), and `color.data-confidence.stale.surfa
-  ce` resolves to black in dark and high contrast, which `05` §5 rules out (D02:621; D03:397): a c
+  ce` resolves to black in dark and high contrast, which `05` §5 rules out (D02:621; D03:418): a c
   hange request to E05's owner, the pair re-measured in §5 (`stale-row`)."
 @ ¶4 item 0
   "- **2.8.3 CMP-239 data-confidence states (D03 CR-3).** Reconciling and verifying are not among
@@ -10944,13 +11108,13 @@ RULED_PIN_TXT = r"""
   "- **2.8.6 CMP-075 EnvBadgeLocal (D02 gap 7).** A compact per-row pill: \"LIVE\" or \"DEMO\" in
    `color.text.primary` on `color.surface.raised` with a `color.env.live` or `color.env.demo` bord
   er, LIVE in `font.weight.bold`, `type.ui.caption` and `radius.badge`, never colour alone (D02:51
-  6; D03:392); its 16 <!-- audit:cited.d02.pill-px=16 --> px height waits for a token (D02:619). I
+  6; D03:413); its 16 <!-- audit:cited.d02.pill-px=16 --> px height waits for a token (D02:619). I
   n a row the pill is `aria-hidden`, as the row's name already leads with its environment. A chang
   e request to E05's owner; CMP-139 wraps the other environment's row actions with `guard.mismatch
   .row`, PROPOSED to E30-D02 (D02:616)."
 @ ¶8 item 0
   "- **2.8.7 CMP-019 Icon (D01 D2; D03 CR-10).** The glyph names to register (D01:170; D02:525; D0
-  3:401), drawn meanwhile as the text glyphs ⟳ △ ! !! ⚠ ✓ and never a colour emoji: the statuses'
+  3:422), drawn meanwhile as the text glyphs ⟳ △ ! !! ⚠ ✓ and never a colour emoji: the statuses'
    `loader`, `clock`, `zap`, `circle-half`, `refresh`, `help-circle`, `octagon-alert`, `lock`, `li
   nk-off`, `check`, `slash`, `x`, `clock-strike` and `stop-square`; the tiers' `triangle` and `ale
   rt-circle`; the tags' `alert-triangle` and `flag`; SCR-078's `copy` and `external-link`; and a d
@@ -10966,14 +11130,14 @@ RULED_PIN_TXT = r"""
 @ ¶10 item 0
   "- **2.8.9 CMP-099 PrintExportBar (D03 CR-9).** SCR-078 uses the CSV form, `formats: [\"csv\"]`;
    running is CMP-038's busy form (`aria-busy`, the label kept), never T2; the file's first line i
-  s the watermark naming the exporting identity, the accounts and the time (D03:181; D03:79). The
+  s the watermark naming the exporting identity, the accounts and the time (D03:200; D03:98). The
    record stays a contract gap: an export reaches no server, so SR-098's audit record waits for G7
-  's path (D03:478; D02:605). A change request to E05's owner for the progress line and the waterm
+  's path (D03:499; D02:605). A change request to E05's owner for the progress line and the waterm
   ark."
 @ ¶11 item 0
   "- **2.8.10 CMP-079 RbacGate (D03 CR-11).** Its `reason` is a key of E09-D09 §3 (`15`:814). Regi
   stered keys bind as they stand: `rbac.*`, `notice.*`, `inflight.*`, `panel.*` and E30-D02's `fro
-  zen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`. `recon.*` (D03:311), `blotter.*`, `g
+  zen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`. `recon.*` (D03:332), `blotter.*`, `g
   uard.mismatch.row`, `feed.*` and the `sl.note` sentence of a Cancel stay PROPOSED with their own
   ers until E09-D09's owner registers them (§6; RULED BQ-13); no string is redefined here."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
@@ -11272,7 +11436,7 @@ RULED_PIN_TXT = r"""
 @ ¶6 row 0
   "| Mo-4  | the correction highlight on a reconciled row (CMP-114, CMP-115)
                                                                          | a reconciliation marker
-   arrives in the row's status cell (D02:414; D03:401 \"the correction highlight is E29-D04's moti
+   arrives in the row's status cell (D02:414; D03:422 \"the correction highlight is E29-D04's moti
   on item\") | opacity (an overlay above the row)  | `motion.duration.fast` (100 <!-- audit:motion
   .duration.fast=100 --> ms)
                                                                            | `motion.easing.standa
@@ -11295,7 +11459,7 @@ RULED_PIN_TXT = r"""
 @ ¶8 row 0
   "| Mo-6  | the SCR-078 drawer (CMP-046 in CMP-209) over the canvas
                                                                                  | it opens or clo
-  ses (D03:401)
+  ses (D03:422)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
       | transform: translateX               | `motion.duration.normal` (200 <!-- audit:motion.dura
   tion.normal=200 --> ms)                                                                     | `m
@@ -11333,14 +11497,14 @@ RULED_PIN_TXT = r"""
 @ ¶11 row 0
   "| Mo-9  | a new fill row in Fills (the Fills tab; CMP-049 in SCR-078)
                                                                              | a fill arrives whil
-  e the list is at its top (D01:411; D03:185)
+  e the list is at its top (D01:411; D03:204)
                                                                     | opacity
                                | `motion.duration.fast` (100 <!-- audit:motion.duration.fast=100 -
   -> ms)                                                                         | `motion.easing.
   standard`                                                | prefers-reduced-motion: the fill row
    is there at frame 0; its time, side word and quantity are the change                         |
    once per row, at most one start per painted batch; scrolled away, nothing moves and the \"3 new
-   fills\" pill appears (D03:176)                                  | 06, 07 |"
+   fills\" pill appears (D03:195)                                  | 06, 07 |"
 @ ¶12 row 0
   "| Mo-10 | a disclosure state swap (expanded ↔ collapsed): a CMP-114 group header, the Closed to
   day disclosure, a CMP-049 detail line in SCR-078 | the user toggles it
@@ -11391,7 +11555,7 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                           | —      |"
 @ ¶16 prose 1
-  "Mo-6 slides only in D03:71's overlay fallback: docked, the drawer reflows the WorkspaceCanvas a
+  "Mo-6 slides only in D03:90's overlay fallback: docked, the drawer reflows the WorkspaceCanvas a
   nd arrives or leaves in one frame in both modes, as CMP-046 binds it (`15`:499), so no width eve
   r animates (a C-row, §7.2). A closed position then joins Closed today at frame 0 (D01:408). An o
   rder's fill is Mo-3 on its filled quantity plus a Mo-8 cut of its status word; Mo-9 is the new f
@@ -11425,7 +11589,7 @@ RULED_PIN_TXT = r"""
 @ ¶1 prose 1
   "Nothing animates per tick or per price update (D02:465 \"Never per tick\"): ages and the \"Last
    update\" counter repaint as text at most once a second (D02:272), the NO SL timer swaps its dig
-  its as text, the account line and the row markers change only on a notice (D03:477), and no tab
+  its as text, the account line and the row markers change only on a notice (D03:498), and no tab
    carries a count (D02:158). Display coalescing paints positions and fills in batches while the `
   orders` and `executions` streams are never throttled, so a state change shows at the next painte
   d frame (D01:412) and adds no motion."
@@ -11511,7 +11675,7 @@ RULED_PIN_TXT = r"""
   "Every gated control of §2 takes CMP-079's `allowed` + `reason` (`15`:814) and keeps its native
    role and its full label; no entry offers a `role` prop or a per-role variant, because the rule
    branches on what the session carries, never on a role name (E09-D09:34). The T2 anatomy is E09-
-  D09's, stated once in each merged spec and only pointed to here (E09-D09:49; D02:429; D03:208):
+  D09's, stated once in each merged spec and only pointed to here (E09-D09:49; D02:429; D03:227):
    `aria-disabled=\"true\"`, never the `disabled` attribute, so the control stays in the Tab order
    and the roving grid; the reason node in the DOM at mount, named by `aria-describedby` and swapp
   ed in place (E09-D09:236); the CMP-019 `lock` named \"Not available\" leading the label (2a) or
@@ -11526,13 +11690,13 @@ RULED_PIN_TXT = r"""
   he countdown sits outside the live region (E42-D02:424) and never animates (§3.3). Account label
   s are the fixtures' \"Main\", \"Sub-1\" and \"Sub-2\", ellipsised with the full label in the too
   ltip and the accessible name (D02:149). A reason never repeats the account, which is named once,
-   in its header marker and line (D03:321). A Manager's rows, filter options, headings, totals, fo
-  oter and CSV watermark name and count only the Manager's own accounts and legs (D02:92; D03:76).
+   in its header marker and line (D03:342). A Manager's rows, filter options, headings, totals, fo
+  oter and CSV watermark name and count only the Manager's own accounts and legs (D02:92; D03:95).
    After `403 account_scope_denied` the refused control is T2 `rbac.account`, sticky until the nex
   t `permission_change` or `GET /me` re-read, and the page echoes only an id the client itself sen
   t (E09-D09:55, :158). No `ret_msg` and no server `message` reach the DOM; a rejected amend shows
    D02's own line, and the exchange's text lives only behind the audited diagnostics (D02:152; D03
-  :78, :80). E09-D09's security statement holds for every entry, density, theme and story: \"Every
+  :97, :99). E09-D09's security statement holds for every entry, density, theme and story: \"Every
    treatment in this document is presentation. The server authorises every request against the 4-t
   uple of `24` §15.2 and answers `403` with a stable code and an audit record (`rbac.denied`) rega
   rdless of what the UI showed — a disabled button, a hidden route or a missing palette command is
@@ -11625,7 +11789,7 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                  | 2a under the editor; a T2 cell keeps its value
    with no glyph among the numerals
-                                                                          | D02:345, :149; D03:208
+                                                                          | D02:345, :149; D03:227
   ; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01), `blotter.amend_in_flight` (E29-D03), §6 |"
 @ ¶7 row 0
   "| \"Cancel ▾\" (the primary)
@@ -11655,8 +11819,8 @@ RULED_PIN_TXT = r"""
   sal of a second amend and of one write per position at a time
                                                                                       | 2a under t
   he editor; 2b on the take-profit row, repeated as its menu item's second line
-                                                                  | D02:345, :431, :435; D03:208,
-   :222                                                                                 |"
+                                                                  | D02:345, :431, :435; D03:227,
+   :241                                                                                 |"
 @ ¶9 row 0
   "| \"Close selected\" and \"Close all in view…\" (CMP-114); \"Cancel selected\" and \"Cancel all
    in view…\" (CMP-115) | CMP-114 and CMP-115 (the selection bar and the toolbar, CMP-001)
@@ -11719,7 +11883,7 @@ RULED_PIN_TXT = r"""
                                                                                     | 2a, the reas
   on beside it
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                 | D03:220, :321
+                                 | D03:239, :342
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
         |"
 @ ¶13 row 0
@@ -11747,22 +11911,22 @@ RULED_PIN_TXT = r"""
   "- **Exits keep their legs and nothing more.** Cancel, close and its items, the bulk closes and
    cancels, Flatten account…, a quantity cut and a recorded take-profit's edit and Cancel are neve
   r gated by a state key or `rbac.env`: in every account state of D02 §10.2 and §10.3, and under t
-  he kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:82). The drawn
-   exceptions are two account states and one environment: offline with REST unreachable, where eve
-  ry write is T2 (D02:333, :431); a Manager's closes and Flatten account… under the kill switch, E
-  39-D01's \"Frozen — the owner closes or releases\" while OD-11 is pending, a Manager's Cancel st
-  aying sendable there (D02:421; E39-D01:66, :687); and the other environment's rows, read-only be
-  hind `guard.mismatch.row` (D-4, D02:145). A Cancel's own reasons — a native-stop row, an Untrack
-  ed, Held or Unknown order (§4.1) — name what the order is, and an exit's own write in flight, `b
-  lotter.amend_in_flight` on a quantity cut or a recorded take-profit's edit and Cancel (§4.1), na
-  mes that write; neither is the account's state, and a Cancel sent while the order's amend is in
-   flight stays busy, \"Cancelling…\", until it resolves (D02:345)."
+  he kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:101). The draw
+  n exceptions are two account states and one environment: offline with REST unreachable, where ev
+  ery write is T2 (D02:333, :431); a Manager's closes and Flatten account… under the kill switch,
+   E39-D01's \"Frozen — the owner closes or releases\" while OD-11 is pending, a Manager's Cancel
+   staying sendable there (D02:421; E39-D01:66, :687); and the other environment's rows, read-only
+   behind `guard.mismatch.row` (D-4, D02:145). A Cancel's own reasons — a native-stop row, an Untr
+  acked, Held or Unknown order (§4.1) — name what the order is, and an exit's own write in flight,
+   `blotter.amend_in_flight` on a quantity cut or a recorded take-profit's edit and Cancel (§4.1),
+   names that write; neither is the account's state, and a Cancel sent while the order's amend is
+   in flight stays busy, \"Cancelling…\", until it resolves (D02:345)."
 @ ¶2 item 0
   "- **The C-2.6 carve-out.** A stop's tighten — a native stop's through `setPositionTpSl`, an ord
   inary stop order's through `amendOrder`, an attach and a re-stamp — is never T2 by view-as, by t
   he kill switch, by a lockout or by a `recon.*` state: it takes the session's permission and trad
   e grant, under view-as the target's, and a loosen is refused inline for every role, E32-D01's `s
-  l.loosen.refused` (D02:435; D03:222; C-2.6). SL/TP… and `Enter` into SCR-064 never take view-as,
+  l.loosen.refused` (D02:435; D03:241; C-2.6). SL/TP… and `Enter` into SCR-064 never take view-as,
    the kill switch, a lockout, a `recon.*` state or a pending TP/SL write, because they only open
    SCR-064, which applies those gates itself; they are T2 only for a Viewer, a read-only grant, th
   e other environment's rows and offline with REST unreachable (D02:338)."
@@ -11773,7 +11937,7 @@ RULED_PIN_TXT = r"""
   ions server-side and shows no reason there: a Manager's account filter lists the assigned accoun
   ts only (D02:375; RULED BQ-8). Export CSV builds its file client-side, a read that stays T1; sho
   uld G7's path become a write-method operation, it takes `rbac.view_as` alone, in 2b in the drawe
-  r's title bar (D03:181, :519). **Nothing is hidden.** A Viewer sees every control, each write T2
+  r's title bar (D03:200, :540). **Nothing is hidden.** A Viewer sees every control, each write T2
    with its reason (`14`:85; D02:433); hiding belongs to admin navigation alone (E09-D09:44). The
    one choice not offered is Group by: Manager, for a Manager and a Viewer, a view choice, not a c
   apability (D02:374)."
@@ -11782,7 +11946,7 @@ RULED_PIN_TXT = r"""
   el held behind an amend (\"Cancelling…\"), an account loading, its Flatten account… included, an
   d an export running take CMP-001's loading state, `aria-busy=\"true\"` with the ⟳ glyph leading
    the label, no `lock`, no reason node and no CMP-079; a second press does nothing (D02:341, :345
-  , :353, :388; D03:181). \"Close all in view…\" and \"Cancel all in view…\" leave the toolbar whi
+  , :353, :388; D03:200). \"Close all in view…\" and \"Cancel all in view…\" leave the toolbar whi
   le nothing is in view (D02:380), and the mandatory Columns read \"Always shown\" as helper text,
    with no `lock` and no reason (D02:376)."
 @ ¶5 item 0
@@ -12052,14 +12216,14 @@ RULED_PIN_TXT = r"""
   ), E30-D02's state keys and the state vocabularies E09-D09 registers beside them, E39-D01's and
    E17-D01's (E09-D09:85; D02:431). A PROPOSED key carries its owner on its row, here and in §4.1,
    and binds no T2 until its owner registers it, because CMP-079's `reason` is a key of E09-D09's
-   vocabulary (`15`:814; D03:536). A PROPOSED reason is one data-free sentence of at most sixty ch
+   vocabulary (`15`:814; D03:557). A PROPOSED reason is one data-free sentence of at most sixty ch
   aracters with a full stop (E09-D09:85); `sl.note`'s sentence keeps its owner's words. D02 §10.2
    and §10.3 still print `blotter.reconciling`, `blotter.verifying`, `blotter.stale_locked` and `b
-  lotter.locked_after_kill` (D02:408–410, :422); D03 replaced them with the `recon.*` keys (D03:55
-  2), so the entries bind `recon.*` alone, and the merged D02 text is its owner's to correct, neve
+  lotter.locked_after_kill` (D02:408–410, :422); D03 replaced them with the `recon.*` keys (D03:57
+  3), so the entries bind `recon.*` alone, and the merged D02 text is its owner's to correct, neve
   r edited here (hand-off §F). D03's fifth key, `recon.reduce`, sits on SCR-060's Submit alone (D0
-  3:319), on no component of this spec. No reason names an account, a symbol, a price or a count,
-   and none restates a registered string in other words (E09-D09:85; D03:321)."
+  3:340), on no component of this spec. No reason names an account, a symbol, a price or a count,
+   and none restates a registered string in other words (E09-D09:85; D03:342)."
 @ ¶2 row 1
   "| Key
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12125,7 +12289,7 @@ RULED_PIN_TXT = r"""
    can resolve the lock.\"
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                         | PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:321)
+                         | PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:342)
                                           | E29-D03, for E09-D09's owner                         |
    §4.1: \"Resolve…\" on the account line
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12219,9 +12383,9 @@ RULED_PIN_TXT = r"""
                                                               | \"Reconciling with Bybit — new ord
   ers are paused.\"; \"Data being verified — new orders are paused.\"; \"Stale — new orders locked
    until the owner resolves it.\"; \"After the kill switch — new orders locked until resolved.\"
-                                       | PROPOSED (D03:315–318)
+                                       | PROPOSED (D03:336–339)
                                                                               | E29-D03, for E09-D
-  09's owner (D03:536)               | §4.1: every new-exposure control of an account that is reco
+  09's owner (D03:557)               | §4.1: every new-exposure control of an account that is reco
   nciling, being verified, on a stale lock or on the lock the kill switch leaves
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                              |"
@@ -12256,7 +12420,7 @@ RULED_PIN_TXT = r"""
          | \"A close for this position is already in flight.\"
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-              | PROPOSED (D02:341); named for E29-D03, which registers none (D03:311)
+              | PROPOSED (D02:341); named for E29-D03, which registers none (D03:332)
                                | E29-D03, the D02 and D03 author, for E09-D09's owner | §4.1: Reve
   rse… and the close items while a close of the position is in flight
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12417,9 +12581,9 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
           | E29-T09, with CMP-001's owner (E05)                    |"
 @ ¶10 row 0
-  "| D04-C8  | D03:401 slides the SCR-078 drawer in and out; `15`:499 has a docked CMP-046 drawer
-   that reflows its host arrive in one frame, and D03:71 docks this one beside the reflowing Works
-  paceCanvas                                                 | Mo-6 slides only in D03:71's overla
+  "| D04-C8  | D03:422 slides the SCR-078 drawer in and out; `15`:499 has a docked CMP-046 drawer
+   that reflows its host arrive in one frame, and D03:90 docks this one beside the reflowing Works
+  paceCanvas                                                 | Mo-6 slides only in D03:90's overla
   y fallback; docked, the drawer arrives and leaves in one frame in both modes, and nothing animat
   es the canvas width (T Perf; E09-D08:214)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12477,14 +12641,14 @@ RULED_PIN_TXT = r"""
                                                              | E29-T07
                                    |"
 @ ¶7 row 0
-  "| D04-G5 | CSV export has no endpoint, permission, audit action or size limit (D03:519, G7): CM
+  "| D04-G5 | CSV export has no endpoint, permission, audit action or size limit (D03:540, G7): CM
   P-099's export writes no server record yet
                                                                                                | E
   29-S04, with the `22` owner            |"
 @ ¶8 row 0
-  "| D04-G6 | No route for \"Resolve…\" and no server refusal while reconciling or desync (D03:522
+  "| D04-G6 | No route for \"Resolve…\" and no server refusal while reconciling or desync (D03:543
   , G10): CMP-028's Resolve… is drawn \"pending route\", and the `recon.*` pause binds this client
-   only                                      | D03 §11.1's owners (D03:619)            |"
+   only                                      | D03 §11.1's owners (D03:641)            |"
 @ ¶9 row 0
   "| D04-G7 | CMP-211 offers a `group` scope (`15`:2505) and CMP-123 has none; SCR-063 draws Flatt
   en account… alone (D02:155); `confirmMode` is one-valued (`15`:2505), so CMP-211 cannot carry ho
@@ -12495,7 +12659,7 @@ RULED_PIN_TXT = r"""
                                               | E17-D01's owner, with the `24` owner    |"
 @ ¶11 row 0
   "| D04-G9 | `position.reversed`, `grid.exported` and `order.diagnostics_viewed` are not in `24`
-   §15.5 (D02:620; `14`:1478; D03:521, G9): Reverse…, Export CSV and the diagnostics read emit no
+   §15.5 (D02:620; `14`:1478; D03:542, G9): Reverse…, Export CSV and the diagnostics read emit no
    registered audit action yet             | the `24` §15.5 owner, with E29-T07      |"
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
 §  Rows: A, C, G and the drift ledger › 7.4 Drift ledger (RULED BQ-12; owner approval pending (#27
@@ -12526,7 +12690,7 @@ RULED_PIN_TXT = r"""
   ------------------------------- | --------------------------------------------------- | --------
   - |"
 @ ¶4 row 0
-  "| DR-1  | `15`:1305; D02:613 (`75a33c164`); D03:536 (`a59ba382b`) | CMP-116 `color.text.buy` /
+  "| DR-1  | `15`:1305; D02:613 (`75a33c164`); D03:557 (`a59ba382b`) | CMP-116 `color.text.buy` /
    `color.text.sell`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                                                                | b
@@ -12566,7 +12730,7 @@ RULED_PIN_TXT = r"""
                                                        | E29-T09 (A-1)
                                          | corrected |"
 @ ¶8 row 0
-  "| DR-5  | `15`:806; D02:621 (`75a33c164`); D03:536 (`a59ba382b`)  | CMP-078 `color.overlay.stal
+  "| DR-5  | `15`:806; D02:621 (`75a33c164`); D03:557 (`a59ba382b`)  | CMP-078 `color.overlay.stal
   e`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
@@ -12585,7 +12749,7 @@ RULED_PIN_TXT = r"""
                                                                                    | E05-D03 (#317
   4), `16` §2.2's owner                  | corrected |"
 @ ¶10 row 0
-  "| DR-7  | `15`:2489; D03:536 (`a59ba382b`)                        | CMP-209 `motion.drawer`
+  "| DR-7  | `15`:2489; D03:557 (`a59ba382b`)                        | CMP-209 `motion.drawer`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                     | b     | `motion.duration.normal` with `motion.easing.decelerate` to open and
@@ -12594,7 +12758,7 @@ RULED_PIN_TXT = r"""
                                                                   | E29-T09 (A-8; D03 CR-6)
                                | corrected |"
 @ ¶11 row 0
-  "| DR-8  | D03:401 (`a59ba382b`)                                   | CMP-046 `motion.slide`
+  "| DR-8  | D03:422 (`a59ba382b`)                                   | CMP-046 `motion.slide`
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                      | b     | `motion.duration.normal` with `motion.easing.decelerate` / `motion.
@@ -12603,12 +12767,12 @@ RULED_PIN_TXT = r"""
                                                                                | E05 (CMP-046, mer
   ged)                               | corrected |"
 @ ¶12 row 0
-  "| DR-9  | D02:619 (`75a33c164`); D03:536 (`a59ba382b`)            | the 16 <!-- audit:cited.d02
+  "| DR-9  | D02:619 (`75a33c164`); D03:557 (`a59ba382b`)            | the 16 <!-- audit:cited.d02
   .pill-px=16 --> px pill and 20 <!-- audit:cited.d02.tag-px=20 --> px tag heights (no name)
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                       | b     | Deliberate exception (DR-9): no height token; a pill or a tag size
   s to `type.ui.caption` with `space.inset.xs`, and an interactive one takes `size.control.height`
-   (D03:377); D03 CR-7 asks E05 for a name
+   (D03:398); D03 CR-7 asks E05 for a name
                                                                                                 |
    E05 (D03 CR-7)                                      | justified |"
 @ ¶13 row 0
@@ -12631,11 +12795,11 @@ RULED_PIN_TXT = r"""
                                                                      | E29-T09 (A-6.1)
                                        | corrected |"
 @ ¶15 row 0
-  "| DR-12 | D02:408–410, :422 (`75a33c164`); D03:552 (`a59ba382b`)  | the reason keys `blotter.re
+  "| DR-12 | D02:408–410, :422 (`75a33c164`); D03:573 (`a59ba382b`)  | the reason keys `blotter.re
   conciling`, `blotter.verifying`, `blotter.stale_locked` and `blotter.locked_after_kill`, which D
   03 superseded, and the five `blotter.*` names D02 leaves to E29-D03, registered nowhere (D02:341
   , :345, :431) | c     | `recon.reconciling`, `recon.desync`, `recon.stale` and `recon.killlock`
-   (D03:552) in place of the four, bound alone here (§6); the five registered or replaced by their
+   (D03:573) in place of the four, bound alone here (§6); the five registered or replaced by their
    owner, the Old → New pair in hand-off Q-2
                                                                                          | the E29
   -D02 and E29-D03 author, for E09-D09's owner | corrected |"
@@ -12746,10 +12910,10 @@ RULED_PIN_TXT = r"""
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
                                                                                             |"
 @ ¶10 row 0
-  "| G-BOARDS         | at most ten boards, at most three light twins (BQ-15)
-                                                                | M24.1 · M24.2
+  "| G-BOARDS         | at most ten boards, at most three light twins; each drawn with its id and
+   PNG (BQ-15)                              | M24.1 · M24.2 · M24.3 · M24.4 · M24.5 · M24.6
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                                                  |"
+                                                  |"
 @ ¶11 row 0
   "| G-BUDGET         | the spec at most 600 lines, §9 at most ten (BQ-1)
                                                                     | M25.1 · M25.2
@@ -12916,8 +13080,8 @@ RULED_PIN_TXT = r"""
 @ ¶0 heading 1
   "## 9. Summary for #823 (at most ten lines)"
 @ ¶1 item 1
-  "- Text-first PR 1 of 2 (`Refs #823`): this spec, the hand-off and the gate tool; the ten boards
-   of §0 are PENDING for the boards PR, which completes #823."
+  "- Text-first PR 1 of 2 (#4576, merged): this spec, the hand-off and the gate tool; PR 2 draws t
+  he ten boards of §0 and completes #823."
 @ ¶2 item 0
   "- Four entries are written whole (CMP-114, CMP-115, CMP-116, CMP-129), three amended field by f
   ield (CMP-123, CMP-049, CMP-209) and one reused by contract (CMP-105); hand-off §C holds them co
@@ -12942,8 +13106,8 @@ RULED_PIN_TXT = r"""
   ver gated by a state key (RULED BQ-13); §5 measures 27 <!-- audit:count.pairs=27 --> gated pairs
    and 2 <!-- audit:count.pairs-measured=2 --> measured ones in three themes."
 @ ¶8 item 0
-  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 217 <!-- audit:count.mutations=2
-  17 --> mutations, and every figure here is its `--json`."
+  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 221 <!-- audit:count.mutations=2
+  21 --> mutations, and every figure here is its `--json`."
 § ["spec", "(end)#1"]
 @ ¶0 end 1
   ""
@@ -12961,8 +13125,9 @@ RULED_PIN_TXT = r"""
   t; owner approval pending (#2701)). Every figure carries its `audit` marker from the tool's `--j
   son`; E29-T09 keeps the value and drops the marker when it pastes a block. Base `6fc8aacc6`; D01
    is cited at its merge `9da45ae35`, D02 at `c4270ba93` (text) and `75a33c164` (boards, the last
-   change to its text, where its line numbers are read), D03 at `a59ba382b` (text; its boards #447
-  2 PENDING)."
+   change to its text, where its line numbers are read), D03 at `a59ba382b` (text) and `af18afb25`
+   (boards #4472, merged after the base, the last change to its text, where its line numbers are r
+  ead)."
 § ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
 § ons) › §A Placement#1"]
 @ ¶0 heading 1
@@ -13062,13 +13227,12 @@ RULED_PIN_TXT = r"""
   ------------------------------------------------------------------------------------------------
   -------------- |"
 @ ¶4 row 0
-  "| Final Penpot link                           | [ ]     | [ ]     | [ ]     | [ ]           | [
-   ]     | [ ]           | [ ]           | PENDING: boards 01 to 05 and their light twins 08 to 10
-   on spec §0's page, drawn in the boards PR, which ticks this line; CMP-049 through boards 01 and
-   02
+  "| Final Penpot link                           | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | drawn: boards 01 to 05 and their light twins 08 to 10 o
+  n spec §0's page (page id `c2f70ddd-ba7e-8136-8008-d9166ddaa5cc`), each board id and PNG in spec
+   §0; CMP-049 through boards 01 and 02
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-              |"
+                                                                            |"
 @ ¶5 row 0
   "| Variants × States                           | [x]     | [x]     | [x]     | [x]           | [
   x]     | [x]           | [x]           | spec §2.1 to §2.5's frame tables, §2.6's three filter f
@@ -13868,7 +14032,7 @@ RULED_PIN_TXT = r"""
         | `transform: translateX` over `normal`, `decelerate` to open, `accelerate` to close; `pre
   fers-reduced-motion`: at frame 0, its heading text is the change
                                   | docked, it arrives in one frame in both modes (CMP-046)
-                                                                   | E29-D04 Mo-6; D03:401      |\
+                                                                   | E29-D04 Mo-6; D03:422      |\
   n| state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled, DEMO / L
   IVE; a disclosure; a row's busy glyph) | at frame 0; `prefers-reduced-motion`: the same cut at f
   rame 0
@@ -14062,16 +14226,16 @@ RULED_PIN_TXT = r"""
 @ ¶1 prose 1
   "Each item names its owner; none is decided here, and none blocks E29-T09's paste of §C."
 @ ¶2 item 1
-  "- **Q-1** The `recon.*` keys (D03:315–319) wait for E09-D09's owner to register them beside E30
-  -D02's (D03:536, :619); until then they stay PROPOSED on every row that names them, and CMP-079
+  "- **Q-1** The `recon.*` keys (D03:336–340) wait for E09-D09's owner to register them beside E30
+  -D02's (D03:557, :641); until then they stay PROPOSED on every row that names them, and CMP-079
    cannot carry them (`15`:814). Owner: E09-D09's owner, with E29-D03 as the vocabulary owner."
 @ ¶3 item 0
   "- **Q-2** The five `blotter.*` keys D02 names for E29-D03 (D02:341, :345, :431) are registered
-   nowhere, since D03 registers only `recon.*` (D03:311); D02's four superseded keys still print a
-  t D02:408–410 and :422 (D03:552). The copy-ready pair for that author (spec DR-12): in D02 §10.2
+   nowhere, since D03 registers only `recon.*` (D03:332); D02's four superseded keys still print a
+  t D02:408–410 and :422 (D03:573). The copy-ready pair for that author (spec DR-12): in D02 §10.2
    and §10.3, `blotter.reconciling` → `recon.reconciling`, `blotter.verifying` → `recon.desync`, `
   blotter.stale_locked` → `recon.stale` and `blotter.locked_after_kill` → `recon.killlock`, each w
-  ith D03's string (D03:315–318). Owner: the E29-D02 and E29-D03 author, to register or replace th
+  ith D03's string (D03:336–339). Owner: the E29-D02 and E29-D03 author, to register or replace th
   em with E09-D09's owner and to correct the merged D02 text."
 @ ¶4 item 0
   "- **Q-3** `guard.mismatch.row` and its converse, the other environment's block notice (D02:145)
@@ -14083,9 +14247,9 @@ RULED_PIN_TXT = r"""
   "- **Q-5** `sl.note`'s first sentence as the native-stop row's Cancel reason (D02:345). Owner: E
   32-D01's owner."
 @ ¶7 item 0
-  "- **Q-6** The verb \"resolve the lock\" for `rbac.owner_only` (D03:321), and Resolve…'s route,
-   which G10 records as missing (D03:522). Owners: E09-D09's owner for the verb; D03's §11.1 owner
-  s, E29-T05, E29-T06, E29-T07 and E45, for the route (D03:619)."
+  "- **Q-6** The verb \"resolve the lock\" for `rbac.owner_only` (D03:342), and Resolve…'s route,
+   which G10 records as missing (D03:543). Owners: E09-D09's owner for the verb; D03's §11.1 owner
+  s, E29-T05, E29-T06, E29-T07 and E45, for the route (D03:641)."
 @ ¶8 item 0
   "- **Q-7** CMP-129's open-positions reason: a key and its string, asked of E30-D02's owner (RULE
   D BQ-8); until it is registered the toggle's T2 frames show `rbac.view_as` and `rbac.owner_only`
@@ -14099,7 +14263,7 @@ RULED_PIN_TXT = r"""
   r releases\" until OD-11 rules (E39-D01:687; D02:654). Owner: E39-D01's owner (OD-11)."
 @ ¶11 item 0
   "- **Q-10** CSV export for a Viewer (OQ-G, D02:656), and SR-098's identity watermark and audit r
-  ecord, which need G7's server path (D03:519, :619). Owners: the owner for OQ-G; E29-S04 for the
+  ecord, which need G7's server path (D03:540, :641). Owners: the owner for OQ-G; E29-S04 for the
    record."
 @ ¶12 item 0
   "- **Q-11** `Ctrl+Shift+F`: Flatten account in the Positions context, or E39-D03's global flatte
@@ -14132,12 +14296,12 @@ RULED_PIN_TXT = r"""
   ount; spec §2.4 draws the field with its copy open. Owner: E29-D03's owner, the copy deck's."
 @ ¶19 item 0
   "- **Q-18** The contract gaps the entries carry without shaping them (spec §7.3), each with its
-   owner there; and the boards: this ticket's are PENDING (spec §0), E29-D03's are PENDING by name
-   (#4472), and E29-D06 packages the hand-off after E29-D05 (`docs/plan/backlog/E29.json` E29-D06)
-  . Owners: as spec §7.3 names them; E29-D06."
+   owner there; and the boards: this ticket's are drawn (spec §0), E29-D03's are merged (#4472, `a
+  f18afb25`), and E29-D06 packages the hand-off after E29-D05 (`docs/plan/backlog/E29.json` E29-D0
+  6). Owners: as spec §7.3 names them; E29-D06."
 @ ¶20 item 0
   "- **Q-19** D03 CR-8 asks for `color.text.primary` on `color.status.success.subtle`, the recover
-  ed summary of SCR-152 (D03:396), to be registered in `tools/contrast/pairs.mjs`; the pair is D03
+  ed summary of SCR-152 (D03:417), to be registered in `tools/contrast/pairs.mjs`; the pair is D03
   's, no entry of this spec binds it, and the registry and its generated matrix change outside thi
   s text-first PR; the same route registers the spec §5 pairs the registry does not list yet (§B).
    Owner: E29-T09, with E29-D03's owner and the `/tools/` owners."
@@ -14147,62 +14311,77 @@ RULED_PIN_TXT = r"""
    budgets become the treegrid variant's tests (A-6.7), the reading spec §2.7 takes of D02 gap 1 (
   D02:610), where BQ-3's default read them as a new threshold. Owner: E29-T09, which applies A-6,
    with E05's owner."
-@ ¶22 prose 1
+@ ¶22 item 0
+  "- **Q-21** In the light theme `color.surface.hover` and `color.surface.overlay` both resolve to
+   `{palette.light.neutral.150}` (#E3E6EA; `packages/ui/tokens/semantic-light.tokens.json`:5, :7),
+   while dark keeps them apart (neutral.200 #22292F vs neutral.150 #1C222B). So a hovered item on
+   an overlay surface (CMP-123's ⋯ menu item, any CMP-041 item) draws pixel-identical to its defau
+  lt in light (board 10, `CMP-123/hover`). Focus-visible and pointer position still differ, but ho
+  ver has no visual cue in light. No token is added and no cue is invented here (RULED BQ-12). Own
+  er: E05's owner (the semantic-light set), for a light hover value distinct from overlay or a rul
+  ing that overlay surfaces take another hover token."
+@ ¶23 item 0
+  "- **Q-22** CMP-129's mode-change confirm (`CMP-129/toggle-confirm`, spec §2.5): the spec gives
+   no title, body or confirmLabel for the CMP-044 `standard` confirm, and CMP-044's confirmLabel \
+  "names the effect, never Confirm\" (`15`:476). Board 05 labels the primary \"confirmLabel · OPEN
+   (not in the spec)\", an open marker, not copy; no string is invented here. Owner: E30-D02's own
+  er, with E29-D03's owner as the copy deck's."
+@ ¶24 prose 1
   "**Change requests** (spec §2.2, §2.8, §2.9; one index so E29-T09 and E29-D06 can route them; no
   ne is decided here):"
-@ ¶23 row 1
+@ ¶25 row 1
   "| CR                                                    | Owner
                                          | Change
                                                                                     | Status    |"
-@ ¶24 row 0
+@ ¶26 row 0
   "| ----------------------------------------------------- | -------------------------------------
   ------ | ---------------------------------------------------------------------------------------
    | --------- |"
-@ ¶25 row 0
+@ ¶27 row 0
   "| CMP-028 Callout (spec §2.8.1)                         | E05's owner
                                    | the stories AccountLineReconciling, AccountLineDesync and Acc
   ountLineLocked             | requested |"
-@ ¶26 row 0
+@ ¶28 row 0
   "| CMP-078 StaleDataShade (spec §2.8.2)                  | E17-D02's and E08-D11's owners; E05's
    owner | an account scope and a reason line; the stale surface's black in dark and high contrast
    | requested |"
-@ ¶27 row 0
+@ ¶29 row 0
   "| CMP-239 data-confidence states (spec §2.8.3)          | E08's owner
                                    | the reconciling and verifying states with their precedence ro
   w                          | requested |"
-@ ¶28 row 0
+@ ¶30 row 0
   "| CMP-057 SplitButton (spec §2.8.4)                     | E05's owner
                                    | `allowed` + `reason` and a busy state on the primary; 2b for
    a row's own reason         | requested |"
-@ ¶29 row 0
+@ ¶31 row 0
   "| CMP-055 FilterBar, CMP-056 ColumnPicker (spec §2.8.5) | E05's owner
                                    | \"Clear all\"; per-tab sets, locked columns, \"Reset to defau
   lt\"                           | requested |"
-@ ¶30 row 0
+@ ¶32 row 0
   "| CMP-075 EnvBadgeLocal (spec §2.8.6)                   | E05's owner
                                    | the compact per-row pill
                                                                   | requested |"
-@ ¶31 row 0
+@ ¶33 row 0
   "| CMP-139 EnvironmentAwareOrderGuard (spec §2.8.6)      | E30-D02's owner
                                | the row form `guard.mismatch.row` (Q-3)
                                                    | PROPOSED  |"
-@ ¶32 row 0
+@ ¶34 row 0
   "| CMP-019 Icon (spec §2.8.7)                            | E05-T06
                                        | the glyph names and a delta glyph for the price-like cell
   s                              | requested |"
-@ ¶33 row 0
+@ ¶35 row 0
   "| CMP-099 PrintExportBar (spec §2.8.9)                  | E05's owner
                                    | the progress line and the watermark
                                                        | requested |"
-@ ¶34 row 0
+@ ¶36 row 0
   "| CMP-011 Tag (spec §2.9)                               | E05's owner
                                    | a `toggle` variant for the Fills Type chips
                                                | requested |"
-@ ¶35 row 0
+@ ¶37 row 0
   "| CMP-100 PriceInput, CMP-101 QtyInput (spec §2.2)      | E30-D04's owner
                                | no blur auto-round inside a cell (D02:618)
                                                 | requested |"
-@ ¶36 row 0
+@ ¶38 row 0
   "| the comfortable control height (Q-15)                 | E05's owner
                                    | one height for `16` §3 rule 3, CMP-002 and the shipped tokens
                              | requested |"
