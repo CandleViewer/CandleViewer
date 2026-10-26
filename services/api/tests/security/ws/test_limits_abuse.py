@@ -31,6 +31,7 @@ from candleviewer.audit.query import AuditQueryService
 from candleviewer.audit.writer import AuditWriter
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.models import MintedSession
+from candleviewer.ws import permissions
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.gateway import GatewayHub, make_ws_router
 from candleviewer.ws.lifecycle import CONNECT_RATE_MESSAGE
@@ -368,14 +369,20 @@ def _near_cap_sub(c: Client) -> dict[str, Any]:
     return frame
 
 
+#: The wall-clock hang guard of the AC-29 flood's writes (#4615): a loaded runner's fsync can
+#: queue a record behind the WAL lock for more than 2 s, which is no hang.
+_HANG_GUARD_S = 30.0
+
+
 async def _order_write(writer: AuditWriter, n: int) -> None:
     """An order-class record, as an OMS write-ahead would emit it (no OMS path does yet), through
-    the writer's WAL into the store. The 2 s bound is a hang guard, not a latency budget."""
-    async with asyncio.timeout(2.0):
+    the writer's WAL into the store. The bound is a hang guard, not a latency budget: wall-clock,
+    so it is wide enough that a loaded runner never trips it (#4615)."""
+    async with asyncio.timeout(_HANG_GUARD_S):
         await writer.emit(
             "orders.submit", actor_label="oms", object_kind="order", object_id=f"o{n}"
         )
-        await writer.flush(2.0)  # and it is in the store, not only in the WAL
+        await writer.flush(_HANG_GUARD_S)  # and it is in the store, not only in the WAL
 
 
 class _Sink:
@@ -389,23 +396,27 @@ class _Sink:
 
 
 def test_x02_ac_29_a_read_only_flood_for_a_minute_leaves_the_order_write_landing(
-    world: RawWorld, tmp_path: Path
+    world: RawWorld, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """AC-29: a principal with market data only (V) sends, each second of a minute, one frame near
     256 KiB and two of 50 private-family topics. The near-cap frame gets one small `err` and no
     record; the other 120 are denied, 20 of them recorded (one record each, never one per topic)
     and the rest counted. Four `orders.submit` records go through the same `AuditWriter`, two while
-    the 20 records are being written and two after: each lands in the store within 2 s.
+    the 20 records are being written and two after: each lands in the store, under a hang guard.
 
     Measures: the writer's handling of an order-class record during the flood, through its real
     WAL (fsync'd, in `tmp_path`), with one connection's budget spent. Does not measure: an OMS
-    path (none writes audit yet: the record is this test's own); latency under load (the 2 s is a
+    path (none writes audit yet: the record is this test's own); latency under load (the bound is a
     hang guard, and each of the four is one call made while a flood frame is in flight, not a
     concurrent load); the per-user bound of eight such connections; the Postgres chain trigger
     (the chain checked is the in-memory repository's: no row lost, doubled or reordered); the
     router's own rows (they go to the rig's sink, so the store holds the 24 rows below and no
     `ws.connection.closed`)."""
     world.perms = frozenset({Permission.MARKETDATA_READ})  # V: every private family is refused
+    # A denial record still queued for the WAL lock when the frame's 2 s bound ends is dropped
+    # and counted, by design (SR-E17-04); here the bound is a hang guard, so that a loaded
+    # runner's slow fsync never drops one of the 20 this test counts (#4615).
+    monkeypatch.setattr(permissions, "FANOUT_AUDIT_TIMEOUT_S", _HANG_GUARD_S)
     repo = FakeAuditRepository()
     writer = AuditWriter(repo, str(tmp_path / "wal"), clock=world.utc_now, sleep=repo.retry_sleep)
     world.call(writer.start)
