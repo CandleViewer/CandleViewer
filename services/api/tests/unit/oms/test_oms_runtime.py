@@ -37,7 +37,14 @@ from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
-from candleviewer.exchange.base.models import AccountRef, Position, RateLane
+from candleviewer.exchange.base.models import (
+    AccountRef,
+    FeeRate,
+    Position,
+    RateLane,
+    RiskLimitTier,
+    Wallet,
+)
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest
@@ -2079,7 +2086,15 @@ async def test_a_stalled_serving_loop_refuses_a_submit_at_its_switches_recorded_
     step `switches` while the serving loop's tick is stale is recorded `orders.submit` denied
     `oms_not_ready` at that step before it is raised (C-2.9), nothing persisted or sent."""
     world, tick = World(), StalledTick()
-    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    tiers = (RiskLimitTier(
+        tier_id=1, risk_limit_value=Decimal(2_000_000), maintenance_margin_rate=Decimal("0.005"),
+        initial_margin_rate=Decimal("0.01"), max_leverage=Decimal(100),
+    ),)  # fmt: skip
+    world.ingestion.instruments = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            get={cr.SYMBOL: instrument()}.get, risk_limit_tiers=lambda _symbol: tiers
+        )
+    )  # #4651: step 3c sizes an entry by its profile, the tiers' rate among its figures
     price = entry().price  # #4575: step 3a reads the market and bands the limit before sizing
     quote = SimpleNamespace(bid1_price=price, ask1_price=price, last_price=price)
     world.ingestion.tickers = SimpleNamespace(
@@ -2094,6 +2109,17 @@ async def test_a_stalled_serving_loop_refuses_a_submit_at_its_switches_recorded_
             flag.read()
         await runtime.wait_ready()
         await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        [port] = world.venue.ports  # #4651: the rest of the size step's figures, the venue's
+        port.set_wallet(Wallet(
+            account_id=cr.ACCOUNT, equity=Decimal(100_000), wallet_balance=Decimal(100_000),
+            available_to_withdraw=None, available_margin=Decimal(100_000), used_margin=Decimal(0),
+            unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0), account_im_rate=Decimal(0),
+            account_mm_rate=Decimal(0), updated_at=0,
+        ))  # fmt: skip
+        fee = FeeRate(
+            symbol=cr.SYMBOL, maker=Decimal("0.0002"), taker=Decimal("0.00055"), fetched_at=0
+        )
+        port.set_fee_rate(cr.ACCOUNT, fee)
         held = set(world.store._orders)
         tick.stall()
         with pytest.raises(OmsNotReady):
