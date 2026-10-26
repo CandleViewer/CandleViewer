@@ -1621,6 +1621,8 @@ The `cv_ws_*` send-path series (E17-T06) observe one data frame in 32 of each su
 
 A stamped frame may also carry a synthetic span id, `sp` (23 §3.1, E17-T06), so that one frame's fan-out can be followed to the client's paint (06 §7.2). It is for log records, never a metric label (a series per frame). Where a frame carries it, its fixed cost on the wire (24 bytes of JSON text, 20 of MessagePack) is left out of `bytes` for `json` / `msgpack`, so `bytes` is what was sent less `sp`, and a stamped frame weighs what an unstamped one does.
 
+**Known limitation: a recorded native trail (E29-T05, #848; the orchestrator's Q3 ruling).** The exchange adapter's `Order` carries no trail, so the private-stream consumer never matches a trailing TP/SL order to a stop the OMS recorded with a trail (`24-internal-schemas.md` §8.8 rule 6, §8.12 pairing step 3): once such a stop fires, its order and its fill read as no OMS intent, which pages and opens the account's lockout, until E29-K01 (#843) gives `Order` the trail.
+
 ### 12.2 Logging
 
 Structured JSON (`structlog`) to stdout, collected by the compose logging driver. Mandatory fields: `ts`, `level`, `logger`, `event`, `env`, `request_id`/`conn_id`, `user_id`, `account_id`, `symbol`, `order_link_id`, `trade_group_id`, `latency_ms`. On the WebSocket gateway `conn_id` is spelled `connection_id` (`ws_` and 12 hex digits: the id in `welcome` and the `object_id` of the `ws.connection.closed` audit row). Redaction filter strips API keys, signatures, cookies and TOTP codes at the formatter level (defence in depth: a unit test asserts a known secret never appears in output).

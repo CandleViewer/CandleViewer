@@ -753,7 +753,7 @@ def test_the_first_bind_takes_only_the_named_live_unbound_record_of_the_orders_k
         "recorded_stops.exchange_order_id IS NULL", "recorded_stops.released_at IS NULL",
         "recorded_stops.status IN ('in_force', 'pending')",
         "recorded_stops.symbol = $", "recorded_stops.position_idx = $",
-        "recorded_stops.kind = $",
+        "recorded_stops.kind = $", "recorded_stops.position_side = $",
         "NOT (EXISTS (SELECT 1 FROM recorded_stops AS held WHERE held.exchange_account_id = $",
         "AND held.exchange_order_id = $",
     ):  # fmt: skip
@@ -761,6 +761,7 @@ def test_the_first_bind_takes_only_the_named_live_unbound_record_of_the_orders_k
     assert sql.endswith("RETURNING recorded_stops.id")
     bound = _bound(stmt)
     assert all(v in bound for v in (ACCOUNT, _BIND.record_id, "x-1", "BTCUSDT", 0, "stop_loss"))
+    assert "Buy" in bound and "Sell" not in bound  # the position a sell order closes (F1)
 
 
 async def test_create_with_binds_inserts_then_binds_and_commits_once() -> None:

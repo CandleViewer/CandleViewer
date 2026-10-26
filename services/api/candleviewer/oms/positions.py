@@ -219,6 +219,11 @@ class PositionProjection:
             return
         await self._hooks(last, key, self._now() + RECORD_BOUND_S)
 
+    def last_applied(self, key: PositionKey) -> Position | None:
+        """The key's last applied position row, or None when none is kept (S6b sizes a Full-mode
+        stop's row whose order shows a quantity of 0 from it, 24 Sec.8.3 rule 7)."""
+        return self._last.get(key)
+
     def oldest_unhanded_age_s(self) -> float:
         """Readiness (S8 binds a gauge and `/readyz`): the age, in seconds, of the oldest key whose
         reading is owed: not handed on, held as future-dated, or evicted from that hold; 0.0 when

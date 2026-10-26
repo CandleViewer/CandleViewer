@@ -21,7 +21,8 @@ XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"
 
 @dataclass
 class Rig:
-    """Answers by port name; `cost` seconds pass per read; `raises` and `hang` script failures."""
+    """Answers by port name (a list answers its items in turn, the last one again); `cost` seconds
+    pass per read; `raises` and `hang` script failures. The recorded-stop seam answers `take`."""
 
     answers: dict[str, Any] = field(default_factory=dict)
     raises: dict[str, BaseException] = field(default_factory=dict)
@@ -57,7 +58,10 @@ class Rig:
         await self._stall(name)
         if name in self.raises:
             raise self.raises[name]
-        return self.answers.get(name)
+        answer = self.answers.get(name)
+        if isinstance(answer, list):
+            return answer.pop(0) if len(answer) > 1 else answer[0]
+        return answer
 
     async def get_by_exchange_order_id(self, account_id: UUID, xid: str) -> Any:
         return await self._hit("bound")
@@ -96,14 +100,19 @@ class Rig:
         self.calls.append(f"handover:{empty_read}")
         await self._hit_raise("handover")
 
-    async def take(self, account_id: UUID, decision: ToRecordedStop, *rest: Any) -> None:
+    async def take(self, account_id: UUID, decision: ToRecordedStop, *rest: Any) -> Any:
         self.calls.append("take")
         self.taken.append(decision)
         await self._stall("take")
+        if "on_take" in self.answers:
+            self.answers["on_take"]()
         if "take" in self.raises:
-            if "on_take" in self.answers:
-                self.answers["on_take"]()
             raise self.raises["take"]
+        return self.answers.get("take")
+
+    async def after_bind(self, account_id: UUID, decision: ToRecordedStop) -> None:
+        self.calls.append("after_bind")
+        await self._hit_raise("after_bind")
 
     async def _stall(self, name: str) -> None:
         if name in self.hang:

@@ -315,8 +315,9 @@ exempt_modules = ["candleviewer.observability"]
 # session service beside them drives B12 and imports the runtime. The private
 # stream's per-frame parser (G-8b) is one too; its runtime beside it drives B13.
 # The private stream's row mapping and pairing (E29-T05) are too, and the
-# position projection and what a read shows of a recorded stop (`stop_shown`):
-# the facade they feed drives B1.
+# position projection, what a read shows of a recorded stop (`stop_shown`) and
+# the recorded stop's order on the stream (`recorded_stop_stream`): the facade
+# they feed drives B1.
 rule = "C-2.20"
 source_modules = [
     "candleviewer.book",
@@ -325,6 +326,7 @@ source_modules = [
     "candleviewer.oms.pairing",
     "candleviewer.oms.positions",
     "candleviewer.oms.push_mapping",
+    "candleviewer.oms.recorded_stop_stream",
     "candleviewer.oms.stop_shown",
     "candleviewer.oms.stream_consumer",
     "candleviewer.oms.stream_push",
