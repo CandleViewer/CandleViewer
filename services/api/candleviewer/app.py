@@ -408,6 +408,9 @@ from candleviewer.storage.repositories.notifications_sqlalchemy import (
     SqlAlchemyNotificationRepository,
 )
 from candleviewer.storage.repositories.onboarding_sqlalchemy import SqlAlchemyOnboardingStore
+from candleviewer.storage.repositories.order_path_symbols_sqlalchemy import (
+    SqlAlchemyOrderPathSymbols,
+)
 from candleviewer.storage.repositories.recorder_sqlalchemy import SqlAlchemyRecorderRepository
 from candleviewer.storage.repositories.recording_reads_sqlalchemy import SqlAlchemyRecordingReads
 from candleviewer.storage.repositories.relational_sqlalchemy import (
@@ -3328,7 +3331,9 @@ def wire_instrument_catalogue(
     neutral `InstrumentsFetcher` port) + Postgres repository (M10) + bus
     publisher (M5) -> ingestion (M6) scheduler. Only this composition root
     sees all four modules (C-3.1). S-RL (#913): the adapter's risk-limit fetcher (same client,
-    same governor) feeds the tiers kept beside the catalogue."""
+    same governor) feeds the tiers kept beside the catalogue. S4-S-c: on the real backend the
+    order path's symbols, read over the catalogue's own pool (its loop), seed the tier refresh;
+    elsewhere nothing seeds it."""
     bus = ctx.bus.bus
     env = ctx.settings.environment.value
 
@@ -3341,6 +3346,11 @@ def wire_instrument_catalogue(
         repository=SqlAlchemyInstrumentsRepository(relational),
         publish=_publish,
         fetch_risk_limits=fetch_risk_limits,
+        order_path_symbols=(
+            SqlAlchemyOrderPathSymbols(relational, statement_timeout_ms=1000)
+            if ctx.settings.storage_backend == "real"
+            else None
+        ),
     )
     ctx.ingestion.attach_instruments(scheduler)
     return scheduler
