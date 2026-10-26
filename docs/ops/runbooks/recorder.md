@@ -100,13 +100,17 @@ and [Quarantined file](recorder-rolloff.md#quarantined-file).
 
 **Symptom.** `recorder_disk_budget_last_sample_timestamp_seconds` is more than 300 seconds old: disk-budget
 sampling is stale or failing. Severity: Ticket. Tracker: #4581.
+The write gate also fails closed on its own three sample intervals (180 s by default) after the
+last completed pass, so a healthy disk can read level 3 and page until sampling resumes.
 
 1. Read `recorder_disk_budget_last_sample_timestamp_seconds` and confirm it has stopped advancing.
 2. Read `recorder_disk_pressure_level`: while sampling is stale it may not reflect the volume.
-3. Check _Disk used_ and the API logs for disk-budget errors.
+3. Check _Disk used_ and the API logs for disk-budget errors. `disk_budget_sample_failed_total`
+   counts each failed pass: it rises while passes fail and stays flat while none ends.
 
 **Remediation.** Restore disk-budget sampling (restart the API if it does not resume) and confirm
 the timestamp advances again. Follow #4581.
+The gate re-opens after two completed passes in a row.
 
 **Do not** silence this alert while sampling is stale; the disk alerts depend on it.
 
@@ -131,7 +135,8 @@ confirm the level falls. Follow #4581.
 ## RecorderWriteGateClosed
 
 **Symptom.** `recorder_disk_pressure_level` is 3: the write gate is closed (a recording volume
-refused at boot, or a halt). Severity: Page. Tracker: #567.
+refused at boot, a halt, or a stale disk-budget sample). Severity: Page. Tracker: #567.
+A stale sample closes the gate even on a healthy disk: see `RecorderDiskBudgetSampleStale`.
 
 1. Read `recorder_disk_pressure_level` and confirm it is 3.
 2. Check the API startup logs for a refused recording volume.

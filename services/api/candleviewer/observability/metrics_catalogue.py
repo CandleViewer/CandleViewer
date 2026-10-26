@@ -3271,6 +3271,17 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "disk_budget_sample_failed_total",
+        "counter",
+        "passes",
+        (),
+        "DiskBudget passes that raised (the write gate fails closed once the samples go stale).",
+        "dashboard: a rising count is a failing meter; the gate fails closed on its own",
+        _L,
+        "E16",
+        exported=True,
+    ),
+    _s(
         "recorder_status_cache_age_seconds",
         "gauge",
         "seconds",

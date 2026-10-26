@@ -238,6 +238,7 @@
 ["cv_ws_upstream_consumers_in_use", "gauge", ["symbol", "topic"], "live", "E17"]
 ["cvwb_bytes_encoded_total", "counter", ["kind"], "live", "E17"]
 ["cvwb_frames_encoded_total", "counter", ["kind"], "live", "E17"]
+["disk_budget_sample_failed_total", "counter", [], "live", "E16"]
 ["disk_free_bytes", "gauge", [], "live", "E16"]
 ["disk_used_ratio", "gauge", [], "live", "E16"]
 ["e2e_tick_to_paint_seconds", "histogram", [], "live", "E04"]

@@ -94,6 +94,10 @@ recorder_disk_budget_last_sample_timestamp_seconds = Gauge(
     "recorder_disk_budget_last_sample_timestamp_seconds",
     "Unix time of the last completed DiskBudget pass (a stale value = a stuck ladder).",
 )
+disk_budget_sample_failed_total = Counter(
+    "disk_budget_sample_failed_total",
+    "DiskBudget passes that raised (the write gate fails closed once the samples go stale).",
+)
 
 # --- Recording status (E16-T08) -----------------------------------------------------------
 recorder_status_cache_age_seconds = Gauge(
@@ -117,6 +121,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_projected_full_timestamp",
         "recorder_disk_budget_last_sample_timestamp_seconds",
         "recorder_disk_budget_breakdown_age_seconds",
+        "disk_budget_sample_failed_total",
         "recorder_status_cache_age_seconds",
         # The nightly roll-off (`recorder/rolloff.py`, E16-T05): unscraped until #3794.
         "recorder_rolloff_bytes_total",
