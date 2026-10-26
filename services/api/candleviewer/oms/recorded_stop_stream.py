@@ -49,7 +49,7 @@ every order push to a bound recorded stop's row whose order is live or ended `fi
 terms step: it reads the record bound to the order and the key's live records, each bounded at
 `PORT_TIMEOUT_S`, and when a record later than the bound one (by `created_at`, then `id`) matches
 the push (`pairing.matching_record`), it releases the bound one and binds the later in one
-transaction (`RecordedStopRepository.release_and_bind`), stamped on the OMS's clock and written
+transaction (the recorded-stop facade's `release_and_bind`), stamped on the OMS's clock and written
 ahead (`sl.modified` or `tp.modified`, reason `successor_bind`, keyed, ids only), bounded at
 `RELEASE_BOUND_S`. A record that has ended keeps its order, and so does one whose order ended
 other than `filled`. A write refused (`RecordedStopNotBindable`), failed or cut short decides
@@ -156,7 +156,7 @@ class BoundStops(Protocol):  # `PositionProjection`'s record hook and last row, 
     def last_applied(self, key: PositionKey) -> Position | None: ...  # sync
 
 
-class SuccessorStops(Protocol):  # `RecordedStopRepository`, structurally
+class SuccessorStops(Protocol):  # the recorded-stop facade's three methods, structurally
     async def for_exchange_order(
         self, account_id: UUID, exchange_order_id: str
     ) -> tuple[RecordedStopRow, ...]: ...

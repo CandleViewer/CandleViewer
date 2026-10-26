@@ -131,9 +131,9 @@ STOP_SIDES: Final[Mapping[str, tuple[StopKind, TpslMode]]] = MappingProxyType({
 _CLAIMS: Final = frozenset(STOP_SIDES) | {"trailing_stop"}
 _CLOSING: Final = MappingProxyType({"Buy": "sell", "Sell": "buy"})  # record side -> order side
 _REFUSED: Final = "a read answered a row that is not the push's: nothing is paired"
-#: How far the venue's clock may sit from the OMS's for a request to be accepted at all: Bybit's
-#: `recv_window` (5000 ms, 24 Sec.14.3). An entry is sent after its attach is recorded, so its
-#: stop's order is created at the venue after the record, give or take this.
+#: How far the venue's clock may sit from the OMS's for a request to be accepted at all: the
+#: venue's signed-request window (5000 ms, 24 Sec.14.3). An entry is sent after its attach is
+#: recorded, so its stop's order is created at the venue after the record, give or take this.
 ATTACH_SKEW: Final = timedelta(milliseconds=5000)
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 _US: Final = timedelta(microseconds=1)

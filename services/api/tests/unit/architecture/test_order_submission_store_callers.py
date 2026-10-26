@@ -47,6 +47,12 @@ key's recorded stops in force for an amend's ratchet (ruling Q4) through its own
 so the type check holds it to that read and it records, settles and sweeps nothing. The key is the
 one of an order its own `scope` read in the caller's `AccountScope` (C-12.4, SR-E29-13), and no
 route reaches it before that admission.
+`oms/recorded_stop_stream.py` (E29-T05 S7b, the successor's bind) is not listed either, for the
+same reason: it reads the bound and live records of one key and releases and binds through its own
+three-method `SuccessorStops` protocol (`for_exchange_order`, `live_for_key`, `release_and_bind`),
+which E29-T05's wiring fills with `RecordedStopRepository`. The account is the private stream's own
+(the push, the row and the caller must name the same account, C-12.4, checked again in SQL), and no
+route reaches it: only the account's stream consumer calls it.
 """
 
 from __future__ import annotations
