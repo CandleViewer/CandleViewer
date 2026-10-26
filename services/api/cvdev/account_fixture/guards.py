@@ -23,8 +23,9 @@ anything is answered:
 The venue's hosts and header names are this stub's vocabulary by design (ADR-0036, Enforcement), so
 `cvdev/**` is excluded from the two adapter-vocabulary Semgrep rules (S9).
 
-This module decides and holds no state; `transport.FixtureTransport` refuses, latches, logs and
-answers. Nothing here imports `candleviewer.secrets` or `candleviewer.audit`.
+This module decides, and holds one piece of state: `LATCH`, the process's one key-id guard latch.
+`transport.FixtureTransport` refuses, latches, logs and answers. Nothing here imports
+`candleviewer.secrets` or `candleviewer.audit`.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import posixpath
+import threading
 from dataclasses import dataclass
 from typing import Final
 from urllib.parse import unquote
@@ -57,6 +59,10 @@ _FUND_SEGMENTS: Final = FUND_PATH_PREFIX.strip("/").split("/")
 PUBLIC_PATH_PREFIX: Final = "/v5/market/"
 _PUBLIC_SEGMENTS: Final = PUBLIC_PATH_PREFIX.strip("/").split("/")
 QUERY_SIGNED: Final = frozenset({"GET", "DELETE"})
+#: The process's one key-id guard latch (S7 lens MINOR-1), `wiring.LATCH`: every fixture transport,
+#: and S12's socket, is built with it unless a test injects its own. Set by the first trip of any;
+#: only a restart clears it (FX-D01).
+LATCH: Final = threading.Event()
 
 
 @dataclass(frozen=True, slots=True)

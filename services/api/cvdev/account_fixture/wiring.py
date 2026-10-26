@@ -19,8 +19,11 @@ import httpx
 
 from candleviewer.account_fixture_wiring import AccountFixture, AccountFixtureRefused, PrivateSocket
 from candleviewer.settings import Settings
-from cvdev.account_fixture import boot
+from cvdev.account_fixture import boot, guards
 
+#: The process's one key-id guard latch (`guards.LATCH`, the same object): every fixture transport,
+#: and S12's socket, is built with it. Set by the first trip of any; only a restart clears it.
+LATCH: Final = guards.LATCH
 #: Why every request is refused for now.
 REFUSAL: Final = "the account fixture transport answers nothing until its guards land (#2893)"
 

@@ -16,6 +16,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Any, Final
 
 import httpx
@@ -36,6 +37,7 @@ from candleviewer.exchange.bybit.key_info import (
 from candleviewer.exchange.bybit.rest import BybitRestClient
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment
+from cvdev.account_fixture.control import KeyStates
 from cvdev.account_fixture.guards import PUBLIC_PATH_PREFIX
 from cvdev.account_fixture.pack import Pack, Scenario, fixture_key_ids
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
@@ -106,7 +108,7 @@ class Stub:
 
 
 class _Seeded(FixtureTransport):
-    """S10's seam as a switch file will use it: every key answers with these overlays seeded."""
+    """Every key answers with these overlays seeded, whatever its key file says."""
 
     overlays: tuple[str, ...] = ()
 
@@ -130,8 +132,16 @@ def make(tmp_path: Path) -> Iterator[Make]:
             kind: type[FixtureTransport] = FixtureTransport,
             pack: Pack = PACK,
         ) -> Stub:
-            gate = ReadOnlyGate()
-            transport = kind(pack, log=log, gate=gate, clock=clock, default=default)
+            keys = KeyStates(tmp_path, PACK, log=log, clock=clock)
+            transport = kind(
+                pack,
+                log=log,
+                gate=ReadOnlyGate(),
+                clock=clock,
+                default=default,
+                keys=keys,
+                latch=Event(),
+            )
             return Stub(transport, clock, tmp_path)
 
         yield build
