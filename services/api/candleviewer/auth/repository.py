@@ -56,7 +56,11 @@ class UserRepository(Protocol):
         (possibly stale) `UserRecord` snapshot, precisely so two concurrent
         wrong-password attempts cannot both observe `failed_login_count - 1`
         and race past the threshold. Returns the resulting `locked_until`
-        (or `None` if the account is not newly locked)."""
+        (or `None` if the account is not newly locked).
+
+        An id with no row (the login's placeholder for an unknown
+        identifier) changes nothing and returns `None`; it never raises,
+        so both failure arms answer alike."""
         ...
 
     async def rehash_password(

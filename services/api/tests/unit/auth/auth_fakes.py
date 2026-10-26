@@ -14,6 +14,8 @@ class FakeUserRepository(UserRepository):
     def __init__(self) -> None:
         self.users: dict[str, UserRecord] = {}
         self.rehash_calls: list[tuple[str, str, dict[str, int]]] = []
+        #: Where `record_login_failure` puts its work for an id with no row; never read.
+        self._discarded: dict[str, UserRecord] = {}
 
     def add(self, user: UserRecord) -> None:
         self.users[str(user.id)] = user
@@ -40,14 +42,20 @@ class FakeUserRepository(UserRepository):
         # Single-threaded fake: the increment and the lock decision happen
         # in one synchronous step (no `await` between read and write), which
         # is the atomicity the real SQL statement must also provide.
-        user = self.users[user_id]
+        # An id with no row (the login placeholder's nil UUID) changes no row and returns
+        # None, like the SQL UPDATE, but does the same record work on a stand-in and discards
+        # it, so the fake costs both login failure paths the same.
+        user = self.users.get(user_id)
+        rows = self.users if user is not None else self._discarded
+        if user is None:
+            user = _ABSENT_ROW
         new_count = user.failed_login_count + 1
         lock_until = now + lock_duration if new_count >= lockout_threshold else None
         update: dict[str, object] = {"failed_login_count": new_count}
         if lock_until is not None:
             update["locked_until"] = lock_until
-        self.users[user_id] = user.model_copy(update=update)
-        return lock_until
+        rows[user_id] = user.model_copy(update=update)
+        return lock_until if rows is self.users else None
 
     async def rehash_password(
         self, user_id: str, *, password_hash: str, algo_params: dict[str, int]
@@ -110,3 +118,7 @@ class FullUsers:
             return None
         user = make_user(password_hash="unused", status=status)
         return user.model_copy(update={"id": uuid.UUID(user_id)})
+
+
+#: `record_login_failure`'s stand-in for an id with no row: a user shaped like `make_user`'s.
+_ABSENT_ROW = make_user(password_hash="unused").model_copy(update={"id": uuid.UUID(int=0)})
