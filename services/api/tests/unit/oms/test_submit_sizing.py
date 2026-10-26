@@ -36,6 +36,7 @@ from tests.unit.accounts import test_sizer as sizer_rig
 from tests.unit.accounts.test_sizer_golden import VECTORS
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import (
+    QTY,
     SYMBOL,
     Figures,
     SubmitRig,
@@ -95,7 +96,8 @@ async def test_entry_sizer_profile_mode_matches_the_golden_vector(vid: str) -> N
     price = None if it.get("price") is None else D(it["price"])
     intent = EntryIntent(
         symbol=it["symbol"], side=it["side"].lower(), order_type=it["order_type"], price=price,
-        sizing=_BY_PROFILE, stop_loss=None,
+        sizing=_BY_PROFILE, stop_loss=None, take_profit=None, time_in_force="GTC",
+        tpsl_mode="Full", position_idx=0,
     )  # fmt: skip
     mid, last = (None if m.get(k) is None else D(m[k]) for k in ("mid", "last_price"))
     size = await sizer.size(
@@ -184,12 +186,17 @@ async def test_submit_a_reduce_only_order_in_another_mode_is_unsupported(
     ("request_", "named"),
     [
         (entry(sizing=SizingRequest(mode="fixed_qty", qty=D("1"))), ("sizing", "max_daily_loss")),
-        (entry(sizing=SizingRequest(mode="fixed_qty", qty=D("0.1"))),
-         ("sizing.qty", "fixed_qty")),
         (entry(stop_loss=StopOffset(unit="price", value=D("56000"))),
          ("stop_loss", "sl_offset_value")),
+        (entry(take_profit=StopOffset(unit="price", value=D("70000"))),
+         ("take_profit", "tp_offset_value")),
+        (entry(sizing=SizingRequest(mode="risk_based", risk_per_trade_usd=D("600"))),
+         ("sizing", "max_daily_loss")),
+        (_by_profile(take_profit=StopOffset(unit="price", value=D("70000"))),
+         ("take_profit", "tp_offset_value")),
     ],
-    ids=["qty_past_a_cap", "qty_above_the_profiles_under_every_cap", "stop_further"],
+    ids=["qty_past_a_cap", "stop_further", "take_profit_further", "risk_past_the_day",
+         "take_profit_alone_in_profile_mode"],
 )  # fmt: skip
 async def test_submit_an_overlay_that_widens_the_profile_is_refused_whole(
     rig: SubmitRig, request_: Any, named: tuple[str, str]
@@ -205,8 +212,13 @@ async def test_submit_an_overlay_that_widens_the_profile_is_refused_whole(
     [
         (SizingRequest(mode="fixed_qty", qty=D("0.005")), D("0.005"), "fixed_qty", D("0.005")),
         (SizingRequest(mode="fixed_qty", qty=D("0.01")), D("0.010"), "fixed_qty", D("0.01")),
+        (SizingRequest(mode="fixed_qty", qty=D("0.1")), D("0.100"), "fixed_qty", D("0.1")),
+        (SizingRequest(mode="fixed_notional", notional_usd=D("600")), QTY, "fixed_notional",
+         D("600")),
+        (SizingRequest(mode="pct_equity", pct=D("0.06")), QTY, "pct_equity", D("0.06")),
     ],
-    ids=["fixed_qty", "fixed_qty_at_the_profiles"],
+    ids=["fixed_qty", "fixed_qty_at_the_profiles", "fixed_qty_above_the_profiles_under_every_cap",
+         "fixed_notional", "pct_equity"],
 )  # fmt: skip
 async def test_submit_an_overlay_inside_the_profile_is_sized_and_recorded(
     rig: SubmitRig, sizing: SizingRequest, qty: Decimal, mode: str, value: Decimal
@@ -266,6 +278,9 @@ _MODES = st.sampled_from(
     [
         SizingRequest(mode="profile"),
         SizingRequest(mode="fixed_qty", qty=D("0.004")),
+        SizingRequest(mode="fixed_notional", notional_usd=D("300")),
+        SizingRequest(mode="pct_equity", pct=D("0.05")),
+        SizingRequest(mode="risk_based", risk_per_trade_usd=D("10")),
     ]
 )
 _STOPS = st.one_of(
@@ -400,26 +415,6 @@ async def test_submit_a_drop_that_raises_still_frees_the_turn(rig: SubmitRig) ->
     assert _free(rig)
 
 
-@pytest.mark.parametrize(
-    "sizing",
-    [
-        SizingRequest(mode="fixed_notional", notional_usd=D("600")),
-        SizingRequest(mode="pct_equity", pct=D("0.06")),
-        SizingRequest(mode="risk_based", risk_per_trade_usd=D("10")),
-    ],
-    ids=["fixed_notional", "pct_equity", "risk_based"],
-)
-async def test_submit_an_entry_in_a_mode_not_served_yet_is_unsupported(
-    rig: SubmitRig, sizing: SizingRequest
-) -> None:
-    """An interim until the overlay is judged (#913 S4-S-b2b): nothing read, recorded or sent."""
-    refused = await _refused(rig, entry(sizing=sizing))
-    assert isinstance(refused, OrderInvalid) and rig.figures.reads == []
-    assert [(e.field, e.rule) for e in refused.errors] == [
-        ("sizing.mode", "sizing_mode_unsupported")
-    ]
-
-
 async def test_submit_an_entry_with_no_stop_and_no_profile_is_400_native_stop_required(
     rig: SubmitRig,
 ) -> None:
@@ -444,19 +439,19 @@ async def test_submit_the_sizing_explanation_passes_the_audit_redactor_unchanged
     assert redact(detail) == detail
 
 
-async def test_submit_a_fixed_qty_request_on_a_profile_of_another_mode_is_unsupported(
+async def test_submit_a_fixed_qty_request_on_a_profile_of_another_mode_is_judged(
     rig: SubmitRig,
 ) -> None:
-    """An interim until the overlay is judged (#913 S4-S-b2b): a `fixed_qty` request on a
-    `risk_based` profile is not sized, so nothing is read, recorded or sent."""
+    """The comparator judges a `fixed_qty` request on a `risk_based` profile (b2a's interim
+    refused it as unsupported): inside every cap it is sized at its qty and recorded."""
     rig.profiles.held[(cr.ACCOUNT, None)] = profile(
         sizing_mode="risk_based", fixed_qty=None, risk_fixed_amount="30"
     )
-    refused = await _refused(rig, entry(sizing=SizingRequest(mode="fixed_qty", qty=D("0.001"))))
-    assert isinstance(refused, OrderInvalid) and rig.figures.reads == []
-    assert [(e.field, e.rule) for e in refused.errors] == [
-        ("sizing.mode", "sizing_mode_unsupported")
-    ]
+    outcome = await rig.submit(entry(sizing=SizingRequest(mode="fixed_qty", qty=D("0.001"))))
+    assert outcome.status == 202 and _sent(rig).qty == D("0.001")
+    assert outcome.trade_group_id is not None
+    group = rig.store._groups[outcome.trade_group_id].group
+    assert (group.requested_qty_mode, group.requested_qty_value) == ("fixed_qty", D("0.001"))
 
 
 async def test_submit_a_request_stop_nearer_than_the_profiles_is_sent(rig: SubmitRig) -> None:
@@ -487,18 +482,23 @@ async def test_submit_a_figure_unknown_for_missing_tiers_requests_them_once_and_
 ) -> None:
     """24 Sec.9.3.6: the symbol's maintenance margin rate is unknown (its tiers are missing from
     the catalogue), so the size step asks for its tiers once, never awaited, and the answer is
-    still 503 `sizing_unavailable`, with nothing recorded or sent."""
+    still 503 `sizing_unavailable`, its `detail` `tiers_pending` (22 `placeOrder`), with nothing
+    recorded or sent."""
     rig.figures.known = figures(maintenance_margin_rate=None)
     refused = await _refused(rig, request_of())
     assert isinstance(refused, SizingUnavailable)
     assert problem_for(refused).code == "sizing_unavailable"
+    assert (refused.detail, refused.retry_after_s) == ("tiers_pending", 1)
     assert rig.tiers.asked == [SYMBOL]
 
 
 async def test_submit_a_figure_unknown_with_the_tiers_known_requests_none(rig: SubmitRig) -> None:
-    """Another figure unknown (the equity), the maintenance margin rate known: no tiers asked."""
+    """Another figure unknown (the equity), the maintenance margin rate known: no tiers asked, and
+    the `detail` is the default sentence, never `tiers_pending`."""
     rig.figures.known = figures(equity=None)
-    assert isinstance(await _refused(rig, _by_profile()), SizingUnavailable)
+    refused = await _refused(rig, _by_profile())
+    assert isinstance(refused, SizingUnavailable)
+    assert refused.detail == SizingUnavailable.default_detail
     assert rig.tiers.asked == []
 
 
@@ -507,3 +507,145 @@ async def test_submit_an_unread_figures_read_requests_no_tiers(rig: SubmitRig) -
     rig.figures.refuse = TimeoutError()
     assert isinstance(await _refused(rig, _by_profile()), SizingUnavailable)
     assert rig.tiers.asked == []
+
+
+async def test_submit_a_percent_stop_lands_a_whole_tick_from_entry(rig: SubmitRig) -> None:
+    """A `percent` request stop is measured from the anchor and moved away from entry onto a
+    whole tick (0.1) before it overlays the profile's offset, so the create's stop is on the grid
+    and never closer than asked: 1.23456 % below 60000 is 59259.264, sent as 59259.2."""
+    outcome = await rig.submit(entry(stop_loss=StopOffset(unit="percent", value=D("1.23456"))))
+    assert outcome.status == 202 and _sent(rig).stop_loss == D("59259.2")
+
+
+async def test_submit_a_request_stop_the_profile_cannot_hold_names_stop_loss(
+    rig: SubmitRig,
+) -> None:
+    """A stop overlay the profile model refuses is a 400 on `stop_loss`, never on `sizing`."""
+    refused = await _refused(rig, entry(stop_loss=StopOffset(unit="atr", value=D("1e9"))))
+    assert isinstance(refused, OrderInvalid)
+    assert [(e.field, e.rule) for e in refused.errors] == [("stop_loss", "profile_overlay")]
+
+
+async def test_submit_a_risk_of_100_percent_is_judged_never_a_model_refusal(
+    rig: SubmitRig,
+) -> None:
+    """`risk_per_trade_pct` is a percent, 100 the most it may be: the overlay holds it (a
+    fraction of 1), so the request is judged and refused by the day's room, not the model."""
+    sizing = SizingRequest(mode="risk_based", risk_per_trade_pct=D(100))
+    refused = await _refused(rig, entry(sizing=sizing))
+    assert isinstance(refused, RiskRefused)
+    assert ("sizing", "max_daily_loss") in [(e.field, e.rule) for e in refused.errors]
+
+
+# --- the review's folds (#913 S4-S-b2b) ---------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cap", "admitted"), [(D("500"), False), (D("700"), True)], ids=["under_the_leg", "above"]
+)
+async def test_submit_a_profile_request_with_a_max_notional_is_judged(
+    rig: SubmitRig, cap: Decimal, admitted: bool
+) -> None:
+    """`profile` mode with `max_notional_usd` takes the judged path: the leg (0.01 at 60000, 600
+    USDT) above the request's 500 is refused whole, 403, never capped; under 700 it is sent."""
+    request = _by_profile(sizing=SizingRequest(mode="profile", max_notional_usd=cap))
+    if admitted:
+        assert (await rig.submit(request)).status == 202 and _sent(rig).qty == QTY
+        return
+    refused = await _refused(rig, request)
+    assert isinstance(refused, RiskRefused)
+    assert [(e.field, e.rule) for e in refused.errors] == [("sizing", "max_position_notional")]
+
+
+@pytest.mark.parametrize(
+    ("price", "admitted"), [(D("70000"), False), (D("64000"), True)], ids=["further", "nearer"]
+)
+async def test_submit_a_take_profit_is_judged_against_the_profiles_when_its_own_leg_fails(
+    rig: SubmitRig, price: Decimal, admitted: bool
+) -> None:
+    """The profile's own take-profit (2R: 66000 from 60000, its stop at 57000) comes from the
+    profile, not from its own leg's outcome: that leg (0.01, 60 USDT of margin) fails on 30 USDT
+    of margin while the request's 0.001 fits, and a 70000 take-profit is still refused."""
+    rig.figures.known = figures(available_margin="30")
+    request = entry(
+        sizing=SizingRequest(mode="fixed_qty", qty=D("0.001")), stop_loss=None,
+        take_profit=StopOffset(unit="price", value=price),
+    )  # fmt: skip
+    if admitted:
+        assert (await rig.submit(request)).status == 202 and _sent(rig).take_profit == price
+        return
+    refused = await _refused(rig, request)
+    assert isinstance(refused, RiskRefused)
+    assert [(e.field, e.rule) for e in refused.errors] == [("take_profit", "tp_offset_value")]
+
+
+@pytest.mark.parametrize(
+    "request_",
+    [entry(sizing=SizingRequest(mode="fixed_qty", qty=QTY, round_to_lot=False)),
+     _by_profile(sizing=SizingRequest(mode="profile", round_to_lot=False,
+                                      max_notional_usd=D("700")))],
+    ids=["fixed_qty", "profile_with_a_max_notional"],
+)  # fmt: skip
+async def test_submit_round_to_lot_false_on_a_judged_entry_is_refused_unread(
+    rig: SubmitRig, request_: Any
+) -> None:
+    """ADR-0040 row 16: the sizer always floors, so `false` is 400 `qty_rounding` on
+    `sizing.round_to_lot`, before any figure is read."""
+    refused = await _refused(rig, request_)
+    assert isinstance(refused, OrderInvalid) and rig.figures.reads == []
+    assert [(e.field, e.rule) for e in refused.errors] == [("sizing.round_to_lot", "qty_rounding")]
+
+
+async def test_submit_round_to_lot_false_on_a_plain_profile_request_is_not_read(
+    rig: SubmitRig,
+) -> None:
+    request = _by_profile(sizing=SizingRequest(mode="profile", round_to_lot=False))
+    assert (await rig.submit(request)).status == 202 and _sent(rig).qty == QTY
+
+
+@pytest.mark.parametrize(
+    ("default", "asked", "admitted"),
+    [("IOC", None, False), ("FOK", None, False), ("IOC", "IOC", True), ("FOK", "IOC", True)],
+    ids=["ioc_default_inherited_gtc", "fok_default_inherited_gtc", "ioc_explicit_on_ioc",
+         "ioc_explicit_on_fok"],
+)  # fmt: skip
+async def test_submit_an_overlays_time_in_force_is_judged_against_the_profiles_default(
+    rig: SubmitRig, default: str, asked: str | None, admitted: bool
+) -> None:
+    """An overlay that names no time-in-force inherits GTC, which rests longer than an IOC or FOK
+    default and is refused; one that names IOC rests no longer and is admitted."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(time_in_force_default=default)
+    request = entry() if asked is None else entry(time_in_force=asked)
+    if admitted:
+        assert (await rig.submit(request)).status == 202
+        return
+    refused = await _refused(rig, request)
+    assert isinstance(refused, RiskRefused)
+    assert [(e.field, e.rule) for e in refused.errors] == [
+        ("time_in_force", "time_in_force_default")
+    ]
+
+
+@pytest.mark.parametrize(
+    "stop",
+    [StopOffset(unit="price", value=D("58000")), StopOffset(unit="ticks", value=D("20000"))],
+    ids=["price", "ticks"],
+)
+async def test_submit_a_tighter_stop_alone_is_admitted_and_sent(
+    rig: SubmitRig, stop: StopOffset
+) -> None:
+    """A stop alone in `profile` mode, nearer than the profile's 57000: judged and sent at 58000
+    (20000 ticks of 0.1 below 60000)."""
+    outcome = await rig.submit(_by_profile(stop_loss=stop))
+    assert outcome.status == 202 and _sent(rig).stop_loss == D("58000")
+
+
+async def test_submit_an_overlay_on_a_non_default_effective_profile_is_admitted(
+    rig: SubmitRig,
+) -> None:
+    """`is_default` is not judged on the order path: an overlay on a named, non-default profile is
+    admitted, though the comparator's `is_default` row would refuse it."""
+    held = profile(is_default=False)
+    rig.profiles.held[(cr.ACCOUNT, held.profile_id)] = held
+    outcome = await rig.submit(entry(profile_id=held.profile_id))
+    assert outcome.status == 202 and _sent(rig).qty == QTY

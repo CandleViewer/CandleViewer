@@ -246,7 +246,7 @@ def test_live_needs_both_preconditions_and_the_switches_run_live_b18_gate() -> N
         row,
         "slice 3 ruling Q5: `kill_switch`, the B18 kill switch until E39-S03",
         "slice 3: `machine_event_sink`, B1's `machine_events` sink while no statechart persistence",
-        "Status of these two: the contract of #913 slice 3 (sub-slices B to G); nothing serves",
+        "Status of these two: served since #913 slice 3 (sub-slices B to G merged)",
     )
 
 

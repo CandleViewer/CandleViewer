@@ -249,6 +249,11 @@ RULE_TAKE_PROFIT_SIDE: Final = "take_profit_side"
 RULE_REDUCE_ONLY_TPSL: Final = "reduce_only_tpsl"
 #: #913 S4-S rulings Q3 and Q4: a limit price or trigger outside the band around mid, else last.
 RULE_PRICE_BAND: Final = "price_band"
+#: ADR-0040 row 16: `sizing.round_to_lot` `false` on a judged entry (the sizer always floors).
+RULE_QTY_ROUNDING: Final = "qty_rounding"
+#: `sizing_unavailable`'s `detail` when the symbol's tiers are being fetched (22 `placeOrder`,
+#: #913 S4-S-d): a retry in a moment is sized, unlike a figure that is unavailable.
+DETAIL_TIERS_PENDING: Final = "tiers_pending"
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,12 +465,14 @@ class ExchangeUnavailable(OrderRefused):
 class SizingUnavailable(OrderRefused):
     """`sizing_unavailable` (#913 S4-S ruling Q5): a figure the size step needs (the day's loss,
     the committed risk, the fee rate, the margin) cannot be read yet (`figure_unknown`), so nothing
-    was recorded or sent; never a venue outage. `retry_after_s` is the answer's `Retry-After`."""
+    was recorded or sent; never a venue outage. `retry_after_s` is the answer's `Retry-After`.
+    `detail` is `DETAIL_TIERS_PENDING` when the symbol's tiers are being fetched, else the default
+    sentence (22 `placeOrder`)."""
 
     default_detail = "The order cannot be sized yet, so it was not sent."
 
-    def __init__(self, *, retry_after_s: int) -> None:
-        super().__init__()
+    def __init__(self, *, retry_after_s: int, detail: str | None = None) -> None:
+        super().__init__(detail)
         self.retry_after_s = _positive_delay(retry_after_s)
 
 
