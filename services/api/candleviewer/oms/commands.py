@@ -126,6 +126,11 @@ denied), is re-paired (both sides, a side the order lacks left out) and recorded
 and settled. A held key answers `STOP_REQUEST_IN_FLIGHT`; a raise leaves the rows in flight (S1).
 An account the port cannot sign for (refused, or with no active key) answers `ACCOUNT_UNAVAILABLE`,
 audited, nothing sent (the 11:34Z ruling); a read that fails before the send, `STORE_UNAVAILABLE`.
+Its records name the request whose registration B1's call spent (`expect_exit`, `_spend`), each
+request's registration its own (#4643): each side's request and each void the principal with the
+role and the correlation id, the port's own refusals the correlation id (C-2.9, #3990). A call
+that finds no registration (one dropped past `max_watches`, or forgotten by an exit service that
+ended first, `oms.exits`) names no request.
 """
 
 from __future__ import annotations
@@ -645,7 +650,7 @@ class PlaceWatch:
 class ExitWatch:
     """An exit service's wait on one order's cancel or amend (`expect_exit`), as `PlaceWatch` is
     the pipeline's on a create: it answers what B1's own call was answered, or None when the call
-    raised (Q11) or the registration was replaced, dropped or forgotten; the venue's 110001 answers
+    raised (Q11) or the registration was dropped or forgotten; the venue's 110001 answers
     why the order parks (`_parked`), as S4-C reads it apart from a fault. A KILL's spends none.
     `request_id` and `actor` name the request the exit is for (#3990)."""
 
@@ -731,7 +736,7 @@ class OmsCommandPort:
         self._max_watches = max_watches
         self._figures = figures  # an accepted amend drops the account's (24 Sec.9.3.6)
         self._watches: OrderedDict[UUID, PlaceWatch] = OrderedDict()
-        self._exits: OrderedDict[tuple[UUID, ExitKind], ExitWatch] = OrderedDict()
+        self._exits: OrderedDict[ExitWatch, None] = OrderedDict()  # registration order (#4643)
         self._resync: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -1152,13 +1157,14 @@ class OmsCommandPort:
         reason: str = STOP_REFUSED,
         by: float | None = None,
         actor: SubmitActor | None = None,
+        request_id: UUID | None = None,
     ) -> None:
         """The request's answer on its rows: `answered`, or `refused`, each void audited ahead
         with `reason` (`_void_record`, keyed apart from its request, #4587) under the request's
-        `actor`, the principal its rows hold: the writer refuses a record that names a user
-        without the role (C-2.9), so a void without it would never land. A settle that fails
-        leaves the rows in flight, for the complete read (21 Sec.3.3.11), and is logged: the
-        exchange's answer stands."""
+        `actor`, the principal its rows hold, and its `request_id` (#4643): the writer refuses a
+        record that names a user without the role (C-2.9), so a void without it would never
+        land. A settle that fails leaves the rows in flight, for the complete read (21
+        Sec.3.3.11), and is logged: the exchange's answer stands."""
         ids = [row.id for row in recorded]
         account_id, at = recorded[0].exchange_account_id, _at(self._now_us())
         try:
@@ -1166,7 +1172,7 @@ class OmsCommandPort:
                 await self._bounded(self._stops.settle(account_id, ids, "answered", at=at), by=by)
                 return
             voided = {**detail, "error_code": error_code}
-            records = [_void_record(row, reason, voided, actor) for row in recorded]
+            records = [_void_record(row, reason, voided, actor, request_id) for row in recorded]
 
             async def void(_rows: tuple[RecordedStopRow, ...]) -> None:
                 for record in records:
@@ -1189,33 +1195,42 @@ class OmsCommandPort:
         actor: SubmitActor | None = None,
     ) -> ExitWatch:
         """Register the exit an exit service is about to command (`CANCEL`, `AMEND`), answered as
-        B1 was. As `expect`: a second registration replaces the first, and past `max_watches` the
-        oldest is dropped, each answered None (C-2.18)."""
+        B1 was. Each is its request's own (#4643): a second of the order and kind never replaces
+        the first, as B1's call spends the oldest (`_spend`); past `max_watches` the oldest is
+        dropped, answered None (C-2.18)."""
         future = asyncio.get_running_loop().create_future()
         watch = ExitWatch(order_id, kind, future, request_id, actor)
-        replaced = self._exits.pop((order_id, kind), None)
-        if replaced is not None:
-            replaced.resolve(None)
-        self._exits[(order_id, kind)] = watch
+        self._exits[watch] = None
         while len(self._exits) > self._max_watches:
-            _, dropped = self._exits.popitem(last=False)
+            dropped, _ = self._exits.popitem(last=False)
             _log().error("oms_exit_watch_dropped", order_id=str(dropped.order_id))
             dropped.resolve(None)
         return watch
 
-    def forget_exit(self, order_id: UUID, kind: ExitKind) -> None:
-        """Drop the order's exit registration while B1 has not spent it: its command was refused
-        (a conflict, a stale version), so no call comes for it. Its watch answers None."""
-        watch = self._exits.pop((order_id, kind), None)
-        if watch is not None:
+    def forget_exit(self, watch: ExitWatch) -> None:
+        """Drop a registration B1 has not spent: its exit service forgets its own on every way out
+        but B1's call having taken it (`oms.exits`), its command refused, its step settled with
+        no call, or no call yet as it ends. Its watch answers None; another request's
+        registration of the order stays, and a watch no longer held is left as it is."""
+        if watch in self._exits:
+            del self._exits[watch]
             watch.resolve(None)
+
+    def _spend(self, order_id: UUID, kind: ExitKind) -> ExitWatch | None:
+        """B1's call takes the order's oldest registration of `kind` (#4643): the facade takes the
+        order's commands one at a time, in the order they were registered, and refuses a later
+        one while the first's step stands, whose refused request forgets its own."""
+        watch = next((w for w in self._exits if (w.order_id, w.kind) == (order_id, kind)), None)
+        if watch is not None:
+            del self._exits[watch]
+        return watch
 
     async def cancel(self, command: b01.Command) -> Mapping[str, Any]:
         """B1's cancel (`cancel_pending`) and a KILL's (`kill_cancel`), module docstring; the
         order's exit registration is spent by B1's own cancel only, never by a KILL's."""
         kill = command.kind == "kill_cancel"
         order_id = _uuid(command.order.get("order_id"))  # parsed before any registration is popped
-        watch = None if kill else self._exits.pop((order_id, "cancel"), None)
+        watch = None if kill else self._spend(order_id, "cancel")
         try:
             answer = await self._cancel(command, kill=kill)
         except BaseException as exc:
@@ -1299,10 +1314,11 @@ class OmsCommandPort:
 
     async def amend(self, command: b01.Command) -> Mapping[str, Any]:
         """`amend_pending`'s call: the stored order changed in place (module docstring); the
-        order's amend registration (`expect_exit`) gets the answer, None when the call raises."""
-        watch = self._exits.pop((_uuid(command.order.get("order_id")), "amend"), None)
+        order's amend registration (`expect_exit`) names the request each record of it names,
+        and gets the answer, None when the call raises."""
+        watch = self._spend(_uuid(command.order.get("order_id")), "amend")
         try:
-            answer = await self._amend(command, None if watch is None else watch.actor)
+            answer = await self._amend(command, watch)
         except BaseException:
             if watch is not None:
                 watch.resolve(None)
@@ -1311,9 +1327,8 @@ class OmsCommandPort:
             watch.resolve(answer)
         return answer
 
-    async def _amend(
-        self, command: b01.Command, actor: SubmitActor | None = None
-    ) -> dict[str, Any]:
+    async def _amend(self, command: b01.Command, watch: ExitWatch | None) -> dict[str, Any]:
+        actor, rid = (None, None) if watch is None else (watch.actor, watch.request_id)
         by = self._deadline(self._amend_timeout_s)  # all of the amend, inside B1's own bound
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
@@ -1321,7 +1336,9 @@ class OmsCommandPort:
         try:
             row = await self._bounded(self._orders.get(account_id, order_id), by=by)
         except _UNREAD as exc:
-            return await self._unread(order_id, account_id, {"order_link_id": link}, exc, by=by)
+            return await self._unread(
+                order_id, account_id, {"order_link_id": link}, exc, by=by, request_id=rid
+            )
         if row is None:
             raise ValueError("no stored order of the account has the command's id")
         _check_names(command, row)
@@ -1330,30 +1347,38 @@ class OmsCommandPort:
         requested = _amend_terms(command.terms)
         if requested is None:  # as B1 refuses terms it could not stage: nothing is sent
             code = OmsErrorCode.INSTRUMENT_FILTER.value
-            return await self._amend_refused(row, code, "terms_not_staged", detail, by=by)
+            return await self._amend_refused(
+                row, code, "terms_not_staged", detail, by=by, request_id=rid
+            )
         if row.provenance != "placed":  # a recorded stop's TP/SL order is not the user's to amend
             return await self._amend_refused(
-                row, ORDER_NOT_AMENDABLE, "not_amendable", detail, by=by
+                row, ORDER_NOT_AMENDABLE, "not_amendable", detail, by=by, request_id=rid
             )
         sides = {side: value for side, value in requested.items() if side in TPSL_SIDES}
         rule = tpsl_scope_refusal(
             sides, reduce_only=row.reduce_only, tpsl_mode=row.tpsl_mode, filled_qty=row.cum_exec_qty
         )
         if rule is not None:
-            return await self._amend_refused(row, rule.upper(), rule, detail, by=by)
+            return await self._amend_refused(row, rule.upper(), rule, detail, by=by, request_id=rid)
         stop, take_profit = _paired(row, sides)
         if sides and stop is None:  # an entry carries its native stop (C-2.6): never sent bare
             rule = "native_stop_required"
-            return await self._amend_refused(row, b01.NATIVE_STOP_REQUIRED, rule, detail, by=by)
+            return await self._amend_refused(
+                row, b01.NATIVE_STOP_REQUIRED, rule, detail, by=by, request_id=rid
+            )
         try:
             account = await self._account(row, by=by)
         except _UNREAD as exc:
-            return await self._unread(row.id, row.exchange_account_id, detail, exc, by=by)
+            return await self._unread(
+                row.id, row.exchange_account_id, detail, exc, by=by, request_id=rid
+            )
         except (AccountScopeDenied, OrderEntryRefused) as exc:  # a raise would land `unknown`
             if isinstance(exc, OrderEntryRefused) and exc.reason != _NO_ACTIVE_KEY:
                 raise
             reason = ACCOUNT_UNAVAILABLE_REASON
-            return await self._amend_refused(row, ACCOUNT_UNAVAILABLE, reason, detail, by=by)
+            return await self._amend_refused(
+                row, ACCOUNT_UNAVAILABLE, reason, detail, by=by, request_id=rid
+            )
         request = AmendOrderRequest(
             account=account,
             symbol=row.symbol,
@@ -1377,16 +1402,20 @@ class OmsCommandPort:
             except StopRequestPending as held:
                 return _held(row.order_link_id, held.retry_after_s)
             except _UNREAD as exc:
-                return await self._unread(row.id, row.exchange_account_id, detail, exc, by=by)
+                return await self._unread(
+                    row.id, row.exchange_account_id, detail, exc, by=by, request_id=rid
+                )
             loose = ratchet_refusal(
                 side=row.side, requested=stop, current=row.stop_loss, in_force=in_force
             )
             if loose is not None:
-                return await self._amend_refused(row, STOP_LOOSENING_REFUSED, loose, detail, by=by)
+                return await self._amend_refused(
+                    row, STOP_LOOSENING_REFUSED, loose, detail, by=by, request_id=rid
+                )
             try:  # any other failure raises: a timed-out insert may have committed rows that only
                 # the complete read resolves, so it is never answered as unsent (fold 2 minor 2)
                 recorded = await self._record_amend(
-                    row, stop, take_profit, detail, sides, by=by, actor=actor
+                    row, stop, take_profit, detail, sides, by=by, actor=actor, request_id=rid
                 )
             except StopRequestInFlight:
                 return _held(row.order_link_id, STOP_REQUEST_RETRY_AFTER_S)
@@ -1398,8 +1427,9 @@ class OmsCommandPort:
             code = OmsErrorCode.RATE_BUDGET_EXCEEDED.value
             if recorded:
                 await self._settle_stop(
-                    recorded, False, code, detail, reason=AMEND_REFUSED, by=by, actor=actor
-                )
+                    recorded, False, code, detail, reason=AMEND_REFUSED, by=by, actor=actor,
+                    request_id=rid,
+                )  # fmt: skip
             _log().warning("oms_amend_rate_refused", order_link_id=row.order_link_id)
             retry = retry_after(exc.retry_after_s)
             return {"ok": False, "error_code": code, "retry_after_s": retry}
@@ -1407,8 +1437,9 @@ class OmsCommandPort:
             await self._venue(account, ack.error_code, ack.exchange_ret_code, by=by)
         if recorded:
             await self._settle_stop(
-                recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by, actor=actor
-            )
+                recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by, actor=actor,
+                request_id=rid,
+            )  # fmt: skip
         if ack.ok:
             if self._figures is not None:  # the amend moved the account's room
                 self._figures.invalidate(account.account_id)
@@ -1426,25 +1457,35 @@ class OmsCommandPort:
         exc: BaseException,
         *,
         by: float,
+        request_id: UUID | None,
     ) -> dict[str, Any]:
         """The 10:18Z ruling: a read failing before the send is `STORE_UNAVAILABLE`, nothing sent
-        and the order live, audited ahead within `AMEND_AUDIT_GRACE_S` past the amend's bound (an
-        audit that fails raises, C-2.9). A stored row read that fails is audited under the
-        command's own ids, before `_check_names`: B1's context is the server's, so trusted."""
+        and the order live, audited ahead under the request's `request_id` within
+        `AMEND_AUDIT_GRACE_S` past the amend's bound (an audit that fails raises, C-2.9). A stored
+        row read that fails is audited under the command's own ids, before `_check_names`: B1's
+        context is the server's, so trusted."""
         failure = type(exc).__name__
         await self._audit_order(
             order_id, account_id, ORDERS_AMEND, "denied", "warning", STORE_UNAVAILABLE_REASON,
-            {**detail, "failure": failure}, by=by + AMEND_AUDIT_GRACE_S,
+            {**detail, "failure": failure}, request_id=request_id, by=by + AMEND_AUDIT_GRACE_S,
         )  # fmt: skip
         _log().warning("oms_amend_store_unavailable", order_link_id=detail.get("order_link_id"))
         retry = retry_after(STORE_UNAVAILABLE_RETRY_AFTER_S)
         return {"ok": False, "error_code": STORE_UNAVAILABLE, "retry_after_s": retry}
 
     async def _amend_refused(
-        self, row: OrderRow, code: str, reason: str, detail: Mapping[str, str | None], *, by: float
+        self,
+        row: OrderRow,
+        code: str,
+        reason: str,
+        detail: Mapping[str, str | None],
+        *,
+        by: float,
+        request_id: UUID | None,
     ) -> dict[str, Any]:
-        """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9),
-        within `AMEND_AUDIT_GRACE_S` past the amend's bound, as `_unread`'s."""
+        """A refusal, nothing recorded or sent, audited ahead (`orders.amend` denied, C-2.9) under
+        the request's `request_id`, within `AMEND_AUDIT_GRACE_S` past the amend's bound, as
+        `_unread`'s."""
         await self._audit_order(
             row.id,
             row.exchange_account_id,
@@ -1453,6 +1494,7 @@ class OmsCommandPort:
             "warning",
             reason,
             detail,
+            request_id=request_id,
             by=by + AMEND_AUDIT_GRACE_S,
         )
         _log().warning("oms_amend_refused", order_link_id=row.order_link_id, code=code)
@@ -1467,11 +1509,13 @@ class OmsCommandPort:
         changed: Mapping[str, object],
         *,
         by: float,
+        request_id: UUID | None,
         actor: SubmitActor | None = None,
     ) -> tuple[RecordedStopRow, ...]:
         """Q2: one `entry_attach` insert naming the order, each row audited in its transaction;
         a re-paired side the amend does not change is audited `changed: "false"`. Rows and records
-        name the requesting principal the amend's exit watch holds (`actor`, C-2.9)."""
+        name the requesting principal the amend's exit watch holds (`actor`, C-2.9), and records
+        its request's correlation id (`request_id`, #4643)."""
         sides: dict[StopKind, Decimal | None] = {"stop_loss": stop, "take_profit": tp}
         news = [
             NewRecordedStop(
@@ -1487,10 +1531,11 @@ class OmsCommandPort:
         marked = {kind: {**detail, "changed": str(kind in changed).lower()} for kind in sides}
         records = [
             _stop_record(
-                _MODIFIED[new.kind], new, "success", "info", AMEND_REASON, marked[new.kind], actor
+                _MODIFIED[new.kind], new, "success", "info", AMEND_REASON, marked[new.kind], actor,
+                request_id=request_id,
             )
             for new in news
-        ]
+        ]  # fmt: skip
 
         async def requested(_rows: tuple[RecordedStopRow, ...]) -> None:
             for record in records:
@@ -1647,11 +1692,12 @@ def _stop_record(
     actor: SubmitActor | None = None,
     *,
     name: str | None = None,
+    request_id: UUID | None = None,
 ) -> KeyedRecord:
     """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11), or
     `name`, which only a void's gives (`_void_record`); it names the row's own principal
     (`actor_user_id`) and, for a user's, the request's `actor` with the role, which the writer
-    refuses it without (C-2.9)."""
+    refuses it without (C-2.9), and the request's correlation id (`request_id`, #4643)."""
     return KeyedRecord(
         action=action,
         name=str(row.id) if name is None else name,
@@ -1664,18 +1710,24 @@ def _stop_record(
         actor_user_id=row.actor_user_id,
         actor=actor,
         detail={**detail, "kind": row.kind, "source": row.source},
+        request_id=request_id,
     )
 
 
 def _void_record(
-    row: RecordedStopRow, reason: str, detail: Mapping[str, str | None], actor: SubmitActor | None
+    row: RecordedStopRow,
+    reason: str,
+    detail: Mapping[str, str | None],
+    actor: SubmitActor | None,
+    request_id: UUID | None,
 ) -> KeyedRecord:
     """A refused request's void of `row`, `sl.modified` (`tp.modified` for a take-profit side)
-    denied with `reason` under the request's `actor`; every void the port writes is built here.
-    It is named `<reason>:<row id>`, as the stop gate's and the sweep's voids are, never as its
-    request: an amend's request holds `<row id>` under the same action, and a void named so would
-    be deduped against it and lost (#4587)."""
+    denied with `reason` under the request's `actor` and `request_id`; every void the port writes
+    is built here. It is named `<reason>:<row id>`, as the stop gate's and the sweep's voids are,
+    never as its request: an amend's request holds `<row id>` under the same action, and a void
+    named so would be deduped against it and lost (#4587)."""
     name = f"{reason}:{row.id}"
     return _stop_record(
-        _MODIFIED[row.kind], row, "denied", "warning", reason, detail, actor, name=name
-    )
+        _MODIFIED[row.kind], row, "denied", "warning", reason, detail, actor, name=name,
+        request_id=request_id,
+    )  # fmt: skip

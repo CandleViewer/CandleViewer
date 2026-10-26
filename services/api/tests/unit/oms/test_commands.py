@@ -2321,17 +2321,19 @@ async def test_an_exit_watch_answers_b1s_cancel_and_a_kills_cancel_spends_none()
     assert answer["ok"] is True and watch.answered and await watch.answer() == answer
 
 
-async def test_exit_watches_are_bounded_replaced_and_forgotten_each_answered_none() -> None:
-    """C-2.18 and S2-Q5, as the pipeline's: a second registration replaces the first, the oldest
-    goes past the bound, and an exit whose command was refused is forgotten, each answered None."""
+async def test_exit_watches_are_bounded_kept_apart_and_forgotten_each_answered_none() -> None:
+    """C-2.18 and S2-Q5, as the pipeline's: a second registration of the order is kept beside the
+    first, never replacing it (#4643), the oldest goes past the bound, and an exit whose command
+    was refused is forgotten, each answered None."""
     rig = build_rig(max_watches=2)
     first = rig.port.expect_exit(UUID(int=1), "cancel")
     second = rig.port.expect_exit(UUID(int=1), "cancel")
+    assert not first.answered
     third, fourth = (rig.port.expect_exit(UUID(int=n), "cancel") for n in (2, 3))
     assert [w.answered for w in (first, second, third, fourth)] == [True, True, False, False]
     assert await first.answer() is None and await second.answer() is None
-    rig.port.forget_exit(UUID(int=3), "cancel")
-    rig.port.forget_exit(UUID(int=3), "cancel")  # nothing registered: nothing to drop
+    rig.port.forget_exit(fourth)
+    rig.port.forget_exit(fourth)  # nothing registered: nothing to drop
     assert fourth.answered and await fourth.answer() is None and not third.answered
 
 

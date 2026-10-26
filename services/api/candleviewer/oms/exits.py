@@ -390,7 +390,8 @@ class ExitMachines(Protocol):
 
 
 class ExitCommands(Protocol):
-    """`commands.OmsCommandPort`'s exit watch."""
+    """`commands.OmsCommandPort`'s exit watch. `forget_exit` leaves a watch it no longer holds
+    (spent, dropped or forgotten) as it is, so `_commanded` may forget its own twice."""
 
     def expect_exit(
         self,
@@ -401,7 +402,7 @@ class ExitCommands(Protocol):
         actor: SubmitActor | None = None,
     ) -> ExitWatch: ...
 
-    def forget_exit(self, order_id: UUID, kind: ExitKind) -> None: ...
+    def forget_exit(self, watch: ExitWatch) -> None: ...
 
 
 class ExitOrders(Protocol):
@@ -706,7 +707,18 @@ class OrderExits:
         """The command through the exit watch (the principal its `actor`), then B1's settle, at
         most `SETTLE_TIMEOUT_S`: the exit's outcome, which `_dispatch` records. `if_match` says
         that `expected_seq` is the client's own `If-Match`, not the version the exit read, which
-        decides what a version the facade finds moved on answers (`_taken_not`)."""
+        decides what a version the facade finds moved on answers (`_taken_not`).
+
+        The watch is this request's own registration (#4643). It is forgotten on every way out
+        but B1's call having taken it: the command refused, the step settled with no call, a
+        settle that timed out or raised, or a cancellation (`aclose`), which goes on as it was.
+        So no stale registration is left for a later request's call to spend and name: a missing
+        principal beats a stale one. The residual: a call of B1's that comes after the exit
+        forgot its registration (the invoke a rebuilt machine resumes after `OrderStepUnknown`,
+        SR-E29-15, or one that had not begun within the settle's bound) finds none of this
+        request's, so its records name no request. While another request's exit of the order is
+        registered and still waits on the facade, that call takes the other's registration
+        instead: its records name that request, and that exit gets its answer."""
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
@@ -715,10 +727,10 @@ class OrderExits:
                 account, row.id, event, payload, actor="user", expected_seq=expected_seq
             )
         except OrderStepUnknown:  # rebuilt from its events: as it stands, never re-sent
-            self._d.commands.forget_exit(row.id, kind)
+            self._d.commands.forget_exit(watch)
             state = None
         except BaseException as exc:
-            self._d.commands.forget_exit(row.id, kind)
+            self._d.commands.forget_exit(watch)
             if not isinstance(exc, (VersionConflict, *_NOT_TAKEN)):
                 raise
             state = await self._moved(row, kind, exc)
@@ -731,10 +743,16 @@ class OrderExits:
                 )
             except (TimeoutError, OrderNotLoaded):
                 state = None
-        answer = await watch.answer() if watch.answered else None
+            except BaseException:  # any other raise, or `aclose`'s cancellation: never swallowed
+                self._d.commands.forget_exit(watch)
+                raise
+        answered = watch.answered
+        answer = await watch.answer() if answered else None
+        if not answered:  # held unless a call of B1's took it, which this leaves alone (#4643)
+            self._d.commands.forget_exit(watch)
         held = self._d.machines.state(row.id)
         state = state if state is not None else (None if held is None else held[0])
-        return await self._result(row, kind, state, answer, watch.answered, terms)
+        return await self._result(row, kind, state, answer, answered, terms)
 
     async def _moved(self, row: OrderRow, kind: ExitKind, error: BaseException) -> str | None:
         """A cancel the order moved under at the facade (`IllegalTransition`) answers as the order
