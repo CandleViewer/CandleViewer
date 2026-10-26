@@ -7,7 +7,9 @@ and each write invalidates the very cache the order path reads (SR-E28-15). The 
 counters go to their owners here. The fake backend (dev, CI) has no store: `None`, and the profile
 routes answer `503 store_unavailable`. Nothing here does I/O; `main._lifespan` calls `dispose`.
 Given the process's bus, the facade announces each committed write on it (`BusProfileChanges`,
-#906 D3a; 24 Sec.9.2).
+#906 D3a; 24 Sec.9.2). The writes' stores share that pool: the accounts the writes resolve and the
+armed rules a delete names (#906 D2-m); `profile_writes` builds the routes' `ProfileWrites` over
+them, with this environment's catalogue (C-2.11).
 """
 
 from __future__ import annotations
@@ -15,26 +17,34 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Final
+from typing import TYPE_CHECKING, Final, Protocol
 from uuid import UUID
 
 from candleviewer.accounts.profile_cache import EffectiveProfiles
-from candleviewer.accounts.profile_repository import ProfilesRepository
+from candleviewer.accounts.profile_repository import ArmedRules, ProfilesRepository
+from candleviewer.accounts.repository import AccountsRepository
+from candleviewer.api.profile_writes import ProfileWrites
 from candleviewer.bus import Topic
+from candleviewer.domain.primitives import Environment
+from candleviewer.instrument_limits_wiring import CatalogueLimits
+from candleviewer.rules_store_pg import PostgresArmedRules
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
 )
+from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
 )
 
 if TYPE_CHECKING:
     from candleviewer.accounts.profile_changes import ProfilesChanged
+    from candleviewer.accounts.profile_validator import SizingWarningsPort
     from candleviewer.bus import Bus
+    from candleviewer.ingestion.service import IngestionService
     from candleviewer.observability.metrics import Metrics
     from candleviewer.settings import Settings
 
-__all__ = ["DISPOSE_S", "BusProfileChanges", "ProfilesWiring", "wire_profiles"]
+__all__ = ["DISPOSE_S", "BusProfileChanges", "ProfilesWiring", "profile_writes", "wire_profiles"]
 
 #: The shutdown's wait, as `key_import_wiring.DRAIN_S`: the container's stop budget (#2565).
 DISPOSE_S: Final = 5.0
@@ -45,6 +55,8 @@ class ProfilesWiring:
     repository: ProfilesRepository
     effective: EffectiveProfiles  # E28-T04's guard reads this one instance
     release: Callable[[], Awaitable[None]]
+    accounts: AccountsRepository  # the writes' account resolution, over the same pool
+    rules: ArmedRules  # a delete's armed-rule blockers (ruling B6), over the same pool
     dispose_s: float = DISPOSE_S
 
     async def dispose(self) -> None:
@@ -90,4 +102,35 @@ def wire_profiles(
     bumps = metrics.get("cv_profile_version_bumps_total")
     changes = None if bus is None else BusProfileChanges(bus, settings.environment.value)
     repository = ProfilesRepository(store, cache=effective, version_bumps=bumps, changes=changes)
-    return ProfilesWiring(repository, effective, relational.dispose)
+    return ProfilesWiring(
+        repository=repository,
+        effective=effective,
+        release=relational.dispose,
+        accounts=AccountsRepository(SqlAlchemyAccountsStore(relational)),
+        rules=PostgresArmedRules(relational),
+    )
+
+
+class _Context(Protocol):
+    """What `profile_writes` reads of `app.AppContext`."""
+
+    @property
+    def settings(self) -> Settings: ...
+
+    @property
+    def ingestion(self) -> IngestionService: ...
+
+
+def profile_writes(
+    wiring: ProfilesWiring | None, ctx: _Context, *, warnings: SizingWarningsPort | None = None
+) -> ProfileWrites | None:
+    """The writes' stores (#906 D2-m): the reads' facade, so one cache (SR-E28-15), the wiring's
+    accounts and armed rules, and the catalogue of the process's environment, read per call as
+    it is attached late (C-2.11); `None` with no wiring (the fake backend: 503)."""
+    if wiring is None:
+        return None
+    env: Environment = ctx.settings.environment.value
+    limits = CatalogueLimits(env, lambda: ctx.ingestion.instruments)
+    return ProfileWrites(
+        wiring.repository, wiring.accounts, limits, wiring.rules, env, warnings=warnings
+    )

@@ -5,6 +5,13 @@
   },
   "components": {
     "headers": {
+      "DefaultBindingETag": {
+        "description": "`W/\"<accountId>:default:<version>\"` of the default binding answered: its version, never the profile it names, so a tag read before a move never matches after it, even once the default is back on the same profile. Send it as `If-Match` on `setAccountDefaultProfile`: the server compares the account id and the version it names, so the weak tag matches.\n",
+        "schema": {
+          "pattern": "^W/\"[0-9a-f-]{36}:default:[1-9][0-9]*\"$",
+          "type": "string"
+        }
+      },
       "ETag": {
         "description": "Opaque version of the returned representation, for `If-Match`.",
         "schema": {
@@ -17,6 +24,13 @@
           "type": "boolean"
         }
       },
+      "ProfileETag": {
+        "description": "`W/\"<id>:<version>\"` of the profile answered. Send it as `If-Match` on `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the version it names, so the weak tag matches.\n",
+        "schema": {
+          "pattern": "^W/\"[0-9a-f-]{36}:[1-9][0-9]*\"$",
+          "type": "string"
+        }
+      },
       "RetryAfter": {
         "description": "Seconds the client should wait before retrying.",
         "schema": {
@@ -25,6 +39,15 @@
       }
     },
     "parameters": {
+      "AccountId": {
+        "in": "path",
+        "name": "accountId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
       "CsrfToken": {
         "description": "SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify\nagainst the session id the server resolves itself (not merely header == cookie). All\ncomparisons are constant time. Sent by every client, browser or not. Required on every state-changing operation except\nthe pre-session ones (see the CSRF section of `info.description`). Missing, mismatched or\nunbound → `403 csrf_token_invalid`.\n",
         "in": "header",
@@ -73,6 +96,15 @@
           "type": "string"
         }
       },
+      "IfMatchRequired": {
+        "description": "ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match.\n",
+        "in": "header",
+        "name": "If-Match",
+        "required": true,
+        "schema": {
+          "type": "string"
+        }
+      },
       "LayoutId": {
         "in": "path",
         "name": "layoutId",
@@ -96,6 +128,15 @@
       "PresetId": {
         "in": "path",
         "name": "presetId",
+        "required": true,
+        "schema": {
+          "format": "uuid",
+          "type": "string"
+        }
+      },
+      "ProfileId": {
+        "in": "path",
+        "name": "profileId",
         "required": true,
         "schema": {
           "format": "uuid",
@@ -380,6 +421,119 @@
         },
         "description": "ETag precondition failed."
       },
+      "PreconditionRequired": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "missing": {
+                "value": {
+                  "code": "precondition_required",
+                  "detail": "This write needs the current ETag; send it as If-Match. Nothing was changed.",
+                  "instance": "urn:cv:req:0193f2bc-6a05-7c3e-9a11-2f8e4b1c9e05",
+                  "status": 428,
+                  "title": "The request must carry If-Match with the current ETag",
+                  "type": "https://candleviewer.local/errors/precondition_required"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The write needs `If-Match` with the resource's current `ETag` and carried none (`precondition_required`): last-write-wins is refused on risk caps by contract. Nothing changed; read the resource, then send its `ETag` back.\n"
+      },
+      "ProfileRejected": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "leverageAboveExchangeMax": {
+                "summary": "SOLUSDT is allowed and the exchange caps it at 20x (second pass)",
+                "value": {
+                  "code": "validation_failed",
+                  "detail": "1 member breaks an exchange limit.",
+                  "errors": [
+                    {
+                      "field": "leverage",
+                      "limit": "20",
+                      "message": "SOLUSDT allows at most 20x — your 25x would be rejected.",
+                      "rule": "max_leverage",
+                      "symbol": "SOLUSDT"
+                    }
+                  ],
+                  "instance": "urn:cv:req:0193f2bc-6a01-7c3e-9a11-2f8e4b1c9e01",
+                  "status": 422,
+                  "title": "Request body or parameters failed schema validation",
+                  "type": "https://candleviewer.local/errors/validation_failed"
+                }
+              },
+              "nativeStopMandatory": {
+                "summary": "The native stop-loss cannot be turned off; the attempt is audited (SR-E28-08)",
+                "value": {
+                  "code": "validation_failed",
+                  "detail": "Every order carries a native stop-loss, so it cannot be turned off.",
+                  "errors": [
+                    {
+                      "field": "require_native_stop",
+                      "message": "Every order carries a native stop-loss, so it cannot be turned off.",
+                      "rule": "native_stop_mandatory"
+                    }
+                  ],
+                  "instance": "urn:cv:req:0193f2bc-6a02-7c3e-9a11-2f8e4b1c9e02",
+                  "status": 422,
+                  "title": "Request body or parameters failed schema validation",
+                  "type": "https://candleviewer.local/errors/validation_failed"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A profile save that is refused, so nothing is stored (`validation_failed`). Each entry of\n`errors` names the body member by its JSON path (`field`, such as\n`sizing.risk_per_trade_pct` or `allowed_symbols[2]`) and the reason (`rule`); a refusal\nagainst an exchange limit also names the instrument (`symbol`) and the limit (`limit`).\n\nA body that fails its schema (a type, an enum, a pattern, a missing or unknown member) is\nrefused with those failures alone, each `rule` the validator's own type as on every route,\nexcept two members named by rule: `native_stop_mandatory` (`require_native_stop` cannot\nbe set to `false`) and `stop_defines_r` (a stop in `r_multiple`: the stop defines R).\nThen two passes run, each listing every failure it finds, the second only when the first\npasses. The first needs no exchange data: `required` and `not_allowed` (the rules of\n`AccountProfileInput`), `range` and `precision` (`limit` holds the bound broken, or the\ndecimal places allowed), `ladder_sum`, `above_leverage_cap`, `cap_unbounded` and\n`default_has_own_operation`. `cap_unbounded` is a trading-enabled profile with a\nloss-bounding cap left unbounded (`ap_trading_caps`, decision D11): any of the five bounds\n`ProfileRiskCaps` requires. `default_has_own_operation` is a write that would move the\naccount's default (`is_default: true` on a create, or on a replace an `is_default` other\nthan the stored one); its `message` is \"The default binding has its own operation.\"\n\nThe second checks the exchange's current limits for the account's environment, judged for\nthe entries the write introduces, from an instrument cache at most 15 minutes old\n(refreshed first when older): `max_leverage`\n(`leverage` above the maximum of a symbol the profile allows, which with `all_symbols` is\nevery listed one and for a pattern every one it matches, so a universal pattern such as\n`*USDT` counts as `all_symbols`), `min_order_qty` and `qty_step` (`sizing.qty`),\n`min_notional` (`risk_caps.max_position_notional_usd` below a symbol's minimum notional)\nand `symbol_not_listed` (an entry that names no listed, trading linear USDT perpetual).\nIt reads that cache only when the write allows something new (an allow entry added or\nchanged, `all_symbols` set, a block entry removed) or moves a judged figure toward a limit\n(`leverage` raised, `sizing.qty` changed, `risk_caps.max_position_notional_usd` lowered or\nnewly set), and then judges the entries the write introduces against every limit, and\nevery allowed symbol against a limit whose figure moved: a write that only narrows, or\nsaves the profile unchanged, reads no cache and is never refused for want of one.\n`native_stop_mandatory`, `above_leverage_cap`, `cap_unbounded` and every refusal of the\nsecond pass are audited as `profile.save_refused`.\n\n`cap_unbounded` is audited though it arrives as a missing member: it is a cap removed\nrather than raised (PF-T02), a refusal of the risk policy and not of shape. A body refused\nonly by rules of shape or by `default_has_own_operation` is not audited, semantic shape\nsuch as `stop_defines_r` included.\n"
+      },
+      "ProfileSaveUnavailable": {
+        "content": {
+          "application/problem+json": {
+            "examples": {
+              "auditUnavailable": {
+                "summary": "The write-ahead audit record could not be written",
+                "value": {
+                  "code": "audit_unavailable",
+                  "detail": "The audit record could not be written; nothing was saved.",
+                  "instance": "urn:cv:req:0193f2bc-6a04-7c3e-9a11-2f8e4b1c9e04",
+                  "retry_after_seconds": 5,
+                  "status": 503,
+                  "title": "Write-ahead audit record could not be written (or no audit backend is wired); refused, fail closed (C-2.9)",
+                  "type": "https://candleviewer.local/errors/audit_unavailable"
+                }
+              },
+              "instrumentCacheUnavailable": {
+                "summary": "The exchange's limits could not be refreshed in time (create and replace)",
+                "value": {
+                  "code": "instrument_cache_unavailable",
+                  "detail": "The exchange's limits could not be refreshed in time; nothing was saved.",
+                  "instance": "urn:cv:req:0193f2bc-6a03-7c3e-9a11-2f8e4b1c9e03",
+                  "retry_after_seconds": 2,
+                  "status": 503,
+                  "title": "Instrument cache is stale and could not be refreshed in time to check the exchange's limits",
+                  "type": "https://candleviewer.local/errors/instrument_cache_unavailable"
+                }
+              }
+            },
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A profile write that could not be checked or recorded, so nothing changed: `instrument_cache_unavailable` when the second pass needed the instrument cache (`ProfileRejected`) and it was more than 15 minutes old and its refresh, shared by concurrent saves, did not finish in time (`createAccountProfile` and `updateAccountProfile` only); `audit_unavailable` when the write-ahead audit record, or the record of a refused save or of an RBAC refusal, could not be written (C-2.9); `store_unavailable` as on every route. Each is retryable after `Retry-After`, and the same request with the same `Idempotency-Key` is then a first submission.\n",
+        "headers": {
+          "Retry-After": {
+            "$ref": "#/components/headers/RetryAfter"
+          }
+        }
+      },
       "ServiceUnavailable": {
         "content": {
           "application/problem+json": {
@@ -529,6 +683,256 @@
       }
     },
     "schemas": {
+      "AccountDefaultBinding": {
+        "description": "An account's default binding: which of its profiles is the default, its ceiling (decision D7). `version` is 1 for the account's first default and grows by one with each move, so it never repeats; `DefaultBindingETag` names it. `getAccountProfile` reads the profile itself.\n",
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/Environment",
+            "description": "It is the account's environment, so a client can badge it wherever profiles are listed (C-2.11), and it is never writable.\n"
+          },
+          "exchange_account_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "profile_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exchange_account_id",
+          "environment",
+          "profile_id",
+          "version"
+        ],
+        "type": "object"
+      },
+      "AccountDefaultBindingInput": {
+        "additionalProperties": false,
+        "description": "The profile to make the account's default, and nothing else: whether the move relaxes a cap is the server's judgement (`setAccountDefaultProfile`), never the caller's.\n",
+        "properties": {
+          "profile_id": {
+            "description": "A live profile of this account.",
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "profile_id"
+        ],
+        "type": "object"
+      },
+      "AccountProfile": {
+        "description": "A stored profile. `profile` holds every member, its default included, and is the body `updateAccountProfile` takes back. `version` is 1 at creation and grows by one with each change (a default move changes two profiles); `ProfileETag` names it.\n",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "environment": {
+            "$ref": "#/components/schemas/Environment",
+            "description": "It is the account's environment, so a client can badge it wherever profiles are listed (C-2.11), and it is never writable.\n"
+          },
+          "exchange_account_id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/AccountProfileInput"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "version": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/ProfileWarning"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "exchange_account_id",
+          "environment",
+          "version",
+          "created_at",
+          "updated_at",
+          "warnings",
+          "profile"
+        ],
+        "type": "object"
+      },
+      "AccountProfileInput": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "sizing": {
+                  "properties": {
+                    "mode": {
+                      "const": "risk_based"
+                    }
+                  }
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "stop_loss"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "all_symbols": {
+                  "const": true
+                }
+              },
+              "required": [
+                "all_symbols"
+              ]
+            },
+            "then": {
+              "properties": {
+                "allowed_symbols": {
+                  "maxItems": 0
+                }
+              }
+            }
+          }
+        ],
+        "description": "A per-account profile as written; 24-internal-schemas.md section 9.2 maps each member to\nits domain field and column. Values are in stored units: a percent is the percent shown\n(`\"0.5\"` is 0.5 %), and a decimal holds at most the places of its column (18 for USDT\namounts, quantities and offsets, 6 for percents of equity and `stop_loss.fallback_pct`, 4\nfor `stop_loss.atr_multiple`, 2 for `leverage` and `risk_caps.max_leverage_cap`; 18 for a\nrung's `qty_pct` and `r`), trailing zeros not counted, refused rather than rounded\n(`precision`). Every USDT amount, quantity and offset, and a rung's `r`, is below 10^20 and\n`stop_loss.atr_multiple` below 10^6, the bounds of their columns (`range`). A create and a\nreplace alike give a member they leave out its default, `null` where nullable (no cap),\nnever the stored value.\n\nBeyond its schema the body must hold (`ProfileRejected` names each rule): the sizing\namount of `sizing.mode` and no other (`required`, `not_allowed`); a `stop_loss` when\n`sizing.mode` is `risk_based` (`required`); no `allowed_symbols` with `all_symbols`\n(`not_allowed`); every cap of `ProfileRiskCaps` bounded when `trading_enabled` is set\n(`cap_unbounded`); `leverage` at most `risk_caps.max_leverage_cap`\n(`above_leverage_cap`); and rungs that take at most the whole leg (`ladder_sum`).\n",
+        "properties": {
+          "all_symbols": {
+            "default": false,
+            "description": "Allows every listed USDT linear perpetual, with no `allowed_symbols`.",
+            "type": "boolean"
+          },
+          "allowed_symbols": {
+            "default": [],
+            "description": "Empty without `all_symbols`, it allows nothing (decision D11).",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSymbolPattern"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "blocked_symbols": {
+            "default": [],
+            "description": "Refused even when allowed, by `allowed_symbols` or `all_symbols`.",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSymbolPattern"
+            },
+            "maxItems": 500,
+            "type": "array"
+          },
+          "default_time_in_force": {
+            "$ref": "#/components/schemas/TimeInForce",
+            "default": "GTC"
+          },
+          "enabled": {
+            "default": true,
+            "description": "A disabled profile sizes nothing.",
+            "type": "boolean"
+          },
+          "is_default": {
+            "default": false,
+            "description": "The account's default, its ceiling (decision D7). A profile write never changes it: the default binding moves only through its own operation (`setAccountDefaultProfile`), so `true` on a create, or on a replace a value other than the stored one, is refused (`default_has_own_operation`).\n",
+            "type": "boolean"
+          },
+          "leverage": {
+            "$ref": "#/components/schemas/Decimal",
+            "description": "At least 1, at most 100, and at most the exchange maximum of each allowed symbol."
+          },
+          "margin_mode": {
+            "$ref": "#/components/schemas/ProfileMarginMode",
+            "default": "cross"
+          },
+          "name": {
+            "description": "Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate. It holds no character of category Cc or Cf either, such as DEL, U+200B, U+202E or U+FEFF (`not_allowed`).\n",
+            "maxLength": 80,
+            "minLength": 1,
+            "pattern": "^[^\\x00-\\x1F]+$",
+            "type": "string"
+          },
+          "position_mode": {
+            "$ref": "#/components/schemas/PositionMode",
+            "default": "one_way"
+          },
+          "reduce_only_default": {
+            "default": false,
+            "type": "boolean"
+          },
+          "require_native_stop": {
+            "const": true,
+            "default": true,
+            "description": "Always true; the safety invariant cannot be disabled (arch P4). The order path never reads it: the stop requirement keys on each order's effect on the position (SR-E29-01).\n",
+            "type": "boolean"
+          },
+          "risk_caps": {
+            "$ref": "#/components/schemas/ProfileRiskCaps"
+          },
+          "sizing": {
+            "$ref": "#/components/schemas/ProfileSizing"
+          },
+          "slippage_tolerance_bps": {
+            "default": 10,
+            "description": "The slippage a market order may take, in basis points.",
+            "maximum": 1000,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stop_loss": {
+            "$ref": "#/components/schemas/ProfileStopLoss",
+            "description": "Required with `risk_based`; left out, it is 10 ticks."
+          },
+          "take_profit": {
+            "description": "`null` or left out: no take-profit distance.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileTakeProfit"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "take_profit_ladder": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/ProfileTakeProfitRung"
+            },
+            "maxItems": 10,
+            "type": "array"
+          },
+          "trading_enabled": {
+            "default": false,
+            "description": "The profile sizes orders only when set, and then bounds every cap (decision D11).",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "leverage",
+          "sizing"
+        ],
+        "type": "object"
+      },
       "BarType": {
         "enum": [
           "time",
@@ -1125,6 +1529,16 @@
           "anchored_vwap"
         ],
         "type": "string"
+      },
+      "Environment": {
+        "description": "Structural environment selector (arch P9). Mirrors the Postgres type `exchange_env`.",
+        "enum": [
+          "live",
+          "demo",
+          "testnet"
+        ],
+        "type": "string",
+        "x-db-enum": "exchange_env"
       },
       "IndicatorPreset": {
         "description": "Response object. Readers must ignore unknown properties (C-6.3). A built-in has `is_builtin: true` and `owner_user_id: null`.",
@@ -1902,6 +2316,13 @@
         ],
         "description": "A flat setting value: a string, an integer or other finite number (each keeps its kind), a boolean, `null`, or an array of at most 32 such strings, numbers or booleans; objects are not allowed. Strings, also inside arrays, are at most 256 characters as sent and are then sanitised like `WorkspaceInput.name` (the name strip set and trimming), except that an empty result is kept; a lone surrogate is rule `invalid_unicode`. Numbers, also inside arrays, lie within ±1e15, so they read back with the same kind and value. A non-zero number must have |x| ≥ 1e-15 (`number_out_of_range`); zero is allowed. `-0.0` is stored as `0.0`."
       },
+      "PositionMode": {
+        "enum": [
+          "one_way",
+          "hedge"
+        ],
+        "type": "string"
+      },
       "Problem": {
         "description": "RFC 9457 problem detail. `code` mirrors the `x-error-codes` catalogue.",
         "properties": {
@@ -2030,6 +2451,404 @@
         ],
         "type": "object"
       },
+      "ProfileMarginMode": {
+        "description": "`MarginMode` without `portfolio` (`ap_margin_mode`).",
+        "enum": [
+          "cross",
+          "isolated"
+        ],
+        "type": "string"
+      },
+      "ProfileRiskCaps": {
+        "additionalProperties": false,
+        "description": "Server-enforced caps, one gate each (SR-052, SR-053); `null` is no cap. A trading-enabled profile bounds every one (decision D11, `cap_unbounded`): `max_open_positions`, `max_concurrent_orders`, `max_leverage_cap`, and one cap of each pair, position size and daily loss.\n",
+        "properties": {
+          "max_concurrent_orders": {
+            "maximum": 500,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_daily_loss_pct": {
+            "description": "Percent of equity lost in a day, at least 0.1 and at most 50 (SCR-131).",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_daily_loss_usd": {
+            "description": "USDT lost in a day, above 0.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_leverage_cap": {
+            "description": "At least 1, at most 100, and at least `leverage`.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_open_positions": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "max_orders_per_minute": {
+            "default": 30,
+            "maximum": 600,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "max_position_notional_usd": {
+            "description": "USDT, above 0.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "max_position_pct_equity": {
+            "description": "Percent of equity, above 0 and at most 100.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "ProfileSizing": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "fixed_qty"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "qty"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "fixed_notional"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "notional_usd"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "pct_equity"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "pct"
+              ]
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "mode": {
+                  "const": "risk_based"
+                }
+              }
+            },
+            "then": {
+              "anyOf": [
+                {
+                  "required": [
+                    "risk_per_trade_pct"
+                  ]
+                },
+                {
+                  "required": [
+                    "risk_per_trade_usd"
+                  ]
+                }
+              ]
+            }
+          }
+        ],
+        "description": "Exactly the amount of `mode` is set and the others are absent or `null`: `qty` (`fixed_qty`), `notional_usd` (`fixed_notional`), `pct` (`pct_equity`), and one of `risk_per_trade_pct` and `risk_per_trade_usd` (`risk_based`).\n",
+        "properties": {
+          "min_leg_notional_usd": {
+            "$ref": "#/components/schemas/Decimal",
+            "default": "0",
+            "description": "A leg below this notional, in USDT, is skipped rather than rejected; at least 0."
+          },
+          "mode": {
+            "$ref": "#/components/schemas/ProfileSizingMode"
+          },
+          "notional_usd": {
+            "description": "USDT per order, above 0.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pct": {
+            "description": "Percent of equity per order, above 0 and at most 100.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "qty": {
+            "description": "Contracts per order, above 0.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk_per_trade_pct": {
+            "description": "Percent of equity lost at the stop, above 0 and at most 100.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "risk_per_trade_usd": {
+            "description": "USDT lost at the stop, above 0.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decimal"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
+      "ProfileSizingMode": {
+        "description": "A profile's sizing mode, the Postgres type `sizing_mode` exactly: a profile never holds `SizingMode`'s request-time values `pct_position` and `profile`.\n",
+        "enum": [
+          "fixed_qty",
+          "fixed_notional",
+          "pct_equity",
+          "risk_based"
+        ],
+        "type": "string",
+        "x-db-enum": "sizing_mode"
+      },
+      "ProfileStopLoss": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "else": {
+              "required": [
+                "value"
+              ]
+            },
+            "if": {
+              "properties": {
+                "unit": {
+                  "const": "atr"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "atr_multiple"
+              ]
+            }
+          }
+        ],
+        "description": "The native stop every order carries (C-2.6): `value` in `ticks` or `percent` of the reference price, or `atr_multiple` times ATR(`atr_period`), with `fallback_pct` while the ATR is unavailable. The member `unit` uses is required; the others take their defaults when left out and are kept for a later change of unit.\n",
+        "properties": {
+          "atr_multiple": {
+            "$ref": "#/components/schemas/Decimal",
+            "default": "2",
+            "description": "The multiple of the ATR, above 0."
+          },
+          "atr_period": {
+            "default": 14,
+            "maximum": 200,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "fallback_pct": {
+            "$ref": "#/components/schemas/Decimal",
+            "default": "2",
+            "description": "The stop while the ATR is unavailable, in percent, above 0 and below 100."
+          },
+          "unit": {
+            "$ref": "#/components/schemas/ProfileStopUnit"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Decimal",
+            "default": "10",
+            "description": "The distance, above 0, in whole ticks or in percent (1.5 is 1.5 %)."
+          }
+        },
+        "required": [
+          "unit"
+        ],
+        "type": "object"
+      },
+      "ProfileStopUnit": {
+        "description": "A profile stop's unit: `offset_unit` without `r_multiple` (`ap_sl_unit`), because the stop defines R (24-internal-schemas.md section 9.3.1), and never `price`.\n",
+        "enum": [
+          "ticks",
+          "percent",
+          "atr"
+        ],
+        "type": "string"
+      },
+      "ProfileSymbolPattern": {
+        "description": "A listed USDT linear perpetual (`BTCUSDT`), or an anchored suffix pattern (`*USDT`) that is stored as written and matched against the listed, trading linear USDT perpetuals each time it is evaluated (SR-E28-06). A bare `*` is refused.\n",
+        "examples": [
+          "BTCUSDT",
+          "*USDT"
+        ],
+        "pattern": "^(\\*[A-Z0-9]{0,16}|[A-Z0-9]{2,16})USDT$",
+        "type": "string"
+      },
+      "ProfileTakeProfit": {
+        "additionalProperties": false,
+        "properties": {
+          "unit": {
+            "$ref": "#/components/schemas/ProfileTargetUnit"
+          },
+          "value": {
+            "$ref": "#/components/schemas/Decimal",
+            "description": "The distance, above 0, in `unit`; `r_multiple` is a multiple of the stop distance."
+          }
+        },
+        "required": [
+          "unit",
+          "value"
+        ],
+        "type": "object"
+      },
+      "ProfileTakeProfitRung": {
+        "additionalProperties": false,
+        "properties": {
+          "qty_pct": {
+            "$ref": "#/components/schemas/Decimal",
+            "description": "Percent of the leg's filled size, above 0 and at most 100."
+          },
+          "r": {
+            "$ref": "#/components/schemas/Decimal",
+            "description": "The target, in R multiples of the stop distance, above 0."
+          }
+        },
+        "required": [
+          "qty_pct",
+          "r"
+        ],
+        "type": "object"
+      },
+      "ProfileTargetUnit": {
+        "description": "A profile take-profit's unit, the Postgres type `offset_unit` exactly; never `price`.",
+        "enum": [
+          "ticks",
+          "percent",
+          "r_multiple",
+          "atr"
+        ],
+        "type": "string",
+        "x-db-enum": "offset_unit"
+      },
+      "ProfileWarning": {
+        "additionalProperties": false,
+        "description": "Advice that never blocks a save (SCR-130's `(!)` marker). A write's answer carries every warning; a read recomputes only `all_symbols` and `no_symbols`, which need no exchange data.\n",
+        "properties": {
+          "code": {
+            "description": "`all_symbols`: every listed symbol is allowed, by the flag or by the pattern `*USDT`; a write, which reads the instrument list, also flags an allow-list whose entries together match every listed symbol. Consider restricting. `no_symbols`: no symbol is allowed, so the profile sizes nothing (decision D11): an empty `allowed_symbols` without `all_symbols`, or the pattern `*USDT` in `blocked_symbols`; a write also flags a profile that allows none of the listed symbols. `sizing_below_min_order`: at the account's current equity the sizing gives less than `symbol`'s minimum order, and `message` works the example. `stop_beyond_liquidation`: the stop lies beyond the estimated liquidation distance at `leverage` (SR-E28-26). Open-ended for readers: a client shows a code it does not know by its `message` (C-6.3).\n",
+            "enum": [
+              "all_symbols",
+              "no_symbols",
+              "sizing_below_min_order",
+              "stop_beyond_liquidation"
+            ],
+            "type": "string"
+          },
+          "estimated": {
+            "default": false,
+            "description": "Derived from an estimate (C10).",
+            "type": "boolean"
+          },
+          "field": {
+            "description": "The JSON path of the member it is about.",
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "symbol": {
+            "$ref": "#/components/schemas/Symbol"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "type": "object"
+      },
       "Symbol": {
         "description": "Bybit USDT linear perpetual symbol. v1 accepts USDT-quoted linear symbols only.",
         "examples": [
@@ -2038,6 +2857,15 @@
           "SOLUSDT"
         ],
         "pattern": "^[A-Z0-9]{2,20}USDT$",
+        "type": "string"
+      },
+      "TimeInForce": {
+        "enum": [
+          "GTC",
+          "IOC",
+          "FOK",
+          "PostOnly"
+        ],
         "type": "string"
       },
       "TradingDisabledProblem": {
@@ -3402,6 +4230,51 @@
     },
     "/exchange-accounts/{accountId}/default-profile": {
       "get": {
+        "description": "The account's default binding: which of its profiles is the default, its ceiling (decision D7), and the binding's `version`, which the weak `ETag` names. Every account has one from its creation, its `Default` profile. An account that does not exist, is deleted or is outside the caller's grants is `404`, all alike.\n",
+        "operationId": "getAccountDefaultProfile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "examples": {
+                  "bound": {
+                    "value": {
+                      "environment": "live",
+                      "exchange_account_id": "a1000000-0000-4000-8000-000000000001",
+                      "profile_id": "b1000000-0000-4000-8000-0000000000a1",
+                      "version": 3
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDefaultBinding"
+                }
+              }
+            },
+            "description": "The binding.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/DefaultBindingETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Get the account's default profile binding",
+        "tags": [
+          "exchange-accounts"
+        ],
         "x-rbac": {
           "permissions": [
             "accounts:read"
@@ -3409,7 +4282,121 @@
           "scope": "granted_accounts"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AccountId"
+        }
+      ],
       "put": {
+        "description": "Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. The one\noperation that moves the account's default (decision D7): the body names the profile to\nbind and nothing else. A `profile_id` that is missing, deleted or another account's is\n`404`, as an account outside the caller's grants is, and so is an account of another\nenvironment than this server's (C-2.11), and a body that fails its schema is\n`422 validation_failed`, and one over 1 KiB `413 payload_too_large`; none is audited.\n\n`If-Match` is required and takes this binding's `ETag`, never a profile's, and it is\nchecked before the profile the body names. Without it the answer is\n`428 precondition_required`; a stale one is `412 version_conflict`, even when the default\nhas since come back to the profile it was on, because the tag names the binding's\nversion. Either way nothing changes: reload, then move again. A retry with the same\n`Idempotency-Key` and body is answered from the stored `200` before `If-Match` is read,\nso a move whose answer was lost is not refused; the key with another body is\n`409 idempotency_key_reuse`.\n\nThe move is audited write-ahead in its transaction, as `profile.unbound` for the default\nit replaces, then `profile.bound` for the new one: when either record cannot be written\nnothing changes (`503 audit_unavailable`). The server judges the move cap by cap over\n`ProfileRiskCaps`: `null` is no bound, and every cap of a profile that cannot trade\n(`enabled` or `trading_enabled` false) counts as zero, since it sizes nothing;\n`allowed_symbols` is not compared. When any cap is higher on the new default than on the\none it replaces, `profile.bound` is labelled `relaxing` and the Owner is notified\n(SR-E28-01). So a move onto the bootstrap `Default` while it cannot trade is not relaxing,\neven with `null` caps, and a move that turns trading on, from a default that cannot\ntrade, is always relaxing. Binding the profile that already is the default changes\nnothing, writes no record and answers the binding with its current `ETag`.\n",
+        "operationId": "setAccountDefaultProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatchRequired"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "bindAlternate": {
+                  "summary": "Make the account's \"Swing\" profile its default",
+                  "value": {
+                    "profile_id": "b1000000-0000-4000-8000-0000000000b2"
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/AccountDefaultBindingInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountDefaultBinding"
+                }
+              }
+            },
+            "description": "Bound, or already bound (nothing changed).",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/DefaultBindingETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "notAProfileId": {
+                    "value": {
+                      "code": "validation_failed",
+                      "detail": "1 field failed validation.",
+                      "errors": [
+                        {
+                          "field": "body.profile_id",
+                          "message": "Input should be a valid UUID.",
+                          "rule": "uuid_parsing"
+                        }
+                      ],
+                      "instance": "urn:cv:req:0193f2bc-6a06-7c3e-9a11-2f8e4b1c9e06",
+                      "status": 422,
+                      "title": "Request body or parameters failed schema validation",
+                      "type": "https://candleviewer.local/errors/validation_failed"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "The body fails its schema (`validation_failed`): `profile_id` missing or not a UUID, or another member. Nothing changes and nothing is audited.\n"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProfileSaveUnavailable"
+          }
+        },
+        "summary": "Make another profile of the account its default",
+        "tags": [
+          "exchange-accounts"
+        ],
+        "x-idempotency": "optional",
         "x-rbac": {
           "permissions": [
             "accounts:write"
@@ -3478,6 +4465,47 @@
     },
     "/exchange-accounts/{accountId}/profiles": {
       "get": {
+        "description": "The account's live profiles, its default first, then by name. Not paginated, an exemption from C3: an account holds its default and a few alternates. A read's `warnings` hold only the codes that need no exchange data. An account outside the caller's grants is `404`, as one that does not exist is.\n",
+        "operationId": "listAccountProfiles",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/AccountProfile"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Profiles."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "List per-account trading profiles",
+        "tags": [
+          "exchange-accounts"
+        ],
         "x-rbac": {
           "permissions": [
             "accounts:read"
@@ -3485,7 +4513,114 @@
           "scope": "granted_accounts"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AccountId"
+        }
+      ],
       "post": {
+        "description": "Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, as the key routes are, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). An account of another environment than this server's is `404`, as a missing one is, on every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`. The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).\n",
+        "operationId": "createAccountProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "examples": {
+                "riskBased": {
+                  "summary": "0.5 % of equity at risk to a 1.5 x ATR(14) stop, trading-enabled with every cap bounded",
+                  "value": {
+                    "allowed_symbols": [
+                      "BTCUSDT",
+                      "ETHUSDT"
+                    ],
+                    "leverage": "10",
+                    "margin_mode": "isolated",
+                    "name": "Alice — 0.5R",
+                    "risk_caps": {
+                      "max_concurrent_orders": 20,
+                      "max_daily_loss_pct": "3",
+                      "max_leverage_cap": "10",
+                      "max_open_positions": 3,
+                      "max_position_notional_usd": "60000"
+                    },
+                    "sizing": {
+                      "min_leg_notional_usd": "5",
+                      "mode": "risk_based",
+                      "risk_per_trade_pct": "0.5"
+                    },
+                    "stop_loss": {
+                      "atr_multiple": "1.5",
+                      "atr_period": 14,
+                      "unit": "atr"
+                    },
+                    "take_profit": {
+                      "unit": "r_multiple",
+                      "value": "2"
+                    },
+                    "trading_enabled": true
+                  }
+                }
+              },
+              "schema": {
+                "$ref": "#/components/schemas/AccountProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProfile"
+                }
+              }
+            },
+            "description": "Created.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ProfileETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ProfileRejected"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProfileSaveUnavailable"
+          }
+        },
+        "summary": "Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)",
+        "tags": [
+          "exchange-accounts"
+        ],
+        "x-idempotency": "recommended",
         "x-rbac": {
           "permissions": [
             "accounts:write"
@@ -3496,6 +4631,84 @@
     },
     "/exchange-accounts/{accountId}/profiles/{profileId}": {
       "delete": {
+        "description": "Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A soft delete: the profile leaves every read, its revisions stay, and a position sized from it keeps its version. Refused with `409 conflict`, nothing changed and `detail` naming each blocker, while the profile is the account's default (make another profile the default first, with `setAccountDefaultProfile`) or while any rule scoped to the account is armed, named by its id and name (a rule cannot name a profile yet). `If-Match` is required: a delete needs the current `ETag`, and last-write-wins is refused on risk caps by contract. Without it the answer is `428 precondition_required`; a stale one is `412 version_conflict`. Audited write-ahead as `profile.deleted`: when that record cannot be written nothing changes (`503 audit_unavailable`).\n",
+        "operationId": "deleteAccountProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatchRequired"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted.",
+            "headers": {
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "examples": {
+                  "notAKey": {
+                    "value": {
+                      "code": "validation_failed",
+                      "detail": "1 field failed validation.",
+                      "errors": [
+                        {
+                          "field": "Idempotency-Key",
+                          "message": "Idempotency-Key must be a UUID.",
+                          "rule": "uuid_parsing"
+                        }
+                      ],
+                      "instance": "urn:cv:req:0193f2bc-6a06-7c3e-9a11-2f8e4b1c9e07",
+                      "status": 422,
+                      "title": "Request body or parameters failed schema validation",
+                      "type": "https://candleviewer.local/errors/validation_failed"
+                    }
+                  }
+                },
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": "`Idempotency-Key` or `profileId` is not a UUID (`validation_failed`, rule `uuid_parsing`). Nothing changes and nothing is audited.\n"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProfileSaveUnavailable"
+          }
+        },
+        "summary": "Delete a per-account profile",
+        "tags": [
+          "exchange-accounts"
+        ],
+        "x-idempotency": "optional",
         "x-rbac": {
           "permissions": [
             "accounts:write"
@@ -3504,6 +4717,41 @@
         }
       },
       "get": {
+        "description": "A profile that is deleted, of another account, of an account outside the caller's grants or missing is `404`, all alike. A read's `warnings` hold only the codes that need no exchange data.\n",
+        "operationId": "getAccountProfile",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProfile"
+                }
+              }
+            },
+            "description": "Profile.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ProfileETag"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "summary": "Get a per-account profile",
+        "tags": [
+          "exchange-accounts"
+        ],
         "x-rbac": {
           "permissions": [
             "accounts:read"
@@ -3511,7 +4759,90 @@
           "scope": "granted_accounts"
         }
       },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/AccountId"
+        },
+        {
+          "$ref": "#/components/parameters/ProfileId"
+        }
+      ],
       "put": {
+        "description": "Owner only, after a step-up for class `risk_caps`, as `createAccountProfile`. A PUT\nreplaces the whole profile: a member it leaves out takes its default, never the stored\nvalue, so omitting `risk_caps` clears every cap and resets `max_orders_per_minute` to its\nserver default of 30; send the full object. It is checked as a create is, a `name` that\nanother profile of the account uses is `409 conflict`, and the profile is stored as its\nnext `version`; the previous version stays readable as a revision, and a position sized\nfrom it keeps it. `require_native_stop` cannot be set to `false`: the attempt is\n`422 validation_failed` / `native_stop_mandatory`, audited as `profile.save_refused`\n(SR-E28-08). A body over 64 KiB is `413 payload_too_large`, as on a create.\n\nA replace never moves the account's default: the default binding moves only through its\nown operation (`setAccountDefaultProfile`). A body whose `is_default` differs from the\nstored one (left out, it is `false`) is `422 validation_failed` /\n`default_has_own_operation`; one that repeats it is accepted, so a profile read and sent\nback whole is a valid replace.\n\n`If-Match` is required: a replace needs the current `ETag`, and last-write-wins is refused\non risk caps by contract. Without it the answer is `428 precondition_required`; a stale\none is `412 version_conflict`. Either way nothing changes: reload, then edit again.\nAudited write-ahead as `profile.updated` with the profile before and after: when that\nrecord cannot be written nothing changes (`503 audit_unavailable`). The server judges a\nreplace as it judges a move (`setAccountDefaultProfile`), cap by cap: `null` is no bound,\nand every cap of a profile that cannot trade counts as zero. A replace that loosens a cap,\nor widens what a profile that can trade allows (an allow entry added or changed,\n`all_symbols` set, a block entry removed), is labelled `relaxing` in that record and\nnotifies the Owner (SR-E28-01). So turning trading off, or clearing the caps of a profile\nthat cannot trade, is never relaxing, and turning trading on always is.\n",
+        "operationId": "updateAccountProfile",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IfMatchRequired"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CsrfToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AccountProfileInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProfile"
+                }
+              }
+            },
+            "description": "Replaced.",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ProfileETag"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/IdempotencyReplayed"
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "412": {
+            "$ref": "#/components/responses/PreconditionFailed"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "422": {
+            "$ref": "#/components/responses/ProfileRejected"
+          },
+          "428": {
+            "$ref": "#/components/responses/PreconditionRequired"
+          },
+          "503": {
+            "$ref": "#/components/responses/ProfileSaveUnavailable"
+          }
+        },
+        "summary": "Replace a per-account profile",
+        "tags": [
+          "exchange-accounts"
+        ],
+        "x-idempotency": "optional",
         "x-rbac": {
           "permissions": [
             "accounts:write"

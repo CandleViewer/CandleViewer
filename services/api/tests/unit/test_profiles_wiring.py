@@ -4,28 +4,39 @@
 over it and the domain facade over both, with the two E28-T01 counters on the process registry,
 and binds the facade's doorbell over the process's bus (D3a). The fake backend has no store. The
 store's methods are patched at class level, so nothing connects: the engine behind it is built
-lazily and never opened. No network.
+lazily and never opened. No network. D2-m: `profile_writes` builds the writes over the same wiring.
 """
 
 from __future__ import annotations
 
 import asyncio
 import dataclasses
+from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 
 from candleviewer.accounts.profile_changes import ProfilesChanged, ProfileVersion
+from candleviewer.accounts.profile_validator import SizingWarningsPort
 from candleviewer.bus import Bus, QueuePolicy, Topic
+from candleviewer.instrument_limits_wiring import CatalogueLimits
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import register_r0
-from candleviewer.profiles_wiring import DISPOSE_S, BusProfileChanges, ProfilesWiring, wire_profiles
+from candleviewer.profiles_wiring import (
+    DISPOSE_S,
+    BusProfileChanges,
+    ProfilesWiring,
+    profile_writes,
+    wire_profiles,
+)
+from candleviewer.rules_store_pg import PostgresArmedRules
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
     SqlAlchemyAccountProfileStore,
 )
 from candleviewer.storage.repositories.accounts import OwnerScope
+from candleviewer.storage.repositories.accounts_sqlalchemy import SqlAlchemyAccountsStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.unit.accounts.test_profile_cache import _P, _row
 from tests.unit.accounts.test_profile_repository import _NO
@@ -214,3 +225,26 @@ async def test_wire_profiles_hands_the_facade_the_doorbell_of_the_process_enviro
     assert unrung is not None and unrung.repository._changes is None
     fake = Settings(environment=Environment.TESTNET, storage_backend="fake")
     assert wire_profiles(fake, _metrics(), bus) is None
+
+
+def test_profile_writes_share_the_reads_wiring_and_the_process_environment() -> None:
+    """#906 D2-m: the writes' facade is the reads' (one cache, SR-E28-15), their accounts and
+    armed rules sit on its one pool, and the catalogue is the process environment's, read per
+    call as it is attached late (C-2.11); no wiring (the fake backend) gives no writes (503)."""
+    settings = Settings(environment=Environment.TESTNET, storage_backend="real")
+    wired = wire_profiles(settings, _metrics())
+    assert wired is not None
+    ctx = SimpleNamespace(settings=settings, ingestion=SimpleNamespace(instruments=None))
+    warnings = cast(SizingWarningsPort, object())
+    writes = profile_writes(wired, cast(Any, ctx), warnings=warnings)
+    assert writes is not None and writes.warnings is warnings
+    assert writes.profiles is wired.repository and writes.accounts is wired.accounts
+    assert writes.rules is wired.rules and writes.environment == "testnet"
+    pool = cast(SqlAlchemyAccountProfileStore, wired.repository._store)._relational
+    assert cast(SqlAlchemyAccountsStore, wired.accounts._store)._relational is pool
+    assert cast(PostgresArmedRules, wired.rules)._relational is pool
+    assert isinstance(writes.limits, CatalogueLimits) and writes.limits.environment == "testnet"
+    ctx.ingestion.instruments = catalogue = cast(Any, object())
+    assert writes.limits.catalogue() is catalogue
+    assert profile_writes(None, cast(Any, ctx)) is None
+    assert wire_profiles(Settings(storage_backend="fake"), _metrics()) is None

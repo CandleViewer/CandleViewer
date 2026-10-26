@@ -567,8 +567,7 @@ operations:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml by #906 slice 0d; the router slice (D2) mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/fee-rate:
     permissions: ['accounts:read']
@@ -622,8 +621,7 @@ operations:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/profiles/{profileId}:
     permissions: ['accounts:read']
@@ -635,15 +633,13 @@ operations:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   DELETE /exchange-accounts/{accountId}/profiles/{profileId}:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml; the owning epic has not mounted it in the app yet
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /executions:
     permissions: ['executions:read']

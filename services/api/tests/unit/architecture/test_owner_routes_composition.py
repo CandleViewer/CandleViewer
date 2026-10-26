@@ -7,7 +7,8 @@ table and the session/step-up/invite services are faked (the RBAC pack's seams; 
 network). #2648 adds the account-access read and write (`SqlAlchemyAccountAccessStore` under
 `AccountAccessService`), #965 the disable, #2649 the user read model, its PATCH and the admin
 session routes (`SqlAlchemyUserAdminStore`). #913 slice 3F adds `POST /orders` through
-`SessionTradingPrincipalResolver` over `SqlAlchemyScopeSource.load_trade_grants`."""
+`SessionTradingPrincipalResolver` over `SqlAlchemyScopeSource.load_trade_grants`. #906 D2-m adds the
+profile writes over `SqlAlchemyAccountProfileStore`'s write edges."""
 
 from __future__ import annotations
 
@@ -43,8 +44,9 @@ from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSo
 from candleviewer.storage.repositories.user_lifecycle_sqlalchemy import SqlAlchemyUserLifecycleStore
 from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
+from tests.contract._profile_writes_world import WritableRows
 from tests.contract.rbac import rbac_harness as rbac
-from tests.contract.test_account_profile_reads_provider import Store
+from tests.contract.test_account_profile_writes_provider import _RISK
 from tests.csrf_helpers import csrf_headers
 
 _ROWS = yaml.safe_load(rbac.MATRIX_PATH.read_text(encoding="utf-8"))["operations"]
@@ -175,9 +177,9 @@ def deployed() -> Iterator[SimpleNamespace]:
             mp.setattr(SqlAlchemyOnboardingStore, name, _delegate(onboarding, name))
         trade, grants = _TradeGrants(), "load_trade_grants"
         mp.setattr(SqlAlchemyScopeSource, grants, _delegate(trade, grants))
-        profiles = Store()  # #906 D1c: the account and profile reads, scoped as Postgres does
+        profiles = WritableRows()  # #906 D1c and D2-m: the reads and the create, as Postgres does
         mp.setattr(SqlAlchemyAccountsStore, "get_account", _delegate(profiles, "get_account"))
-        for name in ("list_profiles", "get_profile"):
+        for name in ("list_profiles", "get_profile", "create_profile"):
             mp.setattr(SqlAlchemyAccountProfileStore, name, _delegate(profiles, name))
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
         app = appmod.create_app(real)  # nothing injected: the deployed composition
@@ -590,3 +592,32 @@ def test_deployed_app_reads_profiles_through_the_callers_grants(
     for sent in (path, f"{path}/{deployed.profiles.rows[rbac.GRANTED][0].id}"):
         resp = deployed.client.get(sent, headers=_headers(deployed.client, actor))
         assert resp.status_code == status, (sent, resp.text)
+
+
+@pytest.mark.parametrize(
+    ("actor", "status"),
+    [("owner", 201), ("manager_with_grant", 403), ("viewer", 403), ("unauthenticated", 403)],
+)
+def test_deployed_app_serves_the_profile_writes_owner_only(
+    deployed: SimpleNamespace, actor: str, status: int
+) -> None:
+    """#906 D2-m: nothing injected, so the writes are the ones `create_app()` mounts over the real
+    backend's stores: the Owner's create of a profile allowing nothing (no listing read, so no
+    catalogue is needed) is stored and recorded ahead of its commit; any other caller is refused
+    and nothing is stored (the unauthenticated one by SR-041 first)."""
+    path = f"/exchange-accounts/{rbac.GRANTED}/profiles"
+    body = {**_RISK, "name": f"Composed {actor}", "allowed_symbols": []}
+    headers = {**_headers(deployed.client, actor), "Idempotency-Key": str(uuid.uuid4())}
+    before, start = len(deployed.profiles.rows[rbac.GRANTED]), len(deployed.audit.records)
+    try:
+        resp = deployed.client.post(path, json=body, headers=headers)
+        assert resp.status_code == status, resp.text
+        created = deployed.profiles.rows[rbac.GRANTED][before:]
+        actions = [r["action"] for r in deployed.audit.records[start:]]
+        if status == 201:
+            assert [f'W/"{row.id}:1"' for row in created] == [resp.headers["etag"]]
+            assert "profile.created" in actions and len(deployed.profiles.hooks) == 1
+        else:
+            assert created == () and "profile.created" not in actions
+    finally:
+        deployed.profiles.reset()

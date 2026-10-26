@@ -143,6 +143,8 @@ def _served() -> Iterator[Served]:
     wiring = SimpleNamespace(repository=repository, effective=None)
     try:
         mp.setattr(appmod, "wire_profiles", lambda *_args: wiring)
+        # The writes are tested in the writes world; this stand-in wiring has no accounts or rules.
+        mp.setattr(appmod, "profile_writes", lambda *_args, **_kwargs: None)
         mp.setattr(appmod, "_build_accounts_counts", lambda _settings: store)  # the M13 store
         yield build_world(mp), store
     finally:
