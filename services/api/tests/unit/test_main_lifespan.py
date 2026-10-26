@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import threading
 from collections.abc import Sequence
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,11 +25,17 @@ from fastapi import FastAPI
 from structlog.testing import capture_logs
 
 from candleviewer import main
-from candleviewer.account_fixture_wiring import ACCOUNT_FIXTURE_AUDIT_ACTION, AccountFixtureRefused
+from candleviewer.account_fixture_wiring import (
+    ACCOUNT_FIXTURE_AUDIT_ACTION,
+    AccountFixtureRefused,
+    build_account_fixture,
+)
 from candleviewer.audit.service import AuditService
 from candleviewer.main import _lifespan
+from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Environment, FeedMode, Settings
-from cvdev.account_fixture import boot
+from cvdev.account_fixture import boot, wiring
+from cvdev.account_fixture import pack as account_pack
 from cvdev.account_fixture.boot import StoredKey
 from tests._account_fixtures import PACK_ROOT
 
@@ -330,7 +337,7 @@ def _fixture_app(
     """The harness with the fixture on (#2893 S8) and the checkout's pack."""
     for name in [n for n in os.environ if n.upper().startswith("CV_")]:
         monkeypatch.delenv(name)
-    monkeypatch.setattr(boot, "PACK_ROOT", PACK_ROOT)
+    monkeypatch.setattr(account_pack, "PACK_ROOT", PACK_ROOT)  # the guard's and the build's
     app, ctx = FastAPI(), _fake_ctx()
     ctx.settings = Settings(
         environment=Environment.DEMO,
@@ -414,6 +421,21 @@ async def test_a_failed_boot_record_stops_every_module_and_raises(
         await _lifespan(app).__aenter__()
 
     assert not [m for m in _modules(ctx) if not m.stopped]
+
+
+async def test_a_passed_guard_builds_the_fixture_pair_on_the_process_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2893 S12b: as `create_app()` leaves it, the door on `app.state`, the gate on the context."""
+    app, ctx = _fixture_app(tmp_path, monkeypatch, _FakeAudit())
+    (tmp_path / "state").mkdir(mode=0o700)
+    monkeypatch.setattr(wiring, "_ONCE", threading.Lock())
+    app.state.account_fixture = build_account_fixture(ctx.settings)
+    ctx.oms_read_only_gate = ReadOnlyGate()
+
+    async with _lifespan(app):
+        armed = app.state.account_fixture.armed
+        assert armed is not None and armed.transport._gate is ctx.oms_read_only_gate
 
 
 async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_stops() -> None:

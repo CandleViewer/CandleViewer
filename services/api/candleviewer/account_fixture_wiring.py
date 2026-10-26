@@ -16,6 +16,7 @@ the guard and serving slices land, the package's transport and connector refuse 
 S8: the lifespan awaits `account_fixture_guard`, the dev package's boot guard, before any module
 starts, and `account_fixture_record` once they run: the guard's boot record goes through the audit
 writer injected here, so `cvdev` never imports `candleviewer.audit`.
+S12b: the handle refuses everything until that guard passes, which then builds the pair behind it.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from typing import Any, Final, Protocol
 import httpx
 import structlog
 
+from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.settings import Settings
 
 #: The dev-only package, and its entry point: a module exposing `build(settings) -> AccountFixture`
@@ -121,16 +123,22 @@ class AccountFixtureBoot(Protocol):
     async def record(self, audit: AccountFixtureAudit) -> None: ...
 
 
-async def account_fixture_guard(settings: Settings) -> AccountFixtureBoot | None:
+async def account_fixture_guard(
+    settings: Settings,
+    fixture: AccountFixture | None = None,
+    gate: ReadOnlyGate | None = None,
+) -> AccountFixtureBoot | None:
     """#2893 S8, for the lifespan before any module starts: the dev package's boot guard refuses
     boot (`AccountFixtureRefused`) while the database holds a key the stub must never answer for;
-    a pass logs a warning. Unset, it imports nothing and returns None."""
+    a pass logs a warning and (S12b) builds `fixture`'s transport and socket on `gate`, which
+    until then refuse everything. Unset, it imports nothing and returns None."""
     if settings.account_fixture is None:
         return None
-    guard: Callable[[Settings], Awaitable[AccountFixtureBoot]] = _dev_module(
-        settings, _DEV_WIRING
-    ).guard_boot
-    return await guard(settings)
+    guard: Callable[
+        [Settings, AccountFixture | None, ReadOnlyGate | None],
+        Awaitable[AccountFixtureBoot],
+    ] = _dev_module(settings, _DEV_WIRING).guard_boot
+    return await guard(settings, fixture, gate)
 
 
 async def account_fixture_record(passed: AccountFixtureBoot | None, audit: _AuditModule) -> None:
