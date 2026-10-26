@@ -1,8 +1,10 @@
-"""#2475: a WAL-drop gap window is sealed by the first row that reaches QuestDB or the WAL, so no
-`backpressure_drop` gap ever spans a written `exch_ts` (C-2.14). Fakes and `tmp_path` only."""
+"""#2475: a WAL-drop gap window is sealed by the first newer row that reaches QuestDB or the WAL,
+so (for per-key monotone delivery) no `backpressure_drop` gap spans a written `exch_ts`, and no
+dropped row is ever left outside a gap (C-2.14). Fakes and `tmp_path` only."""
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +13,7 @@ from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from candleviewer.recorder.wal import RUNS_DIR, WalRecord
-from candleviewer.recorder.writer import StreamWriter
+from candleviewer.recorder.writer import DiskGate, StreamWriter
 from tests.unit.recorder._writer_helpers import T0, FakeClock, make_writer, trade
 
 
@@ -33,6 +35,14 @@ class WalScript:
         self.accepted += [(r.symbol, r.exch_ts) for r in records[:got]]
         self.refused += [(r.symbol, r.exch_ts) for r in records[got:]]
         return got
+
+
+class Halt:
+    """A disk gate whose halt is flipped by the test; no symbol holds a position."""
+
+    def __init__(self, w: StreamWriter) -> None:
+        self.on = False
+        w._gate = DiskGate(halted=lambda: self.on, position_open=lambda _symbol: False)
 
 
 def _at(us: int) -> datetime:
@@ -188,8 +198,161 @@ async def test_stop_sealed_unpersisted_window_raises_critical_event(tmp_path: Pa
     assert f"{T0 + 1}..{T0 + 1}" in event.message
 
 
+async def test_flush_gaps_gate_window_sealed_during_a_drop_insert_is_kept_whole(
+    tmp_path: Path,
+) -> None:
+    """Review repro: only the in-flight window's own sealed copy may be trimmed."""
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    wal, gate = WalScript(w), Halt(w)
+    sink.down.add("*")
+    wal.accept = 0
+    for i, ts in ((1, 150), (2, 160)):
+        await w.on_trade(trade(i, ts=T0 + ts))
+    await _pump(w, clock)  # drop window [150, 160]
+    gate.on = True
+    for i, ts in ((3, 100), (4, 200)):
+        await w.on_trade(trade(i, ts=T0 + ts))  # gate window [100, 200]
+    real = store.record_live_gap
+    fired = False
+
+    async def in_flight(**kw: object) -> bool:
+        nonlocal fired
+        if not fired:
+            fired, gate.on = True, False
+            await w.on_trade(trade(5, ts=T0 + 300))  # admitted: seals the gate window
+        return await real(**kw)  # type: ignore[arg-type]  # forwarded as received
+
+    store.record_live_gap = in_flight  # type: ignore[method-assign]  # inject the race
+    await w.flush_gaps()
+    await w.flush_gaps()
+    assert _spans(store.gaps) == [(_at(T0 + 150), _at(T0 + 160)), (_at(T0 + 100), _at(T0 + 200))]
+
+
+async def test_flush_gaps_trims_only_the_in_flight_windows_own_copy(tmp_path: Path) -> None:
+    """Gate window A, the in-flight window W and gate window B are sealed, in that order,
+    during W's insert, and a new drop window opens: only W's copy is dropped."""
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    wal, gate = WalScript(w), Halt(w)
+    sink.down.add("*")
+    wal.accept = 0
+    for i, ts in ((1, 150), (2, 160)):
+        await w.on_trade(trade(i, ts=T0 + ts))
+    await _pump(w, clock)  # W = [150, 160]
+    real = store.record_live_gap
+    fired = False
+
+    async def gated(*stamps: int) -> None:
+        gate.on = True
+        for ts in stamps:
+            await w.on_trade(trade(ts, ts=T0 + ts))
+        gate.on = False
+
+    async def in_flight(**kw: object) -> bool:
+        nonlocal fired
+        if not fired:
+            fired = True
+            await gated(155, 158)
+            wal.accept = None
+            await w.on_trade(trade(159, ts=T0 + 159))  # seals A; in the WAL, older than W
+            await w.on_trade(trade(170, ts=T0 + 170))
+            await w.pump("trades")  # 170 is newer: seals W
+            await gated(165, 200)
+            await w.on_trade(trade(300, ts=T0 + 300))  # seals B
+            await w.pump("trades")
+            wal.accept = 0
+            await w.on_trade(trade(175, ts=T0 + 175))
+            await w.pump("trades")  # a new drop window
+        return await real(**kw)  # type: ignore[arg-type]  # forwarded as received
+
+    store.record_live_gap = in_flight  # type: ignore[method-assign]  # inject the race
+    await w.flush_gaps()
+    await w.flush_gaps()
+    assert _spans(store.gaps) == [
+        (_at(T0 + a), _at(T0 + b)) for a, b in ((150, 160), (155, 158), (165, 200), (175, 176))
+    ]
+
+
+async def test_flush_gaps_window_widened_below_in_flight_keeps_its_early_rows(
+    tmp_path: Path,
+) -> None:
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    wal = WalScript(w)
+    sink.down.add("*")
+    wal.accept = 0
+    for i, ts in ((1, 150), (2, 160)):
+        await w.on_trade(trade(i, ts=T0 + ts))
+    await _pump(w, clock)  # window [150, 160]
+    real = store.record_live_gap
+    fired = False
+
+    async def in_flight(**kw: object) -> bool:
+        nonlocal fired
+        if not fired:  # a late drop widens the window below the persisted start
+            fired = True
+            await w.on_trade(trade(3, ts=T0 + 100))
+            await w.pump("trades")
+        return await real(**kw)  # type: ignore[arg-type]  # forwarded as received
+
+    store.record_live_gap = in_flight  # type: ignore[method-assign]  # inject the race
+    await w.flush_gaps()
+    await w.flush_gaps()
+    assert _spans(store.gaps) == [(_at(T0 + 150), _at(T0 + 160)), (_at(T0 + 100), _at(T0 + 160))]
+
+
+async def test_wal_drop_written_row_inside_the_open_window_keeps_it_open(tmp_path: Path) -> None:
+    """Out-of-order: a late written row inside [lo, hi] never seals (coverage over precision)."""
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    wal = WalScript(w)
+    sink.down.add("*")
+    wal.accept = 0
+    for i, ts in ((1, 1), (2, 10)):
+        await w.on_trade(trade(i, ts=T0 + ts))
+    await _pump(w, clock)  # window [1, 10]
+    wal.accept = None
+    await w.on_trade(trade(3, ts=T0 + 5))
+    await _pump(w, clock)  # written, but inside the window
+    wal.accept = 0
+    await w.on_trade(trade(4, ts=T0 + 11))
+    await _pump(w, clock)
+    await w.flush_gaps()
+    assert _spans(store.gaps) == [(_at(T0 + 1), _at(T0 + 11))]
+
+
+async def test_replay_of_older_wal_rows_does_not_seal_a_newer_window(tmp_path: Path) -> None:
+    w, sink, _, _, clock = await make_writer(tmp_path)
+    wal = WalScript(w)
+    sink.down.add("*")
+    wal.accept = 1
+    for i in (1, 2):
+        await w.on_trade(trade(i))
+    await _pump(w, clock)  # t1 in the WAL, t2 dropped: window [t2]
+    sink.down.clear()
+    await w.recover()  # t1 replayed: older than the window
+    assert [r["trade_id"] for r in sink.rows("trades")] == ["t1"]
+    assert ("BTCUSDT", "trades") in w._gaps
+
+
+async def test_flush_gaps_overlapping_calls_persist_a_window_once(tmp_path: Path) -> None:
+    w, sink, store, _, clock = await make_writer(tmp_path)
+    wal = WalScript(w)
+    sink.down.add("*")
+    wal.accept = 0
+    await w.on_trade(trade(1))
+    await _pump(w, clock)
+    real = store.record_live_gap
+
+    async def slow(**kw: object) -> bool:
+        for _ in range(5):  # yield to the other flush (no wall-clock sleep)
+            await asyncio.sleep(0)
+        return await real(**kw)  # type: ignore[arg-type]  # forwarded as received
+
+    store.record_live_gap = slow  # type: ignore[method-assign]  # widen the race window
+    await asyncio.gather(w.flush_gaps(), w.flush_gaps())
+    assert _spans(store.gaps) == [(_at(T0 + 1), _at(T0 + 2))]
+
+
 SYMS = ("BTCUSDT", "ETHUSDT")
-KINDS = ("trade", "trade", "trade", "pump", "pump", "pump", "sink", "recover", "flush")
+KINDS = ("trade", "trade", "trade", "pump", "pump", "pump", "sink", "gate", "recover", "flush")
 
 
 @settings(
@@ -200,7 +363,8 @@ KINDS = ("trade", "trade", "trade", "pump", "pump", "pump", "sink", "recover", "
 )
 @given(st.lists(st.tuples(st.sampled_from(KINDS), st.integers(0, 4)), min_size=1, max_size=60))
 # Pinned interleavings (derandomized generation alone does not reach them): queue-full spill,
-# then a partial append; and a sink outage with refuse / accept / refuse pumps.
+# then a partial append; a sink outage with refuse / accept / refuse pumps; a late written row
+# inside an open window; gate and WAL windows open together.
 @example(steps=[("pump", 0), *[("trade", 0)] * 6, ("pump", 1)])
 @example(
     steps=[
@@ -208,22 +372,42 @@ KINDS = ("trade", "trade", "trade", "pump", "pump", "pump", "sink", "recover", "
         *[("trade", 0), ("trade", 1), ("pump", 0), ("flush", 0), ("recover", 4), ("flush", 1)],
     ]
 )
+@example(
+    steps=[
+        *[("sink", 1), ("trade", 0), ("pump", 0), ("trade", 0), ("pump", 0)],
+        *[("trade", 4), ("pump", 4), ("trade", 0), ("pump", 0)],
+    ]
+)
+@example(
+    steps=[
+        *[("sink", 1), ("trade", 0), ("trade", 0), ("pump", 0), ("gate", 1), ("trade", 4)],
+        *[("trade", 0), ("gate", 0), ("trade", 0), ("flush", 1), ("pump", 0)],
+    ]
+)
 async def test_wal_drop_no_gap_contains_a_written_exch_ts(
     tmp_path_factory: pytest.TempPathFactory, steps: list[tuple[str, int]]
 ) -> None:
-    """Random interleavings of admits, sink outages, WAL refusals (whole and partial), pumps,
-    replays and gap flushes: no persisted gap holds a row that reached QuestDB or the WAL,
-    and every refused row lies inside a persisted gap."""
+    """Random interleavings of admits (some late), gate halts, sink outages, WAL refusals
+    (whole and partial), pumps, replays and gap flushes. Every dropped row (gate or WAL) lies
+    in a persisted gap; when each symbol's rows arrive in `exch_ts` order, no persisted gap
+    holds a row that reached QuestDB or the WAL."""
     w, sink, store, _, clock = await make_writer(
         tmp_path_factory.mktemp("wal"), max_queue_rows=3, flush_rows=4
     )
     w.seed(SYMS)
-    wal = WalScript(w)
+    wal, gate = WalScript(w), Halt(w)
+    gated: list[tuple[str, int]] = []
+    admitted: dict[str, list[int]] = {sym: [] for sym in SYMS}
     for i, (kind, arg) in enumerate(steps, start=1):
-        if kind == "trade":
-            await w.on_trade(trade(i, SYMS[arg % 2]))
+        if kind == "trade":  # arg 3 / 4: a late row, older than the two before it
+            sym, ts = SYMS[arg % 2], T0 + 10 * i - (35 if arg >= 3 else 0)
+            (gated if gate.on else []).append((sym, ts))
+            admitted[sym].append(ts)
+            await w.on_trade(trade(i, sym, ts=ts))
         elif kind == "sink":
             sink.down = {"*"} if arg % 2 else set()
+        elif kind == "gate":
+            gate.on = bool(arg % 2)
         elif kind in ("pump", "recover"):  # `arg` caps this step's WAL appends (4 = no cap)
             wal.accept = None if arg == 4 else arg
             clock.advance(0.3)
@@ -233,15 +417,17 @@ async def test_wal_drop_no_gap_contains_a_written_exch_ts(
             await w.flush_gaps()
     store.session = True
     await w.flush_gaps()
+    for sym, t in [*wal.refused, *gated]:
+        assert any(
+            g["symbol"] == sym and g["start"] <= _at(t) <= g["end"]  # type: ignore[operator]  # datetimes
+            for g in store.gaps
+        ), (sym, t)
+    assert not w.pending_gaps() and not w._gate_gaps
+    if any(ts != sorted(set(ts)) for ts in admitted.values()):
+        return  # out of order: coverage only (a late row inside an open window is best-effort)
     written = {(str(r["symbol"]), int(str(r["ts"]))) for r in sink.rows("trades")}
     written |= set(wal.accepted)
     for gap in store.gaps:
         start, end = gap["start"], gap["end"]
         inside = [(s, t) for s, t in written if s == gap["symbol"] and start <= _at(t) < end]  # type: ignore[operator]  # datetimes
         assert not inside, (gap, inside)
-    for sym, t in wal.refused:
-        assert any(
-            g["symbol"] == sym and g["start"] <= _at(t) <= g["end"]  # type: ignore[operator]  # datetimes
-            for g in store.gaps
-        ), (sym, t)
-    assert not w.pending_gaps()
