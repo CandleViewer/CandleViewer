@@ -1,0 +1,36 @@
+rules:
+  - id: cv-recorder-destructive-outside-retention
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Directory- or partition-level destruction (`DROP PARTITION`, `DROP TABLE`, `TRUNCATE`,
+      shutil.rmtree, os.rmdir/removedirs) outside the audited retention sites. Recorded data is
+      deleted only in storage/cold/retention_ops.py (the reaper's cold delete) and
+      storage/cold/rolloff_ops.py (the hot drop after a verified export), each behind
+      RetentionManager's write-ahead `data.deleted` record (C-2.9, SR-099).
+    metadata:
+      rule-id: cv-recorder-destructive-outside-retention
+      ticket: E16-X02
+      sr: SR-099
+    pattern-either:
+      - pattern: shutil.rmtree(...)
+      - pattern: os.rmdir(...)
+      - pattern: os.removedirs(...)
+      - pattern: $P.rmdir()
+      # SQL text in code, not in a comment or a docstring line: the line is not a comment and
+      # holds no triple quote (a multi-line docstring body naming the statement is the one
+      # accepted blind spot; `# nosemgrep` with a reason is the escape).
+      - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bDROP\s+(PARTITION|TABLE)\b'
+      - pattern-regex: '(?m)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bTRUNCATE\s+TABLE\b'
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+        - "**/cv-recorder-destructive-outside-retention*"
+      exclude:
+        - "services/api/candleviewer/storage/cold/retention_ops.py"
+        - "services/api/candleviewer/storage/cold/rolloff_ops.py"
+        - "services/api/candleviewer/recorder/wal.py" # its own runs dir, rebuilt on a torn run
+        - "services/api/candleviewer/observability/support_bundle.py" # its own temp work dir
+        - "services/api/candleviewer/migrations/**" # Alembic downgrades and append-only triggers
+        - "services/api/candleviewer/storage/questdb/runner.py" # schema bootstrap docstring
+        - "services/api/candleviewer/storage/guarded_privileges.py" # privilege names, not SQL

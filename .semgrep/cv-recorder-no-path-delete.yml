@@ -1,0 +1,30 @@
+rules:
+  - id: cv-recorder-no-path-delete
+    languages: [python]
+    severity: ERROR
+    message: >-
+      File or directory removal, move or rename inside the `recorder` package. The recorder
+      module never touches a driver or a filesystem path (ADR-0003, SR-097): deletions go through
+      the storage-side ColdStore / HotStore ports, re-resolved through DatasetRegistry at the
+      delete site, under RetentionManager's write-ahead audit. Only recorder/wal.py owns files
+      (its WAL).
+    metadata:
+      rule-id: cv-recorder-no-path-delete
+      ticket: E16-X02
+      sr: SR-097
+    pattern-either:
+      - pattern: $P.unlink(...)
+      - pattern: os.unlink(...)
+      - pattern: os.remove(...)
+      - pattern: shutil.rmtree(...)
+      - pattern: os.rmdir(...)
+      - pattern: $P.rmdir()
+      - pattern: shutil.move(...)
+      - pattern: os.rename(...)
+      - pattern: os.replace(...)
+    paths:
+      include:
+        - "services/api/candleviewer/recorder/**"
+        - "**/cv-recorder-no-path-delete*"
+      exclude:
+        - "services/api/candleviewer/recorder/wal.py"
