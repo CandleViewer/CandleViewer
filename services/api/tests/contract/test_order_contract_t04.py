@@ -921,7 +921,8 @@ def test_place_order_states_the_price_band_its_setting_and_rule() -> None:
         "A conditional entry, market or limit, has its `trigger.price` judged against `ref`, and "
         "the limit `price` behind a trigger is judged too, against its trigger price, with the "
         "same `b`",
-        "is refused with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}`, "
+        "is refused with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}` "
+        "(or `trigger.price`), "
         "before the order is sized",
         "A reduce-only order is never judged",
         "With neither a mid nor a last price to judge against the request is "

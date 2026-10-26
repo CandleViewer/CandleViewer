@@ -5656,7 +5656,7 @@ paths:
           a value outside is refused at save, never clamped. A conditional entry, market or limit, has its
           `trigger.price` judged against `ref`, and the limit `price` behind a trigger is judged
           too, against its trigger price, with the same `b`. A price outside the band is refused
-          with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}`, before the
+          with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}` (or `trigger.price`), before the
           order is sized. A reduce-only order is never judged, so the band holds back no protective
           order. With neither a mid nor a last price to judge against the request is
           `503 exchange_unavailable` with `Retry-After`, as a market order with no reference price
