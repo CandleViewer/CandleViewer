@@ -11,7 +11,12 @@ The exit routes' two reads (E29-T04 slice 4) hold the principal's scope instead,
 the one predicate both take.
 
 `create` writes the order and its first event (`seq` 0) in one statement, a data-modifying CTE:
-one round trip in one transaction (#845 performance notes). `append` first locks the order row
+one round trip in one transaction (#845 performance notes). A recorded stop's materialised row
+(E29-T05, 24 Sec.8.3 rule 7) binds its record in that transaction, after the insert
+(`first_bind_statement`, scoped by `recorded_stops`' account): a second materialiser of one
+exchange order meets `ux_orders_exch_id` at the insert, and of two orders racing for one record
+the later finds it bound once the earlier commits, so a record has one holder; a bind that takes
+no row is `RecordedStopNotBindable` and rolls the insert back. `append` first locks the order row
 inside the account, then inserts the event with the next `seq` in a second statement, whose fresh
 snapshot sees every committed event; the lock serialises appends to one order, so `seq` stays
 dense and `UNIQUE (order_id, seq)` is only the backstop. Inside the statement builders, before
@@ -103,13 +108,19 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderTransition,
     OutOfScope,
+    RecordedStopBind,
     ScopedOrder,
     StaleOrderState,
+    require_bindable,
     require_exchange_order_id,
     require_exchange_record,
     require_limit,
     require_no_fill,
     settle_accounts,
+)
+from candleviewer.storage.repositories.recorded_stops import (
+    LIVE_STOP_STATUSES,
+    RecordedStopNotBindable,
 )
 from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
@@ -404,6 +415,33 @@ def lock_entry_stops_statement(account_id: UUID, order_id: UUID) -> sa.Select[An
     return stmt.order_by(rs.id).with_for_update()
 
 
+def first_bind_statement(order: NewOrder, binds: RecordedStopBind) -> sa.Update:
+    """The record's first bind (24 Sec.8.3 rule 7; `trg_rs_guard` admits the one bind), run after
+    its order's insert in that transaction: the account's row `binds` names, of the order's key
+    (symbol, `position_idx`) and side, live, holding no id and never released, while no row of the
+    account holds the order's id (one holder, never two). Scoped by `recorded_stops`' account."""
+    rs, other = recorded_stops.c, recorded_stops.alias("held")
+    held: sa.Select[Any] = sa.select(sa.literal_column("1")).where(
+        other.c.exchange_account_id == order.exchange_account_id,
+        other.c.exchange_order_id == order.exchange_order_id,
+    )
+    live: sa.BindParameter[Any] = sa.bindparam(
+        "live", sorted(LIVE_STOP_STATUSES), expanding=True, literal_execute=True
+    )
+    stmt = sa.update(recorded_stops).where(
+        rs.exchange_account_id == order.exchange_account_id,
+        rs.id == binds.record_id,
+        rs.exchange_order_id.is_(None),
+        rs.released_at.is_(None),
+        rs.status.in_(live),
+        sa.type_coerce(rs.symbol, sa.Text) == order.symbol,  # no DOMAIN operator class
+        rs.position_idx == order.position_idx,
+        rs.kind == binds.kind,
+        ~sa.exists(held),
+    )
+    return stmt.values(exchange_order_id=order.exchange_order_id).returning(rs.id)
+
+
 def list_events_statement(
     account_id: UUID, order_id: UUID, after_seq: int, limit: int
 ) -> sa.Select[Any]:
@@ -530,11 +568,19 @@ class CappedStore:
 class SqlAlchemyOrderStore(CappedStore):
     """`OrderStore` and `OrderEventStore` over one relational repository (asyncpg)."""
 
-    async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
+    async def create(
+        self, order: NewOrder, first_event: NewOrderEvent, *, binds: RecordedStopBind | None = None
+    ) -> OrderRow:
         require_exchange_record(first_event)
+        if binds is not None:
+            require_bindable(order, binds)
         stmt = create_statement(order, first_event)
-        async with self._unit_of_work() as uow:
+        async with self._unit_of_work() as uow:  # a refusal raised in here rolls the insert back
             row = (await uow.session.execute(stmt)).mappings().one()
+            if binds is not None:
+                bound = await uow.session.execute(first_bind_statement(order, binds))
+                if bound.first() is None:
+                    raise RecordedStopNotBindable
             await uow.commit()
         return order_row(row)
 

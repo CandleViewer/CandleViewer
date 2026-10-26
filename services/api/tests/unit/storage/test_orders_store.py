@@ -55,6 +55,7 @@ from candleviewer.storage.repositories.orders import (
     require_lifecycle,
     require_money,
 )
+from candleviewer.storage.repositories.recorded_stops import RecordedStopNotBindable
 from tests.unit.oms.write_ahead_contract import event, fill, step
 
 T0 = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
@@ -72,6 +73,15 @@ def _new_order(**over: Any) -> NewOrder:
         "price": Decimal("63099.80"), "stop_loss": Decimal("62000"), "state": "pending_submit",
     }  # fmt: skip
     return NewOrder(**(base | over))
+
+
+#: A recorded stop's materialised row (24 Sec.8.3 rule 7), over `_new_order` (E29-T05 S6a).
+_MATERIALISED: dict[str, Any] = {
+    "order_link_id": "ext-" + "0" * 32, "side": "Sell", "intent": "stop_loss",
+    "order_type": "Market", "price": None, "stop_loss": None, "trigger_price": Decimal(62000),
+    "reduce_only": True, "close_on_trigger": True, "state": "accepted",
+    "lifecycle_state": "submitted", "provenance": "recorded_stop", "exchange_order_id": "x-1",
+}  # fmt: skip
 
 
 def _event(**over: Any) -> NewOrderEvent:
@@ -304,6 +314,9 @@ _STATEMENTS: dict[str, Any] = {
     "fill_statement": mod.fill_statement(_FILL),
     "settle_entry_stops_statement": mod.settle_entry_stops_statement(ACCOUNT, ORDER, "void", T0),
     "lock_entry_stops_statement": mod.lock_entry_stops_statement(ACCOUNT, ORDER),
+    "first_bind_statement": mod.first_bind_statement(
+        _new_order(**_MATERIALISED), port.RecordedStopBind(record_id=ORDER, kind="stop_loss")
+    ),
     "environment_accounts_statement": mod.environment_accounts_statement("demo"),
     "list_unfinished_statement": mod.list_unfinished_statement([ACCOUNT], 4097),
     "in_scope_statement": mod.in_scope_statement(_GRANT, ORDER, "demo"),
@@ -320,9 +333,12 @@ def test_the_statement_set_is_pinned() -> None:
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
 def test_every_statement_but_create_and_the_id_check_is_account_scoped(name: str) -> None:
-    """The entry-stop settle and its lock are scoped by their own table's account (E29-T04)."""
+    """The entry-stop settle and its lock (E29-T04), and a recorded stop's first bind (E29-T05),
+    are scoped by their own table's account."""
     sql = _sql(_STATEMENTS[name])
-    entry_stops = {"settle_entry_stops_statement", "lock_entry_stops_statement"}
+    entry_stops = {
+        "settle_entry_stops_statement", "lock_entry_stops_statement", "first_bind_statement",
+    }  # fmt: skip
     scoped = "orders.exchange_account_id = $" in sql or (
         name in entry_stops and "recorded_stops.exchange_account_id = $" in sql
     )
@@ -718,6 +734,60 @@ async def test_create_maps_the_returned_row_and_commits_once() -> None:
     row = await _store(rel).create(_new_order(), _event())
     assert (row.order_link_id, row.stop_loss, row.tpsl_mode) == (LINK, Decimal("62000"), "Partial")
     assert (rel.commits, len(rel.statements)) == (1, 1)
+
+
+_BIND = port.RecordedStopBind(record_id=uuid.UUID(int=8), kind="stop_loss")
+
+
+def test_the_first_bind_takes_only_the_named_live_unbound_record_of_the_orders_key_and_side() -> (
+    None
+):  # fmt: skip
+    """24 Sec.8.3 rule 7 (S6a): the record of the order's account, key and side, live, holding no
+    id and never released, while no row of the account holds the order's id; it sets the id."""
+    stmt = mod.first_bind_statement(_new_order(**_MATERIALISED), _BIND)
+    sql = " ".join(_sql(stmt).split())
+    assert sql.startswith("UPDATE recorded_stops SET exchange_order_id=$")
+    where = sql.split(" WHERE ", 1)[1]
+    for term in (
+        "recorded_stops.exchange_account_id = $", "recorded_stops.id = $",
+        "recorded_stops.exchange_order_id IS NULL", "recorded_stops.released_at IS NULL",
+        "recorded_stops.status IN ('in_force', 'pending')",
+        "recorded_stops.symbol = $", "recorded_stops.position_idx = $",
+        "recorded_stops.kind = $",
+        "NOT (EXISTS (SELECT 1 FROM recorded_stops AS held WHERE held.exchange_account_id = $",
+        "AND held.exchange_order_id = $",
+    ):  # fmt: skip
+        assert term in where, term
+    assert sql.endswith("RETURNING recorded_stops.id")
+    bound = _bound(stmt)
+    assert all(v in bound for v in (ACCOUNT, _BIND.record_id, "x-1", "BTCUSDT", 0, "stop_loss"))
+
+
+async def test_create_with_binds_inserts_then_binds_and_commits_once() -> None:
+    rel = _Rel(_Result([_order_row(exchange_order_id="x-1")]), _Result([{"id": _BIND.record_id}]))
+    row = await _store(rel).create(_new_order(**_MATERIALISED), _event(), binds=_BIND)
+    assert row.exchange_order_id == "x-1"
+    assert [_sql(s).split()[0] for s in rel.statements] == ["WITH", "UPDATE"]
+    assert (rel.commits, len(rel.units)) == (1, 1)
+
+
+async def test_create_whose_bind_takes_no_row_is_not_bindable_and_commits_nothing() -> None:
+    rel = _Rel(_Result([_order_row(exchange_order_id="x-1")]), _Result())
+    with pytest.raises(RecordedStopNotBindable) as err:
+        await _store(rel).create(_new_order(**_MATERIALISED), _event(), binds=_BIND)
+    assert (rel.commits, err.value.__cause__) == (0, None)
+
+
+@pytest.mark.parametrize(
+    "over", [{"provenance": "placed"}, {"reduce_only": False}, {"exchange_order_id": None}]
+)
+async def test_create_with_binds_of_another_row_is_refused_before_any_statement(
+    over: dict[str, Any],
+) -> None:
+    rel = _Rel()
+    with pytest.raises(ValueError, match="only a recorded stop's materialised row"):
+        await _store(rel).create(_new_order(**(_MATERIALISED | over)), _event(), binds=_BIND)
+    assert (rel.units, rel.commits) == ([], 0)
 
 
 async def test_reads_map_rows_and_absence() -> None:

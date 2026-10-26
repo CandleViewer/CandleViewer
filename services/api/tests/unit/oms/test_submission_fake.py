@@ -2,8 +2,8 @@
 fault at the commit, a write that waits while another holds its rows over its hook, the sweep
 over every account, the hooks' default bounds, which the adapters share, and every CHECK the
 schema declares on the four tables, met by name or left to the row's own refusals. The pairing
-reads' contract (`store_reads_contract.py`) and the stop end's (`stop_end_contract.py`), both
-E29-T05, run here too."""
+reads' contract (`store_reads_contract.py`), the stop end's (`stop_end_contract.py`) and a recorded
+stop's first bind (`first_bind_contract.py`), all E29-T05, run here too."""
 
 from __future__ import annotations
 
@@ -43,9 +43,10 @@ from candleviewer.storage.repositories.submissions import (
     FirstPersisted,
 )
 from candleviewer.storage.repositories.submissions_sqlalchemy import SqlAlchemySubmissionStore
+from tests.unit.oms.first_bind_contract import FirstBindContract, binding, materialised
 from tests.unit.oms.recorded_stop_contract import RecordedStopContract, StopGateContract
 from tests.unit.oms.stop_end_contract import StopEndContract
-from tests.unit.oms.store_reads_contract import StoreReadsContract
+from tests.unit.oms.store_reads_contract import XID, StoreReadsContract
 from tests.unit.oms.submission_contract import (
     EVENT,
     NOTHING,
@@ -56,6 +57,7 @@ from tests.unit.oms.submission_contract import (
     SubmissionContract,
     entry,
     reduce_only,
+    trading_stop,
 )
 
 
@@ -111,7 +113,9 @@ def tick(fake: Fake) -> None:
     fake._clock = lambda: now
 
 
-class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract, StopEndContract):
+class TestInMemorySubmissionStores(
+    SubmissionContract, StoreReadsContract, StopEndContract, FirstBindContract
+):
     @pytest.fixture
     def fake(self) -> Fake:
         return Fake(clock=lambda: T0)
@@ -137,6 +141,25 @@ class TestInMemorySubmissionStores(SubmissionContract, StoreReadsContract, StopE
                 user, account, trade=trade, frozen=frozen
             ),
             owner=fake.seed_owner, elsewhere=lambda: demo_account(fake, "live"),
+        )  # fmt: skip
+
+    @pytest.mark.parametrize("committed", [False, True])
+    async def test_materialise_create_whose_commit_fails_binds_with_its_row_or_not_at_all(
+        self, fake: Fake, committed: bool
+    ) -> None:
+        """24 Sec.8.3 rule 7: the bind is in the order's transaction, so a fault at the commit
+        leaves neither the row nor the binding, and a commit whose answer was cut leaves both."""
+        account, _ = demo_account(fake)
+        [stop] = await fake.stops.insert([trading_stop(account)])
+        order = materialised(account)
+        fake.fail_next(
+            StorageTierUnavailable("postgres unreachable (OSError)"), committed=committed
+        )
+        with pytest.raises(StorageTierUnavailable):
+            await fake.create(order, EVENT, binds=binding(stop))
+        bound = await fake.stops.for_exchange_order(account, XID)
+        assert (await fake.get(account, order.id) is not None, len(bound)) == (
+            committed, int(committed),
         )  # fmt: skip
 
     async def test_a_leg_on_an_account_never_seeded_passes_the_environment_trigger(

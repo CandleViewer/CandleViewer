@@ -239,6 +239,38 @@ class NewOrder:
         require_lifecycle(self.lifecycle_state, self.state)
 
 
+#: The sides a recorded stop's row binds (`recorded_stops.kind`), each the purpose of its TP/SL
+#: order's materialised row (24 Sec.8.3 rule 7).
+RecordedStopKind = Literal["stop_loss", "take_profit"]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RecordedStopBind:
+    """The recorded side whose `recorded_stops` row binds the materialised order's exchange id
+    once, in the transaction that inserts that order's row (24 Sec.8.3 rule 7, 21 Sec.3.3.11
+    "Binding"): the record's id and its side, the order's purpose."""
+
+    record_id: UUID
+    kind: RecordedStopKind
+
+
+def require_bindable(order: NewOrder, binds: RecordedStopBind) -> None:
+    """`ValueError`, before any statement, unless `order` is a recorded stop's materialised row
+    that may take `binds`: provenance `recorded_stop`, at the chart's `submitted`, bound to an
+    exchange order id, of the record's side, and only closing its position, reduce-only and
+    close-on-trigger (C-2.6, INV-B1-o). Names no value."""
+    if not (
+        order.provenance == "recorded_stop"
+        and order.lifecycle_state == "submitted"
+        and order.exchange_order_id is not None
+        and order.intent == binds.kind
+        and order.reduce_only
+        and order.close_on_trigger
+        and order.trade_group_leg_id is None
+    ):
+        raise ValueError("only a recorded stop's materialised row binds its record")
+
+
 def typed_fields(cls: type, kind: type) -> tuple[str, ...]:
     """The fields annotated `kind` or `kind | None`, read off the class, so none is missed."""
     hints = get_type_hints(cls)
@@ -524,9 +556,16 @@ def settle_accounts(reach: Iterable[UUID], requested: Collection[UUID]) -> tuple
 class OrderStore(Protocol):
     """Insert, the write-ahead step and account-scoped reads of `orders` (module docs)."""
 
-    async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
+    async def create(
+        self, order: NewOrder, first_event: NewOrderEvent, *, binds: RecordedStopBind | None = None
+    ) -> OrderRow:
         """Insert the order and its first event (`seq` 0, `to_state` the order's state) in one
-        statement, so one round trip in one transaction (#845 performance notes)."""
+        statement, so one round trip in one transaction (#845 performance notes). With `binds`
+        (E29-T05), a recorded stop's materialised row (`require_bindable`, `ValueError` before any
+        statement) binds its record in the same transaction (24 Sec.8.3 rule 7): the account's
+        record of the order's key and side, live, unbound and never released, while no row of the
+        account holds the id; else `RecordedStopNotBindable`, the order unwritten too. A row that
+        holds the id already is `ux_orders_exch_id`'s, the record left unbound."""
         ...
 
     async def transition(self, step: OrderTransition) -> CommittedStep:

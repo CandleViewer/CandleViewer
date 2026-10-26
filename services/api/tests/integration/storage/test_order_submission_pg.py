@@ -7,8 +7,9 @@ proves: an entry's group, leg, order, recorded stops and anchor in one transacti
 (a refused order, a refusing hook, a profile past the leg's version); the anchor's lookup under its
 principal, its fingerprint compared in SQL and its outcome written once; the recorded stops'
 settle; and the races, gated on `pg_stat_activity` lock waits and never on a fixed sleep: two first
-persists of one key (an entry's and a reduce-only order's), two stop requests on one position and
-an end racing a put in force. The DDL itself is test_order_submission_migration.py's.
+persists of one key (an entry's and a reduce-only order's), two stop requests on one position, an
+end racing a put in force, and two first binds of a recorded stop (E29-T05 S6a: two binders of one
+order, two orders for one record). The DDL itself is test_order_submission_migration.py's.
 """
 
 from __future__ import annotations
@@ -41,7 +42,9 @@ from candleviewer.storage.repositories.orders import (
     NewOrder,
     NewOrderEvent,
     OrderConstraintError,
+    OrderRow,
     OrderTransition,
+    RecordedStopBind,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import SqlAlchemyOrderStore
 from candleviewer.storage.repositories.recorded_stops import (
@@ -72,6 +75,7 @@ from candleviewer.storage.repositories.trade_groups import (
     NewTradeGroupLeg,
     TradeGroupStoreRefusedError,
 )
+from tests.unit.oms.first_bind_contract import materialised
 from tests.unit.oms.submission_contract import audited, trading_stop
 
 pytestmark = pytest.mark.integration
@@ -471,6 +475,84 @@ async def test_two_successors_race_for_one_binding_and_the_loser_writes_nothing(
         one: (xid, None),
         two: (None, None),
     }
+
+
+async def _first_binds(
+    dsn: str, record_ids: tuple[uuid.UUID, uuid.UUID], orders: tuple[NewOrder, NewOrder]
+) -> list[BaseException | OrderRow]:
+    """Two materialising creates, A's binding the first record and B's the second, both started
+    while a third transaction holds the first record's row lock: A inserts its order and waits at
+    its bind, B starts once A waits and runs until it waits too, then the holder commits. The
+    answers are A's and B's, in that order (24 Sec.8.3 rule 7's first bind, S6a)."""
+    plain = dsn.replace("postgresql+asyncpg", "postgresql")
+    async with (
+        asyncio.timeout(30),
+        await psycopg.AsyncConnection.connect(plain) as holder,
+        _racing(dsn, "first-bind-a") as rel_a,
+        _racing(dsn, "first-bind-b") as rel_b,
+    ):
+        await holder.execute(
+            "SELECT 1 FROM recorded_stops WHERE id = %s FOR UPDATE", (record_ids[0],)
+        )
+        tasks: list[asyncio.Task[OrderRow]] = []
+        try:
+            for rel_x, suffix, order, record_id in zip(
+                (rel_a, rel_b), ("first-bind-a", "first-bind-b"), orders, record_ids, strict=True
+            ):
+                store = SqlAlchemyOrderStore(rel_x, statement_timeout_ms=15_000)
+                bind = RecordedStopBind(record_id=record_id, kind="stop_loss")
+                tasks.append(asyncio.create_task(store.create(order, _EVENT, binds=bind)))
+                await _wait_until_blocked(dsn, suffix)
+            await holder.commit()
+            return list(await asyncio.gather(*tasks, return_exceptions=True))
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def test_two_concurrent_first_binds_of_one_order_one_wins_the_loser_refused(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """Two materialisers of one exchange order (the consumer and reconciliation) binding two
+    records of its side: B's insert waits on A's uncommitted row under `ux_orders_exch_id`, A
+    binds and commits, and B is refused by the index with nothing written, its record unbound
+    (SEC-S2C2-4: first binds are serialised by the index, never by the NOT EXISTS)."""
+    account, stops = _account(pg_dsn)[0], SqlAlchemyRecordedStopStore(rel)
+    ids: list[uuid.UUID] = []
+    for _ in range(2):
+        [stop] = await stops.insert([trading_stop(account)])
+        await stops.settle(account, [stop.id], "answered", at=_T0)
+        ids.append(stop.id)
+    a, b = materialised(account, "x-one"), materialised(account, "x-one")
+    done_a, done_b = await _first_binds(pg_dsn, (ids[0], ids[1]), (a, b))
+    assert isinstance(done_a, OrderRow) and done_a.exchange_order_id == "x-one"
+    assert isinstance(done_b, OrderConstraintError) and done_b.constraint == "ux_orders_exch_id"
+    assert _sql(pg_dsn, "SELECT id FROM orders WHERE exchange_account_id = %s", account) == [
+        (a.id,)
+    ]
+    rows = _sql(pg_dsn, "SELECT id, exchange_order_id FROM recorded_stops WHERE id = ANY(%s)", ids)
+    assert dict(rows) == {ids[0]: "x-one", ids[1]: None}
+
+
+async def test_two_concurrent_first_binds_of_two_orders_to_one_record_one_wins(
+    rel: SqlAlchemyRelationalRepository, pg_dsn: str
+) -> None:
+    """Two orders matched to one record: both inserts go through, both binds wait on the record's
+    row; once it is free one binds and commits, and the other, re-reading the row bound, takes no
+    row and is refused (`RecordedStopNotBindable`), its order rolled back with it: one holder."""
+    account, stops = _account(pg_dsn)[0], SqlAlchemyRecordedStopStore(rel)
+    [stop] = await stops.insert([trading_stop(account)])
+    a, b = materialised(account, "x-a"), materialised(account, "x-b")
+    answers = await _first_binds(pg_dsn, (stop.id, stop.id), (a, b))
+    [won] = [
+        order for order, done in zip((a, b), answers, strict=True) if isinstance(done, OrderRow)
+    ]
+    assert sum(isinstance(done, RecordedStopNotBindable) for done in answers) == 1
+    stored = _sql(pg_dsn, "SELECT id FROM orders WHERE exchange_account_id = %s", account)
+    assert stored == [(won.id,)]
+    held = _sql(pg_dsn, "SELECT exchange_order_id FROM recorded_stops WHERE id = %s", stop.id)
+    assert held == [(won.exchange_order_id,)]
 
 
 @pytest.mark.parametrize("row_is", ["unanswered", "ended"])

@@ -64,6 +64,7 @@ from candleviewer.storage.repositories.orders import (
     OrderRow,
     OrderTransition,
     OutOfScope,
+    RecordedStopBind,
     ScopedOrder,
 )
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
@@ -124,8 +125,10 @@ class _Store:
         if self.error is not None:
             raise self.error
 
-    async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
-        self._call("create", order, first_event)
+    async def create(
+        self, order: NewOrder, first_event: NewOrderEvent, *, binds: RecordedStopBind | None = None
+    ) -> OrderRow:
+        self._call("create", order, first_event, **({} if binds is None else {"binds": binds}))
         return _row(stop_loss=order.stop_loss)
 
     async def transition(self, step: OrderTransition) -> CommittedStep:
@@ -213,6 +216,39 @@ async def test_any_other_constraint_error_passes_through_unchanged(constraint: s
     with pytest.raises(OrderConstraintError) as err:
         await OrderRepository(_Store(error=error)).create(ORDER_IN, EVENT_IN)
     assert err.value is error
+
+
+BINDS = RecordedStopBind(record_id=uuid.UUID(int=8), kind="stop_loss")
+
+
+async def test_create_with_binds_passes_them_and_logs_the_record_by_id() -> None:
+    """E29-T05 S6a: a recorded stop's row binds its record in the store's transaction; the log
+    line names the record by id only."""
+    store = _Store()
+    with capture_logs() as logs:
+        await OrderRepository(store).create(ORDER_IN, EVENT_IN, binds=BINDS)
+    assert store.calls == [("create", (ORDER_IN, EVENT_IN), {"binds": BINDS})]
+    [line] = logs
+    assert line["recorded_stop_id"] == str(BINDS.record_id) and line["order_link_id"] == LINK
+
+
+@pytest.mark.parametrize(
+    "error", [RecordedStopNotBindable(), OrderConstraintError("ux_orders_exch_id")]
+)
+async def test_create_with_binds_refusal_passes_through_and_logs_nothing(
+    error: Exception,
+) -> None:
+    with capture_logs() as logs, pytest.raises(type(error)) as err:
+        await OrderRepository(_Store(error=error)).create(ORDER_IN, EVENT_IN, binds=BINDS)
+    assert (err.value, logs) == (error, [])
+
+
+async def test_create_with_binds_under_a_taken_link_id_is_duplicate_and_unchained() -> None:
+    """CODE-03: the facade's own refusal is raised `from None`, its context suppressed."""
+    store = _Store(error=OrderConstraintError("ux_orders_link"))
+    with pytest.raises(DuplicateOrderLinkId) as err:
+        await OrderRepository(store).create(ORDER_IN, EVENT_IN, binds=BINDS)
+    assert (err.value.__cause__, err.value.__suppress_context__) == (None, True)
 
 
 async def test_reads_pass_the_account_through() -> None:

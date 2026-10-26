@@ -7,7 +7,8 @@
   `untracked`, or at `submitted` for a recorded stop's TP/SL order (Sec.8.3 rule 7), from the
   order the OMS registered with `expect` before it sent `VALIDATE`, `DISCOVERED` or
   `MATERIALISED`; the registered order must be the one the machine stamped. An `untracked` row's
-  provenance is `reconciliation` and a `submitted` one's `recorded_stop`. E29-T04's pipeline
+  provenance is `reconciliation` and a `submitted` one's `recorded_stop`, which binds the record
+  the OMS registered with it in that transaction (24 Sec.8.3 rule 7, E29-T05). E29-T04's pipeline
   registers a `validated` order with its `FirstPersist`, and the row is then written with its
   group, recorded stops and anchor in one transaction (`SubmissionRepository.create_first`,
   21 Sec.3.3.10);
@@ -81,6 +82,7 @@ from candleviewer.storage.repositories.orders import (
     OrderEventSource,
     OrderProvenance,
     OrderTransition,
+    RecordedStopBind,
     StaleOrderState,
 )
 from candleviewer.storage.repositories.submissions import FirstPersist
@@ -101,6 +103,8 @@ EntryStopEffect = Literal["answered", "void", "waiting"]
 
 #: Orders registered for their first step and not yet written, the oldest dropped first (C-2.18).
 MAX_EXPECTED: Final = 1024
+#: A registration (`OrderStepWriter.expect`): the order, its first persist or its record's bind.
+_Expected = tuple[NewOrder, FirstPersist | None, RecordedStopBind | None]
 #: Seconds the read of which order holds a stored `exec_id` may take, a quarter of the step's
 #: `CV_PERSIST_TIMEOUT` (C-2.18): the step wrote nothing, so a read that does not answer in time
 #: refuses it (`HolderNotRead`), as a store that did not serve would, never as an outcome in doubt
@@ -265,15 +269,24 @@ class OrderStepWriter:
         self._executions = executions
         self._clock = clock
         self._submissions = submissions
-        self._expected: OrderedDict[UUID, tuple[NewOrder, FirstPersist | None]] = OrderedDict()
+        self._expected: OrderedDict[UUID, _Expected] = OrderedDict()
 
-    def expect(self, order: NewOrder, *, first: FirstPersist | None = None) -> None:
+    def expect(
+        self,
+        order: NewOrder,
+        *,
+        first: FirstPersist | None = None,
+        binds: RecordedStopBind | None = None,
+    ) -> None:
         """Register the order the OMS built (E29-T04's pipeline; E29-T06 for one it discovered;
         E29-T05 or E29-T06 for a recorded stop's TP/SL order) before it sends `VALIDATE`,
         `DISCOVERED` or `MATERIALISED`: that step creates the row from it, with `first`'s rows
-        when given (a `validated` row only). That step spends the registration, whether it
-        writes the row or is refused."""
-        self._expected[order.id] = (order, first)
+        when given (a `validated` row only), or binding `binds`' record in its transaction (a
+        recorded stop's `submitted` row only, 24 Sec.8.3 rule 7). That step spends the
+        registration, whether it writes the row or is refused."""
+        if first is not None and binds is not None:
+            raise ValueError("a first persist binds no recorded stop")
+        self._expected[order.id] = (order, first, binds)
         self._expected.move_to_end(order.id)
         while len(self._expected) > MAX_EXPECTED:
             self._expected.popitem(last=False)
@@ -356,7 +369,7 @@ class OrderStepWriter:
         expected = self._expected.pop(order_id, None)
         if expected is None or FIRST_ROWS.get(to_state) != step.event:
             raise ValueError("no registered order for this order's first row")
-        order, first = expected
+        order, first, binds = expected
         _agrees(order, step, account)
         kind, source = event_kind(step)
         event = NewOrderEvent(
@@ -369,7 +382,11 @@ class OrderStepWriter:
             lifecycle_state=to_state,
             provenance=provenance,
         )
-        if first is None:
+        if binds is not None:
+            if to_state != "submitted":  # before the store, which would refuse the row too
+                raise ValueError("a recorded stop binds with MATERIALISED's row only")
+            await self._orders.create(stored, event, binds=binds)
+        elif first is None:
             await self._orders.create(stored, event)
         elif to_state != "validated" or self._submissions is None:
             raise ValueError("a first persist writes a validated row, through its store")

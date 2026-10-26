@@ -59,6 +59,7 @@ from candleviewer.storage.repositories.orders import (
     OrderStore,
     OrderTransition,
     OutOfScope,
+    RecordedStopBind,
     ScopedOrder,
 )
 from candleviewer.storage.repositories.positions import (
@@ -167,22 +168,32 @@ class OrderRepository:
         self._store = store
         self._timer = timer
 
-    async def create(self, order: NewOrder, first_event: NewOrderEvent) -> OrderRow:
+    async def create(
+        self, order: NewOrder, first_event: NewOrderEvent, *, binds: RecordedStopBind | None = None
+    ) -> OrderRow:
         """The submit hot path: the row and its first event in one transaction (#845); a second
-        row under the id raises `DuplicateOrderLinkId`."""
+        row under the id raises `DuplicateOrderLinkId`. With `binds` (E29-T05), a recorded stop's
+        materialised row binds its record in that transaction (`OrderStore.create`, 24 Sec.8.3
+        rule 7); `RecordedStopNotBindable` passes through, and the log line names the record by
+        id only."""
         try:
             with self._timer.measure("orders"):
-                row = await self._store.create(order, first_event)
+                if binds is None:
+                    row = await self._store.create(order, first_event)
+                else:
+                    row = await self._store.create(order, first_event, binds=binds)
         except OrderConstraintError as exc:
             if exc.constraint != UX_ORDERS_LINK:
                 raise
             raise DuplicateOrderLinkId(order.order_link_id) from None
+        bound = {} if binds is None else {"recorded_stop_id": str(binds.record_id)}
         _log().info(
             "oms_order_created",
             order_link_id=row.order_link_id,
             order_id=str(row.id),
             account_id=str(row.exchange_account_id),
             state=row.state,
+            **bound,
         )
         return row
 
