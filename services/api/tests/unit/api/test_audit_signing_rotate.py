@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -26,6 +27,7 @@ from candleviewer.api.audit_signing_keys import (
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.step_up import GRACE_WINDOW
 from candleviewer.secrets import SecretsService
 from candleviewer.secrets.store import (
     InMemoryAuthKeyStore,
@@ -170,6 +172,24 @@ async def test_a_repeat_after_a_restart_replays_its_200_and_another_body_is_reus
     reused = later.post(again, ref, {"reason": "compromise"})
     assert (reused.status_code, reused.json()["code"]) == (409, "idempotency_key_reuse")
     assert _unstored(repeat, reused)
+
+
+async def test_a_replay_needs_a_live_window_and_never_outlives_it(rot: _Rot) -> None:
+    """#2304 slice 3b (review): the step-up comes before M2's replay of the stored `200`, so the
+    same key and body re-sent once the `keys` window has ended on the fake clock get the
+    challenge, never the stored keys; after a new step-up they get the replay."""
+    token, ref = await elevated(rot), uuid.uuid4()
+    first = rot.post(token, ref)
+    assert first.status_code == 200
+    rot.w.clock.now += GRACE_WINDOW + timedelta(seconds=1)
+    resent = rot.post(token, ref)
+    assert (resent.status_code, resent.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in resent.headers and _unstored(resent)
+    assert first.json()["active"]["key_id"] not in resent.text
+    assert rot.w.elevate(token, action_class="keys").status_code == 200
+    again = rot.post(token, ref)
+    assert (again.status_code, again.headers["idempotency-replayed"]) == (200, "true")
+    assert again.json() == first.json() and len(rot.keys.rows) == 2
 
 
 async def test_another_owners_key_is_one_never_seen(rot: _Rot) -> None:

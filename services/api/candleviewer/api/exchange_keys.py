@@ -1,19 +1,21 @@
 """The key routes (E27-T03, #836; #897 and #898 extend them): `createApiKey`, `testApiKey`.
 
 FastAPI checks the closed body (the shared `422`, no value echoed); then the session (401),
-`keys:manage` (C-12.4, `rbac.denied` audited: 403), the required `Idempotency-Key` (400), its
-replay, the account the import names (`KeyImport.admit`: `404`, or `422` for another UID, recorded
-as the import's are), and only then the `keys` step-up (SR-025; `HANDLER_GATED_ROUTES`, #2304 slice
-3b), whose challenge names the account and the key's kind, never key material or the key's label.
-Then the import, which audits. The key binds only after those admission checks (22, Binding point),
-so a refusal before the step-up is never kept. Its fingerprint holds the path, the label,
-`read_only`, `expected_uid` and `api_key` as an HMAC under a per-process key, never `api_secret`
-(SR-E27-20). The import's `201`, `404`, `409` or `422` is kept for replay; a `403`, `502` or `503`
-never is, nor a `409` that clears by itself (an import of the account still running, as E42-T05's),
-so its re-send is a first submission. The fake backend has no import flow: `503 store_unavailable`.
-An import runs to its end in a task of its own (`key_import_wiring.KeyImports`, which the lifespan
-drains), its answer kept as above, so a cancelled request never stops it between M2's store and the
-promotion. No frame here holds the pasted key in clear.
+`keys:manage` (C-12.4, `rbac.denied` audited: 403), the required `Idempotency-Key` (400), the
+account the import names (`KeyImport.admit`: `404`, or `422` for another UID, recorded as the
+import's are), and only then the `keys` step-up (SR-025; `HANDLER_GATED_ROUTES`, #2304 slice 3b),
+whose challenge names the account and the key's kind, never key material or the key's label. Then
+the replay (a kept answer, or `409 idempotency_key_reuse` for another request; after the step-up, so
+a session holding no live window never reads one back), the in-flight check and the import, which
+audits. The key binds only after those admission checks (22, Binding point), so a refusal before the
+step-up is never kept. Its fingerprint holds the path, the label, `read_only`, `expected_uid` and
+`api_key` as an HMAC under a per-process key, never `api_secret` (SR-E27-20). The import's `201`,
+`404`, `409` or `422` is kept for replay; a `403`, `502` or `503` never is, nor a `409` that clears
+by itself (an import of the account still running, as E42-T05's), so its re-send is a first
+submission. The fake backend has no import flow: `503 store_unavailable`. An import runs to its end
+in a task of its own (`key_import_wiring.KeyImports`, which the lifespan drains), its answer kept as
+above, so a cancelled request never stops it between M2's store and the promotion. No frame here
+holds the pasted key in clear.
 
 `testApiKey` (slice 2b6) takes no step-up (04 §7.2.2 row 44) and no idempotency key: the session,
 then `keys:read` on the account (`granted_accounts`, a refusal audited as `rbac.denied` and always
@@ -292,14 +294,6 @@ def make_exchange_keys_router(
         tag = hmac.new(mac_key, body.api_key.get_secret_value().encode(), "sha256").hexdigest()
         shown = [request.url.path, body.label, body.read_only, body.expected_uid, tag]
         digest = hashlib.sha256(json.dumps(shown).encode()).hexdigest()
-        if (hit := replays.get(owner, once)) is not None:
-            if hit.digest != digest:
-                return _problem("idempotency_key_reuse", "The key was used for another request.")
-            media = "application/json" if hit.status < 400 else "application/problem+json"
-            replayed = {"Idempotency-Replayed": "true"}
-            return Response(hit.body, hit.status, replayed, media_type=media)
-        if (owner, once) in running:
-            return _problem("idempotency_in_flight", "A request with this key is being processed.")
         wanted = KeyImportRequest(
             account_id=account_id,
             api_key=Secret(body.api_key.get_secret_value()),
@@ -316,6 +310,16 @@ def make_exchange_keys_router(
         restated = import_key_text(named, read_only=wanted.read_only)
         if (refused := await demand_elevation(elevation, request, restated)) is not None:
             return refused
+        # The replay after the step-up (#2304 review): a kept answer is read back only by a
+        # session the gate admits, never one holding no live `keys` window.
+        if (hit := replays.get(owner, once)) is not None:
+            if hit.digest != digest:
+                return _problem("idempotency_key_reuse", "The key was used for another request.")
+            media = "application/json" if hit.status < 400 else "application/problem+json"
+            replayed = {"Idempotency-Replayed": "true"}
+            return Response(hit.body, hit.status, replayed, media_type=media)
+        if (owner, once) in running:
+            return _problem("idempotency_in_flight", "A request with this key is being processed.")
         running.add((owner, once))
         work = imports.run(answer(imports.flow, wanted, actor, (owner, once), digest))
         return await asyncio.shield(work)

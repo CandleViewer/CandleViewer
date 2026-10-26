@@ -24,10 +24,12 @@ import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import get_args
 
 from starlette.requests import Request
 
 from candleviewer.accounts.models import ExchangeEnv
+from candleviewer.api._generated import openapi_models as api
 
 _ENVIRONMENTS = frozenset(env.value for env in ExchangeEnv)
 _EXCHANGE_UID = re.compile(r"[0-9]{1,20}")
@@ -134,8 +136,13 @@ def revoke_session_text(user_id: object, session_id: object) -> ChallengeText:
 # one of these. An account is named by `account_reference`; enums and instants are bare. Key
 # material, a key's label and `expected_uid` are never arguments, so they cannot be restated.
 
-#: `RotateAuditSigningKeyRequest.reason` (22): the only values `rotate_signing_key_text` restates.
-_SIGNING_REASONS = frozenset({"scheduled", "compromise", "unrecoverable"})
+#: The only values these templates restate, read from the generated contract models, so a value
+#: the contract adds or drops changes them with it (22 `KekRewrapRequest.environment`,
+#: `RotateAuditSigningKeyRequest.reason`).
+_KEK_ENVIRONMENTS = frozenset(get_args(api.KekRewrapRequest.model_fields["environment"].annotation))
+_SIGNING_REASONS = frozenset(
+    get_args(api.RotateAuditSigningKeyRequest.model_fields["reason"].annotation)
+)
 
 
 def import_key_text(account: str, *, read_only: bool) -> ChallengeText:
@@ -146,8 +153,8 @@ def import_key_text(account: str, *, read_only: bool) -> ChallengeText:
 
 def kek_rewrap_text(environment: str, to_version: int) -> ChallengeText:
     """`rewrapKek`: the environment whose stored keys move, and the KEK version they move to."""
-    if environment not in _ENVIRONMENTS:
-        raise ValueError("a re-wrap names a registered environment")
+    if environment not in _KEK_ENVIRONMENTS:
+        raise ValueError("a re-wrap names a contract environment")
     return ChallengeText(
         f"Re-wrap the {environment} API keys under credential key version {int(to_version)}"
     )

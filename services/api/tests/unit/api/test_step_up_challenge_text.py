@@ -11,12 +11,17 @@ from __future__ import annotations
 import re
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta, timezone
+from typing import get_args
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.api._generated.openapi_models import UpdateUserRequest
+from candleviewer.api._generated.openapi_models import (
+    KekRewrapRequest,
+    RotateAuditSigningKeyRequest,
+    UpdateUserRequest,
+)
 from candleviewer.api.step_up_challenge import (
     UPDATE_USER_RENDERED,
     account_reference,
@@ -145,6 +150,18 @@ def test_key_kek_and_audit_texts_restate_validated_values_only() -> None:
     )
     assert export_audit_text(start, start, compress=True).action_summary.endswith(", compressed")
     assert {t.target for t in (text, kek_rewrap_text("demo", 2))} == {None}
+
+
+def test_enum_texts_restate_every_value_of_their_generated_literal() -> None:
+    """#2304 slice 3b (review): the allow-lists are the generated contract Literals, so every
+    contract value renders and nothing else does."""
+    environments = get_args(KekRewrapRequest.model_fields["environment"].annotation)
+    reasons = get_args(RotateAuditSigningKeyRequest.model_fields["reason"].annotation)
+    assert environments and reasons
+    for environment in environments:
+        assert f" {environment} " in kek_rewrap_text(environment, 2).action_summary
+    for reason in reasons:
+        assert rotate_signing_key_text(reason).action_summary.endswith(f"({reason})")
 
 
 @pytest.mark.parametrize(

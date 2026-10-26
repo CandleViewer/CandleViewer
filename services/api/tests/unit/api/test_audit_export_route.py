@@ -90,9 +90,12 @@ class _World:
         return _WHO.get(request.headers.get("x-who", ""))
 
     elevated = True  # False: no live `audit` window, so the step-up challenges
+    #: A grace window on a fake clock (minutes), when set: elevated only while `now < until`.
+    now: float = 0.0
+    until: float | None = None
 
     async def require_elevation(self, session_id: str, action_class: str) -> None:
-        if not self.elevated:
+        if not self.elevated or (self.until is not None and self.now >= self.until):
             raise StepUpRequired(action_class)
 
     async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
@@ -192,6 +195,23 @@ async def test_an_unelevated_owners_export_is_challenged_restating_the_window(
     assert answer.headers["cache-control"] == "no-store"
     world.elevated = True
     assert (await world.post()).status_code == 202  # the quota was never spent
+
+
+async def test_a_replay_needs_a_live_window_and_never_outlives_it(world: _World) -> None:
+    """#2304 slice 3b (review): the step-up comes before the idempotency lookup, so the same key
+    and body re-sent once the `audit` window has ended on the fake clock get the challenge,
+    never the stored `202`; inside a new window they get the replay."""
+    key, world.until = str(uuid.uuid4()), 5.0
+    first = await world.post(key=key)
+    assert first.status_code == 202
+    world.now = 6.0  # past the 5-minute window
+    resent = await world.post(key=key)
+    assert (resent.status_code, resent.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in resent.headers
+    assert first.json()["job_id"] not in resent.text
+    world.until = 11.0  # a new step-up
+    again = await world.post(key=key)
+    assert (again.status_code, again.headers["idempotency-replayed"]) == (202, "true")
 
 
 @pytest.mark.parametrize("who", ["manager", "viewer"])
