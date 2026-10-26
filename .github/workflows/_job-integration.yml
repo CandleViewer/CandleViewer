@@ -8,8 +8,8 @@ name: _job-integration
 #      fixture manifest + checksum verification (CI-INT-001/002) then the
 #      recorded-fixture -> normalised-events replay. Runs with outbound
 #      network denied except loopback (`_ci_network_guard.py`, autouse).
-#   2. `-m integration` suites needing Postgres/QuestDB (currently the
-#      identity/RBAC migration round-trip, `tests/integration/auth/`) —
+#   2. `-m integration` suites needing Postgres/QuestDB (`tests/integration/`,
+#      sharded since #4605, see below) —
 #      these spin their own service container via testcontainers, which
 #      needs Docker; `services=docker` is available on GitHub-hosted
 #      ubuntu runners.
@@ -26,11 +26,23 @@ name: _job-integration
 # exists and is wired here; it activates automatically as `unit/exchange`
 # and `oms` gain real logic under the existing `-m integration` marker.
 #
-# #3881: the `integration` job runs on the merge queue's merge group and on a merge train, never
-# on a pull request's own run: it is the slowest job of the gate (about 14 minutes), and the queue
-# runs it on every merge into `main` before `ci-required` lets the group through. The resolver
-# reads its `skipped` on a pull request as "runs on the merge group" (scripts/ci_gate_resolver.mjs);
-# change its `if:` and that rule together. `audit-query-plan` is unchanged: opt-in on a PR.
+# #3881: the integration jobs run on the merge queue's merge group and on a merge train, never on
+# a pull request's own run: they are the slowest part of the gate, and the queue runs them on
+# every merge into `main` before `ci-required` lets the group through. The resolver reads the
+# lane's `skipped` on a pull request as "runs on the merge group" (scripts/ci_gate_resolver.mjs);
+# change the jobs' `if:` and that rule together. `audit-query-plan` is unchanged: opt-in on a PR.
+#
+# #4605: the suite step had grown to 18-28 minutes against the 30-minute hang guard (run
+# 40309420588 was cancelled at 30:00 and its PR ejected from the queue). Three job definitions now:
+#   - `integration-shard`: a matrix of four shards of suite 2, split by measured per-file duration
+#     (tools/ci/integration_shards.py: median seconds over five merge-group runs, pinned report
+#     files, a default weight so a new file still lands in exactly one shard). Each writes its
+#     pytest and job time to its summary; shard 1 uploads restore-drill-report and storage-perf.
+#   - `integration-stack`: what runs once, in parallel with the shards: suite 1, the SR-047
+#     probe, the storage chaos scenarios and the Grafana render suite on their compose stores.
+#   - `integration`: the check `ci-required` judges (same name as before); it tabulates every
+#     shard's duration and fails unless every shard and the stack job passed.
+# Each job sets its own timeout-minutes (measured duration plus 10), not vars.CV_CI_TIMEOUT_MINUTES.
 
 on:
   workflow_call: {}
@@ -45,12 +57,125 @@ env:
   CV_CI_ALLOWED_HOSTS: ""
 
 jobs:
-  integration:
-    name: integration
+  integration-shard:
+    # #4605: the Postgres/QuestDB suite in four shards of about equal measured duration
+    # (tools/ci/integration_shards.py; five merge-group runs: 18-27 min in one job, 4.4-7.0 min a
+    # shard). `total` is the one place the shard count is set; the job name, the split script
+    # call and the summary read it. timeout-minutes is the heaviest shard at the slowest measured
+    # pace plus the job's overhead (9 min) plus 10, not vars.CV_CI_TIMEOUT_MINUTES; a pin test
+    # recomputes it from the weight table (scripts/tests/test_integration_shards.py).
+    name: integration-shard (${{ matrix.shard }}/${{ matrix.total }})
     # Not on a pull request (#3881, see the header); the merge group and a merge train run it.
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ fromJSON(vars.CV_CI_TIMEOUT_MINUTES || 20) }}
+    timeout-minutes: 19
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+        total: [4] # keep in sync with the shard list above (a pin test checks it)
+    steps:
+      - name: Record the job's start time (#4605 per-shard durations)
+        id: start
+        run: echo "start_s=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.x"
+          enable-cache: true
+          cache-dependency-glob: "services/api/uv.lock"
+          python-version: "3.12"
+
+      - name: uv sync --frozen --all-groups
+        working-directory: services/api
+        run: uv sync --frozen --all-groups
+
+      # #4301: testcontainers pulls postgres:16-alpine (and postgres:16.4, QuestDB) mid-test when the
+      # daemon lacks them. Pull them here, with retries; Postgres also has a pinned mirror
+      # (tools/ci/prepull_images.sh, infra/images/prepull.txt).
+      - name: Pre-pull postgres, compose postgres and questdb images (CI-INFRA-001)
+        run: tools/ci/prepull_images.sh postgres postgres-compose questdb
+
+      - name: Postgres/QuestDB-backed integration suite, one shard (testcontainers, needs Docker)
+        id: pytest
+        env:
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
+        run: |
+          set -euo pipefail
+          listing=$(python tools/ci/integration_shards.py "$SHARD" "$TOTAL")
+          mapfile -t files <<< "$listing"
+          cd services/api
+          # The pytest wall time and file count go to the job summary (last steps), so growth
+          # shows before a shard nears its timeout; a failing run still reports them.
+          pytest_start_s=$(date +%s)
+          status=0
+          uv run pytest "${files[@]}" -m "integration and not perf and not flaky" --no-cov -rA || status=$?
+          {
+            echo "pytest_s=$(( $(date +%s) - pytest_start_s ))"
+            echo "test_files=${#files[@]}"
+          } >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      # The report files' tests are pinned to shard 1 (PINNED in tools/ci/integration_shards.py).
+      - name: Upload restore-drill report (E07-X02 SR-093)
+        if: ${{ always() && matrix.shard == 1 }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: restore-drill-report
+          path: services/api/build/reports/restore-drill.json
+          if-no-files-found: error
+
+      - name: Upload storage perf report (E07-Q03)
+        if: ${{ always() && matrix.shard == 1 }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: storage-perf
+          path: services/api/build/reports/storage-perf.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Shard duration (job summary; the integration job tabulates every shard)
+        if: always()
+        env:
+          START_S: ${{ steps.start.outputs.start_s }}
+          SHARD: ${{ matrix.shard }}
+          TOTAL: ${{ matrix.total }}
+          PYTEST_S: ${{ steps.pytest.outputs.pytest_s }}
+          TEST_FILES: ${{ steps.pytest.outputs.test_files }}
+          OUTCOME: ${{ steps.pytest.outcome }}
+        run: |
+          mkdir -p shard-timing
+          row="| ${SHARD}/${TOTAL} | $(( $(date +%s) - START_S )) | ${PYTEST_S:-n/a} | ${TEST_FILES:-n/a} | ${OUTCOME} |"
+          echo "$row" > "shard-timing/shard-${SHARD}.md"
+          {
+            echo "### integration-shard ${SHARD}/${TOTAL} duration"
+            echo "| shard | job (s) | pytest (s) | test files | suite step |"
+            echo "|---|---|---|---|---|"
+            echo "$row"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: integration-shard-timing-${{ matrix.shard }}
+          path: shard-timing/shard-${{ matrix.shard }}.md
+          if-no-files-found: error
+          retention-days: 5 # a later "Re-run failed jobs" of `integration` still finds every shard
+
+  integration-stack:
+    # #4605: everything that runs once, beside the shards (about 3 minutes, so never the critical
+    # path, and shard 1 stays as long as the others): the fixture-driven pipeline, the SR-047
+    # probe, the storage chaos scenarios and the Grafana render suite, each on its own compose
+    # stores. timeout-minutes: about 3 minutes measured (run 40314689824) plus 10.
+    name: integration-stack
+    # Not on a pull request (#3881, see the header); the merge group and a merge train run it.
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 13
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -66,12 +191,10 @@ jobs:
         working-directory: services/api
         run: uv sync --frozen --all-groups
 
-      # #4301: testcontainers pulls postgres:16-alpine mid-test when the daemon lacks it, and the
-      # compose steps below pull QuestDB, Grafana and postgres:16.4. Pull them all here, with
-      # retries; Postgres also has a pinned mirror (tools/ci/prepull_images.sh,
-      # infra/images/prepull.txt).
-      - name: Pre-pull postgres, compose postgres, questdb and grafana images (CI-INFRA-001)
-        run: tools/ci/prepull_images.sh postgres postgres-compose questdb grafana
+      # #4301: the compose steps below pull QuestDB, Grafana and postgres:16.4; pull them here,
+      # with retries (tools/ci/prepull_images.sh, infra/images/prepull.txt).
+      - name: Pre-pull compose postgres, questdb and grafana images (CI-INFRA-001)
+        run: tools/ci/prepull_images.sh postgres-compose questdb grafana
 
       - name: Verify fixture manifest (CI-INT-001 fixture unavailable, CI-INT-002 checksum mismatch)
         run: python tools/ci/verify_fixture_manifest.py --manifest tests/fixtures/MANIFEST.sha256 --repo-root .
@@ -79,18 +202,6 @@ jobs:
       - name: Fixture-driven pipeline suite (network denied except loopback)
         working-directory: services/api
         run: uv run pytest tests/integration/pipeline -m "not integration and not fuzz and not perf and not harness and not flaky" --no-cov
-
-      - name: Postgres/QuestDB-backed integration suite (testcontainers, needs Docker)
-        working-directory: services/api
-        run: uv run pytest tests/integration -m "integration and not perf and not flaky" --no-cov -rA
-
-      - name: Upload restore-drill report (E07-X02 SR-093)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: restore-drill-report
-          path: services/api/build/reports/restore-drill.json
-          if-no-files-found: error
 
       - name: SR-047 runtime listener probe on the compose data stores (E07-X02)
         env:
@@ -204,14 +315,43 @@ jobs:
         if: always()
         run: docker rm -f cv-grafana || true
 
-      - name: Upload storage perf report (E07-Q03)
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+  integration:
+    # The check `ci-required` reads (lane `integration`, CONSTITUTION.md §9 check 7): green only
+    # when every shard and the stack job passed; a failing, cancelled or timed-out one fails it.
+    # Its own `if:` keeps the #3881 skip on a pull request (all three jobs skip there, so the
+    # lane's result is `skipped`, which the resolver reads as deferred to the merge group).
+    name: integration
+    needs: [integration-shard, integration-stack]
+    if: ${{ github.event_name != 'pull_request' && !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: storage-perf
-          path: services/api/build/reports/storage-perf.json
-          if-no-files-found: warn
-          retention-days: 30
+          pattern: integration-shard-timing-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/shard-timing
+
+      - name: Per-shard durations (job summary)
+        if: always()
+        env:
+          TIMING_DIR: ${{ runner.temp }}/shard-timing
+        run: |
+          {
+            echo "### integration shards"
+            echo "| shard | job (s) | pytest (s) | test files | suite step |"
+            echo "|---|---|---|---|---|"
+            cat "$TIMING_DIR"/shard-*.md 2>/dev/null || echo "| none reported | | | | |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Every shard and the stack job passed
+        if: always()
+        env:
+          SHARDS: ${{ needs.integration-shard.result }}
+          STACK: ${{ needs.integration-stack.result }}
+        run: |
+          echo "integration-shard (all shards): $SHARDS; integration-stack: $STACK"
+          [ "$SHARDS" = success ] && [ "$STACK" = success ]
 
       - name: Assert no live-exchange egress occurred
         if: always()

@@ -70,6 +70,9 @@ EXPANSIONS = {
     # scripts/tests, scripts/gh/tests and the infra suites), and test_governance_shards checks its
     # shards partition exactly those (#3789, #4361).
     ("governance.yml", "governance-tests"): frozenset({"${files[@]}"}),
+    # tools/ci/integration_shards.py prints the test file paths `pytest tests/integration`
+    # collects, and test_integration_shards checks its shards partition exactly those (#4605).
+    ("_job-integration.yml", "integration-shard"): frozenset({"${files[@]}"}),
 }
 QUARANTINE = "flaky"  # C-9.3 quarantines a test by adding it on top of the test's lane markers
 # Shell scripts a workflow step runs, read like a `run:` (#3091): the blocking xstate-contract gate.

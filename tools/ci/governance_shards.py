@@ -36,7 +36,7 @@ from __future__ import annotations
 
 import fnmatch
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -115,16 +115,33 @@ def suite_files(root: Path = REPO_ROOT) -> list[str]:
     return sorted(found)
 
 
-def shards(files: Iterable[str], count: int) -> list[list[str]]:
-    """`files` split into `count` shards of about equal weight, each sorted."""
+def shards(
+    files: Iterable[str],
+    count: int,
+    weights: Mapping[str, float] = WEIGHTS,
+    default: float = DEFAULT_WEIGHT,
+    pinned: Mapping[str, int] | None = None,
+) -> list[list[str]]:
+    """`files` split into `count` shards of about equal weight, each sorted.
+
+    A `pinned` file goes to its shard (1-based) first; every other file goes greedily, heaviest
+    first, to the lightest shard. #4605: tools/ci/integration_shards.py splits the merge queue's
+    integration suite with its own `weights`, `default` and `pinned`."""
     if count < 1:
         raise ValueError("count must be at least 1")
+    pins = dict(pinned or {})
+    if any(not 1 <= index <= count for index in pins.values()):
+        raise ValueError(f"a pinned shard is outside 1..{count}: {pins}")
     bins: list[list[str]] = [[] for _ in range(count)]
     load = [0.0] * count
-    for name in sorted(files, key=lambda f: (-WEIGHTS.get(f, DEFAULT_WEIGHT), f)):
+    names = set(files)
+    for name in sorted(names & pins.keys()):
+        bins[pins[name] - 1].append(name)
+        load[pins[name] - 1] += weights.get(name, default)
+    for name in sorted(names - pins.keys(), key=lambda f: (-weights.get(f, default), f)):
         lightest = load.index(min(load))
         bins[lightest].append(name)
-        load[lightest] += WEIGHTS.get(name, DEFAULT_WEIGHT)
+        load[lightest] += weights.get(name, default)
     return [sorted(b) for b in bins]
 
 

@@ -87,7 +87,15 @@ EVENT_CONDITIONS = {
     # #3881: the compose integration lane starts on a merge group and on a train, never on a pull
     # request's own run. The reverse of a PR guard: a queue run can only gain a job from it, and
     # the resolver requires the lane there (MERGE_GROUP_ONLY in scripts/ci_gate_resolver.mjs).
-    "_job-integration.yml:integration": "${{ github.event_name != 'pull_request' }}",
+    # #4605: the shards and the stack job carry that condition; the `integration` job that
+    # judges them adds `!cancelled()`, so a failing or cancelled shard still reaches its verdict.
+    **dict.fromkeys(
+        ["_job-integration.yml:integration-shard", "_job-integration.yml:integration-stack"],
+        "${{ github.event_name != 'pull_request' }}",
+    ),
+    "_job-integration.yml:integration": (
+        "${{ github.event_name != 'pull_request' && !cancelled() }}"
+    ),
     # The freeze proposal artifact for a dependency PR's reviewer; the freeze check still runs:
     FREEZE_UPLOAD: "${{ !cancelled() && steps.freeze.outcome == 'failure' && (github.actor == "
     "'dependabot[bot]' || contains(github.event.pull_request.labels.*.name, 'dependencies')) }}",
