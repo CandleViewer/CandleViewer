@@ -20,7 +20,7 @@ lines by `python tools/ci/integration_shards.py weigh LOG...` (`py_test_lanes.lo
 each file's container start-up is inside it, no fixture is session-scoped): runs 40314689824
 (job 121544380186, 18.2 min of pytest), 40313441542 (121540241321, 20.4 min), 40311572348
 (121535134566, 24.9 min), 40309804896 (121528404102, 24.8 min) and 40309420588 (121526736412,
-27.4 min, the cancelled run, whose suite step had finished). The medians sum to 1,458 s; the
+27.4 min, the cancelled run, whose suite step had finished). The medians sum to 1,456 s; the
 slowest run took `SLOWEST_RUN_FACTOR` times that. Any other file costs `DEFAULT_WEIGHT`, the
 median file, so a new, renamed or moved file always lands in exactly one shard
 (`scripts/tests/test_integration_shards.py` proves it for every collected file) and stale
@@ -65,7 +65,7 @@ PINNED: dict[str, tuple[int, str]] = {
 #: The shard job's non-pytest time: set-up, checkout, uv sync, image pre-pull, collection and
 #: uploads (about 70 s in run 40314689824), rounded up.
 SHARD_OVERHEAD_S = 90
-#: The slowest of the five runs over the sum of the medians (1,644 s / 1,458 s).
+#: The slowest of the five runs over the sum of the medians (1,644 s / 1,456.2 s).
 SLOWEST_RUN_FACTOR = 1.13
 #: A shard job's `timeout-minutes` is its expected worst duration plus this (#4605).
 TIMEOUT_MARGIN_MIN = 10

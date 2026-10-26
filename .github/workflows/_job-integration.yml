@@ -126,6 +126,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: restore-drill-report
+          overwrite: true # a re-run of shard 1 replaces the earlier attempt's report
           path: services/api/build/reports/restore-drill.json
           if-no-files-found: error
 
@@ -134,6 +135,7 @@ jobs:
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: storage-perf
+          overwrite: true # a re-run of shard 1 replaces the earlier attempt's report
           path: services/api/build/reports/storage-perf.json
           if-no-files-found: warn
           retention-days: 30
@@ -164,6 +166,9 @@ jobs:
           name: integration-shard-timing-${{ matrix.shard }}
           path: shard-timing/shard-${{ matrix.shard }}.md
           if-no-files-found: error
+          # A re-run of this shard replaces the attempt it repeats (the `_job-py.yml` lane precedent);
+          # without it the re-run's upload fails with "an artifact with this name already exists".
+          overwrite: true
           retention-days: 5 # a later "Re-run failed jobs" of `integration` still finds every shard
 
   integration-stack:
@@ -353,12 +358,14 @@ jobs:
           echo "integration-shard (all shards): $SHARDS; integration-stack: $STACK"
           [ "$SHARDS" = success ] && [ "$STACK" = success ]
 
+      # Informational only: this job runs no tests. The guard acts in the jobs that do.
       - name: Assert no live-exchange egress occurred
         if: always()
         run: |
           echo "Network guard (services/api/tests/_ci_network_guard.py) denies any non-loopback"
-          echo "connect() for the whole run; a test reaching api.bybit.com raises NetworkGuardViolation"
-          echo "and fails this job rather than silently succeeding."
+          echo "connect() in every integration-shard and integration-stack test; a test reaching"
+          echo "api.bybit.com raises NetworkGuardViolation and fails the shard or stack job that ran"
+          echo "it, so the verdict step above fails this job rather than silently succeeding."
 
   # E42-K01 (#888) audit query-plan spike: 10 M synthetic audit_log rows on a
   # testcontainers Postgres 16, EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) per index
