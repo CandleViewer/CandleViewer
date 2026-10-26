@@ -10,7 +10,8 @@ holding the account's profiles re-reads them, and the backstops are E28-S01's. P
 guard: the order path's version check at submit keeps a stale profile from sizing (SR-E28-15).
 
 It runs after the commit, on its own task: an offer that raises is logged (the account, the error
-class) and counted, and never reaches the writer; a cancellation propagates. Each change offered to
+class) and counted, and never reaches the writer, as is an item on the pattern that is no
+`ProfilesChanged` (logged by its class alone); a cancellation propagates. Each change offered to
 a socket is one sample of `cv_profile_propagation_seconds` (`env` only), from its `ts_event`, the
 write's transaction time, at or before its commit (so a sample reads long by that transaction), to
 the hand-off. The composition root builds it (`accounts` and `ws` import nothing of each other,

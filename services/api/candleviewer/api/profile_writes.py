@@ -13,14 +13,19 @@ binding's tag, whose version the store compares under the account's lock before 
 profile the 1 KiB body names (0d-3); binding the current default writes nothing (B4).
 `answer` maps every refusal: one `profile.save_refused` per audited rule (`native_stop_mandatory`
 from every path, SR-E28-08), none for shape; a record not written is `503 audit_unavailable`, with
-nothing stored (C-2.9). Logs carry classes and rule names, never a value (C-12.6).
+nothing stored (C-2.9). Logs carry classes and rule names, never a value (C-12.6). A create or a
+replace past its replay check is a save, counted at its one exit by its answer, its rules if
+refused, and timed from the handler's entry (`SaveMeasures`, #906 D3b); an admission refusal, a
+replay, a delete and a move are none. Each series is per result or rule, never per account,
+profile or principal.
 """
 
 from __future__ import annotations
 
 import inspect
+import time
 import uuid
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Final
@@ -41,7 +46,9 @@ from candleviewer.accounts.errors import (
 from candleviewer.accounts.models import ExchangeEnv
 from candleviewer.accounts.profile_input import (
     DEFAULT_HAS_OWN_OPERATION,
+    FIRST_PASS_RULES,
     NATIVE_STOP_OFF,
+    SCHEMA_RULES,
     ProfileFieldError,
     check_profile_input,
     map_profile_input,
@@ -56,6 +63,7 @@ from candleviewer.accounts.profile_repository import (
     StoredProfile,
 )
 from candleviewer.accounts.profile_validator import (
+    SECOND_PASS_RULES,
     InstrumentLimitsPort,
     InstrumentLimitsUnavailable,
     SizingWarningsPort,
@@ -88,6 +96,7 @@ from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import ForbiddenError, PrincipalSnapshot, enforce
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.context import current_request_uuid
+from candleviewer.observability.metrics import NOOP_CHILD, MetricChild, Metrics
 from candleviewer.observability.redaction import redact_text
 from candleviewer.storage.errors import StorageError, StorageQueryFailed, WriteAheadTimeout
 from candleviewer.storage.repositories.account_profiles import DEFAULT_MOVES_ALONE
@@ -106,6 +115,58 @@ _ENTRY: Final = {"ap_native_sl": NATIVE_STOP_OFF, DEFAULT_MOVES_ALONE: DEFAULT_H
 _IS_DEFAULT: Final = (
     "It is the account's default profile: make another profile the default first"
     " (setAccountDefaultProfile)."
+)
+#: `cv_profile_saves_total{result}`: a save's answer (`SaveMeasures.record`).
+SAVE_RESULTS: Final = ("saved", "refused", "stale", "conflict", "not_found", "unavailable")
+#: `cv_profile_validation_failures_total{rule}`: the contract's named rules, B1's and B2's sets, and
+#: `schema` for any other (a model's type, a JSON error, a stored rule), one union (C-16.5).
+FAILURE_RULES: Final = SCHEMA_RULES | FIRST_PASS_RULES | SECOND_PASS_RULES | {"schema"}
+#: A counted answer's result by its status, a 2xx `saved`; any other status is no save.
+_RESULT_OF: Final = {
+    422: "refused", 412: "stale", 428: "stale", 409: "conflict",
+    404: "not_found", 503: "unavailable",
+}  # fmt: skip
+
+
+@dataclass(frozen=True, slots=True)
+class SaveMeasures:
+    """A save's three series (#906 D3b), each child bound once by `bound`, so no save binds one
+    (the observability contract's rule 3); `clock` times a save from its handler's entry."""
+
+    saves: Mapping[str, MetricChild]
+    failures: Mapping[str, MetricChild]
+    seconds: MetricChild
+    clock: Callable[[], float] = time.perf_counter
+
+    @classmethod
+    def bound(
+        cls, metrics: Metrics, *, clock: Callable[[], float] = time.perf_counter
+    ) -> SaveMeasures:
+        """Over `metrics`, on which `register_r0` registered the catalogue."""
+        saves = metrics.get("cv_profile_saves_total")
+        failures = metrics.get("cv_profile_validation_failures_total")
+        return cls(
+            {result: saves.labels(result) for result in SAVE_RESULTS},
+            {rule: failures.labels(rule) for rule in FAILURE_RULES},
+            metrics.get("cv_profile_save_seconds").child(),
+            clock,
+        )
+
+    def record(self, status: int, rules: Iterable[str], elapsed_s: float) -> None:
+        """One save by its answer's status (`_RESULT_OF`); a refusal counts each distinct rule
+        once, one outside `FAILURE_RULES` as `schema`."""
+        result = "saved" if 200 <= status < 300 else _RESULT_OF.get(status)
+        if result is None:
+            return
+        self.saves[result].inc()
+        self.seconds.observe(elapsed_s)
+        if result == "refused":
+            for rule in {rule if rule in FAILURE_RULES else "schema" for rule in rules}:
+                self.failures[rule].inc()
+
+
+_UNMEASURED: Final = SaveMeasures(
+    dict.fromkeys(SAVE_RESULTS, NOOP_CHILD), dict.fromkeys(FAILURE_RULES, NOOP_CHILD), NOOP_CHILD
 )
 
 
@@ -181,11 +242,13 @@ def _blocked(is_default: bool, armed: Sequence[ArmedRule]) -> str:
 def make_profile_writes_router(
     writes: ProfileWrites | None, audit: Emitter, resolver: SnapshotResolver | None, *,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
-    new_id: Callable[[], uuid.UUID] = uuid.uuid4,
+    new_id: Callable[[], uuid.UUID] = uuid.uuid4, measures: SaveMeasures | None = None,
 ) -> APIRouter:  # fmt: skip
-    """The writes over `writes` (`None`: 503); `resolver=None` (no identity wired): 501."""
+    """The writes over `writes` (`None`: 503); `resolver=None` (no identity wired): 501. A save is
+    counted and timed by `measures`, none when `None` (`create_app` binds the app's)."""
     router = APIRouter(tags=["exchange-accounts"])
     cache = IdempotencyCache() if replays is None else replays
+    measured = _UNMEASURED if measures is None else measures
 
     async def admit(request: Request, account_id: uuid.UUID) -> _Admitted | Response:
         """The admission, in the module docstring's order."""
@@ -219,16 +282,20 @@ def make_profile_writes_router(
         return admitted if held.env is actor.env else problem("not_found", _NO_ACCOUNT)
 
     async def answer(
-        exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None, *, stale: str = _STALE
-    ) -> Response:
+        exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None, *,
+        stale: str = _STALE, rules: list[str] | None = None,
+    ) -> Response:  # fmt: skip
         """A write that stored nothing: an unwritten record before the `StorageError` a
-        `WriteAheadTimeout` is, a stale listing before its `AccountsError`; a defect is raised."""
+        `WriteAheadTimeout` is, a stale listing before its `AccountsError`; a defect is raised.
+        A 422 adds its rules to `rules`, a save's count (D3b)."""
         if isinstance(exc, edge.Refused):
             try:
                 await got.refusals.audit_refused(exc.errors, profile_id=profile_id)
             except ProfileAuditRefused:
                 return _unaudited()
             entries = [entry.to_dict() for entry in exc.errors]
+            if rules is not None:
+                rules += [entry.rule for entry in exc.errors]
             return problem("validation_failed", exc.detail, errors=entries)
         if isinstance(exc, edge.BodyTooLarge):
             return problem("payload_too_large", str(exc))
@@ -253,10 +320,10 @@ def make_profile_writes_router(
             return problem("conflict", _blocked(True, ()))  # a move landed since the read
         if isinstance(exc, AccountRuleError):  # the store's own rule, which the passes missed
             if exc.rule in _ENTRY:  # answered as the pass answers it (audited or not alike)
-                return await answer(edge.refused([_ENTRY[exc.rule]]), got, profile_id)
+                return await answer(edge.refused([_ENTRY[exc.rule]]), got, profile_id, rules=rules)
             _log().error("profile_write_refused_by_constraint", rule=exc.rule)
             stored = ProfileFieldError("", exc.rule, "The profile breaks a stored rule.")
-            return await answer(edge.refused([stored]), got, profile_id)
+            return await answer(edge.refused([stored]), got, profile_id, rules=rules)
         if isinstance(exc, AccountScopeDeniedError):  # the store's live-owner gate (SR-051)
             await not_owner(
                 NamesSession(audit, auth, got.request), got.principal, got.account_id,
@@ -275,14 +342,17 @@ def make_profile_writes_router(
     async def create_account_profile(
         request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
     ) -> Response:
+        began = measured.clock()
         if isinstance(got := await admit(request, account_id), Response):
             return got
+        rules: list[str] | None = None  # from C1 on a save's: the rules its refusal names
         try:
             key = edge.idempotency(request, "createAccountProfile")
             raw = await edge.read_capped(request, edge.MAX_PROFILE_BODY_BYTES)
             digest = request_fingerprint(request.method, request.url.path, raw)
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
                 return hit
+            rules = []
             body = _schema(edge.decode(raw))
             if errors := check_profile_input(body, stored_is_default=None) + edge.name_errors(body):
                 raise edge.refused(errors)
@@ -300,13 +370,17 @@ def make_profile_writes_router(
                 got.scope, account_id, profile, write_ahead=got.records.audit_created()
             )
         except Exception as exc:  # mapped, or raised as a defect
-            return await answer(exc, got)
-        doc = profile_document(
-            stored.profile, created_at=stored.created_at, environment=got.actor.env,
-            warnings=second.warnings,
-        )  # fmt: skip
-        out = JSONResponse(doc, 201, {"ETag": profile_etag(stored.profile)})
-        return remember(cache, str(got.principal.user_id), key, digest, out)
+            out = await answer(exc, got, rules=rules)
+        else:
+            doc = profile_document(
+                stored.profile, created_at=stored.created_at, environment=got.actor.env,
+                warnings=second.warnings,
+            )  # fmt: skip
+            out = JSONResponse(doc, 201, {"ETag": profile_etag(stored.profile)})
+            out = remember(cache, str(got.principal.user_id), key, digest, out)
+        if rules is not None:  # its one exit
+            measured.record(out.status_code, rules, measured.clock() - began)
+        return out
 
     async def current(got: _Admitted, profile_id: uuid.UUID, version: int) -> StoredProfile:
         """The profile, at the version `If-Match` names: compared here, never bound by a write."""
@@ -321,14 +395,17 @@ def make_profile_writes_router(
         account_id: Annotated[uuid.UUID, Path(alias="accountId")],
         profile_id: Annotated[uuid.UUID, Path(alias="profileId")],
     ) -> Response:
+        began = measured.clock()
         if isinstance(got := await admit(request, account_id), Response):
             return got
+        rules: list[str] | None = None  # from U1 on a save's: the rules its refusal names
         try:
             key = edge.idempotency(request, "updateAccountProfile")
             raw = await edge.read_capped(request, edge.MAX_PROFILE_BODY_BYTES)
             digest = request_fingerprint(request.method, request.url.path, raw)
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
                 return hit
+            rules = []
             version = edge.if_match_version(request, str(profile_id))
             body = _schema(edge.decode(raw))
             stored = (await current(got, profile_id, version)).profile
@@ -350,13 +427,17 @@ def make_profile_writes_router(
                 write_ahead=got.records.audit_updated(),
             )  # fmt: skip
         except Exception as exc:  # mapped, or raised as a defect
-            return await answer(exc, got, profile_id)
-        doc = profile_document(
-            saved.profile, created_at=saved.created_at, environment=got.actor.env,
-            warnings=second.warnings,
-        )  # fmt: skip
-        out = JSONResponse(doc, 200, {"ETag": profile_etag(saved.profile)})
-        return remember(cache, str(got.principal.user_id), key, digest, out)
+            out = await answer(exc, got, profile_id, rules=rules)
+        else:
+            doc = profile_document(
+                saved.profile, created_at=saved.created_at, environment=got.actor.env,
+                warnings=second.warnings,
+            )  # fmt: skip
+            out = JSONResponse(doc, 200, {"ETag": profile_etag(saved.profile)})
+            out = remember(cache, str(got.principal.user_id), key, digest, out)
+        if rules is not None:  # its one exit
+            measured.record(out.status_code, rules, measured.clock() - began)
+        return out
 
     @router.delete("/exchange-accounts/{accountId}/profiles/{profileId}", status_code=204)  # nosem: no-raw-account-id reason=owner-only-write-OwnerScope-live-owner-gate-and-account-predicate-in-SQL-SR-051-PF-T01 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
     async def delete_account_profile(

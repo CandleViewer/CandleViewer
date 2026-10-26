@@ -89,7 +89,7 @@ rules:
       # reason, also (E42-T05, #966, cv_backup_verify_failures_total): the seven `Backup.error`
       #   codes, each bound at import (`storage/repositories/backups.BACKUP_ERROR_CODES`); max_series=7.
       # class, domain, reason, state (ADR-0037 S4a): {reserved, shared}; a registered audit
-      #   action's first segment or `other` (39); section 15.6's refusals and `timeout` (14 with
+      #   action's first segment or `other` (38); section 15.6's refusals and `timeout` (14 with
       #   `class`), its anomaly reasons, or {held, stopped}; {open, held, stopped}.
       # tier (E26-T02, #625): a storage tier, never an identifier: the replay read-path series'
       #   {questdb, parquet} (max_series<=16 in the catalogue), and the router's `ServedBy`
@@ -107,6 +107,10 @@ rules:
       # state, also (E28-T01, #905, cv_profile_rows): {trading_enabled, trading_disabled}, never
       #   an account; max_series=2. result, also (cv_profile_cache_lookups_total): {hit, miss},
       #   bound in `accounts/profile_cache.py`; max_series=2.
+      # result, also (E28-T02, #906 D3b, cv_profile_saves_total): the six
+      #   `api/profile_writes.SAVE_RESULTS`; max_series=6. rule, also
+      #   (cv_profile_validation_failures_total): `FAILURE_RULES`, B1's and B2's rule sets plus
+      #   `schema`; max_series=18.
       # from, to, source (E29-T03, #847, oms_state_transitions_total): `from` and `to` are B1's 17
       #   `lifecycle` states, read from the committed chart (`oms/order_machine.Legality`), and a
       #   pair only ever an edge of it; `source` is the five `OrderEventSource` values; max_series=256.

@@ -194,8 +194,9 @@ async def test_a_bridge_that_stops_on_its_own_says_so_and_stop_says_nothing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A `get` that raises ends the task: it is logged by class at error, never silent; a
-    cancellation by `stop` logs nothing (R1S-01). The done-callback is registered at `start`, so
-    it has run when `asyncio.wait` returns."""
+    cancellation by `stop` logs nothing (R1S-01), not even through the loop's exception handler,
+    which asyncio calls for a done-callback that raises. The done-callback is registered at
+    `start`, so it has run when `asyncio.wait` returns."""
     hub = _Hub()
     bus, notices, _ = _bridge(hub)
     assert notices._running is not None
@@ -212,15 +213,18 @@ async def test_a_bridge_that_stops_on_its_own_says_so_and_stop_says_nothing(
             await _publish(bus, _changed(ACC_B, 5))
             await asyncio.wait({task})
         await notices.stop()
-    assert [(log["event"], log["error"]) for log in logs] == [
-        ("profile.notices_stopped", "RuntimeError")
+    assert [(log["event"], log["error"], log["log_level"]) for log in logs] == [
+        ("profile.notices_stopped", "RuntimeError", "error")
     ]
     _, calm, _ = _bridge(_Hub())
     assert calm._running is not None
     _, stopping = calm._running
-    with structlog.testing.capture_logs() as stop_logs:
-        await calm.stop()
-    assert stopping.cancelled() and stop_logs == []
+    loop, raised = asyncio.get_running_loop(), list[dict[str, Any]]()
+    monkeypatch.setattr(loop, "call_exception_handler", raised.append)
+    async with asyncio.timeout(_DEADLINE_S):
+        with structlog.testing.capture_logs() as stop_logs:
+            await calm.stop()
+    assert stopping.cancelled() and (stop_logs, raised) == ([], [])
 
 
 async def test_a_cancellation_in_the_offer_ends_the_bridge_and_is_no_failure() -> None:
@@ -270,7 +274,8 @@ async def test_a_cancelled_stop_still_lets_go_of_the_pattern() -> None:
     stopping = asyncio.ensure_future(notices.stop())
     await asyncio.sleep(0)  # `stop` runs up to its wait for the task
     stopping.cancel()
-    await asyncio.wait({stopping})
+    async with asyncio.timeout(_DEADLINE_S):
+        await asyncio.wait({stopping})
     await _publish(bus, _changed(ACC_A, 4))
     assert stopping.cancelled() and await bus.drain(0) == {}
 
