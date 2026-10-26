@@ -1013,9 +1013,9 @@ class ServingTick:
     """The serving loop's tick, which the order lane reads in place (#913 L4; the ruling of
     2026-10-25 19:19Z). Every write that could refuse at the gate runs on the serving loop (20
     Sec.6.2), so while it stalls the gate's sources are frozen. On the serving loop, `run()` beats
-    every `SERVING_TICK_S`; from any thread, `stale()` answers whether the last beat is older than
-    `SERVING_STALE_S`. Sticky: however long the lane waits, only a beat of the serving loop ends
-    it. The beat's time is a single assignment, read in place."""
+    every `SERVING_TICK_S`; from any thread, `overdue()` gives the last beat's age once it is over
+    `SERVING_STALE_S`, else None. Sticky: however long the lane waits, only a beat of the serving
+    loop ends it. The beat's time is a single assignment, read in place."""
 
     def __init__(
         self,
@@ -1036,19 +1036,22 @@ class ServingTick:
             self.beat()
             await self._wait(SERVING_TICK_S)
 
-    def stale(self) -> bool:
-        return self._clock() - self._beat_at > SERVING_STALE_S
+    def overdue(self) -> float | None:
+        """The last beat's age in seconds once it is over `SERVING_STALE_S`, else None: one read
+        of the clock, so a caller logs the age it judged (SEC-S3L4-04)."""
+        age = self._clock() - self._beat_at
+        return age if age > SERVING_STALE_S else None
 
 
 class FencedSwitches:
     """`TradingSwitches` for new exposure (#913 L4; the rulings of 2026-10-25 19:19Z and 21:56Z):
     a new submit's, the route's step 10, the pipeline's switches and a re-send, and the exit
     service's, which a risk-increasing amend alone reads, as it meets the gate as a submit does
-    (SR-E28-27, C-2.21). While the serving loop's tick is stale, `OmsNotReady`, logged, and no
-    switch is read; else the switches' answer, whose first refusal is the environment lock's fence
-    (#913 L2): the two compose, either refusing on its own. A protective amend, a cancel,
-    cancel-all, a stop attach or a KILL reads none (C-2.6); the gate's age bounds stay the outer
-    ones (20 Sec.6.2)."""
+    (SR-E28-27, C-2.21). While the serving loop's tick is overdue, `OmsNotReady`, logged with the
+    age it was judged at, and no switch is read; else the switches' answer, whose first refusal is
+    the environment lock's fence (#913 L2): the two compose, either refusing on its own. A
+    protective amend, a cancel, cancel-all, a stop attach or a KILL reads none (C-2.6); the gate's
+    age bounds stay the outer ones (20 Sec.6.2)."""
 
     def __init__(self, switches: TradingSwitches, tick: ServingTick) -> None:
         self._switches, self._tick = switches, tick
@@ -1056,8 +1059,13 @@ class FencedSwitches:
     def refusal(
         self, account_id: AccountId, environment: Environment
     ) -> TradingDisabled | OmsNotReady | None:
-        if self._tick.stale():
-            _log().error("oms_submit_fenced", account_id=str(account_id), stale_s=SERVING_STALE_S)
+        if (age := self._tick.overdue()) is not None:
+            _log().error(
+                "oms_submit_fenced",
+                account_id=str(account_id),
+                age_s=round(age, 3),
+                stale_s=SERVING_STALE_S,
+            )
             raise OmsNotReady
         return self._switches.refusal(account_id, environment)
 
@@ -1780,13 +1788,6 @@ def _heartbeat_ended(pager: Pager, task: asyncio.Task[None]) -> None:
         _page(pager, "oms_lane_heartbeat_ended")
 
 
-def _tick_ended(task: asyncio.Task[None]) -> None:
-    """A serving-loop tick that ended other than by its stop's cancel leaves every new submit and
-    risk-increasing amend fenced (`FencedSwitches`), never admitted: logged by its error's class."""
-    if not task.cancelled() and (error := task.exception()) is not None:
-        _log().critical("oms_serving_tick_ended", error=type(error).__name__)
-
-
 async def _drained(tasks: set[asyncio.Task[Any]], timeout_s: float) -> set[asyncio.Task[Any]]:
     """The tasks still running once `timeout_s` has passed, or none."""
     if not tasks:
@@ -2082,6 +2083,15 @@ class OmsRuntime:
         if not task.cancelled() and (error := task.exception()) is not None:
             _log().critical("oms_startup_failed", error=type(error).__name__)
 
+    def _tick_ended(self, task: asyncio.Task[None]) -> None:
+        """A serving-loop tick that ended other than by its stop's cancel leaves every new submit
+        and risk-increasing amend fenced (`FencedSwitches`) until the runtime starts again, never
+        admitted (fail closed): logged by its error's class and paged, once, as the task ends once
+        (SEC-S3L4-02)."""
+        if not task.cancelled() and (error := task.exception()) is not None:
+            _log().critical("oms_serving_tick_ended", error=type(error).__name__)
+            _page(self._pager, "oms_serving_tick_ended")
+
     async def start(self) -> None:
         """Start the serving loop's tick (`ServingTick`, L4) and the order lane, compose the OMS on
         the lane, then spawn the startup task (20 Sec.6.2). A second call does nothing until
@@ -2099,7 +2109,7 @@ class OmsRuntime:
         tick, serving = self._serving_tick(), Serving(self._loop, self._metrics)
         # the serving loop's tick, which a new submit meets on the lane (L4, ruling of 19:19Z)
         self._ticking = spawn(tick.run(), name="oms-serving-tick")
-        self._ticking.add_done_callback(_tick_ended)
+        self._ticking.add_done_callback(self._tick_ended)
         try:
             self._phase = "lane"
             await lane.start()
@@ -2213,7 +2223,8 @@ class OmsRuntime:
         self._failed = False
 
     def _untick(self) -> None:
-        """End the serving loop's tick, if it runs: cancelled, which its callback never logs."""
+        """End the serving loop's tick, if it runs: cancelled, which its callback neither logs nor
+        pages."""
         ticking, self._ticking = self._ticking, None
         if ticking is not None:
             ticking.cancel()
