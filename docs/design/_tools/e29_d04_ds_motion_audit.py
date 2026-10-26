@@ -638,7 +638,7 @@ def visible(text: str) -> str:
 
 # a hard fragment boundary: a semicolon, a spaced dash, a parenthesis or bracket, a colon, a
 # table cell, a sentence end; a negation never reaches across one
-HARD = re.compile(r";\s*|\s+[—–]\s+|[()\[\]]|:\s+|\s\|\s|(?:(?<=[.!?])|(?<=[.!?]\*\*))\s+")
+HARD = re.compile(r";\s*|\s+[—–]\s+|[()\[\]]|:\s+|\s\|\s|(?:(?<=[^\s!][.!?])|(?<=[.!?]\*\*))\s+")
 # a soft boundary inside a fragment: a comma or a conjunction that opens a new clause
 SOFT = re.compile(
     r",\s+(?=(?:the|a|an|it|its|they|their|this|these|that|those|which|each|every|both|so|"
@@ -1005,24 +1005,24 @@ def over(fg: str, bg: str, alpha: float) -> str:
     return "#" + "".join(f"{c:02X}" for c in mix)
 
 
-def resolve(value: object, tokens: dict[str, dict[str, object]], seen: frozenset[str]) -> object:
+def resolve(value: object, entries: dict[str, dict[str, object]], seen: frozenset[str]) -> object:
     """`verify_tokens.resolve`: a DTCG `{token.path}` reference, resolved recursively."""
     if isinstance(value, str) and value.startswith("{") and value.endswith("}"):
         ref = value[1:-1]
         if ref in seen:
             raise SystemExit(f"FAIL parse: circular reference {ref}")
-        if ref not in tokens:
+        if ref not in entries:
             raise SystemExit(f"FAIL parse: unset variable {ref}")
-        return resolve(tokens[ref]["$value"], tokens, seen | {ref})
+        return resolve(entries[ref]["$value"], entries, seen | {ref})
     if isinstance(value, dict):
-        return {k: resolve(v, tokens, seen) for k, v in value.items()}
+        return {k: resolve(v, entries, seen) for k, v in value.items()}
     if isinstance(value, list):
-        return [resolve(v, tokens, seen) for v in value]
+        return [resolve(v, entries, seen) for v in value]
     return value
 
 
 @functools.lru_cache(maxsize=8)
-def token_file(name: str) -> dict[str, dict[str, object]]:
+def ds_set_file(name: str) -> dict[str, dict[str, object]]:
     """One token set at the base: name → its entry."""
     data = json.loads(at_base(f"{DS_DIR_REL}/{name}.tokens.json"))
     return {str(k): v for k, v in data.items() if isinstance(v, dict)}
@@ -1031,7 +1031,7 @@ def token_file(name: str) -> dict[str, dict[str, object]]:
 @functools.lru_cache(maxsize=8)
 def ds_file(name: str) -> dict[str, object]:
     """One token file at the base: name → its raw `$value`."""
-    return {k: v.get("$value") for k, v in token_file(name).items()}
+    return {k: v.get("$value") for k, v in ds_set_file(name).items()}
 
 
 @functools.lru_cache(maxsize=1)
@@ -1065,7 +1065,7 @@ def theme_colours(theme: str) -> dict[str, str]:
     a later set overriding an earlier one (`verify_tokens.merged_set`)."""
     layered: dict[str, dict[str, object]] = {}
     for s in theme_sets()[theme]:
-        layered.update(token_file(s))
+        layered.update(ds_set_file(s))
     out: dict[str, str] = {}
     for name, entry in layered.items():
         if entry.get("$type") == "color":
@@ -1504,14 +1504,14 @@ FILL = re.compile(r"\{\{audit:([A-Za-z0-9_.\-]+)\}\}")
 NUMBER = re.compile(r"(?<![\w.])\d+(?:,\d{3})*(?:\.\d+)?")
 FIGURE = re.compile(
     r"(?<![\w.,:#/>{-])(\d+(?:[.,]\d+)*)\s?-?\s?(ms|s|hz|px|%|:1|milliseconds?|seconds?|pixels?"
-    r"|hertz|percent)(?![\w])",
+    r"|hertz|percent|mins?|minutes?|h|hrs?|hours?)(?![\w])",
     re.IGNORECASE,
 )
 # a spelled figure with a unit ("eight seconds", "half a second", "four hundred milliseconds")
 SPELLED_FIGURE = re.compile(
     r"\b(?:(?:one|two|three|four|five|six|seven|eight|nine|ten|twelve|fifteen|twenty|thirty|forty"
     r"|fifty|sixty|hundred|thousand|half|tenth|quarter)[\s-]+(?:and[\s-]+|of[\s-]+|a[\s-]+)*)+"
-    r"(?:milliseconds?|seconds|pixels?|hertz)\b|\b(?:half|tenth|quarter)[\s-]+(?:of[\s-]+)?a[\s-]+second\b",
+    r"(?:milliseconds?|seconds|minutes|hours|pixels?|hertz)\b|\b(?:half|tenth|quarter)[\s-]+(?:of[\s-]+)?a[\s-]+second\b",
     re.IGNORECASE,
 )
 TWO_DP = re.compile(r"(?<![\w.,:#/-])\d+\.\d{1,2}(?!\d|\.\d)")
@@ -1521,7 +1521,10 @@ BARE_COUNT = re.compile(
     r"|per second|fps)\b|\b(?:peak|bar|ratio|opacity|floor)\s+(?:of\s+)?\d+(?:\.\d+)?(?![\w.])",
     re.IGNORECASE,
 )
-TIME_UNIT = re.compile(r"\d+(?:[.,]\d+)*\s?-?\s?(?:ms|milliseconds?|seconds?|s)\b", re.IGNORECASE)
+TIME_UNIT = re.compile(
+    r"\d+(?:[.,]\d+)*\s?-?\s?(?:ms|milliseconds?|seconds?|s|mins?|minutes?|h|hrs?|hours?)\b",
+    re.IGNORECASE,
+)
 # a quoted fragment G-CITE verifies: right after a `file`:line cite
 CITED_QUOTE = re.compile(r':\d+(?:[–-]\d+)?(?:, :\d+(?:[–-]\d+)?)* "[^"\n]+"')
 DELTA = re.compile(r"Δ[EL]\*?(?:76)?\s+(?:of\s+)?(?:about |around |roughly |some |nearly |~)?\d")
@@ -1862,8 +1865,44 @@ def g_ruled(t: Texts) -> list[str]:
     return one("G-RULED", bad)
 
 
+# `16` §11.4's thirteen checklist lines (`16`:483 onwards), in order, as hand-off §B holds them
+CHECKLIST_LINES = (
+    "Final Penpot link", "Variants × States", "Keyboard table", "Accessible name and role",
+    "Live data", "Motion pair", "Density notes", "Essential exceptions", "Tokens used",
+    "Data contract confirmed", "Contrast and CVD",
+    "Design QA (`16` §12) and a11y AC (`05` §10)", "Sign-off",
+)  # fmt: skip
+CHECK_BOX = ("[x]", "[ ]", "N/A")
+
+
+def checklist_problems(t: Texts) -> list[str]:
+    """Hand-off §B: the thirteen lines present in order, every box `[x]`, `[ ]` or N/A; Sign-off
+    open on every entry with the owner mark (an approval only the owner gives); the Penpot line
+    open while §0's boards are PENDING."""
+    block = section(t.hand, "§B ")
+    if not block:
+        return []  # a missing §B is G-HANDOFF's
+    rows = table_with(block, "`16` §11.4 line", "Evidence")
+    lines = [col(r, "`16` §11.4 line") for r in rows]
+    if lines != list(CHECKLIST_LINES):
+        return ["hand-off §B does not hold `16` §11.4's thirteen lines in order"]
+    bad: list[str] = []
+    for r in rows:
+        line = col(r, "`16` §11.4 line")
+        boxes = [v.strip() for c, v in r.items() if c.startswith("CMP-")]
+        if len(boxes) != 7 or any(not b.startswith(CHECK_BOX) for b in boxes):
+            bad.append(f"§B {line!r}: a box that is not [x], [ ] or N/A")
+        if line == "Sign-off" and (set(boxes) != {"[ ]"} or OWNER_MARK not in col(r, "Evidence")):
+            bad.append("§B Sign-off is ticked or lacks the owner mark")
+        pending_boards = any("PENDING" in col(b, "Status") for b in boards(t.spec))
+        if line == "Final Penpot link" and pending_boards and set(boxes) != {"[ ]"}:
+            bad.append("§B Final Penpot link is ticked while §0's boards are PENDING")
+    return bad
+
+
 def g_owner(t: Texts) -> list[str]:
-    """BQ-2 / BQ-10 / BQ-11 / BQ-12 are owner-level: marked wherever they depart."""
+    """BQ-2 / BQ-10 / BQ-11 / BQ-12 are owner-level: marked wherever they depart; hand-off §B
+    never ticks the owner's sign-off (`16` §11.4)."""
     rows = table_with(section(t.spec, "The sixteen questions"), "#", "Question")
     bq = {row_key(col(r, "#")): " | ".join(r.values()) for r in rows}
     bad = [f"{k} lacks the owner mark" for k in OWNER_BQS if OWNER_MARK not in bq.get(k, "")]
@@ -1871,6 +1910,7 @@ def g_owner(t: Texts) -> list[str]:
         heading = next((ln for ln in t.spec.split("\n") if ln.startswith(prefix)), "")
         if OWNER_MARK not in heading:
             bad.append(f"the {prefix.strip('# ')} heading lacks the owner mark")
+    bad += checklist_problems(t)
     return one("G-OWNER", bad)
 
 
@@ -2185,6 +2225,14 @@ def _spelled_value(words: str) -> float | None:
     return total + current
 
 
+# a motion token said to run more than once: "twice", "two times", "× 3", "3 times"
+REPEAT_WORDS = {"twice": 2.0, "thrice": 3.0, "two": 2.0, "three": 3.0, "four": 4.0, "double": 2.0}
+REPEAT = (
+    r"(?:(twice|thrice|double)\b|(?:times|x|×|\*) ?(two|three|four|\d+)\b"
+    r"|(two|three|four|\d+) times\b|(?:repeated|played|run) (twice|thrice)\b)"
+)
+
+
 def durations(text: str, anywhere: bool = False) -> list[float]:
     """Every duration a text states, in ms, inside a duration phrase (after over / for / in /
     lasts / takes / runs, or before the motion it times: "a 400 ms fade") or, with `anywhere`,
@@ -2224,12 +2272,12 @@ def durations(text: str, anywhere: bool = False) -> list[float]:
             if w:
                 out.append(w if re.fullmatch(UNIT_MS, m[2]) else 1000 * w)
     prim = ds_file("primitives")
-    for m in re.finditer(
-        r"motion\.duration\.([a-z-]+)((?:\s*(?:twice|x 2|× 2|\* 2|times two))?)", plain
-    ):
+    for m in re.finditer(rf"motion\.duration\.([a-z-]+)(?:[,;]?\s*{REPEAT})?", plain):
         if f"motion.duration.{m[1]}" in prim:
             v = float(str(prim[f"motion.duration.{m[1]}"]).removesuffix("ms"))
-            out.append(2 * v if m[2].strip() else v)
+            times = next((float(g) for g in m.groups()[1:] if g and g[0].isdigit()), 0.0)
+            word = next((g for g in m.groups()[1:] if g and not g[0].isdigit()), "")
+            out.append(v * (times or REPEAT_WORDS.get(word, 1.0)))
     return out
 
 
@@ -2320,7 +2368,7 @@ def g_row200(t: Texts) -> list[str]:
                 bad.append(f"`16` block {name!r} {c}: `slow`")
             names = re.findall(r"motion\.duration\.([a-z-]+)", cell)
             names += re.findall(r"\bover (?:the )?([a-z]+)\b(?= /|;|,|$)", cell)
-            if any(x not in ("instant", "fast", "normal") for x in names if x in TOKEN_WORDS):
+            if any(x not in ("instant", "fast", "normal") for x in names if x in SPEED_WORDS):
                 bad.append(
                     f"`16` block {name!r} {c}: a duration that is not instant, fast or normal"
                 )
@@ -2332,7 +2380,7 @@ def g_row200(t: Texts) -> list[str]:
     return one("G-ROW-200", bad)
 
 
-TOKEN_WORDS = ("instant", "fast", "normal", "slow", "slower", "medium", "long", "short")
+SPEED_WORDS = ("instant", "fast", "normal", "slow", "slower", "medium", "long", "short")
 
 
 def g_compositor(t: Texts) -> list[str]:
@@ -2498,6 +2546,10 @@ KIND = (
     r"|fill colou?rs?|fill tones?|fills?|pills?|tags?|badges?|markers?|protection chips?|chips?"
     r"|liq(?:uidation)? tiers?|tiers?|t2|lock(?: glyph)?|enabled|disabled|demo|live(?! regions?)"
     r"|environment pills?|env pills?|states?|status|no_sl|✓|⟳|⚠|△"
+    # the glyphs this spec draws (§2's Glyph columns): the delta and Side ▲ / ▼, a disclosure's
+    # ▸ / ▾ (Mo-10), the Near and Critical tiers' ! and !!; and their names
+    r"|[▲▼▸▾△▽▴▾▶◀►◄]|(?<![!\w])!!?(?![!\w])|\bchevrons?\b|\bcarets?\b|\barrows?\b"
+    r"|\bdisclosures?\b|\btriangles?\b"
 )
 # a frame whose id names a state (a status, a liq tier, a chip state, T2, the display or the
 # toggle): its Motion names a cut row only
@@ -2588,15 +2640,15 @@ def g_instant(t: Texts) -> list[str]:
             bad.append(f"`16` block {col(r, 'Surface')[:24]!r} (a state swap) is not a cut")
     texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
     moving = MOVE_VERBS + "|" + TIMED + r"|\btransition(?:s|ed|ing)? (?:from|to|between|into)\b"
-    hits = clause_claims(texts, KIND, moving, prep=neutral_tokens)
+    hits = clause_claims(texts, KIND, moving, prep=neutral_names)
     bad += [f"claim: {c!r}" for c in hits]
     return one("G-INSTANT", bad)
 
 
-def neutral_tokens(s: str) -> str:
+def neutral_names(s: str) -> str:
     """A sentence with every design-system token but the motion ones read as "a token", so a
     state word inside a name (`color.status.info.subtle`) is no subject."""
-    return re.sub(r"`?\b(?!motion\.)[a-z]+(?:\.[a-z0-9_*{}-]+)+`?", " a token ", s)
+    return re.sub(r"`?(?<![\w.])(?!motion\.)[a-z]+(?:\.[a-z0-9_*{}-]+)+`?", " a token ", s)
 
 
 LOOP_WORDS = (
@@ -2651,9 +2703,11 @@ def g_loop(t: Texts) -> list[str]:
 
 PER_TICK = (
     r"\b(?:per|every|each|on|with|at|for)\s+(?:each\s+|every\s+|a\s+|the\s+|single\s+)?"
-    r"(?:(?:price|mark|market|ws|data|value|feed|book|order|row)\s+)*"
+    r"(?:(?:new|latest|incoming|fresh|price|mark|market|ws|data|value|feed|book|order|row)\s+)*"
     r"(?:ticks?|updates?|messages?|prints?|trades?|deltas?|changes?|refresh\w*|repaints?"
-    r"|fills?|executions?)\b"
+    r"|fills?|executions?|quotes?)\b"
+    r"|\bas (?:the )?(?:new )?(?:prices?|quotes?|values?|ticks?|trades?|data|marks?|updates?) "
+    r"(?:stream|arrive|come|pour|flow|tick|update|change)s?\b|\bstream(?:s|ed|ing)? in\b"
     r"|\b(?:every|each|on every|on each|at every|at each) (?:ws |data |animation |painted )?frames?\b"
     r"|\bper ?tick\b|\btick by tick\b|\btick rate\b|\btick driven\b"
     r"|\bwhenever (?:the |a |its |any )?(?:price|value|mark|figure|number|cell|quantity)s? "
@@ -2676,6 +2730,54 @@ TWEEN = (
     r"count(?:s|ing|ed)? (?:up|down)|\btween\w*|interpolat\w*|roll(?:s|ing)? (?:up|over|to)"
     r"|odometer|\bglid\w*|\banimat\w* to\b|\bticks? (?:up|down)\b"
 )
+
+
+# a `16`-block row that runs per frame, without a limit or with `16` §7.1's limits set aside
+TICK_DENY = (
+    r"\bno limit\w*|\bunlimited\b|\bwithout (?:a |any )?limit\w*|\blimitless\b"
+    r"|\bonce (?:per|a|every|each) (?:painted |animation |ws )?frames?\b"
+    r"|\bper (?:painted |animation |ws )?frames?\b|\bevery update\b|\bper ?tick\b"
+    r"|\blimits? (?:are |is )?(?:waived|lifted|suspended|ignored|relaxed|off|dropped|removed)\b"
+    r"|\b(?:waiv|suspend|lift|ignor|relax|overrid|exempt)\w* (?:\S+ ){0,3}limits?\b"
+    r"|\bstale (?:cells?|values?|rows?|figures?) (?:flash|take|get|keep)\w*|\bfull opacity\b"
+)
+# the flash row of the `16` block: its Enter and Hold / clear cells, exact (default-deny)
+FLASH_ENTER_PIN = (
+    "an opacity overlay of `color.status.info.subtle` above the cell at `16` §7.1's peak, "
+    "decaying over `fast`; `prefers-reduced-motion`: no flash, the signed text and ▲ / ▼ are "
+    "the change"
+)
+FLASH_HOLD_PIN = (
+    "`16` §7.1's limits for the value-change emphasis, unchanged and not restated (`16`:199); "
+    "latest wins; never while stale"
+)
+
+
+def tick_16_block(hand: str) -> list[str]:
+    """The `16` block's rows, each read whole (R10 at the copy E29-T09 pastes): no row runs per
+    tick, per update or per frame, none drops its limit, a stale cell never flashes; the flash
+    row keeps `16` §7.1's peak and limits, its pointer and "never while stale", exact."""
+    bad: list[str] = []
+    rows = block16_rows(hand)
+    flash = [r for r in rows if re.search(r"\bflash", norm_text(col(r, "Surface")))]
+    if rows and len(flash) != 1:
+        bad.append(f"the `16` block has {len(flash)} flash rows, not one")
+    for r in rows:
+        name = col(r, "Surface")[:24]
+        # the pinned flash Hold is held exact below ("for the value-change emphasis" names
+        # `16` §7.1's subject, no trigger); every other cell is read here
+        row = decamel(
+            " | ".join(one_space(v) for v in r.values() if one_space(v) != FLASH_HOLD_PIN)
+        )
+        n = norm_text(row).replace("never while stale", " ")
+        if live(row, PER_TICK) or re.search(TICK_DENY, n) or re.search(r"\bstale\b", n):
+            bad.append(f"`16` block {name!r} runs per tick, per frame or past its limit")
+    for r in flash:
+        if one_space(col(r, "Enter")) != FLASH_ENTER_PIN:
+            bad.append("the `16` block's flash Enter is not `16` §7.1's peak, exact")
+        if one_space(col(r, "Hold / clear")) != FLASH_HOLD_PIN:
+            bad.append("the `16` block's flash Hold is not `16` §7.1's limits (`16`:199), exact")
+    return bad
 
 
 def g_tick(t: Texts) -> list[str]:
@@ -2704,6 +2806,7 @@ def g_tick(t: Texts) -> list[str]:
                 if not re.search(r"\bsettled\b", norm_text(col(r, "Trigger"))):
                     bad.append(f"{k}: the flash starts on something other than a settled value")
     bad += [f"claim (tween): {c!r}" for c in pair_claims(texts, NUMBERISH, TWEEN, 4)]
+    bad += tick_16_block(t.hand)
     s34 = section(t.spec, "3.4 Never per tick")
     if not pending(t.spec, "3.4 Never per tick") and "per tick" not in norm_text(s34):
         bad.append("§3.4 does not state the per-tick rule")
@@ -2731,6 +2834,9 @@ PENDING_STRONG = (
     r"\b(?:paints?|shows?|draws?|displays?) the new (?:price|value|quantity)\b[^.;]*\bbefore\b"
     r"|\bbefore (?:the |an? )?(?:bybit'?s? |exchange'?s? )?(?:ack\w*|acknowledg\w*|confirm\w*)\b"
     r"|\b(?:drawn|shown|painted|reads?) as (?:working|confirmed|amended|filled|done)\b"
+    r"|\b(?:on|at|upon|after) (?:send\w*|submit\w*|click\w*|the press|enter|commit\w*)\b[^.;]*"
+    r"\b(?:takes?|shows?|paints?|draws?|displays?|gets?|reads?|swaps? to|jumps? to) the new "
+    r"(?:price|value|quantity|qty|size|trigger)\b"
     r"|\bvalue cell (?:show|keep|paint|hold|tak)(?:s|es|ing)? the new (?:value|price)\b"
     r"|\b(?:disappears?|vanish\w*|is (?:removed|dropped|cleared)|clears?)\b[^.;]*"
     r"\b(?:the moment|as soon as)\b[^.;]*\b(?:sent|submitted)\b"
@@ -3228,10 +3334,10 @@ def g_env(t: Texts) -> list[str]:
     for text in swept(t):
         for u in units(text):
             raw = _HIDDEN.sub(" ", u)
-            tokens = set(re.findall(r"color\.env\.(live|demo)\b", raw))
+            env_names = set(re.findall(r"color\.env\.(live|demo)\b", raw))
             words = {w.lower() for w in re.findall(r"\b(LIVE|DEMO)\b", unquote(raw) + " " + raw)}
-            if len(tokens) == 1 and words and not (tokens & words):
-                bad.append(f"`color.env.{tokens.pop()}` drawn for {sorted(words)}: {u[:40]!r}")
+            if len(env_names) == 1 and words and not (env_names & words):
+                bad.append(f"`color.env.{env_names.pop()}` drawn for {sorted(words)}: {u[:40]!r}")
     if not pending(t.spec, "4.3 Environment"):
         s43 = norm_text(section(t.spec, "4.3 Environment"))
         if "leads with its environment" not in s43:
@@ -3935,7 +4041,7 @@ GATE_RULES: dict[str, str] = {
     "G-CITE": "cites, quoted fragments and Table A's Old cells hold at the base (condition)",
     "G-PIN": "merged texts at their merge shas (condition)",
     "G-RULED": "RULED cites the #823 ruling; BQ-1 to BQ-16 (BQ-1)",
-    "G-OWNER": "the owner-level rows are marked (BQ-2, BQ-10, BQ-11, BQ-12)",
+    "G-OWNER": "the owner-level rows marked; §B's Sign-off never ticked (BQ-2, BQ-10 to BQ-12)",
     "G-AC": "AC1, AC3 and DoD 1-2 met as copy-ready A-rows (BQ-2)",
     "G-CROW": "every departure has its C-row (BQ-2, BQ-5, BQ-9 to BQ-12)",
     "G-BOARDS": "at most ten boards, at most three light twins (BQ-15)",
@@ -3950,7 +4056,7 @@ GATE_RULES: dict[str, str] = {
     "G-REDUCE-INSTANT": "every twin instant (BQ-9; AC2)",
     "G-INSTANT": "state swaps at frame 0; six rows and six frames animate (BQ-9, BQ-11)",
     "G-LOOP": "no shimmer, pulse or loop word, any case (BQ-10)",
-    "G-TICK": "nothing per tick or update; the flash rate (BQ-9)",
+    "G-TICK": "nothing per tick or update; the flash rate; the `16` block (BQ-9)",
     "G-PENDING": "pending is a state, never drawn as confirmed (BQ-5)",
     "G-FLATTEN": "hold and typed on LIVE, defined once (BQ-7; AC3)",
     "G-DISPLAY": "CMP-129's display variant: no control role, no T2 (BQ-8)",
@@ -5858,6 +5964,179 @@ MUTATIONS: tuple[Mutation, ...] = (
         "condition (a hidden comment)",
         spec=prose_at("3.3 ", "<!-- a shimmer, drawn after all -->"),
     ),
+    # delta r1 MAJOR-1 (R10 at the `16` block): every block row read whole, the flash pinned
+    Mutation(
+        "M8.6",
+        "G-TICK",
+        "BQ-9 (`16` block: the flash Hold per tick)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            FLASH_HOLD_PIN,
+            "on each tick, no limit (`16`:199); latest wins; never while stale",
+        ),
+    ),
+    Mutation(
+        "M8.7",
+        "G-TICK",
+        "BQ-9 (`16` block: another row)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            "the marker, until the account's banner is dismissed",
+            "the marker, once per frame, no limit",
+        ),
+    ),
+    Mutation(
+        "M8.8",
+        "G-TICK",
+        "BQ-9 (`16` block: another case)",
+        hand=sub_in(
+            "C.6 The `16` block", FLASH_HOLD_PIN, "PER TICK; Latest Wins; Never While Stale"
+        ),
+    ),
+    Mutation(
+        "M8.9",
+        "G-TICK",
+        "BQ-9 (`16` block: the peak)",
+        hand=sub_in("C.6 The `16` block", "at `16` §7.1's peak", "at full opacity"),
+    ),
+    Mutation(
+        "M8.10",
+        "G-TICK",
+        "BQ-9 (`16` block: stale)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            "latest wins; never while stale",
+            "latest wins; stale cells flash too",
+        ),
+    ),
+    # delta r1 m1 (R10): streams and quotes
+    Mutation(
+        "M8.11",
+        "G-TICK",
+        "BQ-9 (a stream)",
+        spec=prose_at("3.4 ", "The cells flash as prices stream in."),
+    ),
+    Mutation(
+        "M8.12",
+        "G-TICK",
+        "BQ-9 (a quote)",
+        hand=prose_at("§E ", "The cell flashes on each new quote."),
+    ),
+    Mutation(
+        "M8.13",
+        "G-TICK",
+        "BQ-9 (any case)",
+        spec=prose_at("2.1 ", "THE CELL FLASHES ON EACH NEW QUOTE."),
+    ),
+    # delta r1 MAJOR-2 (R08 at KIND): the spec's own glyphs are state-swap subjects
+    Mutation(
+        "M6.14",
+        "G-INSTANT",
+        "BQ-11 (the delta glyph, §3.5)",
+        spec=sub_in(
+            "3.5 ",
+            "swapped by a Mo-8 cut and never animated",
+            "sliding in over `motion.duration.fast`",
+        ),
+    ),
+    Mutation(
+        "M6.15",
+        "G-INSTANT",
+        "BQ-11 (a disclosure glyph, the hand-off)",
+        hand=sub_in(
+            "C.1 A-1",
+            "Mo-4 (the correction highlight) and Mo-8",
+            "Mo-4 (the correction highlight), the ▸ / ▾ rotating over `motion.duration.fast`, and Mo-8",
+        ),
+    ),
+    Mutation(
+        "M6.16",
+        "G-INSTANT",
+        "BQ-11 (a glyph's name, any case)",
+        spec=prose_at("3.3 ", "The Chevron Rotates A Quarter Turn When A Group Expands."),
+    ),
+    Mutation(
+        "M6.17",
+        "G-INSTANT",
+        "BQ-11 (the Critical tier glyph)",
+        spec=prose_at("2.1 ", "The !! fades in over `motion.duration.fast`."),
+    ),
+    # delta r1 m1 (R11): the new value painted on send
+    Mutation(
+        "M9.6",
+        "G-PENDING",
+        "BQ-5 (on send)",
+        spec=prose_at("2.2 ", "On send, the cell takes the new price."),
+    ),
+    Mutation(
+        "M9.7",
+        "G-PENDING",
+        "BQ-5 (on submit, the hand-off)",
+        hand=prose_at("§E ", "On submit, the row shows the new quantity."),
+    ),
+    Mutation(
+        "M9.8",
+        "G-PENDING",
+        "BQ-5 (any case)",
+        spec=prose_at("3.3 ", "ON SEND, THE CELL TAKES THE NEW PRICE."),
+    ),
+    # delta r1 m1 (R16): minutes and hours
+    Mutation(
+        "M16.7",
+        "G-VALUE",
+        "condition (minutes)",
+        spec=prose_at("2.1 ", "A closed row lingers for 3 minutes."),
+    ),
+    Mutation(
+        "M16.8",
+        "G-VALUE",
+        "condition (hours, the hand-off)",
+        hand=prose_at("§E ", "The chip clears after 2 hours."),
+    ),
+    Mutation(
+        "M16.9",
+        "G-VALUE",
+        "condition (any case)",
+        spec=prose_at("3.4 ", "A closed row lingers for 3 MIN."),
+    ),
+    # delta r1 m1 (R04): a token run more than once
+    Mutation(
+        "M1.11",
+        "G-ROW-200",
+        "BQ-9 (twice)",
+        spec=prose_at("3.1 ", "A new row fades in over `motion.duration.normal`, twice."),
+    ),
+    Mutation(
+        "M1.12",
+        "G-ROW-200",
+        "BQ-9 (two times, the hand-off)",
+        hand=prose_at("§E ", "The drawer slides in over `motion.duration.normal` two times."),
+    ),
+    Mutation(
+        "M1.13",
+        "G-ROW-200",
+        "BQ-9 (any case)",
+        spec=prose_at("2.1 ", "A NEW ROW FADES IN OVER `motion.duration.normal`, TWICE."),
+    ),
+    # delta r1 m2: hand-off §B, the owner's sign-off and the Penpot line
+    Mutation(
+        "M21.2", "G-OWNER", "BQ-2 (§B Sign-off ticked)", hand=line_edit("| Sign-off", "[ ]", "[x]")
+    ),
+    Mutation(
+        "M21.3",
+        "G-OWNER",
+        "BQ-15 (§B Penpot ticked)",
+        hand=line_edit("| Final Penpot link", "[ ]", "[x]"),
+    ),
+    Mutation("M21.4", "G-OWNER", "BQ-2 (§B any case)", hand=line_edit("| Sign-off", "[ ]", "[X]")),
+    Mutation(
+        "M21.5",
+        "G-OWNER",
+        "BQ-2 (§B a line gone)",
+        hand=lambda text, _v: "\n".join(
+            ln for ln in text.split("\n") if not ln.startswith("| Contrast and CVD")
+        ),
+    ),
 )
 # ---------------------------------------------------------------------------- --self-test
 
@@ -7308,8 +7587,10 @@ SEC_PIN_TXT = r"""
   read-only behind `guard.mismatch.row` (D-4, D02:145).
 @ prose
   A Cancel's own reasons — a native-stop row, an Untracked, Held or Unknown order (§4.1) — name
-  what the order is, never the account's state, and a Cancel sent while the order's amend is in
-  flight stays busy, "Cancelling…", until it resolves (D02:345).
+  what the order is, and an exit's own write in flight, `blotter.amend_in_flight` on a quantity
+  cut or a recorded take-profit's edit and Cancel (§4.1), names that write; neither is the
+  account's state, and a Cancel sent while the order's amend is in flight stays busy,
+  "Cancelling…", until it resolves (D02:345).
 @ prose
   - **The C-2.6 carve-out.** A stop's tighten — a native stop's through `setPositionTpSl`, an
   ordinary stop order's through `amendOrder`, an attach and a re-stamp — is never T2 by view-as,
@@ -7699,9 +7980,9 @@ SEC_PIN_TXT = r"""
   in LIVE: E39-D03:388 "in LIVE the typed word replaces the hold"; `14`:294 "plus a typed confirm
   in Live" asks for both
 @ row D04-C9 ‖ Resolution
-  §2.4 composes them on LIVE, the typed word first and then the hold (RULED BQ-7; `15`:476), which
-  is C14's "compose hold → typed and say so" branch; `FLATTEN` stays the word for `all-accounts`
-  (`15`:2506), and CMP-211's `confirmMode` takes CMP-123's dialog (D04-G7)
+  §2.4 composes them on LIVE, the typed word first and then the hold (RULED BQ-7; `15`:476), C14's
+  compose branch, said so, in the other order (typed, then hold); `FLATTEN` stays the word for
+  `all-accounts` (`15`:2506), and CMP-211's `confirmMode` takes CMP-123's dialog (D04-G7)
 @ row D04-C10 ‖ Resolution
   Widened by `05`:148 and D02:465 to the discrete safety events nobody requested: Near and
   Critical crossings, NO SL, a fill, a rejection, offline and reconnected (§2.1, §2.2); a row
@@ -7904,12 +8185,13 @@ SEC_PIN_TXT = r"""
   string | null; leverage: string; marginMode: "cross" | "isolated" | "portfolio"; positionMode:
   "one-way" | "hedge"; protection: { state: "protected" | "attaching" | "verifying" | "amending" |
   "naked" | "naked_unrecoverable"; frozen: boolean }; adlRank: number | null; liqTier: "none" |
-  "watch" | "near" | "critical"; markers?: RowMarkerId[] }`, `RowMarkerId` being the seventeen row
-  markers of E29-D02 and E29-D03; `interface AccountGroup { id: string; label: string; env: "live"
-  | "demo"; positionMode: "one-way" | "hedge"; state?: string; rPnlToday: string; closedToday?: {
-  count: number; net: string; provisional: boolean } }`, `state` being the account's D02 §10.2
-  marker key; money and price fields are the generated `packages/protocol` decimal strings, never
-  `number`.
+  "watch" | "near" | "critical"; markers?: RowMarkerId[]; closed?: { net: string } }`, `closed`
+  set on a lingering closed row with its realised net (D01:408), `RowMarkerId` being the seventeen
+  row markers of E29-D02 and E29-D03; `interface AccountGroup { id: string; label: string; env:
+  "live" | "demo"; positionMode: "one-way" | "hedge"; state?: string; rPnlToday: string;
+  closedToday?: { count: number; net: string; provisional: boolean } }`, `state` being the
+  account's D02 §10.2 marker key; money and price fields are the generated `packages/protocol`
+  decimal strings, never `number`.
 @ code
   - **Data contract**: `positions` from the private `positions` WS topic (`23` §15.2
   `PositionUpdate`) merged with the REST position-list snapshot; `positionMode` from
@@ -8485,7 +8767,8 @@ SEC_PIN_TXT = r"""
   Owner: the owner, who rules OQ-R with E39-D03's owner.
 @ prose
   - **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
-  first applies the shared Tokens row, and the other is then a no-op.
+  first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first,
+  A-6.1's Old cell no longer matches the Purpose it quotes, and A-6.1 is re-based on A-5.1's New.
 @ prose
   Owner: E29-T09, after the owner's approval (owner approval pending (#2701)).
 @ prose
