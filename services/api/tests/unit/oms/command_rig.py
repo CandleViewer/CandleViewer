@@ -42,7 +42,7 @@ from candleviewer.oms.repository import OrderRepository, RecordedStopRepository
 from candleviewer.oms.routing import TradingRouter
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
 from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
-from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S
+from candleviewer.oms_wiring import STOP_REQUEST_BOUND_S, OmsAudit
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import (
     ORDER_STATE_OF,
@@ -243,7 +243,9 @@ class Audits:
     exchange calls made before it (`sent_before`); `refuse` raises instead. The pipeline's
     request records (`RequestRecord`) land here too (`submit_rig`). A keyed record is stored as
     the writer stores it, under `keyed_record_id(action, name)` (`record_id`): one whose id is
-    already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587)."""
+    already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587). One that names a
+    user without its actor raises `ValueError` before anything lands, as the runtime's adapter
+    refuses it (`OmsAudit`: no role to record, C-2.9)."""
 
     sent: Callable[[], int] = lambda: 0
     written: list[tuple[AnyRecord, int]] = field(default_factory=list)
@@ -256,6 +258,8 @@ class Audits:
     async def write(self, record: AnyRecord) -> None:
         key: UUID | None = None
         if isinstance(record, KeyedRecord):  # named first, as `emit_keyed` names it
+            if record.actor_user_id is not None and record.actor is None:  # `OmsAudit`'s rule
+                raise ValueError("a record that names a user has no role without its actor")
             key = keyed_record_id(record.action, record.name)
         if self.refuse is not None:
             raise self.refuse
@@ -345,9 +349,12 @@ def build_rig(
     gate: StopRequestGate | None = None,
     created_at: Callable[[], datetime] = lambda: T0,
     clock: ClockHealth | None = None,
+    records: OmsAudit | None = None,
     **port_kwargs: Any,
 ) -> Rig:
-    """`clock` is what the halt reads, by default the rig's measured `health`."""
+    """`clock` is what the halt reads, by default the rig's measured `health`; `records`, when
+    given, is what the port and the gate audit through in place of `audits` (the runtime's
+    adapter, end to end)."""
     now, monotonic = Now(), Monotonic()
     demo = FakeTradingPort(environment="demo", now_us=now)
     live = FakeTradingPort(environment="live", now_us=now)
@@ -356,6 +363,7 @@ def build_rig(
     stops = RecordedStopRepository(InMemoryRecordedStopStore(store))
     accounts = InMemoryTradingAccounts(ref(), ref(LIVE_ACCOUNT, "live"))
     audits = Audits(sent=lambda: len(demo.calls) + len(live.calls))
+    audit: Audits | OmsAudit = audits if records is None else records
     chosen = handovers if handovers is not None else Handovers()
     credentials, switches = Credentials(), Switches()
     health = FakeClockHealth(monotonic)
@@ -369,7 +377,7 @@ def build_rig(
         return EPOCH + timedelta(microseconds=now.us)
 
     if gate is None:
-        gate = stop_gate(stops, orders, audits, accounts, router, at, monotonic, metrics)
+        gate = stop_gate(stops, orders, audit, accounts, router, at, monotonic, metrics)
     port = OmsCommandPort(
         router=router,
         accounts=accounts,
@@ -379,8 +387,8 @@ def build_rig(
         credentials=credentials,
         clock_halt=halt,
         switches=switches,
-        audit=audits,
-        submit_audit=audits,
+        audit=audit,
+        submit_audit=audit,
         gate=gate,
         notices=notices,
         now_us=now,
