@@ -292,7 +292,9 @@ def make_orders_router(
     rejected = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
 
     def not_ready() -> Response:
-        """Step 3's answer: counted, never audited (24 Sec.8.4)."""
+        """Step 3's answer, and step 10's when the serving loop's stall fence refuses the switches
+        (24 Sec.8.4 `TradingSwitches`): counted, never audited (24 Sec.8.4), as neither decides
+        anything on the order (SEC-S3L4-01)."""
         rejected.labels(PROBLEMS[OmsNotReady].code).inc()
         return order_problem(OmsNotReady(), pager=paging)
 

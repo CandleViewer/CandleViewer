@@ -1030,11 +1030,17 @@ class OrderExits:
     async def _gated(
         self, scoped: ScopedOrder, sized: SizedOrder, instrument: Instrument
     ) -> ExitOutcome | None:
-        """Ruling Q10 and D1, a risk-increasing amend: what `placeOrder` meets, in its order."""
+        """Ruling Q10 and D1, a risk-increasing amend: what `placeOrder` meets, in its order. Its
+        switches are a new submit's, fenced while the serving loop stalls (#913 L4; the
+        orchestrator's ruling of 2026-10-25 21:56Z): their `OmsNotReady` is the amend's `503
+        oms_not_ready`, recorded as every refusal is, nothing sent."""
         row = scoped.order
         if not self._d.oms_enabled():
             return _refused(TradingDisabled())
-        switched = self._d.switches.refusal(AccountId(row.exchange_account_id), self._env)
+        try:
+            switched = self._d.switches.refusal(AccountId(row.exchange_account_id), self._env)
+        except OmsNotReady as exc:  # the stall fence, as a submit meets it (SR-E28-27, C-2.21)
+            return _refused(exc)
         if switched is not None:
             return _refused(switched)
         profile: AccountProfile | None = None

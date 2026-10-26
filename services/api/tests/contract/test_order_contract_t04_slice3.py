@@ -6,6 +6,8 @@ CR-S3N-01 to CR-S3N-09 on the notes of 20, 21, 23 and 24)."""
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
 from typing import Any
 
@@ -13,16 +15,19 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from candleviewer import oms_wiring
+from candleviewer.account_health_wiring import TRACKING_FAULT_AFTER_S
 from candleviewer.accounts.verification import Refusal
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.orders import make_orders_router
 from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S, MachineEventWrongLoop
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterWrongLoop
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_NAMESPACE,
@@ -46,10 +51,12 @@ from candleviewer.oms_wiring import (
     OmsRuntime,
     OrderStateFeed,
     ReferenceDemand,
+    ServedGate,
     UnclaimedMachineEvents,
     environment_lock_key,
 )
 from candleviewer.settings import (
+    ACCOUNT_DOWN_MAX_S,
     OMS_AFTER_ANCHOR_S,
     OMS_STOP_RESERVE_S,
     TEARDOWN_BUDGET_S,
@@ -219,7 +226,8 @@ def test_24_gives_the_routes_checks_in_the_ruled_order_and_audits_each_refusal()
         "`algo_unsupported`, until E32 and E34",
         "shielded from the client's disconnect and from the request's deadline",
         "at most `CV_OMS_DRAIN_S`",
-        "Each refusal from step 2 on, the `501` and step 3's `oms_not_ready` aside, is audited",
+        "Each refusal from step 2 on, the `501` and the `oms_not_ready` of steps 3 and 10 aside, "
+        "is audited",
         "steps 2 and 4 as `rbac.denied`, the gate's as `account.disabled_by_policy`",
         "every other as `orders.submit` with outcome `denied` and its code",
         "Step 3's `oms_not_ready` is not audited, as the `501` is not, but counted "
@@ -692,12 +700,13 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
 
 def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
-    stop inside the grace, from the code's own bounds; the hops named until L3 and L4, L2's gone;
+    stop inside the grace, from the code's own bounds; the hops named until L3, L2's and L4's gone;
     the notices' bound and their count (CR-S3L1A-01); the private stream the lane's port refuses
-    (CR-S3L1B-05); the blocking hops' bound in series (SEC-S3L1A-03); the lane's own refusals read
-    in place (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); a cancelled start and nothing begun
-    once the lane stops or dies, with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane
-    since L1b, no status note left in 20, 23 or 24."""
+    (CR-S3L1B-05); no blocking hop left (SEC-S3L1A-03), the gate read in place since L4, with its
+    read inventory and its two reads; the lane's own refusals read in place (SEC-S3L1C-02); its
+    death paged (SEC-S3L1A-02); a cancelled start and nothing begun once the lane stops or dies,
+    with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane since L1b, no status note
+    left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -711,25 +720,34 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         f"awaited and cut at `CV_COMMAND_TIMEOUT` ({HOP_TIMEOUT_S:g} s): the profile cache and the "
         "clock guard's resync; and until L3 lets the lane sign and send from its own loop, every "
         "venue call",
-        "lane to serving loop, blocking: until L4 the order-entry gate, whose key-standing read is "
-        "not safe from another thread. The lane's thread waits",
         "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
         "the exit routes reach the exit service the same way (`OnLaneExits`)",
         "cancel-all reaches its own service the same way (`OnLaneCancelAll`): its scope, an "
         "account read, within that bound, and its run within the service's own deadline;",
         "and its refusal records, per-order cancels and amends within the service's own bounds",
         "and the exit routes' in-flight guard, claimed and released on the serving loop only",
-        f"waits at most `CV_PERSIST_TIMEOUT` ({BLOCK_TIMEOUT_S:g} s) for the call to begin",
         "a rejected credential, which the lane's gate refuses at once until its notice has landed "
         "there (for good, should it be lost or fail)",
-        "The bound is per call: while the serving loop stalls, N such calls hold the lane's thread "
-        "N times that bound in series, ahead of any other step there, the ruled interim until L4",
         "These notices have no cap of their own: while the serving loop stalls they queue there at "
         "the lane's step rate, so a stall holds at most that rate times its length.",
         "is logged by its call's name and counted (`oms_lane_notices_failed_total`, §12.1)",
         "The switches' gate reads the lane's own refusals of rejected credentials "
         "(`ServedStandings.refused`) on either loop: one dict read, GIL-atomic against the item "
         "the lane assigns and the one the serving loop drops once its notice lands.",
+        "Since L4 the lane reads the order-entry gate itself in place too "
+        f"(`{ServedGate.__name__}`), never by a hop, its own refusals first",
+        "which `observe` and `credential_rejected` publish anew on the serving loop, never "
+        "changing one in place, and which a read never writes, a rejection a later pass has "
+        "cleared dropped by the next tracking read",
+        "the self-check's results, a key at a time, each one `dict.get`",
+        "so a read that overlaps one of its writes admits only where the state before or after it "
+        "does",
+        "Each read takes its source at one instant, so a write is in force for every gate read "
+        "that begins after it returns",
+        "`_land` writes the key standing before it drops the lane's own refusal, so a read that "
+        "misses the one finds the other",
+        "so the lane reads the gate twice and admits only when both reads do: a refusing write "
+        "that lands inside the first is in force for the second",
         f"within {LANE_JOIN_S:g} s (`LANE_JOIN_S`), the last of the 5 s the drain leaves",
         f"A cancelled `start()` waits, within those {OMS_STOP_RESERVE_S:g} s, for the composition "
         "to close what it built on the lane, then stops the lane, cancelled again meanwhile or not",
@@ -746,12 +764,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "Since L2 the lane records through its own `AuditWriter` and `machine_events` WAL sink, on "
         "its own loop, one hash chain with the serving loop's under `pg_advisory_xact_lock`",
     )
-    assert not _missing(
-        rows["OM-D11"],
+    assert (
         "as a persistence bundle's `machine_events` appends did until #913's L2 gave the lane its "
-        "own sink",
-        f"A read not begun within {BLOCK_TIMEOUT_S:g} s answers `oms_not_ready`, refused, never "
-        "open",
+        "own sink" in rows["OM-D11"]
     )
     assert not [row for row in (rows["OM-D10"], rows["OM-D11"]) if "until L2" in row]
     assert not _missing(
@@ -766,7 +781,16 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "The lane writes its audit records and `machine_events` rows through its own writer and "
         "sink (#913's L2), so neither waits on the serving loop" in ws
     )
+    assert "the order-entry gate it reads in place, never waiting there (#913's L4)" in ws
+    assert not _missing(
+        _ROUTE,
+        "The route's step 10 reads the binding on the serving loop and B1's `SEND` on the order "
+        "lane, both in place: the lane never waits on the serving loop for the gate",
+        "before the key standing holds it (`20-architecture.md` §6.2, #913 L4)",
+    )
     assert not [text for text in (lane, ws, _words(_ARCH)) if "until L2" in text]
+    assert not [text for text in (lane, ws, _ROUTE) if "until L4" in text]
+    assert "lane to serving loop, blocking" not in lane and "Serving.block" not in _ARCH
     assert not [text for text in (lane, _ROUTE, ws) if "L1b" in text]
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
@@ -834,4 +858,99 @@ def test_20_gives_the_lane_its_own_writer_and_sink_on_their_own_wal_files() -> N
         "the OMS order lane's own audit WAL (`oms_lane.audit.wal`, its cursor and its `.lock`)",
         "the machine-event WAL (`machine_events.wal`, its cursor and its `.lock`)",
         "(`oms_lane.machine_events.wal`, the same three;",
+    )
+
+
+def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -> None:
+    """#913 slice 3 L4's fold (CR-S3L4-04, CR-S3L4-08; the orchestrator's rulings of 2026-10-25
+    18:27Z (2), 19:19Z and 21:56Z): 20 Sec.6.2 and 24 Sec.8.4 state the stall fence on new submits
+    and risk-increasing amends with its numbers, from the code's own constants, and its outer
+    bounds; the E29 model's OM-D11, F-20 and Sec.11's order-lane row carry L4's gate halves on
+    L2's wording, logged as revision 21; and 20 says the stall fence and the lost lock's compose,
+    either refusing alone."""
+    tick, stale = oms_wiring.SERVING_TICK_S, oms_wiring.SERVING_STALE_S
+    assert stale == 2 * tick  # "twice that": the docs' 1 s is two ticks of 0.5 s
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert not _missing(
+        lane,
+        f"where before L4 a gate read it had not begun within {CV_PERSIST_TIMEOUT:g} s was "
+        "`oms_not_ready`",
+        f"So the OMS ticks on the serving loop every {tick:g} s (`SERVING_TICK_S`), a stamp the "
+        f"lane reads in place, and once the last tick is over {stale:g} s old, twice that "
+        "(`SERVING_STALE_S`), new submits and risk-increasing amends are refused `oms_not_ready` "
+        "(`FencedSwitches`: the route's step 10, the pipeline's switches and its unsent-order "
+        "refusal, a re-send, and the exit "
+        "service's gate read for a risk-increasing amend, which meets the gate as a submit does: "
+        "SR-E28-27, C-2.21), until the serving loop ticks again, never as time passes.",
+        "The fence never holds a protective amend, a cancel, cancel-all, a stop attach or a KILL, "
+        "none of which reads a switch (C-2.6).",
+        f"The account's health decaying to `down` (at most {ACCOUNT_DOWN_MAX_S:g} s after its last "
+        f"WS or REST success) and the last tracking read ageing out ({TRACKING_FAULT_AFTER_S:g} "
+        "s), each judged at read time, stay the outer bounds.",
+        "`FencedSwitches` wraps the binding whose first refusal is the environment lock's fence "
+        "(above), so the two compose: either refuses on its own, the stall fence read first.",
+    )
+    assert "which no longer holds a gate read" not in lane
+    assert "the only bounds of a risk-increasing amend's gate read" not in lane
+    assert (
+        "A new submit's reads of it, the route's, the pipeline's and a re-send's, and a "
+        "risk-increasing amend's in the exit service, are fenced: `oms_not_ready` while the "
+        f"serving loop has not ticked within {stale:g} s, twice its {tick:g} s tick, and no other "
+        "exit reads it (`20-architecture.md` §6.2, #913 L4)."
+    ) in _words(_INTERNAL_DOC)
+    assert "the exit service's never (`20-architecture.md` §6.2" not in _words(_INTERNAL_DOC)
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    lines = threat.read_text(encoding="utf-8").splitlines()
+    [d11] = [_words(line) for line in lines if line.startswith("| OM-D11 |")]
+    [f20] = [_words(line) for line in lines if line.startswith("| F-20 |")]
+    [row] = [_words(line) for line in lines if line.startswith("| E29-T04, the order lane (slice")]
+    [log] = [_words(line) for line in lines if "| Revision 21, #913 slice 3's L4" in line]
+    assert not _missing(
+        d11,
+        "Since L4 the order-entry gate's reads take no hop (`ServedGate` reads it in place)",
+        f"the lane refuses new submits and risk-increasing amends once its {tick:g} s tick is over "
+        f"{stale:g} s old (2 \u00d7 {tick:g} s), until it ticks again",  # the times sign (RUF001)
+        "L4 reads the gate in place, twice, and on a stall fences new submits and risk-increasing "
+        "amends, never a protective exit or KILL",
+    )
+    assert "A read not begun within 1 s answers `oms_not_ready`" not in d11
+    assert "never an exit or a KILL" not in d11
+    assert "a stalled serving loop fencing new submits within 1 s instead" in f20
+    assert "block the lane until L4" not in f20 and "| With #913's L1d |" in f20
+    assert not _missing(
+        row,
+        "and L4's order-entry gate read in place, twice, with no hop, and its fence on new submits "
+        "while the serving loop stalls, shipped with their tests",
+        "L2 closed OM-D11's sink half and L4 its gate half",
+    )
+    assert "CR-S3L4-04" in log and "19:19Z" in log and "21:56Z" in log
+    assert "new submits and risk-increasing amends" in log and "never an exit" not in log
+
+
+def test_24_and_the_route_name_the_stall_fences_step_10_answer_counted_never_audited() -> None:
+    """SEC-S3L4-01 (the Fable lens at 8b626ef6): the stall fence's `oms_not_ready` at step 10 is
+    the route's third unaudited answer, beside the `501` and step 3's, as it decides nothing on
+    the order; it is counted, and a submit the same fence refuses at the pipeline's own read of
+    the switches is recorded there. 24 Sec.8.4's sentence and the route's `not_ready()` name it."""
+    route = _between(_INTERNAL_DOC, "**The route (E29-T04 slice 3;", "**The exit routes")
+    assert not _missing(
+        route,
+        "Each refusal from step 2 on, the `501` and the `oms_not_ready` of steps 3 and 10 aside, "
+        "is audited before it is answered (C-2.9)",
+        "Step 10's, the stall fence's (`TradingSwitches`, below), is counted and not audited too, "
+        "as it decides nothing on the order; a submit the same fence refuses at the pipeline's "
+        "own read of the switches is recorded there (`orders.submit`, `denied`, `oms_not_ready`, "
+        "step `switches`).",
+    )
+    assert "the `501` and step 3's `oms_not_ready` aside" not in route
+    tree = ast.parse(inspect.getsource(make_orders_router))
+    [not_ready] = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "not_ready"
+    ]
+    assert not _missing(
+        _words(ast.get_docstring(not_ready) or ""),
+        "Step 3's answer, and step 10's when the serving loop's stall fence refuses the switches "
+        "(24 Sec.8.4 `TradingSwitches`): counted, never audited (24 Sec.8.4)",
     )

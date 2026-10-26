@@ -1,8 +1,8 @@
 """The exit service's amend (E29-T04 slice 4, `oms.exits`; 22 `amendOrder`; rulings Q3 to Q5 and
-Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01, the orchestrator's ruling of 2026-10-25 00:27Z
-(1), the code lens's CR-S4D2A-01 and -09, and the Fable lens's SEC-S4D2A-01 and -03): over the
-real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's limit buy entry
-resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000, Full mode,
+Q10, the S4-A decisions D1 and D3, SEC-S4C2B-01, the orchestrator's rulings of 2026-10-25 00:27Z
+(1) and 21:56Z, the code lens's CR-S4D2A-01 and -09, and the Fable lens's SEC-S4D2A-01 and -03):
+over the real B1 facade, the real command port and the fake venue (`submit_rig`), the rig's limit
+buy entry resting `submitted` (0.010 at 60000, its stop 58000 and its take-profit 64000, Full mode,
 unfilled)."""
 
 from __future__ import annotations
@@ -18,7 +18,9 @@ from uuid import uuid4
 
 import pytest
 from fastapi.responses import Response
+from structlog.testing import capture_logs
 
+from candleviewer import oms_wiring
 from candleviewer.api.order_etag import NO_VERSION
 from candleviewer.api.order_exits_common import exit_fault, exit_response, run_claimed
 from candleviewer.exchange.base.errors import OmsErrorCode
@@ -432,6 +434,40 @@ async def test_a_risk_increasing_amend_meets_place_orders_gates_and_a_reducing_o
     assert (up.kind, up.status, up.code) == ("refused", 403, code) and amends(rig) == []
     down = await exits.amend(found, AmendTerms(qty=D("0.009")), caller=CALLER, expected_seq=None)
     assert down.kind == "accepted" and len(amends(rig)) == 1
+
+
+@pytest.mark.parametrize(
+    "protective",
+    [AmendTerms(qty=D("0.009")), AmendTerms(sides={"stop_loss": StopOffset("price", D("59000"))})],
+    ids=["qty-cut", "stop-tightened"],
+)
+async def test_a_stalled_serving_loop_fences_a_risk_increasing_amend_never_a_protective_one(
+    rig: SubmitRig, protective: AmendTerms
+) -> None:
+    """#913 L4, the orchestrator's ruling of 2026-10-25 21:56Z: a risk-increasing amend meets the
+    order-entry gate as a submit does (SR-E28-27, C-2.21), so its switches are a new submit's,
+    fenced (`oms_wiring.FencedSwitches`): once the serving loop's tick is over `SERVING_STALE_S`
+    old, `503 oms_not_ready` with its `Retry-After`, logged, recorded as every refusal of the exit
+    service is (C-2.9), nothing sent, until the tick beats again. A protective amend, a smaller
+    quantity or a tighter stop, reads no switch and is sent all the same (C-2.6)."""
+    now = [100.0]
+    tick = oms_wiring.ServingTick(clock=lambda: now[0])
+    found, up = await scoped(rig), AmendTerms(qty=D("0.011"))
+    exits = exits_of(rig, switches=oms_wiring.FencedSwitches(rig.port.switches, tick))
+    now[0] += oms_wiring.SERVING_STALE_S + 0.001
+    with capture_logs() as logs:
+        fenced = await exits.amend(found, up, caller=CALLER, expected_seq=None)
+    assert (fenced.kind, fenced.status, fenced.code, fenced.retry_after_s) == (
+        "refused", 503, "oms_not_ready", OMS_NOT_READY_RETRY_AFTER_S,
+    )  # fmt: skip
+    logged = [(e["account_id"], e["log_level"]) for e in logs if e["event"] == "oms_submit_fenced"]
+    assert logged == [(str(cr.ACCOUNT), "error")]
+    assert amends(rig) == [] and requests(rig, "orders.amend") == [("denied", "oms_not_ready")]
+    kept = await exits.amend(found, protective, caller=CALLER, expected_seq=None)
+    assert kept.kind == "accepted" and len(amends(rig)) == 1
+    tick.beat()  # the serving loop ticks again: the fence alone refused it
+    again = await exits.amend(found, up, caller=CALLER, expected_seq=None)
+    assert again.kind == "accepted" and len(amends(rig)) == 2
 
 
 async def test_the_venues_refusal_is_502_and_the_order_kept_on_its_prior_terms(

@@ -22,9 +22,10 @@ in this order:
    found is adopted and nothing is sent (C-2.10);
 2. the synchronous switches, then the clock halt, are asked (C-2.21): a refusal is
    `ResendRefused`, nothing sent, so no create is re-sent under a clock a `10002` tripped
-   (SEC-2B1-01). A clock not composed or not measured yet is a third outcome: the halt lets
-   `OmsNotReady` through (ruling Q8), logged as a refusal is (`oms_resend_refused`, with its
-   code) and raised as it is, nothing sent, so B1 lands the order in `unknown` all the same;
+   (SEC-2B1-01). A serving loop that has stalled, and a clock not composed or not measured yet,
+   are a third outcome: the switches' fence (#913 L4) or the halt (ruling Q8) lets `OmsNotReady`
+   through, logged as a refusal is (`oms_resend_refused`, with its code) and raised as it is,
+   nothing sent, so B1 lands the order in `unknown` all the same;
 3. where history never expires (`order_retention_days` None: live), a create older than
    `LIVE_RESEND_MAX_AGE_S` is never re-sent. Within the venue's history span
    (`LIVE_HISTORY_SPAN_S`, 24 h) the miss means it never landed: it ends `rejected` with
@@ -844,8 +845,10 @@ class OmsCommandPort:
         """[LANE-26]'s order: the lookup whatever the switches say, the switches and the clock
         halt, the live bounds, then `adopt_or_resend`, which looks once more just before its one
         re-send (SR-E29-15) and applies rule 6 from the port's own retention (24 Sec.8.3: demo's 6
-        days). A refusal is `ResendRefused`; a clock not measured yet raises `OmsNotReady` as it
-        is (`ClockHalt.refusal`): both are logged `oms_resend_refused`, and nothing is sent."""
+        days). A refusal is `ResendRefused`; `OmsNotReady`, the switches' while the serving loop
+        stalls (#913 L4, SEC-S3L4-03) or the halt's while no clock is measured yet
+        (`ClockHalt.refusal`), is raised as it is: both are logged `oms_resend_refused`, and
+        nothing is sent."""
         link = request.order_link_id
         try:
             found = await find_by_link_id(port, request)
@@ -856,15 +859,15 @@ class OmsCommandPort:
             return Unresolved(order_link_id=link, reason="lookup_failed")
         if found is not None:
             return Adopted(order=found[0], source=found[1])
-        refusal: OrderRefused | None = self._switches.refusal(
-            account.account_id, account.environment
-        )
-        if refusal is None:  # SEC-2B1-01: never a re-send under a clock a `10002` tripped
-            try:
+        try:  # either may let `OmsNotReady` through: logged as a refusal is, raised as it is
+            refusal: OrderRefused | None = self._switches.refusal(
+                account.account_id, account.environment
+            )
+            if refusal is None:  # SEC-2B1-01: never a re-send under a clock a `10002` tripped
                 refusal = self._clock_halt.refusal()
-            except OmsNotReady as not_ready:  # no clock composed, or none measured yet (Q8)
-                _log_resend_refused(link, not_ready)
-                raise  # as it is: B1 lands the order in `unknown` (S1), nothing was sent
+        except OmsNotReady as not_ready:  # a stalled serving loop (L4), or no clock measured (Q8)
+            _log_resend_refused(link, not_ready)
+            raise  # as it is: B1 lands the order in `unknown` (S1), nothing was sent
         if refusal is not None:
             _log_resend_refused(link, refusal)
             raise ResendRefused(refusal)

@@ -37,7 +37,14 @@ from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
-from candleviewer.exchange.base.models import AccountRef, Position, RateLane
+from candleviewer.exchange.base.models import (
+    AccountRef,
+    FeeRate,
+    Position,
+    RateLane,
+    RiskLimitTier,
+    Wallet,
+)
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest
@@ -50,7 +57,7 @@ from candleviewer.oms.errors import (
     OrderEntryRefused,
     StoreUnavailable,
 )
-from candleviewer.oms.exits import ExitCaller, ExitOutcome, OrderExits
+from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitOutcome, OrderExits
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
@@ -95,7 +102,7 @@ from tests._signing import fake_capability
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import order_rig
 from tests.unit.oms.order_rig import ACCOUNT, GATES, Pager, order_of
-from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly
+from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly, context, entry, instrument
 
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
 INTERIMS = ("stop_resolver", "risk_gate", "arm_records", "atr", "kill_switch")
@@ -179,11 +186,13 @@ class Sink(InMemoryMachineEventSink):
 @dataclass
 class Writer:
     """The order lane's own audit writer the stores build (#913 L2): each append, by its action
-    and reason; a keyed one stored as the writer stores it, under `keyed_record_id(action, name)`,
-    so one whose id is already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587);
-    its start and stop land in `log`, the world's, and each stop's grace in `graces`."""
+    and reason, and with all its fields; a keyed one stored as the writer stores it, under
+    `keyed_record_id(action, name)`, so one whose id is already stored lands nothing
+    (`ON CONFLICT (record_id) DO NOTHING`, #4587); its start and stop land in `log`, the world's,
+    and each stop's grace in `graces`."""
 
     actions: list[tuple[str, str | None]] = field(default_factory=list)
+    records: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     stored: set[UUID] = field(default_factory=set)
     log: list[str] = field(default_factory=list)
     graces: list[float] = field(default_factory=list)
@@ -197,12 +206,14 @@ class Writer:
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.actions.append((action, fields.get("reason")))
+        self.records.append((action, fields))
 
     async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
         key = keyed_record_id(action, name)
         if key not in self.stored:
             self.stored.add(key)
             self.actions.append((action, fields.get("reason")))
+            self.records.append((action, fields))
 
 
 @dataclass
@@ -2000,6 +2011,200 @@ async def test_native_sl_the_runtimes_kill_cancels_at_the_venue_and_spares_a_rec
     assert sent == [("critical", SENDING.order_link_id)]
     assert ("orders.cancel", "kill_spared_recorded_stop") in world.writer.actions
     assert [r for _, r in world.writer.actions if str(r).startswith("kill_cancel")] == []
+
+
+class StalledTick(oms_wiring.ServingTick):
+    """The serving loop's tick on the test's clock, which beats only while the test lets it:
+    `stall()` stops its beats and moves its clock past `SERVING_STALE_S`, `resume()` beats again,
+    so the fence closes and opens when the test says, whatever the wall clock does."""
+
+    def __init__(self) -> None:
+        self.now, self.stalled = 0.0, False
+        super().__init__(clock=lambda: self.now)
+
+    def beat(self) -> None:
+        if not self.stalled:
+            super().beat()
+
+    def stall(self) -> None:
+        self.stalled = True
+        self.now += 2 * oms_wiring.SERVING_STALE_S
+
+    def resume(self) -> None:
+        self.stalled = False
+        self.beat()
+
+
+async def test_a_stalled_serving_loop_fences_new_risk_never_a_protective_exit_or_a_kill() -> None:
+    """#913 L4 (the orchestrator's rulings of 2026-10-25 19:19Z on CR-04 and 21:56Z): while the
+    serving loop has not ticked within twice its interval, the switches of every new submit, the
+    route's step 10, the pipeline's step and a re-send's, refuse `oms_not_ready`, logged, until it
+    ticks again, and so do the exit service's, which a risk-increasing amend alone reads, as it
+    meets the order-entry gate as a submit does (SR-E28-27, C-2.21): the composed exit service
+    answers it `503 oms_not_ready`, recorded, nothing sent. A protective amend reads no switch and
+    is sent, and a KILL still cancels at the venue (C-2.6)."""
+    world, tick, owner = World(), StalledTick(), UUID(int=1)
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    await crashed(world)
+    world.store.seed_owner(owner)
+    async with started(world.runtime(serving_tick=lambda: tick)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        parts, account = runtime._composed(), AccountId(UUID(int=1))
+        commands = parts.submission._commands
+        submits = (runtime.route.switches, parts.submission._deps.switches, commands._switches)
+        caller = ExitCaller(OwnerScope(owner), SubmitActor(user_id=owner, role="owner"))
+        scoped = await runtime.exits.scope(caller, SENDING.id)
+        assert isinstance(scoped, ScopedOrder)
+        tick.stall()
+        with capture_logs() as logs:
+            for switches in submits:
+                with pytest.raises(OmsNotReady):
+                    switches.refusal(account, "demo")
+        assert [e["event"] for e in logs] == ["oms_submit_fenced"] * len(submits)
+        up, down = AmendTerms(qty=Decimal("0.011")), AmendTerms(qty=Decimal("0.009"))
+        fenced = await runtime.exits.amend(scoped, up, caller=caller, expected_seq=None)
+        assert (fenced.kind, fenced.status, fenced.code) == ("refused", 503, "oms_not_ready")
+        assert ("orders.amend", "oms_not_ready") in world.writer.actions
+        kept = await runtime.exits.amend(scoped, down, caller=caller, expected_seq=None)
+        assert kept.kind == "accepted"
+        assert await parts.machines.kill("kill switch") == ()
+        tick.resume()
+        assert [switches.refusal(account, "demo") for switches in submits] == [None] * 3
+    [port] = world.venue.ports
+    exits = [call for call in port.calls if call.method in ("amend_order", "cancel_order")]
+    assert [call.method for call in exits] == ["amend_order", "cancel_order"]
+    assert [getattr(call.request, "qty", None) for call in exits] == [Decimal("0.009"), None]
+    assert exits[-1].lane == "critical"
+
+
+async def test_a_stalled_serving_loop_refuses_a_submit_at_its_switches_recorded_not_ready() -> None:
+    """SEC-S3L4-03 (the Fable lens at 8b626ef6), end to end: the composed pipeline's switches are
+    fenced, and `FencedSwitches` raises where `TradingSwitches` answers, so a submit that reaches
+    step `switches` while the serving loop's tick is stale is recorded `orders.submit` denied
+    `oms_not_ready` at that step before it is raised (C-2.9), nothing persisted or sent."""
+    world, tick = World(), StalledTick()
+    tiers = (RiskLimitTier(
+        tier_id=1, risk_limit_value=Decimal(2_000_000), maintenance_margin_rate=Decimal("0.005"),
+        initial_margin_rate=Decimal("0.01"), max_leverage=Decimal(100),
+    ),)  # fmt: skip
+    world.ingestion.instruments = SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(
+            get={cr.SYMBOL: instrument()}.get, risk_limit_tiers=lambda _symbol: tiers
+        )
+    )  # #4651: step 3c sizes an entry by its profile, the tiers' rate among its figures
+    price = entry().price  # #4575: step 3a reads the market and bands the limit before sizing
+    quote = SimpleNamespace(bid1_price=price, ask1_price=price, last_price=price)
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: quote,
+        is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None,
+        release=lambda _consumer, _symbol: None,
+    )
+    await crashed(world)
+    async with started(world.runtime(serving_tick=lambda: tick)) as runtime:
+        for flag in world.flags:
+            flag.read()
+        await runtime.wait_ready()
+        await until(lambda: world.store._orders[SENDING.id].lifecycle_state == "submitted")
+        [port] = world.venue.ports  # #4651: the rest of the size step's figures, the venue's
+        port.set_wallet(Wallet(
+            account_id=cr.ACCOUNT, equity=Decimal(100_000), wallet_balance=Decimal(100_000),
+            available_to_withdraw=None, available_margin=Decimal(100_000), used_margin=Decimal(0),
+            unrealised_pnl=Decimal(0), cum_realised_pnl=Decimal(0), account_im_rate=Decimal(0),
+            account_mm_rate=Decimal(0), updated_at=0,
+        ))  # fmt: skip
+        fee = FeeRate(
+            symbol=cr.SYMBOL, maker=Decimal("0.0002"), taker=Decimal("0.00055"), fetched_at=0
+        )
+        port.set_fee_rate(cr.ACCOUNT, fee)
+        held = set(world.store._orders)
+        tick.stall()
+        with pytest.raises(OmsNotReady):
+            await runtime.submission.submit(entry(), context())
+        assert set(world.store._orders) == held  # nothing persisted
+    fenced = [r for r in world.writer.records if r[1].get("reason") == "oms_not_ready"]
+    assert [(action, r["outcome"], r["after_state"]["step"]) for action, r in fenced] == [
+        ("orders.submit", "denied", "switches")
+    ]
+    [port] = world.venue.ports
+    creates = [call.request for call in port.calls if call.method == "place_order"]
+    assert [getattr(create, "order_link_id", None) for create in creates] == [
+        SENDING.order_link_id
+    ]  # the resumed create's alone
+
+
+async def test_a_create_resumed_under_a_stalled_serving_loop_is_logged_unsent_unknown() -> None:
+    """SEC-S3L4-03 (the Fable lens at 8b626ef6), end to end: a create the startup resumes meets the
+    fenced switches after its lookup; their `OmsNotReady` is logged `oms_resend_refused` with its
+    code, as the clock halt's is, and raised as it is, so B1 lands the order in `unknown` for
+    reconciliation (S1), nothing re-sent under a stalled serving loop."""
+    world, tick = World(), StalledTick()
+    await crashed(world)
+    tick.stall()  # from the start: the sweep resumes the create under it
+    for flag in world.flags:
+        flag.read()
+    with capture_logs() as logs:
+        async with started(world.runtime(serving_tick=lambda: tick)):
+            orders = world.store._orders
+            await until(lambda: orders[SENDING.id].lifecycle_state != "submitting")
+            assert orders[SENDING.id].lifecycle_state == "unknown"
+    [line] = [e for e in logs if e["event"] == "oms_resend_refused"]
+    assert (line["order_link_id"], line["refusal"], line["code"]) == (
+        SENDING.order_link_id, "OmsNotReady", "oms_not_ready",
+    )  # fmt: skip
+    methods = [call.method for call in world.venue.ports[0].calls]
+    assert methods and set(methods) <= {"open_orders", "order_history"}  # looked up, never sent
+
+
+async def test_the_serving_tick_beats_on_the_serving_loop_from_start_until_stop() -> None:
+    """#913 L4 (CR-04, 19:19Z): `start()` spawns the tick on the serving loop, the loop that started
+    the runtime, where it beats every `SERVING_TICK_S`; `stop()` ends it."""
+    beats, waits = list[asyncio.AbstractEventLoop](), list[float]()
+
+    class Noted(oms_wiring.ServingTick):
+        def beat(self) -> None:
+            beats.append(asyncio.get_running_loop())
+            super().beat()
+
+    async def wait(seconds: float) -> None:
+        waits.append(seconds)
+        await asyncio.sleep(0)
+
+    async with started(World().runtime(serving_tick=lambda: Noted(wait=wait))):
+        await until(lambda: len(beats) >= 3)
+    assert set(beats) == {asyncio.get_running_loop()}
+    assert set(waits) == {oms_wiring.SERVING_TICK_S}
+    after = len(beats)
+    await settle()
+    assert len(beats) == after  # it ended with the stop
+    assert [t for t in asyncio.all_tasks() if t.get_name() == "oms-serving-tick"] == []
+
+
+async def test_a_serving_tick_that_ends_by_a_fault_pages_once_and_one_stopped_never() -> None:
+    """SEC-S3L4-02 (the Fable lens at 8b626ef6): a tick that ends other than by the stop's cancel
+    leaves every new submit and risk-increasing amend fenced until the runtime starts again (fail
+    closed), so it is logged by its error's class and paged once, `oms_serving_tick_ended`,
+    through the runtime's pager; the stop's cancel of a ticking one pages nothing."""
+
+    class Broken(oms_wiring.ServingTick):
+        async def run(self) -> None:
+            self.beat()
+            raise RuntimeError("the tick broke")
+
+    broken, calm = World(), World()
+    with capture_logs() as logs:
+        for world, tick in ((broken, Broken), (calm, oms_wiring.ServingTick)):
+            async with started(world.runtime(serving_tick=tick)) as runtime:
+                ticking = runtime._ticking
+                assert ticking is not None
+                await settle()
+            await asyncio.wait({ticking})  # its callback has run: ended, or cancelled by the stop
+    [line] = [e for e in logs if e["event"] == "oms_serving_tick_ended"]
+    assert (line["error"], line["log_level"]) == ("RuntimeError", "critical")
+    assert (broken.pager.calls, calm.pager.calls) == (["oms_serving_tick_ended"], [])
 
 
 async def test_a_failing_store_leaves_it_not_ready_and_the_sweep_retries_with_backoff(

@@ -13,7 +13,6 @@ from typing import Any
 from uuid import UUID
 
 import pytest
-from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
@@ -21,7 +20,6 @@ from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.models import AccountRef, Position
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import Serving
 from candleviewer.oms_wiring import (
     ServedClock,
@@ -63,49 +61,30 @@ def _serving() -> Serving:
     return Serving(asyncio.get_running_loop(), Metrics("demo"))
 
 
-async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_unrun() -> None:
-    """C-2.21, fail closed: this loop is blocked, so the blocking hop does not begin here within
-    its bound. The gate is `OmsNotReady`, logged, so nothing is sent, and it does not run once
-    this loop turns again."""
+async def test_the_gate_is_read_on_the_lane_before_a_notice_sent_ahead_of_it_lands() -> None:
+    """#913 L4 (C-2.21): the lane reads the gate in place, twice, never waiting on the serving loop,
+    so a read of another account answers there while a rejection's notice sent ahead of it waits
+    for this loop; the account the notice names the lane refuses meanwhile itself (below)."""
     calls, done, serving = Calls(), threading.Event(), _serving()
     spy: Any = Spy(calls)
-    gate = ServedGate(spy, serving, ServedStandings(spy, serving))
-
-    async def hops() -> list[str]:
-        failed = []
-        try:
-            gate.refusal(cr.ACCOUNT)
-        except OmsNotReady:
-            failed.append("gate")
-        done.set()
-        return failed
-
-    with capture_logs() as logs:
-        async with running() as lane:
-            answered = lane.call(hops())
-            assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
-            assert await answered == ["gate"]
-            await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
-    unanswered = [e["account_id"] for e in logs if e["event"] == "oms_gate_unanswered"]
-    assert unanswered == [str(cr.ACCOUNT)] and calls == []
-
-
-async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from_the_lane() -> None:
-    """C-2.21: the notice is never awaited, yet it reaches the key standing before any gate read the
-    lane makes after it."""
-    calls, serving = Calls(), _serving()
-    spy: Any = Spy(calls)
     standings = ServedStandings(spy, serving)
-    gate = ServedGate(spy, serving, standings)
+    gate = ServedGate(spy, standings)
 
-    async def rejected() -> OrderEntryRefusal | None:
-        standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
-        return gate.refusal(OTHER)
+    async def rejected() -> threading.Thread:
+        try:
+            standings.credential_rejected(cr.ACCOUNT, Refusal.UNKNOWN_KEY)
+            assert gate.refusal(OTHER) is None
+            return threading.current_thread()
+        finally:
+            done.set()
 
     async with running() as lane:
-        assert await lane.call(rejected()) is None
+        answered = lane.call(rejected())
+        assert done.wait(BOUND_S)  # this loop blocks meanwhile: the notice cannot land
+        on = await answered
+        await lane.call(asyncio.sleep(0))  # this loop has turned: the notice has landed
     here = threading.current_thread()
-    assert calls == [("credential_rejected", here), ("refusal", here)]
+    assert calls == [("refusal", on), ("refusal", on), ("credential_rejected", here)]
 
 
 async def test_a_rejected_credential_is_refused_on_the_lane_before_its_notice_lands() -> None:
@@ -115,7 +94,7 @@ async def test_a_rejected_credential_is_refused_on_the_lane_before_its_notice_la
     calls, done, serving = Calls(), threading.Event(), _serving()
     spy: Any = Spy(calls)
     standings = ServedStandings(spy, serving)
-    gate = ServedGate(spy, serving, standings)
+    gate = ServedGate(spy, standings)
 
     async def rejected() -> OrderEntryRefusal | None:
         try:
@@ -155,7 +134,7 @@ async def test_a_landed_rejection_is_dropped_never_a_later_one_and_a_failed_one_
     await asyncio.to_thread(loop.run_until_complete, asyncio.sleep(0))  # the notices land
     loop.close()
     assert seen == [True, True, False] and list(standings._sent) == [OTHER]
-    assert ServedGate(standing, serving, standings).refusal(OTHER) is oms_wiring.NO_ACTIVE_KEY
+    assert ServedGate(standing, standings).refusal(OTHER) is oms_wiring.NO_ACTIVE_KEY
 
 
 async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a_private_stream(

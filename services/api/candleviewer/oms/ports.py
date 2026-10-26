@@ -615,7 +615,10 @@ class TradingSwitches(Protocol):
     live account, the B18 kill switch and the order-entry gate (#3382, ruling R1's second check),
     and the composed runtime's fence once its environment's lock is lost (#913 L2, SEC-S3L2-02).
     The refusal, `TradingDisabled` or the fence's `OmsNotReady`, or None; it reads in-memory state
-    and never awaits."""
+    and never awaits. It may raise `OmsNotReady` instead, as the runtime's stall fence does while
+    the serving loop has not ticked (`oms_wiring.FencedSwitches`, #913 L4, SEC-S3L4-03): nothing is
+    sent on it, and each caller answers it as order entry not open yet, as it answers its own
+    `OmsNotReady`."""
 
     def refusal(
         self, account_id: AccountId, environment: Environment
