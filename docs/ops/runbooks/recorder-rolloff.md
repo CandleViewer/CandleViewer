@@ -9,7 +9,8 @@ Nightly, per stream, closed QuestDB days older than every present symbol's hot w
 (`retention_policies.retain_days`; pinned = never) are exported via the existing cold exporter, then
 re-read: row count **and** a canonical content SHA-256 must equal the hot source, and the manifest
 SHA-256 must re-verify. Only when **every** symbol in that day verifies is the day audited
-(`retention.purge`) and dropped. Days are processed newest-first. Watermarks live at
+(`retention.purge`) and dropped. Days are processed oldest-first; each day's watermark advances
+before its drop, and a failing day stops the stream (#2347). Watermarks live at
 `<CV_PARQUET_ROOT>/_manifests/_watermarks/<stream>/symbol=<SYM>.json` and only move forward.
 
 A day is its `yyyy-MM-dd` partition, or, for a `PARTITION BY HOUR` table (`orderbook_deltas`), its
@@ -33,8 +34,8 @@ fails, the run goes on with the next stream and counts
    otherwise) with `recorder_rolloff_failures_total{reason="drop_not_applied_<reason>"}`: the DROP
    was issued but QuestDB never confirmed it within `apply_timeout_s`, or, when the day's partition
    listing came back without names or without a live partition, it was never issued. Nothing was
-   lost — the cold copy verified before the DROP, the day stays `retained` and the watermark did not
-   move. `reason=suspended`:
+   lost — the cold copy verified before the DROP and the watermark already covers the day, so it is
+   in both tiers (read from Parquet) until the next run re-drops it. `reason=suspended`:
    the WAL is suspended; inspect `wal_tables()` and run `ALTER TABLE <table> RESUME WAL;` after
    fixing the cause — the next nightly run re-issues the drop. `reason=timeout`: QuestDB is slow or
    unreachable; the next run retries. `reason=unexpected_shape`: `table_partitions()` returned rows
