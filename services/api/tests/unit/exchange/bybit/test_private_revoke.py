@@ -122,16 +122,17 @@ async def test_an_operator_reopens_a_key_three_refusals_marked() -> None:
 
 
 async def test_the_adapter_closes_a_keys_streams_and_reopens_through_its_hooks() -> None:
-    """E27-S04 (#898) wires these: the service's hooks reach its one registry, and before any
-    trading port exists there is no stream to close."""
+    """E27-S04 (#898) wires these: the service's hooks reach its one registry. Before any trading
+    port exists there is no stream to close, and the key is tombstoned all the same (#913
+    L1d-2a, RC-G8B-03), so these first calls name another key."""
     from candleviewer.exchange.bybit.service import ExchangeBybitService
 
     venue = PrivateVenue(VirtualClock())
     adapter = ExchangeBybitService(
         fake_capability(SIGNER_ID), private_ws_connect=venue.connect, environment="demo"
     )
-    assert await adapter.close_private_streams(account().key_ref) == ()
-    assert adapter.reopen_private_streams(account().key_ref) is False
+    assert await adapter.close_private_streams(NEW_KEY) == ()
+    assert adapter.reopen_private_streams(NEW_KEY) is False  # closed, never marked
     stream = await adapter.trading_port("demo").subscribe_private(account())
     async with asyncio.timeout(5):  # a guard only: no clock is needed to reach `live`
         for _ in range(2):  # heartbeat, resyncing
@@ -200,6 +201,7 @@ async def test_close_key_refuses_a_key_ref_that_is_no_api_keys_id(key_ref: str) 
     await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
     with pytest.raises(ValueError, match="not an api_keys id"):
         await streams.close_key(key_ref, reason="key_revoked")
-    assert not streams._closed_keys and not venue.sockets[0].closed
+    assert not streams.tombstones.refuses(key_ref) and not venue.sockets[0].closed
+    assert not streams.tombstones.refuses(account().key_ref)
     await consumer.stop()
     await streams.aclose()

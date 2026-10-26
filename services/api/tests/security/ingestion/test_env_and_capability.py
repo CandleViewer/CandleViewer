@@ -50,6 +50,7 @@ TRADING_NAMES = {
     "connect_private_stream",
     "close_private_streams",
     "reopen_private_streams",
+    "open_private_stream",  # #913 L1d-2a: the adapter's stream opener for the order lane
 }
 TRADING_PATHS = ("/v5/order/", "/v5/position/", "/v5/asset/")
 
