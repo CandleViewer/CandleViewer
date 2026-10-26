@@ -6335,7 +6335,7 @@ export interface components {
       leverage: components["schemas"]["Decimal"];
       /** @default cross */
       margin_mode: components["schemas"]["ProfileMarginMode"];
-      /** @description Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate. */
+      /** @description Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate. It holds no character of category Cc or Cf either, such as DEL, U+200B, U+202E or U+FEFF (`not_allowed`). */
       name: string;
       /** @default one_way */
       position_mode: components["schemas"]["PositionMode"];
@@ -15638,6 +15638,15 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
       412: components["responses"]["PreconditionFailed"];
+      /** @description `Idempotency-Key` or `profileId` is not a UUID (`validation_failed`, rule `uuid_parsing`). Nothing changes and nothing is audited. */
+      422: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          "application/problem+json": components["schemas"]["Problem"];
+        };
+      };
       428: components["responses"]["PreconditionRequired"];
       503: components["responses"]["ProfileSaveUnavailable"];
     };

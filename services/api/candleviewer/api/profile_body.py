@@ -35,7 +35,8 @@ MAX_PROFILE_BODY_BYTES: Final = 65_536
 MAX_BINDING_BODY_BYTES: Final = 1_024
 #: A profile body nests 3 deep (an object in `take_profit_ladder`), checked before it is decoded.
 MAX_JSON_DEPTH: Final = 8
-#: The generated model's entries answered (B1 Sec.3); B1's own follow them, never cut.
+#: The generated model's entries answered; B1a's own (`schema_errors`) follow them, never cut
+#: (#906; 22's `ProfileRejected`).
 MODEL_ERRORS_SHOWN: Final = 20
 _LENGTH: Final = re.compile(r"[0-9]{1,19}")  # a usable `Content-Length`, as `api/drawings.py`
 _TAG: Final = re.compile(r'W/"([0-9a-f-]{36}(?::default)?):([1-9][0-9]{0,18})"')
@@ -51,6 +52,10 @@ _NOT_A_KEY: Final = ProfileFieldError(
 _NOT_JSON: Final = "The body is not UTF-8 JSON."
 #: pydantic names the class it expected, which `redact_text` would read as a key (R1C-01).
 _NOT_AN_OBJECT: Final = "Input should be an object."
+#: pydantic quotes a character of the input, which `redact_text` keeps (#906 R1S-01, C-12.6).
+_NOT_A_UUID: Final = "Input should be a valid UUID."
+#: The model's own messages answered as constants, by error type: never one for a whole family.
+_CONSTANT: Final = {"model_type": _NOT_AN_OBJECT, "uuid_parsing": _NOT_A_UUID}
 _TOO_DEEP: Final = f"JSON nesting is deeper than {MAX_JSON_DEPTH} levels."
 
 
@@ -136,15 +141,14 @@ def decode(raw: bytes, *, field: str = "") -> object:
 def model_errors(exc: ValidationError, *, prefix: str = "") -> list[ProfileFieldError]:
     """The generated model's first `MODEL_ERRORS_SHOWN` failures, each at its member's path under
     `prefix` with the validator's own type as its rule: an unknown member at its parent, never by
-    its key; no input and no context; each message through `redact_text`, but a non-object's,
-    which is a constant."""
+    its key; no input and no context; each message through `redact_text`, but a non-object's and a
+    non-UUID's, which are constants (`_CONSTANT`)."""
     found = exc.errors(include_url=False, include_input=False, include_context=False)
     entries = []
     for error in found[:MODEL_ERRORS_SHOWN]:
         loc = error["loc"][:-1] if error["type"] == "extra_forbidden" else error["loc"]
         path = ".".join(part for part in (prefix, field_path(loc)) if part)
-        model_type = error["type"] == "model_type"  # names a class, not a value
-        message = _NOT_AN_OBJECT if model_type else redact_text(error["msg"])
+        message = _CONSTANT.get(error["type"]) or redact_text(error["msg"])
         entries.append(ProfileFieldError(path, error["type"], message))
     return entries
 
@@ -162,11 +166,12 @@ def name_errors(body: ProfileBody) -> list[ProfileFieldError]:
 def if_match_version(request: Request, resource: str) -> int:
     """The version `If-Match` names of `resource`, a profile id or `<accountId>:default` (U1, D1,
     B1): no header is `IfMatchMissing`; anything but exactly one weak tag of this resource (`*`, a
-    list, two headers, the strong form, another resource's tag) is `IfMatchRefused`."""
+    list, two headers, the strong form, another resource's tag, a pad other than OWS's space and
+    tab) is `IfMatchRefused`."""
     sent = request.headers.getlist("if-match")
     if not sent:
         raise IfMatchMissing
-    tag = _TAG.fullmatch(sent[0].strip()) if len(sent) == 1 else None
+    tag = _TAG.fullmatch(sent[0].strip(" \t")) if len(sent) == 1 else None  # RFC 9110's OWS
     if tag is None or tag.group(1) != resource:
         raise IfMatchRefused
     return int(tag.group(2))

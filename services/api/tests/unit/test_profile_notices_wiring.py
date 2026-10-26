@@ -43,6 +43,7 @@ from candleviewer.storage.repositories.account_profiles_sqlalchemy import (
 )
 from candleviewer.storage.repositories.accounts import OwnerScope
 from tests.unit.accounts.test_profile_cache import _P, _row
+from tests.unit.accounts.test_profile_repository import _NO
 from tests.unit.test_main_lifespan_stop_order import _app, _Stops, _Task
 from tests.unit.ws._seq_support import validate
 from tests.unit.ws.test_system_filter import ACC_A, ACC_B
@@ -300,9 +301,11 @@ async def test_a_refused_or_idle_write_tells_no_socket_and_a_committed_one_its_a
     async with asyncio.timeout(_DEADLINE_S):
         owner = await rig.connect(_as(uuid4(), "owner"))
         with pytest.raises(AccountVersionConflictError):
-            await repo.update_profile(scope, account, pid, _P, expected_version=2)
-        await repo.set_default_profile(scope, account, pid, expected_binding_version=8)
-        await repo.update_profile(scope, account, pid, _P, expected_version=3)
+            await repo.update_profile(scope, account, pid, _P, expected_version=2, write_ahead=_NO)
+        await repo.set_default_profile(
+            scope, account, pid, expected_binding_version=8, write_ahead=_NO
+        )
+        await repo.update_profile(scope, account, pid, _P, expected_version=3, write_ahead=_NO)
         first, rest = await _next(owner), await _system(owner)
         await notices.stop()
         await rig.close()

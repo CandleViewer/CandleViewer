@@ -1133,7 +1133,7 @@ class AccountProfileInput(BaseModel):
     name: Annotated[
         str,
         Field(
-            description="Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate.\n",
+            description="Unique per account, in any letter case. It holds no control character (U+0000 to U+001F) and no unpaired surrogate. It holds no character of category Cc or Cf either, such as DEL, U+200B, U+202E or U+FEFF (`not_allowed`).\n",
             max_length=80,
             min_length=1,
             pattern="^[^\\x00-\\x1F]+$",

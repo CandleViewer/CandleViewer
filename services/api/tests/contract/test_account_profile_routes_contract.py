@@ -50,7 +50,8 @@ _DECLARED = {
     "createAccountProfile": (f"201 {_REFUSED} {_WRITE} {_LARGE}", _KEYED, "recommended"),
     "getAccountProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "updateAccountProfile": (f"200 {_STALE} {_REFUSED} {_WRITE} {_LARGE}", _TAGGED, "optional"),
-    "deleteAccountProfile": (f"204 {_STALE} {_WRITE}", _TAGGED, "optional"),
+    # The delete's 422 is R1C-03.
+    "deleteAccountProfile": (f"204 {_STALE} 422 {_WRITE}", _TAGGED, "optional"),
     "getAccountDefaultProfile": (f"200 {_READ} 503:ServiceUnavailable", "", None),
     "setAccountDefaultProfile": (f"200 {_STALE} 422 {_WRITE} {_LARGE}", _TAGGED, "optional"),
 }
@@ -565,6 +566,8 @@ def test_the_records_hold_the_profile_whole_and_a_refused_save_once_per_rule() -
         "outcome `denied`, one record per audited rule the refusal names, its `after` the"
         " account's id, the rule's entry count and its first 20 entries;",
         "; a refused create names the account (`object_kind` `exchange_account`);",
+        "; a refused replace names the profile its path names (`object_kind` `account_profile`, the"
+        " path's `profileId`), whether or not that profile exists,",  # #4495 R1S-01
         "; a record that cannot be written is `503 audit_unavailable`; its `reason` is one of",
     )
     assert [words for words in said if words not in _records()] == []
@@ -582,6 +585,8 @@ def test_the_body_states_its_bounds_and_the_name_holds_no_control_character() ->
     name = body["properties"]["name"]
     assert name["pattern"] == r"^[^\x00-\x1F]+$"  # JSON Schema, Python `re` and the model alike
     no_control = "It holds no control character (U+0000 to U+001F) and no unpaired surrogate."
+    no_control += " It holds no character of category Cc or Cf either, such as DEL, U+200B, U+202E"
+    no_control += " or U+FEFF (`not_allowed`)."  # #906 R1C-03: `name_errors`' refusal
     assert _text(name["description"]) == f"Unique per account, in any letter case. {no_control}"
     base = {"leverage": "1", "sizing": {"mode": "fixed_qty", "qty": "1"}}
     refused = dict.fromkeys(("A\x00B", "A\nB", "Alice\n"), "string_pattern_mismatch")  # Rust `$`

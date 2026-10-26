@@ -3450,6 +3450,26 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
         "409": { $ref: "#/components/responses/Conflict" }
         "412": { $ref: "#/components/responses/PreconditionFailed" }
+        "422":
+          description: >
+            `Idempotency-Key` or `profileId` is not a UUID (`validation_failed`, rule
+            `uuid_parsing`). Nothing changes and nothing is audited.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+              examples:
+                notAKey:
+                  value:
+                    type: "https://candleviewer.local/errors/validation_failed"
+                    title: "Request body or parameters failed schema validation"
+                    status: 422
+                    detail: "1 field failed validation."
+                    instance: "urn:cv:req:0193f2bc-6a06-7c3e-9a11-2f8e4b1c9e07"
+                    code: validation_failed
+                    errors:
+                      - field: Idempotency-Key
+                        rule: uuid_parsing
+                        message: "Idempotency-Key must be a UUID."
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
@@ -3565,7 +3585,7 @@ paths:
                     errors:
                       - field: body.profile_id
                         rule: uuid_parsing
-                        message: "Input should be a valid UUID, invalid character: found `S` at 1"
+                        message: "Input should be a valid UUID."
         "428": { $ref: "#/components/responses/PreconditionRequired" }
         "503": { $ref: "#/components/responses/ProfileSaveUnavailable" }
 
@@ -17596,7 +17616,8 @@ components:
           pattern: '^[^\x00-\x1F]+$'
           description: >
             Unique per account, in any letter case. It holds no control character (U+0000 to
-            U+001F) and no unpaired surrogate.
+            U+001F) and no unpaired surrogate. It holds no character of category Cc or Cf either,
+            such as DEL, U+200B, U+202E or U+FEFF (`not_allowed`).
         is_default:
           type: boolean
           default: false
