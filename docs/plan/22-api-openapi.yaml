@@ -824,8 +824,9 @@ x-error-codes-ws:
     retryable: false
     close_code: 1002
     title: >-
-      Malformed inbound frame: not valid JSON or MessagePack, or a binary body inconsistent with
-      its header
+      Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack, a frame of the
+      wrong kind for the connection's subprotocol, a binary body inconsistent with its header, or
+      a resync with no ch or a p that is not an object
   - code: unsupported_protocol
     scope: connection
     retryable: false
@@ -874,7 +875,8 @@ x-error-codes-ws:
     retryable: false
     title: >-
       Subscription option out of range, of the wrong type, or an unknown key; also a request-level
-      refusal of a sub, unsub, ctl or resync whose shape breaks the schema, with no ch
+      refusal of a malformed `sub` or `unsub`, or a `ctl` or `resync` naming a bad `ch`, `rs` or
+      `sub_id`, with no `ch`
     rest_analogue: validation_failed
   - code: encoding_unsupported
     scope: topic

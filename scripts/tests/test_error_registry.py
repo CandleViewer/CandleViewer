@@ -239,19 +239,24 @@ def test_reworded_titles_keep_their_meaning_and_the_md_row() -> None:
 
 
 def test_request_level_use_of_invalid_options_and_the_wide_frame_malformed_title() -> None:
-    # #2553: `invalid_options` also refuses a malformed sub/unsub/ctl/resync, with no `ch`;
-    # `frame_malformed` is §3.6's code for any malformed inbound frame, not only binary bodies.
+    # #2553: `invalid_options` also refuses a malformed sub/unsub or a ctl/resync naming a bad
+    # `ch`, `rs` or `sub_id`, with no `ch`; `frame_malformed` is §3.6's code for a malformed
+    # inbound frame, and §7.7's for a resync with no `ch` or a `p` that is no object.
     titles = _titles()
     assert titles["invalid_options"] == (
         "Subscription option out of range, of the wrong type, or an unknown key; also a "
-        "request-level refusal of a sub, unsub, ctl or resync whose shape breaks the schema, "
-        "with no ch"
+        "request-level refusal of a malformed `sub` or `unsub`, or a `ctl` or `resync` naming a "
+        "bad `ch`, `rs` or `sub_id`, with no `ch`"
     )
     assert titles["frame_malformed"] == (
-        "Malformed inbound frame: not valid JSON or MessagePack, or a binary body inconsistent "
-        "with its header"
+        "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack, a frame of "
+        "the wrong kind for the connection's subprotocol, a binary body inconsistent with its "
+        "header, or a resync with no ch or a p that is not an object"
     )
     flat = " ".join(MD.split())
-    assert "Also a request-level refusal: a `sub`, `unsub`, `ctl` or `resync`" in flat
-    assert "no `ch`" in flat
-    assert "not valid JSON or MessagePack, or a binary body inconsistent with its header (§3.6)" in flat
+    assert (
+        "Also a request-level refusal: a malformed `sub` or `unsub`, or a `ctl` or `resync` "
+        "naming a bad `ch`, `rs` or `sub_id`, gets it with no `ch`"
+    ) in flat
+    assert "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack" in flat
+    assert "or a `resync` with no `ch` or a `p` that is not an object (§7.7)" in flat
