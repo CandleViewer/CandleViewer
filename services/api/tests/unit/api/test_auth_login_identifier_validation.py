@@ -5,6 +5,7 @@ audited and the identifier is not echoed. Through the real router, `LoginService
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -48,7 +49,7 @@ async def test_failed_login_with_a_nul_identifier_is_refused_and_not_audited(
 ) -> None:
     repo = PgTextAuditRepository()
     writer = AuditWriter(repo, str(tmp_path / "a.wal"), clock=FakeClock(), sleep=repo.retry_sleep)
-    login = LoginService(FakeUserRepository(), Hasher(pepper="p"))
+    login = LoginService(FakeUserRepository(), Hasher(pepper="p"), failure_floor=timedelta(0))
     app = FastAPI()
     install_error_redaction(app)
     auth = cast(Any, _Auth(login))

@@ -57,6 +57,7 @@ async def _setup() -> tuple[_RecordingRepository, LoginService, str]:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
+        failure_floor=timedelta(0),
     )
     return repo, service, str(user.id)
 

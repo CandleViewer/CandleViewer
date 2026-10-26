@@ -796,6 +796,8 @@ def build_auth_service(
         system_events=PgSystemEventWriter(relational, redact_details=system_event_redactor()),
         # E09-S11 (O4): whether a break-glass reset is unresolved, for the WS `system` notice.
         break_glass_events=SqlAlchemyBreakGlassEvents(relational),
+        # #4648: the minimum time a failed sign-in takes, held to 250-5000 ms by `Settings`.
+        login_failure_floor=timedelta(milliseconds=settings.auth_login_failure_floor_ms),
     )
 
 

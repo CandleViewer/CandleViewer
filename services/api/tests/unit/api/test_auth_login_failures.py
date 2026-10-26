@@ -149,7 +149,9 @@ async def _login_service(*, per_address: int = 10_000) -> LoginService:
     for name, extra in states.items():
         repo.add(make_user(username=name, email=f"{name}@x.test", password_hash=pw, **extra))
     throttle = PerIpLoginThrottle(max_attempts=per_address)
-    return LoginService(repo, hasher, per_ip_throttle=throttle, clock=lambda: _NOW)
+    return LoginService(
+        repo, hasher, per_ip_throttle=throttle, clock=lambda: _NOW, failure_floor=timedelta(0)
+    )
 
 
 async def _login(client: httpx.AsyncClient, identifier: str, password: str) -> int:

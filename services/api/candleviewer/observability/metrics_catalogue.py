@@ -3619,6 +3619,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_login_failure_floor_missed_total",
+        "counter",
+        "failures",
+        (),
+        "Failed sign-ins that took longer than the minimum failed sign-in time, so were not held "
+        "(#4648, LoginService).",
+        "AuthLoginFailureFloorMissed (any in 10m, ticket)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_stepup_failures_total",
         "counter",
         "failures",

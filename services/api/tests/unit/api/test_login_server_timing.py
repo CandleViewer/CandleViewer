@@ -74,7 +74,11 @@ def _service(
     if throttled:
         throttle.record_failure(_LOOPBACK[0])
     return LoginService(
-        repo, Hasher(perf_counter=ticks), per_ip_throttle=throttle, clock=lambda: _T0
+        repo,
+        Hasher(perf_counter=ticks),
+        per_ip_throttle=throttle,
+        clock=lambda: _T0,
+        failure_floor=timedelta(0),
     )
 
 

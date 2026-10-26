@@ -138,6 +138,14 @@ auth_lockouts_total = Counter(
     "auth_lockouts_total",
     "Account lockouts applied by repeated wrong passwords (SR-016), from login or step-up.",
 )
+#: #4648: one per failed sign-in that took longer than `LOGIN_FAILURE_FLOOR` before its response
+#: was due, so it was returned without the wait (`LoginService._hold_failure`). No label. Any
+#: increase means failed sign-ins were not all held to the same minimum time;
+#: `AuthLoginFailureFloorMissed` tickets it.
+auth_login_failure_floor_missed_total = Counter(
+    "auth_login_failure_floor_missed_total",
+    "Failed sign-ins that took longer than the minimum failed sign-in time, so were not held.",
+)
 auth_stepup_failures_total = Counter(
     "auth_stepup_failures_total",
     "Failed step-up re-authentications (wrong password or code, or a locked account).",
@@ -400,6 +408,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_enrolment_only_sessions_total",
         "auth_enrolments_total",
         "auth_lockouts_total",
+        "auth_login_failure_floor_missed_total",  # #4648
         "auth_stepup_failures_total",
         "authz_denied_total",
         "auth_totp_clock_skew_total",

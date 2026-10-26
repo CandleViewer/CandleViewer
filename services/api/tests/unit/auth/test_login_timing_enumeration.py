@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import statistics
 import time
+from datetime import timedelta
 
 import pytest
 
@@ -25,7 +26,14 @@ async def test_login_timing_unknown_vs_wrong_password_indistinguishable_over_100
     repo = FakeUserRepository()
     hasher = Hasher(pepper="test-pepper")
     repo.add(make_user(password_hash=await hasher.hash("correct-horse-battery-staple")))
-    service = LoginService(repo, hasher, per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9))
+    # No failure floor: this measures the two arms' own work, which a floor would pad to one
+    # deadline; the floor has its own tests (test_login_failure_paths.py, the integration suite).
+    service = LoginService(
+        repo,
+        hasher,
+        per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9),
+        failure_floor=timedelta(0),
+    )
 
     unknown: list[float] = []
     wrong: list[float] = []

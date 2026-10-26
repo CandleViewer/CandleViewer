@@ -102,6 +102,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         {},
     ),
     "AuthLockouts": ("auth_lockouts_total", "0+0x10 1+0x10", "0+0x20", "15m", {}),
+    # #4648: one failed sign-in returned without the wait is enough.
+    "AuthLoginFailureFloorMissed": (
+        'auth_login_failure_floor_missed_total{env="live"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "15m",
+        {"env": "live"},
+    ),
     # #2496 (SR-022): a single accepted recovery code is enough.
     "AuthRecoveryCodeUsed": (
         'auth_recovery_codes_used_total{env="live"}',

@@ -9,7 +9,7 @@ wrong passwords yields zero `account_locked` records, and every later attempt yi
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
@@ -60,6 +60,7 @@ async def _client() -> tuple[httpx.AsyncClient, _Audit, FakeUserRepository]:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
+        failure_floor=timedelta(0),
     )
     audit = _Audit()
     app = FastAPI()

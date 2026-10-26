@@ -1104,6 +1104,27 @@ docker compose -f infra/compose/docker-compose.yml --profile core --profile obs 
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'login' | tail -20
 ```
 
+<a id="alert-authloginfailurefloormissed"></a>
+
+### AuthLoginFailureFloorMissed
+
+| Element               | Detail                                                                                                                                                                                                                                                                         |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1. What fired         | A failed sign-in took longer than the minimum failed sign-in time before its response was due, so it was returned without the wait (`auth_login_failure_floor_missed_total`, #4648). Ticket.                                                                                   |
+| 2. User impact        | None for the user. Failed sign-ins in the window were not all held to the same minimum time.                                                                                                                                                                                   |
+| 3. What is still safe | Sign-in, lockouts, the per-address throttle and trading are unaffected.                                                                                                                                                                                                        |
+| 5. Remediation        | Check the API host's load and the sign-in volume: a burst of failed sign-ins or an overloaded host makes a failure slower than the minimum time. Treat a burst as `AuthLoginFailureSpike`. If the host is not overloaded, follow `SECURITY.md` and do not open a public issue. |
+| 6. Escalation         | Owner and security reviewer if it repeats.                                                                                                                                                                                                                                     |
+| 7. Verify recovery    | No new increase.                                                                                                                                                                                                                                                               |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(auth_login_failure_floor_missed_total[10m])'
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (method)(increase(auth_login_failures_total[10m]))'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'login' | tail -20
+```
+
 <a id="alert-authdisabledusersessionrevoked"></a>
 
 ### AuthDisabledUserSessionRevoked
