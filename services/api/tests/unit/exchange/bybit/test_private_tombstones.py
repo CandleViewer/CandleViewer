@@ -6,10 +6,12 @@ The adapter holds one `KeyTombstones` and shares it with every registry it build
 closed before any registry exists is refused by the first one, and a key one registry closed or
 marked is refused by every other; `reopen_private_streams` needs no registry. `close_key` returns
 within `CLOSE_TIMEOUT_S` plus 1 s: past that it pages and raises `PrivateStreamCloseOverran`,
-naming the accounts still closing, while the close runs on. The registry serves the loop of its
-first `open`; another loop's `open` or `close_key` is refused before anything is signed, dialled
-or closed. `ready()` counts what `__anext__` returns with no wait. RC-G8B-04: a stream B13 ended is
-not named by a later `close_key`, and three refusals mark the key even when a close queued first.
+naming the accounts still closing, while the close runs on; a retry names none of them. The
+registry serves the loop of the `open` that creates its first stream, so a refused one binds no
+loop; another loop's `open` or `close_key` is refused before anything is signed, dialled or
+closed, and a revoke from another loop still tombstones the key first. `ready()` counts what
+`__anext__` returns with no wait. RC-G8B-04: a stream B13 ended is not named by a later
+`close_key`, and three refusals mark the key even when a close queued first.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import AuthError
-from candleviewer.exchange.base.models import PrivateStreamStatus
+from candleviewer.exchange.base.models import AccountRef, PrivateStreamStatus
 from candleviewer.exchange.base.reconnect import ConnectionBudget, ReconnectPolicy
 from candleviewer.exchange.bybit import private_stream as ps
 from candleviewer.exchange.bybit.metrics import bybit_private_ws_disconnects_total
@@ -74,6 +76,17 @@ def _over(venue: PrivateVenue, tombstones: Any) -> ps.PrivateStreams:
 def _ended(reason: str) -> float:
     value: float = bybit_private_ws_disconnects_total.labels(reason=reason)._value.get()
     return value
+
+
+async def _next(stream: Any, count: int) -> list[str]:
+    """The stream's next `count` items, each a status shown as `state:reason`."""
+    seen: list[str] = []
+    async with asyncio.timeout(5):  # a guard only: the chart reaches `live` with no clock
+        for _ in range(count):
+            item = await stream.__anext__()
+            assert isinstance(item, PrivateStreamStatus)
+            seen.append(f"{item.state}:{item.reason}")
+    return seen
 
 
 @pytest.mark.parametrize("reason", ["key_revoked", "key_rotated"])
@@ -149,9 +162,10 @@ class _StuckVenue(PrivateVenue):
 
 async def test_a_revoke_whose_close_overruns_pages_raises_and_still_closes() -> None:
     """Q6 (RC-G8B-03): a close held past `CLOSE_TIMEOUT_S` plus 1 s pages once (CRITICAL,
-    `cv_page`, ids only) and raises `PrivateStreamCloseOverran`, a `TimeoutError` with a fixed
-    text naming the account still closing. The close runs on: a retry waits for the same close,
-    and once it finishes the socket is closed and `closed(key_revoked)` is the last item."""
+    `cv_page`, ids only) and raises `PrivateStreamCloseOverran`, a bare `TimeoutError` with a
+    fixed text naming the account still closing. The close runs on: a retry waits for the same
+    close and names no account, so the overrun's `accounts` is the audit's source for it; once
+    the close finishes the socket is closed and `closed(key_revoked)` is the last item."""
     clock = VirtualClock()
     venue = _StuckVenue(clock)
     streams = make_streams(venue)
@@ -171,6 +185,9 @@ async def test_a_revoke_whose_close_overruns_pages_raises_and_still_closes() -> 
     assert isinstance(overran.value, ps.PrivateStreamCloseOverran)
     assert overran.value.accounts == (ACCOUNT_A,)
     assert str(overran.value) == "the key's private streams are still closing"
+    # bare, as the open's refusals (SR-E29-08): nothing chained, no context shown
+    assert overran.value.__cause__ is None and overran.value.__context__ is None
+    assert overran.value.__suppress_context__
     pages = [e for e in logs if e["event"] == "bybit_private_key_close_overran"]
     assert pages == [
         {
@@ -205,10 +222,10 @@ async def _elsewhere(work: Callable[[], Awaitable[Any]]) -> str:
 
 
 async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is_signed() -> None:
-    """Q5 (D6): the registry serves the loop of its first `open`. An `open` or a `close_key` from
-    any other loop is refused (`RuntimeError`) before anything is signed, dialled, built or
-    closed, so a mis-wiring never reaches M2's binding (whose refusal would mark the key) and
-    never leaves a stream half closed; the first refusal of the window pages."""
+    """Q5 (D6): the registry serves the loop of the `open` that created its first stream. An `open`
+    or a `close_key` from any other loop is refused (`RuntimeError`) before anything is signed,
+    dialled, built or closed, so a mis-wiring never reaches M2's binding (whose refusal would mark
+    the key) and never leaves a stream half closed; the first refusal of the window pages."""
     clock, calls = VirtualClock(), list[Call]()
     venue = PrivateVenue(clock)
     streams = make_streams(venue, calls=calls)
@@ -227,6 +244,68 @@ async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is
     assert [(e["event"], e["log_level"], e.get("cv_page")) for e in logs] == [
         ("bybit_private_streams_wrong_loop", "critical", True)
     ]
+    await consumer.stop()
+    await streams.aclose()
+
+
+async def test_a_revoke_from_another_loop_tombstones_first_and_its_retry_closes() -> None:
+    """24 §14.2 rule 13 (D6, RC-G8B-03): `close_private_streams` from any loop but the
+    registry's writes the key's tombstone first, in the adapter, then raises `RuntimeError`, not
+    a `TimeoutError`: any exception means the close is not done. The socket stays open and the
+    call pages once, and a stream on the key is refused at once, with nothing signed or dialled.
+    A retry on the registry's loop closes the socket and names the account, whose close it
+    started, with `closed(key_revoked)` the stream's last item."""
+    venue, calls = PrivateVenue(VirtualClock()), list[Call]()
+    adapter = _adapter(venue, calls)
+    stream = await adapter.open_private_stream(account())
+    assert await _next(stream, 2) == ["heartbeat:evidence", "resyncing:connected"]
+    signed, dialled = len(calls), list(venue.dialled)
+    with capture_logs() as logs:
+        refused = await _elsewhere(lambda: adapter.close_private_streams(account().key_ref))
+        assert refused == "the private streams serve another event loop"
+        assert not venue.sockets[0].closed
+        with pytest.raises(AuthError):  # the same key: tombstoned by the refused call itself
+            await adapter.open_private_stream(account(ACCOUNT_B))
+        assert (len(calls), venue.dialled) == (signed, dialled)
+        assert await adapter.close_private_streams(account().key_ref) == (ACCOUNT_A,)
+    assert venue.sockets[0].closed and await _next(stream, 1) == ["closed:key_revoked"]
+    pages = [e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]
+    assert [(e["log_level"], e.get("cv_page")) for e in pages] == [("critical", True)]
+    await stream.aclose()
+    await adapter.stop(5.0)
+
+
+@pytest.mark.parametrize(
+    ("first", "refusal"),
+    [
+        (account(ACCOUNT_B, environment="live"), ValueError),
+        (account(ACCOUNT_B, key_ref=NEW_KEY), AuthError),
+    ],
+    ids=["another-environment", "closed-key"],
+)
+async def test_a_refused_first_open_from_another_loop_binds_no_loop(
+    first: AccountRef, refusal: type[Exception]
+) -> None:
+    """Q5 (D6): the registry takes the loop of the `open` that creates its first stream, after
+    every refusal, so a first open from another loop refused for its own reason (another
+    environment's account, a closed key) binds nothing and pages nothing: the serving loop then
+    opens, reaches `live` and closes as before. Once bound, the loop check still comes first: the
+    same open from another loop is refused as off the registry's loop."""
+    clock = VirtualClock()
+    venue = PrivateVenue(clock)
+    streams = make_streams(venue)
+    assert await streams.close_key(NEW_KEY, reason="key_revoked") == ()  # binds nothing either
+    with capture_logs() as logs:
+        with pytest.raises(refusal):
+            await _elsewhere(lambda: streams.open(first))
+        assert venue.dialled == []
+        consumer = Consumer(await streams.open(account()))
+        await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+        refused = await _elsewhere(lambda: streams.open(first))
+        assert refused == "the private streams serve another event loop"
+    pages = [e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]
+    assert len(pages) == 1  # the open after the bind; the refused first one paged nothing
+    assert await streams.close_key(account().key_ref, reason="key_revoked") == (ACCOUNT_A,)
     await consumer.stop()
     await streams.aclose()
 
