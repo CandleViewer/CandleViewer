@@ -266,7 +266,7 @@ keeps a copy. Run it with no session recorder (`script`, `asciinema`), keep the 
 clipboard manager's history, and once step 7 has redeemed it clear the terminal and its scrollback
 (`clear; printf '\033[3J'`, and `tmux clear-history` in tmux). Its options, exit statuses and
 refusals are #4479's: `docs/ops/runbooks/auth-rbac.md` §4, "Bootstrap the first Owner (O5, #4479)",
-which ships with it.
+which shipped with #4479's CLI (#4554).
 
 ## 7. Account and key import: the first-run script
 

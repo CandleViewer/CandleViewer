@@ -42,6 +42,7 @@ from candleviewer.auth.invite_service import hash_token
 from candleviewer.auth.metrics import auth_owner_bootstrap_events
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.observability.logging import configure_logging, reset_logging
+from candleviewer.observability.redaction import redact_text
 from candleviewer.secrets._kek import LoadedKek
 from candleviewer.settings import Environment, Settings
 from candleviewer.storage.repositories.break_glass_sqlalchemy import SqlAlchemyBreakGlassEvents
@@ -314,5 +315,9 @@ def test_no_secret_beyond_the_single_print(world: SimpleNamespace) -> None:
     # The capture is live: cv-api's audit lane logged the redemption's records, and the three
     # request lines that carried the token (the offer, the password, the confirmation: httpx's,
     # as uvicorn's access log would be) passed through the same pipeline, redacted (#415).
+    # Which shape names the token depends on the draw: the key shape is tried first, so a token
+    # that starts with 18 to 36 letters and digits before a `-` (about 1 in 8) is `key-shape`.
+    marker = redact_text(world.token)
+    assert marker in ("[redacted:invite-token-shape]", "[redacted:key-shape]")
     assert '"event":"audit.lane.appended"' in world.api_log
-    assert world.api_log.count("[redacted:invite-token-shape]") == 3
+    assert world.api_log.count(marker) == 3

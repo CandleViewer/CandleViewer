@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines as their author gave them that day (they land with #3180), and its known-gaps row was dropped. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines, which shipped in #4522, and its known-gaps row was dropped; on 2026-10-26 (#4494's follow-up) it gained a bullet on the orphaned `invited` user that a run for another email leaves behind. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -957,8 +957,9 @@ needs none) and without a recovery code in `live`; and:
 - A channel to the Owner that keeps no copy of what passes through it, and the Owner ready to
   redeem within minutes in the app (R-009, web or desktop).
 
-**Procedure (compose).** On the demo host (#3180; `infra/compose/docker-compose.demo-host.yml`
-lands with it), `$COMPOSE` is set once as below; another stack uses its own `-p` and `-f`, as in §3:
+**Procedure (compose).** On the demo host (#3180's `infra/compose/docker-compose.demo-host.yml`,
+shipped in #4522), `$COMPOSE` is set once as below; another stack uses its own `-p` and `-f`,
+as in §3:
 
 ```bash
 COMPOSE="docker compose -p cv-demo -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.vps.yml -f infra/compose/docker-compose.demo-host.yml"
@@ -1017,6 +1018,20 @@ COMPOSE="docker compose -p cv-demo -f infra/compose/docker-compose.yml -f infra/
   token was lost; the invite expired (4 h); the enrolment lapsed (30 minutes after the password
   step); or the confirmation answered `503` because its record was refused, which rolled the grant
   back and left the user `invited` with TOTP enrolled.
+- **A run for another email.** The new run revokes the earlier run's invite, but that run's
+  `invited` user stays: no role, a placeholder password hash that never verifies and no usable
+  invite, so it cannot sign in or hold a permission. No served route lists users yet (`listUsers`
+  is contract-only). A later run for that email reuses it. Otherwise, once the new Owner is
+  active, read its id read-only as in step 9 (the `object_id` of the earlier run's
+  `auth.bootstrap_owner_invited` row, or the bootstrap mint's user, which no one invited:
+  `SELECT id, created_at FROM users WHERE status = 'invited' AND invited_by IS NULL`), and the
+  Owner disables it with the served disable above (`DELETE /users/{userId}`, step-up `users`,
+  with `acknowledge_unknown_positions=true` as above, audited as `users.disable`; the row is
+  never hard-deleted). Break-glass (§3) resets a locked-out Owner's MFA and touches no other
+  user: it is the way back to that disable, not a way to remove the user. If the new run is
+  refused 18 because the earlier user holds the same part before `@` (a mistyped domain, say),
+  nothing is revoked and the earlier invite stays open for its 4 h: run again for the earlier
+  address (its user is reused) or for one whose part before `@` differs.
 - **Someone else redeemed it.** The Owner's `/invite/<token>` answers not valid though nobody
   redeemed it, or step 9's `actor_ip` or time is not the Owner's. Read the invite and the user
   (read-only, as in step 9):
