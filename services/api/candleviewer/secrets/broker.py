@@ -543,7 +543,8 @@ class CredentialBroker:
         signing is the real fix (#835 residual, follow-up issue). The write-ahead record
         carries `digest` as `message_sha256`; any failure after it (fence, decrypt, MAC,
         cancellation) appends `security.credential_sign_failed` with a bounded `reason`. #913 L3b:
-        `io` is another loop's I/O; the fence to the DEK's last use is one guarded section."""
+        `io` is another loop's I/O; the fence to the DEK's last use is one guarded section, which
+        refuses an I/O closed since the loop check (L1d)."""
         if caller_module not in ALLOWED_CALLERS or purpose not in _PURPOSES:
             raise CredentialUnavailable("caller_not_permitted")
         self._bound(io, caller_module)
@@ -571,7 +572,9 @@ class CredentialBroker:
                     self._guard.acquire()  # one section, no await: the fence to the DEK let go
                     try:
                         row = self._check_row(row, key_id, purpose, fence=True)  # destroyed?
-                        if io is not None and not io.closed:  # a closed I/O never joins again
+                        if io is not None:
+                            if io.closed:  # closed since its loop check: refused, as there
+                                raise SigningLoopMismatch("signing_loop_mismatch")
                             self._loops.add(weakref.ref(io))  # `destroy` and `aclose` reach it
                         self._touch(key_id, io=io)  # started, never awaited: never delays a signing
                         if row.secret_enc[: env.NONCE_LEN] != row.enc_nonce:
