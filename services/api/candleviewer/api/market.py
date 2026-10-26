@@ -58,7 +58,7 @@ from candleviewer.api.market_response import (
     encode_cursor,
     kline_response,
     problem,
-    serialize_bar,
+    serialize_bars,
 )
 from candleviewer.bars.limits import DEFAULT_LIMIT, MAX_LIMIT, MAX_TIME_WINDOW_US
 from candleviewer.bars.metrics import record_page, record_param_rejected
@@ -439,7 +439,7 @@ def make_market_router(
         )  # fmt: skip
         return kline_response(
             symbol=symbol, interval=interval, bar_type="time",
-            bars=[serialize_bar(r, include_delta=include_delta) for r in rows], meta=meta,
+            bars=serialize_bars(rows, include_delta=include_delta), meta=meta,
         )  # fmt: skip
 
     return router

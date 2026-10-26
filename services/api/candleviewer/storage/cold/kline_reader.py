@@ -17,11 +17,13 @@ import contextlib
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
+from operator import attrgetter
 from pathlib import Path
 from typing import Any
 
 import duckdb
 import pyarrow as pa
+import pyarrow.compute as pc
 import structlog
 
 from candleviewer.observability.context import thread_future
@@ -273,12 +275,66 @@ def _stamps(files: list[Path]) -> dict[Path, tuple[int, int]]:
     return out
 
 
+#: Price/size columns, in `ColdKlineRow` order; `_READ_SQL` lists the same names.
+_NUM_COLS = ("open", "high", "low", "close", "volume", "turnover")
+_TXT = "__cv_txt_"  # prefix of their text columns in the result
+# union_by_name tolerates schema drift; optional columns default in Python. Dedup on ts happens
+# before LIMIT so duplicate part-file rows never eat the cap. #2523: `ts` leaves DuckDB as int64
+# epoch us (the WHERE still binds the stored TIMESTAMPTZ, so the predicate is pushed into the
+# scan), never as tz-aware datetimes built in Python; each `_NUM_COLS` column also leaves it as
+# text (`__cv_txt_<name>`, cast in the scan, off the GIL). `ts` is in that list so the set is
+# never empty (a binder error); its text is unused.
+_READ_SQL = (
+    "SELECT * REPLACE (epoch_us(ts) AS ts), "
+    "CAST(COLUMNS(c -> c IN ('ts', 'open', 'high', 'low', 'close', 'volume', 'turnover')) "
+    "AS VARCHAR) AS '__cv_txt_\\0' "
+    "FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
+    "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
+    "QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) = 1 "
+    "ORDER BY ts DESC LIMIT $n"
+)
+
+
 def _column(table: pa.Table, name: str, default: object) -> list[Any]:
     """`name`'s values, or `default` per row when no file carries it (union_by_name)."""
     if name in table.column_names:
         values: list[Any] = table.column(name).to_pylist()
         return values
     return [default] * table.num_rows
+
+
+def _num_column(table: pa.Table, name: str) -> list[str]:
+    """`[_num(v) for v in column]` without the per-row Python call (#2523).
+
+    For a DOUBLE column DuckDB's own text is Python's `repr` of every finite float (checked
+    by a property test); exponent forms, inf and nan (`-nan` in DuckDB) hold "e" or "n" and,
+    with nulls, are the only rows that still go through `_num`. Other types keep `_num`."""
+    if name not in table.column_names:
+        return ["0"] * table.num_rows
+    raw = table.column(name)
+    if not pa.types.is_float64(raw.type):
+        return [_num(v) for v in raw.to_pylist()]
+    txt = table.column(_TXT + name)
+    out: list[str] = txt.to_pylist()
+    odd = pc.or_kleene(
+        pc.is_null(txt), pc.or_(pc.match_substring(txt, "e"), pc.match_substring(txt, "n"))
+    )
+    if pc.any(odd).as_py():
+        for i in pc.indices_nonzero(odd).to_pylist():
+            out[i] = _num(raw[i].as_py())
+    return out
+
+
+def _source_column(table: pa.Table) -> list[str]:
+    """`str(source or "parquet")` per row, column-wise for a string column."""
+    if "source" not in table.column_names:
+        return ["parquet"] * table.num_rows
+    src = table.column("source")
+    if not pa.types.is_string(src.type):
+        return [str(v or "parquet") for v in src.to_pylist()]
+    blank = pc.or_kleene(pc.is_null(src), pc.equal(src, ""))
+    filled: list[str] = pc.if_else(blank, "parquet", src).to_pylist()
+    return filled
 
 
 def _read_rows(
@@ -290,49 +346,24 @@ def _read_rows(
 ) -> list[ColdKlineRow]:
     try:
         cur.execute("SET TimeZone = 'UTC'")
-        # union_by_name tolerates schema drift; optional columns default in Python. Dedup on
-        # ts happens before LIMIT so duplicate part-file rows never eat the cap. #2523: `ts`
-        # leaves DuckDB as int64 epoch us (the WHERE still binds the stored TIMESTAMPTZ, so the
-        # predicate is pushed into the scan), never as tz-aware datetimes built in Python.
         table = cur.execute(
-            "SELECT * REPLACE (epoch_us(ts) AS ts) "
-            "FROM read_parquet($files, hive_partitioning = false, union_by_name = true) "
-            "WHERE ts >= make_timestamptz($lo::BIGINT) AND ts < make_timestamptz($hi::BIGINT) "
-            "QUALIFY row_number() OVER (PARTITION BY ts ORDER BY ts) = 1 "
-            "ORDER BY ts DESC LIMIT $n",
-            {"files": files, "lo": lo, "hi": hi, "n": max_rows},
+            _READ_SQL, {"files": files, "lo": lo, "hi": hi, "n": max_rows}
         ).to_arrow_table()
     except duckdb.Error as exc:
         raise ColdKlineReadError(f"cold kline read failed: {type(exc).__name__}") from exc
     finally:
         cur.close()  # N4: the worker closes its own cursor; the shared instance stays open
-    # Column-wise: one `to_pylist` per column, no per-row dicts (#2523).
-    out = [
-        ColdKlineRow(
-            ts_us=ts,
-            open=_num(o),
-            high=_num(h),
-            low=_num(lo_),
-            close=_num(c),
-            volume=_num(v),
-            turnover=_num(t),
-            confirmed=bool(ok),
-            source=str(src or "parquet"),
-        )
-        for ts, o, h, lo_, c, v, t, ok, src in zip(
+    # Column-wise (#2523): one pass per column, rows built by `map`, no per-row Python body.
+    out = list(
+        map(
+            ColdKlineRow,
             table.column("ts").to_pylist(),
-            _column(table, "open", "0"),
-            _column(table, "high", "0"),
-            _column(table, "low", "0"),
-            _column(table, "close", "0"),
-            _column(table, "volume", "0"),
-            _column(table, "turnover", "0"),
-            _column(table, "confirmed", True),
-            _column(table, "source", None),
-            strict=True,
+            *(_num_column(table, name) for name in _NUM_COLS),
+            map(bool, _column(table, "confirmed", True)),
+            _source_column(table),
         )
-    ]
-    out.sort(key=lambda x: x.ts_us)
+    )
+    out.sort(key=attrgetter("ts_us"))  # one descending run: linear
     return out
 
 
