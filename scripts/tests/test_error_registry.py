@@ -63,7 +63,7 @@ def test_generator_rejects_a_title_outside_the_bmp() -> None:
 def test_generator_rejects_a_lone_surrogate_title_naming_the_code() -> None:
     entries = generate.load_registry(MINI)
     entries[0]["title"] = "bad \ud800 title"
-    with pytest.raises(generate.RegistryError, match="not_found"):
+    with pytest.raises(generate.RegistryError, match="surrogate"):
         generate.render_py(entries)
 
 
@@ -89,6 +89,58 @@ def test_gate_reports_a_render_refusal_as_a_registry_line() -> None:
     text = MINI.replace("title: t", "title: '\U0001f600'", 1)
     errs = gate.check(MINI_MD, text, {})
     assert len(errs) == 1 and errs[0].startswith("registry: ") and "not_found" in errs[0]
+
+
+def _ws(extra: str) -> str:
+    if extra.startswith("surface:"):
+        return MINI.replace("surface: [rest, ws]", extra, 1)
+    return MINI.replace("{code: forbidden,", "{code: forbidden, " + extra + ",", 1)
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "surface: rest",
+        "surface: [rest, smtp]",
+        "surface: ['rest\"']",
+        "surface: [[rest]]",
+        "close_code: '4401'",
+        "close_code: '1); import os #'",
+        "close_code: true",
+        "close_code: 4401.5",
+        "close_code: 999",
+        "close_code: 5000",
+    ],
+)
+def test_load_registry_rejects_bad_surface_and_close_code(field: str) -> None:
+    with pytest.raises(generate.RegistryError, match="forbidden"):
+        generate.load_registry(_ws(field))
+
+
+def test_load_registry_accepts_the_registry_close_codes() -> None:
+    entries = generate.load_registry(_ws("close_code: 4401"))
+    assert entries[1]["close_code"] == 4401
+
+
+@pytest.mark.parametrize("scope", ["true", "'\U0001f600'", "[a]", "1"])
+def test_ws_scope_must_be_clean_text(scope: str) -> None:
+    text = MINI.replace("scope: topic", f"scope: {scope}")
+    with pytest.raises(generate.RegistryError, match="unknown_topic"):
+        generate.render_py(generate.load_registry(text))
+
+
+def test_lone_surrogate_scope_is_refused() -> None:
+    entries = generate.load_registry(MINI)
+    entries[2]["scope"] = "to\ud800pic"
+    with pytest.raises(generate.RegistryError, match="surrogate"):
+        generate.render_py(entries)
+
+
+@pytest.mark.parametrize("ra", ["[a, b]", "{a: b}", "true", "5"])
+def test_gate_reports_a_bad_rest_analogue_as_a_registry_line(ra: str) -> None:
+    text = MINI.replace("rest_analogue: not_found", f"rest_analogue: {ra}")
+    errs = gate.check(MINI_MD, text, {})
+    assert len(errs) == 1 and errs[0].startswith("registry: ") and "unknown_topic" in errs[0]
 
 
 def test_generator_keeps_a_bmp_title_as_a_valid_literal() -> None:

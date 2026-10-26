@@ -28,6 +28,9 @@ SRC_NOTE = "docs/plan/22-api-openapi.yaml (x-error-codes, x-error-codes-ws)"
 
 
 CODE_SHAPE = re.compile(r"[a-z][a-z0-9_]*")
+SURFACES = frozenset({"rest", "ws"})
+# RFC 6455 close codes: 1000-2999 protocol range, 3000-4999 registered/private use.
+CLOSE_CODE_RANGE = range(1000, 5000)
 
 
 class RegistryError(ValueError):
@@ -57,29 +60,71 @@ def load_registry(text: str) -> list[dict[str, Any]]:
                 )
             seen.add(code)
             if origin == "x-error-codes":
-                surface = [str(s).strip().lower() for s in raw.get("surface", ["rest"])]
+                surface = _checked_surface(code, raw.get("surface", ["rest"]))
                 scope = "any" if "ws" in surface else None
             else:
                 surface = ["ws"]
                 scope = raw.get("scope")
                 if not scope:
                     raise RegistryError(f"{code}: WS code without scope")
+            close_code = raw.get("close_code")
+            if close_code is not None and (
+                type(close_code) is not int or close_code not in CLOSE_CODE_RANGE
+            ):
+                raise RegistryError(
+                    f"{code}: close_code must be null or an integer in 1000..4999, "
+                    f"got {close_code!r}"
+                )
+            rest_analogue = raw.get("rest_analogue")
+            for field, value in (("scope", scope), ("rest_analogue", rest_analogue)):
+                if value is not None and not isinstance(value, str):
+                    raise RegistryError(f"{code}: {field} must be a string or null")
             entries.append(
                 {
                     "code": code,
                     "surface": surface,
                     "scope": scope,
                     "retryable": bool(raw.get("retryable", False)),
-                    "rest_analogue": raw.get("rest_analogue"),
-                    "close_code": raw.get("close_code"),
+                    "rest_analogue": rest_analogue,
+                    "close_code": close_code,
                     "title": str(raw.get("title", "")).strip(),
                 }
             )
     return entries
 
 
-def _py_literal(value: object) -> str:
-    """A Python literal for a JSON-shaped scalar: ``None`` for null, never a text replacement."""
+def _checked_surface(code: str, value: object) -> list[str]:
+    """``surface`` must be a list whose items (after strip and lower) are known surfaces."""
+    if not isinstance(value, list):
+        raise RegistryError(f"{code}: surface must be a list, got {value!r}")
+    surface = [str(s).strip().lower() for s in value]
+    for item in surface:
+        if item not in SURFACES:
+            raise RegistryError(f"{code}: surface {item!r} must be one of {sorted(SURFACES)}")
+    return surface
+
+
+def _checked_text(field: str, code: str, value: object) -> str | None:
+    """Text emitted into a literal: a string in the BMP without a lone surrogate, or ``None``."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise RegistryError(f"{field} for {code!r} must be a string")
+    # json.dumps escapes non-BMP text as a surrogate pair, which is not a valid Python string
+    # literal for that character, so the text must stay inside the Basic Multilingual Plane.
+    if any(ord(ch) > 0xFFFF for ch in value):
+        raise RegistryError(f"{field} for {code!r} must stay in the BMP")
+    # Defence in depth: json.dumps would escape a lone surrogate, but it can never be valid
+    # UTF-8 text, so refuse it at the source.
+    if any(0xD800 <= ord(ch) <= 0xDFFF for ch in value):
+        raise RegistryError(f"{field} for {code!r} must not contain a lone surrogate")
+    return value
+
+
+def _py_literal(value: str | None) -> str:
+    """A Python literal for ``str | None``: ``None`` for null, never a text replacement."""
+    if value is not None and not isinstance(value, str):
+        raise RegistryError(f"cannot emit {type(value).__name__} as a string literal")
     return "None" if value is None else json.dumps(value)
 
 
@@ -122,20 +167,14 @@ def render_py(entries: list[dict[str, Any]]) -> str:
         surf = "(" + "".join(f'"{s}", ' for s in e["surface"]).rstrip() + ")"
         if len(e["surface"]) == 1:
             surf = f'("{e["surface"][0]}",)'
-        scope = _py_literal(e["scope"])
-        ra = _py_literal(e["rest_analogue"])
-        # json.dumps escapes non-BMP text as a surrogate pair, which is not a valid Python string
-        # literal for that character, so a title must stay inside the Basic Multilingual Plane.
-        # A lone surrogate passes that range test but cannot be encoded as UTF-8, so refuse it too.
-        if any(ord(ch) > 0xFFFF for ch in str(e["title"])):
-            raise RegistryError(f"error title for {e['code']!r} must stay in the BMP")
-        if any(0xD800 <= ord(ch) <= 0xDFFF for ch in str(e["title"])):
-            raise RegistryError(f"error title for {e['code']!r} must not contain a lone surrogate")
+        scope = _py_literal(_checked_text("scope", e["code"], e["scope"]))
+        ra = _py_literal(_checked_text("rest_analogue", e["code"], e["rest_analogue"]))
+        title = _checked_text("error title", e["code"], str(e["title"]))
         cc = "None" if e["close_code"] is None else str(e["close_code"])
         rt = "True" if e["retryable"] else "False"
         out.append(
             f'    ErrorCode.{_member(e["code"])}: ErrorMeta({surf}, {scope}, '
-            f'{rt}, {ra}, {cc}, {json.dumps(e["title"])}),'
+            f"{rt}, {ra}, {cc}, {json.dumps(title)}),"
         )
     out += [
         "}",
