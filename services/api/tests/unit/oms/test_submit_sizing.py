@@ -75,7 +75,7 @@ def _sent(rig: SubmitRig) -> PlaceOrderRequest:
 
 
 def _by_profile(**over: Any) -> Any:
-    return entry(sizing=_BY_PROFILE, stop_loss=None, take_profit=None, **over)
+    return entry(**({"sizing": _BY_PROFILE, "stop_loss": None, "take_profit": None} | over))
 
 
 # --- each mode against its golden vector (E28-T03's own, read unchanged) ------------------------
@@ -184,8 +184,12 @@ async def test_submit_a_reduce_only_order_in_another_mode_is_unsupported(
     ("request_", "named"),
     [
         (entry(sizing=SizingRequest(mode="fixed_qty", qty=D("1"))), ("sizing", "max_daily_loss")),
+        (entry(sizing=SizingRequest(mode="fixed_qty", qty=D("0.1"))),
+         ("sizing.qty", "fixed_qty")),
+        (entry(stop_loss=StopOffset(unit="price", value=D("56000"))),
+         ("stop_loss", "sl_offset_value")),
     ],
-    ids=["qty_past_a_cap"],
+    ids=["qty_past_a_cap", "qty_above_the_profiles_under_every_cap", "stop_further"],
 )  # fmt: skip
 async def test_submit_an_overlay_that_widens_the_profile_is_refused_whole(
     rig: SubmitRig, request_: Any, named: tuple[str, str]
@@ -200,8 +204,9 @@ async def test_submit_an_overlay_that_widens_the_profile_is_refused_whole(
     ("sizing", "qty", "mode", "value"),
     [
         (SizingRequest(mode="fixed_qty", qty=D("0.005")), D("0.005"), "fixed_qty", D("0.005")),
+        (SizingRequest(mode="fixed_qty", qty=D("0.01")), D("0.010"), "fixed_qty", D("0.01")),
     ],
-    ids=["fixed_qty"],
+    ids=["fixed_qty", "fixed_qty_at_the_profiles"],
 )  # fmt: skip
 async def test_submit_an_overlay_inside_the_profile_is_sized_and_recorded(
     rig: SubmitRig, sizing: SizingRequest, qty: Decimal, mode: str, value: Decimal
@@ -434,3 +439,40 @@ async def test_submit_the_sizing_explanation_passes_the_audit_redactor_unchanged
     detail = dict(record.detail)
     assert "1R = " in str(detail["sizing_explanation"])
     assert redact(detail) == detail
+
+
+async def test_submit_a_fixed_qty_request_on_a_profile_of_another_mode_is_unsupported(
+    rig: SubmitRig,
+) -> None:
+    """An interim until the overlay is judged (#913 S4-S-b2b): a `fixed_qty` request on a
+    `risk_based` profile is not sized, so nothing is read, recorded or sent."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(
+        sizing_mode="risk_based", fixed_qty=None, risk_fixed_amount="30"
+    )
+    refused = await _refused(rig, entry(sizing=SizingRequest(mode="fixed_qty", qty=D("0.001"))))
+    assert isinstance(refused, OrderInvalid) and rig.figures.reads == []
+    assert [(e.field, e.rule) for e in refused.errors] == [
+        ("sizing.mode", "sizing_mode_unsupported")
+    ]
+
+
+async def test_submit_a_request_stop_nearer_than_the_profiles_is_sent(rig: SubmitRig) -> None:
+    """The profile's stop is 5 % (57000) below 60000; the request's 58000 is nearer, so it is the
+    stop the leg is sized from and the create carries."""
+    outcome = await rig.submit(entry(stop_loss=StopOffset(unit="price", value=D("58000"))))
+    assert outcome.status == 202 and _sent(rig).stop_loss == D("58000")
+
+
+async def test_submit_a_request_stop_whose_leg_a_cap_clamps_is_refused_whole(
+    rig: SubmitRig,
+) -> None:
+    """A stop alone in `profile` mode is an overlay too: a tighter stop raises a risk-based leg's
+    quantity, and a cap that would clamp it refuses the request whole, never clamped (ADR-0040)."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(
+        sizing_mode="risk_based", fixed_qty=None, risk_fixed_amount="30",
+        max_position_notional="1000",
+    )  # fmt: skip
+    request = _by_profile(stop_loss=StopOffset(unit="price", value=D("59900")))
+    refused = await _refused(rig, request)
+    assert isinstance(refused, RiskRefused)
+    assert [(e.field, e.rule) for e in refused.errors] == [("sizing", "max_position_notional")]

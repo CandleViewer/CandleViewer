@@ -321,10 +321,11 @@ async def test_happy_path_is_an_acceptance_not_a_fill(
 
 
 async def test_filters_are_enforced_before_any_exchange_call(world: World) -> None:
-    """Gherkin "Filters are enforced before any exchange call": a price that is no multiple of the
-    tick (0.1) is refused 400 `tick_size_violation`; no order request reaches the venue, only the
-    size step's reads before it (24 Sec.8.4 item 2, step 3c), and nothing is recorded, the refusal
-    audited before it is answered (C-2.9)."""
+    """Gherkin "Filters are enforced before any exchange call", read as before any order call
+    (24 Sec.8.4 item 2): the size step's figure reads (step 3c) come first. A price that is no
+    multiple of the tick (0.1) is refused 400 `tick_size_violation`; no order call reaches the
+    venue, only those reads, and nothing is recorded, the refusal audited before it is answered
+    (C-2.9)."""
     async with _serving(world) as client:
         calls = len(world.port.calls)
         answer = await _post(client, world.body | {"price": "60000.05"})

@@ -730,8 +730,9 @@ class OmsAudit:
     `emit_keyed`, under the id `record_id` names ahead (`keyed_record_id`), a `RequestRecord` and
     an `OrderAuditRecord` through `emit`. A record names its actor and role (`user:<role>`, with
     its session and address), or `system:oms` where none is given, its object, its account and
-    detail as `after_state` (ids, state names and codes, C-12.6), its correlation id and the
-    process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
+    detail as `after_state` (ids, state names, codes and, on `trade_group.submit`, the sizing
+    explanation with its figures (SR-E28-13), never a credential, C-12.6), its correlation id and
+    the process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
 
     def __init__(self, writer: AuditWriterPort, *, environment: Environment) -> None:
         self._writer, self._environment = writer, environment

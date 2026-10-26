@@ -646,8 +646,8 @@ async def test_a_symbol_the_profile_does_not_allow_is_refused_403(rig: SubmitRig
 async def test_the_risk_gate_sees_the_sized_rounded_order_and_refuses_live(rig: SubmitRig) -> None:
     """SR-E29-04 and R4: the gate judges the order as sized and floored to the lot step; the
     interim gate refuses every live order before anything is recorded."""
-    await rig.submit(entry(sizing=SizingRequest(mode="fixed_qty", qty=Decimal("0.0109"))))
-    assert [order.qty for order in rig.risk.seen] == [Decimal("0.010")]
+    await rig.submit(entry(sizing=SizingRequest(mode="fixed_qty", qty=Decimal("0.0059"))))
+    assert [order.qty for order in rig.risk.seen] == [Decimal("0.005")]
     rig.profiles.held[(cr.LIVE_ACCOUNT, None)] = profile(cr.LIVE_ACCOUNT)
     before = rig.written()
     refused = await _refused(rig, entry(account_id=cr.LIVE_ACCOUNT), context(client_ref=uuid4()))

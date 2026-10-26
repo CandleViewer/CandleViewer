@@ -1,16 +1,18 @@
 """The size step of an entry (24-internal-schemas.md Sec.8.4 item 2, step 3c; #913 S4-S).
 
-An order that is not reduce-only is sized by its effective profile's sizer (`accounts.sizer`,
-24 Sec.9.3), never by a client figure, from step 3a's market read (`SizingMarket`, its ATR None
-until the E13 kernel port reaches `oms`, ruling Q6) and the account's figures (`OrderFigures`).
-`sizing.mode` `profile` sizes by the profile. `fixed_qty` overlays the request's qty onto a copy
-of the profile, and the request's stop overlays the profile's offset (ruling Q2), the profile's
-caps the ceiling: an overlaid leg a cap would clamp is refused whole, never clamped. Every other
-mode is `sizing_mode_unsupported` until the comparator judges the overlay (an interim, #913
-S4-S-b2b). The leg's stop is the stop its risk was computed from, so the sizer is an entry's one
-stop source; `NativeStopGuard` still judges it (C-2.6). Each outcome but `ok` is one answer (22
-`placeOrder`'s mapping), before anything is recorded or sent. Every leg the answer rests on is
-recorded in `cv_sizer_*`. An entry's `round_to_lot` is not read: the sizer floors to the lot step.
+An order that is not reduce-only is sized by its effective profile's sizer (`accounts.sizer`, 24
+Sec.9.3), never by a client figure, from step 3a's market read (`SizingMarket`, its ATR None until
+the E13 kernel port reaches `oms`, ruling Q6) and the account's figures (`OrderFigures`).
+`sizing.mode` `profile` sizes by the profile. `fixed_qty` overlays the request's qty onto a copy of
+a `fixed_qty` profile, and the request's stop overlays the profile's offset (ruling Q2). Until the
+comparator judges the overlay (an interim, #913 S4-S-b2b) the request only narrows the profile,
+each refused whole with 403, never clamped: an overlaid leg a cap would clamp, a qty above the
+profile's `fixed_qty` and a stop further from the anchor than the profile's own. Every other mode,
+and `fixed_qty` on a profile of another mode, is `sizing_mode_unsupported`. The leg's stop is the
+stop its risk was computed from, so the sizer is an entry's one stop source; `NativeStopGuard`
+still judges it (C-2.6). Each outcome but `ok` is one answer (22 `placeOrder`'s mapping), before
+anything is recorded or sent. Every leg the answer rests on is recorded in `cv_sizer_*`. An entry's
+`round_to_lot` is not read: the sizer floors to the lot step.
 """
 
 from __future__ import annotations
@@ -115,14 +117,20 @@ def _invalid(field: str, rule: str, message: str) -> OrderInvalid:
     return OrderInvalid(message, errors=(FieldError(field, rule, message),))
 
 
-def _overlay(sizing: SizingRequest) -> tuple[dict[str, object], Decimal] | None:
+def _overlay(
+    sizing: SizingRequest, profile: AccountProfile
+) -> tuple[dict[str, object], Decimal] | None:
     """The request's sizing as profile fields and its raw value; None for `profile`. A mode but
-    `fixed_qty` is refused (module docstring), and so is a missing value."""
+    `fixed_qty`, `fixed_qty` on a profile of another mode (module docstring) and a missing value
+    are refused."""
     mode = sizing.mode
     if mode == "profile":
         return None
     if mode != "fixed_qty":
         message = f"{mode} sizing is not available yet."
+        raise _invalid("sizing.mode", RULE_SIZING_MODE_UNSUPPORTED, message)
+    if profile.sizing_mode != "fixed_qty":
+        message = f"fixed_qty sizing on a {profile.sizing_mode} profile is not available yet."
         raise _invalid("sizing.mode", RULE_SIZING_MODE_UNSUPPORTED, message)
     value = sizing.qty
     if value is None or not value.is_finite():
@@ -180,6 +188,21 @@ def _answered(leg: LegSizing) -> LegSizing:
     raise SizingUnavailable(retry_after_s=SIZING_RETRY_AFTER_S)  # figure_unknown
 
 
+def _narrower(
+    profile: AccountProfile, value: Decimal | None, leg: LegSizing, baseline: LegSizing
+) -> None:
+    """The interim's narrowing rows (module docstring): a qty above the profile's `fixed_qty`,
+    and a stop further from the shared anchor than the profile's own, are refused whole, 403."""
+    if value is not None and profile.fixed_qty is not None and value > profile.fixed_qty:
+        message = "The request's qty is above the profile's."
+        raise RiskRefused(message, errors=(FieldError("sizing.qty", "fixed_qty", message),))
+    if leg.stop is None or baseline.stop is None:
+        raise ValueError("an anchored leg carries its stop")
+    if leg.stop.distance > baseline.stop.distance:
+        message = "The request's stop is further from entry than the profile's."
+        raise RiskRefused(message, errors=(FieldError("stop_loss", "sl_offset_value", message),))
+
+
 def _market(mid: Px | None, last: Px | None) -> SizingMarket:
     """Step 3a's read as the sizer takes it; a price no `Price` holds is no price."""
     try:
@@ -229,7 +252,7 @@ class EntrySizer:
             raise RiskRefused("No profile allows this order.")
         if not (profile.enabled and profile.trading_enabled):  # before any figure is read
             raise RiskRefused("The account's profile is not enabled for trading.")
-        overlay = _overlay(intent.sizing)
+        overlay = _overlay(intent.sizing, profile)
         try:
             asked = SizingIntent(
                 symbol=intent.symbol, side=intent.side, order_type=intent.order_type,
@@ -256,9 +279,11 @@ class EntrySizer:
             message = "The request's sizing is out of range."
             raise _invalid("sizing", "profile_overlay", message) from None
         leg = _answered(self._observed(asked, widened, figures, instrument, market))
-        if overlay is not None and leg.binding is not None:  # refused whole, never clamped
+        overlaid = overlay is not None or intent.stop_loss is not None
+        if overlaid and leg.binding is not None:  # refused whole, never clamped
             message = "The request goes past the profile's caps."
             raise RiskRefused(message, errors=(FieldError("sizing", leg.binding.cap, message),))
+        _narrower(profile, value, leg, baseline)
         return self._size(leg, widened.sizing_mode, value)
 
     async def _read(

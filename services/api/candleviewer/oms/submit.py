@@ -18,8 +18,8 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
 3. the size step (24 Sec.8.4 item 2, #913 S4-S): 3a the market read and the price band, 3b the
    reference price (24 Sec.9.3 step 2), 3c the size: an entry by its effective profile's sizer
    (`oms.sizing`, which answers each outcome but `ok` as 22 maps it, `figure_unknown` 503
-   `sizing_unavailable`, and refuses whole a request's qty or stop that a profile's cap would
-   clamp), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
+   `sizing_unavailable`, and refuses whole a request's qty or stop that goes past the
+   profile), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
    exchange-truth position (SR-E29-01, read for a reduce-only order only, within
    `position_timeout_s`), the native stop and the intent (`NativeStopGuard`, C-2.6, over the
    sizer's own stop for an entry), the take-profit (S2-Q6), then the `SizedOrder`. Two entries on
