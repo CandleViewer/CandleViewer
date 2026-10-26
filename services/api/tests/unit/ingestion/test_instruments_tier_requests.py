@@ -6,8 +6,10 @@ rows only (C-13.5); a fixed clock, no sleeps."""
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.ingestion import instruments_refresh as refresh_mod
 from candleviewer.ingestion.instruments_refresh import InstrumentsRefreshScheduler
@@ -82,12 +84,52 @@ async def test_request_tiers_past_the_cap_is_full_and_fetches_nothing(
 async def test_request_tiers_known_or_unlisted_symbol_kicks_nothing() -> None:
     fetch, clock = _Fetch(), _Clock()
     sched = _sched(fetch, clock)
-    assert sched.request_tiers("BTCUSDT") is None  # no catalogue yet
     await sched.refresh_now()
     await sched.ensure_risk_limits("BTCUSDT")
     assert sched.request_tiers("BTCUSDT") is None  # known tiers
     assert sched.request_tiers("NOPEUSDT") is None  # not listed
+    snap = sched.snapshot()
+    assert snap is not None
+    shut = snap.by_symbol["ETHUSDT"].model_copy(update={"status": "closed"})
+    sched.cache.swap(dataclasses.replace(snap, by_symbol={**snap.by_symbol, "ETHUSDT": shut}))
+    assert sched.request_tiers("ETHUSDT") is None  # closed
     assert sched._tier_kicks == set() and fetch.calls == ["BTCUSDT"]
+    assert not {"NOPEUSDT", "ETHUSDT"} & sched._tier_symbols
+
+
+async def test_request_tiers_before_the_catalogue_loads_is_kept_for_the_first_refresh() -> None:
+    fetch, clock = _Fetch(), _Clock()
+    sched = _sched(fetch, clock)
+    assert sched.request_tiers("BTCUSDT") is None  # no catalogue yet: nothing to kick
+    assert sched._tier_kicks == set() and "BTCUSDT" in sched._tier_symbols
+    await sched.refresh_now()
+    assert fetch.calls == ["BTCUSDT"]  # the first refresh fetched it
+
+
+async def test_request_tiers_with_no_fetcher_wired_is_kept_too() -> None:
+    sched = InstrumentsRefreshScheduler(
+        fetch_instruments_info=_catalogue, repository=_Repo(), now_us=_Clock()
+    )
+    await sched.refresh_now()
+    assert sched.request_tiers("BTCUSDT") is None
+    assert "BTCUSDT" in sched._tier_symbols
+
+
+async def test_request_tiers_a_full_set_warns_once_a_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(refresh_mod, "TIER_SYMBOLS_MAX", 1)
+    fetch, clock = _Fetch(), _Clock()
+    sched = _sched(fetch, clock)
+    sched.request_tiers("BTCUSDT")
+    with capture_logs() as logs:
+        sched.request_tiers("ETHUSDT")
+        sched.request_tiers("SOLUSDT")
+        clock.us = _NOW + _MINUTE_US
+        sched.request_tiers("XRPUSDT")
+    warned = [e for e in logs if e["event"] == "tier_requests_set_full"]
+    assert len(warned) == 2 and all("symbols" not in e for e in warned)
+    assert sched._tier_symbols == {"BTCUSDT"}
 
 
 async def test_request_tiers_returns_at_once_while_the_fetch_hangs_and_stop_ends_it() -> None:

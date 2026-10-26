@@ -2849,8 +2849,9 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("reason",),
         "Risk-limit tier requests from the order lane to the catalogue that were dropped (E29-T04 "
         "S4-S-d, 24 Sec.9.3.6): full, 100 symbols already waiting or kicked in the minute, or "
-        "stopped, the serving loop had closed or the catalogue had stopped. The entry they were "
-        "asked for stays figure_unknown until a refresh fetches its tiers.",
+        "stopped, the catalogue had stopped (a closed serving loop is counted by "
+        "oms_lane_notices_failed_total). The entry they were asked for stays "
+        "figure_unknown until a refresh fetches its tiers.",
         "> 0 (rule: E29-T08)",
         _P,
         "E29",

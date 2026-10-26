@@ -228,6 +228,7 @@ class InstrumentsRefreshScheduler:
         #: S-RL: the symbols each refresh re-fetches tiers for: the order path's (S4-S-c) and
         #: those fetched once on demand; catalogue symbols only, at most `TIER_SYMBOLS_MAX`.
         self._tier_symbols: set[str] = set()
+        self._tier_set_full_us = -TIER_REQUEST_WINDOW_S * 1_000_000  # the last full warning
         #: S4-S-c: the last refresh fetched fewer tiers than it had symbols for; and how often so.
         self._tiers_incomplete, self._tiers_streak = False, 0
         #: S4-S-c: `start()`'s refresh spends at most a quarter of its timeout on the tiers.
@@ -434,6 +435,8 @@ class InstrumentsRefreshScheduler:
             return "stopped"
         current = self.cache.current()
         if self._fetch_risk_limits is None or current is None:
+            # not loaded or not wired yet: remembered, so the first refresh fetches it
+            self._remember_tier_symbol(symbol)
             return None
         listed = current.get(symbol)
         if listed is None or listed.status == "closed":
@@ -449,12 +452,24 @@ class InstrumentsRefreshScheduler:
         if len(kicked) >= TIER_REQUESTS_MAX:
             return "full"
         kicked[symbol] = now
-        if len(self._tier_symbols) < TIER_SYMBOLS_MAX:
-            self._tier_symbols.add(symbol)
+        self._remember_tier_symbol(symbol)
         task = spawn(self.ensure_risk_limits(symbol), name="instruments-tier-request")
         self._tier_kicks.add(task)
         task.add_done_callback(self._tier_kicks.discard)
         return None
+
+    def _remember_tier_symbol(self, symbol: str) -> None:
+        """Join `symbol` to the refreshed set within `TIER_SYMBOLS_MAX`; a full set is warned of
+        once per `TIER_REQUEST_WINDOW_S`, with no symbol list."""
+        if symbol in self._tier_symbols:
+            return
+        if len(self._tier_symbols) < TIER_SYMBOLS_MAX:
+            self._tier_symbols.add(symbol)
+            return
+        now = self._now_us()
+        if now - self._tier_set_full_us >= TIER_REQUEST_WINDOW_S * 1_000_000:
+            self._tier_set_full_us = now
+            get_logger(__name__).warning("tier_requests_set_full", cap=TIER_SYMBOLS_MAX)
 
     def _tier_cooling(self, symbol: str) -> bool:
         """S-RL: `symbol`'s last tier fetch failed less than `on_demand_cooldown_s` ago."""

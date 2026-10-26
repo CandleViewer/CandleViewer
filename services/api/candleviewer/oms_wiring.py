@@ -1079,22 +1079,23 @@ class ServedClock:
 
 #: How many tier requests may wait to land on the serving loop (#913 S4-S-d), one per symbol.
 TIER_REQUESTS_PENDING_MAX: Final = 100
-#: The tier requests dropped, by `reason`: `full`, or `stopped`.
+#: The tier requests dropped, by `reason`: `full` (the bridge or the catalogue), or `stopped` (the
+#: catalogue had stopped).
 TIER_REQUESTS_DROPPED: Final = "oms_tier_requests_dropped_total"
 
 
 class ServedTierRequests:
-    """`TierRequests` from the lane (#913 S4-S-d, 24 Sec.9.3.6): each symbol is handed to the
-    catalogue on the serving loop with `call_soon_threadsafe`, never awaited, so the submit path
-    makes no network call of its own (CV-C13). At most `TIER_REQUESTS_PENDING_MAX` symbols wait
-    to land there, a symbol already waiting adding nothing. A request past that, one the closed
-    serving loop cannot take, and one the catalogue drops is counted by `reason` (`full`,
-    `stopped`); none raises into its caller."""
+    """`TierRequests` from the lane (#913 S4-S-d, 24 Sec.9.3.6): each symbol is notified to the
+    catalogue on the serving loop (`Serving.notify`), never awaited, so the submit path makes no
+    network call of its own (CV-C13). At most `TIER_REQUESTS_PENDING_MAX` symbols wait to land
+    there, a symbol already waiting adding nothing. A request past that is counted `full`, and
+    one the catalogue drops is counted by its reason (`full`, `stopped`); none raises into its
+    caller. A request the closed serving loop cannot take is not this counter's: `Serving`
+    counts it (`oms_lane_notices_failed_total{lost}`), and the runtime's stop ends the wait
+    (`close`)."""
 
-    def __init__(
-        self, catalogue: InstrumentCatalogue, loop: asyncio.AbstractEventLoop, metrics: Metrics
-    ) -> None:
-        self._catalogue, self._loop = catalogue, loop
+    def __init__(self, catalogue: InstrumentCatalogue, serving: Serving, metrics: Metrics) -> None:
+        self._catalogue, self._serving = catalogue, serving
         spec = next(spec for spec in CATALOGUE if spec.name == TIER_REQUESTS_DROPPED)
         dropped = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
         self._dropped = {"full": dropped.labels("full"), "stopped": dropped.labels("stopped")}
@@ -1114,14 +1115,14 @@ class ServedTierRequests:
             if full:
                 self._dropped["full"].inc()
                 return
-            try:
-                self._loop.call_soon_threadsafe(self._land, symbol)
-            except RuntimeError:  # the serving loop has closed
-                with self._guard:
-                    self._pending.discard(symbol)
-                self._dropped["stopped"].inc()
+            self._serving.notify(self._land, symbol)
         except Exception as exc:  # a request's failure is never its caller's
             _log().error("oms_tier_request_failed", error=type(exc).__name__)
+
+    async def close(self) -> None:
+        """The runtime's stop: the symbols still waiting are dropped, none will land."""
+        with self._guard:
+            self._pending.clear()
 
     def _land(self, symbol: str) -> None:
         with self._guard:
@@ -2067,10 +2068,12 @@ class OmsRuntime:
             profiles = ServedProfiles(self.profiles, serving)
             # S4-S-d: the size step's ask for missing tiers (S4-S-b2a calls it); a no-op when no
             # catalogue is composed, as on a process with no exchange feed
-            catalogue, loop = ingestion.instruments, self._loop  # the serving loop, set by start()
+            catalogue = ingestion.instruments
             tiers: TierRequests = NO_TIER_REQUESTS
-            if catalogue is not None and loop is not None:
-                tiers = ServedTierRequests(catalogue, loop, metrics)
+            if catalogue is not None:
+                bridge = ServedTierRequests(catalogue, serving, metrics)
+                closers.append(("tier_requests", bridge.close))
+                tiers = bridge
             deps = SubmissionDeps(
                 accounts=accounts,
                 instruments=instruments,
