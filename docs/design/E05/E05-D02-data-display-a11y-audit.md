@@ -124,8 +124,8 @@ pairs below with the same tool. Structurally, no slice-2 state depends on hue al
 
 - **Status tones** (CMP-011, CMP-012) are told apart by glyph shape and word. Light warning and danger glyphs and
   outlines (`.strong`) are identical (dE76 0 for every vision type, slice 1 A6), while their dots are 56.6 apart
-  (34.5 under tritanopia) and their chip fills 18.8 (9.5); dark info and success dots are 11.9 apart under
-  tritanopia.
+  (33.9 under tritanopia) and their chip fills 18.8 (4.7 under tritanopia, below the 5.0 JND: the glyph shape and
+  the word carry it); dark info and success dots are 12.1 apart under tritanopia.
 - **Direction** (CMP-020, CMP-024) is carried by the + or − sign and by the slope. The buy and sell strokes are only
   8.3 (dark), 16.1 (light) and 5.8 (high contrast) apart under deuteranopia.
 - **Estimated** (CMP-011) is the dashed outline and the literal word.
