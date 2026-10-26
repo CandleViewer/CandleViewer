@@ -18,7 +18,11 @@ ROOT = Path(__file__).resolve().parents[2]
 ALERT_DIR = ROOT / "infra" / "prometheus" / "alerts"
 RUNBOOK = "docs/plan/07-release-and-prr.md"
 #: Additional runbooks an alert may link to (E08-T06).
-EXTRA_RUNBOOKS = ("docs/ops/ingestion.md", "docs/ops/runbooks/kek-custody.md")
+EXTRA_RUNBOOKS = (
+    "docs/ops/ingestion.md",
+    "docs/ops/runbooks/kek-custody.md",
+    "docs/ops/runbooks/recorder.md",  # E16-T09 (#567)
+)
 SEVERITIES = {"page", "ticket"}
 #: `resolves: window` marks an event-type page: it clears when its rate window moves on, not when
 #: anyone acts, so Alertmanager sends no [RESOLVED] for it (receiver `page_event`, #2931). The

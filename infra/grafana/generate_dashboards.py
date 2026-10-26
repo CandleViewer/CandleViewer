@@ -1064,6 +1064,43 @@ def ga_defects() -> Board:
     return b
 
 
+def recorder() -> Board:
+    """E16-T09 (#567) board for infra/prometheus/alerts/recorder.yml (docs/ops/runbooks/recorder.md).
+    Declared series only: no retention or recorder-gap series is exported yet."""
+    b = Board("cv-recorder", "CV / Recorder", ["recorder", "storage"])
+    b.row("Writes")
+    by_symbol = rate("recorder_bytes_written_total", "symbol")
+    b.ts("Recorder write rate by symbol (bytes/s)", by_symbol, "Bps", legend="{{symbol}}")
+    _describe(b, "A flat line while other symbols write is a silent stop (RecorderSilentStop).")
+    by_stream = f"3600 * {rate('recorder_rows_total', 'stream')}"
+    b.ts("Recorded rows per hour by stream", by_stream, "short", legend="{{stream}}")
+    lag = f"max by (stream) (ingest_lag_seconds{{{E}}})"
+    b.ts("Ingest lag by stream (budget 20 ms)", lag, "s", 0.02, 0.1, "{{stream}}")
+    b.row("Backpressure")
+    dropped = rate("trade_writes_dropped_total", "reason")
+    b.ts("Dropped rows/s", dropped, "ops", legend="trades {{reason}}")
+    _extra(b, "B", rate("book_writes_dropped_total", "reason"), "book {{reason}}")
+    _extra(b, "C", f"sum({rate('ticker_writes_dropped_total')})", "tickers")
+    b.ts("Write backlog (rows)", f"recorder_write_backlog_rows{{{E}}}", "short")
+    b.ts("Spill bytes (WAL)", f"recorder_spill_bytes{{{E}}}", "bytes", 1)
+    b.row("Disk")
+    disk = "Disk used (warn 80 %, autostop 90 %, halt 95 %)"
+    b.ts(disk, f"disk_used_ratio{{{E}}}", "percentunit", 0.8, 0.95)
+    steps = b.panels[-1]["fieldConfig"]["defaults"]["thresholds"]["steps"]
+    steps.insert(2, {"color": "#CC79A7", "value": 0.9})  # Okabe-Ito reddish purple: autostop
+    _threshold_lines(b)
+    full = f"1000 * (max(recorder_projected_full_timestamp{{{E}}}) > 0)"
+    b.stat("Projected full date (UTC)", full, "dateTimeAsIso")
+    b.panels[-1]["fieldConfig"]["defaults"]["noValue"] = "none projected"
+    b.row("Gaps and roll-off")
+    gaps = f"sum by (symbol, recovered) (increase(trade_gaps_total{{{E}}}[{RI}]))"
+    b.ts("Gaps per interval by symbol", gaps, "short", legend="{{symbol}} {{recovered}}")
+    mark = f"max by (stream) (recorder_watermark_lag_days{{{E}}})"
+    b.ts("Roll-off watermark lag (days)", mark, "d", legend="{{stream}}")
+    b.flush()
+    return b
+
+
 BOARDS = {
     "system-health": system,
     "market-data": market,
@@ -1073,6 +1110,7 @@ BOARDS = {
     "ingestion": ingestion,
     "frontend": frontend,
     "ga-defects": ga_defects,
+    "recorder": recorder,
 }
 
 

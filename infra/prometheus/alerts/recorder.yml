@@ -1,0 +1,86 @@
+# E16-T09 (#567). Runbook docs/ops/runbooks/recorder.md; promtool: tests/ingestion_alerts.test.yml.
+groups:
+  - name: recorder
+    interval: 30s
+    rules:
+      # "Recording" = wrote within 6 h: no per-symbol recording-state or last-write gauge is
+      # exported, so the lookback stands in for it and keeps the page firing for a dead writer
+      # (a 10 m lookback auto-resolved it after 10 m). A deliberate stop pages until silenced.
+      # "Market active" = any ingest event in the env in 30 s (two to three 15 s scrapes): no
+      # connection-level last-message series is exported and 10 s is under the scrape resolution.
+      # Writer stops at t: increase[1m] is 0 by t+60 s, the 30 s evaluation pages by t+90 s.
+      # A venue outage pages once, via IngestionStoppedReporting.
+      - alert: RecorderSilentStop
+        expr: >-
+          (
+            sum by (env, symbol) (increase(recorder_bytes_written_total[6h])) > 0
+            unless on (env, symbol)
+            sum by (env, symbol) (increase(recorder_bytes_written_total[1m])) > 0
+          )
+          and on (env) (sum by (env) (rate(ingest_events_total[30s])) > 0)
+        for: 0m
+        labels: { severity: page, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recordersilentstop"
+          summary: "The recorder has written nothing for {{ $labels.symbol }} for 60 seconds while the market is active."
+      - alert: RecorderMessagesDropped
+        expr: >-
+          sum by (env) (increase(trade_writes_dropped_total[5m])) > 0
+          or sum by (env) (increase(book_writes_dropped_total[5m])) > 0
+          or sum by (env) (increase(ticker_writes_dropped_total[5m])) > 0
+        for: 0m
+        labels: { severity: page, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recordermessagesdropped"
+          summary: "Market-data rows were dropped before they reached the hot store."
+      - alert: RecorderSpilling
+        expr: max by (env) (recorder_spill_bytes) > 0
+        for: 5m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderspilling"
+          summary: "The recorder has been spilling to its WAL for five minutes."
+      - alert: RecorderGapBurst
+        # > 5.5, not > 5: increase() extrapolates at the window edges, so five real gaps can read 5.3.
+        expr: sum by (env, symbol) (increase(trade_gaps_total[1h])) > 5.5
+        for: 0m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recordergapburst"
+          summary: "More than five tape gaps opened for {{ $labels.symbol }} in one hour."
+      # Hot window + 2 days per roll-off stream (retention_defaults.py, rolloff.py; test-pinned).
+      - alert: RollOffWatermarkLag
+        expr: >-
+          max by (env, stream) (recorder_watermark_lag_days{stream="orderbook_delta"}) > 9
+          or max by (env, stream) (recorder_watermark_lag_days{stream=~"trades|tickers"}) > 32
+          or max by (env, stream) (recorder_watermark_lag_days{stream="liquidations"}) > 92
+        for: 0m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-rolloffwatermarklag"
+          summary: "The roll-off watermark for {{ $labels.stream }} is more than two days past its hot window."
+      # Disk-budget sampling (#4581): a stale last-sample time means the ladder is not being run.
+      - alert: RecorderDiskBudgetSampleStale
+        expr: time() - max by (env) (recorder_disk_budget_last_sample_timestamp_seconds) > 300
+        for: 0m
+        labels: { severity: ticket, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdiskbudgetsamplestale"
+          summary: "The recorder disk-budget sample is more than 300 seconds old."
+          tracker: "#4581"
+      - alert: RecorderDiskPressureAutostop
+        expr: max by (env) (recorder_disk_pressure_level) >= 2
+        for: 0m
+        labels: { severity: page, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdiskpressureautostop"
+          summary: "The recorder disk-pressure level is at autostop or above."
+          tracker: "#4581"
+      - alert: RecorderWriteGateClosed
+        expr: max by (env) (recorder_disk_pressure_level) >= 3
+        for: 0m
+        labels: { severity: page, component: recorder }
+        annotations:
+          runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
+          summary: "The recorder write gate is closed (disk-pressure level 3)."
+          tracker: "#567"

@@ -1,8 +1,10 @@
-# promtool test rules for the E08-T06 ingestion alert set (hand-written; the
-# E04-T05 generator covers system_*.yml only). Run:
+# promtool test rules for the E08-T06 ingestion alert set and the E16-T09 (#567) recorder set
+# (hand-written; the E04-T05 generator covers system_*.yml only). The recorder cases share this
+# file because the venue-outage case needs both sets, and CI already runs it. Run:
 #   promtool test rules infra/prometheus/tests/ingestion_alerts.test.yml
 rule_files:
   - ../alerts/ingestion.yml
+  - ../alerts/recorder.yml
 evaluation_interval: 1m
 tests:
   - interval: 1m
@@ -150,3 +152,165 @@ tests:
       - eval_time: 25m
         alertname: BookResyncStorm
         exp_alerts: []
+  # --- E16-T09 (#567) recorder set: each alert fires and has a silent edge ---------------------
+  # BTCUSDT's writer stops at 5 m; ETHUSDT and the feed keep going: silent at 5 m, fires at 6 m,
+  # and still fires at 25 m (a dead writer must not auto-resolve once its 10 m increase is 0).
+  - interval: 15s
+    input_series:
+      - series: 'recorder_bytes_written_total{env="demo",symbol="BTCUSDT",stream="trades"}'
+        values: "0+100x20 2000+0x81"
+      - series: 'recorder_bytes_written_total{env="demo",symbol="ETHUSDT",stream="trades"}'
+        values: "0+100x101"
+      - series: 'ingest_events_total{env="demo",exchange="bybit",stream="trade",symbol="ETHUSDT"}'
+        values: "0+10x101"
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RecorderSilentStop
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: RecorderSilentStop
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo, symbol: BTCUSDT }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recordersilentstop"
+              summary: "The recorder has written nothing for BTCUSDT for 60 seconds while the market is active."
+      - eval_time: 25m
+        alertname: RecorderSilentStop
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo, symbol: BTCUSDT }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recordersilentstop"
+              summary: "The recorder has written nothing for BTCUSDT for 60 seconds while the market is active."
+  # Venue outage: no event and no write anywhere from 5 m: no per-symbol page. The feed-level
+  # IngestionStoppedReporting pages once for it (its own case above: enabled, no events).
+  - interval: 15s
+    input_series:
+      - series: 'recorder_bytes_written_total{env="demo",symbol="BTCUSDT",stream="trades"}'
+        values: "0+100x20 2000+0x41"
+      - series: 'recorder_bytes_written_total{env="demo",symbol="ETHUSDT",stream="trades"}'
+        values: "0+100x20 2000+0x41"
+      - series: 'ingest_events_total{env="demo",exchange="bybit",stream="trade",symbol="BTCUSDT"}'
+        values: "0+10x20 200+0x41"
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: RecorderSilentStop
+        exp_alerts: []
+  # An eviction pages and clears once the 5 m window passes. Five gaps in the hour stay silent,
+  # the sixth fires. Watermark lag at its line (9, 32, 92) stays silent, over it fires. Spill from
+  # 2 m: pending at 6 m, firing at 7 m (`for: 5m`).
+  - interval: 1m
+    input_series:
+      - series: 'trade_writes_dropped_total{env="demo",exchange="bybit",reason="queue_full"}'
+        values: "0 0 0 5+0x10"
+      - series: 'recorder_spill_bytes{env="demo"}'
+        values: "0 0 4096+0x10"
+      - series: 'trade_gaps_total{env="demo",exchange="bybit",symbol="BTCUSDT",recovered="true"}'
+        values: "0+1x6 6+0x3"
+      - series: 'recorder_watermark_lag_days{env="demo",stream="orderbook_delta"}'
+        values: "9 9 9 10+0x6"
+      - series: 'recorder_watermark_lag_days{env="demo",stream="trades"}'
+        values: "32+0x9"
+      - series: 'recorder_watermark_lag_days{env="demo",stream="liquidations"}'
+        values: "92+0x9"
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RollOffWatermarkLag
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: RollOffWatermarkLag
+        exp_alerts:
+          - exp_labels:
+              { severity: ticket, component: recorder, env: demo, stream: orderbook_delta }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-rolloffwatermarklag"
+              summary: "The roll-off watermark for orderbook_delta is more than two days past its hot window."
+      - eval_time: 4m
+        alertname: RecorderMessagesDropped
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recordermessagesdropped"
+              summary: "Market-data rows were dropped before they reached the hot store."
+      - eval_time: 5m
+        alertname: RecorderGapBurst
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: RecorderSpilling
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: RecorderGapBurst
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo, symbol: BTCUSDT }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recordergapburst"
+              summary: "More than five tape gaps opened for BTCUSDT in one hour."
+      - eval_time: 7m
+        alertname: RecorderSpilling
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderspilling"
+              summary: "The recorder has been spilling to its WAL for five minutes."
+      - eval_time: 13m
+        alertname: RecorderMessagesDropped
+        exp_alerts: []
+  # Gap burst off the window edge: the counter starts at 10, so increase() extrapolates 30 s back.
+  # Five gaps read 5 * 450 / 420 = 5.36 at 7 m (a bare `> 5` would fire); the sixth fires at 8 m.
+  - interval: 1m
+    input_series:
+      - series: 'trade_gaps_total{env="demo",exchange="bybit",symbol="ETHUSDT",recovered="true"}'
+        values: "10+1x5 15 15 16+0x2"
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: RecorderGapBurst
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: RecorderGapBurst
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo, symbol: ETHUSDT }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recordergapburst"
+              summary: "More than five tape gaps opened for ETHUSDT in one hour."
+  # Disk-budget sampling (#4581) and the write gate (#567). The last sample stops at 5 m (300):
+  # 300 s old at 10 m stays silent, 360 s at 11 m fires. Pressure 1 is silent for both; 2 fires
+  # the autostop page only; 3 fires both.
+  - interval: 1m
+    input_series:
+      - series: 'recorder_disk_budget_last_sample_timestamp_seconds{env="demo"}'
+        values: "0+60x5 300+0x10"
+      - series: 'recorder_disk_pressure_level{env="demo"}'
+        values: "0 1 2 3+0x5"
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RecorderDiskBudgetSampleStale
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: RecorderDiskBudgetSampleStale
+        exp_alerts:
+          - exp_labels: { severity: ticket, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdiskbudgetsamplestale"
+              summary: "The recorder disk-budget sample is more than 300 seconds old."
+              tracker: "#4581"
+      - eval_time: 1m
+        alertname: RecorderDiskPressureAutostop
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: RecorderDiskPressureAutostop
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderdiskpressureautostop"
+              summary: "The recorder disk-pressure level is at autostop or above."
+              tracker: "#4581"
+      - eval_time: 2m
+        alertname: RecorderWriteGateClosed
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: RecorderWriteGateClosed
+        exp_alerts:
+          - exp_labels: { severity: page, component: recorder, env: demo }
+            exp_annotations:
+              runbook_url: "docs/ops/runbooks/recorder.md#alert-recorderwritegateclosed"
+              summary: "The recorder write gate is closed (disk-pressure level 3)."
+              tracker: "#567"
