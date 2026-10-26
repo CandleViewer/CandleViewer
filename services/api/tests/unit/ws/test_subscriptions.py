@@ -23,13 +23,14 @@ from candleviewer.bars.models import BarSpec
 from candleviewer.bars.reader import BarTail
 from candleviewer.bars.series_store import Hold, SeriesStore
 from candleviewer.ws import limits
-from candleviewer.ws._generated.error_codes import WS_ERROR_CODES
+from candleviewer.ws._generated.error_codes import ERROR_META, WS_ERROR_CODES, ErrorCode
 from candleviewer.ws.limits import MAX_BARS_SUBSCRIPTIONS
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
     SubscriptionServices,
     VersionedSnapshot,
+    _fail,
     handle_ctl,
     handle_sub,
     handle_unsub,
@@ -1063,6 +1064,22 @@ def test_bar_service_shutting_down_is_a_retryable_internal_error() -> None:
     (r,) = _sub(conn, "bars.BTCUSDT.time.5")
     assert (r["ok"], r["error"]["code"]) == (False, "internal_error")
     assert conn.by_id == {}
+
+
+def test_internal_error_result_carries_only_the_catalogue_title_and_no_field() -> None:
+    """#2553: a caller's text and `field` never reach the client on `internal_error`."""
+    res = _fail("bars.BTCUSDT.time.5", "internal_error", "secret SQL detail", "instances")
+    assert res["error"] == {
+        "code": "internal_error",
+        "message": ERROR_META[ErrorCode.INTERNAL_ERROR].title,
+        "retryable": ERROR_META[ErrorCode.INTERNAL_ERROR].retryable,
+    }
+    assert "secret" not in json.dumps(res)
+
+
+def test_other_codes_keep_the_caller_message_and_field_in_a_result() -> None:
+    err = _fail("bars.BTCUSDT.time.5", "invalid_options", "bad value", "instances")["error"]
+    assert (err["message"], err["field"]) == ("bad value", "instances")
 
 
 def test_bars_effective_echoes_the_defaults_and_explicit_values() -> None:
