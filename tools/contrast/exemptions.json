@@ -227,8 +227,13 @@
       "owner": "basiltt"
     },
     {
-      "pair": "light:color.heatmap.bid.3 vs color.heatmap.bid.4:tritanopia",
-      "reason": "Adjacent light-theme heatmap ramp stops collapse under tritanopia simulation (dE76 2.62 < floor 5.0); tracked as follow-up design debt alongside the deuteranopia finding for the same stops.",
+      "pair": "dark:color.heatmap.bid.3 vs color.heatmap.bid.4:tritanopia",
+      "reason": "adjacent bid ramp steps ΔE76 4.49 under Machado tritanopia; retune tracked in #4649 (expires 2026-11-30)",
+      "owner": "basiltt"
+    },
+    {
+      "pair": "high-contrast:color.heatmap.bid.3 vs color.heatmap.bid.4:tritanopia",
+      "reason": "adjacent bid ramp steps ΔE76 4.49 under Machado tritanopia; retune tracked in #4649 (expires 2026-11-30)",
       "owner": "basiltt"
     },
     {

@@ -1,10 +1,12 @@
 // Pure colour-math helpers for the contrast-matrix gate (E05-T05).
 //
 // Ports the WCAG relative-luminance/contrast-ratio formulas and the Brettel
-// (1997) dichromacy simulation already validated in
+// (1997)/Vienot protanopia and deuteranopia simulation validated in
 // `docs/research/_tools/cvd_simulate.py` (E05-D07) to JS so the same
 // deterministic, stdlib-only logic runs inside the Node/Style Dictionary
-// build pipeline. No network, no dependencies.
+// build pipeline. Tritanopia is NOT ported from that file (its tritan row is
+// defective, #4639); it uses the Machado, Oliveira & Fernandes (2009) matrix
+// below instead. No network, no dependencies.
 
 /** @param {string} hex */
 function hexToRgb(hex) {
@@ -60,7 +62,7 @@ const LMS_TO_RGB = [
   [-0.0102485335, 0.0540193266, -0.113614708],
   [-0.000365296938, -0.00412161469, 0.693511405],
 ];
-// Brettel (1997)/Vienot dichromacy projection planes for D65.
+// Brettel (1997)/Vienot dichromacy projection planes for D65 (protan, deutan).
 const PROJECTIONS = {
   protanopia: [
     [0, 2.02344, -2.52581],
@@ -72,10 +74,22 @@ const PROJECTIONS = {
     [0.494207, 0, 1.24827],
     [0, 0, 1],
   ],
+};
+
+// Tritanopia: Machado, Oliveira & Fernandes (2009), "A Physiologically-based
+// Model for Simulation of Color Vision Deficiency", IEEE TVCG 15(6), the
+// published tritanomaly matrix at severity 1.0, applied directly to linear RGB
+// (each row sums to 1, so white and greys are preserved), then clamped and
+// encoded back to sRGB. Mirrors TRITAN_MACHADO / `simulate` in
+// `docs/design/_tools/e12_d06_series_audit.py`, with the same rounding.
+// Replaces the defective LMS row `S = -0.395913 L + 0.801109 M` carried by
+// `docs/research/_tools/cvd_simulate.py`, which mapped every colour onto
+// R = G (red -> #BABA00, green -> #BDBDFF); see #4639.
+const LINEAR_RGB_SIMS = {
   tritanopia: [
-    [1, 0, 0],
-    [0, 1, 0],
-    [-0.395913, 0.801109, 0],
+    [1.255528, -0.076749, -0.178779],
+    [-0.078411, 0.930809, 0.147602],
+    [0.004733, 0.691367, 0.3039],
   ],
 };
 
@@ -93,12 +107,16 @@ function matvec(m, v) {
  * @param {"protanopia"|"deuteranopia"|"tritanopia"} deficiency
  */
 export function simulateCvd(hex, deficiency) {
-  const projection = PROJECTIONS[deficiency];
-  if (!projection) {
+  const linearSim = Object.hasOwn(LINEAR_RGB_SIMS, deficiency) ? LINEAR_RGB_SIMS[deficiency] : null;
+  const projection = Object.hasOwn(PROJECTIONS, deficiency) ? PROJECTIONS[deficiency] : null;
+  if (!linearSim && !projection) {
     throw new Error(`A11Y-C000 unknown CVD deficiency: "${deficiency}"`);
   }
   const rgb = hexToRgb(hex);
   const lin = rgb.map(srgbToLinear);
+  if (linearSim) {
+    return rgbToHex(matvec(linearSim, lin).map(linearToSrgb));
+  }
   const lms = matvec(RGB_TO_LMS, lin);
   const proj = matvec(projection, lms);
   const lin2 = matvec(LMS_TO_RGB, proj);
@@ -142,7 +160,7 @@ export function deltaE76(hexA, hexB) {
  * Minimum perceptually-just-noticeable-difference floor, below which two
  * adjacent ramp stops (or a buy/sell pair) are flagged as indistinguishable
  * under a CVD simulation. Value fixed by E05-D07 (`docs/research/_tools/
- * cvd_simulate.py`): CIE76 dE < 2.3 is the classic JND; 5.0 is the
+ * cvd_simulate.py`; only the floor, not that file's tritan row): CIE76 dE < 2.3 is the classic JND; 5.0 is the
  * conservative "clearly distinguishable at a glance under stress/low-vision"
  * floor used for the automated re-tuning flag (A11Y-C003).
  */
