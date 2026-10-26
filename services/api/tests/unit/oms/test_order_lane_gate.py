@@ -18,6 +18,7 @@ from typing import Any
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.account_health_wiring import TRACKING_FAULT_AFTER_S
@@ -27,7 +28,9 @@ from candleviewer.accounts.order_gate import AccountHealthCheck
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.flags.maintenance import MAINTENANCE_REFUSAL, MaintenanceGate
 from candleviewer.domain.order_entry import OrderEntryGate, OrderEntryRefusal
+from candleviewer.domain.primitives import AccountId
 from candleviewer.observability.metrics import Metrics
+from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import Serving
 from candleviewer.oms_wiring import ServedGate, ServedStandings
 from candleviewer.settings import ACCOUNT_DOWN_MAX_S
@@ -207,18 +210,40 @@ def test_the_serving_tick_is_stale_past_twice_its_interval_until_it_beats_again(
     in place, and a new submit, or a risk-increasing amend (the ruling of 21:56Z), is fenced once
     the last beat is older than twice the tick's interval, the 1 s within which a stalled serving
     loop refused a gate read before L4. Sticky: however long the lane waits, only a beat of the
-    serving loop ends it."""
+    serving loop ends it. Past the bound the tick gives the age it judged (SEC-S3L4-04)."""
     now = [100.0]
     tick = oms_wiring.ServingTick(clock=lambda: now[0])
     assert oms_wiring.SERVING_STALE_S == 2 * oms_wiring.SERVING_TICK_S == 1.0
     now[0] += oms_wiring.SERVING_STALE_S
-    assert not tick.stale()  # at twice its interval: not yet
+    assert tick.overdue() is None  # at twice its interval: not yet
     now[0] += 0.001
-    assert tick.stale()
+    assert tick.overdue() == pytest.approx(1.001)
     now[0] += 3600.0
-    assert tick.stale()  # the time passing never ends it
+    assert tick.overdue() == pytest.approx(3601.001)  # the time passing never ends it
     tick.beat()
-    assert not tick.stale()
+    assert tick.overdue() is None
+
+
+class _Admitting:
+    """Switches that admit every account: only the fence refuses."""
+
+    def refusal(self, account_id: AccountId, environment: str) -> None:
+        return None
+
+
+def test_the_fence_logs_the_age_it_judged_from_its_one_read_beside_its_bound() -> None:
+    """SEC-S3L4-04 (the Fable lens at 8b626ef6): `oms_submit_fenced` names the last beat's age as
+    the fence judged it, from its one read of the tick's clock, never the bound alone nor a later
+    read, so a beat landing meanwhile never logs a fresh age for a refusal; the bound beside it."""
+    reads = iter([100.0, 101.75, 160.0])  # the tick built; the fence's one read; any second read
+    fenced = oms_wiring.FencedSwitches(
+        _Admitting(), oms_wiring.ServingTick(clock=lambda: next(reads))
+    )
+    with capture_logs() as logs, pytest.raises(OmsNotReady):
+        fenced.refusal(AccountId(ACC), "demo")
+    assert [(e["event"], e["age_s"], e["stale_s"]) for e in logs] == [
+        ("oms_submit_fenced", 1.75, oms_wiring.SERVING_STALE_S)
+    ]
 
 
 def _rejected(world: _World, account: UUID) -> None:

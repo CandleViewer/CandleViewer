@@ -6,6 +6,8 @@ CR-S3N-01 to CR-S3N-09 on the notes of 20, 21, 23 and 24)."""
 
 from __future__ import annotations
 
+import ast
+import inspect
 import re
 from typing import Any
 
@@ -18,6 +20,7 @@ from candleviewer.account_health_wiring import TRACKING_FAULT_AFTER_S
 from candleviewer.accounts.verification import Refusal
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
+from candleviewer.api.orders import make_orders_router
 from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S, MachineEventWrongLoop
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterWrongLoop
 from candleviewer.exchange.bybit.key_info import refusal
@@ -223,7 +226,8 @@ def test_24_gives_the_routes_checks_in_the_ruled_order_and_audits_each_refusal()
         "`algo_unsupported`, until E32 and E34",
         "shielded from the client's disconnect and from the request's deadline",
         "at most `CV_OMS_DRAIN_S`",
-        "Each refusal from step 2 on, the `501` and step 3's `oms_not_ready` aside, is audited",
+        "Each refusal from step 2 on, the `501` and the `oms_not_ready` of steps 3 and 10 aside, "
+        "is audited",
         "steps 2 and 4 as `rbac.denied`, the gate's as `account.disabled_by_policy`",
         "every other as `orders.submit` with outcome `denied` and its code",
         "Step 3's `oms_not_ready` is not audited, as the `501` is not, but counted "
@@ -920,3 +924,32 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
     )
     assert "CR-S3L4-04" in log and "19:19Z" in log and "21:56Z" in log
     assert "new submits and risk-increasing amends" in log and "never an exit" not in log
+
+
+def test_24_and_the_route_name_the_stall_fences_step_10_answer_counted_never_audited() -> None:
+    """SEC-S3L4-01 (the Fable lens at 8b626ef6): the stall fence's `oms_not_ready` at step 10 is
+    the route's third unaudited answer, beside the `501` and step 3's, as it decides nothing on
+    the order; it is counted, and a submit the same fence refuses at the pipeline's own read of
+    the switches is recorded there. 24 Sec.8.4's sentence and the route's `not_ready()` name it."""
+    route = _between(_INTERNAL_DOC, "**The route (E29-T04 slice 3;", "**The exit routes")
+    assert not _missing(
+        route,
+        "Each refusal from step 2 on, the `501` and the `oms_not_ready` of steps 3 and 10 aside, "
+        "is audited before it is answered (C-2.9)",
+        "Step 10's, the stall fence's (`TradingSwitches`, below), is counted and not audited too, "
+        "as it decides nothing on the order; a submit the same fence refuses at the pipeline's "
+        "own read of the switches is recorded there (`orders.submit`, `denied`, `oms_not_ready`, "
+        "step `switches`).",
+    )
+    assert "the `501` and step 3's `oms_not_ready` aside" not in route
+    tree = ast.parse(inspect.getsource(make_orders_router))
+    [not_ready] = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "not_ready"
+    ]
+    assert not _missing(
+        _words(ast.get_docstring(not_ready) or ""),
+        "Step 3's answer, and step 10's when the serving loop's stall fence refuses the switches "
+        "(24 Sec.8.4 `TradingSwitches`): counted, never audited (24 Sec.8.4)",
+    )
