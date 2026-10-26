@@ -224,7 +224,17 @@ async def test_rolloff_older_failing_day_stops_newer_drops_and_caps_the_watermar
     hot = FakeHot({T: {day(12): ["BTCUSDT"], day(11): ["BTCUSDT"], day(10): ["BTCUSDT"]}})
     arch = FakeArchiver(fail={("BTCUSDT", day(11)): ["archive_verification_failed"] * 3})
     marks = FakeMarks()
-    report = await _job(hot, arch, marks).run()
+    with capture_logs() as logs:
+        report = await _job(hot, arch, marks).run()
+    assert [e for e in logs if e["event"] == "rolloff_stream_stopped"] == [
+        {
+            "event": "rolloff_stream_stopped",
+            "log_level": "warning",
+            "stream": "trades",
+            "day_start_us": day(11),
+            "reason": "archive_verification_failed",
+        }
+    ]
     assert [d for _, d in arch.calls] == [day(12)] + [day(11)] * 3  # oldest first; day(10) waits
     assert hot.dropped == report.dropped == [(T, day(12))]
     assert report.retained == [(T, day(11), "archive_verification_failed")]
@@ -640,7 +650,9 @@ async def test_rolloff_late_row_between_export_and_drop_aborts_drop(new_symbol: 
     assert audit.rows[1][1]["reason"] == "count_changed"
     assert report.retained == [(T, day(10), "archive_verification_failed")]
     assert "archive.verification_failed" in emitted
-    assert (await marks.get("BTCUSDT", T)).archived_through_us == 0
+    # the watermark moved before the re-check: the day keeps its hot rows (both tiers) and the
+    # next run re-archives it
+    assert (await marks.get("BTCUSDT", T)).archived_through_us == day(10) + US_PER_DAY
 
 
 async def test_rolloff_late_rows_on_an_older_day_stop_newer_drops() -> None:
@@ -661,7 +673,8 @@ async def test_rolloff_late_rows_on_an_older_day_stop_newer_drops() -> None:
     report = await _job(hot, FakeArchiver(), marks).run()
     assert hot.dropped == report.dropped == []
     assert report.retained == [(T, day(11), "archive_verification_failed")]
-    assert (await marks.get("BTCUSDT", T)).archived_through_us == 0
+    # covers the late-row day (its rows stay hot), never the newer day above it
+    assert (await marks.get("BTCUSDT", T)).archived_through_us == day(11) + US_PER_DAY
 
 
 async def test_rolloff_day_just_past_window_waits_for_safety_margin() -> None:
@@ -857,8 +870,58 @@ async def test_rolloff_purge_audit_precedes_final_recheck_and_drop() -> None:
         async def write(self, action: str, detail: dict[str, str | int]) -> None:
             order.append(action)
 
-    await _job(H({T: {day(10): ["BTCUSDT"]}}), FakeArchiver(), FakeMarks(), audit=A()).run()
-    assert order == ["snapshot", "retention.purge", "snapshot", "drop"]
+    class M(FakeMarks):
+        async def advance(
+            self, symbol: str, stream: StreamKind, through_us: int, *, now_us: int
+        ) -> RollOffWatermark:
+            order.append("advance")
+            return await super().advance(symbol, stream, through_us, now_us=now_us)
+
+    await _job(H({T: {day(10): ["BTCUSDT"]}}), FakeArchiver(), M(), audit=A()).run()
+    # only the drop's own listing and DROP follow the last snapshot (#2347 review)
+    assert order == ["snapshot", "retention.purge", "advance", "snapshot", "drop"]
+
+
+async def test_rolloff_late_row_during_the_watermark_advance_keeps_the_day_hot() -> None:
+    """A backfilled row that lands while the watermark is written is caught by the final
+    re-check: the day stays hot, and the next run archives the row and drops the day."""
+    counts = {day(10): 10}
+    archived: dict[int, int] = {}
+
+    class Hot(FakeHot):
+        async def row_counts(self, stream: StreamKind, rng: TimeRange) -> dict[str, int]:
+            return {"BTCUSDT": counts[rng.start_us]}
+
+    class Arch(FakeArchiver):
+        async def archive_day(
+            self, symbol: str, stream: StreamKind, d: TimeRange
+        ) -> ArchiveOutcome:
+            archived[d.start_us] = counts[d.start_us]  # the export reads the hot day as it is
+            self.verified.add((symbol, stream, d.start_us))
+            n = counts[d.start_us]
+            return ArchiveOutcome(symbol, stream, d.start_us, d.end_us, True, rows=n, bytes=1)
+
+    class LateMarks(FakeMarks):
+        armed = True
+
+        async def advance(
+            self, symbol: str, stream: StreamKind, through_us: int, *, now_us: int
+        ) -> RollOffWatermark:
+            if self.armed:
+                self.armed = False
+                counts[day(10)] += 1  # the late row
+            return await super().advance(symbol, stream, through_us, now_us=now_us)
+
+    hot, marks = Hot({T: {day(10): ["BTCUSDT"]}}), LateMarks()
+    report = await _job(hot, Arch(), marks).run()
+    assert hot.dropped == report.dropped == []
+    assert report.retained == [(T, day(10), "archive_verification_failed")]
+    # the watermark already covers the day: safe, its hot rows stay until a re-archive
+    assert (await marks.get("BTCUSDT", T)).archived_through_us == day(10) + US_PER_DAY
+
+    report = await _job(hot, Arch(), marks).run()
+    assert hot.dropped == report.dropped == [(T, day(10))]
+    assert archived[day(10)] == 11  # the late row reached Parquet before the drop
 
 
 class UnconfirmedHot(FakeHot):
@@ -934,28 +997,39 @@ async def test_rolloff_unconfirmed_drop_is_audited_retained_and_stops_the_stream
 
 
 _OUTCOMES = st.sampled_from(["ok", "verify_fail", "late_row", "crash_drop", "unconfirmed"])
+_SYMS = ("BTCUSDT", "ETHUSDT", "SOLUSDT")
 
 
-@settings(max_examples=120, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@settings(max_examples=150, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(
     nights=st.lists(st.lists(_OUTCOMES, min_size=5, max_size=5), min_size=1, max_size=4),
-    layout=st.lists(
-        st.sets(st.sampled_from(["BTCUSDT", "ETHUSDT"]), min_size=1), min_size=5, max_size=5
-    ),
+    layout=st.lists(st.sets(st.sampled_from(_SYMS), min_size=1), min_size=5, max_size=5),
+    # SOLUSDT's hot window: the common 7 days, a longer one (11 or 12 days keeps the newer
+    # days of the five inside it), or pinned (`None`, never rolled off)
+    sol_days=st.sampled_from([7, 11, 12, None]),
 )
 async def test_property_watermark_never_trails_a_drop_and_stays_contiguous(
-    nights: list[list[str]], layout: list[set[str]]
+    nights: list[list[str]], layout: list[set[str]], sol_days: int | None
 ) -> None:
-    """#2347 invariant over random per-day outcomes: at every DROP each symbol of the day is
-    already below its watermark; a dropped day never sits above a day still hot only; and the
-    watermark covers a hot day only when that day is in both tiers (verified cold)."""
+    """#2347 invariant over random per-day outcomes and retention policies: at every DROP each
+    symbol of the day is already below its watermark; an older day of that symbol is still hot
+    only if it reached its own DROP first (both tiers), never a day kept hot by a failure or
+    another symbol's window; and the watermark covers a hot day only when it is verified cold."""
     days = [day(14 - i) for i in range(5)]  # oldest first
     plan: dict[int, str] = {}
     marks = FakeMarks()
     arch = FakeArchiver()
 
+    async def hot_days(symbol: str, stream: StreamKind) -> int | None:
+        return sol_days if symbol == "SOLUSDT" else 7
+
+    def in_window(d: int, sym: str) -> bool:  # `_window_ok` for one symbol, safety margin 1
+        w = sol_days if sym == "SOLUSDT" else 7
+        return w is not None and d + US_PER_DAY <= NOW_US - (w + 1) * US_PER_DAY
+
     class Hot(FakeHot):
         reads: ClassVar[dict[int, int]] = {}
+        attempted: ClassVar[set[int]] = set()  # days that reached `drop_day` (advanced first)
 
         async def row_counts(self, stream: StreamKind, rng: TimeRange) -> dict[str, int]:
             n = self.reads.get(rng.start_us, 0)
@@ -968,14 +1042,16 @@ async def test_property_watermark_never_trails_a_drop_and_stays_contiguous(
         async def drop_day(self, stream: StreamKind, day_start_us: int) -> None:
             for sym in self.days[stream][day_start_us]:
                 assert (sym, stream, day_start_us) in arch.verified
+                assert in_window(day_start_us, sym)
                 mark = (await marks.get(sym, stream)).archived_through_us
                 assert mark >= day_start_us + US_PER_DAY, "watermark trails the drop"
-                # contiguous: no older day of this symbol is still hot without a cold copy
-                assert all(
-                    (sym, stream, d) in arch.verified
-                    for d, syms in self.days[stream].items()
-                    if d < day_start_us and sym in syms
-                )
+                # contiguous: an older day of `sym` still hot must have reached its own DROP
+                # (so it is in both tiers); a failed, late-row or window-kept day must not
+                for d, syms in self.days[stream].items():
+                    if d < day_start_us and sym in syms:
+                        assert d in self.attempted, "dropped above an older day still hot"
+                        assert (sym, stream, d) in arch.verified
+            self.attempted.add(day_start_us)
             mode = plan.get(day_start_us)
             if mode == "crash_drop":
                 raise Kill
@@ -985,20 +1061,21 @@ async def test_property_watermark_never_trails_a_drop_and_stays_contiguous(
 
     hot = Hot({T: {d: sorted(syms) for d, syms in zip(days, layout, strict=True)}})
     hot.reads.clear()
-    for modes in [*nights, ["ok"] * 5]:  # a clean night last: everything converges
+    hot.attempted.clear()
+    for modes in [*nights, ["ok"] * 5]:  # a clean night last: everything droppable drops
         plan.clear()
         plan.update(zip(days, modes, strict=True))
         arch.fail = {
             (sym, d): ["archive_verification_failed"] * 3
             for d, mode in plan.items()
             if mode == "verify_fail"
-            for sym in ("BTCUSDT", "ETHUSDT")
+            for sym in _SYMS
         }
         try:
-            await _job(hot, arch, marks).run()
+            await _job(hot, arch, marks, hot_days=hot_days).run()
         except Kill:
             pass
-        for sym in ("BTCUSDT", "ETHUSDT"):
+        for sym in _SYMS:
             mark = (await marks.get(sym, T)).archived_through_us
             # every dropped day of `sym` is below its watermark; every hot one above it is
             # hot only, and one below it is in both tiers
@@ -1009,7 +1086,13 @@ async def test_property_watermark_never_trails_a_drop_and_stays_contiguous(
                     assert d + US_PER_DAY <= mark
                 elif d + US_PER_DAY <= mark:
                     assert (sym, T, d) in arch.verified
-    assert hot.days[T] == {}
+    # after the clean night a day is still hot only when a symbol of it is inside its window or
+    # waits behind an older day still hot (pinned / longer-window symbols, bounded by them)
+    left = sorted(hot.days[T])
+    for i, d in enumerate(left):
+        syms = set(hot.days[T][d])
+        older = {s for e in left[:i] for s in hot.days[T][e]}
+        assert not all(in_window(d, s) for s in syms) or syms & older
 
 
 # #3794: a stream whose aged partitions roll-off cannot list is counted and logged, never silent.

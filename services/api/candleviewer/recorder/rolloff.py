@@ -13,16 +13,17 @@ raised by the archiver, the symbol is retried with bounded exponential backoff
 and its watermark is not advanced. The drop is audited (write-ahead) before it is issued.
 
 Watermark invariant (#2347): the watermark never trails a drop. Days roll oldest-first, and
-each day's symbols get their watermark advanced past the day after its final hot/cold re-check
-and BEFORE its `drop_day`, so `CoverageService` never attributes a dropped day to QuestDB.
-A day that fails stops the stream for this pass, so the watermark stays a contiguous prefix
-and no newer day is dropped above a day still hot; a day kept hot only by another symbol's
-window blocks the newer days of its own symbols. A crash or a DROP QuestDB cannot confirm
-(`StoragePartitionDropNotApplied`) after the advance leaves the day in BOTH tiers, never in
-neither: the cold copy verified first, so coverage reads it from Parquet, and the next run
-re-archives (idempotent), re-advances (a no-op `max`) and re-drops it. An unconfirmed drop is
-never reported dropped: the outcome is audited (`rolloff.drop_unconfirmed`), the day is
-retained and the stream stops for this pass.
+each day's symbols get their watermark advanced past the day BEFORE the final hot/cold re-check
+and its `drop_day`, so `CoverageService` never attributes a dropped day to QuestDB, and a row
+landing during the advance fails the re-check and keeps the day hot (re-archived next run).
+A day that fails stops the stream for this pass (`rolloff_stream_stopped` names it), so the
+watermark stays a contiguous prefix and no newer day is dropped above a day still hot; a day
+kept hot only by another symbol's window blocks the newer days of its own symbols. A crash or
+a DROP QuestDB cannot confirm (`StoragePartitionDropNotApplied`) after the advance leaves the
+day in BOTH tiers, never in neither: the cold copy verified first, so coverage reads it from
+Parquet, and the next run re-archives (idempotent), re-advances (a no-op `max`) and re-drops
+it. An unconfirmed drop is never reported dropped: the outcome is audited
+(`rolloff.drop_unconfirmed`), the day is retained and the stream stops for this pass.
 """
 
 from __future__ import annotations
@@ -338,6 +339,7 @@ class RollOffJob:
             failed = [o for o in outcomes if not o.verified]
             if failed:
                 report.retained.append((stream, day_start, failed[0].reason))
+                self._stopped(stream, day_start, failed[0].reason or "unknown")
                 break  # a contiguous prefix: no newer day drops above a day still hot
             rows = sum(o.rows for o in outcomes)
             detail: dict[str, str | int] = {
@@ -348,9 +350,12 @@ class RollOffJob:
                 "range_end_us": day.end_us,
                 "rows": rows,
             }
-            # Write-ahead audit (C-2.9) BEFORE the final re-check, so only the watermark
-            # advance, the drop's partition listing and its DROP follow the last snapshot.
+            # Write-ahead audit (C-2.9), then the watermark (#2347), both BEFORE the final
+            # re-check, so only the drop's partition listing and its DROP follow the last
+            # snapshot. The day is labelled cold before it can leave QuestDB, so the watermark
+            # never trails the drop; dying after this leaves the day in both tiers.
             await self._audit.write("retention.purge", detail)
+            await self._advance(stream, symbols, day.end_us)
             after = await self._hot.snapshot(stream, day)
             exported = {o.symbol: o.rows for o in outcomes}
             counts = {sym: v[0] for sym, v in after.items()}
@@ -358,20 +363,28 @@ class RollOffJob:
                 reason = "count_changed" if counts != exported else "values_changed"
                 # The purge record is append-only and stands; record the abort.
                 await self._audit.write("rolloff.drop_aborted", detail | {"reason": reason})
+                # The watermark already covers the day, whose cold copy lacks the late rows:
+                # safe, they stay hot, and the next run re-archives the day (`advance` is a max).
                 await self._late_rows(stream, day, report)
+                self._stopped(stream, day_start, "late_rows")
                 break
-            # Hot and cold are verified equal: label the day cold BEFORE it leaves QuestDB, so
-            # the watermark never trails the drop (#2347). Dying here leaves both tiers.
-            await self._advance(stream, symbols, day.end_us)
             try:
                 await self._hot.drop_day(stream, day_start)
             except StoragePartitionDropNotApplied as exc:
                 await self._drop_unconfirmed(stream, day, detail, exc, report)
+                self._stopped(stream, day_start, f"drop_not_applied_{exc.reason}")
                 break  # the newer days wait for the next pass
             for o in outcomes:
                 recorder_rolloff_bytes_total.labels(stream=stream.value).inc(o.bytes)
             report.dropped.append((stream, day_start))
             await asyncio.sleep(0)  # yield between partitions (live ingestion first)
+
+    @staticmethod
+    def _stopped(stream: StreamKind, day_start_us: int, reason: str) -> None:
+        """Name the day that ends the pass: every newer day of the stream stays hot behind it."""
+        logger().warning(
+            "rolloff_stream_stopped", stream=stream.value, day_start_us=day_start_us, reason=reason
+        )
 
     async def _drop_unconfirmed(
         self,
