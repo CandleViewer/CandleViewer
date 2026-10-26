@@ -727,6 +727,22 @@ def test_the_scan_cap_cuts_before_a_run_that_it_would_split(redact: Callable[[st
     assert redact(out) == out  # a text cut once is not cut again
 
 
+@pytest.mark.parametrize("pad", [0, 5], ids=["in-marker", "on-letter"])
+@pytest.mark.parametrize("escape", ["\\n", "\\t", "\\r"], ids=["n", "t", "r"])
+@pytest.mark.parametrize("redact", _REDACTIONS.values(), ids=_REDACTIONS)
+def test_the_scan_cap_cuts_before_an_escape_that_it_would_split(
+    redact: Callable[[str], str], escape: str, pad: int
+) -> None:
+    # the labels' markers move the cap into the escape between a label and its marker: into the
+    # marker, whose run takes the escape's letter, or onto that letter, after the `\` (#4653)
+    out = redact(" " * pad + "token=ab " * 157 + f"session={escape}ab token=ab")
+
+    assert out.endswith(f" session={redaction._TRUNCATED}")  # no `\` is left to read as a value
+    assert len(out) <= _CAP
+    assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
 def _ping(depth: int, value: str) -> None:
     if depth > 0:
         _pong(depth - 1, value)
@@ -770,10 +786,12 @@ _PIECES = (
     *("\\'", '\\"', "\\n"),
     *(_KEY_MARK, redaction._TRUNCATED, "<omitted>", "***", "null", "None"),
 )
-#: Text of those pieces, where the run of TOTP shapes before them moves them across the cut.
+#: Text of those pieces, where the run of TOTP shapes or of labels before them moves them across
+#: the cut: the labels' markers alone lengthen a message across it (#4653).
 _LABEL_HEAVY = st.builds(
-    lambda pad, before, pieces, after: "x" * pad + " " + "123456 " * before + pieces + after,
+    lambda pad, fill, before, pieces, after: "x" * pad + " " + fill * before + pieces + after,
     st.integers(0, 21),
+    st.sampled_from(["123456 ", "token=ab "]),
     st.integers(0, 400),
     st.lists(st.sampled_from(_PIECES), max_size=40).map("".join),
     st.sampled_from(["", "123456 " * 300, "\n123456" * 300]),
@@ -787,16 +805,21 @@ _LABEL_HEAVY = st.builds(
 @example(" " + "123456 " * 185 + "token=ab " + "123456 " * 397)
 @example("x" * 13 + " " + "123456 " * 184 + "Authorization: Bearer ab " + "123456 " * 397)
 @example("x" * 18 + " " + "123456 " * 184 + "Cookie: v\n" + "123456 " * 397)
+@example(" " + "123456 " * 44 + "token" * 8 + "machines.session=\\ntoken" + "\n123456" * 300)
+@example("token=ab " * 157 + "session=\\nab token=ab")
 def test_a_label_heavy_text_stays_within_the_cap_and_a_second_pass_changes_nothing(
     text: str,
 ) -> None:
-    # the examples: a cut inside a placeholder, the second cut inside a key-name marker, and a cut
-    # right after one (after a label, a header with its scheme, a cookie header to its line's end)
+    # the examples: a cut inside a placeholder, the second cut inside a key-name marker, a cut
+    # right after one (after a label, a header with its scheme, a cookie header to its line's end),
+    # and a cut inside the escaped line break between a label and its marker, on a traceback and on
+    # a message (#4653)
     for redact in _REDACTIONS.values():
         out = redact(text)
 
         assert len(out) <= _CAP
         assert redact(out) == out
+        assert list(scan_text(out)) == []
 
 
 def test_a_label_whose_value_the_cut_dropped_passes_the_bundle_scan() -> None:
