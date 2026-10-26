@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from candleviewer.auth.break_glass_notice import BreakGlassEvents, BreakGlassNotice
@@ -23,7 +23,7 @@ from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.errors import AuthServiceUnavailable
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
-from candleviewer.auth.login_service import LoginService
+from candleviewer.auth.login_service import LOGIN_FAILURE_FLOOR, LoginService
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.session_chart import SessionChart
@@ -83,8 +83,11 @@ class AuthService:
         invite_repository: InviteRepository | None = None,
         system_events: SystemEventWriter | None = None,
         break_glass_events: BreakGlassEvents | None = None,
+        login_failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
     ) -> None:
         self._started = False
+        #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`).
+        self._login_failure_floor = login_failure_floor
         #: Where a TOTP clock-skew event goes (#2146); `None` still counts the metric.
         self._system_events = system_events
         self._invite_repository = invite_repository
@@ -248,6 +251,7 @@ class AuthService:
                 Hasher(pepper=self._pepper),
                 mfa_repository=self._mfa_repository,
                 clock=self._clock,
+                failure_floor=self._login_failure_floor,
             )
         if self._session_repository is not None:
             self._sessions = SessionService(

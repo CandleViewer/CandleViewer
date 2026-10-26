@@ -943,6 +943,7 @@ Layered, highest priority last: packaged defaults → `infra/compose/.env` → e
 | `CV_API_STOP_BUDGET_S`           | int    | `30`                      | process | api SIGTERM-to-SIGKILL budget, 23-120 s; equals compose `stop_grace_period`; the WS grace must fit it (#2565)       |
 | `CV_UVICORN_DRAIN_TIMEOUT_S`     | int    | `5`                       | process | bound on uvicorn's drain of open connections, 4-30 s; 4 s is one close's flush plus its audit write (#2565)         |
 | `CV_AUTH_PERF_ENABLED`           | bool   | `false`                   | process | #2097: owner-only `/auth/_perf/argon2-params` + login `Server-Timing`; refused unless testnet with no exchange key  |
+| `CV_AUTH_LOGIN_FAILURE_FLOOR_MS` | int    | `500`                     | process | #4648: a failed sign-in returns no sooner than this after the attempt started; 250-5000, no off value (C-4.14)      |
 | `CV_TEST_CLOCK`                  | bool   | `false`                   | process | auth server test clock (#2086), no HTTP route; refused unless testnet with no exchange key (E16-FR-11)              |
 | `CV_TEST_CLOCK_FILE`             | path   | unset                     | process | offset in signed decimal seconds, read per auth decision; absolute, no `..`, no symlink in it; own DB (see below)   |
 | `CV_ACCOUNT_FIXTURE`             | str    | unset                     | process | dev-only fixture scenario token (#2893); refused unless demo, synthetic feed, no key var, no test clock             |

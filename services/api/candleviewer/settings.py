@@ -100,6 +100,17 @@ OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
 OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
 OMS_PRICE_BAND_MAX: Final = Decimal("0.20")
 
+#: #4648: `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`. A failed sign-in returns no sooner than this many
+#: milliseconds after the attempt started; this module owns the default (`LoginService` reads it).
+AUTH_LOGIN_FAILURE_FLOOR_MS: Final = 500
+#: The lowest accepted value. Below it a normal failed sign-in could take longer than the minimum
+#: time, so failures would no longer all wait out the same deadline. Zero is refused: no setting
+#: turns the minimum time off (C-4.14).
+AUTH_LOGIN_FAILURE_FLOOR_MIN_MS: Final = 250
+#: The highest accepted value: a typo guard, so a mistyped value cannot hold every failed sign-in,
+#: a mistyped password included, for minutes.
+AUTH_LOGIN_FAILURE_FLOOR_MAX_MS: Final = 5000
+
 
 class Environment(StrEnum):
     """The three structural exchange environments (P9, `20-architecture.md` Sec.7.1).
@@ -421,6 +432,13 @@ class Settings(BaseSettings):
     # value to `auth_csrf_previous_key_hex` (verify-only) for one refresh lifetime.
     auth_csrf_key_hex: SecretStr | None = None
     auth_csrf_previous_key_hex: SecretStr | None = None
+    # #4648: the minimum time a failed sign-in takes, in ms (`AUTH_LOGIN_FAILURE_FLOOR_MS`). A field
+    # check, so a value outside 250-5000 refuses startup without echoing another setting (#2728).
+    auth_login_failure_floor_ms: int = Field(
+        default=AUTH_LOGIN_FAILURE_FLOOR_MS,
+        ge=AUTH_LOGIN_FAILURE_FLOOR_MIN_MS,
+        le=AUTH_LOGIN_FAILURE_FLOOR_MAX_MS,
+    )
     # #3085: how often the view-as sweeper ends what no request ends (an expiry, a session's end,
     # an eligibility lost with no request coming) and writes a pending end's record late. HTTP
     # and the sockets act at once; the tick bounds only those ends and records.

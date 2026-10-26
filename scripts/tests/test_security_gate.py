@@ -2019,7 +2019,7 @@ _CODEQL_LINE_PINS = {
     ),
 }
 _MFA_TOKEN_ENTRY = (
-    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:106"
+    "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:108"
 )
 _MFA_RULE, _MFA_PATH, _MFA_LINE = _MFA_TOKEN_ENTRY.rsplit(":", 2)
 _MFA_TOKEN_RESULT = (_MFA_RULE, _MFA_PATH, int(_MFA_LINE))
@@ -2102,7 +2102,7 @@ def test_repo_register_key_tag_entry_still_keys_a_random_mac_over_the_api_key() 
 
 
 def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:
-    """The weak-hashing entries (login_service.py:106, mfa_service.py:72) are false positives
+    """The weak-hashing entries (login_service.py:108, mfa_service.py:72) are false positives
     only while the hashed value is the MFA challenge token and that token is 256 random bits.
     A result is keyed to its hashing line, so a new hashed value or token source would stay
     accepted there: pin both, so such a change fails here and the entries are re-triaged."""

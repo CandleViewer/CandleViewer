@@ -47,6 +47,7 @@ from candleviewer.auth.metrics import auth_lockouts_total, auth_login_failure_fl
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MS
 
 if TYPE_CHECKING:
     from candleviewer.auth.mfa_repository import MfaRepository
@@ -63,8 +64,9 @@ MFA_CHALLENGE_TTL = timedelta(minutes=5)
 #: #4648: a failed sign-in returns no sooner than this after the attempt started. It is set
 #: well above the time a normal failure takes, so every failure normally waits out the same
 #: deadline; a failure that is already slower is never held longer, and is counted
-#: (`auth_login_failure_floor_missed_total`). A successful sign-in is never held.
-LOGIN_FAILURE_FLOOR = timedelta(milliseconds=500)
+#: (`auth_login_failure_floor_missed_total`). A successful sign-in is never held. The
+#: default only: production passes `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`, whose default this is.
+LOGIN_FAILURE_FLOOR = timedelta(milliseconds=AUTH_LOGIN_FAILURE_FLOOR_MS)
 
 Clock = Callable[[], datetime]
 MonotonicClock = Callable[[], float]
