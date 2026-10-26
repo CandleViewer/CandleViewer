@@ -2,10 +2,10 @@
 
 An exit service registers the exit it is about to command (`OmsCommandPort.expect_exit`) with
 its request's principal (`actor`) and correlation id (`request_id`), and B1's call of the order's
-amend spends the registration (`amend`). Each record the port writes for that amend, each side's
-request (`sl.modified` / `tp.modified`, reason `amend`), each void of a refused one and the
-port's own refusal (`orders.amend` denied), names the request's correlation id beside its
-principal and role, as a place's records name theirs (#3990; SEC-4609-01).
+amend spends the registration (`amend`). Each record the port writes for that amend names the
+request's correlation id: each side's request (`sl.modified` / `tp.modified`, reason `amend`)
+and each void of a refused one beside its principal and role, and the port's own refusal
+(`orders.amend` denied), as a place's records name theirs (#3990; SEC-4609-01).
 
 A second request's exit of the same order, registered before B1's call for the first, is a
 registration of its own (SEC-4609-02). The facade takes the order's commands one at a time, in
@@ -14,6 +14,11 @@ call spends the order's oldest registration of its kind; a request whose command
 refused forgets its own registration and no other; and an exit whose step B1 settled without a
 call of the port leaves none behind. So neither request's rows or records name the other's
 principal, role or request, and no exit is answered another's call.
+
+B1's call spends a registration of its own order and kind only, never an older one of another
+order or of the other kind (CR-4650-01). An exit that ends any other way than by B1's call taking
+its registration forgets it as well, over the scripted facade: its settle timed out or raised, or
+`aclose` cancelled it, the cancellation going on (CR-4650-03, CR-4650-04).
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.command_rig import Rig
 from tests.unit.oms.submit_rig import SubmitRig
-from tests.unit.oms.test_exits import OTHER, OWNER, exits_of
+from tests.unit.oms.test_exits import OTHER, OWNER, exits_of, forgotten, scripted
 from tests.unit.oms.test_exits_amend import scoped
 
 #: Two principals amending one order, each under its own request's correlation id.
@@ -53,6 +58,9 @@ _TIGHTER = {"stop_loss": "58500"}
 #: The exit service's amend of the same order's stop, 58000 to 59000.
 _TIGHTER_TERMS = AmendTerms(sides={"stop_loss": StopOffset("price", Decimal("59000"))})
 _REFUSED = FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "refused")
+_AMEND: oc.ExitKind = "amend"
+#: B1's one cancel, which the scripted facade takes.
+_SENT = ["CANCEL"]
 
 type Named = tuple[UUID | None, str | None, UUID | None]
 
@@ -133,14 +141,15 @@ def _unread(target: str, error: BaseException) -> Callable[[Rig, pytest.MonkeyPa
         ({"provenance": "recorded_stop"}, {"price": "60500"}, None, "not_amendable"),
         ({"cum_exec_qty": Decimal("0.004")}, _TIGHTER, None, "tpsl_after_fill"),
         ({}, {"stop_loss": None}, None, "native_stop_required"),
+        ({"stop_loss": None}, {"take_profit": "65000"}, None, "native_stop_required"),
         ({}, {"stop_loss": "57999"}, None, "looser_than_order"),
         ({}, _TIGHTER, _unread("account", AccountScopeDenied()), "account_unavailable"),
         ({}, _TIGHTER, _unread("row", StorageError("down")), "store_unavailable"),
         ({}, _TIGHTER, _unread("account", StoreUnavailable()), "store_unavailable"),
         ({}, _TIGHTER, _unread("gate", StoreUnavailable()), "store_unavailable"),
     ],
-    ids=["terms_not_staged", "not_amendable", "tpsl_rule", "native_stop", "looser_stop",
-         "account_unavailable", "row_unread", "account_unread", "gate_unread"],
+    ids=["terms_not_staged", "not_amendable", "tpsl_rule", "native_stop", "native_stop_paired",
+         "looser_stop", "account_unavailable", "row_unread", "account_unread", "gate_unread"],
 )  # fmt: skip
 async def test_each_refusal_the_port_records_for_a_users_amend_names_its_request(
     rig: Rig,
@@ -151,7 +160,9 @@ async def test_each_refusal_the_port_records_for_a_users_amend_names_its_request
     reason: str,
 ) -> None:
     """SEC-4609-01: the port's own refusal of a user's amend, nothing recorded ahead or sent, is
-    recorded (`orders.amend` denied) under the request's correlation id too."""
+    recorded (`orders.amend` denied) under the request's correlation id too; `native_stop` asks
+    the stop cleared (Q3's scope), `native_stop_paired` a take-profit on an order that holds no
+    stop, so the re-paired request would go bare (`_paired`, CR-4650-02)."""
     order = await _live(rig, **over)
     rig.port.expect_exit(order.id, "amend", request_id=_RID_A, actor=_A)
     if fail is not None:
@@ -217,6 +228,39 @@ async def test_two_requests_cancels_of_one_order_each_keep_their_own_registratio
     answer = await rig.port.cancel(cr.command("cancel", order))
     assert answer["ok"] is True and first.answered and not second.answered
     assert await first.answer() == answer
+
+
+async def test_b1s_amend_never_takes_another_orders_older_registration(rig: Rig) -> None:
+    """CR-4650-01: B1's call spends a registration of its own order and kind only (`_spend`). An
+    amend registered earlier for another order stays unanswered when B1 calls this order's amend,
+    whose records name this order's request; B1's call for the other order then spends it."""
+    other, order = await _live(rig, seq=1), await _live(rig)
+    earlier = rig.port.expect_exit(other.id, _AMEND, request_id=_RID_A, actor=_A)
+    own = rig.port.expect_exit(order.id, _AMEND, request_id=_RID_B, actor=_B)
+    answer = await rig.port.amend(cr.command(_AMEND, order, _TIGHTER))
+    assert answer["ok"] is True and own.answered and not earlier.answered
+    assert await own.answer() == answer
+    assert {_named(record) for record in _keyed(rig.audits.written)} == {_as(_B, _RID_B)}
+    later = await rig.port.amend(cr.command(_AMEND, other, _TIGHTER))
+    assert earlier.answered and await earlier.answer() == later
+
+
+@pytest.mark.parametrize(("first", "called"), [("cancel", "amend"), ("amend", "cancel")])
+async def test_b1s_call_never_takes_its_orders_older_registration_of_the_other_kind(
+    rig: Rig, first: oc.ExitKind, called: oc.ExitKind
+) -> None:
+    """CR-4650-01: a cancel and an amend of one order, each its own request's: B1's call of one
+    kind spends that kind's registration only, though the other kind's is older, which stays
+    unanswered; an amend's records name its own request, never the cancel's."""
+    order = await _live(rig)
+    older = rig.port.expect_exit(order.id, first, request_id=_RID_A, actor=_A)
+    own = rig.port.expect_exit(order.id, called, request_id=_RID_B, actor=_B)
+    call = rig.port.amend if called == "amend" else rig.port.cancel
+    answer = await call(cr.command(called, order, _TIGHTER if called == "amend" else None))
+    assert answer["ok"] is True and own.answered and not older.answered
+    assert await own.answer() == answer
+    named = {_named(record) for record in _keyed(rig.audits.written)}
+    assert named == ({_as(_B, _RID_B)} if called == "amend" else set())
 
 
 # --- the exit service over the real facade and port (`submit_rig`) ------------------------------
@@ -302,3 +346,41 @@ async def test_an_exit_whose_step_b1_settled_with_no_call_leaves_no_registration
     later = await exits.amend(found, _TIGHTER_TERMS, caller=_caller(_B, _RID_B), expected_seq=None)
     assert later.kind == "accepted"
     assert _sides_named(exit_rig) == [_as(_B, _RID_B)] * 2
+
+
+# --- the exit service's other ways out, over the scripted facade (`test_exits.scripted`) ---------
+
+
+async def test_an_exit_whose_settle_timed_out_forgets_its_registration() -> None:
+    """CR-4650-03: B1 took the command and did not settle it within the bound, so the exit
+    answers `unknown` and forgets its registration: a missing principal beats a stale one, which
+    a later request's call would spend and name. A call of B1's that comes later finds none."""
+    exits, machines, row, _ = await scripted("submitted", TimeoutError())
+    got = await exits.cancel_admitted(row, actor=_A, reason="user", request_id=_RID_A)
+    assert (got.kind, got.lifecycle_state, machines.sent) == ("unknown", "cancel_pending", _SENT)
+    assert await forgotten(machines)
+
+
+async def test_an_exit_whose_settle_raised_forgets_its_registration_and_raises() -> None:
+    """CR-4650-04: any other raise of B1's settle forgets the registration, and goes on."""
+    exits, machines, row, _ = await scripted("submitted", RuntimeError("a defect"))
+    with pytest.raises(RuntimeError, match="a defect"):
+        await exits.cancel_admitted(row, actor=_A, reason="user", request_id=_RID_A)
+    assert machines.sent == _SENT and await forgotten(machines)
+
+
+async def test_aclose_forgets_a_waiting_exits_registration_and_its_cancellation_goes_on() -> None:
+    """CR-4650-04: `aclose` at shutdown cancels an exit waiting on B1's settle. Its registration is
+    forgotten, and the cancellation is never swallowed: the exit's task ends cancelled, and so
+    does its caller's wait."""
+    exits, machines, row, _ = await scripted("submitted", "cancelled")
+    machines.gate = asyncio.Event()
+    caller = asyncio.ensure_future(
+        exits.cancel_admitted(row, actor=_A, reason="user", request_id=_RID_A)
+    )
+    await machines.entered.wait()
+    [running] = exits._running
+    await exits.aclose()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert running.cancelled() and await forgotten(machines)

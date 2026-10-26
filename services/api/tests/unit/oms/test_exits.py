@@ -363,7 +363,10 @@ class Watches:
         return watch
 
     def forget_exit(self, watch: oc.ExitWatch) -> None:
-        self.held.pop((watch.order_id, watch.kind)).resolve(None)
+        """As the port's: a watch no longer held is left as it is."""
+        if self.held.get(key := (watch.order_id, watch.kind)) is watch:
+            del self.held[key]
+            watch.resolve(None)
 
 
 @dataclass
