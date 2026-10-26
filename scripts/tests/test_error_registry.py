@@ -246,17 +246,19 @@ def test_request_level_use_of_invalid_options_and_the_wide_frame_malformed_title
     assert titles["invalid_options"] == (
         "Subscription option out of range, of the wrong type, or an unknown key; also a "
         "request-level refusal of a malformed `sub` or `unsub`, or a `ctl` or `resync` naming a "
-        "bad `ch`, `rs` or `sub_id`, with no `ch`"
+        "bad `ch` or `rs`, or a `resync` naming a bad `sub_id`, with no `ch`"
     )
     assert titles["frame_malformed"] == (
         "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack, a frame of "
         "the wrong kind for the connection's subprotocol, a binary body inconsistent with its "
-        "header, or a resync with no ch or a p that is not an object"
+        "header, or a resync with no ch, a p that is not an object, an unknown reason, or a "
+        "last_seq that is neither an integer nor null"
     )
     flat = " ".join(MD.split())
     assert (
         "Also a request-level refusal: a malformed `sub` or `unsub`, or a `ctl` or `resync` "
-        "naming a bad `ch`, `rs` or `sub_id`, gets it with no `ch`"
+        "naming a bad `ch` or `rs`, or a `resync` naming a bad `sub_id`, gets it with no `ch`"
     ) in flat
     assert "Malformed inbound frame (§3.6): invalid or over-bound JSON or MessagePack" in flat
-    assert "or a `resync` with no `ch` or a `p` that is not an object (§7.7)" in flat
+    assert "an unknown `reason`, or a `last_seq` that is neither an integer nor `null` (§7.7)" in flat
+    assert "Each counts a strike; the third closes with `bye` `bad_client` and `4400`" in flat
