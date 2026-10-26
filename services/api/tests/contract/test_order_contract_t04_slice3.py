@@ -395,7 +395,8 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
 
 def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None:
     """The code's defaults; the ranges keep the stop, command and stuck bounds `OmsBounds` holds,
-    the stop request's bound named where its setting is, and the drain inside the module's grace."""
+    the stop request's bound named where its setting is, and the drain inside the module's grace;
+    the stores' statement cap holds 20's bounds in the code (#913 S4-G2)."""
     section = _ARCH.split("### 7.2 Configuration model", 1)[1].split("### 7.3 ", 1)[0]
     cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in section.split("\n")]
     rows = {row[0].strip("`"): row[1:] for row in cells if len(row) == 5 and row[0][:4] == "`CV_"}
@@ -405,8 +406,19 @@ def test_20_declares_the_oms_settings_within_the_bounds_the_code_holds() -> None
         "CV_OMS_STARTUP_WAIT_S": ["float", "`30`", "process"],
         "CV_OMS_DRAIN_S": ["float", "`10`", "process"],
         "CV_TRADING_LIVE_ENABLED": ["bool", "`false`", "process"],
+        "CV_OMS_STATEMENT_TIMEOUT_MS": ["int", "`2000`", "process"],
     }
     assert {key: rows[key][:3] for key in expected} == expected
+    cap = Settings.model_fields["oms_statement_timeout_ms"]  # #913 S4-G2: the row's own bounds
+    floor = next(rule.ge for rule in cap.metadata if hasattr(rule, "ge"))
+    ceiling = next(rule.le for rule in cap.metadata if hasattr(rule, "le"))
+    assert (cap.default, floor, ceiling) == (2000, 1500, 5000)
+    assert floor > CV_PERSIST_TIMEOUT * 1000  # above B1's write-ahead bound, as S7 has it
+    assert ceiling <= Settings.model_fields["oms_submit_timeout_ms"].default  # the submit bound
+    assert (
+        f"; {floor}-{ceiling}: above `CV_PERSIST_TIMEOUT` (1 s)"
+        in rows["CV_OMS_STATEMENT_TIMEOUT_MS"][3]
+    )
     bounds = OmsBounds.from_settings(Settings())
     assert (bounds.submit_timeout_s * 1000, bounds.stuck_after_s) == (5000, 30)
     assert not _missing(
