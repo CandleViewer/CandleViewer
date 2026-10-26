@@ -9,7 +9,8 @@ import asyncio
 import concurrent.futures
 import inspect
 import threading
-from collections.abc import AsyncIterator, Awaitable, Coroutine
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
 from contextlib import asynccontextmanager
 from decimal import Decimal
 from types import SimpleNamespace
@@ -26,17 +27,23 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import OmsCommandPort
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms.exits import AmendTerms, ExitCaller
+from candleviewer.oms.fakes import InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import SubmitActor
 from candleviewer.oms_lane import LANE_JOIN_S, LaneStopped, OrderLane, Serving
 from candleviewer.settings import OMS_STOP_RESERVE_S, TEARDOWN_BUDGET_S, Settings
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import Gateway, LoopAffinityError
+from candleviewer.statechart.persistence import ChainTripLatch
+from candleviewer.statechart.plugins import InMemoryMachineEventSink
 from candleviewer.storage.repositories.accounts import OwnerScope
-from candleviewer.storage.repositories.orders import ScopedOrder
+from candleviewer.storage.repositories.orders import NewOrder, ScopedOrder
+from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.unit.oms import command_rig as cr
+from tests.unit.oms import order_rig
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.test_oms_runtime import (
+    KEY,
     SENDING,
     STARTED,
     Port,
@@ -821,3 +828,112 @@ async def test_a_lane_dying_as_the_start_calls_the_compose_fails_the_start_close
     assert (failed_closed(logs), failed_phases(logs)) == (["LaneStopped"], ["lane"])
     assert world.pager.calls == ["oms_runtime_failed_closed: lane"]
     assert world.venue.ports == [] and not b01.ports_wired()
+
+
+# --- order turns on the lane, the serving loop blocked (#913 L2; the stall test's setup) ----------
+
+
+def exit_order(seq: int) -> NewOrder:
+    """A reduce-only limit sell: its fills start no stop (INV-B1-o), so an `EXEC` of it reads
+    and sends nothing at the venue. A short id, so its ack's exchange id (`x<id>`, `placed`)
+    passes the exchange-answer redactor that a 39-digit one does not."""
+    return cr.new_order(
+        seq=seq, id=UUID(int=seq), side="Sell", intent="scale_out", reduce_only=True,
+        stop_loss=None, take_profit=None,
+    )  # fmt: skip
+
+
+async def hydrating(world: World, n: int) -> list[NewOrder]:
+    """A first process that went down with `n` reduce-only orders `submitted`, each acked, as
+    `crashed` leaves its two: the runtime's sweep hydrates them all."""
+    store, saved = world.store, b01._ATTEMPTS
+    InMemorySubmissionStore(store).seed_account(cr.ref())
+    world.accounts.append(TradingAccountRow(cr.ACCOUNT, "demo", cr.UIDS["demo"], False, KEY))
+    b01._ATTEMPTS = OrderedDict()
+    rig, orders = order_rig.build_rig(store), [exit_order(1000 + i) for i in range(n)]
+    try:
+        for order in orders:
+            await rig.facade.start(order, environment="demo", gates=order_rig.GATES)
+            await rig.facade.command(cr.ACCOUNT, order.id, "SEND", actor="user")
+        await rig.quiet()
+        assert {rig.facade.state(order.id)[0] for order in orders} == {"submitted"}
+    finally:
+        await rig.facade.stop()
+        b01._ATTEMPTS = saved
+    return orders
+
+
+async def validated(machines: OrderMachines, n: int) -> list[NewOrder]:
+    """`n` entries started and left `validated`, never sent: each takes an abandon."""
+    entries = [cr.new_order(seq=2000 + i) for i in range(n)]
+    for entry in entries:
+        await machines.start(entry, environment="demo", gates=order_rig.GATES)
+    return entries
+
+
+async def turns(
+    machines: OrderMachines,
+    exits: Sequence[NewOrder],
+    entries: Sequence[NewOrder],
+    clock: Callable[[], float],
+) -> list[tuple[float, float]]:
+    """The order turns, in turn: an `EXEC` of each exit, a partial fill, and an abandon of each
+    entry from `validated`; neither calls the venue. Each is timed on `clock` from its send to its
+    committed step, its event, sink rows and audit record included: (sent, committed)."""
+    spans = list[tuple[float, float]]()
+    for exit_, entry in zip(exits, entries, strict=True):
+        fill = order_rig.fill_of(
+            exit_, f"e{exit_.id.int % 10**6}", "0.004", account_id=str(cr.ACCOUNT), side="sell"
+        )
+        sent = clock()
+        await machines.push(cr.ACCOUNT, exit_.id, "EXEC", fill)
+        spans.append((sent, clock()))
+        sent = clock()
+        await machines.abandon(cr.ACCOUNT, entry.id, "lane_isolation")
+        spans.append((sent, clock()))
+    return spans
+
+
+async def _when(began: threading.Event) -> None:
+    assert await asyncio.to_thread(began.wait, BOUND_S)
+
+
+@pytest.mark.parametrize("bundled", [False, True])
+async def test_order_turns_on_the_lane_need_no_turn_of_the_blocked_serving_loop(
+    bundled: bool,
+) -> None:
+    """#913 L2 (29 CV-C13; rulings Q12, Q13): with this loop blocked, the lane takes an `EXEC` of
+    each hydrated order and abandons as many `validated` ones, each recorded by the lane's own
+    audit writer and written ahead to its own sink, beside a bundle's or not: the lane releases
+    this loop's block once every turn has committed. A turn that waited on this loop, an audit or
+    sink hop among them, would leave the block to its bound. No timing is asserted (the stall
+    test's numbers are `test_order_lane_isolation`'s)."""
+    world, count = World(), 8
+    exits = await hydrating(world, count)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    for flag in world.flags:
+        flag.read()
+    runtime = world.runtime(lane=OrderLane, bundle=bundle if bundled else None)
+    async with asyncio.timeout(3 * BOUND_S), started(runtime):
+        await runtime.wait_ready()
+        parts = runtime._composed()
+        entries = await parts.lane.call(validated(parts.machines, count))
+        blocked, ended = threading.Event(), threading.Event()
+
+        async def driven() -> list[tuple[float, float]]:
+            await _when(blocked)
+            try:
+                return await turns(parts.machines, exits, entries, lambda: 0.0)
+            finally:
+                ended.set()
+
+        taken = parts.lane.call(driven())
+        blocked.set()
+        released = ended.wait(BOUND_S)  # this loop blocks meanwhile
+        assert released and len(await taken) == 2 * count
+    states = {world.store._orders[order.id].lifecycle_state for order in (*exits, *entries)}
+    assert states == {"partially_filled", "killed"}
+    killed = ("orders.cancel", "kill_no_cancel_unsubmitted")
+    assert world.writer.actions.count(killed) == count
+    [sink] = world.sinks
+    assert sink.rows and bundle.sink.rows == []
