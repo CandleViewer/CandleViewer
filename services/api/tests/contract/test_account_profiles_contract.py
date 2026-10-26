@@ -363,6 +363,16 @@ def test_every_rest_member_is_one_domain_field_and_one_column() -> None:
     assert all(len(cells) == len(set(cells)) for cells in (rest, fields, columns))  # one to one
     renamed = {f for _, f, c, _ in rows if f and c and f not in c and c not in f}
     assert renamed == {"tp_ladder[].qty_pct", "denied_symbols"}  # a column is named for its field
+
+    # #4098 R1C-04: a member's last segment names its field or its column, but six name their own
+    def paired(member: str, *cells: str | None) -> bool:
+        end = member.rsplit(".", 1)[-1]
+        return any(end in cell or cell in end for cell in cells if cell)
+
+    assert {r for r, f, c, _ in rows if r and (f or c) and not paired(r, f, c)} == {
+        "sizing.risk_per_trade_pct", "sizing.risk_per_trade_usd", "stop_loss.fallback_pct",
+        "take_profit_ladder", "require_native_stop", "default_time_in_force",
+    }  # fmt: skip
     assert [row[:3] for row in rows if None in row[:3]] == [
         ("environment", None, None),  # the account's, not the profile's (#906 D2-c)
         ("created_at", None, "created_at"),

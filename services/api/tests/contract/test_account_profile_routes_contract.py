@@ -652,3 +652,38 @@ def test_a_profile_and_the_binding_name_the_accounts_environment() -> None:
     items = listing["examples"]["twoAccounts"]["value"]["items"]
     (listed,) = [item for item in items if item["id"] == binding["exchange_account_id"]]
     assert binding["environment"] == listed["environment"]
+
+
+# -- #906 D3d: the closing evidence ---------------------------------------------------------------
+
+#: D4: every existing test the E28 model's cells credit to #906's slices and routes, by name.
+_CREDITED = (
+    "test_every_mounted_dangerous_write_route_is_gated",
+    "test_a_profile_write_without_step_up_is_403_and_audited_before_the_handler",
+    "test_profile_write_without_step_up_is_403_and_changes_nothing",
+    "test_cell_outcome_matches_matrix",
+    "test_every_disallowed_profile_write_cell_is_403_audited_and_changes_nothing",
+    "test_trading_enabled_profile_requires_loss_caps",
+    "test_wildcard_matches_only_listed_linear_usdt_perps",
+    "test_native_sl_false_refused_by_every_path",
+    "test_a_replace_is_200_at_the_next_version_and_records_before_and_after",
+    "test_a_change_reaches_each_socket_that_may_view_its_account_and_no_other",
+    "test_a_create_replays_its_201_and_refuses_the_key_for_another_body",
+    "test_a_stale_catalogue_is_503_retry_after_2_and_its_retry_is_a_first_submission",
+    "test_a_writes_answer_carries_the_sizing_warnings_of_its_port",
+    "test_a_profile_lives_through_its_routes_on_postgres_with_its_revisions_and_records",
+)
+
+
+def test_every_test_the_e28_model_credits_to_906_exists() -> None:
+    """D4: a renamed or misspelt test fails here. Each name is cited in the model and defined under
+    `services/api/tests`."""
+    model = ROOT / "docs/security/threat-models/E28-profiles-trade-groups.md"
+    cited = model.read_text(encoding="utf-8")
+    defined = {
+        name
+        for path in (ROOT / "services/api/tests").rglob("*.py")
+        for name in re.findall(r"^(?:async )?def (test_\w+)\(", path.read_text("utf-8"), re.M)
+    }
+    assert [name for name in _CREDITED if f"`{name}`" not in cited] == []
+    assert [name for name in _CREDITED if name not in defined] == []

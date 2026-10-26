@@ -466,7 +466,7 @@ row; record which name appeared.
 <!-- prettier-ignore -->
 | Event (this plan) | Ticket or threat-model name | 04 §8.2 | Registered today |
 | --- | --- | --- | --- |
-| `profile.created`, `profile.updated`, `profile.deleted` | same (E28-T02) | same | yes (#4087); legacy `profiles.update` kept |
+| `profile.created`, `profile.updated`, `profile.deleted` | same (E28-T02) | same | yes (#4087); `profiles.update` retired (#906) |
 | `profile.bound`, `profile.unbound` (`relaxing` when looser) | same (E28-T02) | same | yes (#4087) |
 | `profile.save_refused{reason}` | same (E28-T02) | same | yes (#4087) |
 | `auth.step_up_required` | the contract's step-up refusal | none (`auth.stepup.*` records the step-up itself) | yes |
