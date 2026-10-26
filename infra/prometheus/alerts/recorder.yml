@@ -86,6 +86,7 @@ groups:
           tracker: "#567"
       # Seek anchors (#2223): a skip loses no data, so only a reason other than `late` that keeps
       # rising for 10 minutes matters. `late` is the expected skip and is excluded.
+      # A skip is counted once per slot, so the 5 m window assumes an interval of at most 300 s.
       - alert: RecorderAnchorSkipped
         expr: sum by (env, reason) (increase(recorder_anchor_skipped_total{reason!="late"}[5m])) > 0
         for: 10m

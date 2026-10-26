@@ -152,7 +152,8 @@ A stale sample closes the gate even on a healthy disk: see `RecorderDiskBudgetSa
 
 **Symptom.** `recorder_anchor_skipped_total{reason}` has risen for 10 minutes for a reason other
 than `late`. No data is lost (the deltas are still recorded), but replay seeks fall back an
-interval for each skipped anchor. Severity: Ticket. Tracker: #2223.
+interval for each skipped anchor. The rule assumes `CV_RECORDER_SNAPSHOT_INTERVAL_S` is at most
+300 s, one skip in each 5-minute window. Severity: Ticket. Tracker: #2223.
 
 1. Read the `reason` label on the alert; `late` is expected and never alerts.
 2. Map it: `no_book` = no book for the symbol; `not_live` = the feed is not live (resync or
