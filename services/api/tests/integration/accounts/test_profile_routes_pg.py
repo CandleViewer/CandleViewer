@@ -107,15 +107,14 @@ def _served(world: rbac.World, dsn: str, wal: Path) -> Iterator[SimpleNamespace]
         portal.call(writer.start)
         ctx.audit._writer = writer  # the lazy emitters resolve it per call
         verify = AuditQueryService(SqlAlchemyAuditRepository(relational)).verify
-        try:
+        with contextlib.ExitStack() as stack:  # each teardown runs even if one before it raises
+            stack.callback(ctx.bus.bus.unsubscribe, probe)
+            stack.callback(portal.call, relational.dispose)
+            stack.callback(portal.call, app.state.profiles.dispose)
+            stack.callback(portal.call, writer.stop, 5.0)
             yield SimpleNamespace(
                 client=client, portal=portal, probe=probe, writer=writer, verify=verify
             )
-        finally:
-            portal.call(writer.stop, 5.0)
-            portal.call(app.state.profiles.dispose)
-            portal.call(relational.dispose)
-            ctx.bus.bus.unsubscribe(probe)
 
 
 def _tag(*parts: object) -> dict[str, str]:
@@ -169,6 +168,10 @@ def test_a_profile_lives_through_its_routes_on_postgres_with_its_revisions_and_r
         ("profile.unbound", o, True, True, None), ("profile.bound", n, True, True, "true"),
         ("profile.deleted", o, True, False, None),
     ]  # fmt: skip
+    caps = _sql(pg_dsn, "SELECT before_state->>'max_open_positions', after_state->>'max_open_"
+                        "positions' FROM audit_log WHERE object_id = %s AND action = 'profile."
+                        "updated'", n)  # fmt: skip
+    assert caps == [("3", "5")]  # the replace's record holds the cap before and after it
     assert chain.verified
     notices = _sql(pg_dsn, "SELECT details->>'profile_id', details->>'previous_profile_id', "
                            "correlation_id::text FROM system_events WHERE exchange_account_id = "
