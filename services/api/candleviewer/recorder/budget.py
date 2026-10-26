@@ -456,7 +456,7 @@ class DiskBudget:
         if (report := self._report) is None:
             return None
         level, gate, reason = self._gate()
-        if report.level == level:
+        if (report.level, report.write_gate, report.write_gate_reason) == (level, gate, reason):
             return report
         return report.model_copy(
             update={"level": level, "write_gate": gate, "write_gate_reason": reason}

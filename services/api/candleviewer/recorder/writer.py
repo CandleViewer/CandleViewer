@@ -375,10 +375,11 @@ def liquidation_records(ev: LiquidationLike) -> list[WalRecord]:
 
 @dataclass(frozen=True, slots=True)
 class DiskGate:
-    """E16-T07 write gate (#491 decision, INV-B11-a): while `halted()` (DiskBudget level 3 or a
-    refused volume) rows of symbols without an open position are dropped into
+    """E16-T07 write gate (#491 decision, INV-B11-a): while `halted()` (DiskBudget level 3, a
+    refused volume or a stale sample) rows of symbols without an open position are dropped into
     `backpressure_drop` gaps, and an open position keeps writing. Both are plain synchronous
-    reads, never an interpreter (C-2.20); lifting is the ladder's hysteresis."""
+    reads, never an interpreter (C-2.20); lifting is the ladder's hysteresis or, for a stale
+    sample, two completed passes in a row."""
 
     halted: Callable[[], bool]
     position_open: Callable[[str], bool]

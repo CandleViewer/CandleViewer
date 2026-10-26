@@ -134,6 +134,27 @@ async def test_a_raising_meter_closes_the_gate_three_intervals_after_its_last_pa
         await budget.stop()
 
 
+async def test_a_meter_that_never_answers_ages_the_gate_from_construction() -> None:
+    mono, meter, loop = FakeClock(T), FakeMeter(fail=True), Loop()
+    failed = _read(disk_budget_sample_failed_total)
+    budget = _budget(meter, mono, loop)  # built at T: with no completed pass, the age starts here
+    budget.start()
+    try:
+        await loop.idle()  # the first pass, at T, fails
+        assert (_gate(budget), _read(recorder_disk_pressure_level)) == (OPEN, 0.0)
+        for at in (T + 60, T + 120, T + BOUND):  # more failed passes: open up to exactly 180 s
+            await loop.step(mono, at)
+            assert (_gate(budget), _read(recorder_disk_pressure_level)) == (OPEN, 0.0), at
+        mono.t = T + BOUND + 0.001
+        assert _gate(budget) == CLOSED
+        await loop.step(mono, T + 240)
+        assert (_gate(budget), _read(recorder_disk_pressure_level)) == (CLOSED, 3.0)
+        await loop.step(mono, T + 300)  # a failed pass while already closed still counts
+        assert _read(disk_budget_sample_failed_total) - failed == 6
+    finally:
+        await budget.stop()
+
+
 async def test_a_pass_that_never_returns_still_closes_the_gate_at_read_time() -> None:
     mono, meter, loop = FakeClock(T), StuckMeter(), Loop()
     config = BudgetConfig(cap_bytes=CAP, io_timeout_s=3_600.0)  # nothing ends the stuck read
@@ -247,3 +268,13 @@ async def test_the_writer_drops_rows_while_stale_and_takes_them_after_recovery()
     assert [r["trade_id"] for r in sink.rows("trades")] == ["t1", "t4"]
     gaps = [(g["start"], g["end"], g["cause"]) for g in store.gaps]
     assert gaps == [(_at(T0 + 2), _at(T0 + 3), "backpressure_drop")]  # t2 to t3, both dropped
+
+
+async def test_the_report_follows_a_refused_volume_set_after_its_sample() -> None:
+    budget = _budget(FakeMeter(used=CAP), FakeClock(T), Loop())  # level 3 on the ladder
+    await budget.sample_once()
+    report = budget.report()
+    assert report is not None and report.write_gate_reason == "disk_halt"
+    budget.recording_refused = True  # the same level, a different reason
+    report = budget.report()
+    assert report is not None and report.write_gate_reason == "volume_refused"
