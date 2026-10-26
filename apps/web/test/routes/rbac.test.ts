@@ -1,16 +1,10 @@
 import { describe, expect, it } from "vitest";
-import {
-  evaluateAccess,
-  isStepUpFresh,
-  STEP_UP_TTL_MS,
-  type MeClaims,
-} from "../../src/routes/rbac";
+import { evaluateAccess, type MeClaims } from "../../src/routes/rbac";
 
 const base: MeClaims = {
   authenticated: true,
   role: "viewer",
   permissions: [],
-  elevatedAt: null,
 };
 
 describe("evaluateAccess", () => {
@@ -19,7 +13,6 @@ describe("evaluateAccess", () => {
       authenticated: false,
       role: null,
       permissions: [],
-      elevatedAt: null,
     };
     expect(evaluateAccess({ roles: "public" }, unauth)).toEqual({ kind: "allow" });
   });
@@ -29,7 +22,6 @@ describe("evaluateAccess", () => {
       authenticated: false,
       role: null,
       permissions: [],
-      elevatedAt: null,
     };
     expect(evaluateAccess({ roles: ["owner"] }, unauth)).toEqual({ kind: "redirect-login" });
   });
@@ -49,37 +41,23 @@ describe("evaluateAccess", () => {
     });
   });
 
-  it("requires step-up when the route demands it and none is recorded", () => {
+  it("lets an owner into an admin route with no client step-up check (#2725)", () => {
     const owner: MeClaims = { ...base, role: "owner" };
-    expect(evaluateAccess({ roles: ["owner"], requiresStepUp: true }, owner)).toEqual({
-      kind: "step-up-required",
+    expect(evaluateAccess({ roles: ["owner"], denyAs: "404" }, owner)).toEqual({ kind: "allow" });
+  });
+
+  it("still denies a manager an admin route with 404", () => {
+    const manager: MeClaims = { ...base, role: "manager" };
+    expect(evaluateAccess({ roles: ["owner"], denyAs: "404" }, manager)).toEqual({
+      kind: "deny",
+      as: "404",
     });
   });
 
-  it("allows when step-up is fresh", () => {
-    const owner: MeClaims = { ...base, role: "owner", elevatedAt: new Date().toISOString() };
-    expect(evaluateAccess({ roles: ["owner"], requiresStepUp: true }, owner)).toEqual({
-      kind: "allow",
+  it("still redirects an unauthenticated session away from an admin route", () => {
+    const unauth: MeClaims = { authenticated: false, role: null, permissions: [] };
+    expect(evaluateAccess({ roles: ["owner"], denyAs: "404" }, unauth)).toEqual({
+      kind: "redirect-login",
     });
-  });
-});
-
-describe("isStepUpFresh", () => {
-  it("is false when never elevated", () => {
-    expect(isStepUpFresh(base)).toBe(false);
-  });
-
-  it("is true just under the 30-minute TTL", () => {
-    const elevatedAt = new Date(Date.now() - (STEP_UP_TTL_MS - 1000)).toISOString();
-    expect(isStepUpFresh({ ...base, elevatedAt })).toBe(true);
-  });
-
-  it("is false once the 30-minute TTL has elapsed", () => {
-    const elevatedAt = new Date(Date.now() - (STEP_UP_TTL_MS + 1000)).toISOString();
-    expect(isStepUpFresh({ ...base, elevatedAt })).toBe(false);
-  });
-
-  it("is false for an unparsable timestamp", () => {
-    expect(isStepUpFresh({ ...base, elevatedAt: "not-a-date" })).toBe(false);
   });
 });

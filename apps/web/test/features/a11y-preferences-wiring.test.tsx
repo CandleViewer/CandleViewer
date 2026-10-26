@@ -118,7 +118,7 @@ describe("SCR-117 routed in the real app", () => {
           : reply(200, {}),
       );
     vi.stubGlobal("fetch", f);
-    setMeClaims({ authenticated: true, role: "owner", permissions: [], elevatedAt: null });
+    setMeClaims({ authenticated: true, role: "owner", permissions: [] });
     const flags = vi.fn();
     const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/settings/appearance"] });
     render(

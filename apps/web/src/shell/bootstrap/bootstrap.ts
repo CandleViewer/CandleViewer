@@ -38,7 +38,6 @@ function meToClaims(me: Me): MeClaims {
     authenticated: true,
     role: me.role as Role,
     permissions: me.permissions,
-    elevatedAt: me.session?.elevated_until ?? null,
   };
 }
 

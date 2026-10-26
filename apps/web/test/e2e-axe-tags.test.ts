@@ -58,6 +58,7 @@ describe("the a11y gate's axe tags (#3700)", () => {
     // selects them (target-size, aria-roledescription, audio-caption). Add any new tagged scan here.
     expect(calls.map((c) => c.file).sort()).toEqual([
       "a11y/axe.collect.ts",
+      "auth/stepup.spec.ts", // SCR-006 with the step-up dialog open (#2725)
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
     ]);

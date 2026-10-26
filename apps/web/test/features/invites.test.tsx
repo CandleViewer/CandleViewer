@@ -110,15 +110,42 @@ describe("AdminInviteScreen (SCR-123)", () => {
     );
   });
 
-  it("prompts for step-up when the server demands it", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (_u: string, init?: RequestInit) =>
-        init?.method === "POST"
-          ? reply(403, { code: "step_up_required" })
-          : reply(200, { items: [] }),
-      ),
-    );
+  it("answers the step-up challenge and re-sends the held invite once (#2725)", async () => {
+    const challenge = {
+      type: "https://candleviewer.local/errors/step_up_required",
+      title: "A dangerous action needs a live step-up elevation for its action class",
+      status: 403,
+      code: "step_up_required",
+      action_class: "users",
+      challenge_id: "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+      challenge_expires_at: new Date(Date.now() + 300_000).toISOString(),
+      action_summary: "Invite user 'annie' as viewer",
+      target: null,
+    };
+    let creates = 0;
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      if (u.endsWith("/auth/step-up")) {
+        return reply(200, {
+          elevated_until: "2026-09-14T10:40:00Z",
+          action_class: "users",
+          single_use: false,
+          step_up_expires_at: "2026-09-14T10:40:00Z",
+        });
+      }
+      if (init?.method === "POST") {
+        creates += 1;
+        return creates === 1
+          ? reply(403, challenge)
+          : reply(201, {
+              id: "u1",
+              username: "annie",
+              invite_url: "/invite/abc",
+              invite_expires_at: "2026-09-17T10:00:00Z",
+            });
+      }
+      return reply(200, { items: [] });
+    });
+    vi.stubGlobal("fetch", f);
     render(
       <MemoryRouter>
         <AdminInviteScreen />
@@ -126,6 +153,146 @@ describe("AdminInviteScreen (SCR-123)", () => {
     );
     fireEvent.change(screen.getByLabelText("Username"), { target: { value: "annie" } });
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
-    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveAccessibleDescription("Invite user 'annie' as viewer");
+    expect(await seriousViolations()).toEqual([]);
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByLabelText("Invite link")).toHaveValue(
+      `${window.location.origin}/invite/abc`,
+    );
+    const posts = f.mock.calls.filter(([u, i]) => u.endsWith("/users") && i?.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[1]?.[1]?.body).toBe(posts[0]?.[1]?.body);
+    const key = (i: number): string | null =>
+      new Headers(posts[i]?.[1]?.headers).get("Idempotency-Key");
+    expect(key(0)).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(key(1)).toBe(key(0));
+    const stepUp = f.mock.calls.find(([u]) => u.endsWith("/auth/step-up"));
+    expect(JSON.parse(String(stepUp?.[1]?.body))).toMatchObject({
+      challenge_id: challenge.challenge_id,
+    });
+  });
+
+  it("shows Not sent and never re-sends the invite when the step-up is cancelled", async () => {
+    const f = vi.fn(async (_u: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? reply(403, {
+            code: "step_up_required",
+            action_class: "users",
+            challenge_id: "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+            challenge_expires_at: new Date(Date.now() + 300_000).toISOString(),
+          })
+        : reply(200, { items: [] }),
+    );
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "annie" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(await screen.findByRole("status")).toHaveTextContent("Not sent");
+    expect(f.mock.calls.filter(([, i]) => i?.method === "POST")).toHaveLength(1);
+  });
+
+  it("opens at most one new step-up cycle when the re-send is challenged again", async () => {
+    const challenge = (id: string) => ({
+      code: "step_up_required",
+      action_class: "users",
+      challenge_id: id,
+      challenge_expires_at: new Date(Date.now() + 300_000).toISOString(),
+    });
+    let creates = 0;
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      if (u.endsWith("/auth/step-up")) {
+        return reply(200, { elevated_until: "x", action_class: "users", single_use: false });
+      }
+      if (init?.method === "POST") {
+        creates += 1;
+        return reply(403, challenge(`0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6${creates}`));
+      }
+      return reply(200, { items: [] });
+    });
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText("Username"), { target: { value: "annie" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
+    for (let cycle = 1; cycle <= 2; cycle += 1) {
+      await screen.findByRole("alertdialog");
+      fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+      fireEvent.change(screen.getByLabelText("Authenticator code"), {
+        target: { value: "123456" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+      await waitFor(() => expect(creates).toBe(cycle + 1));
+    }
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The invitation could not be created.",
+    );
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(creates).toBe(3);
+  });
+
+  it("sends no Idempotency-Key on a read", async () => {
+    const f = vi.fn(async () => reply(200, { items: [] }));
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(f).toHaveBeenCalled());
+    const [, init] = f.mock.calls[0] as unknown as [string, RequestInit];
+    expect(new Headers(init.headers).has("Idempotency-Key")).toBe(false);
+  });
+
+  it("re-issues through the step-up challenge too", async () => {
+    let reissues = 0;
+    const f = vi.fn(async (u: string, init?: RequestInit) => {
+      if (u.endsWith("/auth/step-up")) {
+        return reply(200, { elevated_until: "x", action_class: "users", single_use: false });
+      }
+      if (u.endsWith("/invite") && init?.method === "POST") {
+        reissues += 1;
+        return reissues === 1
+          ? reply(403, {
+              code: "step_up_required",
+              action_class: "users",
+              challenge_id: "0c9b8a7d-6e5f-4a3b-9c2d-1e0f9a8b7c6d",
+              challenge_expires_at: new Date(Date.now() + 300_000).toISOString(),
+            })
+          : reply(201, {
+              id: "u1",
+              username: "bob",
+              invite_url: "/invite/def",
+              invite_expires_at: "2026-09-17T10:00:00Z",
+            });
+      }
+      return reply(200, {
+        items: [{ user_id: "u1", username: "bob", role: "viewer", expires_at: "x", expired: true }],
+      });
+    });
+    vi.stubGlobal("fetch", f);
+    render(
+      <MemoryRouter>
+        <AdminInviteScreen />
+      </MemoryRouter>,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Re-issue" }));
+    await screen.findByRole("alertdialog");
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    fireEvent.change(screen.getByLabelText("Authenticator code"), { target: { value: "123456" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
+    expect(await screen.findByLabelText("Invite link")).toHaveValue(
+      `${window.location.origin}/invite/def`,
+    );
   });
 });

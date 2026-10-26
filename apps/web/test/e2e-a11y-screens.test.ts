@@ -31,7 +31,6 @@ describe("the a11y gate's screen set (#3470)", () => {
         authenticated: true,
         role: signedIn?.role ?? null,
         permissions: [],
-        elevatedAt: null,
       };
       const decision = access && evaluateAccess(access, claims);
       expect(decision, `${id}: the guard lets the stub in`).toEqual({ kind: "allow" });

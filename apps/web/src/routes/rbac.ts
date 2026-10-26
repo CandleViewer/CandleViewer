@@ -24,8 +24,6 @@ export interface RouteAccess {
    * R-300..R-360 ("owner-hat"). Every other RBAC-denied route renders 403.
    */
   readonly denyAs?: "403" | "404";
-  /** True for `/admin/**` routes: entering requires a fresh (<=30 min) step-up token. */
-  readonly requiresStepUp?: boolean;
 }
 
 /** The claims the app shell caches from `GET /me` (`22-api-openapi.yaml`). */
@@ -34,34 +32,25 @@ export interface MeClaims {
   readonly role: Role | null;
   /** Flattened effective permission set, e.g. `"rules:author"`. */
   readonly permissions: readonly string[];
-  /** ISO 8601 timestamp of the last successful `/auth/step-up`, or null if never elevated. */
-  readonly elevatedAt: string | null;
 }
 
-export const STEP_UP_TTL_MS = 30 * 60 * 1000;
-
-export function isStepUpFresh(claims: MeClaims, now: () => number = Date.now): boolean {
-  if (!claims.elevatedAt) return false;
-  const elevatedAtMs = Date.parse(claims.elevatedAt);
-  if (Number.isNaN(elevatedAtMs)) return false;
-  return now() - elevatedAtMs < STEP_UP_TTL_MS;
-}
+/*
+ * No client-side step-up pre-emption (#2725): entering `/admin/**` asks for no step-up here. Each
+ * dangerous action answers the server's own `403 step_up_required` challenge
+ * (`features/stepUp/StepUpChallengeGate`), so step-up credentials are only ever sent with a
+ * server-issued `challenge_id`. SCR-149's "re-auth on first entry" returns once its contract
+ * (the admin re-auth endpoint or an `admin` grace class) lands.
+ */
 
 /** Client-side rendering decision for a route + claims pair. Never an authorisation grant. */
 export type AccessDecision =
-  | { kind: "allow" }
-  | { kind: "redirect-login" }
-  | { kind: "deny"; as: "403" | "404" }
-  | { kind: "step-up-required" };
+  { kind: "allow" } | { kind: "redirect-login" } | { kind: "deny"; as: "403" | "404" };
 
 export function evaluateAccess(access: RouteAccess, claims: MeClaims): AccessDecision {
   if (access.roles === "public") return { kind: "allow" };
   if (!claims.authenticated || !claims.role) return { kind: "redirect-login" };
   if (!access.roles.includes(claims.role)) {
     return { kind: "deny", as: access.denyAs ?? "403" };
-  }
-  if (access.requiresStepUp && !isStepUpFresh(claims)) {
-    return { kind: "step-up-required" };
   }
   return { kind: "allow" };
 }

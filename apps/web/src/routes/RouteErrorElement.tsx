@@ -1,8 +1,7 @@
 import type { JSX } from "react";
 import { isRouteErrorResponse, useRouteError } from "react-router";
-import { ForbiddenError, StepUpRequiredError } from "./guards";
+import { ForbiddenError } from "./guards";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
-import { StepUpGate } from "./StepUpGate";
 
 /**
  * Route-level `errorElement`. Guard loaders throw typed errors (never plain
@@ -15,9 +14,6 @@ export function RouteErrorElement(): JSX.Element {
 
   if (error instanceof ForbiddenError) {
     return error.as === "404" ? <NotFoundState /> : <ForbiddenState />;
-  }
-  if (error instanceof StepUpRequiredError) {
-    return <StepUpGate redirectTo={error.redirectTo} />;
   }
   if (isRouteErrorResponse(error)) {
     return error.status === 404 ? <NotFoundState /> : <ForbiddenState />;
