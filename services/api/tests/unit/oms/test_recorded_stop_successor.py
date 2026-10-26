@@ -14,7 +14,7 @@ from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from hypothesis import given, settings
@@ -43,6 +43,7 @@ from tests.unit.oms.test_stream_push import STOP, event, order_row
 
 XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"  # the transcribed frames' order id
 AT = datetime(2031, 3, 4, 5, 6, 7, tzinfo=UTC)  # the OMS's clock, nowhere near the wall clock
+STOP_TIME = "1672364262457"  # the transcribed order row's `updatedTime`
 ENDED_OTHERWISE = ["cancelled", "rejected", "expired", "deactivated", "partially_filled_canceled"]
 
 
@@ -146,27 +147,95 @@ async def bound_row(world: World) -> OrderRow:
 async def test_successor_record_matching_the_push_releases_the_predecessor_and_binds_in_one_transaction(  # noqa: E501 -- the plan's test name, verbatim
     world: World,
 ) -> None:
-    """One `release_and_bind`: the hook sees the predecessor released and the successor bound
-    while neither is committed, and both land together; the record hook then runs for the key."""
+    """One `release_and_bind`: the hook is handed the predecessor released and the successor bound
+    (its record names both and the order) while neither is committed, and both land together; the
+    record hook then runs for the key."""
     old = await predecessor(world)
     new = await later(world, old)
     seen: list[tuple[str | None, str | None]] = []
+    details: list[Any] = []
 
     class Ahead:
         async def write(self, record: KeyedRecord) -> None:
             table = stops(world)
             seen.append((table[old.id].exchange_order_id, table[new].exchange_order_id))
+            details.append(record.detail)
 
     world.audit = Ahead()
     calls = spy(world).calls
     await world.run(event("order", orderId=XID, **STOP))
     assert calls == ["for_exchange_order", "live_for_key", "release_and_bind"]
     assert seen == [(XID, None)]  # written ahead: nothing committed yet
+    assert details == [
+        {"kind": "stop_loss", "predecessor_id": str(old.id), "successor_id": str(new),
+         "exchange_order_id": XID},
+    ]  # fmt: skip
     released, bound = stops(world)[old.id], stops(world)[new]
     assert (released.exchange_order_id, released.released_at) == (None, T0)
     assert (bound.exchange_order_id, bound.released_at) == (XID, None)
     assert await world.bound() == [new]
     assert world.ports.counts == ["successor_bound"] and world.ports.hooked == [KEY]
+
+
+@pytest.mark.parametrize(
+    ("values", "push"),
+    [
+        ({"trigger_price": Decimal(93500)}, {"triggerPrice": "93500"}),
+        ({"trigger_price": Decimal(93500), "size": Decimal("0.4")},
+         {"triggerPrice": "93500", "qty": "0.4"}),
+    ],
+    ids=["trigger", "trigger_and_size"],
+)  # fmt: skip
+async def test_a_stop_moved_in_place_sends_its_terms_then_binds_the_later_record(
+    world: World, values: dict[str, Any], push: dict[str, str]
+) -> None:
+    """The main case: the OMS moves its Partial stop in place, so the push carries the later
+    record's terms. `TERMS_CHANGED` is sent first, the row follows the push, and then the binding
+    moves to the later record, with one record written ahead."""
+    old = await predecessor(world)
+    new = await later(world, old, **values)
+    calls = spy(world).calls
+    await world.run(event("order", orderId=XID, **(STOP | push)))
+    assert world.ports.counts == ["terms", "successor_bound"]
+    row = await bound_row(world)
+    assert (row.trigger_price, row.qty) == (Decimal(93500), values.get("size", Decimal("0.5")))
+    assert calls == ["for_exchange_order", "live_for_key", "release_and_bind"]
+    assert await world.bound() == [new] and stops(world)[old.id].released_at == T0
+    assert [r.name for r in world.ports.audited] == [f"successor_bind:{new}"]
+
+
+async def test_a_stale_push_never_moves_the_binding_back(world: World) -> None:
+    """The security lens: once a newer push bound the later record, a late or redelivered push of
+    the order still showing the old terms, older by the venue's time, matches a record written
+    since at those terms, and decides nothing: the binding stays, nothing is released."""
+    old = await predecessor(world)
+    moved = await later(world, old, trigger_price=Decimal(93500))
+    calls = spy(world).calls
+    world.kept = world.successor()
+    newer = str(int(STOP_TIME) + 1_000)
+    await world.run(
+        event("order", orderId=XID, **(STOP | {"triggerPrice": "93500", "updatedTime": newer}))
+    )
+    assert await world.bound() == [moved]
+    stops(world)[moved] = replace(stops(world)[moved], status="in_force", in_force_at=T0)
+    back = await later(world, stops(world)[moved])  # the OMS records the old terms again
+    calls.clear()
+    await world.run(event("order", orderId=XID, **(STOP | {"updatedTime": STOP_TIME})))
+    assert "release_and_bind" not in calls and await world.bound() == [moved]
+    assert stops(world)[moved].released_at is None and stops(world)[back].exchange_order_id is None
+
+
+async def test_an_entrys_attach_is_never_a_successor(world: World) -> None:
+    """The security lens: a pending attach of an entry not yet filled, at the push's terms, is
+    never handed a bound order's binding; its stop arrives as an order of its own at the fill."""
+    old = await predecessor(world)
+    new = await later(world, old)
+    stops(world)[new] = replace(stops(world)[new], source="entry_attach", order_id=uuid4())
+    calls = spy(world).calls
+    await world.run(event("order", orderId=XID, **STOP))
+    assert calls == ["for_exchange_order", "live_for_key"]
+    assert await world.bound() == [old.id] and stops(world)[new].exchange_order_id is None
+    assert world.ports.audited == []
 
 
 @pytest.mark.parametrize(
@@ -511,8 +580,10 @@ async def test_property_looser_foreign_in_place_change_on_a_bound_partial_stop_k
 
 
 def test_successor_budget_fits_the_seams_bounds() -> None:
+    """The seam's bound is the check's inner bounds plus a margin, so they always end it first."""
     assert rss.RELEASE_BOUND_S == stream_push.PUSH_TIMEOUT_S
-    assert rss.SUCCESSOR_BUDGET_S == stream_push.SUCCESSOR_BOUND_S
+    assert rss.SUCCESSOR_BUDGET_S == 3 * stream_push.PORT_TIMEOUT_S + rss.RELEASE_BOUND_S
+    assert stream_push.SUCCESSOR_BOUND_S > rss.SUCCESSOR_BUDGET_S
 
 
 _ROW = order_row(
@@ -523,8 +594,9 @@ _ROW = order_row(
 
 async def test_successor_check_runs_after_the_terms_step_and_the_pushs_event() -> None:
     rig = Rig(answers={"bound": _ROW})
-    await rig.run(event("order", orderId=XID, **(STOP | {"orderStatus": "Triggered"})))
-    assert [name for _, name, _ in rig.pushed] == ["TRIGGERED"]
+    moved = STOP | {"orderStatus": "Triggered", "triggerPrice": "93500"}
+    await rig.run(event("order", orderId=XID, **moved))
+    assert rig.trace == ["TERMS_CHANGED", "TRIGGERED", "successor"]
     assert rig.successors == [(_ROW.id, "triggered")]
 
 

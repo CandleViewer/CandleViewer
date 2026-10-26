@@ -108,6 +108,7 @@ class World:
     stops: Any = None  # the successor's record store, when not the repository over the rig's
     clock: Callable[[], datetime] = lambda: T0  # the OMS's clock
     audit: Any = None  # the successor's release audit, when not the ports' list
+    kept: Successor | None = None  # one successor across runs (its push times), when set
 
     def successor(self) -> Successor:
         stops = self.stops or RecordedStopRepository(self.rig.store.stops)
@@ -129,8 +130,8 @@ class World:
         p = self.ports
         pushes = StreamPushes(
             target=self.rig.facade, reads=self, fill_orders=p, lockout=p, handovers=p,
-            stops=self.stream(), successors=self.successor(), no_intent=p, counts=p, pager=p,
-            monotonic=asyncio.get_running_loop().time,
+            stops=self.stream(), successors=self.kept or self.successor(), no_intent=p,
+            counts=p, pager=p, monotonic=asyncio.get_running_loop().time,
         )  # fmt: skip
         async with asyncio.timeout(5.0):  # real seconds: only a failing test's
             await pushes.handle(ev.account_id, ev, r)

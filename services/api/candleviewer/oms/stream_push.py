@@ -77,9 +77,10 @@ PUSH_TIMEOUT_S: Final = 30.0  # the facade's 5 s ports, B1's 10 s write-ahead an
 #: `recorded_stop_stream.TAKE_BUDGET_S`: the account and link reads, the 30 s materialise (24
 #: Sec.8.12, Q5) and the two read-backs; the seam's own bounds end it first.
 STOP_TAKE_BOUND_S: Final = 4 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
-#: `recorded_stop_stream.SUCCESSOR_BUDGET_S`: the two record reads, the 30 s release and bind, and
-#: the re-read or the record hook; the seam's own bounds end it first.
-SUCCESSOR_BOUND_S: Final = 3 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
+#: `recorded_stop_stream.SUCCESSOR_BUDGET_S` (the two record reads, the 30 s release and bind, and
+#: the re-read or the record hook) plus one port bound of margin, so the seam's own bounds end it
+#: first and a committed bind is never also cut here.
+SUCCESSOR_BOUND_S: Final = 4 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
 PAGED_ORDERS: Final = 1024  # the order ids a full buffer paged on, the oldest forgotten
 
 type Outcome = Literal[

@@ -37,6 +37,7 @@ class Rig:
     pages: list[str] = field(default_factory=list)
     taken: list[ToRecordedStop] = field(default_factory=list)
     successors: list[tuple[UUID, str]] = field(default_factory=list)  # (row id, order status)
+    trace: list[str] = field(default_factory=list)  # the pushes' events and the successor, in order
     opened: list[tuple[str, str]] = field(default_factory=list)
     stalled: asyncio.Event = field(default_factory=asyncio.Event)  # set once a port hangs
     _shared: StreamPushes | None = None
@@ -84,6 +85,7 @@ class Rig:
     async def push(self, account_id: UUID, order_id: UUID, event: str, payload: Any) -> None:
         self.calls.append("push")
         self.pushed.append((order_id, event, dict(payload)))
+        self.trace.append(event)
         await self._stall("push")
         if self.push_errors:
             raise self.push_errors.pop(0)
@@ -120,6 +122,7 @@ class Rig:
     async def check(self, account_id: UUID, row: OrderRow, order: Order) -> None:
         """The successor's check (S7b): noted apart from `calls`; `raises` and `hang` script it."""
         self.successors.append((row.id, order.state))
+        self.trace.append("successor")
         await self._hit_raise("successor")
 
     async def _stall(self, name: str) -> None:
