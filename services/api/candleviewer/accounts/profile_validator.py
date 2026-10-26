@@ -325,7 +325,8 @@ _SIDES: Final[tuple[Side, Side]] = ("buy", "sell")
 class SymbolFigures:
     """One symbol's save-time inputs: its instrument; its ticker and ATR as the order path builds
     the `SizingMarket` (mid, else the last price; a stale ticker gives neither); and the
-    maintenance margin rate of the account's risk-limit tier for it, else tier 1's."""
+    maintenance margin rate of the account's risk-limit tier for it, else the lowest tier's by
+    `risk_limit_value` (never the tier whose id is 1)."""
 
     instrument: Instrument | None
     market: SizingMarket

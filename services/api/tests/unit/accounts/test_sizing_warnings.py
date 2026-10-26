@@ -20,7 +20,7 @@ from candleviewer.domain.primitives import Environment
 from tests.unit.accounts.test_sizer import atr, instrument, profile, wallet
 
 D = Decimal
-_MMR: Final = D("0.005")  # BTCUSDT's risk-limit tier 1
+_MMR: Final = D("0.005")  # a sample rate; BTCUSDT's recorded lowest tier is 0.0033
 _AT_MID: Final = sz.SizingMarket(mid=D(64000))
 _TINY: Final = wallet("10")  # 0.5 % of 10 USDT over a 120 USDT stop: 0.0004 BTC, under 0.001
 
