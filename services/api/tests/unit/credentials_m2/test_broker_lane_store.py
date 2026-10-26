@@ -64,7 +64,7 @@ class _Pools:
     """The root's lane store factory: hands out a store (the rig's lane side), noting the bound
     M2 asks for and the thread, and each dispose of the pool: its thread, and whether the lane's
     I/O (the last of `ios`) was closed by then. Each of `faults` spoils one dispose: "raise"
-    fails it, "stall" parks it until cancelled."""
+    fails it, "stall" parks it until cancelled, "yield" lets the loop run others twice in it."""
 
     def __init__(self, store: Any, ios: list[Any] | None = None) -> None:
         self.store, self.ios, self.faults = store, ios, list[str]()
@@ -81,6 +81,9 @@ class _Pools:
                 raise RuntimeError("the pool's dispose failed")
             if fault == "stall":
                 await asyncio.Event().wait()  # never set: only a bound ends it
+            if fault == "yield":
+                for _ in range(2):
+                    await asyncio.sleep(0)  # yields only: no time passes
             self.released.append((threading.current_thread(), closed))
 
         return self.store, release
@@ -250,6 +253,45 @@ def test_a_failed_dispose_raises_and_keeps_the_pool_counted_for_the_next_aclose(
     signing, pools.faults[:] = _bound(rig, pools, _Writer()), ["raise"]
     with pytest.raises(RuntimeError, match="dispose failed"):
         rig.lane.run(signing.aclose())
+    assert (pools.released, _pools_in_use()) == ([], before + 1)
+    rig.lane.run(signing.aclose())
+    assert (len(pools.released), _pools_in_use()) == (1, before)
+
+
+def test_two_overlapping_acloses_dispose_of_the_pool_once(rig: _Rig) -> None:
+    """D-1 (Minor 5): the pool is claimed before its dispose is awaited, so a second `aclose`
+    that overlaps the first frees nothing more: one dispose, and the gauge falls once."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing, pools.faults[:] = _bound(rig, pools, _Writer()), ["yield"]
+
+    async def both() -> None:
+        await asyncio.gather(signing.aclose(), signing.aclose())
+
+    rig.lane.run(both())
+    assert (len(pools.released), _pools_in_use()) == (1, before)
+
+
+def test_an_aclose_cancelled_in_its_dispose_keeps_the_pool_for_the_next_aclose(rig: _Rig) -> None:
+    """D-1 (Minor 5): a close cancelled while it disposes of the pool, as a closer's deadline
+    cancels it, leaves the pool held and counted, and the next `aclose` frees it."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing, pools.faults[:] = _bound(rig, pools, _Writer()), ["stall"]
+
+    async def cancelled_in_its_dispose() -> bool:
+        closing = asyncio.ensure_future(signing.aclose())
+        for _ in range(100):  # the dispose takes its fault as it starts
+            if not pools.faults:
+                break
+            await asyncio.sleep(0)
+        assert not pools.faults
+        closing.cancel()
+        try:
+            await closing
+        except asyncio.CancelledError:
+            return True
+        return False
+
+    assert rig.lane.run(cancelled_in_its_dispose())
     assert (pools.released, _pools_in_use()) == ([], before + 1)
     rig.lane.run(signing.aclose())
     assert (len(pools.released), _pools_in_use()) == (1, before)
@@ -426,7 +468,7 @@ def test_a_lane_binding_with_no_store_factory_wired_is_refused(rig: _Rig) -> Non
 
 
 #: A fake DSN: no database listens there, and building a pool never connects.
-_DSN = "postgresql+asyncpg://lane:fake@localhost:5432/cv"
+_DSN = "postgresql+asyncpg://localhost:5432/cv"
 
 
 def _real() -> Settings:
@@ -500,7 +542,7 @@ def test_the_roots_lane_store_factory_holds_no_plaintext_dsn(
     """L-2 (C-12.6): the factory the root hands M2 lives as long as M2's binder, so it unwraps the
     DSN at each call and its closure holds none in plaintext, only what keeps it secret."""
     factories: list[Any] = []
-    real = app.build_secrets_service
+    real = wiring.build_secrets_service
 
     def noted(*args: Any, **kw: Any) -> Any:
         factories.append(kw["loop_store"])
