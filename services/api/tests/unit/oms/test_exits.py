@@ -362,8 +362,8 @@ class Watches:
         self.made.append(watch)
         return watch
 
-    def forget_exit(self, order_id: UUID, kind: oc.ExitKind) -> None:
-        self.held.pop((order_id, kind)).resolve(None)
+    def forget_exit(self, watch: oc.ExitWatch) -> None:
+        self.held.pop((watch.order_id, watch.kind)).resolve(None)
 
 
 @dataclass
