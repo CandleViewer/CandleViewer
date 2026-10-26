@@ -5,6 +5,8 @@ save binds none (the observability contract's rule 3)."""
 
 from __future__ import annotations
 
+import time
+
 from candleviewer.accounts.profile_input import FIRST_PASS_RULES, SCHEMA_RULES
 from candleviewer.accounts.profile_validator import SECOND_PASS_RULES
 from candleviewer.api.profile_writes import FAILURE_RULES, SAVE_RESULTS, SaveMeasures
@@ -36,3 +38,10 @@ def test_the_measures_bind_every_child_once_and_a_save_binds_none() -> None:
     assert (bound, [metrics.get(name).series_count for name in _SERIES]) == ([6, 18, 1],) * 2
     counted = [get(_SERIES[1], {"env": "demo", "rule": r}) for r in ("max_leverage", "schema")]
     assert (counted, get(f"{_SERIES[2]}_count", {"env": "demo"})) == ([1.0, 1.0], 1.0)
+
+
+def test_a_save_is_timed_on_the_performance_counter_by_default() -> None:
+    """The timer is `time.perf_counter()` from the handler's entry (round 1's R1C-02)."""
+    metrics = Metrics("demo")
+    register_r0(metrics)
+    assert SaveMeasures.bound(metrics).clock is time.perf_counter

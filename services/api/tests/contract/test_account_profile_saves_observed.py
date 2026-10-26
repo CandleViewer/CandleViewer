@@ -99,6 +99,13 @@ def _key_used_twice(w: Writes, body: dict[str, Any]) -> Any:
     return send(w, CREATE, key=key, body=body)
 
 
+def _replace_key_used_twice(w: Writes) -> Any:
+    """A replace, then the same key with another body: 409 (H8), so no second save."""
+    key = str(uuid.uuid4())
+    send(w, REPLACE, key=key)
+    return send(w, REPLACE, key=key, body={**_RISK, "name": "Bob"})
+
+
 def _catalogue_down(w: Writes) -> Any:
     w.limits.fails = InstrumentLimitsUnavailable("no listing in time")
     return send(w, CREATE)
@@ -123,6 +130,8 @@ _CASES = [
     pytest.param(lambda w: send(w, MOVE), 200, {}, id="moved"),
     pytest.param(lambda w: send(w, CREATE, raw=b"[" * 65_537), 413, {}, id="over-cap"),
     pytest.param(lambda w: send(w, CREATE, key="not-a-uuid"), 422, {}, id="bad-key"),
+    pytest.param(lambda w: send(w, REPLACE, key="not-a-uuid"), 422, {}, id="replace-bad-key"),
+    pytest.param(_replace_key_used_twice, 409, {"saved": 1}, id="replace-key-reused"),
     pytest.param(lambda w: send(w, REPLACE, at=uuid.uuid4()), 404, {}, id="no-account"),
     pytest.param(lambda w: send(w, CREATE, "manager_with_grant"), 403, {}, id="forbidden"),
 ]  # fmt: skip
@@ -169,6 +178,15 @@ def test_a_refused_save_counts_each_distinct_rule_once_and_any_other_type_as_sch
     counted = {"refused": 5, "max_leverage": 1, "symbol_not_listed": 1, "schema": 3}
     counted |= {"native_stop_mandatory": 1}
     assert {k: v for k, v in delta.items() if k not in ("count", "sum")} == counted
+
+
+def test_a_refused_replace_counts_its_rules_as_a_create_does(rig: Rig) -> None:
+    """The replace's exit collects its refusal's rules too: an unknown member is one `schema`
+    (round 1's R1C-01; the create's are B4's)."""
+    body = {**_RISK, "colour": "red"}
+    resp, delta = _measured(rig, lambda: send(rig.saves, REPLACE, body=body))
+    counted = {k: v for k, v in delta.items() if k != "sum"}
+    assert (resp.status_code, counted) == (422, {"refused": 1, "schema": 1, "count": 1})
 
 
 def test_every_counted_save_observes_its_round_trip(
