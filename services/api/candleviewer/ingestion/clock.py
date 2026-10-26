@@ -250,6 +250,16 @@ class ClockGuard:
             return None
         return self.offset_us() // _MICROS_PER_MS  # includes any detected host step
 
+    def offset_ms_snapshot(self) -> int | None:
+        """#913 L1d (CR-S3L1B-09): `offset_ms_or_none` for a reader on another event loop, the
+        order lane's trading port: the last verified offset in ms, any host step the serving loop's
+        reads have folded in, else `None` before the first successful measurement, never a
+        fabricated 0. It runs no host-step check, so it changes nothing, counts nothing and spawns
+        no resync on the calling loop: two attribute reads of values replaced whole."""
+        if self._last_measured_monotonic is None:
+            return None
+        return self._offset_us // _MICROS_PER_MS
+
     def offset_age_s(self) -> float:
         """Seconds since the last successful measurement, or `inf` if none
         has ever completed (scenario "Exchange time endpoint unavailable":
