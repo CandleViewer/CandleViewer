@@ -795,6 +795,39 @@ def trading() -> Board:
         "short",
         legend="{{state}}",
     )
+    # #906 (E28-T02): profile saves by result and refusal rule, the save p95 against the second
+    # pass's 1.5 s catalogue deadline and SCR-131's 2 s budget (dashed lines), and the catalogue
+    # refreshes a save may wait for (ruling B8). Per result or rule, never per account, profile
+    # or principal.
+    b.row("Account profiles")
+    b.ts(
+        "Profile saves/s by result",
+        rate("cv_profile_saves_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    b.ts(
+        "Refused profile saves/s by rule",
+        rate("cv_profile_validation_failures_total", "rule"),
+        "ops",
+        legend="{{rule}}",
+    )
+    b.ts("Profile save p95 (budget 2 s)", q("cv_profile_save_seconds"), "s", 1.5, 2.0)
+    _threshold_lines(b)
+    b.ts(
+        "Instrument catalogue refreshes/s by result",
+        rate("instruments_refresh_total", "result"),
+        "ops",
+        legend="{{result}}",
+    )
+    _describe(
+        b,
+        "Instrument catalogue refreshes by result: ok, or error once its retries are spent. They "
+        "run on the 12 h schedule, at start-up and on demand: a profile save that adds allow "
+        "scope or moves a limit waits up to 1.5 s for one when the catalogue is over 15 minutes "
+        "old or marked stale. timeout is a start-up fetch given up; throttled is an unknown-symbol "
+        "lookup refused a refresh inside its cool-down, so none ran.",
+    )
     b.flush()
     return b
 
