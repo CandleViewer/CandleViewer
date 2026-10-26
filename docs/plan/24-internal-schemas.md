@@ -3737,7 +3737,7 @@ class RecordingPolicy(BaseModel):
     streams: tuple[Literal["trades","orderbook_delta","orderbook_snapshot","tickers",
                            "klines","liquidations","open_interest","funding"], ...]
     book_depth: int = 200
-    snapshot_interval_s: int = 300           # periodic full snapshot for seekable replay
+    snapshot_interval_s: int = 60            # periodic full snapshot (seek anchor), any book_depth; §13.7
     retention_days: int = 30                 # owner default
     pinned: bool = False                     # pinned ⇒ never deleted
     cold_after_days: int = 2                 # QuestDB -> Parquet
@@ -4041,6 +4041,8 @@ class ReplayBookmark(BaseModel):
 **Seek algorithm.** (1) Find the latest `orderbook_snapshot` at or before the target (these exist every `snapshot_interval_s`, plus at every subscribe/resync). (2) Load it and rebuild the book. (3) Re-apply book deltas from the snapshot to the target. (4) Rebuild bar/footprint/profile state either from a persisted `BuilderState` checkpoint (written every 60 s) or by replaying trades from the enclosing session anchor. (5) Prime metric warmup by replaying `max(warmup_bars)` bars of history _before_ the target so indicators are valid at t=0 rather than `None`. Seek is bounded at ≤2 s for any point in a recorded day, which is a performance gate in `06-performance-and-load-standard.md`.
 
 > **Measured (E26-K01, synthetic 200-depth, laptop):** at the 300 s default, worst-case seek was 8.6 s p95, outside this bound; 60 s snapshots + collapsed-delta re-apply measured 0.41 s p95 — see [ADR-0035](27-adrs/ADR-0035-replay-source-and-seek.md) (proposed).
+>
+> **Default (E16, #2223):** `snapshot_interval_s` is **60 s** (`RecordingPolicy` §13.1, `RecorderConfig`), down from 300 s, at every `book_depth`: the figure was measured at 200, the default depth, and a shallower book is cheaper to anchor. ADR-0035 (proposed) confirms it. The recorder writes the anchor every interval through the same writer path as the deltas, so a seek finds one no more than one interval before its target. A skipped anchor loses no data (the deltas are still recorded), so it is not a `DataGap`: a seek falls back to the previous anchor, and the skip is never silent. It is logged and counted in a recorder metric that the code PR adds to the metrics catalogue. When the cause is a resync or a writer drop, the existing `resync` or `backpressure_drop` gap (§13.3) already marks the missing deltas, and the resync writes its own anchor. Cost: about +18 MB hot and +2.2 MB cold per symbol-day (E26-K01).
 
 **Playback.** A monotonic scheduler emits events preserving inter-event deltas scaled by `speed`. `speed=0` is step mode: `step_event`, `step_ms(n)`, `step_bar`. At `speed=-1` events are emitted as fast as consumers accept (used for rule backtests). Backpressure from a slow consumer slows the clock rather than dropping events — replay must never lose data.
 
@@ -5202,7 +5204,7 @@ class RecorderConfig(BaseModel):
     enabled: bool = True
     default_retention_days: int = 30
     default_book_depth: int = 200
-    snapshot_interval_s: int = 300
+    snapshot_interval_s: int = 60         # seek anchor cadence per recorded book, any depth (§13.7)
     linger_minutes: int = 15
     raw_frame_retention_days: int = 7
     ring_buffer_size: int = 100_000
