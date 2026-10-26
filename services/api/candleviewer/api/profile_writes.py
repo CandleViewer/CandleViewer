@@ -234,7 +234,7 @@ def _blocked(is_default: bool, armed: Sequence[ArmedRule]) -> str:
     if armed:
         named = [f'{rule.rule_id} "{redact_text(rule.name)[:80]}"' for rule in armed[:ARMED_SHOWN]]
         more = ", and more" if len(armed) > ARMED_SHOWN else ""
-        said.append(f"Rules scoped to the account are armed: {', '.join(named)}{more}.")
+        said.append(f"Armed rules cover the account: {', '.join(named)}{more}.")
         said.append("Disarm them first.")
     return " ".join(said)
 

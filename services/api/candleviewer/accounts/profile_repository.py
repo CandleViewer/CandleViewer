@@ -167,8 +167,8 @@ ARMED_SHOWN: Final = 10
 
 @dataclass(frozen=True, slots=True)
 class ArmedRule:
-    """A rule scoped to an account: while it is armed, no profile of the account is deleted
-    (ruling B6)."""
+    """A rule covering an account: while it is armed, no profile of the account is deleted
+    (ruling B6, #4563)."""
 
     rule_id: UUID
     name: str
@@ -178,8 +178,8 @@ class ArmedRules(Protocol):
     """The rules store's read of an account's armed rules, bound in the composition root."""
 
     async def armed_on(self, account_id: UUID) -> tuple[ArmedRule, ...]:
-        """Armed, live rules with `scope='account'` on the account, by lower(name), id; at most
-        ARMED_SHOWN + 1."""
+        """Armed, live rules that cover the account (their active version's scope lists it or
+        lists no account, at any scope level), by lower(name), id; at most ARMED_SHOWN + 1."""
 
 
 class ProfilesRepository:
