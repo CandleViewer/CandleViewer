@@ -4206,7 +4206,7 @@ class ExchangeCapabilities(BaseModel):
 
 The id filters are keyword-only (#846 ruling Q5, §8.5): an implementation sends them, filters the rows again itself, and refuses an `ext-` key as a filter. The exchange's implementation is `exchange/bybit/trading.py` (G-8, #2877), with capability records for live and demo and none for testnet; `FakeTradingPort` (`exchange/base/fakes.py`) is the in-memory one, and one conformance suite runs against both.
 
-`subscribe_private` (G-8b, #3963) refuses before anything is signed, dialled or built: an account of another environment or a `key_ref` that is no `api_keys` id (`ValueError`), a second stream for an account that has one (`ValueError`: one consumer per account, SR-E29-02), a key that `close_private_streams` closed or that three `auth` refusals marked (`AuthError`), and a stream past the cap of 64 (`RateBudgetExceededError`, `reason` `stream_cap`); a port built with no stream registry, and an adapter that has stopped (`stop()`, after which a later `start()` opens none again), refuse every account (`RuntimeError`). Once it returns, the stream (`PrivateStream`: an async iterator the consumer can close) raises nothing: it yields `PrivateEvent`s and `PrivateStreamStatus`es in arrival order, never reordered, and ends after its `closed` status (§14.2 rule 13). The consumer closes it (`contextlib.aclosing`): its `aclose()`, even before a read, or its task's cancellation, closes the socket. `FakeTradingPort` yields the account's seeded events and then what a test pushes for it, statuses included, ends after a `closed` status or `end_stream()`, and refuses a second subscriber as the exchange's port does.
+`subscribe_private` (G-8b, #3963) refuses before anything is signed, dialled or built: an account of another environment or a `key_ref` that is no `api_keys` id (`ValueError`), a second stream for an account that has one (`ValueError`: one consumer per account, SR-E29-02), a key that `close_private_streams` closed or that three `auth` refusals marked (`AuthError`), and a stream past the cap of 64 (`RateBudgetExceededError`, `reason` `stream_cap`); the order lane's port (`lane_trading_port`, #913) opens through a stream source once its composition root gives it one (L1d-2b), a source that opens the account's stream from the adapter's one registry on the serving loop (`open_private_stream`) and raises its refusals on the lane; a port built with neither a stream registry nor a stream source, an adapter that has stopped (`stop()`, after which a later `start()` opens none again), and a registry asked from any loop but its own refuse every account (`RuntimeError`). Once it returns, the stream (`PrivateStream`: an async iterator the consumer can close) raises nothing: it yields `PrivateEvent`s and `PrivateStreamStatus`es in arrival order, never reordered, and ends after its `closed` status (§14.2 rule 13). The consumer closes it (`contextlib.aclosing`): its `aclose()`, even before a read, or its task's cancellation, closes the socket. `FakeTradingPort` yields the account's seeded events and then what a test pushes for it, statuses included, ends after a `closed` status or `end_stream()`, and refuses a second subscriber as the exchange's port does.
 
 `RateHeadroomPort` is a separate small protocol, not a `TradingPort` method: it reads the adapter's local rate budget for an account's lane, takes no token and sends nothing (§8.7; #2877 ruling 4), so the venue-call surface and its conformance suite stay as they are, and E34-T02's `reserve()` can replace it without touching `TradingPort`. The exchange's port and `FakeTradingPort` both satisfy it (the fake answers what a test scripts, else a fresh budget), and the OMS's own `RateHeadroom` port binds to it (E29-T04).
 
@@ -4337,10 +4337,11 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
     private stream of the account's environment (`PRIVATE_WS_URLS`; demo's is `stream-demo`, and
     the stream never branches on the environment), authenticated with the account's active key
     (`AccountRef.key_ref`). Its lifecycle is B13 (`ws_conn`, lane `platform`), built through
-    `statechart.factory`. The adapter sends B13 its lifecycle events only (`CONNECT`,
-    `BACKOFF_DUE`, `BUDGET_RECHECK`, `SOCKET_CLOSED`, `PONG_DEADLINE`, `SHUTDOWN`, `KILL`), each
-    only while the socket that raised it is current; frames, pings and the watchdog are plain tasks
-    that never query the interpreter (C-2.20, INV-B13-d).
+    `statechart.factory` on the registry's loop, the serving loop, which refuses an open from any
+    other loop before anything is signed or dialled. The adapter sends B13 its lifecycle events
+    only (`CONNECT`, `BACKOFF_DUE`, `BUDGET_RECHECK`, `SOCKET_CLOSED`, `PONG_DEADLINE`, `SHUTDOWN`,
+    `KILL`), each only while the socket that raised it is current; frames, pings and the watchdog
+    are plain tasks that never query the interpreter (C-2.20, INV-B13-d).
     - **Ops.** Only `auth`, `subscribe` and `ping` are ever sent (SR-040a: no order entry over
       WS). Every dial signs a fresh `auth` through M2 under `sign_ws_auth` (C-2.7): `expires` is
       10 s ahead of the exchange clock (the measured offset; the host's while unmeasured), and the
@@ -4398,7 +4399,8 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       unannounced and the next `resyncing` covers the gap.
     - **`auth` refusals (G-8b ruling 10).** Three consecutive exchange refusals of `auth`
       (`success` false), each while the exchange clock offset is measured, close the stream
-      (`closed`, `auth_refused`) and mark the key: a later stream on it is refused (`AuthError`)
+      (`closed`, `auth_refused`) and mark the key at the third refusal, so even a consumer close
+      that lands first leaves it marked (RC-G8B-04): a later stream on it is refused (`AuthError`)
       before anything is signed or dialled, until `reopen_private_streams(key_ref)` (an operator's
       action) or a new key. A granted `auth` resets the count; a timeout, an unreadable reply, a
       transport error and a refusal while the offset is unmeasured count nothing, so a skewed host
@@ -4412,20 +4414,38 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       closes every stream on the key before it returns, and returns their accounts: it tombstones
       the key (bounded), closes each socket within 1 s, queues `closed` with `key_revoked` or
       `key_rotated`, and hands B13's stop to a task the adapter owns; a stream on that key is
-      refused afterwards (`AuthError`). The whole call is bounded at 2 s (the socket bound of 1 s
-      plus 1 s). A close that overruns it answers no success: the call raises
-      `PrivateStreamCloseOverran` (an `exchange/base` type, a `TimeoutError` with fixed text,
-      carrying the accounts still closing) and never returns as a completed close, so the caller treats the revoke or
-      rotation step as not done and retries; the close itself keeps running (the registry owns its
-      tasks) and a retry is idempotent, the tombstone standing. E27-S04 (#898) calls it on revoke, force-disable,
+      refused afterwards (`AuthError`). The accounts it returns are those of the streams whose close
+      it started: a stream already closing for another reason, or one B13 ended, is waited for, not
+      named. The tombstone comes first, in the adapter, whether or not a stream registry exists yet,
+      so every registry the adapter builds refuses the key (RC-G8B-03), and `reopen_private_streams`
+      needs no registry either. The whole call is bounded at 2 s (the socket bound of 1 s plus 1 s).
+      A close that overruns it answers no success: the call raises `PrivateStreamCloseOverran` (an
+      `exchange/base` type, a `TimeoutError` with fixed text, carrying the accounts still closing)
+      and never returns as a completed close, so the caller treats the revoke or rotation step as
+      not done and retries; the close itself keeps running (the registry owns its tasks) and a retry
+      is idempotent, the tombstone standing. The overrun's `closed` names the streams the call
+      closed within the bound, so together with `accounts` it names every stream whose close the
+      call started. A retry's return and its `closed` name none of them; a retry that overruns again
+      names the streams still closing in its `accounts` again, so E27-S04 audits each account once
+      across a revoke's calls. The overrun pages (`bybit_private_key_close_overran`); its type is
+      `candleviewer.exchange.base.errors.PrivateStreamCloseOverran`, outside the §8.6 taxonomy and
+      never mapped by the boundary, so E27-S04 catches it without importing the adapter (C-2.2).
+      That catch lives in a module that may import M3 (`exchange.base`), such as the route (M23) or
+      the composition root: M13 (accounts) and M21 (admin) may not import it (CONSTITUTION §3,
+      `.importlinter`'s `forbidden-M13` and `forbidden-M21`), and a catch by `except TimeoutError`
+      alone would also take the caller's own `asyncio.timeout`, which carries no fields. Any other
+      exception from the call means the close is not done as well: one from any loop but the
+      registry's is a `RuntimeError` (`PrivateStreamsWrongLoop`), raised once the key is tombstoned
+      and before anything is closed. E27-S04 (#898) calls it on revoke, force-disable,
       mark-compromised and account-disable, and with `key_rotated` at the start of a rotation's
-      overlap, after which the consumer resubscribes with the new key (AC-35). On a rotation the
+      overlap, after which the consumer resubscribes with the new key (AC-35). It answers no success
+      and retries on any exception from the call, and audits an overrun's `accounts` and `closed` as
+      the streams its revoke closes, each account once across the revoke's calls. On a rotation the
       account's active key is switched to the new key before the `key_rotated` close, so the
       consumer's resubscribe after that close signs with the new key; a resubscribe on the retired
       key would be refused with `AuthError`. (The retired key stays signable for in-flight requests
-      through the overlap, `rotating`; the switch is about which key a new stream picks.)
-      M2 is the backstop: a
-      destroyed key's next `auth` borrow is refused (`key_unusable`).
+      through the overlap, `rotating`; the switch is about which key a new stream picks.) M2 is the
+      backstop: a destroyed key's next `auth` borrow is refused (`key_unusable`).
     - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one
       `ConnectionBudget` (`exchange.base`): 480 opens in any 300 s, of which public opens take at
       most 420, so 60 stay for private ones; `testApiKey`'s key probe counts in it, at most 10 per
@@ -6101,3 +6121,11 @@ This number follows `main`'s last entry, §19.41; an entry that lands first take
 This number follows `main`'s last entry, §19.42; an entry that lands first takes it, and this one moves to the next free number.
 
 - §8.3 rule 7 (the orchestrator's carry, 2026-10-26 18:13Z): the first bind's window for an entry's attach leaves one residual, now stated: a foreign stop the venue created inside the window, before the record was written, that matches the attach's terms can still first-bind it. No table, column, chart or `machine_hash` change.
+
+### 19.44 2026-10-26 — §14.1, §14.2 rule 13: the adapter's stream tombstones, its bounded revoke close and the registry's loop (E29-T04, #913)
+
+This number follows `main`'s last entry, §19.43; an entry that lands first takes it, and this one moves to the next free number.
+
+- §14.2 rule 13, revocation (#913 L1d-2a, ruling Q6; RC-G8B-03), around B1b's sentences (#4686), which it keeps whole: `close_private_streams` tombstones the key in the adapter first, whether or not a stream registry exists yet, and every registry the adapter builds reads that one table; `reopen_private_streams` needs no registry. The accounts the call returns are those of the streams whose close it started; a stream already closing for another reason is waited for, not named. Past B1b's 2 s bound the overrun also pages (`bybit_private_key_close_overran`). By the ruling of 2026-10-26 `PrivateStreamCloseOverran` lives in `exchange/base/errors.py` (`candleviewer.exchange.base.errors.PrivateStreamCloseOverran`), so E27-S04 catches it without importing the adapter (C-2.2): a `TimeoutError` and no `ExchangeError`, outside the §8.6 taxonomy. That catch lives in a module that may import M3, such as the route (M23) or the composition root, as M13 and M21 may not; an `except TimeoutError` alone would also take the caller's own `asyncio.timeout`. Its `accounts` keeps B1b's meaning, the streams still closing; a new `closed` names the streams the call closed within the bound, so together they name every stream whose close the call started. A retry's return and its `closed` name none of them; a retry that overruns again names the streams still closing in its `accounts` again, so E27-S04 audits each account once across a revoke's calls. Any other exception from the call means the close is not done as well, including the `RuntimeError` (`PrivateStreamsWrongLoop`) from any loop but the registry's, raised once the key is tombstoned. E27-S04 (#898) answers no success and retries on any exception from the call, and audits an overrun's `accounts` and `closed`, each account once across the revoke's calls. A stream B13 itself ended is no longer named by a later revoke, and three refusals mark the key whichever close queues first (RC-G8B-04).
+- §14.2 rule 13, lifecycle (ruling Q5): the registry serves the loop of the open that creates its first stream, the serving loop (a refused open binds none), and refuses an open or a close from any other loop before anything is signed or dialled.
+- §14.1: the order lane's port opens through a stream source once its composition root gives it one (L1d-2b's bridge), after its own environment check; that source opens from the adapter's one registry on the serving loop (`open_private_stream`). A registry asked from another loop refuses every account (`RuntimeError`). No REST, WS, table, column or chart change; E27's KV-E13 and SR-E27-17 follow.
