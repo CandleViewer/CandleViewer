@@ -552,34 +552,16 @@ async def require_bound_elevation(
 #: and (#3083) if any mounted operation of any method that the contract or the RBAC
 #: seed marks for step-up is in neither registry nor its reasoned allow-list.
 DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
-    ("POST", re.compile(r"^/users$"), "users"),  # invite
-    ("POST", re.compile(r"^/users/[^/]+/invite$"), "users"),  # reissue mints a new token
-    ("DELETE", re.compile(r"^/users/[^/]+/invite$"), "users"),  # revoke
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/rotate$"), "keys"),
     ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+$"), "keys"),
     # reveal-scope has no contract path yet (E27); pre-registered under the keys prefix.
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
-    # #2751 (SR-025, 04 §7.2.2 rows 50, 52). The `users` rows of rows 38, 40 and 40a and the
-    # export moved to `HANDLER_GATED_ROUTES` (#2304 slices 3a and 3b).
-    # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
-    ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
-    ("PUT", re.compile(r"^/recording/symbols/[^/]+/pin$"), "recorder"),  # pinRecordedSymbol
-    # #906 (E28-T02, SR-E28-02, 04 §7.2.2 row 21): createAccountProfile, updateAccountProfile and
-    # deleteAccountProfile. Not mounted yet. A profile's caps and native-stop rule size every order,
-    # so the guard refuses an un-elevated write before its handler runs and B16 writes
-    # `auth.step_up_required`; the handler's own `profile.save_refused` never names a step-up.
-    ("POST", re.compile(r"^/exchange-accounts/[^/]+/profiles$"), "risk_caps"),
-    ("PUT", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
-    ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/profiles/[^/]+$"), "risk_caps"),
-    # #906 0d (SR-E28-02, 04 §7.2.2 row 21c): setAccountDefaultProfile moves the account's default
-    # profile, its ceiling (D7). Not mounted yet; the read, getAccountDefaultProfile, passes.
-    ("PUT", re.compile(r"^/exchange-accounts/[^/]+/default-profile$"), "risk_caps"),
-    # #895 (E27-S01, SR-E27-02, 04 §7.2.2 row 45): createExchangeAccount. `keys`, the class of the
-    # key routes the account needs next: 22 names no class for it. The patch and the delete are
-    # E27-S04's (#898) to register when it mounts them; the contract sweep flags them until then.
-    ("POST", re.compile(r"^/exchange-accounts$"), "keys"),
+    # #2751, #2738, #906 and #895 rows (SR-025, 04 §7.2.2 rows 9, 21, 21c, 38, 40, 40a, 45, 50,
+    # 52) moved to `HANDLER_GATED_ROUTES` (#2304 slices 3a to 3c): a path row challenges before
+    # the handler's RBAC, validation and lookup. No mounted route is path-gated any more; the
+    # rows above are pre-registered for routes their tickets have not mounted.
 )
 
 #: These routes cannot be gated by path alone: kill-switch *engage* must
@@ -658,6 +640,23 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
     ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
     ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (04 row 50)
+    # #2304 slice 3c, likewise: the invite writes (04 row 38) after the body or the target's
+    # lookup; the recorder's retention set and pin (04 row 9) after the body and the entry's
+    # lookup, their records still written ahead by the policy and the route; the profile writes
+    # and the default's move (04 rows 21, 21c, SR-E28-02) after the account, `If-Match`, the body
+    # and the profile; the account's create (04 row 45, SR-E27-02) after its shape rules.
+    ("POST", "/users", "users"),  # createUser
+    ("POST", "/users/{userId}/invite", "users"),  # reissueInvite: mints a new token
+    ("DELETE", "/users/{userId}/invite", "users"),  # revokeInvite
+    ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies
+    ("PUT", "/recording/symbols/{recordedSymbolId}/pin", "recorder"),  # pinRecordedSymbol
+    ("POST", "/exchange-accounts/{accountId}/profiles", "risk_caps"),  # createAccountProfile
+    ("PUT", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
+    ("DELETE", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
+    ("PUT", "/exchange-accounts/{accountId}/default-profile", "risk_caps"),
+    # createExchangeAccount: `keys`, the class of the key routes the account needs next (22
+    # names none). Its patch and delete are E27-S04's (#898) to register when it mounts them.
+    ("POST", "/exchange-accounts", "keys"),
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
@@ -667,7 +666,7 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: each with its 04 §7.2.2 row, in the registry test. `feature-flags` (#3083):
 #: a flag write is owner-equivalent configuration (live gate, kill switches). `view-as`
 #: (#3085): an impersonation start, handler-gated. `exchange-accounts/{id}/profiles` (#906,
-#: SR-E28-02): the profile writes, path-gated with `risk_caps`.
+#: SR-E28-02): the profile writes, handler-gated with `risk_caps` (#2304 slice 3c).
 #: `exchange-accounts/{id}/default-profile` (#906 0d): the default binding's move, likewise.
 #: `exchange-accounts` exactly (#895, SR-E27-02): the account's create; nothing under it.
 DANGEROUS_PATH_PATTERN = re.compile(

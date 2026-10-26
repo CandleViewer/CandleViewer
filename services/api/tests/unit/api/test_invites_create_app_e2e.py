@@ -237,8 +237,9 @@ async def test_expired_invite_respects_injected_clock(world: _World) -> None:
 async def test_manager_cannot_create_invite_even_after_step_up(world: _World) -> None:
     mgr = await _login(world, "manager", frozenset())
     first = world.client.post("/users", headers=_h(mgr), json=_BODY)
-    assert first.status_code == 403  # step-up gate precedes RBAC on a dangerous route
-    assert world.elevate(mgr).status_code == 200
+    assert first.status_code == 403 and first.json()["code"] == "forbidden"  # RBAC first (#2304)
+    assert "challenge_id" not in first.json() and not world.audit.of("auth.step_up_required")
+    assert world.elevate(mgr, action_class="users").status_code == 200  # no challenge to answer
     r = world.client.post("/users", headers=_h(mgr), json=_BODY)
     assert r.status_code == 403 and r.json()["code"] == "forbidden"  # RBAC, server-side
     assert not world.invites.rows and not world.audit.of("users.invited")

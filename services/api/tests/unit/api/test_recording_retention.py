@@ -16,9 +16,11 @@ from typing import Any, get_args
 import httpx
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from candleviewer.api import recording_retention as retention
 from candleviewer.api.recorder_admin import JOB_KIND, AdminJobStore, Job
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.recorder.retention import RunReport
@@ -72,7 +74,8 @@ class _Sweeper:
 
 
 class _Env:
-    def __init__(self, *perms: str, owner: bool = True, enabled: bool = True) -> None:
+    def __init__(self, *perms: str, owner: bool = True, enabled: bool = True,
+                 gated: bool = True) -> None:  # fmt: skip
         self.caller = AuditPrincipal(uuid.uuid4(), "u", frozenset(perms), is_owner=owner)
         self.log: list[str] = []
         self.audit: list[tuple[str, dict[str, Any]]] = []
@@ -80,14 +83,25 @@ class _Env:
         self.store: _Store | None = _Store(self.log)
         self.jobs, self.sweeper = AdminJobStore(), _Sweeper()
         self.sweeper_up = True
+        self.elevated, self.restated = True, list[ChallengeText | None]()
         app = FastAPI()
         app.include_router(retention.make_recording_retention_router(
             lambda: self.store, self.jobs, lambda: self.sweeper if self.sweeper_up else None,
-            enabled, self, self))  # fmt: skip
+            enabled, self, self, elevation=self.elevate if gated else None))  # fmt: skip
         self.http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
 
     async def resolve(self, request: Any) -> AuditPrincipal | None:
         return self.caller if self.caller.permissions else None
+
+    async def elevate(
+        self, session_id: uuid.UUID | None, text: ChallengeText | None
+    ) -> JSONResponse | None:
+        """The `recorder` step-up: a live window while `elevated`, else its challenge."""
+        self.restated.append(text)
+        summary = None if text is None else text.action_summary
+        refused = {"code": "step_up_required", "action_class": "recorder", "status": 403,
+                   "action_summary": summary}  # fmt: skip
+        return None if self.elevated else JSONResponse(refused, 403)
 
     async def emit(self, action: str, **kwargs: Any) -> None:
         if action == "retention.change" and self.audit_down:
@@ -420,3 +434,69 @@ async def test_a_body_of_more_than_1000_items_is_refused() -> None:
     resp = await env.http.put(_PATH, json={"items": many})
     assert (resp.status_code, resp.json()["code"]) == (422, "validation_failed")
     assert env.log == []
+
+
+# -- #2304 slice 3c: the `recorder` step-up, demanded by the handler -----------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"items": [{"stream": "trades"}]}, {"items": [], "x": 1}, {"items": [_item("nope")]}],
+    ids=["missing-field", "unknown-field", "bad-stream"],
+)
+async def test_an_unelevated_callers_invalid_set_is_the_422_never_a_challenge(body: Any) -> None:
+    env = _Env("recording:write")
+    env.elevated = False
+    r = await env.http.put(_PATH, json=body)
+    assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
+    assert env.restated == [] and env.store is not None and env.store.replaced == 0
+
+
+async def test_an_unelevated_callers_refused_set_is_the_q5_422_never_a_challenge() -> None:
+    env = _Env("recording:write")
+    env.elevated = False
+    r = await env.put([_item(action="pin")])
+    assert (r.status_code, r.json()["code"]) == (422, "retention_invalid_policy")
+    assert env.restated == []
+
+
+async def test_an_unelevated_viewer_is_the_audited_403_never_a_challenge() -> None:
+    env = _Env("recording:read", owner=False)
+    env.elevated = False
+    r = await env.put([])
+    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    assert [a for a, _ in env.audit] == ["rbac.denied"] and env.restated == []
+
+
+async def test_an_unelevated_callers_valid_set_is_challenged_restating_its_size() -> None:
+    env = _Env("recording:write")
+    env.elevated = False
+    r = await env.put([_item(symbol="BTCUSDT")], key=str(uuid.uuid4()), apply_now="true")
+    assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
+    n = len(_whole([_item(symbol="BTCUSDT")]))
+    assert r.json()["action_summary"] == (
+        f"Replace the retention policy set with {n} policies, then sweep now"
+    )
+    assert env.store is not None and env.store.replaced == 0 and env.audit == []
+    assert not env.jobs._jobs and env.sweeper.runs == 0
+
+
+async def test_a_kept_answer_is_read_back_only_behind_a_live_window() -> None:
+    """The replay comes after the gate: once the window ends, the same key and body get the
+    challenge, never the stored answer, and nothing is stored again."""
+    env, key = _Env("recording:write"), str(uuid.uuid4())
+    first = await env.put([_item(days=40)], key=key)
+    assert first.status_code == 200 and env.store is not None and env.store.replaced == 1
+    env.elevated = False
+    again = await env.put([_item(days=40)], key=key)
+    assert (again.status_code, again.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in again.headers and env.store.replaced == 1
+    env.elevated = True
+    replayed = await env.put([_item(days=40)], key=key)
+    assert replayed.headers["idempotency-replayed"] == "true" and env.store.replaced == 1
+
+
+async def test_a_set_wired_without_its_step_up_fails_closed_and_stores_nothing() -> None:
+    env = _Env("recording:write", gated=False)
+    r = await env.put([])
+    assert r.status_code == 503 and env.store is not None and env.store.replaced == 0

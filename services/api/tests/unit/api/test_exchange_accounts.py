@@ -99,12 +99,17 @@ class _Store:
 _DEFAULT = _Resolver()
 
 
+async def _elevated(_request: Any, _text: Any) -> None:
+    return None
+
+
 def _client(
     store: _Store | None, audit: _Audit, resolver: _Resolver | None = _DEFAULT, **kw: Any
 ) -> TestClient:
     app = FastAPI()
     # `_Store` is a structural fake of the `AccountsStore` port: only the two calls used here.
     accounts = None if store is None else AccountsRepository(store)  # type: ignore[arg-type]
+    kw.setdefault("elevation", _elevated)  # a live `keys` window (#2304 slice 3c)
     router = make_exchange_accounts_router(accounts, audit, resolver, environment="demo", **kw)
     app.include_router(router)
     return TestClient(app, raise_server_exceptions=False)
@@ -248,8 +253,9 @@ def test_an_item_merges_the_monitors_view_and_a_disabled_account_says_so() -> No
     assert "key_status" not in doc and doc["created_at"].endswith("Z")
 
 
-async def test_a_create_without_step_up_is_refused_by_the_path_guard_with_keys() -> None:
-    """SR-E27-02: the row in `DANGEROUS_ROUTES` refuses before the handler; a list passes."""
+async def test_the_path_guard_leaves_the_creates_keys_step_up_to_its_handler() -> None:
+    """SR-E27-02, #2304 slice 3c: no path row refuses the create before its handler (which
+    demands `keys` after RBAC and the shape); a stand-in with no gate is reached."""
     c, em, *_ = await _build()
     reached: list[str] = []
 
@@ -260,10 +266,13 @@ async def test_a_create_without_step_up_is_refused_by_the_path_guard_with_keys()
     app = c.app
     assert isinstance(app, FastAPI)
     app.add_api_route("/exchange-accounts", stand_in, methods=["GET", "POST"])
-    r = c.post("/exchange-accounts", headers=_H)
-    assert (r.status_code, r.json()["code"], r.json()["action_class"]) == (
-        403, "step_up_required", "keys",
-    )  # fmt: skip
-    assert [call["action"] for call in em.calls].count("auth.step_up_required") == 1
-    assert reached == []
-    assert c.get("/exchange-accounts", headers=_H).status_code == 200
+    assert c.post("/exchange-accounts", headers=_H).status_code == 200
+    assert "auth.step_up_required" not in [call["action"] for call in em.calls]
+    assert reached == ["ran"]
+
+
+def test_a_create_wired_without_its_step_up_fails_closed_and_stores_nothing() -> None:
+    store, audit = _Store(), _Audit()
+    resp = _client(store, audit, elevation=None).post("/exchange-accounts", json=BODY)
+    assert (resp.status_code, resp.json()["code"]) == (503, "service_unavailable")
+    assert audit.records == [] and len(store.rows) == 1

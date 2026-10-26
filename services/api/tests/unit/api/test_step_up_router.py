@@ -10,7 +10,8 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from candleviewer.api.step_up import make_read_only_guard, make_step_up_router
+from candleviewer.api.step_up import make_read_only_guard, make_step_up_router, request_elevation
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.models import Severity
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.envelope import TotpEncryptor
@@ -120,8 +121,8 @@ async def _build(
     target: Any = None,
     gated_stub: bool = True,
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
-    """`gated_stub` mounts a stand-in for a path-gated `users` write (the invite reissue, still
-    in `DANGEROUS_ROUTES`); a caller mounting the real invite router turns it off."""
+    """`gated_stub` mounts a stand-in for a `users` write gated in its handler (the invite
+    re-issue, #2304 slice 3c); a caller mounting the real invite router turns it off."""
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
     mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
     user = uuid.uuid4()
@@ -152,6 +153,7 @@ async def _build(
         permissions=frozenset({Permission.USERS_WRITE}),
     )
     app = FastAPI()
+    app.state.step_up_auth = auth  # a handler-gated route's `request_elevation` (#2304)
     app.include_router(
         make_step_up_router(
             auth,
@@ -165,10 +167,12 @@ async def _build(
     app.middleware("http")(make_read_only_guard(auth, emitter))
 
     if gated_stub:
+        users_gate = request_elevation(auth, "users")
 
         @app.post("/users/{uid}/invite")
-        async def reissue(uid: str) -> dict[str, bool]:
-            return {"ok": True}
+        async def reissue(uid: str, request: Request) -> Any:
+            text = ChallengeText(f"Reissue the invite link of user {uid}")
+            return await users_gate(request, text) or {"ok": True}
 
     @app.post("/exchange-accounts/{aid}/keys/{kid}/rotate")
     async def rotate(aid: str, kid: str) -> dict[str, bool]:

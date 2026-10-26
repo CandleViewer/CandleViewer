@@ -1,25 +1,31 @@
-"""#2738 (SR-025, 04 §7.2.2 rows 9 and 9a): the guard demands `recorder` step-up on the
-retention routes it gates by path, before E16-T08 (#492) mounts them, and leaves the
-recorded-symbol add, PATCH and DELETE to their handler: only the body or query tells whether
-one changes retention or deletes data, and a plain add needs no code.
+"""#2738 (SR-025, 04 §7.2.2 rows 9 and 9a): every recording write demands `recorder` in its
+handler, never the path guard (#2304 slice 3c moved the retention set and the pin off their path
+rows): only the handler has the body, the caller's RBAC and the entry to decide on, and a plain
+add needs no code.
 """
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
+from candleviewer.api.step_up import request_elevation
+from candleviewer.api.step_up_challenge import ChallengeText
 from tests.unit.api.test_step_up_router import _H, _PW, _build, _code
 
 
-def _stand_in(c: TestClient, method: str, path: str) -> list[str]:
-    """Mount a stand-in for a route E16-T08 has not mounted yet, behind the real guard."""
+def _stand_in(c: TestClient, method: str, path: str, *, gated: bool = False) -> list[str]:
+    """Mount a stand-in for a recording write behind the real guard; `gated`: it demands
+    `recorder` itself first, as the retention set's and the pin's handlers do."""
     ran: list[str] = []
+    gate = request_elevation(cast(FastAPI, c.app).state.step_up_auth, "recorder")
 
-    async def handler() -> dict[str, bool]:
+    async def handler(request: Request) -> Any:
+        if gated and (refused := await gate(request, ChallengeText("Change retention"))):
+            return refused
         ran.append(method)
         return {"ok": True}
 
@@ -32,7 +38,7 @@ async def test_retention_change_needs_recorder_step_up_then_gets_a_grace_window(
     path: str,
 ) -> None:
     c, em, seed, clock, _ = await _build()
-    ran = _stand_in(c, "PUT", path)
+    ran = _stand_in(c, "PUT", path, gated=True)
     denied = c.put(path, headers=_H)
     assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
     assert denied.json()["action_class"] == "recorder" and not ran
@@ -51,6 +57,8 @@ async def test_retention_change_needs_recorder_step_up_then_gets_a_grace_window(
         ("POST", "/recording/symbols"),
         ("PATCH", "/recording/symbols/s1"),
         ("DELETE", "/recording/symbols/s1"),
+        ("PUT", "/recording/retention-policies"),
+        ("PUT", "/recording/symbols/s1/pin"),
     ],
 )
 async def test_guard_leaves_recorded_symbol_writes_to_the_handler(method: str, path: str) -> None:

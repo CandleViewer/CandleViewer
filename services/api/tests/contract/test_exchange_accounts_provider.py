@@ -377,3 +377,97 @@ def test_the_stores_owner_gate_refusing_a_create_is_403_and_audited(served: Serv
     assert answer(resp, "post")["required_permissions"] == ["accounts:write"]
     (record,) = world.audit.records
     assert record["reason"] == "not_owner:accounts:write:none"
+
+
+# -- #2304 slice 3c: the `keys` step-up, demanded by the handler after RBAC and the shape -------
+
+
+def _unelevated(world: World, body: Any, actor: str = "owner", key: str | None = None) -> Any:
+    world.step_up.elevated = False
+    try:
+        return create(world, body, actor, key)
+    finally:
+        world.step_up.elevated = True
+
+
+@pytest.mark.parametrize(
+    "body",
+    [MAIN | {"parent_account_id": str(PARENT)},
+     {k: v for k, v in SUB.items() if k != "parent_account_id"},
+     MAIN | {"environment": "live"}, MAIN | {"api_key": "x"}, MAIN | {"exchange_uid": "12"}],
+    ids=["main-with-parent", "sub-without-parent", "other-environment", "undeclared", "short-uid"],
+)  # fmt: skip
+def test_an_unelevated_owners_invalid_create_is_the_422_never_a_challenge(
+    served: Served, body: dict[str, Any]
+) -> None:
+    world, store = served
+    resp = _unelevated(world, body)
+    assert (resp.status_code, answer(resp, "post")["code"]) == (422, "validation_failed")
+    assert [kind for kind, _ in store.seen] == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"id": uuid.uuid4()}, {"env": "live"}, {"kind": "sub", "parent_account_id": PARENT}],
+    ids=["missing", "another-env", "a-sub"],
+)
+def test_an_unelevated_owners_sub_whose_parent_is_unavailable_is_the_422_never_a_challenge(
+    served: Served, change: dict[str, Any]
+) -> None:
+    world, store = served
+    named = uuid.uuid4()
+    if "id" not in change:  # a stored account, of another environment or itself a sub
+        store.rows[named] = dataclasses.replace(store.rows[GRANTED], id=named, **change)
+    resp = _unelevated(world, SUB | {"parent_account_id": str(named)})
+    assert [(e["field"], e["rule"]) for e in answer(resp, "post")["errors"]] == [
+        ("parent_account_id", "parent_unavailable")
+    ]
+    assert [kind for kind, _ in store.seen] == []
+
+
+@pytest.mark.parametrize("actor", ["manager_with_grant", "viewer"])
+def test_an_unelevated_non_owners_create_is_the_audited_403_never_a_challenge(
+    served: Served, actor: str
+) -> None:
+    world, store = served
+    resp = _unelevated(world, MAIN | {"exchange_uid": "99990003"}, actor)
+    assert (resp.status_code, answer(resp, "post")["code"]) == (403, "forbidden")
+    assert "challenge_id" not in resp.json()
+    assert [r["action"] for r in world.audit.records] == ["rbac.denied"]
+    assert store.seen == []
+
+
+@pytest.mark.parametrize(
+    ("body", "summary"),
+    [
+        (MAIN | {"label": "SENTINEL-free-text"},
+         "Register a main demo bybit account, UID 10234567"),
+        (SUB | {"label": "SENTINEL-free-text"},
+         f"Register a sub demo bybit account, UID {SUB['exchange_uid']} under account {PARENT}"),
+    ],
+    ids=["main", "sub"],
+)  # fmt: skip
+def test_an_unelevated_owners_create_is_challenged_restating_it_never_the_label(
+    served: Served, body: dict[str, Any], summary: str
+) -> None:
+    world, store = served
+    resp = _unelevated(world, body)
+    got = answer(resp, "post")
+    assert (resp.status_code, got["code"], got["action_class"]) == (403, "step_up_required", "keys")
+    assert (got["action_summary"], got["target"]) == (summary, None)
+    assert "SENTINEL" not in resp.text and "create" not in [kind for kind, _ in store.seen]
+    assert world.audit.records == []
+
+
+def test_a_kept_create_is_read_back_only_behind_a_live_window(served: Served) -> None:
+    world, store = served
+    key, body = str(uuid.uuid4()), MAIN | {"exchange_uid": "99990004", "label": "Kept"}
+    first = create(world, body, key=key)
+    assert first.status_code == 201
+    again = _unelevated(world, body, key=key)
+    assert (again.status_code, again.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in again.headers
+    replayed = create(world, body, key=key)
+    assert (replayed.status_code, replayed.json()) == (201, first.json())
+    assert replayed.headers["idempotency-replayed"] == "true"
+    assert [kind for kind, _ in store.seen] == ["create"]

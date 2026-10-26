@@ -1,14 +1,16 @@
-"""The recorded-set writes (E16-T08, #492): `recording:write`, scope none. Checked in order:
-session (401), permission (403, audited), a user actor (403), the per-user write limit (429), the
+"""The recorded-set writes (E16-T08, #492): `recording:write`, scope none. Checked in order: session
+(401), permission (403, audited), a user actor (403), the per-user write limit (429), the
 `Idempotency-Key` and the body (422), the store (503), the `recorder` step-up where the write
 changes retention (403), a replay (409 on another body), the entry in the settings' env and the
-caller's view (404), then the write, which the policy records ahead of the store (503 when it
-cannot); a pin, an unpin and a retention change included (#2188 S3c), so the routes record only
-what they refuse. The caller's view goes to the port from the principal only (C-12.4): an unpin or
-a lower retention that a cause outside it holds is 403, recorded once; on an add the manual
-reason may already have landed (recorded by the policy) when a hidden cause took the row
-between the port's checks. No control writes until the recorder runtime is bound (#2188 S4b):
-until then every write is 503."""
+caller's view (404), then the write. The pin, always under the step-up, demands it after the
+entry's lookup instead, its challenge restating the entry and the pin (#2304 slice 3c), and looks
+its key up only behind it (a kept answer, or the 409 for another request). The policy records
+each write ahead of the store (503 when it cannot); a pin, an unpin and a retention change
+included (#2188 S3c), so the routes record only what they refuse. The caller's view goes to the
+port from the principal only (C-12.4): an unpin or a lower retention that a cause outside it
+holds is 403, recorded once; on an add the manual reason may already have landed (recorded by the
+policy) when a hidden cause took the row between the port's checks. No control writes until the
+recorder runtime is bound (#2188 S4b): until then every write is 503."""
 
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ from candleviewer.api.idempotency import (
     request_fingerprint,
 )
 from candleviewer.api.recording_symbols import _dump
+from candleviewer.api.step_up_challenge import ChallengeText, pin_symbol_text
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.models import AuditOutcome, Severity
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterStopped
@@ -47,8 +50,9 @@ from candleviewer.recorder.models import Actor
 from candleviewer.ws._generated.error_codes import ErrorCode
 
 BAD, MISSING = ErrorCode.VALIDATION_FAILED, ErrorCode.NOT_FOUND
-#: The session's step-up check for `recorder`: `None` when elevated, else the challenge answer.
-Elevation = Callable[[uuid.UUID | None], Awaitable[JSONResponse | None]]
+#: The session's step-up check for `recorder`: `None` when elevated, else the challenge answer,
+#: restating the request when the route names it (the pin and the retention set, #2304).
+Elevation = Callable[[uuid.UUID | None, ChallengeText | None], Awaitable[JSONResponse | None]]
 _RETAINS: Final = frozenset({"pinned", "retention_days"})  # a retention change (04 row 9)
 _BASIS: Final = "~0.5-0.75 GB/day/symbol compressed at depth 200"
 _DEEP: Final = "Depth 500 records more than the depth-200 planning rate."
@@ -210,7 +214,10 @@ def make_recording_writes_router(
     replays = IdempotencyCache() if cache is None else cache
 
     async def begin[M](request: Request, operation: str, parse: Callable[[Request, bytes], M],
-                       retains: Callable[[M], bool]) -> tuple[M, _Call]:  # fmt: skip
+                       retains: Callable[[M], bool], *,
+                       looked_up: bool = True) -> tuple[M, _Call]:  # fmt: skip
+        """The admission; `looked_up=False` leaves the key's lookup to `kept`, for a route that
+        demands its step-up after this (the pin, #2304)."""
         p = await common.caller(principal_resolver, audit, request, Permission.RECORDING_WRITE)
         try:  # `added_by` and the audit name a user, so the actor must be one
             actor = Actor(kind="user", id=str(uuid.UUID(str(p.actor_id))))
@@ -227,18 +234,26 @@ def make_recording_writes_router(
         if (found := control()) is None:
             raise common.unavailable()
         if retains(body):
-            if elevation is None:
-                raise common.unavailable()
-            if (refused := await elevation(p.session_id)) is not None:
-                raise _Answered(refused)
+            await gate(p, None)
         where = f"{request.url.path}?{request.url.query}"
-        digest = request_fingerprint(request.method, where, raw)
+        call = _Call(p, actor, found, key, request_fingerprint(request.method, where, raw), None)
+        return body, kept(call) if looked_up else call
+
+    def kept(call: _Call) -> _Call:
+        """`call` with the key's kept answer, if any; the key with another request is 409."""
         try:
-            hit = replay(replays, actor.id, key, digest)
+            hit = replay(replays, call.actor.id, call.key, call.digest)
         except IdempotencyKeyReuse:
             msg = "The Idempotency-Key was first used with another request."
             raise common.Problem(409, ErrorCode.IDEMPOTENCY_KEY_REUSE, msg) from None
-        return body, _Call(p, actor, found, key, digest, hit)
+        return replace(call, replayed=hit)
+
+    async def gate(p: AuditPrincipal, text: ChallengeText | None) -> None:
+        """The `recorder` step-up (unwired: 503); a refusal is raised as its answer."""
+        if elevation is None:
+            raise common.unavailable()
+        if (refused := await elevation(p.session_id, text)) is not None:
+            raise _Answered(refused)
 
     def done(call: _Call, out: Response) -> Response:
         return remember(replays, call.actor.id, call.key, call.digest, out)
@@ -343,11 +358,17 @@ def make_recording_writes_router(
     async def pin_recorded_symbol(
         request: Request, entry_id: Annotated[str, Path(alias="recordedSymbolId")]
     ) -> Response:
-        """Always under the `recorder` step-up (04 row 9; the guard gates the path as well)."""
-        body, call = await begin(request, "pinRecordedSymbol", _json(_Pin), lambda _b: True)
-        if call.replayed is not None:
-            return call.replayed
+        """Always under the `recorder` step-up (04 row 9), demanded once the body is valid and
+        the entry is found (#2304 slice 3c), so a refused or missing one is never challenged;
+        a kept answer is read back only behind it."""
+        body, call = await begin(request, "pinRecordedSymbol", _json(_Pin), lambda _b: False,
+                                 looked_up=False)  # fmt: skip
         entry = await visible(call, entry_id)
+        days = None if body.pinned else body.retention_days
+        await gate(call.p, pin_symbol_text(entry.symbol, entry.id, pinned=body.pinned,
+                                           retention_days=days))  # fmt: skip
+        if (call := kept(call)).replayed is not None:  # the key, only behind the step-up
+            return call.replayed
         try:  # the policy records the pin or the unpin, its retention too, ahead of the row
             pinned = await _stored(call.control.pin(
                 entry.id, body.pinned, call.actor, restricted=not call.p.is_owner,

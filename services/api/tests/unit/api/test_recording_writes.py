@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 
 from candleviewer.api import recording_writes as writes
 from candleviewer.api.recording_symbols import make_recording_symbols_router
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.recorder import control as rc
@@ -46,6 +47,7 @@ class _Env:
         self.caller = AuditPrincipal(uuid.uuid4(), "u", frozenset(perms), is_owner=owner)
         self.audit: list[tuple[str, dict[str, Any]]] = []
         self.elevated, self.fail_audit, self.now = elevated, False, 0.0
+        self.asked: list[ChallengeText | None] = []  # each step-up the routes demanded
         self.listed = {"BTCUSDT", "ETHUSDT", "SOLUSDT"}
         app = FastAPI()
         limiter = writes.WriteLimiter(clock=lambda: self.now)
@@ -63,8 +65,13 @@ class _Env:
             raise AuditUnavailable("full")
         self.audit.append((action, kwargs))
 
-    async def elevate(self, session_id: uuid.UUID | None) -> JSONResponse | None:
-        refused = {"code": "step_up_required", "action_class": "recorder", "status": 403}
+    async def elevate(
+        self, session_id: uuid.UUID | None, text: ChallengeText | None = None
+    ) -> JSONResponse | None:
+        self.asked.append(text)
+        summary = None if text is None else text.action_summary
+        refused = {"code": "step_up_required", "action_class": "recorder", "status": 403,
+                   "action_summary": summary}  # fmt: skip
         return None if self.elevated else JSONResponse(refused, 403)
 
     def actions(self) -> list[str]:
@@ -906,3 +913,106 @@ async def test_a_patch_of_retention_on_a_pinned_row_is_ignored_and_records_nothi
     kept = await env.http.patch(_one(entry.id), json={"retention_days": 7})
     assert (kept.status_code, kept.json()["retention_days"]) == (200, None)
     assert fake.entries["BTCUSDT"].retention_days == 60 and env.actions() == []
+
+
+# -- #2304 slice 3c: the pin's `recorder` step-up comes after the body and the entry's lookup ----
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{}, {"pinned": "yes"}, {"pinned": True, "x": 1}, {"pinned": False, "retention_days": 0}],
+)
+async def test_an_unelevated_callers_invalid_pin_is_the_422_never_a_challenge(body: Any) -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W)
+    refused = await env.http.put(_PIN.format(entry.id), json=body)
+    assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
+    assert env.asked == [] and not fake.entries["BTCUSDT"].pinned
+
+
+async def test_an_unelevated_viewers_pin_is_the_audited_403_never_a_challenge() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, "recording:read", owner=False)
+    refused = await env.http.put(_PIN.format(entry.id), json={"pinned": True})
+    assert (refused.status_code, refused.json()["code"]) == (403, "forbidden")
+    assert env.actions() == ["rbac.denied"] and env.asked == []
+
+
+@pytest.mark.parametrize("entry_id", [str(uuid.UUID(int=1)), "not-a-uuid"])
+async def test_an_unelevated_callers_pin_of_a_missing_entry_is_the_404_never_a_challenge(
+    entry_id: str,
+) -> None:
+    env = _Env(FakeRecorder(), *W)
+    refused = await env.http.put(_PIN.format(entry_id), json={"pinned": True})
+    assert (refused.status_code, refused.json()["code"]) == (404, "not_found")
+    assert env.asked == [] and env.actions() == []
+
+
+@pytest.mark.parametrize(
+    ("body", "summary"),
+    [
+        ({"pinned": True, "retention_days": 9}, "Pin the recording of BTCUSDT (keep forever)"),
+        ({"pinned": False, "retention_days": 7}, "Unpin the recording of BTCUSDT, keeping 7 days"),
+        ({"pinned": False}, "Unpin the recording of BTCUSDT"),
+    ],
+    ids=["pin", "unpin-days", "unpin"],
+)
+async def test_an_unelevated_callers_pin_is_challenged_restating_the_entry(
+    body: Any, summary: str
+) -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT", pinned=not body["pinned"])
+    env = _Env(fake, *W)
+    refused = await env.http.put(_PIN.format(entry.id), json=body)
+    assert (refused.status_code, refused.json()["code"]) == (403, "step_up_required")
+    assert refused.json()["action_summary"] == summary
+    assert fake.entries["BTCUSDT"] == entry and env.actions() == []
+
+
+async def test_a_kept_pin_is_read_back_only_behind_a_live_window() -> None:
+    fake, key = FakeRecorder(), {"Idempotency-Key": str(uuid.uuid4())}
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W, elevated=True)
+    first = await env.http.put(_PIN.format(entry.id), json={"pinned": True}, headers=key)
+    assert first.status_code == 200 and env.actions() == ["retention.change"]
+    env.elevated = False  # the window ended
+    again = await env.http.put(_PIN.format(entry.id), json={"pinned": True}, headers=key)
+    assert (again.status_code, again.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in again.headers
+    env.elevated = True
+    replayed = await env.http.put(_PIN.format(entry.id), json={"pinned": True}, headers=key)
+    assert (replayed.content, replayed.headers["idempotency-replayed"]) == (first.content, "true")
+    assert env.actions() == ["retention.change"]  # recorded once
+
+
+async def test_an_unelevated_callers_key_reused_for_another_pin_is_challenged_not_409() -> None:
+    """The key's lookup comes after the gate, as on the retention set: without a live window a
+    reused key with another body meets the challenge, never `409 idempotency_key_reuse`; with
+    one, the 409."""
+    fake, key = FakeRecorder(), {"Idempotency-Key": str(uuid.uuid4())}
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W, elevated=True)
+    first = await env.http.put(_PIN.format(entry.id), json={"pinned": True}, headers=key)
+    assert first.status_code == 200
+    env.elevated = False
+    other = await env.http.put(_PIN.format(entry.id), json={"pinned": False}, headers=key)
+    assert (other.status_code, other.json()["code"]) == (403, "step_up_required")
+    assert other.json()["action_summary"] == "Unpin the recording of BTCUSDT"
+    env.elevated = True
+    reused = await env.http.put(_PIN.format(entry.id), json={"pinned": False}, headers=key)
+    assert (reused.status_code, reused.json()["code"]) == (409, "idempotency_key_reuse")
+    assert fake.entries["BTCUSDT"].pinned and env.actions() == ["retention.change"]
+
+
+async def test_a_pin_wired_without_its_step_up_fails_closed() -> None:
+    fake = FakeRecorder()
+    entry = fake.put("BTCUSDT")
+    env = _Env(fake, *W, elevated=True)
+    app = FastAPI()
+    app.include_router(writes.make_recording_writes_router(
+        lambda: fake, env, env, None, env.listed.__contains__))  # fmt: skip
+    http = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://t")
+    refused = await http.put(_PIN.format(entry.id), json={"pinned": True})
+    assert refused.status_code == 503 and not fake.entries["BTCUSDT"].pinned

@@ -1,23 +1,29 @@
 """The profile writes (E28-T02, #906 D2-4 to D2-6): create, replace, delete, move; none is mounted
-before D2-m (ruling B12). Behind the middleware (the view-as guard refuses a viewing session, the
-path guard asks for the `risk_caps` step-up, SR-E28-02), `admit` answers: no resolver 501; no
-session 401; `accounts:write`, the Owner's alone (C-12.4), before any store read: a 403 audited as
-`rbac.denied`, or `503 audit_unavailable` when that record cannot be written (#906's ruling of
-2026-10-22 17:25Z (3)); no store 503; the account in the Owner's scope, a missing, deleted or
-other-environment one the same 404 (C-2.11), the store's live-owner gate a 403. Then the
-`Idempotency-Key`, the body under its cap and the replay of the caller's own `2xx` (SR-E28-17).
-A replace or a delete then needs `If-Match`: 428 without it, 412 for anything but this profile's
-current version, compared before the store is asked; a delete's blockers, the default and the
-armed rules, are named in one 409 (ruling B6). A move (`setAccountDefaultProfile`) needs the
-binding's tag, whose version the store compares under the account's lock before it reads the
-profile the 1 KiB body names (0d-3); binding the current default writes nothing (B4).
+before D2-m (ruling B12). Behind the middleware (the view-as guard refuses a viewing session),
+`admit` answers: no resolver 501; no session 401; `accounts:write`, the Owner's alone (C-12.4),
+before any store read: a 403 audited as `rbac.denied`, or `503 audit_unavailable` when that record
+cannot be written (#906's ruling of 2026-10-22 17:25Z (3)); no store 503; the account in the
+Owner's scope, a missing, deleted or other-environment one the same 404 (C-2.11), the store's
+live-owner gate a 403. Then the `Idempotency-Key`, the body under its cap and the lookup of the
+caller's own kept `2xx` (SR-E28-17). A replace or a delete then needs `If-Match`: 428 without it,
+412 for anything but this profile's current version, compared before the store is asked; a
+delete's blockers, the default and the armed rules, are named in one 409 (ruling B6). A move
+(`setAccountDefaultProfile`) needs the binding's tag, whose version the store compares under the
+account's lock before it reads the profile the 1 KiB body names (0d-3); binding the current
+default writes nothing (B4). The route compares that tag and reads that profile before its
+step-up too, so a stale tag or a missing profile is refused, never challenged.
+
+The `risk_caps` step-up (SR-E28-02, `HANDLER_GATED_ROUTES`, #2304 slice 3c; unwired: 503) comes
+after all of that and before the exchange's limits and the store: its challenge names the account
+by `account_reference` and the profile by its id, never its name. A kept answer skips the body
+checks and the lookups (its profile may since be gone), but is read back only behind the step-up.
 `answer` maps every refusal: one `profile.save_refused` per audited rule (`native_stop_mandatory`
 from every path, SR-E28-08), none for shape; a record not written is `503 audit_unavailable`, with
 nothing stored (C-2.9). Logs carry classes and rule names, never a value (C-12.6). A create or a
 replace past its replay check is a save, counted at its one exit by its answer, its rules if
 refused, and timed from the handler's entry (`SaveMeasures`, #906 D3b); an admission refusal, a
-replay, a delete and a move are none. Each series is per result or rule, never per account,
-profile or principal.
+replay, a step-up's answer, a delete and a move are none. Each series is per result or rule, never
+per account, profile or principal.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from candleviewer.accounts.errors import (
     AccountsError,
     AccountVersionConflictError,
 )
-from candleviewer.accounts.models import ExchangeEnv
+from candleviewer.accounts.models import ExchangeAccount, ExchangeEnv
 from candleviewer.accounts.profile_input import (
     DEFAULT_HAS_OWN_OPERATION,
     FIRST_PASS_RULES,
@@ -89,6 +95,8 @@ from candleviewer.api.profile_projection import (
 )
 from candleviewer.api.profiles import AccountReads, OnAccount, not_owner, problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import account_reference, profile_write_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
@@ -200,6 +208,7 @@ class _Admitted:
     scope: OwnerScope
     records: ProfileAudit
     refusals: ProfileAudit
+    account: ExchangeAccount | None = None  # as `admit` read it: the challenge names it (#2304)
 
 
 def _forbidden() -> JSONResponse:
@@ -243,9 +252,11 @@ def make_profile_writes_router(
     writes: ProfileWrites | None, audit: Emitter, resolver: SnapshotResolver | None, *,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     new_id: Callable[[], uuid.UUID] = uuid.uuid4, measures: SaveMeasures | None = None,
+    elevation: RequestElevation | None = None,
 ) -> APIRouter:  # fmt: skip
     """The writes over `writes` (`None`: 503); `resolver=None` (no identity wired): 501. A save is
-    counted and timed by `measures`, none when `None` (`create_app` binds the app's)."""
+    counted and timed by `measures`, none when `None` (`create_app` binds the app's). `elevation`
+    demands the `risk_caps` step-up (None: 503, nothing stored)."""
     router = APIRouter(tags=["exchange-accounts"])
     cache = IdempotencyCache() if replays is None else replays
     measured = _UNMEASURED if measures is None else measures
@@ -271,15 +282,32 @@ def make_profile_writes_router(
         if writes is None:
             return problem("store_unavailable", "Profiles are not available on this backend.")
         actor = ProfileActor(principal.user_id, ip, request_id, ExchangeEnv(writes.environment))
-        admitted = _Admitted(
-            request, principal, account_id, writes, actor, OwnerScope(principal.user_id),
-            ProfileAudit(audit, actor, account_id), ProfileAudit(named, actor, account_id),
-        )  # fmt: skip
+        scope = OwnerScope(principal.user_id)
+        refusals = ProfileAudit(named, actor, account_id)
         try:
-            held = await writes.accounts.get_account(admitted.scope, account_id)
+            held = await writes.accounts.get_account(scope, account_id)
         except Exception as exc:  # mapped, or raised as a defect
-            return await answer(exc, admitted)
-        return admitted if held.env is actor.env else problem("not_found", _NO_ACCOUNT)
+            return await answer(exc, _Admitted(
+                request, principal, account_id, writes, actor, scope,
+                ProfileAudit(audit, actor, account_id), refusals,
+            ))  # fmt: skip
+        if held.env is not actor.env:
+            return problem("not_found", _NO_ACCOUNT)
+        return _Admitted(
+            request, principal, account_id, writes, actor, scope,
+            ProfileAudit(audit, actor, account_id), refusals, held,
+        )  # fmt: skip
+
+    async def gate(
+        got: _Admitted, verb: str, profile_id: uuid.UUID | None = None
+    ) -> Response | None:
+        """The `risk_caps` step-up, once the write is admitted and checked: None when the session
+        holds a live window, else the answer, a challenge restating the write."""
+        if (held := got.account) is None:  # `admit` returns no write it has not read the account of
+            raise RuntimeError("a profile write gated before its account was read")
+        named = account_reference(held.label, held.env.value, held.exchange_uid)
+        restated = profile_write_text(verb, named, profile_id)
+        return await demand_elevation(elevation, got.request, restated)
 
     async def answer(
         exc: Exception, got: _Admitted, profile_id: uuid.UUID | None = None, *,
@@ -351,11 +379,13 @@ def make_profile_writes_router(
             raw = await edge.read_capped(request, edge.MAX_PROFILE_BODY_BYTES)
             digest = request_fingerprint(request.method, request.url.path, raw)
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
-                return hit
+                return await gate(got, "create") or hit  # a kept answer, behind the step-up
             rules = []
             body = _schema(edge.decode(raw))
             if errors := check_profile_input(body, stored_is_default=None) + edge.name_errors(body):
                 raise edge.refused(errors)
+            if (refused := await gate(got, "create")) is not None:
+                return refused  # not a save: nothing is counted (#2304)
             profile = map_profile_input(
                 body, profile_id=new_id(), account_id=account_id, version=1,
                 updated_at=to_us(datetime.now(UTC)),  # the store writes its own
@@ -404,7 +434,7 @@ def make_profile_writes_router(
             raw = await edge.read_capped(request, edge.MAX_PROFILE_BODY_BYTES)
             digest = request_fingerprint(request.method, request.url.path, raw)
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
-                return hit
+                return await gate(got, "replace", profile_id) or hit
             rules = []
             version = edge.if_match_version(request, str(profile_id))
             body = _schema(edge.decode(raw))
@@ -412,6 +442,8 @@ def make_profile_writes_router(
             held = stored.is_default  # the stored one, never the body's
             if errors := check_profile_input(body, stored_is_default=held) + edge.name_errors(body):
                 raise edge.refused(errors)
+            if (refused := await gate(got, "replace", profile_id)) is not None:
+                return refused
             profile = map_profile_input(
                 body, profile_id=profile_id, account_id=account_id, version=stored.version,
                 updated_at=stored.updated_at,
@@ -451,12 +483,14 @@ def make_profile_writes_router(
             key = edge.idempotency(request, "deleteAccountProfile")
             digest = request_fingerprint(request.method, request.url.path, b"")  # reads no body
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
-                return hit
+                return await gate(got, "delete", profile_id) or hit
             version = edge.if_match_version(request, str(profile_id))
             is_default = (await current(got, profile_id, version)).profile.is_default
             armed = await got.writes.rules.armed_on(account_id)  # a failure deletes nothing
             if is_default or armed:
                 return problem("conflict", _blocked(is_default, armed))
+            if (refused := await gate(got, "delete", profile_id)) is not None:
+                return refused
             await got.writes.profiles.delete_profile(
                 got.scope, account_id, profile_id, expected_version=version,
                 write_ahead=got.records.audit_deleted(),
@@ -478,9 +512,17 @@ def make_profile_writes_router(
             raw = await edge.read_capped(request, edge.MAX_BINDING_BODY_BYTES)
             digest = request_fingerprint(request.method, request.url.path, raw)
             if (hit := replay(cache, str(got.principal.user_id), key, digest)) is not None:
-                return hit
+                return await gate(got, "default", _bound_to(edge.decode(raw, field="body"))) or hit
             version = edge.if_match_version(request, f"{account_id}:default")
             profile_id = _bound_to(edge.decode(raw, field="body"))
+            # Before the step-up (#2304): the tag, then the profile the body names, as the store
+            # checks them under the account's lock, so neither refusal is ever a challenge.
+            binding = await got.writes.profiles.get_default_binding(got.scope, account_id)
+            if binding.version != version:
+                raise AccountVersionConflictError
+            await got.writes.profiles.read_profile(got.scope, account_id, profile_id)
+            if (refused := await gate(got, "default", profile_id)) is not None:
+                return refused
             move = await got.writes.profiles.set_default_profile(
                 got.scope, account_id, profile_id, expected_binding_version=version,
                 write_ahead=got.records.audit_moved(profile_id, version),

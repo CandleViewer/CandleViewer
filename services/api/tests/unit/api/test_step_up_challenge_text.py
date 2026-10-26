@@ -18,6 +18,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from candleviewer.api._generated.openapi_models import (
+    CreateExchangeAccountRequest,
+    CreateUserRequest,
     KekRewrapRequest,
     RotateAuditSigningKeyRequest,
     UpdateUserRequest,
@@ -27,8 +29,15 @@ from candleviewer.api.step_up_challenge import (
     account_reference,
     export_audit_text,
     import_key_text,
+    invite_user_text,
     kek_rewrap_text,
+    pin_symbol_text,
+    profile_write_text,
     quote_label,
+    register_account_text,
+    reissue_invite_text,
+    retention_policies_text,
+    revoke_invite_text,
     rotate_signing_key_text,
     typed_target,
     update_user_text,
@@ -172,5 +181,88 @@ def test_enum_texts_restate_every_value_of_their_generated_literal() -> None:
 )
 def test_enum_texts_refuse_a_value_outside_their_enum(build: Callable[[], object]) -> None:
     """Fail closed: a value the contract's enum lacks is a defect, never restated."""
+    with pytest.raises(ValueError):
+        build()
+
+
+def test_invite_recorder_profile_and_account_texts_restate_validated_values_only() -> None:
+    """#2304 slice 3c: users, profiles and entries by id, an account by its reference, enums,
+    counts and days bare; a username, email, display name or label is never an argument."""
+    account = account_reference("Main", "demo", "1001234")
+    texts = {
+        invite_user_text(
+            ["viewer"], mfa_required=True
+        ): "Invite a new user as viewer (MFA required)",
+        invite_user_text(["viewer"], mfa_required=False): (
+            "Invite a new user as viewer (MFA not required)"
+        ),
+        reissue_invite_text("u1"): "Reissue the invite link of user u1",
+        revoke_invite_text("u1"): "Revoke the pending invite of user u1",
+        retention_policies_text(
+            1, apply_now=False
+        ): "Replace the retention policy set with 1 policy",
+        retention_policies_text(9, apply_now=True): (
+            "Replace the retention policy set with 9 policies, then sweep now"
+        ),
+        pin_symbol_text("BTCUSDT", "e1", pinned=True, retention_days=None): (
+            "Pin the recording of BTCUSDT (keep forever)"
+        ),
+        pin_symbol_text("BTCUSDT", "e1", pinned=False, retention_days=7): (
+            "Unpin the recording of BTCUSDT, keeping 7 days"
+        ),
+        pin_symbol_text("btc'usdt", "e1", pinned=False, retention_days=None): (
+            "Unpin the recording of entry e1"
+        ),
+        profile_write_text("create", account): (
+            "Create a risk profile for account 'Main' (demo, UID 1001234)"
+        ),
+        profile_write_text("replace", account, "p1"): (
+            "Replace risk profile p1 of account 'Main' (demo, UID 1001234)"
+        ),
+        profile_write_text("delete", account, "p1"): (
+            "Delete risk profile p1 of account 'Main' (demo, UID 1001234)"
+        ),
+        profile_write_text("default", account, "p1"): (
+            "Make risk profile p1 the default of account 'Main' (demo, UID 1001234)"
+        ),
+        register_account_text("bybit", "live", "main", "1001234"): (
+            "Register a main live bybit account, UID 1001234"
+        ),
+        register_account_text("bybit", "demo", "sub", "1001235", "a1"): (
+            "Register a sub demo bybit account, UID 1001235 under account a1"
+        ),
+    }
+    for text, summary in texts.items():
+        assert (text.action_summary, text.target) == (summary, None)
+
+
+def test_slice_3c_enum_texts_restate_every_value_of_their_generated_literal() -> None:
+    """The allow-lists are the generated contract Literals (22 `CreateUserRequest.roles`,
+    `CreateExchangeAccountRequest`): every contract value renders."""
+    roles = get_args(get_args(CreateUserRequest.model_fields["roles"].annotation)[0])
+    fields = CreateExchangeAccountRequest.model_fields
+    kinds, envs = (get_args(fields[f].annotation) for f in ("kind", "environment"))
+    assert roles and kinds and envs
+    for role in roles:
+        assert f" as {role} " in invite_user_text([role], mfa_required=True).action_summary
+    for kind in kinds:
+        for env in envs:
+            summary = register_account_text("bybit", env, kind, "1001234").action_summary
+            assert f"a {kind} {env} bybit account" in summary
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda: invite_user_text([_SENTINEL], mfa_required=True),
+        lambda: register_account_text("bybit", "live", _SENTINEL, "1001234"),
+        lambda: register_account_text("bybit", _SENTINEL, "main", "1001234"),
+        lambda: register_account_text(_SENTINEL, "live", "main", "1001234"),
+        lambda: register_account_text("bybit", "live", "main", _SENTINEL),
+    ],
+    ids=["invite-role", "account-kind", "account-environment", "exchange", "exchange-uid"],
+)
+def test_slice_3c_texts_refuse_a_value_outside_their_enum(build: Callable[[], object]) -> None:
+    """Fail closed: a value the contract lacks is a defect, never restated."""
     with pytest.raises(ValueError):
         build()

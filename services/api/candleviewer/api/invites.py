@@ -1,8 +1,11 @@
 """Invite-based user creation and redemption (E09-S05, US-ONB-006).
 
-Owner side (`users:write`, step-up `users` enforced by the dangerous-route
-middleware in `api/step_up.py`): `POST /users`, `GET /users/invites`,
-`POST|DELETE /users/{userId}/invite` (re-issue / revoke).
+Owner side (`users:write`): `POST /users`, `GET /users/invites`,
+`POST|DELETE /users/{userId}/invite` (re-issue / revoke). Each write is handler-gated
+(`HANDLER_GATED_ROUTES`, #2304 slice 3c): RBAC, the audit check, the body (a create) or the
+target's lookup (a re-issue needs an `invited` user, a revoke a pending invite: `404`) come
+first, and only then the `users` step-up (unwired: 503), its challenge naming the role or the
+user's id, never a username, an email or a display name.
 
 Invitee side (unauthenticated, per-IP throttled): `GET /invites/{token}`
 validates without consuming; `POST /invites/{token}` sets the password, consumes
@@ -22,7 +25,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Annotated, Any, Protocol
 
 from fastapi import APIRouter, Path, Request
@@ -31,6 +34,13 @@ from pydantic import ValidationError
 
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import (
+    invite_user_text,
+    reissue_invite_text,
+    revoke_invite_text,
+)
+from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -62,6 +72,12 @@ class _AuditRefused(Exception):
 
 class _Emitter(Protocol):
     async def emit(self, action: str, **kwargs: Any) -> None: ...
+
+
+class UserStatuses(Protocol):
+    """`UserRoleStore.get_status`: a re-issue's target, read before its step-up (#2304)."""
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None: ...
 
 
 class InviteAuthLike(SessionsLike, Protocol):
@@ -134,13 +150,16 @@ def make_invites_router(
     *,
     audit_ready: Callable[[], bool],
     now: Any = None,
+    elevation: RequestElevation | None = None,
+    users: UserStatuses | None = None,
 ) -> APIRouter:
     """`emitter` is mandatory: an invite action without an audit record
     (C-2.9) is refused at wiring time, and while `audit_ready()` is false
     every invite action answers 503 before changing anything (#2492). Owner
     actions audit ahead, in the store's transaction: refused, nothing persists.
     `principal_resolver=None` fails the owner routes closed with 501 (as
-    `/users/{id}/roles`)."""
+    `/users/{id}/roles`). `elevation` demands the writes' `users` step-up (None: 503, nothing
+    changes); `users` is the re-issue's target lookup (None: 503, nothing changes)."""
     if emitter is None:
         raise TypeError("make_invites_router: audit emitter is required")
     router = APIRouter(tags=["users"])
@@ -217,6 +236,37 @@ def make_invites_router(
 
         return hook
 
+    async def _looked_up(lookup: Awaitable[bool], detail: str) -> JSONResponse | None:
+        """A write's target, read before its step-up: 404 when absent, 503 on a store outage
+        (anything else is a defect, raised)."""
+        try:
+            found = await lookup
+        except Exception as exc:
+            if not is_storage_outage(exc):
+                raise
+            return _problem(503, "Service unavailable", "the user store is unavailable")
+        return None if found else _problem(404, "Not found", detail)
+
+    async def _invited(user_id: uuid.UUID, store: UserStatuses) -> bool:
+        return await store.get_status(user_id) == "invited"
+
+    async def _pending(user_id: uuid.UUID) -> bool:
+        # The whole pending list per revoke (`list_pending` also sets the pending gauge, as the
+        # list route does): fine at the expected scale, as invites are few and Owner-issued, and
+        # the store has no per-user read of a pending invite.
+        return any(rec.user_id == user_id for rec in await auth.invites.list_pending())
+
+    async def _not_invited(user_id: uuid.UUID) -> JSONResponse | None:
+        """A re-issue's: an `invited` user. No store wired is a wiring fault, 503, as the other
+        unwired ports answer: the lookup is never skipped (C-12.4)."""
+        if users is None:
+            return _problem(503, "Service unavailable", "the user store is not wired")
+        return await _looked_up(_invited(user_id, users), "no invited user with this id")
+
+    async def _not_pending(user_id: uuid.UUID) -> JSONResponse | None:
+        """A revoke's: a pending invite of the user, as `list_pending` lists them."""
+        return await _looked_up(_pending(user_id), "no pending invite for this user")
+
     # -- owner side --------------------------------------------------------
 
     @router.post("/users")
@@ -244,6 +294,9 @@ def make_invites_router(
                 request_id=current_request_uuid(),
             )
             return _problem(422, "Unprocessable entity", "invalid invite request")
+        restated = invite_user_text(parsed.roles, mfa_required=parsed.mfa_required)
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            return refused  # after RBAC and the body (#2304): nothing is created
         try:
             invite = await auth.invites.create(
                 parsed, invited_by=got.user_id, audit=_write_ahead("users.invited", got, request)
@@ -276,6 +329,11 @@ def make_invites_router(
             return got
         if (down := _audit_down()) is not None:
             return down
+        if (missing := await _not_invited(user_id)) is not None:
+            return missing  # the target's lookup, before the gate (#2304)
+        gate = await demand_elevation(elevation, request, reissue_invite_text(user_id))
+        if gate is not None:
+            return gate
         hook = _write_ahead("users.invite_reissued", got, request)
         try:
             invite = await auth.invites.reissue(user_id, invited_by=got.user_id, audit=hook)
@@ -294,6 +352,11 @@ def make_invites_router(
             return got
         if (down := _audit_down()) is not None:
             return down
+        if (missing := await _not_pending(user_id)) is not None:
+            return missing  # the target's lookup, before the gate (#2304)
+        gate = await demand_elevation(elevation, request, revoke_invite_text(user_id))
+        if gate is not None:
+            return gate
         try:
             await auth.invites.revoke(
                 user_id, audit=_write_ahead("users.invite_revoked", got, request)

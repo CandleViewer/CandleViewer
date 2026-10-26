@@ -89,22 +89,21 @@ def _step_up(actor: str, live: bool) -> StepUpService:
 def test_every_disallowed_profile_write_cell_is_403_audited_and_changes_nothing(
     w: Writes, write: Write, actor: str, live: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Gherkin 8, P9 (E28-X03's cells): without a live window the path guard refuses before any
-    handler and B16 records `auth.step_up_required`; inside one, B16 records the window's use and
-    the route refuses `accounts:write` with `rbac.denied`. Nothing is read, written, invalidated
-    or noticed, and the one refusal record, as each record, names the actor and session (#4174)."""
+    """Gherkin 8, P9 (E28-X03's cells): the profile writes are handler-gated (#2304 slice 3c), so
+    the handler's RBAC check runs before it demands the step-up. A Manager or Viewer is refused
+    `accounts:write` with `rbac.denied` / `403 forbidden` whether or not a `risk_caps` window is
+    live: no challenge (`auth.step_up_required`) and no use of the window
+    (`auth.step_up_grace_used`) is recorded. Nothing is read, written, invalidated or noticed, and
+    the one refusal record names the actor and session (#4174)."""
     step_up = _step_up(actor, live)
     monkeypatch.setattr(w.world.app.state.app_context.auth, "_step_up", step_up)
     with w.world.client as client:  # one loop, so B16's chart outlives the request
         assert client.portal is not None
         resp = send(w, write, actor)
         client.portal.call(step_up.stop)
-    code = "forbidden" if live else "step_up_required"
-    assert (resp.status_code, answered(resp, write)["code"]) == (403, code)
-    records, denied = w.world.audit.records, AuditOutcome.DENIED
-    refused = [("rbac.denied", denied)] if live else [("auth.step_up_required", denied)]
-    used = [("auth.step_up_grace_used", AuditOutcome.SUCCESS)] if live else []
-    assert [(r["action"], r["outcome"]) for r in records] == used + refused
+    assert (resp.status_code, answered(resp, write)["code"]) == (403, "forbidden")
+    records = w.world.audit.records
+    assert [(r["action"], r["outcome"]) for r in records] == [("rbac.denied", AuditOutcome.DENIED)]
     named = [(str(r["actor_user_id"]), str(r["session_id"])) for r in records]
     assert named == [(str(rbac.user_id_of(actor)), str(rbac.session_id_of(actor)))] * len(records)
     assert (w.rows.seen, _new(w), w.rows.notices, w.invalidated) == ([], [], [], [])

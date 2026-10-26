@@ -16,7 +16,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, get_args
 
 import httpx
 import pytest
@@ -28,7 +28,9 @@ import candleviewer.app as appmod
 from candleviewer.admin.account_access import AccountAccessService
 from candleviewer.admin.user_disable import UserDisableService
 from candleviewer.api.onboarding_checklist import STEP_ORDER
+from candleviewer.api.recording_retention import Stream
 from candleviewer.profiles_wiring import ProfilesWiring
+from candleviewer.rules_store_pg import PostgresArmedRules
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.account_access import AccessGrant
 from candleviewer.storage.repositories.account_access_sqlalchemy import (
@@ -46,6 +48,7 @@ from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUs
 from candleviewer.storage.repositories.users_sqlalchemy import SqlAlchemyUserAdminStore
 from tests.contract._profile_writes_world import WritableRows
 from tests.contract.rbac import rbac_harness as rbac
+from tests.contract.test_account_profile_writes_provider import _ALT as _ALT_BODY
 from tests.contract.test_account_profile_writes_provider import _RISK
 from tests.csrf_helpers import csrf_headers
 
@@ -140,6 +143,10 @@ class _TradeGrants:
         return self.rows.get(user_id, [])
 
 
+async def _no_armed_rules(_self: object, _account_id: uuid.UUID) -> tuple[()]:
+    return ()
+
+
 def _loopback_only() -> list[str]:
     """The mesh self-check's host socket table (psutil / WSL portproxy), fixed: one loopback
     bind, so the checklist's `tailscale` probe is deterministic and reads nothing from the host."""
@@ -179,8 +186,9 @@ def deployed() -> Iterator[SimpleNamespace]:
         mp.setattr(SqlAlchemyScopeSource, grants, _delegate(trade, grants))
         profiles = WritableRows()  # #906 D1c and D2-m: the reads and the create, as Postgres does
         mp.setattr(SqlAlchemyAccountsStore, "get_account", _delegate(profiles, "get_account"))
-        for name in ("list_profiles", "get_profile", "create_profile"):
+        for name in ("list_profiles", "get_profile", "create_profile", "get_default_binding"):
             mp.setattr(SqlAlchemyAccountProfileStore, name, _delegate(profiles, name))
+        mp.setattr(PostgresArmedRules, "armed_on", _no_armed_rules)  # a delete's blockers: none
         mp.setattr(appmod, "real_socket_enumerator", lambda: _loopback_only)
         app = appmod.create_app(real)  # nothing injected: the deployed composition
         ctx = app.state.app_context
@@ -532,6 +540,130 @@ def test_deployed_app_challenges_an_unelevated_owner_restating_the_request(
     )
     assert "SENTINEL" not in resp.text and resp.json()["target"] is None
     assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
+
+
+#: #2304 slice 3c: the invite, recorder, profile and account writes on the deployed app, each a
+#: valid request. GRANTED's account reads as `'fx' (demo, UID 1000001)`; ALT is its profile 2.
+_ALT, _ACCOUNT = uuid.UUID(int=2), "'fx' (demo, UID 1000001)"
+_REPLACE = {**_ALT_BODY, "name": "SENTINEL"}
+_PROFILES = f"/exchange-accounts/{rbac.GRANTED}"
+_POLICIES = {"items": [{"stream": s, "retain_days": 30, "action": "archive_parquet"}
+                       for s in get_args(Stream)]}  # fmt: skip
+_INVITE = {"email": "SENTINEL@example.com", "username": "SENTINEL", "roles": ["viewer"],
+           "display_name": "SENTINEL-free-text"}  # fmt: skip
+_NEW_ACCOUNT = {"exchange": "bybit", "environment": "demo", "kind": "main",
+                "label": "SENTINEL-free-text", "exchange_uid": "1009999"}  # fmt: skip
+_SLICE_3C: dict[str, tuple[str, str, Any, dict[str, str], str, str]] = {
+    "createUser": ("POST", "/users", _INVITE, {}, "users",
+                   "Invite a new user as viewer (MFA required)"),
+    "reissueInvite": ("POST", "/users/{}/invite", None, {}, "users",
+                      "Reissue the invite link of user {}"),
+    "revokeInvite": ("DELETE", "/users/{}/invite", None, {}, "users",
+                     "Revoke the pending invite of user {}"),
+    "setRetentionPolicies": ("PUT", "/recording/retention-policies", _POLICIES, {}, "recorder",
+                             f"Replace the retention policy set with {len(get_args(Stream))} "
+                             "policies"),
+    "createAccountProfile": ("POST", f"{_PROFILES}/profiles", {**_RISK, "name": "SENTINEL"}, {},
+                             "risk_caps", f"Create a risk profile for account {_ACCOUNT}"),
+    "updateAccountProfile": ("PUT", f"{_PROFILES}/profiles/{_ALT}", _REPLACE,
+                             {"If-Match": f'W/"{_ALT}:2"'}, "risk_caps",
+                             f"Replace risk profile {_ALT} of account {_ACCOUNT}"),
+    "deleteAccountProfile": ("DELETE", f"{_PROFILES}/profiles/{_ALT}", None,
+                             {"If-Match": f'W/"{_ALT}:2"'}, "risk_caps",
+                             f"Delete risk profile {_ALT} of account {_ACCOUNT}"),
+    "setAccountDefaultProfile": ("PUT", f"{_PROFILES}/default-profile",
+                                 {"profile_id": str(_ALT)},
+                                 {"If-Match": f'W/"{rbac.GRANTED}:default:1"'}, "risk_caps",
+                                 f"Make risk profile {_ALT} the default of account {_ACCOUNT}"),
+    "createExchangeAccount": ("POST", "/exchange-accounts", _NEW_ACCOUNT, {}, "keys",
+                              "Register a main demo bybit account, UID 1009999"),
+}  # fmt: skip
+
+
+def _slice_3c(
+    deployed: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, actor: str, operation: str
+) -> httpx.Response:
+    """`operation` from `actor` holding no live elevation, its target present: the viewer is an
+    `invited` user with a pending invite, GRANTED has the profile ALT."""
+    method, path, body, extra, _, _ = _SLICE_3C[operation]
+    viewer = rbac.user_id_of("viewer")
+    invites = deployed.client.app.state.app_context.auth._invites
+
+    async def pending() -> tuple[Any, ...]:
+        return (SimpleNamespace(user_id=viewer),)
+
+    async def invited(user_id: uuid.UUID) -> str | None:
+        return "invited" if user_id == viewer else None
+
+    monkeypatch.setattr(invites, "list_pending", pending, raising=False)
+    monkeypatch.setattr(deployed.users, "get_status", invited)
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    step_up.elevated = False
+    try:
+        headers = {**_headers(deployed.client, actor), "Idempotency-Key": str(uuid.uuid4())}
+        resp: httpx.Response = deployed.client.request(
+            method, path.format(viewer), json=body, headers={**headers, **extra}
+        )
+        return resp
+    finally:
+        step_up.elevated = True
+        deployed.profiles.reset()
+
+
+@pytest.mark.parametrize("operation", list(_SLICE_3C))
+def test_deployed_app_challenges_a_slice_3c_write_restating_it_never_its_free_text(
+    deployed: SimpleNamespace, operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2304 slice 3c: an Owner the handler admits, with a valid request and a found target, is
+    challenged with the restatement; no username, email, label or name reaches it, nothing was
+    stored, and the handler wrote no `rbac.denied`."""
+    audited = len(deployed.audit.records)
+    resp = _slice_3c(deployed, monkeypatch, "owner", operation)
+    _, _, _, _, action_class, summary = _SLICE_3C[operation]
+    assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
+    want = summary.format(rbac.user_id_of("viewer"))
+    assert (resp.json()["action_class"], resp.json()["action_summary"]) == (action_class, want)
+    assert "SENTINEL" not in resp.text and resp.json()["target"] is None
+    assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
+
+
+_REFUSED_3C = [
+    (operation, actor)
+    for operation in _SLICE_3C
+    for actor in ("viewer",) + (() if "Retention" in operation else ("manager_with_grant",))
+]
+
+
+@pytest.mark.parametrize(("operation", "actor"), _REFUSED_3C)
+def test_deployed_app_refuses_an_unelevated_slice_3c_write_rbac_refuses_without_a_challenge(
+    deployed: SimpleNamespace, operation: str, actor: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2304 slice 3c: RBAC comes before the step-up, so a Manager (a Viewer for the recorder's
+    `recording:write`, which a Manager holds) gets the audited 403, never a challenge."""
+    audited = len(deployed.audit.records)
+    resp = _slice_3c(deployed, monkeypatch, actor, operation)
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden"), resp.text
+    assert "challenge_id" not in resp.json()
+    actions = [r["action"] for r in deployed.audit.records[audited:]]
+    assert "rbac.denied" in actions and "auth.step_up_required" not in actions
+
+
+def test_deployed_app_answers_a_pin_before_its_gate_while_no_recorder_is_bound(
+    deployed: SimpleNamespace,
+) -> None:
+    """#2304 slice 3c: the pin demands its step-up after the store and the entry's lookup; with
+    no recorder runtime bound the deployed app answers 503 first, never a challenge.
+    `test_recording_writes.py` reaches its gate."""
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    step_up.elevated = False
+    try:
+        resp = deployed.client.put(
+            f"/recording/symbols/{uuid.uuid4()}/pin", json={"pinned": True},
+            headers=_headers(deployed.client, "owner"),
+        )  # fmt: skip
+    finally:
+        step_up.elevated = True
+    assert resp.status_code == 503 and "challenge_id" not in resp.json()
 
 
 def _states(resp: httpx.Response) -> dict[str, str]:

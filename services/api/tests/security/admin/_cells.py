@@ -209,6 +209,22 @@ BEFORE_GATE: dict[str, tuple[int, str]] = {
         "#2304: the matrix's empty body is refused before the gate; "
         "`test_users_account_access_put.py` and `test_owner_routes_composition.py` reach it",
     ),
+    # #2304 slice 3c: the invite writes gate after the body or the target's lookup.
+    "POST /users": (
+        422,
+        "#2304 slice 3c: the matrix's body is refused before the gate; `test_invites_router.py` "
+        "and `test_owner_routes_composition.py` reach it",
+    ),
+    "POST /users/{userId}/invite": (
+        404,
+        "#2304 slice 3c: the cell's user id names no invited user, so the lookup's `404` comes "
+        "first; `test_invites_router.py` and `test_owner_routes_composition.py` reach the gate",
+    ),
+    "DELETE /users/{userId}/invite": (
+        404,
+        "#2304 slice 3c: the cell's user id has no pending invite, so the lookup's `404` comes "
+        "first; `test_invites_router.py` and `test_owner_routes_composition.py` reach the gate",
+    ),
     "DELETE /users/{userId}": (
         404,
         "#2304 slice 3b: the cell's user id names no user, so the lookup's `404` comes first; "

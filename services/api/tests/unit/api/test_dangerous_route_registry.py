@@ -14,6 +14,7 @@ from __future__ import annotations
 import functools
 import json
 import re
+import sys
 from collections.abc import Mapping, Sequence
 from typing import Any, cast
 
@@ -23,7 +24,6 @@ from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, Host, Mount
 from starlette.types import Receive, Scope, Send
 
-from candleviewer.api import step_up as step_up_module
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.rbac_conformance import RBAC_SEED_PATH
@@ -531,19 +531,9 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
 @pytest.mark.parametrize(
     ("method", "path", "action_class"),
     [
-        ("POST", "/users", "users"),
-        ("POST", "/users/u/invite", "users"),
-        ("DELETE", "/users/u/invite", "users"),
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
-        ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
-        ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
-        ("POST", "/exchange-accounts/a/profiles", "risk_caps"),  # createAccountProfile (#906)
-        ("PUT", "/exchange-accounts/a/profiles/p", "risk_caps"),  # updateAccountProfile (#906)
-        ("DELETE", "/exchange-accounts/a/profiles/p", "risk_caps"),  # deleteAccountProfile (#906)
-        ("PUT", "/exchange-accounts/a/default-profile", "risk_caps"),  # setAccountDefaultProfile
-        ("POST", "/exchange-accounts", "keys"),  # createExchangeAccount (#895, SR-E27-02)
     ],
 )
 def test_contract_dangerous_routes_map_to_action_class(
@@ -563,6 +553,19 @@ _USERS_HANDLER_GATED = [
 ]
 
 
+#: #2304 slice 3c: the invite, recorder, profile and account writes, gated likewise.
+_SLICE_3C_HANDLER_GATED = [
+    ("POST", "/users", "users"),  # createUser (04 row 38)
+    ("POST", "/users/{userId}/invite", "users"),  # reissueInvite
+    ("DELETE", "/users/{userId}/invite", "users"),  # revokeInvite
+    ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
+    ("PUT", "/recording/symbols/{recordedSymbolId}/pin", "recorder"),  # pinRecordedSymbol
+    ("POST", "/exchange-accounts/{accountId}/profiles", "risk_caps"),  # createAccountProfile
+    ("PUT", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
+    ("DELETE", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
+    ("PUT", "/exchange-accounts/{accountId}/default-profile", "risk_caps"),
+    ("POST", "/exchange-accounts", "keys"),  # createExchangeAccount (#895, SR-E27-02)
+]
 #: #2304 slice 3b: the key, KEK and audit writes, gated by their handlers likewise.
 _KEYS_AUDIT_HANDLER_GATED = [
     ("POST", "/exchange-accounts/{accountId}/keys", "keys"),  # createApiKey (04 row 41)
@@ -574,7 +577,9 @@ _KEYS_AUDIT_HANDLER_GATED = [
 
 @pytest.mark.parametrize(
     ("method", "path", "action_class"),
-    [(m, p, "users") for m, p in _USERS_HANDLER_GATED] + _KEYS_AUDIT_HANDLER_GATED,
+    [(m, p, "users") for m, p in _USERS_HANDLER_GATED]
+    + _KEYS_AUDIT_HANDLER_GATED
+    + _SLICE_3C_HANDLER_GATED,
 )
 def test_moved_writes_are_handler_gated_not_path_gated(
     method: str, path: str, action_class: str
@@ -593,7 +598,7 @@ def test_safe_reads_are_not_gated() -> None:
     assert dangerous_action_class("GET", "/users/u") is None
     assert dangerous_action_class("GET", "/admin/backups/b") is None
     assert dangerous_action_class("GET", "/exchange-accounts") is None  # listExchangeAccounts
-    assert len(DANGEROUS_ROUTES) >= 7
+    assert len(DANGEROUS_ROUTES) >= 5  # the pre-registered rows (#2304 slice 3c)
 
 
 def test_invites_router_write_routes_are_gated() -> None:
@@ -738,8 +743,8 @@ def test_mounting_a_pending_handler_gate_is_caught() -> None:
 
 #: Every recording and recorder write in `22-api-openapi.yaml` -> how it is gated (#2738).
 _RECORDING_WRITES: dict[str, tuple[str, str | None]] = {
-    "setRetentionPolicies": ("path", "recorder"),  # 04 §7.2.2 row 9
-    "pinRecordedSymbol": ("path", "recorder"),  # row 9
+    "setRetentionPolicies": ("handler", "recorder"),  # 04 §7.2.2 row 9 (#2304 slice 3c)
+    "pinRecordedSymbol": ("handler", "recorder"),  # row 9
     "updateRecordedSymbol": ("handler", "recorder"),  # row 9 for pin / retention, else row 8
     # A stop keeps the pin and refuses purge_data=true (#492 rulings Q3, Q4): row 8 only. 22
     # agrees: removeRecordedSymbol names no step-up (add, PATCH and pin each name `recorder`).
@@ -950,8 +955,8 @@ def test_the_flag_write_is_handler_gated_from_the_locked_row() -> None:
 
 _PROFILES = "/exchange-accounts/{accountId}/profiles"
 _PROFILE = _PROFILES + "/{profileId}"
-#: The three writes of the contract. Their rows are registered before the router that serves them
-#: is mounted (the sweeps above look at mounted routes only), so the gate is there the moment it is.
+#: The three writes of the contract, handler-gated since #2304 slice 3c (their path rows were
+#: registered before D2-m mounted them).
 _PROFILE_WRITES = [("POST", _PROFILES), ("PUT", _PROFILE), ("DELETE", _PROFILE)]
 _BINDING = "/exchange-accounts/{accountId}/default-profile"
 #: The writes the two profile prefixes hold: the three above and the default binding's move.
@@ -959,10 +964,10 @@ _RISK_CAPS_WRITES = [*_PROFILE_WRITES, ("PUT", _BINDING)]
 
 
 @pytest.mark.parametrize(("method", "path"), _RISK_CAPS_WRITES)
-def test_a_profile_write_is_path_gated_with_the_risk_caps_class(method: str, path: str) -> None:
+def test_a_profile_write_is_handler_gated_with_the_risk_caps_class(method: str, path: str) -> None:
     assert DANGEROUS_PATH_PATTERN.match(path)
-    assert dangerous_action_class(method, _concrete(path)) == "risk_caps"
-    assert not _ungated(method, path)
+    assert dangerous_action_class(method, _concrete(path)) is None
+    assert _registered_classes(method, path) == {"risk_caps"} and not _ungated(method, path)
 
 
 @pytest.mark.parametrize(
@@ -1017,7 +1022,7 @@ def test_the_sweep_gains_the_profile_and_binding_prefixes_and_no_other_exchange_
     assert bool(DANGEROUS_PATH_PATTERN.match(path)) is swept
 
 
-def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
+def test_every_contract_profile_write_is_handler_gated_with_risk_caps() -> None:
     """From the contract, so another write under either prefix fails here until it is registered."""
     profile = re.compile(r"^/exchange-accounts/\{[^}]+\}/(profiles|default-profile)(/|$)")
     found = {
@@ -1026,7 +1031,7 @@ def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
         if profile.match(key[1])
     }
     writes = {op: _gating(*key) for key, op in found.items() if key[0] in _WRITE}
-    gated = ("path", "risk_caps")
+    gated = ("handler", "risk_caps")
     assert writes == dict.fromkeys(
         ["createAccountProfile", "updateAccountProfile", "deleteAccountProfile"], gated
     ) | {"setAccountDefaultProfile": gated}
@@ -1038,8 +1043,8 @@ def test_every_contract_profile_write_is_path_gated_with_risk_caps() -> None:
 def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
     monkeypatch: pytest.MonkeyPatch, method: str, path: str
 ) -> None:
-    """Mounted (here by a stand-in router), the four writes pass the sweep through their rows
-    alone, and the sweep names exactly the one whose row is dropped."""
+    """Mounted (here by a stand-in router), the four writes pass the sweep through their handler
+    rows alone, and the sweep names exactly the one whose row is dropped."""
     app = create_app()
     router = APIRouter(prefix="/exchange-accounts")
     router.add_api_route("/{accountId}/profiles", _stand_in, methods=["GET", "POST"])
@@ -1049,8 +1054,18 @@ def test_the_sweep_catches_a_mounted_profile_write_whose_row_is_dropped(
     router.add_api_route("/{accountId}/default-profile", _stand_in, methods=["GET", "PUT"])
     app.include_router(router)
     assert _ungated_dangerous_writes(app) == []
-    dropped = [r for r in DANGEROUS_ROUTES if r[0] == method and r[1].match(_concrete(path))]
+    dropped = [r for r in HANDLER_GATED_ROUTES if r[:2] == (method, path)]
     assert len(dropped) == 1
-    rows = tuple(r for r in DANGEROUS_ROUTES if r not in dropped)
-    monkeypatch.setattr(step_up_module, "DANGEROUS_ROUTES", rows)
+    rows = tuple(r for r in HANDLER_GATED_ROUTES if r not in dropped)
+    monkeypatch.setattr(sys.modules[__name__], "HANDLER_GATED_ROUTES", rows)
     assert _ungated_dangerous_writes(app) == [(method, path)]
+
+
+def test_no_mounted_route_is_path_gated() -> None:
+    """#2304 slices 3a to 3c: every mounted step-up write is handler-gated; the path rows left
+    are pre-registered for routes their tickets have not mounted, which must gate in their
+    handlers once mounted."""
+    served = served_operations(create_app())
+    assert served  # an empty walk would pass vacuously
+    mounted = [(m, p) for m, p in served if dangerous_action_class(m, _concrete(p)) is not None]
+    assert mounted == []

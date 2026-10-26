@@ -34,7 +34,6 @@ def _rooted(c: TestClient) -> TestClient:
 @pytest.mark.parametrize(
     ("method", "path", "action_class"),
     [
-        ("POST", "/users/u1/invite", "users"),
         ("POST", "/exchange-accounts/a1/keys/k1/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a1/keys/k1", "keys"),
     ],
@@ -52,11 +51,11 @@ async def test_guard_under_root_path_demands_step_up_on_path_gated_route(
 async def test_guard_under_root_path_admits_the_session_once_elevated() -> None:
     c, _em, seed, clock, _ = await _build()
     rc = _rooted(c)
-    path = f"{_ROOT}/users/{uuid.uuid4()}/invite"
+    path = f"{_ROOT}/exchange-accounts/{uuid.uuid4()}/keys/k1/rotate"  # a pre-registered path row
     assert rc.post(path, headers=_H).status_code == 403
     body = {"code": _code(seed, clock), "password": _PW}
     ok = rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=body)
-    assert ok.status_code == 200 and ok.json()["action_class"] == "users"
+    assert ok.status_code == 200 and ok.json()["action_class"] == "keys"
     assert rc.post(path, headers=_H).status_code == 200
     assert rc.post(f"{_ROOT}/orders", headers=_H).status_code == 200  # ordinary write
 
@@ -106,8 +105,8 @@ def _stub_app(auth: _Unwired) -> FastAPI:
     app = FastAPI()
     app.middleware("http")(make_read_only_guard(auth))
 
-    @app.post("/users/{uid}/invite")
-    async def roles(uid: str) -> dict[str, bool]:
+    @app.post("/exchange-accounts/{aid}/keys/{kid}/rotate")
+    async def rotate(aid: str, kid: str) -> dict[str, bool]:
         return {"ok": True}
 
     @app.get("/exchange-accounts/{aid}/keys/{kid}/reveal-scope")
@@ -129,7 +128,7 @@ def _stub_app(auth: _Unwired) -> FastAPI:
 def test_guard_fails_closed_when_sessions_are_wired_but_step_up_is_not(root: str) -> None:
     c = TestClient(_stub_app(_SessionsOnly()), root_path=root)
     for method, path in (
-        ("POST", "/users/u1/invite"),
+        ("POST", "/exchange-accounts/a1/keys/k1/rotate"),
         ("GET", "/exchange-accounts/a1/keys/k1/reveal-scope"),  # a path-gated read
     ):
         r = c.request(method, root + path, headers=_H)
@@ -137,7 +136,7 @@ def test_guard_fails_closed_when_sessions_are_wired_but_step_up_is_not(root: str
         assert r.headers["content-type"] == "application/problem+json"
         assert r.json()["code"] == "service_unavailable"
         assert r.json()["detail"] == "step-up not wired"
-    assert c.post(root + "/users/u1/invite").status_code == 503  # no token: still refused
+    assert c.post(root + "/exchange-accounts/a1/keys/k1/rotate").status_code == 503  # no token
     # Only the path-gated routes: ordinary writes and the kill-switch (engage
     # never waits for a code; its release is gated in the handler) pass.
     assert c.post(root + "/orders", headers=_H).status_code == 200
@@ -149,5 +148,5 @@ def test_guard_defers_to_the_routes_when_no_session_store_is_wired(root: str) ->
     """The fake backend: nothing can authenticate, and every dangerous route
     fails closed on its own (501/503), so the guard leaves the request alone."""
     c = TestClient(_stub_app(_Unwired()), root_path=root)
-    assert c.post(root + "/users/u1/invite", headers=_H).status_code == 200
+    assert c.post(root + "/exchange-accounts/a1/keys/k1/rotate", headers=_H).status_code == 200
     assert c.post(root + "/orders", headers=_H).status_code == 200
