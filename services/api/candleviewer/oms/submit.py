@@ -471,7 +471,7 @@ class SubmissionDeps:
     the audit writer, the trade-group facade the leg's and the group's status go through
     (S2-Q4, a system surface no route reaches, C-12.4) and the account's figures the size step
     reads (24 Sec.9.3.6). `tier_requests` is the catalogue's tier bridge (S4-S-d), which the size
-    step calls on a `figure_unknown` caused by missing tiers (S4-S-b2a); nothing calls it yet."""
+    step calls on a `figure_unknown` caused by missing tiers (S4-S-b2a), never awaiting it."""
 
     accounts: TradingAccounts
     instruments: Instruments
@@ -686,7 +686,9 @@ class OrderSubmission:
             )
         self._stop_retries = tuple(_delay(wait) for wait in stop_retries)
         self._guard = NativeStopGuard(ports.stop_resolver)
-        self._sizer = EntrySizer(deps.figures, SizerMetrics.register(metrics))
+        self._sizer = EntrySizer(
+            deps.figures, SizerMetrics.register(metrics), tier_requests=deps.tier_requests
+        )
         self._request_qty = RequestQtySizer()
         self._turns = tuple(asyncio.Lock() for _ in range(ENTRY_TURNS))
         self._turn_wait_s = stuck_after_s

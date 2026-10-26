@@ -11,8 +11,11 @@ profile's `fixed_qty` and a stop further from the anchor than the profile's own.
 and `fixed_qty` on a profile of another mode, is `sizing_mode_unsupported`. The leg's stop is the
 stop its risk was computed from, so the sizer is an entry's one stop source; `NativeStopGuard`
 still judges it (C-2.6). Each outcome but `ok` is one answer (22 `placeOrder`'s mapping), before
-anything is recorded or sent. Every leg the answer rests on is recorded in `cv_sizer_*`. An entry's
-`round_to_lot` is not read: the sizer floors to the lot step.
+anything is recorded or sent. A `figure_unknown` whose symbol's maintenance margin rate is unknown
+(its tiers missing from the catalogue) first requests the symbol's tiers (`TierRequests`, 24
+Sec.9.3.6), never awaited, and is still `503 sizing_unavailable`. Every leg the answer rests on
+is recorded in `cv_sizer_*`. An entry's `round_to_lot` is not read: the sizer floors to the lot
+step.
 """
 
 from __future__ import annotations
@@ -56,12 +59,14 @@ from .errors import (
     StopUnitUnsupported,
 )
 from .ports import (
+    NO_TIER_REQUESTS,
     UNKNOWN_FIGURES,
     OrderEffect,
     OrderFigures,
     OrderType,
     SizingRequest,
     StopOffset,
+    TierRequests,
 )
 
 __all__ = ["FIGURES_TIMEOUT_S", "SIZING_RETRY_AFTER_S", "EntryIntent", "EntrySize", "EntrySizer"]
@@ -224,8 +229,10 @@ class EntrySizer:
         *,
         timeout_s: float = FIGURES_TIMEOUT_S,
         clock: Callable[[], float] = time.perf_counter,
+        tier_requests: TierRequests = NO_TIER_REQUESTS,
     ) -> None:
         self._figures = figures
+        self._tier_requests = tier_requests
         self._observer = observer
         self._timeout_s = timeout_s
         self._clock = clock
@@ -260,16 +267,22 @@ class EntrySizer:
             )  # fmt: skip
         except ValidationError:
             raise _invalid("price", "finite", "The price cannot be sized.") from None
-        figures = await self._read(account, intent.symbol, profile)
+        figures, untiered = await self._read(account, intent.symbol, profile)
         market = _market(mid, last)
+
+        def answered(leg: LegSizing) -> LegSizing:
+            if untiered and leg.reason is FailReason.FIGURE_UNKNOWN:
+                self._tier_requests.request_tiers(intent.symbol)  # never awaited, never raises
+            return _answered(leg)
+
         if overlay is None and intent.stop_loss is None:
             leg = self._observed(asked, profile, figures, instrument, market)
-            return self._size(_answered(leg), profile.sizing_mode, None)
+            return self._size(answered(leg), profile.sizing_mode, None)
         started = self._clock()
         baseline = size_leg(asked, profile, figures, instrument, market)
         if baseline.ref_price is None or baseline.stop is None:  # a gate skip or no price
             self._observer.record(baseline, self._clock() - started)
-            _answered(baseline)
+            answered(baseline)
             raise ValueError("a leg with no anchor is never ok")
         fields, value = overlay if overlay is not None else ({}, None)
         stop = _stop_overlay(intent.stop_loss, intent.side, baseline.ref_price, instrument)
@@ -278,7 +291,7 @@ class EntrySizer:
         except ValidationError:
             message = "The request's sizing is out of range."
             raise _invalid("sizing", "profile_overlay", message) from None
-        leg = _answered(self._observed(asked, widened, figures, instrument, market))
+        leg = answered(self._observed(asked, widened, figures, instrument, market))
         overlaid = overlay is not None or intent.stop_loss is not None
         if overlaid and leg.binding is not None:  # refused whole, never clamped
             message = "The request goes past the profile's caps."
@@ -288,9 +301,10 @@ class EntrySizer:
 
     async def _read(
         self, account: AccountRef, symbol: Symbol, profile: AccountProfile
-    ) -> AccountFigures:
-        """The account's figures with the symbol's rates; on a read that fails or does not answer
-        in time, every figure unknown (the leg then fails `figure_unknown`)."""
+    ) -> tuple[AccountFigures, bool]:
+        """The account's figures with the symbol's rates, and whether the reading answered the
+        symbol's maintenance margin rate unknown (its tiers missing); on a read that fails or does
+        not answer in time, every figure unknown (the leg then fails `figure_unknown`)."""
         try:
             async with asyncio.timeout(self._timeout_s):
                 reading = await self._figures.read(
@@ -298,16 +312,17 @@ class EntrySizer:
                 )
         except Exception as exc:
             _log().warning("oms_submit_figures_unread", failure=type(exc).__name__)
-            return UNKNOWN_FIGURES
+            return UNKNOWN_FIGURES, False
         rates = reading.symbols.get(symbol)
         if rates is None:
-            return reading.account
-        return reading.account.model_copy(
+            return reading.account, False
+        known = reading.account.model_copy(
             update={
                 "maintenance_margin_rate": rates.maintenance_margin_rate,
                 "taker_fee_rate": rates.taker_fee_rate,
             }
         )
+        return known, rates.maintenance_margin_rate is None
 
     def _observed(
         self,

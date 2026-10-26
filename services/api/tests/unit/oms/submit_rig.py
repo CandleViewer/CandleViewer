@@ -224,6 +224,16 @@ class Figures:
 
 
 @dataclass
+class TierAsks:
+    """`TierRequests` that lists each symbol asked for, in order."""
+
+    asked: list[Symbol] = field(default_factory=list)
+
+    def request_tiers(self, symbol: Symbol) -> None:
+        self.asked.append(symbol)
+
+
+@dataclass
 class Profiles:
     """`Profiles` over the profiles a test seeds, the account's default under `None`; an account
     with none is `AccountNotFoundError`, as the cache answers it; `refuse` raises instead."""
@@ -373,6 +383,8 @@ class SubmitRig:
     submissions: InMemorySubmissionStore
     #: Another pipeline over the same parts, with other keywords.
     make: Callable[..., OrderSubmission]
+    #: The symbols the size step asked the catalogue's tiers for.
+    tiers: TierAsks = field(default_factory=TierAsks)
 
     @property
     def store(self) -> InMemoryOrderStore:
@@ -455,7 +467,7 @@ def build_rig(
     recording = Risk(risk if risk is not None else ports.risk_gate)
     ports = replace(ports, risk_gate=recording)
     instruments, prices, profiles, held = Instruments(), Prices(), Profiles(), Figures()
-    groups = Groups(store)
+    groups, tiers = Groups(store), TierAsks()
     read_only, sleeps = ReadOnly(), Sleeps()
     lookup = FlakyLookup(store, lies=lies)
     deps = SubmissionDeps(
@@ -468,6 +480,7 @@ def build_rig(
         audit=port.audits,
         groups=TradeGroupRepository(cast(TradeGroupStore, groups)),
         figures=held,
+        tier_requests=tiers,
     )
     make = partial(
         OrderSubmission,
@@ -489,7 +502,7 @@ def build_rig(
     pipeline = make(**pipeline_kwargs)
     return SubmitRig(
         pipeline, machines, port, instruments, prices, profiles, held, groups, read_only, sleeps,
-        recording, lookup, metrics, pager, submissions, make,
+        recording, lookup, metrics, pager, submissions, make, tiers,
     )  # fmt: skip
 
 

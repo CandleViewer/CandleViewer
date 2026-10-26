@@ -476,3 +476,31 @@ async def test_submit_a_request_stop_whose_leg_a_cap_clamps_is_refused_whole(
     refused = await _refused(rig, request)
     assert isinstance(refused, RiskRefused)
     assert [(e.field, e.rule) for e in refused.errors] == [("sizing", "max_position_notional")]
+
+
+@pytest.mark.parametrize("request_of", [_by_profile, entry], ids=["profile", "fixed_qty_and_stop"])
+async def test_submit_a_figure_unknown_for_missing_tiers_requests_them_once_and_is_503(
+    rig: SubmitRig, request_of: Any
+) -> None:
+    """24 Sec.9.3.6: the symbol's maintenance margin rate is unknown (its tiers are missing from
+    the catalogue), so the size step asks for its tiers once, never awaited, and the answer is
+    still 503 `sizing_unavailable`, with nothing recorded or sent."""
+    rig.figures.known = figures(maintenance_margin_rate=None)
+    refused = await _refused(rig, request_of())
+    assert isinstance(refused, SizingUnavailable)
+    assert problem_for(refused).code == "sizing_unavailable"
+    assert rig.tiers.asked == [SYMBOL]
+
+
+async def test_submit_a_figure_unknown_with_the_tiers_known_requests_none(rig: SubmitRig) -> None:
+    """Another figure unknown (the equity), the maintenance margin rate known: no tiers asked."""
+    rig.figures.known = figures(equity=None)
+    assert isinstance(await _refused(rig, _by_profile()), SizingUnavailable)
+    assert rig.tiers.asked == []
+
+
+async def test_submit_an_unread_figures_read_requests_no_tiers(rig: SubmitRig) -> None:
+    """A read that fails says nothing of the tiers: 503, and no tiers asked."""
+    rig.figures.refuse = TimeoutError()
+    assert isinstance(await _refused(rig, _by_profile()), SizingUnavailable)
+    assert rig.tiers.asked == []
