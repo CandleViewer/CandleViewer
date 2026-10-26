@@ -3900,7 +3900,11 @@ consumer and whether it is pinned. Order placement never reads the budget (SR-09
 (`statvfs`) is read first and alone drives the free-space path; the per-tier / per-symbol
 breakdown is best effort (own timeout and worker thread, last sizes kept), so a stalled QuestDB
 or a slow walk never freezes the ladder. A stale breakdown never commits a series point or
-refits; its age is `recorder_disk_budget_breakdown_age_seconds`.
+refits; its age is `recorder_disk_budget_breakdown_age_seconds`. The write gate also fails closed
+on a stale sample: once the last completed pass is older than 3 × `CV_DISK_SAMPLE_INTERVAL_S`
+(aged at every read, on a monotonic clock), `halted`, `refuses_auto_record` and the effective
+`level` read as at level 3 until two passes in a row complete, and each failed pass counts in
+`disk_budget_sample_failed_total`.
 
 **Deviations (orchestrator decision on #491, 2026-10-13).**
 

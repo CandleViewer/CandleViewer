@@ -552,6 +552,18 @@ def test_exported_recorder_metrics_served_with_env() -> None:
         collector.close()
 
 
+def test_disk_budget_failed_pass_counter_is_live_exported_and_carries_no_label() -> None:
+    """#4581: `DiskBudget` passes that raised, per process. No label, so never a path or a value;
+    served with the recorder's series under the catalogue's HELP."""
+    from candleviewer.recorder.metrics import EXPORTED_NAMES, disk_budget_sample_failed_total
+
+    spec = next(s for s in CATALOGUE if s.name == "disk_budget_sample_failed_total")
+    row = spec.kind, spec.labels, spec.status, spec.owner_epic, spec.exported
+    assert row == ("counter", (), "live", "E16", True)
+    (family,) = disk_budget_sample_failed_total.collect()
+    assert spec.name in EXPORTED_NAMES and family.documentation == spec.help
+
+
 def test_exported_replay_metrics_served_with_env() -> None:
     """E26-T02/T03: the replay read-path and playback series are `live`, served via
     `export_replay_metrics`."""

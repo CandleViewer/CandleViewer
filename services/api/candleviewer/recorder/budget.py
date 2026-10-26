@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -20,13 +21,14 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Final, Protocol, cast
+from typing import Final, Literal, Protocol, cast
 
 import structlog
 
 from candleviewer.bus.models import Topic
 from candleviewer.observability import spawn
 from candleviewer.recorder.metrics import (
+    disk_budget_sample_failed_total,
     disk_free_bytes,
     disk_used_ratio,
     recorder_bytes_per_day,
@@ -53,6 +55,11 @@ _MAX_RUNWAY_DAYS: Final = 36_500
 _PCT: Final = 100  # every threshold is an integer percentage
 #: Default budget of each pass's best-effort breakdown (`BudgetConfig.breakdown_timeout_s`).
 BREAKDOWN_TIMEOUT_S: Final = 5.0
+#: The write gate fails closed once the last completed pass is older than this many sample
+#: intervals (#4581): the bound `admin_wiring` puts on a report's age, and `hole_us`'s slack.
+STALE_AFTER_INTERVALS: Final = 3
+#: Completed passes in a row that re-open a gate that failed closed: one alone is no recovery.
+RECOVERY_PASSES: Final = 2
 _LADDER: Final = (DiskPressureLevel.WARN, DiskPressureLevel.AUTOSTOP, DiskPressureLevel.HALT)
 #: Suggested actions named by every ladder event: codes only, never host paths.
 SUGGESTED_ACTIONS: Final = "reduce_depth,shorten_retention,unpin"
@@ -61,6 +68,10 @@ _RECORDED: Final[tuple[TierName, ...]] = ("questdb", "parquet")
 RECORDED_TIERS: Final = frozenset(_RECORDED)
 _TIERS: Final[tuple[TierName, ...]] = ("questdb", "parquet", "postgres")
 _SYMBOL_RE: Final = re.compile(r"^[A-Z0-9]{2,20}USDT$")  # OpenAPI `Symbol`
+#: `StorageUsage`'s write-gate fields: the effective level, the gate and why it is closed.
+_GateFields = tuple[
+    DiskPressureLevel, Literal["open", "closed"], Literal["disk_halt", "volume_refused"] | None
+]
 #: What the series store may raise when its volume or file is unavailable.
 _UNAVAILABLE: Final = (OSError, TimeoutError, StorageError)
 _LEVEL_EVENT: Final[dict[DiskPressureLevel, tuple[Severity, str]]] = {
@@ -354,6 +365,7 @@ class DiskBudget:
         store: SeriesStore | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         recording_refused: bool = False,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._meter, self._events, self._bus = meter, events, bus
         #: SR-096: a recording volume shared with the backend keeps the write gate closed.
@@ -375,6 +387,11 @@ class DiskBudget:
         self._fresh_at = now_us()
         self._rate_labels: set[str] = set()
         self._task: asyncio.Task[None] | None = None
+        #: The stale-sample gate (#4581) ages passes on `monotonic`, never on the wall clock.
+        self._monotonic = monotonic
+        self._stale_after_s = STALE_AFTER_INTERVALS * config.sample_interval_s
+        self._ok_at = monotonic()  # the last completed pass: construction until the first
+        self._tripped, self._ok_run = False, 0  # failed closed; completed passes in a row
 
     @property
     def config(self) -> BudgetConfig:
@@ -400,24 +417,50 @@ class DiskBudget:
         return self._ladder.accelerate
 
     @property
+    def sample_stale(self) -> bool:
+        """The last completed pass is older than `STALE_AFTER_INTERVALS` sample intervals, or the
+        gate has not seen `RECOVERY_PASSES` in a row since (#4581): every gate reader then fails
+        closed. Aged at each read on the monotonic clock, not by the sampling task: a plain
+        subtraction per row, never an interpreter (C-2.20)."""
+        return self._tripped or self._monotonic() - self._ok_at > self._stale_after_s
+
+    @property
     def halted(self) -> bool:
-        """The `StreamWriter` gate (#491): level 3 or a refused volume. A plain bool per row."""
-        return self.recording_refused or self._ladder.level is DiskPressureLevel.HALT
+        """The `StreamWriter` gate (#491): level 3, a refused volume or a stale sample. A plain
+        bool per row."""
+        return (
+            self.recording_refused
+            or self.sample_stale
+            or self._ladder.level is DiskPressureLevel.HALT
+        )
 
     @property
     def effective_level(self) -> DiskPressureLevel:
-        """`level`, but 3 exactly when the write gate is closed (a refused volume too): the report
-        and the level gauge both read this."""
+        """`level`, but 3 exactly when the write gate is closed (a refused volume or a stale
+        sample too): the report and the level gauge both read this."""
         return DiskPressureLevel.HALT if self.halted else self._ladder.level
 
     @property
     def refuses_auto_record(self) -> bool:
-        """`RecordingPolicy`: no new chart-open recording from level 2 (ADR-0015 d6, AC3)."""
-        return self.recording_refused or self._ladder.level >= DiskPressureLevel.AUTOSTOP
+        """`RecordingPolicy`: no new chart-open recording from level 2 (ADR-0015 d6, AC3), on a
+        refused volume or on a stale sample."""
+        return (
+            self.recording_refused
+            or self.sample_stale
+            or self._ladder.level >= DiskPressureLevel.AUTOSTOP
+        )
 
     def report(self) -> StorageUsage | None:
-        """`StorageUsage` from the last sample (never measured per request); `None` before it."""
-        return self._report
+        """`StorageUsage` from the last sample (never measured per request); `None` before it. Its
+        write gate is the one read now, so a sample gone stale since reports the gate closed."""
+        if (report := self._report) is None:
+            return None
+        level, gate, reason = self._gate()
+        if report.level == level:
+            return report
+        return report.model_copy(
+            update={"level": level, "write_gate": gate, "write_gate_reason": reason}
+        )
 
     def measured_growth(self) -> tuple[int | None, Mapping[str, int]]:
         """`(net total bytes/day, gross write rate per fitted symbol)` from the last fit.
@@ -472,6 +515,7 @@ class DiskBudget:
             self._announced = state
         recorder_disk_budget_last_sample_timestamp_seconds.set(now // US_PER_S)
         recorder_disk_budget_breakdown_age_seconds.set((now - self._fresh_at) // US_PER_S)
+        self._settle(None)
 
     def _build_report(
         self,
@@ -487,8 +531,7 @@ class DiskBudget:
             "questdb": self._cfg.hot_days,
             "parquet": self._cfg.retention_days,
         }
-        level = self.effective_level
-        gated = level is DiskPressureLevel.HALT
+        level, gate, reason = self._gate()
         return StorageUsage(
             disk_total_bytes=m.total_bytes,
             disk_used_bytes=m.total_bytes - m.free_bytes,
@@ -509,12 +552,37 @@ class DiskBudget:
             generated_at=_utc(now),
             cap_bytes=self._cfg.cap_bytes,
             level=level,
-            write_gate="closed" if gated else "open",
-            write_gate_reason=(
-                ("volume_refused" if self.recording_refused else "disk_halt") if gated else None
-            ),
+            write_gate=gate,
+            write_gate_reason=reason,
             accelerate_retention=self._ladder.accelerate,
         )
+
+    def _gate(self) -> _GateFields:
+        """The report's write-gate fields, as the gate reads now."""
+        level = self.effective_level
+        if level is not DiskPressureLevel.HALT:
+            return level, "open", None
+        return level, "closed", "volume_refused" if self.recording_refused else "disk_halt"
+
+    def _settle(self, error: str | None) -> None:
+        """Fold a pass into the stale gate: `error` names a failed pass's class, `None` is a
+        completed pass. Once the last completed pass is older than the bound the gate trips; a
+        completed pass then starts a run, which a failed pass ends, and only `RECOVERY_PASSES` in
+        a row re-open it. Each transition is logged once; the level gauge follows the gate."""
+        now = self._monotonic()
+        late = now - self._ok_at > self._stale_after_s
+        if late and not self._tripped:
+            self._tripped = True
+            logger().error("disk_budget_samples_stale", error=error)
+        if error is not None:
+            self._ok_run = 0
+        else:
+            self._ok_at = now
+            self._ok_run = 1 if late else min(self._ok_run + 1, RECOVERY_PASSES)
+            if self._tripped and self._ok_run >= RECOVERY_PASSES:
+                self._tripped = False
+                logger().info("disk_budget_samples_fresh")
+        recorder_disk_pressure_level.set(int(self.effective_level))
 
     def _publish_metrics(
         self, used: int, free: int, full_at: int | None, rates: Mapping[str, int]
@@ -673,8 +741,10 @@ class DiskBudget:
                     await self.load_series()
                     loaded = True
                 await self.sample_once()
-            except Exception as exc:  # a failed pass keeps the last level; next pass retries
+            except Exception as exc:  # the last level holds until the stale gate trips
+                disk_budget_sample_failed_total.inc()
                 logger().error("disk_budget_sample_failed", error=type(exc).__name__)
+                self._settle(type(exc).__name__)
             await self._sleep(self._cfg.sample_interval_s)
 
 
