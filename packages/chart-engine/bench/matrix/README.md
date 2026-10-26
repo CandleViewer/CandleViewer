@@ -10,19 +10,24 @@ directory is the driver, the harness shells and the comparison tool, so the run 
 | `run-matrix.mjs --runtime chromium` (headless, real WebGL2 via SwiftShader) | Ran end to end (B1,B5), report valid, manifest complete                                                                                                                                                                         |
 | `--dry-run` (B5 composition, B7 logic, manifest)                            | Ran, passes                                                                                                                                                                                                                     |
 | `compare-matrix.mjs` criterion 1 at the 10 % boundary, both sides           | Unit-tested (`test/bench/matrix/`)                                                                                                                                                                                              |
-| Electron shell (`electron/`)                                                | **Written, not launched** (no display/GPU in the authoring environment)                                                                                                                                                         |
+| Electron shell (`electron/`)                                                | **Launched on Windows 11, 2026-10-26** (Electron 45.0.0 / Chromium 156, ANGLE D3D11; B1 / B5 / B10 smoke, 1 rep, 5k bars). Non-reference host, so not evidence                                                                  |
 | Tauri shell (`tauri/`)                                                      | **Written, not compiled**: no Rust toolchain was available offline. Crate versions in `Cargo.toml` are exact pins I could not resolve offline: if `cargo` rejects them, bump to the nearest Tauri 2.x and note it in the report |
 
 ## Prerequisites (reference machine)
 
 1. Windows 11, the reference GPU with current driver, power plan "High performance", plugged in.
 2. Close everything else. **Exception:** the co-tenancy run (below) wants the dev stack (WSL, Docker, QuestDB, Postgres) up.
-3. `pnpm install --frozen-lockfile` at the repo root. Electron and Playwright come from `apps/desktop`.
-4. Chromium arm: `pnpm --filter @candleviewer/desktop exec playwright install chromium` (once).
-5. Tauri arm: Rust (stable, MSVC) + the WebView2 runtime (Evergreen, preinstalled on Win 11). Then:
+3. **Node ≥ 20.19** (the repo's `engines` floor; `.nvmrc` pins 20.19.5). `electron@45`'s installer needs
+   `require(esm)`: on Node 20.14 the Electron arm dies before launch with `ERR_REQUIRE_ESM`.
+4. `pnpm install --frozen-lockfile` at the repo root. Electron and Playwright come from `apps/desktop`.
+5. Then `node tools/ci/run-allowed-postinstall.mjs` (the SR-138 allowlist runner; about 150 s). It fetches the
+   Electron binary, because Electron ≥ 42 has no postinstall of its own. Without it, the first launch fails with
+   "Electron failed to install correctly".
+6. Chromium arm: `pnpm --filter @candleviewer/desktop exec playwright install chromium` (once).
+7. Tauri arm: Rust (stable, MSVC) + the WebView2 runtime (Evergreen, preinstalled on Win 11). Then:
    `cd packages/chart-engine/bench/matrix/tauri/src-tauri && cargo generate-lockfile && cargo audit`
    (commit the lockfile with the results; supply-chain rules are E06-X02).
-6. Note the background load (Task Manager) in the issue comment.
+8. Note the background load (Task Manager) in the issue comment.
 
 ## The three commands (same seed and fixture on all three)
 
@@ -118,3 +123,5 @@ denied, loopback URL only. The Tauri shell registers no commands/plugins and has
   `cargo run` and reports through the same HTTP sink.
 - Resident memory uses the OS working set (summed by process name) and, for Electron, `app.getAppMetrics()`.
 - B9 is measured as a JS cold-init to first modelled frame + first GL draw, not a process cold start.
+- Under the hardened shell the matrix page logs three CSP `style-src 'self'` notices for the inline styles in
+  `page/matrix.html`. They are cosmetic and don't affect the canvas measurement.
