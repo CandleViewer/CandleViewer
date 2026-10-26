@@ -14,7 +14,7 @@ delivery here is a solo AI-agent + single-owner org, so:
   description of the stimulus** (no build exists yet — none is required pre-E05-D01). No participants,
   timings, or quotes are fabricated; every finding below is labelled **(heuristic)**.
 - **CVD / contrast validation → computed programmatically.** Done for real (not simulated-as-a-finding):
-  `docs/research/_tools/cvd_simulate.py` runs the actual Brettel-1997 dichromacy simulation against the
+  `docs/research/_tools/cvd_simulate.py` runs the actual Brettel-1997 dichromacy simulation (protanopia, deuteranopia; Machado 2009 for tritanopia) against the
   real token hex values in `packages/ui/tokens/primitives.tokens.json` /
   `packages/ui/tokens/semantic-dark.tokens.json`, and the real WCAG contrast formula. Its output is
   `docs/research/artifacts/E05-D07/cvd_simulation.md` (committed evidence, not a screenshot).
@@ -30,13 +30,13 @@ delivery here is a solo AI-agent + single-owner org, so:
 
 **Token cross-check** — `packages/ui/tokens/primitives.tokens.json` already defines:
 
-| Token | Value |
-|---|---|
-| `size.row.compact` | 24px |
-| `size.row.comfortable` | 32px |
-| `size.control.compact` | 24px |
-| `size.control.comfortable` | 32px |
-| `size.target.min` | 24px |
+| Token                      | Value |
+| -------------------------- | ----- |
+| `size.row.compact`         | 24px  |
+| `size.row.comfortable`     | 32px  |
+| `size.control.compact`     | 24px  |
+| `size.control.comfortable` | 32px  |
+| `size.target.min`          | 24px  |
 
 **Finding (heuristic) — comfortable row height should be 32px, not 36px.** The brief's prose proposes
 36/40px, but the primitive tokens actually authored (E05-D01, already merged) use 32px for both
@@ -45,7 +45,7 @@ delivery here is a solo AI-agent + single-owner org, so:
 the accessible minimum with headroom (+8px, i.e. +33%) while still being meaningfully denser than the
 originally-proposed 36-40px for reading-heavy admin/settings surfaces. There is no participant data
 contradicting 32px, and the shipped tokens are the closer-to-implementation artefact — **this report
-confirms the brief's *intent* (two-mode system, compact default for trading surfaces) but revises the
+confirms the brief's _intent_ (two-mode system, compact default for trading surfaces) but revises the
 comfortable numeric value down to 32/32px to match what E05-D01 already shipped**, rather than forcing
 a later token-breaking change. This is recorded as a brief amendment (§6 below), not a silent doc drift.
 
@@ -55,13 +55,14 @@ brief §3 rule 2: any control inside a 24px row that cannot itself be ≥24×24p
 treatment (§3 below), it does not mean the row shrinks further.
 
 **Heuristic evaluation — positions grid & DOM ladder scanning (heuristic, no live timing data):**
+
 - Positions grid at 24px compact rows: walking through the described data (symbol, side, size, entry,
   mark, PnL, SL) at `font.size.xs`/`sm` (11/12px) monospace, the number of columns realistically legible
   without wrapping is 7-9 before truncation risk — consistent with `15-component-catalogue.md` CMP-107
   needing responsive column priority, not a token change.
 - DOM ladder at 24px rows: heuristic walk-through of "find-the-largest-loss" / "find-the-price-level"
   tasks (the ticket's named task probes) suggests price-column left-alignment + tabular-figure monospace
-  is necessary at compact density to keep digit columns aligned during fast repaint — this is *already*
+  is necessary at compact density to keep digit columns aligned during fast repaint — this is _already_
   implied by `type.num.*` using `font.family.mono` (confirmed, no change needed).
 - No participant session occurred, so no measured error/time rates exist; this is flagged as an open
   question in §7, not asserted as validated.
@@ -73,6 +74,7 @@ a UI-family tabular-figure variant of `Inter` (`font.family.ui` with `font-varia
 
 **Decision: JetBrains Mono is confirmed as `font.family.mono`.** Rationale (heuristic, static-mock
 review — no rendered-font A/B was run):
+
 - JetBrains Mono is purpose-built for dense numeric/code columns: consistent glyph width, distinct
   `0`/`O`, `1`/`l`/`I`, `8`/`B` shapes — the exact ambiguity classes that matter for price/qty misreads
   in an execution UI (safety-relevant per `CLAUDE.md` §1 "it moves real money").
@@ -97,11 +99,11 @@ glyph-shape/x-height at 11px, which is why the mono family choice (not size) is 
 Per brief §3 rule 2, walking `15-component-catalogue.md` CMP-100..139 for compact-row-embedded controls
 that cannot reach 24×24px without breaking row density:
 
-| CMP-* | Control | Why it can't be 24×24px in a 24px row | Compensating control |
-|---|---|---|---|
-| CMP-108 DomLadderRow | inline buy/sell click-to-trade glyph per row | Row itself is 24px tall; a 24×24 hit target would consume the entire row height leaving no margin between rows, defeating scan density | Invisible padding extends the true hit target to the full row height/width band even though the visual glyph is ~16px; 1px visual separator + `:hover` background-tint gives a mis-tap guard; documented in CMP-108's Storybook a11y notes per brief §3 rule 2 |
-| CMP-109 FootprintCell | per-cell bid/ask numeric click target (drill-in) | Cell grid density is the entire point of footprint — cells are frequently <24px square at deep zoom-out | Whole-cell click area already matches the rendered cell bounds (which vary with zoom); at zoom levels where a cell would render <24px, the DOM-mirror surrogate (05-accessibility-standard.md §6.1) is sized to the *visible* cell, and keyboard/focus navigation (not pointer precision) is the accessible path — flagged as CMP-109's primary a11y strategy, not a padding trick |
-| CMP-113 HeatmapLegend row (per §"Trading-specific" catalogue) | legend swatch + label repeated per ramp stop | Legend rows are informational, not primary click targets, but a click-to-filter-by-stop interaction (if added) would be undersized at compact legend density | If added: legend rows are given `size.control.comfortable` (32px) height even in an otherwise-compact panel — legends are exempted from row-height inheritance, per no-shrink-below-minimum in brief §3 rule 2 |
+| CMP-*                                                         | Control                                          | Why it can't be 24×24px in a 24px row                                                                                                                        | Compensating control                                                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CMP-108 DomLadderRow                                          | inline buy/sell click-to-trade glyph per row     | Row itself is 24px tall; a 24×24 hit target would consume the entire row height leaving no margin between rows, defeating scan density                       | Invisible padding extends the true hit target to the full row height/width band even though the visual glyph is ~16px; 1px visual separator + `:hover` background-tint gives a mis-tap guard; documented in CMP-108's Storybook a11y notes per brief §3 rule 2                                                                                                                     |
+| CMP-109 FootprintCell                                         | per-cell bid/ask numeric click target (drill-in) | Cell grid density is the entire point of footprint — cells are frequently <24px square at deep zoom-out                                                      | Whole-cell click area already matches the rendered cell bounds (which vary with zoom); at zoom levels where a cell would render <24px, the DOM-mirror surrogate (05-accessibility-standard.md §6.1) is sized to the _visible_ cell, and keyboard/focus navigation (not pointer precision) is the accessible path — flagged as CMP-109's primary a11y strategy, not a padding trick |
+| CMP-113 HeatmapLegend row (per §"Trading-specific" catalogue) | legend swatch + label repeated per ramp stop     | Legend rows are informational, not primary click targets, but a click-to-filter-by-stop interaction (if added) would be undersized at compact legend density | If added: legend rows are given `size.control.comfortable` (32px) height even in an otherwise-compact panel — legends are exempted from row-height inheritance, per no-shrink-below-minimum in brief §3 rule 2                                                                                                                                                                     |
 
 Any other compact-mode control **not** on this list must meet 24×24px unconditionally (brief §3 rule 2)
 — this includes CMP-102 SideToggle, CMP-100/101 numeric inputs' step buttons, and CMP-107 OrderTicket's
@@ -113,6 +115,7 @@ Full machine-generated evidence: `docs/research/artifacts/E05-D07/cvd_simulation
 `python docs/research/_tools/cvd_simulate.py`).
 
 **Summary:**
+
 - Two candidate buy/sell pairs were tested: pair-A (`color.buy.default` #2EBD59 / `color.sell.default`
   #E5484D) and pair-B (`color.buy.hc` #6BD48A / `color.sell.hc` #F08A8A, the high-contrast-theme variant).
 - Both pairs pass WCAG AA 3:1 non-text contrast against `surface.app` (#0B0E11) in normal vision: pair-A
@@ -135,12 +138,14 @@ ticket's Technical notes ("the CVD simulation script is handed to E05-T05 as the
 ## 5. Session protocol (written, ready for the owner to run)
 
 **Positions-grid scanning task** ("find-the-largest-loss"):
+
 1. Present a static/replay positions grid (≥12 rows) at compact density.
 2. Time-to-first-correct-click, per participant, per density mode (compact vs comfortable), per mono
    candidate (if a second candidate is prototyped).
 3. Record error count (wrong row clicked) and verbal confusion notes.
 
 **DOM-ladder scanning task** ("find-the-price-level"):
+
 1. Present a static DOM ladder (≥20 price rows) with a target price called out verbally.
 2. Time-to-first-correct-click; record whether compact row height caused adjacent-row mis-clicks.
 

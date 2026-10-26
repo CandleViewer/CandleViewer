@@ -136,15 +136,15 @@ Text needs 4.5:1 (WCAG 1.4.3); glyphs, boundaries, fills that carry a value and 
 Not reviewed in this pre-review: nothing is drawn yet, and the formal CVD review is E05-D04's (`05` §4.2, brief §13.3
 item 3). ΔE76 spot checks (base, then protanopia / deuteranopia / tritanopia); every tone carries a glyph and a word:
 
-- **Info against success** glyphs and edges (`.strong`): 54.0 (52.0 / 50.8 / **1.3**) dark and high contrast, 59.3 (55.4
-  / 54.3 / 10.5) light — indistinguishable under tritanopia in dark; the `info` and `check` shapes and the words carry
-  the tone. The `.default` edges: 77.1 (73.0 / 72.0 / 11.9) dark, 55.9 (54.3 / 54.8 / 22.6) light.
-- **Error against warning**: the `.default` edges 63.6 (61.2 / 44.7 / 23.8) dark, 56.6 light; the `.strong` glyphs 14.7
-  (12.5 / 14.0 / 5.5) dark and high contrast and **0.0 in light** (identical, slice 1 A6): the shapes carry them.
-- **Progress default against success** fill: 137.7 (124.0 / 119.1 / 40.7) dark, but **2.1 under tritanopia in high
-  contrast**: the tone's word and the value text carry it.
-- **Success against warning** (`.strong`): 57.6 (15.7 / 31.1 / 133.6) dark, 65.0 (17.4 / 27.2 / 136.2) light.
-- **Focus ring against a focused item** (`focus.ring` vs `surface.hover`): 65.9 or more in every theme and simulation.
+- **Info against success** glyphs and edges (`.strong`): 54.0 (52.0 / 50.8 / **10.3**) dark and high contrast, 59.3
+  (55.4 / 54.3 / 10.9) light — distinct under tritanopia (1.3 in dark before #4639); the `info` and `check` shapes and
+  the words carry the tone. The `.default` edges: 77.1 (73.0 / 72.0 / 12.1) dark, 55.9 (54.3 / 54.8 / 13.5) light.
+- **Error against warning**: the `.default` edges 63.6 (61.2 / 44.7 / 42.4) dark, 56.6 light; the `.strong` glyphs 14.7
+  (12.5 / 14.0 / 11.2) dark and high contrast and **0.0 in light** (identical, slice 1 A6): the shapes carry them.
+- **Progress default against success** fill: 137.7 (124.0 / 119.1 / 30.3) dark, and **18.7 under tritanopia in high
+  contrast** (2.1 before #4639): the tone's word and the value text carry it.
+- **Success against warning** (`.strong`): 57.6 (15.7 / 31.1 / 64.9) dark, 65.0 (17.4 / 27.2 / 69.1) light.
+- **Focus ring against a focused item** (`focus.ring` vs `surface.hover`): 54.3 or more in every theme and simulation.
 
 ## 6. Findings for the owner and E05-D04
 
@@ -169,7 +169,7 @@ item 3). ΔE76 spot checks (base, then protanopia / deuteranopia / tritanopia); 
    H36); the TopBar and the panic cluster stay outside the inert page (§6 H23); toasts render above the scrim but stay
    inert, announced through CMP-212's regions, their actions reached after the dialog closes (conventions 31, E40-D02
    §4.3).
-10. Info and success are indistinguishable under tritanopia in dark (1.3): the glyph shapes carry them (§5).
+10. Info and success stay apart under tritanopia (10.3 in dark; 1.3 before #4639): the glyph shapes carry them (§5).
 11. An order confirm times out to Cancel after 20 s without a key or pointer event (E30-D03 D3 (6)): the countdown is
     `aria-live="off"` and announced at 0:10 and 0:00 only; a screen-reader read of the body does not restart it, so the
     restatement stays short (E30-D03 D3); WCAG 2.2.1 rests on SCR-114's setting of its length (E30-D03 G6), one of the

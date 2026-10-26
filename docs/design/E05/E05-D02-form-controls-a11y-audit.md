@@ -118,13 +118,13 @@ Not reviewed in this pre-review: nothing is drawn yet, and the formal CVD review
 item 3). ΔE76 spot checks with `docs/research/_tools/cvd_simulate.py` (base, then protanopia / deuteranopia /
 tritanopia); structurally, no slice-3 state depends on hue alone:
 
-- **Invalid against rest** (`status.danger.default` vs `text.tertiary` boundaries): 69.8 (32.3 / 46.8 / 85.6) dark,
-  51.2 (25.2 / 36.3 / 67.8) light, 74.8 (45.9 / 51.6 / 88.8) high contrast — and the 2 px width, the glyph and the
+- **Invalid against rest** (`status.danger.default` vs `text.tertiary` boundaries): 69.8 (32.3 / 46.8 / 87.0) dark,
+  51.2 (25.2 / 36.3 / 63.7) light, 74.8 (45.9 / 51.6 / 90.9) high contrast — and the 2 px width, the glyph and the
   words carry it anyway.
-- **Error against warning glyphs** (`status.danger.strong` vs `status.warning.strong`): 14.7 (12.5 / 14.0 / 5.5) in dark
+- **Error against warning glyphs** (`status.danger.strong` vs `status.warning.strong`): 14.7 (12.5 / 14.0 / 11.2) in dark
   and high contrast, **0.0 in light** (identical, slice 1 A6): the glyph shapes and the words tell them apart.
-- **Selected tint** (`action.selected`) vs canvas: 27.4 (28.6 / 29.9 / 38.3) dark, 11.3 (11.1 / 12.3 / 13.6) light; vs
-  a hovered row 25.4 dark, 8.7 light (7.3 under tritanopia). The checked box and the outline carry selection.
+- **Selected tint** (`action.selected`) vs canvas: 27.4 (28.6 / 29.9 / 16.0) dark, 11.3 (11.1 / 12.3 / 8.7) light; vs
+  a hovered row 25.4 dark, 8.7 light (5.6 under tritanopia). The checked box and the outline carry selection.
 - **Selected outline vs focus ring** (`border.selected` vs `focus.ring`): 16.1 dark, 12.6 light, 58.5 high contrast —
   slice 1 A7's near-identical blue rings, kept apart by the 2 px gap.
 
