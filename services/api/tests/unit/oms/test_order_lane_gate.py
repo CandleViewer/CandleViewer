@@ -146,20 +146,12 @@ def _answers(reads: list[Read], when: str) -> tuple[set[Answer], set[Answer]]:
     return {served for _, served, _ in begun}, {raw for _, _, raw in begun}
 
 
-async def test_a_stalled_serving_loop_leaves_the_gate_answering_on_the_lane_at_once(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_a_stalled_serving_loop_leaves_the_gate_answering_on_the_lane_at_once() -> None:
     """#913 L4 (SEC-S3L1A-03): this loop is blocked, yet the lane reads the gate in place and
-    answers each account at once as it stands, no hop begun. Before L4 each read waited
-    `BLOCK_TIMEOUT_S` in `Serving.block` for this loop, which never began it, then refused
-    `oms_not_ready`."""
-    hops, block = list[str](), Serving.block
-
-    def noted(self: Serving, fn: Callable[[], Any], **bound: Any) -> Any:
-        hops.append("block")
-        return block(self, fn, **bound)
-
-    monkeypatch.setattr(Serving, "block", noted)
+    answers each account at once as it stands, with no hop: `Serving` has no blocking call left,
+    removed with its last user. Before L4 each read waited up to 1 s in `Serving.block` for this
+    loop, which never began it, then refused `oms_not_ready`."""
+    assert not hasattr(Serving, "block")  # nothing on the lane can wait for this loop's turn
     world, done = _world(_serving(), [ACC]), threading.Event()
 
     async def reads() -> list[Answer]:
@@ -172,7 +164,6 @@ async def test_a_stalled_serving_loop_leaves_the_gate_answering_on_the_lane_at_o
         answered = lane.call(reads())
         assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
         assert await answered == [None, "no_active_key"]  # ACC_B: the read did not list it
-    assert hops == []
 
 
 async def test_a_stalled_serving_loop_leaves_the_lane_admitting_until_its_gate_ages_out() -> None:

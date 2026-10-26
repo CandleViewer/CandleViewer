@@ -6,7 +6,6 @@ the lane's thread is a bound on the test, and a stalled serving loop is one bloc
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
 import inspect
 import threading
 from collections import OrderedDict
@@ -166,8 +165,8 @@ async def test_a_cancelled_caller_cancels_the_lanes_task_and_a_shielded_one_leav
 
 
 async def test_a_hop_to_a_stalled_serving_loop_is_bounded_and_its_timeout_surfaces() -> None:
-    """C-2.18: this loop is blocked, so neither hop can begin here: each times out on the lane, and
-    neither runs once this loop turns again."""
+    """C-2.18: this loop is blocked, so the hop cannot begin here: it times out on the lane, and it
+    does not run once this loop turns again."""
     serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
     ran, done = list[str](), threading.Event()
 
@@ -180,18 +179,14 @@ async def test_a_hop_to_a_stalled_serving_loop_is_bounded_and_its_timeout_surfac
             await serving.call(note(), timeout_s=0)
         except TimeoutError:
             failures.append("call")
-        try:
-            serving.block(lambda: ran.append("block"), timeout_s=0)
-        except TimeoutError:
-            failures.append("block")
         done.set()
         return failures
 
     async with running() as lane:
         answered = lane.call(hops())
         assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
-        assert await answered == ["call", "block"]
-        for _ in range(8):  # this loop turns again: neither hop runs
+        assert await answered == ["call"]
+        for _ in range(8):  # this loop turns again: the hop does not run
             await asyncio.sleep(0)
     assert ran == []
 
@@ -201,9 +196,9 @@ def _failing(value: str) -> None:
 
 
 async def test_hops_from_the_lane_land_in_order_and_a_failing_notice_is_logged() -> None:
-    """A notice sent before a read lands before it (a rejected credential, then a blocking call);
-    one that raises on the serving loop is logged by its type, never raised on the lane, and one the
-    closed serving loop cannot take is logged as lost; each is counted (CR-S3L1A-01)."""
+    """A notice sent before an awaited hop lands before it (a rejected credential, then a profile
+    read); one that raises on the serving loop is logged by its type, never raised on the lane, and
+    one the closed serving loop cannot take is logged as lost; each is counted (CR-S3L1A-01)."""
     metrics, closed = Metrics("demo"), asyncio.new_event_loop()
     serving = Serving(asyncio.get_running_loop(), metrics)
 
@@ -211,14 +206,13 @@ async def test_hops_from_the_lane_land_in_order_and_a_failing_notice_is_logged()
         seen: list[str] = []
         serving.notify(seen.append, "notified")
         serving.notify(_failing, "a value never logged")
-        serving.block(lambda: seen.append("read"))
         seen.append(await serving.call(asyncio.sleep(0, result="awaited")))
         return seen
 
     closed.close()
     with capture_logs() as logs:
         async with running() as lane:
-            assert await lane.call(ordered()) == ["notified", "read", "awaited"]
+            assert await lane.call(ordered()) == ["notified", "awaited"]
         Serving(closed, metrics).notify(_failing, "a value never logged")
     failed = [(e["call"], e["error"]) for e in logs if e["event"] == "oms_lane_notice_failed"]
     assert failed == [("_failing", "ValueError")] and "a value never logged" not in str(logs)
@@ -229,33 +223,6 @@ async def test_hops_from_the_lane_land_in_order_and_a_failing_notice_is_logged()
 def _counted(metrics: Metrics, reason: str) -> float | None:
     labels = {"env": "demo", "reason": reason}
     return metrics.registry.get_sample_value("oms_lane_notices_failed_total", labels)
-
-
-async def test_a_blocking_hop_begun_within_its_bound_is_waited_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CR-S3L1A-06: the serving loop has begun the call when `block`'s bound runs out (the answer's
-    bounded wait starts only then), so the waiter waits it out and takes its refusal."""
-    began, waiting = threading.Event(), threading.Event()
-
-    class Watched(concurrent.futures.Future[Any]):
-        def result(self, timeout: float | None = None) -> Any:
-            if timeout is None:  # the unbounded wait on a call begun
-                waiting.set()
-            else:
-                assert began.wait(BOUND_S)
-            return super().result(timeout)
-
-    def refusal() -> str:
-        began.set()
-        assert waiting.wait(BOUND_S)
-        return "refused"
-
-    monkeypatch.setattr(
-        oms_lane, "concurrent", SimpleNamespace(futures=SimpleNamespace(Future=Watched))
-    )
-    serving = Serving(asyncio.get_running_loop(), Metrics("demo"))
-    assert await asyncio.to_thread(serving.block, refusal, timeout_s=0) == "refused"
 
 
 async def test_idle_waits_until_every_call_the_lane_began_has_ended() -> None:

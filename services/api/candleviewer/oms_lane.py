@@ -14,12 +14,12 @@ begun, nothing begins on the lane: a call it takes then, or one whose task has n
 closed unrun, its caller answered `LaneStopped`, as `call` answers one made after.
 
 `Serving` is the way back to the serving loop, the loop that started the runtime, for what is bound
-to it. `call` awaits a coroutine run there; `block` waits on the lane's thread for a synchronous
-call made there; `notify` makes a call there and waits for nothing. Each is bounded (C-2.18):
-`call` and `block` by their timeouts, a notification by the lane's step rate times the serving
-loop's stall (20 Sec.6.2), and one lost or failed there is logged and counted. An answer that
-matters is never dropped, since `block` waits out a call that has begun. Calls from one thread
-begin in the order they were made. From the serving loop itself, each is a plain call.
+to it. `call` awaits a coroutine run there; `notify` makes a call there and waits for nothing. Each
+is bounded (C-2.18): `call` by its timeout, a notification by the lane's step rate times the
+serving loop's stall (20 Sec.6.2), and one lost or failed there is logged and counted. Nothing makes
+the lane's thread wait for the serving loop: since #913's L2 and L4 no synchronous call crosses
+(the lane's own sink, the order-entry gate read in place). Calls from one thread begin in the order
+they were made. From the serving loop itself, each is a plain call.
 """
 
 from __future__ import annotations
@@ -39,7 +39,7 @@ from candleviewer.observability import spawn
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import MetricChild, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
+from candleviewer.statechart.config import CV_COMMAND_TIMEOUT
 
 #: How long the lane's loop has to start running; past it the runtime fails closed.
 LANE_START_S: Final = 5.0
@@ -49,10 +49,6 @@ LANE_JOIN_S: Final = 1.0
 #: The bound on an awaited hop to the serving loop: B1's command bound, which every venue call's
 #: own bounds are inside, so the hop never cuts one short (`oms_wiring.ServedPort`).
 HOP_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
-#: The bound on a blocking hop, B1's write-ahead bound: how long the lane's thread waits for the
-#: serving loop to begin a synchronous call (none since #913's L2 gave the lane its own sink and L4
-#: read the order-entry gate in place).
-BLOCK_TIMEOUT_S: Final = CV_PERSIST_TIMEOUT
 #: Each step of the lane thread's own cleanup once its loop has stopped: its five end inside
 #: `LANE_JOIN_S`, so a cleanup that runs long ends before the join gives up.
 _CLEANUP_S: Final = LANE_JOIN_S / 6
@@ -367,34 +363,6 @@ class Serving:
                 coro.close()
                 raise
             return await ran
-
-    def block[T](self, fn: Callable[[], T], *, timeout_s: float = BLOCK_TIMEOUT_S) -> T:
-        """`fn()` called on the serving loop while this thread waits for its answer: for a
-        synchronous caller on the lane, which cannot await. `TimeoutError` when it has not begun
-        within `timeout_s`, and then it never will; once begun, its own answer, however long it
-        takes, so a refusal is never lost (`audit/machine_events.py`)."""
-        if self._here():
-            return fn()
-        answer: concurrent.futures.Future[T] = concurrent.futures.Future()
-
-        def run() -> None:
-            if not answer.set_running_or_notify_cancel():
-                return
-            try:
-                answer.set_result(fn())
-            except Exception as exc:  # the waiter raises it
-                answer.set_exception(exc)
-            finally:
-                if not answer.done():  # anything else left `fn`: the waiter is answered too
-                    answer.set_exception(RuntimeError("the serving loop's call did not return"))
-
-        self._loop.call_soon_threadsafe(run)
-        try:
-            return answer.result(timeout_s)
-        except TimeoutError:
-            if answer.cancel():
-                raise
-            return answer.result()
 
     def notify(self, fn: Callable[..., object], /, *args: Any, **kwargs: Any) -> None:
         """`fn(*args, **kwargs)` called on the serving loop, never awaited: a notification. What

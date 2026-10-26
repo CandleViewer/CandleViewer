@@ -27,7 +27,7 @@ from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
 from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
     ENVIRONMENT_LOCK_NAMESPACE,
@@ -873,7 +873,7 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
     assert not _missing(
         lane,
-        f"where before L4 a gate read it had not begun within {BLOCK_TIMEOUT_S:g} s was "
+        f"where before L4 a gate read it had not begun within {CV_PERSIST_TIMEOUT:g} s was "
         "`oms_not_ready`",
         f"So the OMS ticks on the serving loop every {tick:g} s (`SERVING_TICK_S`), a stamp the "
         f"lane reads in place, and once the last tick is over {stale:g} s old, twice that "
