@@ -25,11 +25,14 @@ from one reduction frame, `--mutate-kinds` the undo line from one reduction-kind
 turns the `drop` -> `archive_parquet` kind into a plain confirm, `--mutate-title` gives K7 K6's title,
 `--mutate-nothing` adds "Nothing is deleted." to K6's body, `--mutate-producer` writes the plain mark
 into the kinds frame's Producer cell, `--mutate-applynow` removes the Apply-now qualifier from the
-lengthening confirm's copy row. Exit 1 on a gated FAIL.
+lengthening confirm's copy row, `--mutate-bodynow` removes the lengthening confirm from the
+run-now body's row, `--mutate-trigger` removes "Apply now unticked" from the lengthening frame's
+Trigger. Exit 1 on a gated FAIL.
 
 Usage: python3 -I docs/design/_tools/e16_d03_retention_audit.py [--json] [--check]
   [--mutate-consequence | --mutate-kinds | --mutate-typed | --mutate-plain | --mutate-title
-   | --mutate-nothing | --mutate-producer | --mutate-applynow] [--extra F]
+   | --mutate-nothing | --mutate-producer | --mutate-applynow
+   | --mutate-bodynow | --mutate-trigger] [--extra F]
 """
 
 from __future__ import annotations
@@ -339,7 +342,7 @@ K1 | confirm | trades {seed_trades} archive_parquet | trades {reduce_to} drop
 K2 | confirm | trades {reduce_to} drop | trades {drop_lower_to} drop
 K3 | confirm | trades {seed_trades} archive_parquet | trades {override_days} drop
 K4 | confirm | trades {override_days} archive_parquet | trades {reduce_to} drop
-K5 | confirm | trades {seed_trades} archive_parquet; orderbook_snapshot {seed_orderbook_snapshot} archive_parquet | trades {reduce_to} drop; orderbook_snapshot {reduce_to} drop
+K5 | confirm | trades {seed_trades} archive_parquet; orderbook_delta {seed_orderbook_delta} archive_parquet | trades {reduce_to} drop; orderbook_delta {reduce_to} drop
 K6 | confirm | trades {long_days} drop | trades {seed_trades} archive_parquet
 K7 | confirm | trades {long_days} archive_parquet | trades {seed_trades} archive_parquet
 """
@@ -356,6 +359,8 @@ MUTATIONS = {
     "nothing": "says Nothing is deleted",
     "producer": "names the plain confirm",
     "applynow": "lacks the Apply-now qualifier",
+    "bodynow": "does not cover the lengthening confirm",
+    "trigger": "does not leave Apply now unticked",
 }
 # "Nothing is deleted." on the lengthening confirm holds only while Apply now is unticked (`22`
 # :5246: a run started now still deletes what the current rules make eligible).
@@ -724,7 +729,7 @@ def sentences(fx: dict[str, Any]) -> dict[str, str]:
         "pinned_note": f"{fx['pinned_symbol']} is pinned and is not affected.",
         "tiering": (
             f"Moves trades older than {n} days to Parquet sooner; it is still kept for {m} months. "
-            "Nothing is deleted."
+            "This change deletes nothing."
         ),
         "help_archive": (
             "Days in the fast store before the nightly move to Parquet. "
@@ -863,11 +868,15 @@ def gates(
     if APPLY_NOW_QUALIFIER not in lengthen:
         bad.append("spec section 14: retention.confirm.lengthen.body lacks the Apply-now qualifier")
     now = first(r"^(\| `retention\.confirm\.plain\.body_now` +\|.*)$", deck, MULTI)
+    if mode == "bodynow":
+        now = now.replace("`retention.confirm.lengthen.body`", "", 1)
     if "`retention.confirm.lengthen.body`" not in now:
         bad.append(
             "spec section 14: retention.confirm.plain.body_now does not cover the lengthening confirm"
         )
     trig = first(r"^\| `SCR-141/confirm-lengthen` +\| ([^|]*)\|", spec, MULTI)
+    if mode == "trigger":
+        trig = trig.replace("Apply now unticked", "", 1)
     if "Apply now unticked" not in trig:
         bad.append(
             "spec section 5: SCR-141/confirm-lengthen's Trigger does not leave Apply now unticked"
