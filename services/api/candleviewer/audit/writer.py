@@ -71,17 +71,32 @@ place of a new one. A repeat, in this run or after a restart, is a no-op insert 
 namespace and an action not listed is refused, so two actions never share an id, and a version 5
 id never equals a random one (version 4) or a lane anomaly id (version 8): a repeat only ever meets
 its own record. `emit()` and `build()` are unchanged, so the lane façade still mirrors `emit()`.
+
+One loop, one file (D6, #913 L2): a writer serves one event loop, the one it was built on, or,
+built outside one, the one its `start()` runs on, which alone binds it (SEC-S3L2-07): until then
+every other call is refused, from any loop, so a first caller elsewhere never takes it. Its lock,
+events and tasks are that loop's. `start()`, `flush()`, `stop()`, `emit()`, `emit_keyed()`,
+`ingest()` and `ingest_counted()` each refuse a call from any other loop with
+`AuditWriterWrongLoop`, an `AuditUnavailable`, before anything is read, counted or written; the
+first refusal of each `APPEND_FAILURE_COOLDOWN` window, on the writer's clock, is logged CRITICAL
+as a page (CR-S3L2-08), so a wiring defect pages once a window, never once a call. `build()` and
+the counters touch nothing of the loop's and are not checked. An `exclusive` writer (the order
+lane's, 29 CV-C13) takes `lock_wal_file`'s lock before it opens its WAL and holds it until its
+`stop()` has ended, so no second writer ever opens the file; once stopped, it is not started
+again.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import uuid
 from collections import deque
 from collections.abc import Awaitable, Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from io import FileIO
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Concatenate, Final
@@ -93,7 +108,7 @@ from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity, storable
 from candleviewer.audit.redact import redact
 from candleviewer.audit.repository import AuditRepository
-from candleviewer.audit.wal import AuditWal, AuditWalFull
+from candleviewer.audit.wal import AuditWal, AuditWalFull, lock_wal_file
 from candleviewer.observability.context import spawn, thread_future
 
 
@@ -135,6 +150,14 @@ def keyed_record_id(action: str, name: str) -> uuid.UUID:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    """The event loop running on this thread, or `None`."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _uuid_or_none(value: str | uuid.UUID | None) -> uuid.UUID | None:
@@ -206,9 +229,25 @@ class AuditWriter:
         clock: Clock = _utc_now,
         sleep: Sleeper = asyncio.sleep,
         max_insert_attempts: int | None = None,
+        exclusive: bool = False,
     ) -> None:
         self._repository = repository
-        self._wal = AuditWal(_path(wal_path), max_bytes=max_wal_bytes)
+        #: D6: the event loop the writer serves, `None` until its `start()` binds one when it is
+        #: built outside a loop (module docstring, `_on_its_loop`).
+        self._loop = _running_loop()
+        #: When a refusal from another loop last paged, and the lock the refusing threads take
+        #: to read and set it, so one window pages once (CR-S3L2-08), which a binding `start()`
+        #: takes too (SEC-S3L2-07).
+        self._wrong_loop_paged_at: datetime | None = None
+        self._wrong_loop_guard = threading.Lock()
+        self._exclusive = exclusive
+        #: An exclusive writer's lock on `<wal>.lock`, taken before the WAL is opened (D6).
+        self._wal_file: FileIO | None = lock_wal_file(_path(wal_path)) if exclusive else None
+        try:
+            self._wal = AuditWal(_path(wal_path), max_bytes=max_wal_bytes)
+        except BaseException:
+            self._release_wal_file()
+            raise
         self._wal_lock = asyncio.Lock()
         #: In-flight `_wal_lock` critical sections (see `_shielded`); `stop()` drains them.
         self._wal_ops: set[asyncio.Task[Any]] = set()
@@ -306,7 +345,12 @@ class AuditWriter:
         """Start the flusher. It replays WAL backlog from a previous run
         first, inside the task, so `start()` never blocks on Postgres.
         Also the recovery path after a fail-closed flusher death. Raises
-        `RuntimeError` while a `stop()` is still shutting the writer down."""
+        `RuntimeError` while a `stop()` is still shutting the writer down, and for an exclusive
+        writer once a `stop()` has ended (its lock is gone). A writer built outside a loop is
+        bound to this call's here (SEC-S3L2-07)."""
+        self._on_its_loop(binds=True)
+        if self._exclusive and self._wal_file is None:
+            raise RuntimeError("AuditWriter.start(): an exclusive writer is not started again")
         if self._stopping is not None:
             if not self._stopping.done():
                 raise RuntimeError("AuditWriter.start(): stop() is still in progress")
@@ -328,6 +372,7 @@ class AuditWriter:
 
     async def flush(self, timeout_s: float) -> None:
         """Wait until every WAL record is committed to Postgres."""
+        self._on_its_loop()
         async with asyncio.timeout(timeout_s):
             await self._idle.wait()
 
@@ -342,6 +387,7 @@ class AuditWriter:
         `app.py`) still moves on to the next module, while the shutdown itself runs
         to the end and always cancels the flusher. A failure of the shutdown reaches
         the callers still waiting and is logged at critical in any case."""
+        self._on_its_loop()
         if self._stopping is None:
             self._stopping = spawn(self._stop(grace_s), name="audit-writer-stop")
             self._stopping.add_done_callback(_log_task_failure)
@@ -370,6 +416,34 @@ class AuditWriter:
         # A read or commit + compaction the flusher was inside keeps
         # `_wal_lock` until its WAL thread returns; wait for it as well.
         await self._drain_wal_ops(grace_s)
+        self._release_wal_file()  # D6: no WAL op of this writer runs any more
+
+    def _release_wal_file(self) -> None:
+        held, self._wal_file = self._wal_file, None
+        if held is not None:
+            held.close()
+
+    def _on_its_loop(self, *, binds: bool = False) -> None:
+        """D6: a call from any loop but the writer's own, or from none, is `AuditWriterWrongLoop`
+        before anything is read, counted or written, the first of each `APPEND_FAILURE_COOLDOWN`
+        window on the writer's clock paged (CR-S3L2-08; a clock stepped back reads as expired).
+        A writer built outside a loop serves the loop of the first call that `binds`, its
+        `start()`, taken under the guard so two loops never both take it (SEC-S3L2-07); before
+        that every call is refused, so a first caller elsewhere never takes it."""
+        running = _running_loop()
+        if binds and running is not None and self._loop is None:
+            with self._wrong_loop_guard:
+                if self._loop is None:
+                    self._loop = running
+        if running is None or running is not self._loop:
+            now = self._clock()
+            with self._wrong_loop_guard:
+                paged, first = self._wrong_loop_paged_at, False
+                if paged is None or not timedelta(0) <= now - paged < APPEND_FAILURE_COOLDOWN:
+                    self._wrong_loop_paged_at, first = now, True
+            if first:
+                logger().critical("audit_writer_wrong_loop", cv_page=True)
+            raise AuditWriterWrongLoop("the audit writer serves another event loop")
 
     def build(
         self,
@@ -445,6 +519,7 @@ class AuditWriter:
         clock is not read. Cancelling the caller never interrupts an append that has started:
         that record is still accepted. Cancelled while still queued for
         `_wal_lock`, nothing is appended (see `_shielded`)."""
+        self._on_its_loop()
         try:
             self._refuse_unless_accepting()
         except AuditError:
@@ -474,11 +549,13 @@ class AuditWriter:
         records" above): `build()` with the keywords of `emit()`, then `ingest()`, so a refusal is
         counted and raised as `emit()`'s, only after `build()` checked the record. `ValueError`
         for an action `KEYED_ACTIONS` does not list, or a blank `name`."""
+        self._on_its_loop()
         keyed = {"record_id": keyed_record_id(action, name)}
         await self.ingest_counted(self.build(action, **fields).model_copy(update=keyed))
 
     async def ingest_counted(self, record: AuditEmission) -> int:
         """`ingest()` for a caller that waits on the record: a refusal is counted, then raised."""
+        self._on_its_loop()  # before the count: a wrong loop counts nothing
         try:
             return await self.ingest(record)
         except (AuditUnavailable, AuditWriterStopped):
@@ -501,6 +578,7 @@ class AuditWriter:
         record is in Postgres. A `record_id` ingested before is appended again and gets the
         next token like any record; its insert is a no-op
         (`ON CONFLICT (record_id) DO NOTHING`), and that insert commits the token."""
+        self._on_its_loop()
         self._refuse_unless_accepting()
         if isinstance(record, AuditEmission):  # `model_validate()` returns an instance unchecked
             record = record.model_dump(warnings=False)
@@ -720,6 +798,12 @@ class AuditWriterStopped(AuditError):
 class AuditUnavailable(AuditError):
     """Raised by `emit()` when the record could not be made durable (WAL full
     or unwritable). The audited action must be refused (C-2.9 fail-closed)."""
+
+
+class AuditWriterWrongLoop(AuditUnavailable):
+    """A call from an event loop other than the writer's own, or from a thread that runs none:
+    refused before anything is read, counted or written (D6, fail closed), a wiring defect that
+    pages. The audited action is refused, as for any `AuditUnavailable`."""
 
 
 #: The actor of the audit lane's own records (§15.6 Ingest step 1).

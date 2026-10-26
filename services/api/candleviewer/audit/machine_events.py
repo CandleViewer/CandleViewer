@@ -59,11 +59,14 @@ lossy; fail closed) and reuses `AuditWal` (24-internal-schemas.md §17.6):
   adopt `plugins_for` keep their long-lived machines' keys resident until the keys that have a
   live plugin are pinned (review round 2, a follow-up).
 
-`append`, `head` and `seed` run on the loop that started the sink. A machine on another loop (the
-order lane's own loop) must wait for the result of each call it makes there, so that a refusal and
-the fsync are seen on its own thread: `asyncio.run_coroutine_threadsafe(<a coroutine that calls
-it>, <the sink's loop>).result(timeout)`. A fire-and-forget hop would lose a refusal. The other
-choice is a sink of the lane's own, on its own loop and WAL file; which one is E29-T03/T04's call.
+A sink serves one event loop (D6, #913 L2): the one it was built on, or, built outside one (the
+persistence bundle's, as `main.py` builds the app at import), the one its `start()` runs on, which
+alone binds it (SEC-S3L2-07): until then every other call is refused, from any loop, so a first
+caller elsewhere never takes it. `append`, `head`, `seed`, `start` and `stop` each refuse a call
+from any other loop, or from a thread that runs none, with `MachineEventWrongLoop` before anything
+is read or written; the first refusal of each `APPEND_FAILURE_COOLDOWN_S` window, on the sink's
+clock, is logged CRITICAL as a page (CR-S3L2-08). The order lane (29 CV-C13) has a sink of its
+own, on its own loop and WAL file, besides any the serving loop holds (E29-T04's ruling Q13).
 
 Rows are dataclass instances and frames the dicts `dataclasses.asdict` gives. `MachineEventRow`
 lives in `statechart/plugins/audit.py` and is named here for annotations only: a run-time import
@@ -74,10 +77,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import fcntl
 import json
 import os
 import re
+import threading
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -89,7 +92,7 @@ from typing import TYPE_CHECKING, Any, Final, Protocol
 import structlog
 
 from candleviewer.audit.errors import AuditError
-from candleviewer.audit.wal import AuditWal, AuditWalFull
+from candleviewer.audit.wal import AuditWal, AuditWalFull, AuditWalLocked, lock_wal_file
 from candleviewer.observability.context import run_in_thread, spawn
 from candleviewer.storage.errors import StorageQueryFailed
 
@@ -148,6 +151,11 @@ class MachineEventRejected(AuditError, ValueError):
     """The row is refused before anything is written: the table would never accept it."""
 
 
+class MachineEventWrongLoop(MachineEventUnavailable):
+    """A call from an event loop other than the sink's own, or from a thread that runs none:
+    refused before anything is read or written (D6, fail closed), a wiring defect that pages."""
+
+
 class ChainKey(Protocol):
     """A machine key (`statechart.persistence.MachineKey`): one chain per key."""
 
@@ -172,6 +180,14 @@ class MachineEventStore(Protocol):
 
 def _ignore(_value: Any) -> None:
     return None
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    """The event loop running on this thread, or `None`."""
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,21 +264,12 @@ def _is_poison(exc: Exception) -> bool:
 
 
 def _lock_wal(path: Path) -> FileIO:
-    """An exclusive, non-blocking lock on `<wal>.lock`, never through a symlink; closing the
-    returned file drops it."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    flags = os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW
-    fd = os.open(path.with_name(path.name + ".lock"), flags, 0o600)
+    """`lock_wal_file`'s exclusive lock on `<wal>.lock`; another holder is unavailability."""
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BaseException as exc:
-        os.close(fd)
-        if isinstance(exc, BlockingIOError):
-            raise MachineEventUnavailable(
-                "the machine-event WAL is locked by another process"
-            ) from None
-        raise
-    return FileIO(fd, "r")
+        return lock_wal_file(path)
+    except AuditWalLocked:
+        refused = "the machine-event WAL is locked by another process"
+        raise MachineEventUnavailable(refused) from None
 
 
 def _owner_only(path: Path) -> None:
@@ -305,6 +312,13 @@ class MachineEventWalSink:
         self.max_bytes = max_bytes
         self._clock, self._sleep = clock, sleep
         self._metrics = metrics or SinkMetrics()
+        #: D6: the event loop the sink serves, the one it was built on, else the one its `start()`
+        #: binds (`_on_its_loop`, SEC-S3L2-07); when a refusal from another loop last paged, and
+        #: the lock the refusing threads take to read and set it (CR-S3L2-08), which a binding
+        #: `start()` takes too.
+        self._loop = _running_loop()
+        self._wrong_loop_paged_at: datetime | None = None
+        self._wrong_loop_guard = threading.Lock()
         self._wal: AuditWal | None = None
         self._lock: FileIO | None = None
         self._task: asyncio.Task[None] | None = None
@@ -344,8 +358,31 @@ class MachineEventWalSink:
         """Machine keys whose chain head is held."""
         return len(self._heads)
 
+    def _on_its_loop(self, *, binds: bool = False) -> None:
+        """D6: a call from any loop but the sink's own, or from none, is `MachineEventWrongLoop`,
+        before anything is read or written, the first of each `APPEND_FAILURE_COOLDOWN_S` window
+        on the sink's clock paged, as `_not_running` pages (CR-S3L2-08). A sink built outside a
+        loop serves the loop of the first call that `binds`, its `start()`, taken under the guard
+        so two loops never both take it (SEC-S3L2-07); before that every call is refused, so a
+        first caller elsewhere never takes it."""
+        running = _running_loop()
+        if binds and running is not None and self._loop is None:
+            with self._wrong_loop_guard:
+                if self._loop is None:
+                    self._loop = running
+        if running is None or running is not self._loop:
+            now, cooldown = self._clock(), timedelta(seconds=APPEND_FAILURE_COOLDOWN_S)
+            with self._wrong_loop_guard:
+                paged, first = self._wrong_loop_paged_at, False
+                if paged is None or not timedelta(0) <= now - paged < cooldown:
+                    self._wrong_loop_paged_at, first = now, True
+            if first:
+                logger().critical("machine_events.wrong_loop", cv_page=True)
+            raise MachineEventWrongLoop("the machine-event sink serves another event loop")
+
     def head(self, key: ChainKey) -> str | None:
         """The key's chain head, the last accepted `row_hash`, or `None` when not held. O(1)."""
+        self._on_its_loop()
         chain = (key.machine_kind, key.entity_id, key.env)
         held = self._heads.get(chain)
         if held is not None:
@@ -356,6 +393,7 @@ class MachineEventWalSink:
         """Hold the key's chain head before anything appends to it: at once when held; else after
         the WAL drained, from the store, both within `SEED_DRAIN_S`. `MachineEventUnavailable`
         on a timeout, a read error, a dead flusher or a sink that is not running."""
+        self._on_its_loop()
         chain = (key.machine_kind, key.entity_id, key.env)
         if chain in self._heads:
             self._heads.move_to_end(chain)
@@ -416,7 +454,9 @@ class MachineEventWalSink:
     async def start(self) -> None:
         """Lock and open the WAL off the loop, then start the flusher, which replays the leftover
         frames first. Never waits on Postgres. `MachineEventUnavailable` if another process holds
-        the WAL; a corrupt WAL raises `AuditWalCorrupt` (fail closed: the boot stops)."""
+        the WAL; a corrupt WAL raises `AuditWalCorrupt` (fail closed: the boot stops). A sink
+        built outside a loop is bound to this call's here (SEC-S3L2-07)."""
+        self._on_its_loop(binds=True)
         if self._task is not None and not self._task.done():
             return
         if self._lock is None:
@@ -437,6 +477,7 @@ class MachineEventWalSink:
     async def stop(self) -> None:
         """Stop accepting, give the flusher `STOP_GRACE_S` to drain, cancel it and drop the lock.
         What Postgres does not hold yet stays durable in the WAL for the next start."""
+        self._on_its_loop()
         self._accepting = False
         task, self._task = self._task, None
         if task is not None and not task.done():
@@ -460,6 +501,7 @@ class MachineEventWalSink:
     def append(self, row: MachineEventRow) -> None:
         """Durably append one row: when this returns its frame is written and `fsync`'d. Raises
         `MachineEventRejected` (nothing written) or `MachineEventUnavailable` (fail closed)."""
+        self._on_its_loop()
         if self._failure is not None:
             raise MachineEventUnavailable(
                 f"the machine-event flusher died ({type(self._failure).__name__})"

@@ -4,8 +4,10 @@ Demo and live keys share the database, each environment on its own KEK lineage (
 process stages v1 to v2 and the Owner's `POST /admin/keys/kek-rewrap` goes through the real CSRF,
 step-up and RBAC middleware (`tests/unit/api/test_admin_kek.py`'s world) to M2 on
 `SqlAlchemyCredentialStore`; M2's write-ahead records go through a real `AuditWriter`. Every
-Postgres call runs on the app's loop (`portal.call`). Needs Docker (testcontainers); CI
-`integration` runs it.
+Postgres call runs on the app's loop (`portal.call`), and the writer is built on it too: a writer
+serves the loop it is built on and refuses a call from any other (D6), as the app's own is built
+by `AuditService.start()` on the serving loop. Needs Docker (testcontainers); CI `integration`
+runs it.
 """
 
 from __future__ import annotations
@@ -90,11 +92,11 @@ async def test_a_staged_rotation_runs_end_to_end_through_the_route(
 ) -> None:
     rel = SqlAlchemyRelationalRepository(pg_dsn, "it-kek")
     store = SqlAlchemyCredentialStore(rel, audit_row=_audit_row)
-    writer = AuditWriter(SqlAlchemyAuditRepository(rel), str(tmp_path / "audit.wal"))
+    audit = SimpleNamespace(writer=None)  # M2's sink reads `audit.writer` per call, as in the app
     staged = SecretsService(  # the rotation boot, its own records through the real writer
         store=store,
         kcv_store=store,
-        audit=secrets_audit_sink(cast(Any, SimpleNamespace(writer=writer))),
+        audit=secrets_audit_sink(cast(Any, audit)),
         sources=_bound_sources(_Src(KEK_V2, 2), _Src(KEK_V1, 1)),
         harden=lambda: True,
         auth_keys=SqlAlchemyAuthKeyStore(rel, env="demo"),
@@ -105,6 +107,8 @@ async def test_a_staged_rotation_runs_end_to_end_through_the_route(
     with TestClient(w.client.app, client=("127.0.0.1", 50000)) as client:
         assert client.portal is not None
         w.client, run = client, client.portal.call  # one loop for every Postgres call
+        repo, wal = SqlAlchemyAuditRepository(rel), str(tmp_path / "audit.wal")
+        audit.writer = writer = run(AuditWriter, repo, wal)  # D6: built on the loop it serves
         run(writer.start)
         live = run(_stored, store, pg_dsn, "live", _Src(KEK_LIVE, 1), 1)
         demo = run(_stored, store, pg_dsn, "demo", _Src(KEK_V1, 1), 2)

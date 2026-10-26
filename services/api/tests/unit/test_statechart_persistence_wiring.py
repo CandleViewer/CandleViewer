@@ -22,6 +22,7 @@ from structlog.testing import capture_logs
 import candleviewer.admin_wiring as admin_wiring
 import candleviewer.app as app_module
 from candleviewer.app import create_app
+from candleviewer.audit.machine_events import MachineEventWrongLoop
 from candleviewer.settings import Settings
 from candleviewer.statechart.config import LANES
 from candleviewer.statechart.gateway import ALWAYS_ADMIT
@@ -290,14 +291,42 @@ def test_the_bundle_repr_names_neither_the_keys_nor_the_pool(tmp_path: Path) -> 
     assert "persister=" in text  # the rest of the repr is kept
 
 
-def test_a_direct_plugin_build_for_an_unseeded_key_is_refused(
+async def test_a_direct_plugin_build_for_an_unseeded_key_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """security-2: the synchronous builder refuses a key whose head the sink does not hold: its
-    first row would chain from the genesis and fork a stored chain. After a seed it builds."""
+    first row would chain from the genesis and fork a stored chain. After a seed it builds. On the
+    loop the app was built on, as `plugins_for` and a restore's `prepare` build: the sink serves
+    that loop alone (D6, #913 L2)."""
     bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
     with pytest.raises(ChainSeedError, match="unseeded") as refused:
         bundle.plugins(KEY, "control")
     assert refused.value.key == KEY
     monkeypatch.setattr(bundle.sink, "head", lambda key: GENESIS_HASH)
     assert len(bundle.plugins(KEY, "control")) == 3
+
+
+def test_the_bundles_sink_built_outside_a_loop_serves_the_loop_that_starts_it(
+    tmp_path: Path,
+) -> None:
+    """SEC-S3L2-07 (#913 L2, the Fable lens at 864fa082): `main.py` builds the app at import,
+    outside any loop, and with it the bundle's sink, which a first caller no longer binds: before
+    the lifespan's `start()` a read is refused on any loop; started, the sink serves that loop, its
+    reads and its stop included, and refuses another."""
+    bundle = create_app(_real(tmp_path), hmac_keys=FixedKeys()).state.statechart_persistence
+
+    async def head() -> str | None:
+        return bundle.sink.head(KEY)
+
+    async def lifespan() -> None:
+        with pytest.raises(MachineEventWrongLoop):  # bound to no loop until its start
+            await head()
+        await bundle.start()
+        try:
+            assert await head() is None  # this loop serves it now
+            with pytest.raises(MachineEventWrongLoop):
+                await asyncio.to_thread(asyncio.run, head())
+        finally:
+            await bundle.stop()
+
+    asyncio.run(lifespan())
