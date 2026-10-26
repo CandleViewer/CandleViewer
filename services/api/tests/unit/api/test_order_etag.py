@@ -34,7 +34,9 @@ def test_order_etag_refuses_a_seq_no_order_holds(seq: int) -> None:
 
 
 def test_expected_seq_without_if_match_checks_no_version() -> None:
-    """22 `IfMatch`: omitting it accepts last-write-wins (ruling Q5, D3)."""
+    """22 `OrderIfMatch`: an absent `If-Match` names no tag's version, and the exit service sends
+    the version it judged the amend at, never last-write-wins (ruling Q5 as amended,
+    SEC-S4C2B-01)."""
     assert expected_seq(None, ORDER) is None
 
 

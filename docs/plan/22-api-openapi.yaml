@@ -5745,7 +5745,11 @@ paths:
           `validated`, answers that `503` too: this request sends nothing and leaves its anchor
           undecided, and a `submitting` row whose commit was lost is resumed by a restart's
           hydration, under its persisted `orderLinkId`: looked up first, and sent again only
-          within its re-send bound (24-internal-schemas.md section 8.3 rule 6). A store failure
+          within its re-send bound (24-internal-schemas.md section 8.3 rule 6). This route's own
+          `503 store_unavailable` carries neither `Retry-After` nor `retry_after_seconds`, unlike
+          the shared `storeUnavailable` example. A `503 store_unavailable` from a check ahead of
+          the route is that check's own: the "Enrolment-only session" check's carries
+          `Retry-After: 5`, the "Idle lock" and "View-as session" checks' none. A store failure
           after the send is never a `503`: the request answers its outcome, `202` with the order's
           last known state or the `502`.
         * An entry's stop request is recorded with its order, one stop request in flight per
@@ -5835,8 +5839,8 @@ paths:
             Accepted into the OMS, never a fill: every order the request created, with its state
             (`OrderAcceptance`), and its `ETag` (`OrderETag`) for `If-Match` on `amendOrder`, on
             the first answer and on both replays, the 24 h record's stored tag and the anchor's
-            current one; an order already final carries none (#913 slice 4 ruling Q5). It is sent
-            once `amendOrder` is served (E29-T04 slice 4, S4-D2); until then the `202` carries none.
+            current one; an order already final carries none (#913 slice 4 ruling Q5). The tag is
+            read once the step the body renders has returned, so it may name a later step.
           headers:
             Idempotency-Replayed: { $ref: "#/components/headers/IdempotencyReplayed" }
             ETag: { $ref: "#/components/headers/OrderETag" }
@@ -5899,6 +5903,7 @@ paths:
                       environment: live
                     reconciling: true
         "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
         "409":
@@ -6085,7 +6090,7 @@ paths:
       parameters:
         - $ref: "#/components/parameters/CsrfToken"
         - $ref: "#/components/parameters/IdempotencyKeyRequired"
-        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/OrderIfMatch"
         - $ref: "#/components/parameters/ArmToken"
       requestBody:
         required: true
@@ -6247,9 +6252,10 @@ paths:
         `idempotency_in_flight` with `Retry-After: 1`, as an order's conflicts are reported in
         `results`, never as a `409`; `429 rate_limited` with `Retry-After: 1` when the in-flight
         guard holds all its keys, or all the caller's share of them, nothing sent
-        (24-internal-schemas.md section 8.4 step 9); `501 not_implemented` until the route is
-        wired; and `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913
-        slice 4, the rulings of 2026-10-24 11:31Z to 11:45Z).
+        (24-internal-schemas.md section 8.4 step 9); `501 not_implemented` from a deployment that
+        composes no OMS (the fake backend), nothing read, recorded or sent; and
+        `503 store_unavailable` when the scope itself cannot be read, nothing sent (#913 slice 4,
+        the rulings of 2026-10-24 11:31Z to 11:45Z).
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       x-idempotency: required
       parameters:
@@ -14741,6 +14747,21 @@ components:
         unparseable value or another resource's tag (another profile's, a profile's sent to the
         default binding, or another account's binding tag) is `412 version_conflict`,
         never a match.
+      schema: { type: string }
+    OrderIfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: >
+        `amendOrder`'s precondition: the order's `ETag` (`OrderETag`) from an answer about it,
+        `placeOrder`'s `202` or `amendOrder`'s. With it the amend applies to that version alone:
+        an order that has taken a step since is refused with `412 version_conflict`, nothing sent,
+        and so are `*`, a list of tags, a weak or unparseable tag and another order's tag.
+        Omitting it is not last-write-wins: the amend carries the version it was judged at, and an
+        order that took a step meanwhile is refused with `409 conflict` and `Retry-After: 1`,
+        nothing sent, never with `412`, which answers the client's own tag alone. A step into a
+        state that takes no amend is `422 order_not_amendable` either way (ruling Q5, as amended on
+        2026-10-24: SEC-S4C2B-01; `amendOrder` gives the order of the checks).
       schema: { type: string }
     UserId:
       name: userId
