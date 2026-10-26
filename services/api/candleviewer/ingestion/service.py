@@ -112,6 +112,9 @@ class IngestionService:
         #: (ClockGuard's offset in ms once E08 wires it; None = unmeasured).
         self.latency: StageRecorder | None = None
         self.clock_offset_ms: Callable[[], int | None] = lambda: 0
+        #: #913 L1d: the guard's offset as a reader on another loop takes it (`offset_ms_snapshot`,
+        #: the order lane's port): None until a guard is attached and has measured, never 0.
+        self.clock_offset_snapshot_ms: Callable[[], int | None] = lambda: None
         self.clock: ClockGuard | None = None
         self._closers: list[Callable[[], Awaitable[None]]] = []
         #: E08-S03: ticker demand/merge/publish, attached with the public WS.
@@ -143,6 +146,7 @@ class IngestionService:
         `/v5/market/time`) feeds every `on_event`/`record` call."""
         self.clock = guard
         self.clock_offset_ms = guard.offset_ms_or_none
+        self.clock_offset_snapshot_ms = guard.offset_ms_snapshot
 
     def attach_closer(self, closer: Callable[[], Awaitable[None]]) -> None:
         """Resource (e.g. the clock REST client) to close on `stop()`."""

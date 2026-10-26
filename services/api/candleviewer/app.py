@@ -944,7 +944,22 @@ def _build_secrets(settings: Settings, audit: AuditHandle) -> SecretsBundle:
     keyring = SqlAlchemyAuthKeyStore(relational, env=settings.environment.value)
     # #889: boot opens or generates the signing key; a re-wrap counts it, an enrolment may trial it.
     keys = SqlAlchemyExportKeyStore(relational, env=settings.environment.value, audit_row=audit_row)
-    return build_secrets_service(store, store, audit, auth_keys=keyring, export_keys=keys)
+
+    def loop_store(
+        connections: int,
+    ) -> tuple[SqlAlchemyCredentialStore, Callable[[], Awaitable[None]]]:
+        # #913 L1d (Q10): the order lane's credential reads, over a small lazy pool of their own,
+        # which M2 alone builds on the lane's loop, holds, and frees once its signing closes. The
+        # DSN is unwrapped here, at the call: the closure keeps `settings`, never the plaintext.
+        dsn = settings.pg_dsn.get_secret_value()
+        pool = SqlAlchemyRelationalRepository(
+            dsn, "oms-secrets", pool_size=connections, max_overflow=0
+        )
+        return SqlAlchemyCredentialStore(pool), pool.dispose
+
+    return build_secrets_service(
+        store, store, audit, auth_keys=keyring, export_keys=keys, loop_store=loop_store
+    )
 
 
 def _record_factory(model: Any) -> Callable[..., Any]:

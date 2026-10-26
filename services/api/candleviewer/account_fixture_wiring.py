@@ -68,6 +68,13 @@ class AccountFixture(Protocol):
     @property
     def private_ws_connect(self) -> Callable[[str], Awaitable[PrivateSocket]]: ...
 
+    def lane_rest_transport(self) -> httpx.AsyncBaseTransport:
+        """#913 L1d: a REST transport for the order lane's loop, which the root builds there and
+        closes there, since no transport is shared across loops (L3b): a new one at each call,
+        never `rest_transport`, which the adapter's `lane_trading_port` refuses. It refuses every
+        request, armed or not; whether it opens with the adapter's door (#4585) is L1d-1's."""
+        ...
+
 
 def build_account_fixture(settings: Settings) -> AccountFixture | None:
     """The fixture handle for `create_app()`: None unless `CV_ACCOUNT_FIXTURE` is set.

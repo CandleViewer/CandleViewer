@@ -11,6 +11,7 @@ from candleviewer.exchange.base.frame_guard import MAX_FUTURE_SKEW_MS, FrameReje
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.ingestion.metrics import clock_resync_triggered_total
 from candleviewer.ingestion.rejection import EventWindow, corrected_now_us
+from candleviewer.ingestion.service import IngestionService
 from candleviewer.observability.logging import configure_logging
 
 _S = 1_000_000
@@ -293,6 +294,47 @@ async def test_offset_ms_or_none_includes_host_step() -> None:
     await guard.measure_once()
     clocks.step(-10)
     assert guard.offset_ms_or_none() == 10_000
+
+
+async def test_the_offset_snapshot_reads_the_verified_offset_and_never_checks_a_host_step() -> None:
+    """#913 L1d (CR-S3L1B-09, ruling Q4): the order lane's reader, called on its own loop. `None`
+    until the guard has measured, never a fabricated 0, and the service's alike until a guard is
+    attached; then the offset as the serving loop's reads left it: a host step none of them has
+    seen is not folded in, nothing is counted and no resync is spawned on the calling loop."""
+    clocks, fetches, service = _Clocks(), list[int](), IngestionService()
+    guard = _guard(clocks, fetches)
+    assert service.clock_offset_snapshot_ms() is None and guard.offset_ms_snapshot() is None
+    service.attach_clock(guard)
+    assert service.clock_offset_snapshot_ms() is None  # attached, never measured
+    await guard.measure_once()
+    clocks.step(-10)
+    steps, fetched = _steps(), len(fetches)
+    assert service.clock_offset_snapshot_ms() == guard.offset_ms_snapshot() == 0
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert (_steps(), len(fetches)) == (steps, fetched)  # no host-step check ran
+    assert guard.offset_ms_or_none() == 10_000  # a serving read folds the step in
+    assert service.clock_offset_snapshot_ms() == 10_000
+
+
+async def test_the_offset_snapshot_floors_a_sub_millisecond_offset_as_the_serving_read() -> None:
+    """#913 L1d: a venue 0.5 ms behind the host is an offset of -1 ms in the snapshot, floored as
+    `offset_ms_or_none` floors it, never truncated to 0."""
+    clocks = _Clocks()
+
+    async def behind() -> tuple[int, float, float]:
+        return (clocks.wall() // 1000 - 500, clocks.wall() / 1e9, 0.0)
+
+    guard = ClockGuard(
+        behind,
+        sample_count=1,
+        wall_ns=clocks.wall,
+        mono_ns=clocks.mono,
+        step_check_interval_ms=0,
+        sleep=_no_sleep,
+    )
+    await guard.measure_once()
+    assert guard.offset_ms_snapshot() == guard.offset_ms_or_none() == -1
 
 
 async def test_periodic_failure_log_survives_logging_reconfiguration() -> None:

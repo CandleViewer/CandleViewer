@@ -10,7 +10,7 @@ import hmac
 import sys
 import threading
 import weakref
-from collections.abc import Iterator
+from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -18,7 +18,6 @@ import httpx
 import pytest
 import structlog
 
-from candleviewer.admin.wiring import build_secrets_service, secrets_bundle
 from candleviewer.exchange.base.models import CancelOrderRequest
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.secrets import KEY_ID_SLOT, Secret, _envelope, _kek, broker, candidate, service
@@ -99,6 +98,10 @@ class _Side:
             raise RuntimeError("audit down")
 
 
+async def _no_pool() -> None:
+    """The dispose of a side's pool: the sides share in-memory rows, so there is none."""
+
+
 async def _stored(broker: Any, secret: str = v.API_SECRET) -> Any:
     meta = await broker.store(
         "demo", v.ACCOUNT, "main", Secret(v.API_KEY), Secret(secret), v.SNAPSHOT
@@ -151,8 +154,12 @@ class _Rig:
         mp.setattr(_envelope, "seal", self._guarded(_envelope.seal))  # the seal and its wrap
         self.key_id = self.serving.run(_stored(self.broker))
         self.served = service.mint_borrower(self.svc, "exchange_adapter")
-        self.bind = service.mint_loop_signing(self.svc, "exchange_adapter")
-        self.signing = self.lane.run(_on(self.bind, self.sides["lane"], self.sides["lane"]))
+        self.bind = service.mint_loop_signing(self.svc, "exchange_adapter", loop_store=self._store)
+        self.signing = self.lane.run(_on(self.bind, self.sides["lane"]))
+
+    def _store(self, _connections: int) -> tuple[_Side, Callable[[], Awaitable[None]]]:
+        """M2's factory of the lane's own store: the lane's side, which has no pool to free."""
+        return self.sides["lane"], _no_pool
 
     def _guarded(self, call: Any, held: bool = True) -> Any:
         """`call`, noting a miss unless the guard is held, or for the MAC (`held=False`) not."""
@@ -337,13 +344,18 @@ def test_the_serving_close_returns_at_once_while_the_lane_stalls(rig: _Rig) -> N
 def test_a_finished_loop_is_freed_and_leaves_the_registry(rig: _Rig, closed: bool) -> None:
     extra = _Loop()
     side = _Side("extra", rig.sides["lane"].rows, rig, extra.loop)
-    signing = extra.run(_on(rig.bind, side, side))
+
+    def own(_connections: int, store: _Side = side) -> tuple[_Side, Callable[[], Awaitable[None]]]:
+        return store, _no_pool  # the extra loop's own side, which has no pool to free
+
+    bind = service.mint_loop_signing(rig.svc, "exchange_adapter", loop_store=own)
+    signing = extra.run(_on(bind, side))
     extra.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
     if closed:
         extra.run(signing.aclose())
     assert extra.close()
     gone = weakref.ref(extra.loop)
-    del extra, signing, side
+    del extra, signing, side, bind, own
     rig.ios.clear()
     gc.collect()
     with rig.guard:
@@ -460,33 +472,6 @@ def test_the_loop_signing_is_minted_for_the_adapter_only_and_never_subclassed() 
         service.mint_loop_signing(service.SecretsService(), "oms")
     with pytest.raises(TypeError, match="may not be subclassed"):
         type("Evil", (service.LoopSigning,), {"__module__": "candleviewer.oms.evil"})
-
-
-def test_the_bundle_binds_on_a_loop_only_and_records_through_that_loops_audit(rig: _Rig) -> None:
-    emitted: list[tuple[str, dict[str, Any]]] = []
-
-    async def emit(action: str, **columns: Any) -> None:
-        emitted.append((action, columns))
-
-    audit: Any = type("Audit", (), {"writer": type("Writer", (), {"emit": staticmethod(emit)})})
-    bind, lane = secrets_bundle(rig.svc).loop_signing, rig.sides["lane"]
-    with pytest.raises(RuntimeError, match="no running event loop"):
-        bind(store=lane, audit=audit)
-    signing = rig.lane.run(_on(lambda: bind(store=lane, audit=audit)))
-    rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
-    ((action, columns),) = emitted
-    assert (action, columns["actor_label"], columns["object_id"]) == (
-        BORROWED, "system:exchange_adapter", str(rig.key_id)
-    )  # fmt: skip
-
-
-@pytest.mark.parametrize("shared", ["store", "audit"])
-def test_a_lane_bound_to_the_serving_loops_store_or_audit_is_refused(shared: str) -> None:
-    serving: dict[str, Any] = {"store": InMemoryCredentialStore(), "audit": object()}
-    bind = build_secrets_service(serving["store"], serving["store"], serving["audit"]).loop_signing
-    lane = {"store": InMemoryCredentialStore(), "audit": object(), shared: serving[shared]}
-    with pytest.raises(ValueError, match="never the serving loop's"):
-        bind(**lane)
 
 
 def test_a_lane_port_signs_on_the_lane_loop_through_the_lanes_store_and_sink(rig: _Rig) -> None:

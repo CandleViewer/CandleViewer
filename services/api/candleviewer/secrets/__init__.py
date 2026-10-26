@@ -14,7 +14,8 @@ its `CandidateSigner`, a `SigningCapability`, and stores it only after the check
 `audit`'s ports (#889, ADR-0039 decision 3): a signature and public key material, never a seed.
 It mints `SigningKeyRotator` for `admin` too (#889 S7): the signing key's rotation, which answers
 with public key material, or `ExportKeyRotationError`; and `RotationRunning` for the export route
-(#889 S10): whether a rotation runs, a bool; and `LoopSigning`, the order lane's (#913 L3b).
+(#889 S10): whether a rotation runs, a bool; and `LoopSigning`, the order lane's (#913 L3b), over
+a store M2 builds with the root's `LoopStoreFactory` (#913 L1d).
 """
 
 from __future__ import annotations
@@ -38,6 +39,7 @@ from candleviewer.secrets.secret import Secret
 from candleviewer.secrets.service import (
     CredentialBorrower,
     LoopSigning,
+    LoopStoreFactory,
     SecretsLifecycle,
     SecretsLifecycleFacade,
     SecretsMetadata,
@@ -80,6 +82,7 @@ __all__ = [
     "KekSourceNotPermitted",
     "KekUnavailable",
     "LoopSigning",
+    "LoopStoreFactory",
     "Purpose",
     "RequestSignature",
     "RewrapReport",

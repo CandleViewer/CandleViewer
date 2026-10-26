@@ -52,6 +52,7 @@ from candleviewer.secrets import (
     ExportSigner,
     KcvStore,
     LoopSigning,
+    LoopStoreFactory,
     RotationRunning,
     SecretsError,
     SecretsLifecycle,
@@ -81,11 +82,37 @@ SecretsMeta = SecretsMetadata
 LoopSigningHandle = LoopSigning
 
 
-class LoopSigningBinder(Protocol):
-    """`SecretsBundle.loop_signing` (#913 L3b): called on the order lane's loop with that loop's
-    own credential store and audit service, never the serving loop's, it binds signing there."""
+class LaneAuditWriter(Protocol):
+    """`AuditWriter.emit`, the durable append M2 writes its records ahead through (C-2.9), as the
+    order lane holds its own writer (#913 L1d): L2's lane writer or, until it lands, the OMS's hop
+    to the serving loop's writer, never that writer itself. Each parameter is the writer's, of its
+    kind and with its default."""
 
-    def __call__(self, *, store: CredentialStore, audit: AuditService) -> LoopSigning: ...
+    async def emit(
+        self,
+        action: str,
+        *,
+        actor_label: str,
+        actor_user_id: str | uuid.UUID | None = None,
+        actor_ip: str | None = None,
+        session_id: str | uuid.UUID | None = None,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        outcome: AuditOutcome = AuditOutcome.SUCCESS,
+        severity: Severity = Severity.INFO,
+        reason: str | None = None,
+        after_state: dict[str, Any] | None = None,
+        request_id: str | uuid.UUID | None = None,
+        env: ExchangeEnv | None = None,
+    ) -> None: ...
+
+
+class LaneSigningBinder(Protocol):
+    """`SecretsBundle.lane_signing` (#913 L1d): called on the order lane's loop with the lane's own
+    audit writer, never the serving loop's, it binds signing there over a credential store M2
+    builds on that loop and alone holds; `LoopSigning.aclose` closes it, then frees its pool."""
+
+    def __call__(self, *, audit: LaneAuditWriter) -> LoopSigning: ...
 
 
 @dataclass(frozen=True)
@@ -94,8 +121,8 @@ class SecretsBundle:
     and its key directory are `audit`'s ports, for the export job (#889, ADR-0039), the directory
     also for `listAuditSigningKeys` and the export's own `503`, the rotator is `admin`'s, for
     `rotateAuditSigningKey`, and the running rotation the export route's, for its own `409`.
-    `loop_signing(store=, audit=)`, called on the order lane's loop with the lane's own store and
-    audit service, binds signing to it (#913)."""
+    `lane_signing(audit=)`, called on the order lane's loop with the lane's own audit writer, binds
+    signing there (#913 L3b) over a credential store M2 builds on that loop (#913 L1d)."""
 
     lifecycle: SecretsLifecycle
     metadata: SecretsMetadata
@@ -105,14 +132,15 @@ class SecretsBundle:
     signing_keys: SigningKeyDirectory
     signing_key_rotator: SigningKeyRotator
     rotation_running: RotationRunning
-    loop_signing: LoopSigningBinder
+    lane_signing: LaneSigningBinder
 
 
 __all__ = [
     "AuditHandle",
     "AuditVerifyRunner",
+    "LaneAuditWriter",
     "LaneNotWired",
-    "LoopSigningBinder",
+    "LaneSigningBinder",
     "LoopSigningHandle",
     "MachineEventSinkHandle",
     "MachineEventSinkMetrics",
@@ -201,6 +229,16 @@ def secrets_audit_sink(audit: AuditService) -> Callable[[str, dict[str, str]], A
     return sink
 
 
+def _lane_audit_sink(writer: LaneAuditWriter) -> Callable[[str, dict[str, str]], Awaitable[None]]:
+    """M2 audit port -> the order lane's own durable `emit` (write-ahead, C-2.9), the columns
+    `secrets_audit_sink` writes through a service (#913 L1d)."""
+
+    async def sink(action: str, fields: dict[str, str]) -> None:
+        await writer.emit(action, **_secrets_audit_columns(action, fields))
+
+    return sink
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -235,12 +273,14 @@ def build_secrets_service(
     audit: AuditService | None = None,
     auth_keys: AuthKeyStore | None = None,
     export_keys: ExportKeyStore | None = None,
+    *,
+    loop_store: LoopStoreFactory | None = None,
 ) -> SecretsBundle:
     """Construct M2 once and split it into narrow capabilities. No I/O; the KEK is loaded in
     `start()`. Without an injected store (fake backend) every credential op fails closed. A KEK
     re-wrap run counts `auth_keys`, the environment's auth keyring, and `export_keys`, its audit
     export signing keys, which boot opens or generates, and is never complete without both
-    (#3505; #889)."""
+    (#3505; #889). `loop_store` builds the order lane's own credential store; only M2 calls it."""
     sink = secrets_audit_sink(audit) if audit is not None else None
     if store is None or kcv_store is None:
         svc = SecretsService(audit=sink)  # no store: fail closed, but still audited (C-2.9)
@@ -249,21 +289,27 @@ def build_secrets_service(
             store=store, kcv_store=kcv_store, audit=sink, auth_keys=auth_keys,
             export_keys=export_keys,
         )  # fmt: skip
-    return secrets_bundle(svc, serving=(store, audit))
+    return secrets_bundle(svc, serving=audit, loop_store=loop_store)
+
+
+def _serving_writer(audit: object) -> object:
+    """The serving loop's audit writer behind its service, once started; else None."""
+    return audit.writer if isinstance(audit, AuditService) and audit.is_active else None
 
 
 def secrets_bundle(
-    svc: SecretsService, *, serving: tuple[object, object] = (None, None)
+    svc: SecretsService, *, serving: object = None, loop_store: LoopStoreFactory | None = None
 ) -> SecretsBundle:
     """Every capability of `svc`, each minted here: `build_secrets_service`'s, and a test's that
-    builds a service of its own. `serving` is the serving loop's credential store and audit
-    service: bound to that loop, `loop_signing` refuses them to a lane (#913 L3b)."""
-    bind = mint_loop_signing(svc, "exchange_adapter")
+    builds a service of its own. `serving` is the serving loop's audit service: bound to that
+    loop, `lane_signing` refuses it and its writer to the lane (#913 L3b), whose store M2 builds
+    with `loop_store`, never the serving loop's (#913 L1d)."""
+    bind = mint_loop_signing(svc, "exchange_adapter", loop_store=loop_store)
 
-    def loop_signing(*, store: CredentialStore, audit: AuditService) -> LoopSigning:
-        if store is serving[0] or audit is serving[1]:
-            raise ValueError("the lane's store and audit are its own, never the serving loop's")
-        return bind(store, secrets_audit_sink(audit))  # M2's sink: built here (C-2.9)
+    def lane_signing(*, audit: LaneAuditWriter) -> LoopSigning:
+        if audit is serving or audit is _serving_writer(serving):
+            raise ValueError("the lane's audit writer is its own, never the serving loop's")
+        return bind(_lane_audit_sink(audit))  # M2's sink, built here (C-2.9), over M2's store
 
     return SecretsBundle(
         SecretsLifecycleFacade(svc),
@@ -274,7 +320,7 @@ def secrets_bundle(
         _SigningKeyDirectory(mint_signing_keys(svc)),
         mint_signing_key_rotator(svc),
         mint_rotation_running(svc),
-        loop_signing,
+        lane_signing,
     )
 
 
