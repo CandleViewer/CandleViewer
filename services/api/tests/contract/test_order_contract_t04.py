@@ -25,6 +25,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from candleviewer.accounts.sizer import FailReason, SkipReason
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
@@ -828,9 +829,13 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
         "one (`ExchangeCapabilities.supports_reduce_only_tpsl`",
         "is refused with `validation_failed` / `reduce_only_tpsl`, one `errors[]` item per side, "
         "before anything is recorded or sent",
-        "`sizing.mode` `profile` sizes by the profile; another mode overlays the request's values "
-        "onto a copy of the profile, judged as a resulting leg and refused whole, never clamped",
-        "an overlay that widens the profile is refused whole (ADR-0040), never clamped",
+        "`sizing.mode` `profile` sizes by the profile; another mode, except `pct_position`, "
+        "overlays the request's values onto a copy of the profile, judged by `judge_leg` "
+        "(24-internal-schemas.md section 9.3.2a) as a resulting leg and refused whole, never "
+        "clamped, when it goes past the profile's caps (ADR-0040; #913 S4-S ruling Q2)",
+        "`pct_position` on an order that is not reduce-only, is `validation_failed` / "
+        "`sizing_mode_unsupported`; `pct_position` on a reduce-only one is refused the same way "
+        "until the position read reaches the size step (an interim)",
         "an `atr` stop uses `fallback_sl_offset_pct`, recorded as `stop_fallback`",
         "until the E13 kernel port reaches `oms`",
         "a profile with no fallback fails closed",
@@ -911,8 +916,8 @@ def test_place_order_states_the_price_band_its_setting_and_rule() -> None:
         "ref \N{MULTIPLICATION SIGN} (1 + b)]`, `ref` the market's mid price, else its last "
         "price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to "
         "`0.20`, with no off value; `20-architecture.md` section 7.2)",
-        "A per-profile value, when the profile carries one, is bounded the same way: inside "
-        "`0.005` to `0.20`, the setting being the default",
+        "A per-profile value, when the profile carries one, is allowed only inside `0.005` to "
+        "`0.20`; a value outside is refused at save, never clamped, the setting being the default",
         "A conditional entry, market or limit, has its `trigger.price` judged against `ref`, and "
         "the limit `price` behind a trigger is judged too, against its trigger price, with the "
         "same `b`",
@@ -945,6 +950,7 @@ def test_place_order_maps_each_sizer_outcome_to_one_answer() -> None:
             answers[outcome] = answer.split(",", 1)[0].split(" with ", 1)[0].split(" on ", 1)[0]
     reasons = set(re.findall(r"`([a-z_]+)`", _between(_INTERNAL_DOC, "| `skip` |", "\n\n")))
     assert set(answers) == reasons - {"fail"}  # the kind's own cell is no reason
+    assert set(answers) == {str(r) for r in SkipReason} | {str(r) for r in FailReason}
     assert answers == {
         "profile_disabled": "`403 risk_limit_breached`",
         "symbol_not_allowed": "`403 risk_limit_breached`",
@@ -978,6 +984,11 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
         _words(figures),
         'an announced interim, `DayRiskFigures` (`oms_interim_ports{port="risk_figures"}`',
         "It serves demo and testnet accounts only and refuses `live` at construction",
+        "the cached committed-risk figure is dropped on every accepted send on the account, so "
+        "no two entries inside the cache window are sized against the same room",
+        "On a live process nothing serves `risk_figures`, so every figure is unknown and every "
+        "live entry is `figure_unknown`, answered `503 sizing_unavailable`, until E39-T01",
+        "Until E39-T01 (#881) serves real day figures",
         "the recorded stop or, without one, the profile's fallback distance (which errs high)",
         "`taker_fee_rate` is the venue's fee rate per (account, symbol), cached for seconds",
         "E39-T01 (#881) replaces the counters; the fee source stays",
@@ -989,5 +1000,13 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
         "`risk_figures`, the demo and testnet `DayRiskFigures`, which refuses `live` at "
         "construction",
         "`atr`, an `atr` stop's `fallback_sl_offset_pct` until the E13 kernel port reaches `oms`",
+        "`stop_resolver`, `risk_gate`, `arm_records` and `sizer`, until S4-S-b2 retires it",
+        "`risk_figures` at 1 on a live process means every live entry is refused "
+        "`503 sizing_unavailable` (dashboard)",
     )
+    assert "E39-S01 serves real day figures" not in _INTERNAL_DOC
+    assert "Planned (wired by `oms.submit`'s size step) for a single order" in _ARCH
+    assert "0.005-0.20, no off value (C-4.14)     |" in _ARCH
+    pct = _SCHEMAS["SizingMode"]["description"]
+    assert "`placeOrder` refuses it (`sizing_mode_unsupported`) until the position read" in pct
     assert 'oms_interim_ports{port="atr"}' in _words(_INTERNAL_DOC.split("**9.3.5 ", 1)[0])
