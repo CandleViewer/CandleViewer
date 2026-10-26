@@ -10,10 +10,11 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import UUID
 
-from candleviewer.exchange.base.models import Execution, PrivateEvent
+from candleviewer.exchange.base.models import Execution, Order, PrivateEvent
 from candleviewer.oms.pairing import ToRecordedStop
 from candleviewer.oms.push_mapping import ForPairing, route
 from candleviewer.oms.stream_push import StreamPushes
+from candleviewer.storage.repositories.orders import OrderRow
 
 GUARD_S = 2.0  # real seconds: the only wall clock, and only ever a failing test's
 XID = "9aac161b-8ed6-450d-9cab-c5cc67c21784"
@@ -35,6 +36,8 @@ class Rig:
     counts: list[str] = field(default_factory=list)
     pages: list[str] = field(default_factory=list)
     taken: list[ToRecordedStop] = field(default_factory=list)
+    successors: list[tuple[UUID, str]] = field(default_factory=list)  # (row id, order status)
+    trace: list[str] = field(default_factory=list)  # the pushes' events and the successor, in order
     opened: list[tuple[str, str]] = field(default_factory=list)
     stalled: asyncio.Event = field(default_factory=asyncio.Event)  # set once a port hangs
     _shared: StreamPushes | None = None
@@ -42,6 +45,7 @@ class Rig:
     def streams(self, **kw: Any) -> StreamPushes:
         ports: dict[str, Any] = dict.fromkeys(("target", "reads", "fill_orders", "lockout"), self)
         ports |= dict.fromkeys(("handovers", "stops", "no_intent", "counts", "pager"), self)
+        ports["successors"] = self
         return StreamPushes(**(ports | {"monotonic": lambda: self.now} | kw))
 
     async def run(self, ev: PrivateEvent, **kw: Any) -> None:
@@ -81,6 +85,7 @@ class Rig:
     async def push(self, account_id: UUID, order_id: UUID, event: str, payload: Any) -> None:
         self.calls.append("push")
         self.pushed.append((order_id, event, dict(payload)))
+        self.trace.append(event)
         await self._stall("push")
         if self.push_errors:
             raise self.push_errors.pop(0)
@@ -113,6 +118,12 @@ class Rig:
     async def after_bind(self, account_id: UUID, decision: ToRecordedStop) -> None:
         self.calls.append("after_bind")
         await self._hit_raise("after_bind")
+
+    async def check(self, account_id: UUID, row: OrderRow, order: Order) -> None:
+        """The successor's check (S7b): noted apart from `calls`; `raises` and `hang` script it."""
+        self.successors.append((row.id, order.state))
+        self.trace.append("successor")
+        await self._hit_raise("successor")
 
     async def _stall(self, name: str) -> None:
         if name in self.hang:

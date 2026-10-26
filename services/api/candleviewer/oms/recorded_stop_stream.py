@@ -44,6 +44,24 @@ ends once its order is bound (on its order push, or on its fill, which sizes the
 Both raise nothing but `CancelledError`. Logs carry ids, a kind and an outcome only: never a price,
 a size or the push's link id (C-12.6). Nothing here imports the facade or the statechart.
 
+**The successor's bind (S7b; 24 Sec.8.12, Sec.8.3 rule 7, Sec.15.5).** `Successor.check` runs on
+every order push to a bound recorded stop's row whose order is live or ended `filled`, after its
+terms step: it reads the record bound to the order and the key's live records, each bounded at
+`PORT_TIMEOUT_S`, and when a record later than the bound one (by `created_at`, then `id`) matches
+the push (`pairing.matching_record`), it releases the bound one and binds the later in one
+transaction (the recorded-stop facade's `release_and_bind`), stamped on the OMS's clock and written
+ahead (`sl.modified` or `tp.modified`, reason `successor_bind`, keyed, ids only), bounded at
+`RELEASE_BOUND_S`. A record that has ended keeps its order, and so does one whose order ended
+other than `filled`. A write refused (`RecordedStopNotBindable`), failed or cut short decides
+nothing: the record bound to the order is read again and logged by id, and nothing acts on what
+the write may have done. A bind then runs the projection's record hook for the key (`after_bind`).
+Two guards keep a push from moving a binding it should not (the security lens): a push older, by
+the venue's `updated_at`, than the newest one the check met for the order is stale and decides
+nothing (the facade ignores such a step and answers as for one it took, so the stream cannot learn
+it there), and an entry's attach (`entry_attach`) is never a successor, as its stop arrives as a
+new order at the entry's fill, never as an in-place change of a bound one (the first bind, in
+`pairing.first_bindable`, takes one only for an order the venue created after it).
+
 Known residual (the orchestrator's Q3 ruling): `Order` carries no trail, so a fired native trail
 the OMS recorded never reaches here; it reads as no OMS intent until E29-K01 (`oms.pairing`).
 """
@@ -53,6 +71,7 @@ from __future__ import annotations
 import asyncio
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Mapping
+from datetime import datetime
 from decimal import Decimal
 from types import MappingProxyType
 from typing import Any, Final, Literal, Protocol
@@ -72,16 +91,35 @@ from candleviewer.storage.repositories.orders import (
     RecordedStopBind,
     TimeInForce,
 )
-from candleviewer.storage.repositories.recorded_stops import RecordedStopRow
+from candleviewer.storage.repositories.recorded_stops import (
+    LIVE_STOP_STATUSES,
+    RecordedStopRow,
+    ReleaseWriteAhead,
+)
 
-from .pairing import STOP_SIDES, ToRecordedStop
-from .ports import PositionKey, TradingAccounts
+from .pairing import STOP_SIDES, ToRecordedStop, matching_record
+from .ports import KeyedRecord, PositionKey, TradingAccounts
 from .stream_push import PAGED_ORDERS, PORT_TIMEOUT_S, PUSH_TIMEOUT_S, Event, Pager, PushCounts
 
 #: 24 Sec.8.12 (Q5): a recorded stop's materialise, bounded as the facade's push is, not at 5 s.
 MATERIALISE_BOUND_S: Final = PUSH_TIMEOUT_S
 #: One `take` at worst: the account, the link-id read, the materialise and the two read-backs.
 TAKE_BUDGET_S: Final = 4 * PORT_TIMEOUT_S + MATERIALISE_BOUND_S
+#: 24 Sec.8.12 "The successor's bind": the orders a successor may bind, live or ended `filled`; one
+#: ended otherwise (cancelled, rejected, expired, deactivated) keeps its record (Sec.8.3 rule 7).
+SUCCESSOR_STATES: Final = frozenset(
+    {"new", "untriggered", "partially_filled", "triggered", "filled"}
+)
+#: The release and bind, bounded as the facade's push is: the store's write-ahead audit inside it.
+RELEASE_BOUND_S: Final = PUSH_TIMEOUT_S
+#: One `Successor.check` at worst: the two reads, the release and the re-read or the record hook.
+SUCCESSOR_BUDGET_S: Final = 3 * PORT_TIMEOUT_S + RELEASE_BOUND_S
+#: The orders whose newest push time the successor's check keeps, the oldest forgotten past it.
+STAMPED_ORDERS: Final = PAGED_ORDERS
+SUCCESSOR_BIND: Final = "successor_bind"  # 24 Sec.15.5: the record's reason and name prefix
+_MODIFIED: Final[Mapping[str, str]] = MappingProxyType(
+    {"stop_loss": "sl.modified", "take_profit": "tp.modified"}
+)
 
 _SIDES: Final[Mapping[str, OrderSide]] = MappingProxyType({"buy": "Buy", "sell": "Sell"})
 _TYPES: Final[Mapping[str, OrderType]] = MappingProxyType({"market": "Market", "limit": "Limit"})
@@ -116,6 +154,23 @@ class OrderReads(Protocol):  # the order store's reads
 class BoundStops(Protocol):  # `PositionProjection`'s record hook and last row, structurally
     async def after_bind(self, key: PositionKey) -> None: ...
     def last_applied(self, key: PositionKey) -> Position | None: ...  # sync
+
+
+class SuccessorStops(Protocol):  # the recorded-stop facade's three methods, structurally
+    async def for_exchange_order(
+        self, account_id: UUID, exchange_order_id: str
+    ) -> tuple[RecordedStopRow, ...]: ...
+    async def live_for_key(
+        self, account_id: UUID, symbol: str, position_idx: int
+    ) -> tuple[RecordedStopRow, ...]: ...
+    async def release_and_bind(
+        self, account_id: UUID, predecessor_id: UUID, successor_id: UUID, exchange_order_id: str,
+        *, at: datetime, write_ahead: ReleaseWriteAhead,
+    ) -> tuple[RecordedStopRow, RecordedStopRow]: ...  # fmt: skip
+
+
+class ReleaseAudit(Protocol):  # `SubmitAudit.write`, structurally: durable or it raises (C-2.9)
+    async def write(self, record: KeyedRecord) -> None: ...
 
 
 class RecordedStopStream:
@@ -252,6 +307,127 @@ class RecordedStopStream:
         return row
 
 
+class Successor:
+    """24 Sec.8.12 "The successor's bind" (module docstring). Raises nothing but
+    `CancelledError`."""
+
+    def __init__(
+        self, *, stops: SuccessorStops, audit: ReleaseAudit, positions: BoundStops,
+        counts: PushCounts, clock: Callable[[], datetime],
+    ) -> None:  # fmt: skip
+        self._stops, self._audit, self._positions = stops, audit, positions
+        self._counts, self._clock = counts, clock
+        self._stamps: OrderedDict[tuple[AccountId, str], int] = OrderedDict()
+
+    async def check(self, account_id: AccountId, row: OrderRow, order: Order) -> None:
+        """An order push to `row`, a bound recorded stop's row: the side's later matching record,
+        if any, takes the order's binding from the record that holds it."""
+        xid = order.exchange_order_id
+        mine = (order.account_id, row.exchange_account_id) == (account_id, account_id)
+        if row.exchange_order_id != xid or not mine:  # the caller's check, again (C-12.4)
+            return
+        ids = _ids(account_id, order)
+        if self._stale(account_id, order, ids) or order.state not in SUCCESSOR_STATES:
+            return
+        held = await self._read(self._stops.for_exchange_order(account_id, xid), ids)
+        live = [r for r in held or () if r.status in LIVE_STOP_STATUSES and r.released_at is None]
+        if len(live) != 1:  # none: an ended record keeps its order (rule 7); two: never
+            if len(live) > 1:
+                self._refused("stream_successor_two_holders", ids)
+            return
+        [old] = live
+        key = (account_id, order.symbol, order.position_idx)
+        rows = await self._read(self._stops.live_for_key(*key), ids)
+        if rows is None:
+            return
+        if any(_key(r) != key for r in (old, *rows)):  # a store defect (C-12.4)
+            self._refused("stream_successor_foreign_record", ids)
+            return
+        candidates = [r for r in rows if r.source != "entry_attach"]  # never an entry's attach
+        new = matching_record(order, candidates)
+        if new is None or new.kind != old.kind or _age(new) <= _age(old):  # never an earlier one
+            return
+        pair = {"predecessor_id": str(old.id), "successor_id": str(new.id)} | ids
+        if not await self._release(account_id, old.id, new.id, xid, pair):
+            again = await self._read(self._stops.for_exchange_order(account_id, xid), ids)
+            if again is not None:  # a failed re-read was counted already
+                holders = [str(r.id) for r in again]
+                _log().warning("stream_successor_undecided", holders=holders, **pair)
+                self._counts.count("successor_undecided")
+            return
+        _log().info("stream_successor_bound", **pair)
+        self._counts.count("successor_bound")
+        try:  # the hook runs again at the key's next applied position row
+            await _bounded(self._positions.after_bind(PositionKey(*key)), PORT_TIMEOUT_S)
+        except Exception as exc:
+            _log().warning("stream_after_bind_failed", kind=type(exc).__name__, **ids)
+            self._counts.count("after_bind_failed")
+
+    def _stale(self, account_id: AccountId, order: Order, ids: Mapping[str, str]) -> bool:
+        """True when the push is older, by the venue's `updated_at`, than the newest one this check
+        met for the order (a late or redelivered push); else that newest time moves to it. A push
+        with no time is never judged stale. The newest times live in this process only, at most
+        `STAMPED_ORDERS` orders: the first push after a restart, or after the order's time was
+        evicted, is never judged stale (as the facade's own `last_update_ms`); E29-T06's read path
+        is to seed or supersede them."""
+        stamp, key = order.updated_at, (account_id, order.exchange_order_id)
+        if stamp is None:
+            return False
+        last = self._stamps.get(key)
+        if last is not None and stamp < last:
+            _log().info("stream_successor_stale_push", **ids)
+            return True
+        self._stamps[key] = stamp
+        self._stamps.move_to_end(key)
+        if len(self._stamps) > STAMPED_ORDERS:
+            self._stamps.popitem(last=False)
+        return False
+
+    async def _release(
+        self, account_id: AccountId, old: UUID, new: UUID, xid: str, pair: Mapping[str, str]
+    ) -> bool:
+        """True when the release and bind committed; anything else decided nothing known."""
+        try:
+            await _bounded(
+                self._stops.release_and_bind(
+                    account_id, old, new, xid, at=self._clock(), write_ahead=self._write_ahead
+                ),
+                RELEASE_BOUND_S,
+            )
+        except Exception as exc:  # refused, failed, a late audit or the bound: never acted on
+            _log().warning("stream_successor_not_bound", kind=type(exc).__name__, **pair)
+            return False
+        return True
+
+    async def _write_ahead(self, rows: tuple[RecordedStopRow, RecordedStopRow]) -> None:
+        """24 Sec.15.5: one keyed record ahead of the commit, as `system:oms`, ids only."""
+        released, bound = rows
+        detail: dict[str, str | None] = {
+            "kind": bound.kind, "predecessor_id": str(released.id),
+            "successor_id": str(bound.id), "exchange_order_id": bound.exchange_order_id,
+        }  # fmt: skip
+        record = KeyedRecord(
+            _MODIFIED[bound.kind], f"{SUCCESSOR_BIND}:{bound.id}", bound.exchange_account_id,
+            "recorded_stop", bound.id, "success", "info", SUCCESSOR_BIND, None, detail,
+        )  # fmt: skip
+        await self._audit.write(record)
+
+    async def _read(
+        self, call: Awaitable[tuple[RecordedStopRow, ...]], ids: Mapping[str, str]
+    ) -> tuple[RecordedStopRow, ...] | None:
+        """A record read, bounded; None when it failed or the bound cut it (decides nothing)."""
+        try:
+            return await _bounded(call, PORT_TIMEOUT_S)
+        except Exception as exc:
+            _log().warning("stream_successor_read_failed", kind=type(exc).__name__, **ids)
+            self._counts.count("successor_undecided")
+            return None
+
+    def _refused(self, event: str, ids: Mapping[str, str]) -> None:
+        _log().error(event, **ids)
+        self._counts.count("pairing_refused")
+
+
 def _row_of(
     row_id: UUID, account_id: AccountId, record: RecordedStopRow, order: Order, link: str,
     qty: Decimal,
@@ -296,6 +472,14 @@ def _its_stop(account_id: AccountId, record: RecordedStopRow, order: Order) -> b
 async def _bounded[T](call: Awaitable[T], seconds: float) -> T:
     async with asyncio.timeout(seconds):
         return await call
+
+
+def _age(record: RecordedStopRow) -> tuple[datetime, UUID]:  # later and latest (rule 7)
+    return record.created_at, record.id
+
+
+def _key(record: RecordedStopRow) -> tuple[UUID, str, int]:
+    return record.exchange_account_id, record.symbol, record.position_idx
 
 
 def _ids(account_id: AccountId, order: Order) -> dict[str, str]:  # ids only (C-12.6)

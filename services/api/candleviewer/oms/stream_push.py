@@ -10,8 +10,10 @@ next pass reads the order afresh, and a fill is handed over undecided). A record
 its order's changed terms first (S7a, `oms.stop_terms`): an order push's at most once a second, the
 latest winning, sent before any other push of that order and by `flush` at the account's next row
 or `heartbeat`; a fill sends them first, and one over the row's quantity as loaded reads the order
-and sends its terms unless the row took them already, else is delivered anyway and counted. It
-raises nothing but `CancelledError`. Ids only in logs (C-12.6). Nothing here imports the facade or
+and sends its terms unless the row took them already, else is delivered anyway and counted. Every
+order push to a recorded stop's row then runs the successor's check (S7b, `SuccessorCheck`): a
+later record of the side that matches the push takes the order's binding. It raises nothing but
+`CancelledError`. Ids only in logs (C-12.6). Nothing here imports the facade or
 the statechart.
 """
 
@@ -75,6 +77,10 @@ PUSH_TIMEOUT_S: Final = 30.0  # the facade's 5 s ports, B1's 10 s write-ahead an
 #: `recorded_stop_stream.TAKE_BUDGET_S`: the account and link reads, the 30 s materialise (24
 #: Sec.8.12, Q5) and the two read-backs; the seam's own bounds end it first.
 STOP_TAKE_BOUND_S: Final = 4 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
+#: `recorded_stop_stream.SUCCESSOR_BUDGET_S` (the two record reads, the 30 s release and bind, and
+#: the re-read or the record hook) plus one port bound of margin, so the seam's own bounds end it
+#: first and a committed bind is never also cut here.
+SUCCESSOR_BOUND_S: Final = 4 * PORT_TIMEOUT_S + PUSH_TIMEOUT_S
 PAGED_ORDERS: Final = 1024  # the order ids a full buffer paged on, the oldest forgotten
 
 type Outcome = Literal[
@@ -82,11 +88,14 @@ type Outcome = Literal[
     "not_loaded", "no_intent", "exchange_placed", "undecided", "pairing_refused",
     "lockout_failed", "handover_unavailable", "stop_materialised", "stop_found", "stop_undecided",
     "after_bind_failed", "unmapped", "stop_qty_refused", "stop_no_position", "terms",
-    "terms_coalesced", "terms_before_fill_unread", "terms_older",
+    "terms_coalesced", "terms_before_fill_unread", "terms_older", "terms_ended", "successor_bound",
+    "successor_undecided",
 ]  # fmt: skip
 type Decision = ToRow | WaitOnRow | ToRecordedStop | NoIntent | Undecided
 type Event = Literal["EXEC", "TRIGGERED", "EXPIRE", "REMOTE_CANCELLED"]
 type Sent = Event | Literal["TERMS_CHANGED"]  # what `PushTarget` is sent
+#: The events that end a row (B1's own ends): an older push carrying one discards pending terms.
+ENDS: Final[frozenset[Event]] = frozenset({"REMOTE_CANCELLED", "EXPIRE"})
 
 
 def _log() -> Any:
@@ -126,6 +135,13 @@ class RecordedStopStream(Protocol):
     async def after_bind(self, account_id: AccountId, decision: ToRecordedStop) -> None: ...
 
 
+class SuccessorCheck(Protocol):
+    """`recorded_stop_stream.Successor`'s: on an order push to a recorded stop's row, the side's
+    later matching record takes the order's binding (24 Sec.8.12 "The successor's bind")."""
+
+    async def check(self, account_id: AccountId, row: OrderRow, order: Order) -> None: ...
+
+
 class NoIntentRecords(Protocol):
     """Writes `oms.no_intent_detected` (`exchange_placed: true`, `frozen: false`), then pages."""
 
@@ -163,11 +179,12 @@ class StreamPushes:
     def __init__(
         self, *, target: PushTarget, reads: StreamReads, fill_orders: FillOrders,
         lockout: ForeignOrderLockout, handovers: ExecutionHandovers, stops: RecordedStopStream,
-        no_intent: NoIntentRecords, counts: PushCounts, pager: Pager,
+        successors: SuccessorCheck, no_intent: NoIntentRecords, counts: PushCounts, pager: Pager,
         monotonic: Callable[[], float], handover_bound_s: float = HANDOVER_BOUND_S,
     ) -> None:  # fmt: skip
         self._target, self._reads, self._fills = target, reads, fill_orders
         self._lockout, self._handovers, self._stops = lockout, handovers, stops
+        self._successors = successors
         self._records, self._counts, self._pager = no_intent, counts, pager
         self._now, self._bound = monotonic, handover_bound_s
         self._paged: OrderedDict[UUID, None] = OrderedDict()
@@ -327,33 +344,55 @@ class StreamPushes:
 
     async def _deliver(self, ctx: _Ctx, row: OrderRow, *, held: bool) -> None:
         r = ctx.route
-        if row.provenance == "recorded_stop":  # its terms first (24 Sec.8.3 rule 7, sixth item)
+        stop = row.provenance == "recorded_stop"
+        if stop:  # its terms first (24 Sec.8.3 rule 7, sixth item)
             if isinstance(r.push, Execution):
                 await self._before_fill(ctx, row, r.push)
             else:
-                await self._terms_step(ctx, row, r.push, at_once=r.event is not None)
-        if r.event is None:  # a status no event follows
-            return
-        link = row.order_link_id
-        payload = (
-            exec_payload(r.push, order_id=row.id, order_link_id=link)
-            if isinstance(r.push, Execution)
-            else push_payload(r.push, order_link_id=link, ts_event=ctx.ts_event)
-        )
-        await self._step(ctx, row.id, r.event, payload, "held" if held else "paired")
+                await self._terms_step(ctx, row, r.push, r.event)
+        if r.event is not None:  # else a status no event follows
+            link = row.order_link_id
+            payload = (
+                exec_payload(r.push, order_id=row.id, order_link_id=link)
+                if isinstance(r.push, Execution)
+                else push_payload(r.push, order_link_id=link, ts_event=ctx.ts_event)
+            )
+            await self._step(ctx, row.id, r.event, payload, "held" if held else "paired")
+        if stop and isinstance(r.push, Order):  # after the terms step (24 Sec.8.12)
+            await self._successor_of(ctx, row, r.push)
 
-    async def _terms_step(self, ctx: _Ctx, row: OrderRow, order: Order, *, at_once: bool) -> None:
+    async def _successor_of(self, ctx: _Ctx, row: OrderRow, order: Order) -> None:
+        """The successor's check, bounded as a whole; the seam's own bounds end it first, so a
+        cut here is a defect, logged and counted, and decides nothing."""
+        try:
+            await self._bounded(
+                self._successors.check(ctx.account_id, row, order), SUCCESSOR_BOUND_S
+            )
+        except Exception as exc:
+            _log().error("stream_successor_failed", kind=type(exc).__name__, **self._ids(ctx))
+            self._counts.count("successor_undecided")
+
+    async def _terms_step(
+        self, ctx: _Ctx, row: OrderRow, order: Order, follows: Event | None
+    ) -> None:
         """An order push to a recorded stop's row: its changed terms, at once before the push's
-        own event (an end or a trigger), else coalesced (`oms.stop_terms`). The latest terms win
-        by the venue's time: a push older than the pending slot's terms sends no terms and leaves
-        the slot as it is (its own event, if any, is still delivered and the facade's watermark
-        judges it), a push showing the row's terms drops a pending slot, and one naming only some
-        terms keeps the slot's others (`carried`)."""
+        own event (`follows`: an end or a trigger), else coalesced (`oms.stop_terms`). The latest
+        terms win by the venue's time: a push older than the pending slot's terms sends no terms
+        and leaves the slot as it is (its own event, if any, is still delivered and the facade's
+        watermark judges it), unless that event ends the row: then the slot is discarded, counted
+        `terms_ended`, since the stop has ended at the venue and a later flush into the ended row
+        could only be recorded as an anomaly (the S7a Fable delta's Low). A push showing the row's
+        terms drops a pending slot, and one naming only some terms keeps the slot's others
+        (`carried`)."""
         key: TermsKey = (ctx.account_id, row.id)
         waiting = self._pending.peek(key)
         if waiting is not None and older_than(order, ctx.ts_event, waiting.payload):
-            self._counts.count("terms_older")
+            ended = follows in ENDS
+            if ended:
+                self._pending.take(key)
+            self._counts.count("terms_ended" if ended else "terms_older")
             return
+        at_once = follows is not None
         kept = carried(None if waiting is None else waiting.payload, order, row)
         changed = differs(order, row, kept)
         payload = terms_payload(order, row, ctx.ts_event, kept) if changed else None
@@ -389,7 +428,12 @@ class StreamPushes:
             return
         a, xid = ctx.account_id, fill.exchange_order_id
         order = await self._read(partial(self._fills.order_of, a, xid, fill.symbol), ctx.deadline)
-        if isinstance(order, Order) and order.exchange_order_id == xid and order.qty > loaded:
+        if (
+            isinstance(order, Order)
+            and order.account_id == a  # the account's own order (the S7a Fable look's 4)
+            and order.exchange_order_id == xid
+            and order.qty > loaded
+        ):
             if not differs(order, row, terms=terms):  # the terms just sent are the order's
                 return
             payload = terms_payload(order, row, ctx.ts_event)
