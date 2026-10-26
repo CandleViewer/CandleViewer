@@ -160,8 +160,9 @@ def test_the_split_is_balanced_by_the_measured_weights() -> None:
     loads = [_weight(part) for part in gs.shards(gs.suite_files(), count)]
     # Greedy, heaviest first: the shards differ by at most the heaviest single file.
     assert max(loads) - min(loads) <= max(gs.WEIGHTS.values())
-    # And no shard carries more than 20% over an even split (the one heavy file sits alone).
-    assert max(loads) <= sum(loads) / count * 1.2
+    # And no shard carries more than 20% over an even split, unless it holds one file that cannot
+    # be split further: the heaviest file sits alone and sets the floor (#4588, six shards).
+    assert max(loads) <= max(sum(loads) / count * 1.2, max(gs.WEIGHTS.values()))
 
 
 TOOL_GATED = re.compile(r"""which\(\s*["'](?:semgrep|gitleaks)["']\s*\)""")
@@ -225,13 +226,13 @@ def test_an_empty_shard_fails_the_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     assert gs.main(["2", "2"]) == 1
 
 
-def test_governance_runs_the_checks_five_test_shards_and_an_aggregate() -> None:
+def test_governance_runs_the_checks_six_test_shards_and_an_aggregate() -> None:
     doc = _workflow()
     jobs = doc["jobs"]
     assert list(jobs) == ["governance-checks", "governance-tests", "governance"]
     assert jobs["governance-tests"]["strategy"] == {
         "fail-fast": False,
-        "matrix": {"shard": [1, 2, 3, 4, 5], "total": [5]},
+        "matrix": {"shard": [1, 2, 3, 4, 5, 6], "total": [6]},
     }
     assert (
         jobs["governance-tests"]["name"]

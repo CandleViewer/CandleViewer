@@ -10,7 +10,7 @@ name: governance
 #     GitHub Actions annotation.
 # Owning ticket: E01-Q02. #3789: parallel jobs instead of one. `governance-checks` runs the
 # checks, the canary and the reports; the `governance-tests` shards run the unit tests
-# (tools/ci/governance_shards.py splits the files by measured duration; #4365, #4588: five shards,
+# (tools/ci/governance_shards.py splits the files by measured duration; #4365, #4588: six shards,
 # because two ran at the 90 s budget); `governance` needs all of them, combines the shards'
 # coverage, applies the 85% gate and fails unless every job passed, so the `governance` check
 # still means the whole set. Each job checks its own duration.
@@ -167,7 +167,7 @@ jobs:
           fi
 
   governance-tests:
-    # The unit tests, in five shards of about equal measured duration (#3789, #4365, #4588): one job ran
+    # The unit tests, in six shards of about equal measured duration (#3789, #4365, #4588): one job ran
     # them in 55-69 s of a 90 s budget, two shards then sat at the budget as the suite grew. Each
     # shard writes raw coverage data only; `governance` combines it. `total` is the one place the
     # shard count is set; the job name, the split script call and the summary all read it.
@@ -177,8 +177,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5]
-        total: [5] # keep in sync with the shard list above (a pin test checks it)
+        shard: [1, 2, 3, 4, 5, 6]
+        total: [6] # keep in sync with the shard list above (a pin test checks it)
     steps:
       - name: "Record job start time (perf budget <=90s, E01-Q02)"
         id: gov_start
@@ -314,11 +314,11 @@ jobs:
           COV_DIR: ${{ runner.temp }}/gov-coverage
         run: |
           set -euo pipefail
-          # The combine reads only the downloaded shard files, and all five must be there.
+          # The combine reads only the downloaded shard files, and all six must be there.
           shopt -s nullglob
           files=("$COV_DIR"/coverage-shard-*)
-          [ "${#files[@]}" -eq 5 ] || {
-            echo "::error::expected 5 shard coverage files in $COV_DIR, found ${#files[@]}"
+          [ "${#files[@]}" -eq 6 ] || {
+            echo "::error::expected 6 shard coverage files in $COV_DIR, found ${#files[@]}"
             exit 1
           }
           python -m coverage combine "${files[@]}"

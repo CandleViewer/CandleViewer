@@ -173,7 +173,7 @@ The workflow also runs a **canary self-test** (`python scripts/gov_self_test.py 
 replays every checker above against a deliberately-broken fixture tree under
 `scripts/tests/fixtures/self_test/` and asserts each one fails — the guard against a green `governance`
 check that has silently stopped checking anything — and a **coverage gate** over all of `scripts/**`:
-five `governance-tests` shards run the unit tests, the infra suites included (#4361), with
+six `governance-tests` shards run the unit tests, the infra suites included (#4361), with
 `--cov=scripts`, and the `governance` job
 combines their data and fails under 85% (#3789, #4365). Each of its jobs measures its own duration
 against a 90 s budget, recorded as a `::notice` annotation on every run; exceeding it fails that job
