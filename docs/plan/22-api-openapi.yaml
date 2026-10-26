@@ -14359,12 +14359,17 @@ paths:
         roll-off.
 
         **Idempotency.** The `Idempotency-Key` is anchored for the caller together with the
-        request's fingerprint and its `before`, durably: the anchor outlives the job store and a
-        restart of the service. A retry with the same key
-        and a different `before` is refused with `409 idempotency_key_reuse` whose `errors[0]`
-        names `before` and gives the anchored bound in `message`; nothing is deleted. A retry
-        with the same key and another difference in the body is `422 idempotency_key_reused`. A
-        retry with the same key and the same body never purges past the anchored bound.
+        request's fingerprint and its `before`, as a permanent anchor scoped to the caller and this
+        operation (21-database-schema.md section 3.3.10): it answers at any age and outlives the
+        job store and a restart of the service. The anchor is created with the write-ahead
+        `retention.purge` record, so a refusal or a `503` anchors nothing. A retry with the same
+        key is compared on `before` first, as an instant: when it differs the answer is `409
+        idempotency_key_reuse` whose `errors[0]` names `before` and gives the anchored bound in
+        `message`, whatever else differs; nothing is deleted. A retry with the same key, the same
+        `before` and another difference in the body is `422 idempotency_key_reused`. A retry with
+        the same key and the same body never purges past the anchored bound: while the job is
+        known it is that job, and after a restart it is a new purge of the same window, answered
+        `202` with a new job.
 
         The audit record (`retention.purge`, exact window, partition count, rows, bytes) is
         written BEFORE the job exists; if it cannot be written the answer is 503 and no job
