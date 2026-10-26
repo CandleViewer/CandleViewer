@@ -32,9 +32,10 @@ started, or the write past its bound), as at the key store's owner gate (`api/ex
 with a warning log; any other failure of the write is a defect and propagates. A target read that
 fails or passes `TARGET_READ_TIMEOUT_S`, or a guard built with nothing to read it, is `503
 store_unavailable`.
-The handler checks the account half (`scope_for_target`). In the hold the write runs in the
-viewer's own scope, and no target is read (22 "View-as session", Protective writes). A live
-context is evaluated as a request's would be
+The handler checks the account half (`scope_for_target`), and refuses a request with a component
+that is not protective as the guard refuses any write (`refuse_component`). In the hold the write
+runs in the viewer's own scope, and no target is read (22 "View-as session", Protective writes). A
+live context is evaluated as a request's would be
 (`ViewAsService.evaluate`): one whose viewer or target is no longer eligible ends there, and the
 request answers `view_as_expired`. Before refusing a write, a read-only session gets the read-only
 guard's own `session_read_only` (`assert_writable`, at most once a request), because the contract
@@ -349,3 +350,21 @@ async def _refuse(
     except ViewAsRefusalUnrecorded:
         return _problem(ErrorCode.AUDIT_UNAVAILABLE, 503)
     return _problem(ErrorCode(reason), 403)
+
+
+async def refuse_component(
+    recorder: ViewAsRefusalRecorder | None,
+    context: ViewAsRequestContext,
+    operation: tuple[str, str],
+    ip: str | None,
+) -> tuple[str, Response]:
+    """A registered protective write's handler refusing a request the guard passed it, in which
+    it found a component that is not protective (22 "View-as session", Protective writes): as the
+    guard refuses any write, `view_as_read_only` while live and `view_as_expired` in the hold,
+    counted, budgeted and recorded ahead, else `503 audit_unavailable` (`_refuse`). The code it
+    answers, and its problem."""
+    reason: OperationReason = (
+        "view_as_read_only" if context.phase is ViewAsPhase.LIVE else "view_as_expired"
+    )
+    answer = await _refuse(recorder, context, reason, operation, ip)
+    return (reason if answer.status_code == 403 else "audit_unavailable"), answer

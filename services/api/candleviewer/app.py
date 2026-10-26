@@ -2466,6 +2466,7 @@ def create_app(
             metrics=metrics_facade,
             auth=ctx.auth,
             protective=protective_writes,
+            view_as_refusals=lambda: app.state.view_as_refusals,
         )
     )
     # #2111: the start-up and nightly audit chain verify job (lifespan-started). #2966: the real
