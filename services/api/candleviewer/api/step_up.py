@@ -561,9 +561,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
-    # #2751 (SR-025, 04 §7.2.2 rows 50, 52). The `users` rows of rows 38, 40 and 40a moved to
-    # `HANDLER_GATED_ROUTES` (#2304 slice 3a).
-    ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
+    # #2751 (SR-025, 04 §7.2.2 rows 50, 52). The `users` rows of rows 38, 40 and 40a and the
+    # export moved to `HANDLER_GATED_ROUTES` (#2304 slices 3a and 3b).
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
     ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
     ("PUT", re.compile(r"^/recording/symbols/[^/]+/pin$"), "recorder"),  # pinRecordedSymbol
@@ -653,11 +652,12 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("DELETE", "/users/{userId}/sessions/{sessionId}", "users"),  # revokeUserSession
     ("PUT", "/users/{userId}/account-access", "users"),  # setUserAccountAccess
     # #2304 slice 3b, likewise: each handler decides RBAC, its body and its target's lookup, then
-    # demands the class through `request_elevation`, with the restatement of
-    # `api.step_up_challenge`. Key material is never restated.
+    # demands the class through `request_elevation` (or the session's, for the export), with
+    # the restatement of `api.step_up_challenge`. Key material is never restated.
     ("POST", "/exchange-accounts/{accountId}/keys", "keys"),  # createApiKey (04 row 41)
     ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
     ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
+    ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (04 row 50)
 )
 
 #: Mounted write routes whose path matches this must be in one of the two

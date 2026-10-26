@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 from hypothesis import given
@@ -19,6 +20,7 @@ from candleviewer.api._generated.openapi_models import UpdateUserRequest
 from candleviewer.api.step_up_challenge import (
     UPDATE_USER_RENDERED,
     account_reference,
+    export_audit_text,
     import_key_text,
     kek_rewrap_text,
     quote_label,
@@ -120,8 +122,8 @@ def test_update_user_text_renders_allow_listed_values_bare() -> None:
     )
 
 
-def test_key_and_kek_texts_restate_validated_values_only() -> None:
-    """#2304 slice 3b: an account by its reference, enums bare; the pasted key pair,
+def test_key_kek_and_audit_texts_restate_validated_values_only() -> None:
+    """#2304 slice 3b: an account by its reference, enums and instants bare; the pasted key pair,
     a key label and `expected_uid` are never arguments, so they cannot reach the text."""
     account = account_reference("Main", "demo", "1001234")
     assert import_key_text(account, read_only=True).action_summary == (
@@ -136,7 +138,13 @@ def test_key_and_kek_texts_restate_validated_values_only() -> None:
     assert rotate_signing_key_text("compromise").action_summary == (
         "Rotate the audit export signing key (compromise)"
     )
-    assert kek_rewrap_text("demo", 2).target is None
+    start = datetime(2026, 10, 1, 2, tzinfo=timezone(timedelta(hours=2)))
+    text = export_audit_text(start, datetime(2026, 10, 2, tzinfo=UTC), compress=False)
+    assert text.action_summary == (
+        "Export the audit log from 2026-10-01T00:00:00+00:00 to 2026-10-02T00:00:00+00:00"
+    )
+    assert export_audit_text(start, start, compress=True).action_summary.endswith(", compressed")
+    assert {t.target for t in (text, kek_rewrap_text("demo", 2))} == {None}
 
 
 @pytest.mark.parametrize(

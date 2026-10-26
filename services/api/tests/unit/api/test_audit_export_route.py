@@ -34,6 +34,7 @@ from candleviewer.api.audit_limiter import AuditVerifyLimiter
 from candleviewer.api.recorder_admin import AUDIT_EXPORT, Job, JobConflict
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.query import AuditQueryService
+from candleviewer.auth.errors import StepUpRequired
 from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.secrets._export_custody import GENERATED
 from candleviewer.secrets.store import InMemoryAuthKeyStore, InMemoryExportKeyStore
@@ -88,8 +89,11 @@ class _World:
     async def resolve(self, request: Request) -> AuditPrincipal | None:
         return _WHO.get(request.headers.get("x-who", ""))
 
+    elevated = True  # False: no live `audit` window, so the step-up challenges
+
     async def require_elevation(self, session_id: str, action_class: str) -> None:
-        pass  # a live `audit` window: the download's own step-up passes
+        if not self.elevated:
+            raise StepUpRequired(action_class)
 
     async def record_pending(self, session_id: str, action_class: str) -> StepUpChallenge:
         return StepUpChallenge(uuid.UUID(int=7), action_class, datetime.now(UTC) + CHALLENGE_WINDOW)
@@ -170,6 +174,62 @@ async def test_each_refusal_comes_in_the_contracts_order(
     assert world.reasons() == recorded.get(status, []) and world.jobs.held() == 0
     if status == 403:
         assert world.records[0][1]["session_id"] == _WHO[who].session_id
+
+
+async def test_an_unelevated_owners_export_is_challenged_restating_the_window(
+    world: _World,
+) -> None:
+    """#2304 slice 3b: the handler's `audit` challenge comes after RBAC and the body, restating
+    the validated window; no job, no hold, no record, no quota spent."""
+    world.elevated = False
+    answer = await world.post(key=str(uuid.uuid4()))
+    assert (answer.status_code, answer.json()["code"], answer.json()["action_class"]) == (
+        403, "step_up_required", "audit"
+    )  # fmt: skip
+    window = "2026-10-22T11:00:00+00:00 to 2026-10-22T12:00:00+00:00"
+    assert answer.json()["action_summary"] == f"Export the audit log from {window}, compressed"
+    assert (world.records, world.jobs.held(), world.jobs.tasks) == ([], 0, {})
+    assert answer.headers["cache-control"] == "no-store"
+    world.elevated = True
+    assert (await world.post()).status_code == 202  # the quota was never spent
+
+
+@pytest.mark.parametrize("who", ["manager", "viewer"])
+async def test_an_unelevated_forbidden_role_is_the_audited_403_never_a_challenge(
+    world: _World, who: str
+) -> None:
+    world.elevated = False
+    answer = await world.post(who)
+    assert (answer.status_code, answer.json()["code"], "challenge_id" in answer.json()) == (
+        403, "forbidden", False
+    )  # fmt: skip
+    assert len(world.records) == 1 and world.records[0][0] == "admin.audit_denied"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"from": "2026-10-22T11:00:00Z"}, {**_BODY, "note": "SENTINEL"}],
+    ids=["no-to", "other"],
+)
+async def test_an_unelevated_owners_invalid_body_is_the_422_never_a_challenge(
+    world: _World, body: dict[str, Any]
+) -> None:
+    world.elevated = False
+    answer = await world.post(body=body)
+    assert (answer.status_code, answer.json()["code"]) == (422, "validation_failed")
+    assert "SENTINEL" not in answer.text and world.jobs.held() == 0
+
+
+async def test_an_export_wired_without_its_step_up_fails_closed(root: Path) -> None:
+    """#2304 slice 3b: no step-up service is a wiring fault, 503, never "no step-up needed"."""
+    made = _World(root)
+    made.app = FastAPI()
+    made.app.include_router(make_audit_router(made, made, exports=made.exports))
+    answer = await made.post()
+    assert (answer.status_code, answer.json()["code"], made.jobs.tasks) == (
+        503, "service_unavailable", {}
+    )  # fmt: skip
+    made.query.close()
 
 
 async def test_a_429_and_a_409_are_counted_and_carried_by_the_users_next_record(

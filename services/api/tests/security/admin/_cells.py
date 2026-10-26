@@ -179,6 +179,9 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
         "json": {"reason": "scheduled"},
         "headers": {"Idempotency-Key": "00000000-0000-4000-8000-0000000023b0"},
     },
+    "POST /admin/audit/export": {
+        "json": {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"},
+    },
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
 GATE_CLASS: dict[str, str] = {"PUT /admin/feature-flags/{flagKey}": "flags"}

@@ -432,13 +432,14 @@ def test_deployed_app_refuses_an_unelevated_user_admin_write_rbac_refuses_withou
         (f"/exchange-accounts/{rbac.GRANTED}/keys", {"api_key": "k" * 18, "api_secret": "s" * 36}),
         ("/admin/keys/kek-rewrap", {"environment": "demo", "to_version": 2}),
         ("/admin/keys/audit-signing/rotate", {"reason": "scheduled"}),
+        ("/admin/audit/export", {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"}),
     ],
-    ids=["createApiKey", "rewrapKek", "rotateAuditSigningKey"],
+    ids=["createApiKey", "rewrapKek", "rotateAuditSigningKey", "exportAuditLog"],
 )
-def test_deployed_app_refuses_an_unelevated_key_write_without_a_challenge(
+def test_deployed_app_refuses_an_unelevated_key_or_audit_write_without_a_challenge(
     deployed: SimpleNamespace, actor: str, path: str, body: Any
 ) -> None:
-    """#2304 slice 3b: the key and KEK writes are handler-gated, so a Manager or a Viewer
+    """#2304 slice 3b: the key, KEK and audit writes are handler-gated, so a Manager or a Viewer
     holding no live elevation gets the audited 403, never a challenge."""
     audited = len(deployed.audit.records)
     step_up = deployed.client.app.state.app_context.auth._step_up
@@ -452,12 +453,13 @@ def test_deployed_app_refuses_an_unelevated_key_write_without_a_challenge(
     assert "challenge_id" not in resp.json()
     actions = [r["action"] for r in deployed.audit.records[audited:]]
     assert "auth.step_up_required" not in actions
-    assert "rbac.denied" in actions
+    assert {"rbac.denied", "admin.audit_denied"} & set(actions)
 
 
 _LIVE_SESSION = uuid.UUID(int=0x5E55)
-#: Each handler-gated `users` write (#2304 slice 3a, all six) and key and KEK write (slice 3b) on
-#: the deployed app: the request an un-elevated Owner sends, its class and its restatement.
+_WINDOW = {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z", "compress": False}
+#: Each handler-gated `users` write (#2304 slice 3a, all six) and key, KEK and audit write (slice
+#: 3b) on the deployed app: the request an un-elevated Owner sends, its class and its restatement.
 _CHALLENGED: dict[str, tuple[str, str, Any, str, str]] = {
     "deleteUser": ("DELETE", "/users/{}", None, "users", "Disable user {}"),
     "setUserRoles": (
@@ -487,6 +489,10 @@ _CHALLENGED: dict[str, tuple[str, str, Any, str, str]] = {
     "rotateAuditSigningKey": (
         "POST", "/admin/keys/audit-signing/rotate", {"reason": "scheduled"}, "keys",
         "Rotate the audit export signing key (scheduled)",
+    ),
+    "exportAuditLog": (
+        "POST", "/admin/audit/export", _WINDOW, "audit",
+        "Export the audit log from 2026-10-01T00:00:00+00:00 to 2026-10-02T00:00:00+00:00",
     ),
 }  # fmt: skip
 

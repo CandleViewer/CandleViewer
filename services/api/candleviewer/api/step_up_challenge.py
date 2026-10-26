@@ -23,6 +23,7 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from starlette.requests import Request
 
@@ -128,9 +129,9 @@ def revoke_session_text(user_id: object, session_id: object) -> ChallengeText:
     return ChallengeText(f"Revoke session {session_id} of user {user_id}")
 
 
-# -- The key and KEK routes' templates (#2304 slice 3b) -----------------------------------
+# -- The key, KEK and audit routes' templates (#2304 slice 3b) -----------------------------------
 # Each route validates its request, then RBAC, then its target's lookup, and only then composes
-# one of these. An account is named by `account_reference`; enums are bare. Key
+# one of these. An account is named by `account_reference`; enums and instants are bare. Key
 # material, a key's label and `expected_uid` are never arguments, so they cannot be restated.
 
 #: `RotateAuditSigningKeyRequest.reason` (22): the only values `rotate_signing_key_text` restates.
@@ -157,6 +158,13 @@ def rotate_signing_key_text(reason: str) -> ChallengeText:
     if reason not in _SIGNING_REASONS:
         raise ValueError("a rotation names a contract reason")
     return ChallengeText(f"Rotate the audit export signing key ({reason})")
+
+
+def export_audit_text(from_ts: datetime, to_ts: datetime, *, compress: bool) -> ChallengeText:
+    """`exportAuditLog`: the window, both bounds in UTC, and whether the file is compressed."""
+    span = f"{from_ts.astimezone(UTC).isoformat()} to {to_ts.astimezone(UTC).isoformat()}"
+    tail = ", compressed" if compress else ""
+    return ChallengeText(f"Export the audit log from {span}{tail}")
 
 
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
@@ -265,6 +273,7 @@ __all__ = [
     "account_reference",
     "canonical_json",
     "disable_user_text",
+    "export_audit_text",
     "import_key_text",
     "kek_rewrap_text",
     "mfa_reset_text",

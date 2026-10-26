@@ -13,7 +13,7 @@ import threading
 import uuid
 from dataclasses import replace
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -224,13 +224,29 @@ _OWNER_SHAPES = pytest.mark.parametrize(
 )
 
 
+class _Elevated:
+    """A step-up service whose session holds a live `audit` window (#2304 slice 3b: the export's
+    step-up is its handler's, after validation)."""
+
+    step_up_is_active = sessions_is_active = True
+
+    def __init__(self) -> None:
+        self.step_up = self.sessions = self
+
+    async def require_elevation(self, session_id: str, action_class: str) -> None:
+        return None
+
+
 @_OWNER_SHAPES
 def test_export_with_nothing_wired_is_unavailable_and_recorded_with_no_job(principal: Any) -> None:
     """#889 S10 replaced the `501`: with no export wired the Owner's request is `503
     signing_unavailable` (export alone is unavailable), with no job id, recorded as a refusal
     under the budget naming why. The served route is `test_audit_export_route.py`'s."""
-    service = _FakeAuditService()
-    client = TestClient(_app(service, _FakeResolver(principal())))
+    service, app = _FakeAuditService(), FastAPI()
+    owner = replace(principal(), session_id=uuid.uuid4())
+    step_up: Any = _Elevated()  # the step-up seams it reads, as `_FakeAuditService` is the service
+    app.include_router(make_audit_router(cast(Any, service), _FakeResolver(owner), step_up=step_up))
+    client = TestClient(app)
     response = client.post("/admin/audit/export", json=_EXPORT_BODY)
     assert (response.status_code, response.json()["code"]) == (503, "signing_unavailable")
     assert "job_id" not in response.text and "Retry-After" not in response.headers

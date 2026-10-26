@@ -537,7 +537,6 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
-        ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
         ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
         ("POST", "/exchange-accounts/a/profiles", "risk_caps"),  # createAccountProfile (#906)
@@ -564,11 +563,12 @@ _USERS_HANDLER_GATED = [
 ]
 
 
-#: #2304 slice 3b: the key and KEK writes, gated by their handlers likewise.
+#: #2304 slice 3b: the key, KEK and audit writes, gated by their handlers likewise.
 _KEYS_AUDIT_HANDLER_GATED = [
     ("POST", "/exchange-accounts/{accountId}/keys", "keys"),  # createApiKey (04 row 41)
     ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
     ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
+    ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
 ]
 
 
