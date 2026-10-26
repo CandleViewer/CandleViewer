@@ -7278,6 +7278,9 @@ SEC_PIN_TXT = r"""
   draw from primitives and the file's own token sets, imported with
   `docs/design/_tools/penpot_token_sets.py`, and use no shared library (the per-set Penpot files
   ruling; orchestrator-approved).
+@ prose
+  Boards round 1 redrew all ten: the component now keeps only the Lucide `lock` glyph, without the
+  SVG import's base fill layer and without a clip, so it reads as a lock at the export size.
 § spec ‖ 0. Boards (drawn; ten: seven dark, three light t
 @ row 02 ‖ Draws
   `CMP-115/*`: the fifteen statuses, each glyph + word; the amend moments (editing, pending,
@@ -9696,6 +9699,14 @@ SEC_PIN_TXT = r"""
   Owner: E29-T09, with E29-D03's owner and the `/tools/` owners.
 @ prose
   Owner: E29-T09, which applies A-6, with E05's owner.
+@ prose
+  So a hovered item on an overlay surface (CMP-123's ⋯ menu item, any CMP-041 item) draws
+  pixel-identical to its default in light (board 10, `CMP-123/hover`).
+@ prose
+  Owner: E05's owner (the semantic-light set), for a light hover value distinct from overlay or a
+  ruling that overlay surfaces take another hover token.
+@ prose
+  Owner: E30-D02's owner, with E29-D03's owner as the copy deck's.
 @ head 2
   Owner
 @ row CMP-078 StaleDataShade (spec §2.8.2) ‖ Change
@@ -10017,7 +10028,13 @@ RULED_PIN_TXT = r"""
   e `lock`, on the grid and at the stroke of the DS icon set), not a library instance: the boards
    draw from primitives and the file's own token sets, imported with `docs/design/_tools/penpot_to
   ken_sets.py`, and use no shared library (the per-set Penpot files ruling; orchestrator-approved)
-  ."
+  . Boards round 1 redrew all ten: the component now keeps only the Lucide `lock` glyph, without t
+  he SVG import's base fill layer and without a clip, so it reads as a lock at the export size. Tw
+  o steps are set live in Penpot before export, as no token holds their values: board 03's simulat
+  ed strip fills (#878787, #787878, #9F905E, #81744B; `docs/design/_tools/cvd_sim.py`) and board 0
+  6's Mo-3 / Mo-4 frame-0 overlay opacity, at §3.5's peak. Two open items the boards surfaced are
+   hand-off Q-21 (light `color.surface.hover` = `color.surface.overlay`, board 10) and Q-22 (board
+   05's confirmLabel, marked OPEN, not invented)."
 § ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 0.
 §  Boards (drawn; ten: seven dark, three light twins)#1"]
 @ ¶0 heading 1
@@ -10045,57 +10062,57 @@ RULED_PIN_TXT = r"""
 @ ¶4 row 0
   "| 01  | `E29-D04 / 01 positions-row-states`           | `CMP-114/*`: the row states, the liq ti
   ers, the protection chip, the row markers, the group header and totals rows, the \"Updates pause
-  d\" chip, the Closed today line | `451a7777-ea42-802d-8008-d926fea7f704` | drawn: [E29-D04-01-po
+  d\" chip, the Closed today line | `bf8d3fa3-1246-80f3-8008-d9b610605583` | drawn: [E29-D04-01-po
   sitions-row-states.png](img/E29-D04-01-positions-row-states.png)                     |"
 @ ¶5 row 0
   "| 02  | `E29-D04 / 02 order-row-lifecycle`            | `CMP-115/*`: the fifteen statuses, each
    glyph + word; the amend moments (editing, pending, unconfirmed, rejected); the native-stop row
-                                 | `451a7777-ea42-802d-8008-d929909a45f6` | drawn: [E29-D04-02-ord
+                                 | `bf8d3fa3-1246-80f3-8008-d9917b771807` | drawn: [E29-D04-02-ord
   er-row-lifecycle.png](img/E29-D04-02-order-row-lifecycle.png)                       |"
 @ ¶6 row 0
   "| 03  | `E29-D04 / 03 pnl-badge-numerics`             | `CMP-116/*`: the bar variant, null R, f
   ee paid and funding received, provisional and divergent; the greyscale and deuteranopia strips
-                                  | `451a7777-ea42-802d-8008-d92ba58b22da` | drawn: [E29-D04-03-pn
+                                  | `bf8d3fa3-1246-80f3-8008-d993dade32ae` | drawn: [E29-D04-03-pn
   l-badge-numerics.png](img/E29-D04-03-pnl-badge-numerics.png)                         |"
 @ ¶7 row 0
   "| 04  | `E29-D04 / 04 flatten-confirm`                | `CMP-123/*`: default, holding, armed, t
   he typed word on LIVE, busy, the T2 frames, offline
-                                                                             | `451a7777-ea42-802d
-  -8008-d92c5507506f` | drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png
+                                                                             | `bf8d3fa3-1246-80f3
+  -8008-d998dc401645` | drawn: [E29-D04-04-flatten-confirm.png](img/E29-D04-04-flatten-confirm.png
   )                               |"
 @ ¶8 row 0
   "| 05  | `E29-D04 / 05 mode-toggle-and-account-filter` | `CMP-129/*`: the display variant and th
   e toggle with its confirm (§2.5's frames); `CMP-105/*`: the filter picker and its chips
-                                         | `451a7777-ea42-802d-8008-d92d7704e084` | drawn: [E29-D0
+                                         | `bf8d3fa3-1246-80f3-8008-d99a239643d5` | drawn: [E29-D0
   4-05-mode-toggle-and-account-filter.png](img/E29-D04-05-mode-toggle-and-account-filter.png) |"
 @ ¶9 row 0
   "| 06  | `E29-D04 / 06 motion-storyboard`              | `motion/*`: frame 0 and the last frame
    of each §3.2 row on opacity or a transform; the state swap at frame 0
-                                                           | `93d416aa-5e4d-8056-8008-d96b07eca380
+                                                           | `bf8d3fa3-1246-80f3-8008-d99b011bffe0
   ` | drawn: [E29-D04-06-motion-storyboard.png](img/E29-D04-06-motion-storyboard.png)
                              |"
 @ ¶10 row 0
   "| 07  | `E29-D04 / 07 motion-reduced-twins`           | `motion/*-reduce`: the `prefers-reduced
   -motion` twin of every board-06 frame, at frame 0
-                                                                               | `93d416aa-5e4d-80
-  56-8008-d96c145d9c93` | drawn: [E29-D04-07-motion-reduced-twins.png](img/E29-D04-07-motion-reduc
+                                                                               | `bf8d3fa3-1246-80
+  f3-8008-d99c3c847ff7` | drawn: [E29-D04-07-motion-reduced-twins.png](img/E29-D04-07-motion-reduc
   ed-twins.png)                     |"
 @ ¶11 row 0
   "| 08  | `E29-D04 / 08 positions-row-states-light`     | light twin of 01
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | `451a7777-ea42-802d-8008-d93091c3767e` |
+                                                       | `bf8d3fa3-1246-80f3-8008-d99d9ed7527c` |
    drawn: [E29-D04-08-positions-row-states-light.png](img/E29-D04-08-positions-row-states-light.pn
   g)         |"
 @ ¶12 row 0
   "| 09  | `E29-D04 / 09 order-row-lifecycle-light`      | light twin of 02
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | `451a7777-ea42-802d-8008-d9342fad7032` |
+                                                       | `bf8d3fa3-1246-80f3-8008-d9a667a1c7f9` |
    drawn: [E29-D04-09-order-row-lifecycle-light.png](img/E29-D04-09-order-row-lifecycle-light.png)
              |"
 @ ¶13 row 0
   "| 10  | `E29-D04 / 10 flatten-confirm-light`          | light twin of 04
   \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
-                                                       | `451a7777-ea42-802d-8008-d9375ee59a02` |
+                                                       | `bf8d3fa3-1246-80f3-8008-d9b2d1b4f597` |
    drawn: [E29-D04-10-flatten-confirm-light.png](img/E29-D04-10-flatten-confirm-light.png)
                      |"
 @ ¶14 prose 1
@@ -14294,62 +14311,77 @@ RULED_PIN_TXT = r"""
    budgets become the treegrid variant's tests (A-6.7), the reading spec §2.7 takes of D02 gap 1 (
   D02:610), where BQ-3's default read them as a new threshold. Owner: E29-T09, which applies A-6,
    with E05's owner."
-@ ¶22 prose 1
+@ ¶22 item 0
+  "- **Q-21** In the light theme `color.surface.hover` and `color.surface.overlay` both resolve to
+   `{palette.light.neutral.150}` (#E3E6EA; `packages/ui/tokens/semantic-light.tokens.json`:5, :7),
+   while dark keeps them apart (neutral.200 #22292F vs neutral.150 #1C222B). So a hovered item on
+   an overlay surface (CMP-123's ⋯ menu item, any CMP-041 item) draws pixel-identical to its defau
+  lt in light (board 10, `CMP-123/hover`). Focus-visible and pointer position still differ, but ho
+  ver has no visual cue in light. No token is added and no cue is invented here (RULED BQ-12). Own
+  er: E05's owner (the semantic-light set), for a light hover value distinct from overlay or a rul
+  ing that overlay surfaces take another hover token."
+@ ¶23 item 0
+  "- **Q-22** CMP-129's mode-change confirm (`CMP-129/toggle-confirm`, spec §2.5): the spec gives
+   no title, body or confirmLabel for the CMP-044 `standard` confirm, and CMP-044's confirmLabel \
+  "names the effect, never Confirm\" (`15`:476). Board 05 labels the primary \"confirmLabel · OPEN
+   (not in the spec)\", an open marker, not copy; no string is invented here. Owner: E30-D02's own
+  er, with E29-D03's owner as the copy deck's."
+@ ¶24 prose 1
   "**Change requests** (spec §2.2, §2.8, §2.9; one index so E29-T09 and E29-D06 can route them; no
   ne is decided here):"
-@ ¶23 row 1
+@ ¶25 row 1
   "| CR                                                    | Owner
                                          | Change
                                                                                     | Status    |"
-@ ¶24 row 0
+@ ¶26 row 0
   "| ----------------------------------------------------- | -------------------------------------
   ------ | ---------------------------------------------------------------------------------------
    | --------- |"
-@ ¶25 row 0
+@ ¶27 row 0
   "| CMP-028 Callout (spec §2.8.1)                         | E05's owner
                                    | the stories AccountLineReconciling, AccountLineDesync and Acc
   ountLineLocked             | requested |"
-@ ¶26 row 0
+@ ¶28 row 0
   "| CMP-078 StaleDataShade (spec §2.8.2)                  | E17-D02's and E08-D11's owners; E05's
    owner | an account scope and a reason line; the stale surface's black in dark and high contrast
    | requested |"
-@ ¶27 row 0
+@ ¶29 row 0
   "| CMP-239 data-confidence states (spec §2.8.3)          | E08's owner
                                    | the reconciling and verifying states with their precedence ro
   w                          | requested |"
-@ ¶28 row 0
+@ ¶30 row 0
   "| CMP-057 SplitButton (spec §2.8.4)                     | E05's owner
                                    | `allowed` + `reason` and a busy state on the primary; 2b for
    a row's own reason         | requested |"
-@ ¶29 row 0
+@ ¶31 row 0
   "| CMP-055 FilterBar, CMP-056 ColumnPicker (spec §2.8.5) | E05's owner
                                    | \"Clear all\"; per-tab sets, locked columns, \"Reset to defau
   lt\"                           | requested |"
-@ ¶30 row 0
+@ ¶32 row 0
   "| CMP-075 EnvBadgeLocal (spec §2.8.6)                   | E05's owner
                                    | the compact per-row pill
                                                                   | requested |"
-@ ¶31 row 0
+@ ¶33 row 0
   "| CMP-139 EnvironmentAwareOrderGuard (spec §2.8.6)      | E30-D02's owner
                                | the row form `guard.mismatch.row` (Q-3)
                                                    | PROPOSED  |"
-@ ¶32 row 0
+@ ¶34 row 0
   "| CMP-019 Icon (spec §2.8.7)                            | E05-T06
                                        | the glyph names and a delta glyph for the price-like cell
   s                              | requested |"
-@ ¶33 row 0
+@ ¶35 row 0
   "| CMP-099 PrintExportBar (spec §2.8.9)                  | E05's owner
                                    | the progress line and the watermark
                                                        | requested |"
-@ ¶34 row 0
+@ ¶36 row 0
   "| CMP-011 Tag (spec §2.9)                               | E05's owner
                                    | a `toggle` variant for the Fills Type chips
                                                | requested |"
-@ ¶35 row 0
+@ ¶37 row 0
   "| CMP-100 PriceInput, CMP-101 QtyInput (spec §2.2)      | E30-D04's owner
                                | no blur auto-round inside a cell (D02:618)
                                                 | requested |"
-@ ¶36 row 0
+@ ¶38 row 0
   "| the comfortable control height (Q-15)                 | E05's owner
                                    | one height for `16` §3 rule 3, CMP-002 and the shipped tokens
                              | requested |"
