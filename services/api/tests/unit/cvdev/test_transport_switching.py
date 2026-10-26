@@ -546,7 +546,7 @@ async def test_a_transport_built_without_a_latch_shares_the_process_latch(
 
 
 async def test_a_request_reads_the_clock_off_the_event_loop(stack: Stack) -> None:
-    """With the key's file, in one thread (`_at`): the clock is a file read on a stack."""
+    """With the key's file, in one thread (`select`): the clock is a file read on a stack."""
     loop, seen = threading.get_ident(), []
 
     def clock() -> datetime:

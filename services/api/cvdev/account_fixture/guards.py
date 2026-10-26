@@ -20,6 +20,10 @@ anything is answered:
    receive window, then the query string for GET and DELETE or the body otherwise (the REST
    client's `_payload_string`). Compared in constant time; a mismatch answers 10004.
 
+S12's private-WS socket meets the same guards: the adapter's demo private stream alone
+(`DEMO_PRIVATE_WS`) at connect, then on its `auth` op a pack key id, then the signature the
+adapter's signer has M2 make there (`ws_signature_verifies`).
+
 The venue's hosts and header names are this stub's vocabulary by design (ADR-0036, Enforcement), so
 `cvdev/**` is excluded from the two adapter-vocabulary Semgrep rules (S9).
 
@@ -36,11 +40,11 @@ import posixpath
 import threading
 from dataclasses import dataclass
 from typing import Final
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
-from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS
+from candleviewer.exchange.bybit.config import ALLOWED_REST_HOSTS, PRIVATE_WS_URLS
 from cvdev.account_fixture.pack import derived_secret
 from cvdev.account_fixture.requestlog import HostEnv, KeyClass, Refusal
 
@@ -59,6 +63,15 @@ _FUND_SEGMENTS: Final = FUND_PATH_PREFIX.strip("/").split("/")
 PUBLIC_PATH_PREFIX: Final = "/v5/market/"
 _PUBLIC_SEGMENTS: Final = PUBLIC_PATH_PREFIX.strip("/").split("/")
 QUERY_SIGNED: Final = frozenset({"GET", "DELETE"})
+#: The one private stream the socket answers: the adapter's demo URL, exactly (C-2.11).
+DEMO_PRIVATE_WS: Final = PRIVATE_WS_URLS["demo"]
+#: What the signer has M2 sign for a WS `auth`, before `expires` (24 section 14.3, "Auth (WS)").
+WS_AUTH_PREFIX: Final = b"GET/realtime"
+_WS_HOSTS: Final[dict[str | None, HostEnv]] = {
+    urlsplit(PRIVATE_WS_URLS["demo"]).hostname: "demo",
+    urlsplit(PRIVATE_WS_URLS["live"]).hostname: "live",
+    urlsplit(PRIVATE_WS_URLS["testnet"]).hostname: "testnet",
+}
 #: The process's one key-id guard latch (S7 lens MINOR-1), `wiring.LATCH`: every fixture transport,
 #: and S12's socket, is built with it unless a test injects its own. Set by the first trip of any;
 #: only a restart clears it (FX-D01).
@@ -85,6 +98,11 @@ def host_env(host: str) -> HostEnv | None:
     if host == DEMO_REST_HOST:
         return "demo"
     return "testnet" if host == TESTNET_REST_HOST else "live"
+
+
+def ws_host_env(host: str | None) -> HostEnv | None:
+    """The environment of a private-stream host of the adapter's table, else None."""
+    return _WS_HOSTS.get(host)
 
 
 def _segments(path: str) -> list[str]:
@@ -139,5 +157,17 @@ def signature_verifies(request: httpx.Request, key_id: str, body: bytes) -> bool
     payload = request.url.query if request.method in QUERY_SIGNED else body
     message = f"{timestamp}{key_id}{window}".encode() + payload
     secret = derived_secret(stored_under(key_id)).encode()
+    expected = hmac.new(secret, message, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected.encode(), given.encode())
+
+
+def ws_signature_verifies(key_id: str, expires: object, given: object) -> bool:
+    """Guard 4 for a WS `auth` a pack key id signed: HMAC-SHA256 with the stored-under scenario's
+    derived secret over `GET/realtime` and `expires` (an integer, as the adapter sends it); false
+    for any other part. The stub never judges `expires` itself, as it never judges REST time."""
+    if type(expires) is not int or not isinstance(given, str):
+        return False
+    secret = derived_secret(stored_under(key_id)).encode()
+    message = WS_AUTH_PREFIX + str(expires).encode()
     expected = hmac.new(secret, message, hashlib.sha256).hexdigest()
     return hmac.compare_digest(expected.encode(), given.encode())

@@ -423,3 +423,17 @@ Both are files in `CV_ACCOUNT_FIXTURE_DIR`, beside the request log, so they surv
 Tests call `FixtureClock.set`/`advance` and `KeyStates.switch` in process; a stack gets a command
 line for them with the fixture compose override (#2893 S14). A harness may also write either file
 itself, to a temporary file renamed into place; a key file off the rules refuses the key's calls.
+
+### The private-WS socket (#2893 S12)
+
+`services/api/cvdev/account_fixture/private_ws.py` plays `ws.private` to the adapter's private
+socket, after the same guards as REST: the demo private stream only, a pack key id in `auth` (any
+other trips the process latch), and its signature over `GET/realtime` and `expires` with the
+secret of the scenario the key is stored under. A connect answers as the stack default
+(`CV_ACCOUNT_FIXTURE`, from boot), so TC-115 runs with `demo_ws_unreachable`; after a verified
+`auth` the socket follows the key's scenario on the fixture clock, a switch included. A refused
+`auth` gets the auth reply with `success: false`, a stand-in like the WS frames above. A frame the
+script does not answer, a subscribe before `auth` or of a topic the adapter does not use, closes
+the socket unanswered. The request log has one `ws` line per connect, `auth` and close; its
+`method` names the event: `CONNECT`, `REFUSE` (refused by the script), `AUTH`, `DROP` (closed by
+the stub) or `CLOSE` (closed by the client).

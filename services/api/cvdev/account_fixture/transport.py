@@ -35,7 +35,7 @@ whose level is its severity: critical for the P0 refusals (test plan section 0.1
 refusal without one, warning for a mismatch. A line the log cannot write never lets a refusal
 through, and withholds an answer: a clock that cannot be read fails the line so. Built at boot, as
 the constructor reads the whole pack; a request reads the fixture clock, its key's file and a
-switch's pack files, all in one thread off the event loop (`_at`). Nothing here
+switch's pack files, all in one thread off the event loop (`select`). Nothing here
 imports `candleviewer.secrets` or `candleviewer.audit`.
 """
 
@@ -187,7 +187,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         seen = guards.admit(request, self._key_ids)
         if seen.key_class == "non_fixture":  # whichever guard refuses it first (FX-S01)
-            self._trip()
+            self.trip()
         private = not guards.is_public_path(request.url.path)
         if seen.refusal is not None or self.latched or (seen.key_class == "unsigned" and private):
             self._refuse(request, seen)
@@ -214,8 +214,8 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         answers is unstubbed."""
         call = f"{request.method} {request.url.path}"
         try:
-            now, scenario, started = await asyncio.to_thread(self._at, seen.key_id)
-        except _ClockInvalid:
+            now, scenario, started = await asyncio.to_thread(self.select, seen.key_id)
+        except ClockInvalid:
             self._invalid(request, seen, "clock_invalid")
         except (KeyStateError, OSError):  # a key file, or `keys/`, that cannot be read or written
             self._invalid(request, seen, "key_state_invalid")
@@ -239,12 +239,25 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         unconfirmed, order = reply.code_unconfirmed, _order(call, sent)
         return Answer(response, "served", scenario.name, ret_code, unconfirmed, overlays, order)
 
-    def _at(self, key_id: str | None) -> tuple[datetime, Scenario, datetime]:
-        """The fixture clock, then `_selection` at it. Both read files: off the event loop."""
+    @property
+    def pack(self) -> Pack:
+        return self._pack
+
+    @property
+    def log(self) -> RequestLog:
+        return self._log
+
+    @property
+    def key_ids(self) -> frozenset[str]:
+        return self._key_ids
+
+    def select(self, key_id: str | None) -> tuple[datetime, Scenario, datetime]:
+        """The fixture clock, then `_selection` at it, for this transport and S12's socket. Both
+        read files: off the event loop. `ClockInvalid`, `KeyStateError` or `OSError` refuse."""
         try:
             now = self._clock()
         except (ValueError, OSError) as exc:
-            raise _ClockInvalid from exc
+            raise ClockInvalid from exc
         scenario, started = self._selection(key_id, now)
         return now, scenario, started
 
@@ -282,7 +295,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         logger().error(f"exchange.account_fixture_{code}", **self._fields(request, seen))
         raise httpx.ConnectError(_message(code), request=request) from None
 
-    def _trip(self) -> None:
+    def trip(self) -> None:
         """Latch every transport in the process, then the gate unless it holds a latch already,
         which is kept (as the key self-check keeps a more specific one)."""
         self._latch.set()
@@ -343,7 +356,7 @@ class FixtureTransport(httpx.AsyncBaseTransport):
         return True
 
 
-class _ClockInvalid(Exception):
+class ClockInvalid(Exception):
     """The fixture clock could not be read: its file is off its rule."""
 
 
