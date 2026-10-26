@@ -156,6 +156,7 @@ from candleviewer.api.order_cancel_all import make_cancel_all_router
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import SessionTradingPrincipalResolver
 from candleviewer.api.orders import OrderPrincipals, make_orders_router
+from candleviewer.api.profile_writes import make_profile_writes_router
 from candleviewer.api.profiles import make_profiles_router
 from candleviewer.api.recorder_admin import AdminJobStore, make_recorder_admin_router
 from candleviewer.api.recorder_purge import make_recorder_purge_router
@@ -319,7 +320,8 @@ from candleviewer.orderflow.indicators.metrics import export_indicator_metrics
 from candleviewer.orderflow.service import OrderflowService
 from candleviewer.paper.service import PaperService
 from candleviewer.profile_notices_wiring import ProfileNotices
-from candleviewer.profiles_wiring import wire_profiles
+from candleviewer.profile_warnings_wiring import SaveTimeFigures
+from candleviewer.profiles_wiring import profile_writes, wire_profiles
 from candleviewer.recorder.control import RecordingControl, StoredRecordingControl
 from candleviewer.recorder.control_runtime import RecorderWiring, RuntimeRecordingControl
 from candleviewer.recorder.coverage import CoverageService
@@ -2290,6 +2292,21 @@ def create_app(
     )
     app.state.account_health = account_health
     ctx.accounts.attach_account_health(account_health.feed)
+    # #906 D2: the profile writes and the default binding's move, Owner only and path-gated with
+    # `risk_caps` (SR-E28-02), each audited ahead of its commit; a relaxing one notifies the Owner
+    # in its transaction (SR-E28-01), and the second pass reads this environment's catalogue
+    # (C-2.11). After the account health wiring: the save's sizing warnings read its wallet cache.
+    warnings = SaveTimeFigures(
+        account_health.wallets, lambda: ctx.ingestion.instruments, lambda: ctx.ingestion.tickers
+    )
+    app.include_router(
+        make_profile_writes_router(
+            profile_writes(profiles, ctx, warnings=warnings),
+            _LazyAuditEmitter(ctx.audit),
+            profiles_resolver,
+            auth=ctx.auth,  # a refusal names the caller's session (#4174)
+        )
+    )
     # #895 (E27-S01): `listExchangeAccounts` and `createExchangeAccount` over the M13 store built
     # above (real backend only), in the caller's grants (the profiles' resolver), each account with
     # the monitor's and the wallet cache's status.

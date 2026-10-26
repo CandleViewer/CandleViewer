@@ -224,6 +224,11 @@ def test_raw_body_prefixes_match_whole_segments() -> None:
     assert cc.under_raw_body_prefix("/layout-presets")
     assert not cc.under_raw_body_prefix("/drawingsx")
     assert not cc.under_raw_body_prefix("/layout-presets-v2")
+    profiles = "/exchange-accounts/{accountId}/profiles"  # #906 D2-m: the profile writes
+    assert cc.under_raw_body_prefix(profiles) and cc.under_raw_body_prefix(f"{profiles}/{{id}}")
+    assert cc.under_raw_body_prefix("/exchange-accounts/{accountId}/default-profile")
+    assert not cc.under_raw_body_prefix("/exchange-accounts/{accountId}/profiles-v2")
+    assert not cc.under_raw_body_prefix("/exchange-accounts/{accountId}")
 
 
 def test_the_yaml_path_is_resolved_on_use_not_at_import() -> None:

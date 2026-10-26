@@ -41,9 +41,17 @@ CONTRACT_SUBSET_RESOURCE = "contract_subset.json"
 
 #: Routers that read raw request bodies (#2551): drawings (E14-T01), workspaces (E15-T01),
 #: whose router also serves `/layout-presets` (the YAML groups it with `/workspaces*`), and
-#: indicator presets (E13-T03). The subset carries their full contract path items, so the app
-#: can publish those in its OpenAPI.
-RAW_BODY_PREFIXES = ("/drawings", "/workspaces", "/layout-presets", "/indicator-presets")
+#: indicator presets (E13-T03), and the account profiles' writes and default binding (E28-T02,
+#: #906 D2-m), whose reads publish with them. The subset carries their full contract path items,
+#: so the app can publish those in its OpenAPI.
+RAW_BODY_PREFIXES = (
+    "/drawings",
+    "/workspaces",
+    "/layout-presets",
+    "/indicator-presets",
+    "/exchange-accounts/{accountId}/profiles",
+    "/exchange-accounts/{accountId}/default-profile",
+)
 
 # Routes the app serves that are intentionally outside the REST contract
 # (operational/observability endpoints, not product API surface).

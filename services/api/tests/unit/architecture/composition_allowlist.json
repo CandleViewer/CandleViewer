@@ -3,10 +3,6 @@
     "candleviewer.api.auth_perf": {
       "reason": "perf instrumentation: create_app() includes it only while CV_AUTH_PERF_ENABLED is on (keyless testnet); the default app runs with it off",
       "ticket": "#2097"
-    },
-    "candleviewer.api.profile_writes": {
-      "reason": "the profile writes merge unmounted and mount in #906 slice D2's last PR (ruling B12)",
-      "ticket": "#906"
     }
   },
   "context_modules": {},
@@ -31,10 +27,6 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "DELETE /exchange-accounts/{accountId}/keys/{keyId}": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "DELETE /exchange-accounts/{accountId}/profiles/{profileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
@@ -290,10 +282,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "POST /exchange-accounts/{accountId}/profiles": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
     "POST /instruments/refresh": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
@@ -395,14 +383,6 @@
       "ticket": "E49-K01-F4-baseline"
     },
     "PUT /detectors/config": {
-      "reason": "contract-first operation; implementation lands with its owning epic",
-      "ticket": "E49-K01-F4-baseline"
-    },
-    "PUT /exchange-accounts/{accountId}/default-profile": {
-      "reason": "contract-first operation (#906 slice 0d-1, the default binding); the router slice D2 serves it",
-      "ticket": "#906"
-    },
-    "PUT /exchange-accounts/{accountId}/profiles/{profileId}": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },

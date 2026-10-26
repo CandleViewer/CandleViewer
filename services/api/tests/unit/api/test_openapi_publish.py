@@ -285,7 +285,8 @@ def test_openapi_json_serves_the_published_operation() -> None:
 def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
     """The real app: the raw-body operations in its document are exactly the served routes
     FastAPI puts in the schema (`include_in_schema=False` ones excluded), each carrying the
-    contract's operation (the drawings router is mounted, so its operations are published)."""
+    contract's operation (the drawings router is mounted, so its operations are published, and
+    so are the profile writes and the binding's move, #906 D2-m)."""
     app = create_app(Settings(git_sha="test", version="0.0.0-test"))
     doc = app.openapi()
     assert_spec_is_valid(doc)
@@ -299,6 +300,10 @@ def test_the_app_publishes_only_its_schema_routes_and_validates() -> None:
         if m != "parameters"
     }
     assert published == served
+    profiles = "/exchange-accounts/{accountId}/profiles"
+    writes = {("post", profiles), ("put", f"{profiles}/{{profileId}}")}
+    writes |= {("delete", f"{profiles}/{{profileId}}")}
+    assert writes | {("put", "/exchange-accounts/{accountId}/default-profile")} <= served
     for method, path in served:
         assert doc["paths"][path][method] == SUBSET["paths"][path][method]
 

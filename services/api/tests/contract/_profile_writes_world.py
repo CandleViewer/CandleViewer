@@ -1,7 +1,7 @@
 """The profile writes' provider world (#906 D2-4 to D2-6): the RBAC pack's real `create_app()` (no
 network, C-13.5) over `WritableRows`, D1c's store fake (which answers the accounts too) with the
-writes, and the writes' router, included here until D2-m mounts it. The app's own reads, the
-binding's `GET` among them, read the same fake."""
+writes, and the writes' router as the app mounts it (#906 D2-m), over this world's stores, replay
+clock and ids. The app's own reads, the binding's `GET` among them, read the same fake."""
 
 from __future__ import annotations
 
@@ -224,13 +224,16 @@ def build(mp: pytest.MonkeyPatch) -> Writes:
     wiring = SimpleNamespace(repository=repository, effective=None)
     mp.setattr(appmod, "wire_profiles", lambda *_args: wiring)
     mp.setattr(appmod, "_build_accounts_counts", lambda _settings: rows)  # the reads' accounts
-    world = build_world(mp)
     writes = ProfileWrites(repository, AccountsRepository(cast(Any, rows)), limits, rules, "demo")
-    ctx, replays = world.app.state.app_context, IdempotencyCache(clock=lambda: clock[0])
-    audit, auth = appmod._LazyAuditEmitter(ctx.audit), ctx.auth
-    router = make_profile_writes_router(
-        writes, audit, world.resolver, auth=auth, replays=replays,
-        new_id=lambda: minted.pop() if minted else uuid.uuid4(),
-    )  # fmt: skip
-    world.app.include_router(router)  # until D2-m mounts it (ruling B12)
+    mp.setattr(appmod, "profile_writes", lambda *_args, **_kwargs: writes)
+    replays = IdempotencyCache(clock=lambda: clock[0])
+
+    def new_id() -> uuid.UUID:
+        return minted.pop() if minted else uuid.uuid4()
+
+    def mounted(*args: Any, **kwargs: Any) -> Any:  # the app's include, with this world's seams
+        return make_profile_writes_router(*args, **kwargs, replays=replays, new_id=new_id)
+
+    mp.setattr(appmod, "make_profile_writes_router", mounted)
+    world = build_world(mp)
     return Writes(world, rows, limits, clock, invalidated, rules, replays, minted, writes)

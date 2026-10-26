@@ -342,7 +342,8 @@ def test_a_profile_write_never_moves_the_default() -> None:
     rows = [r for r in lines if r.startswith("| F-")]
     owed = [row for row in rows if "#906 0d" in row.split("|")[-2]]  # in its Tracked cell
     owes = "`setAccountDefaultProfile`, with its own `ETag` and `IfMatchRequired` (#906 0d)"
-    route = "Owed: the route that writes `profile.bound` with the `relaxing` label and notifies the"
+    route = "#906 D2 mounts the route, which writes `profile.bound` with the `relaxing` label and"
+    route += " notifies the"  # #906 D2-m: mounted
     assert len(owed) == 1 and owes in owed[0] and f"{route} Owner (SR-E28-01)" in owed[0]
     # R3-03 (X3), R3-04 (vi), O9: Medium, a schema finding (the binding's version), due before D2
     cells = [cell.strip() for cell in owed[0].split("|")[4:8]]
