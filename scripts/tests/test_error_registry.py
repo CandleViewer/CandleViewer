@@ -104,6 +104,8 @@ def _ws(extra: str) -> str:
         "surface: [rest, smtp]",
         "surface: ['rest\"']",
         "surface: [[rest]]",
+        "surface: []",
+        "surface: [rest, ' REST ']",
         "close_code: '4401'",
         "close_code: '1); import os #'",
         "close_code: true",

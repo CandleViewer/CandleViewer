@@ -101,6 +101,8 @@ def _checked_surface(code: str, value: object) -> list[str]:
     for item in surface:
         if item not in SURFACES:
             raise RegistryError(f"{code}: surface {item!r} must be one of {sorted(SURFACES)}")
+    if not surface or len(set(surface)) != len(surface):
+        raise RegistryError(f"{code}: surface must name each surface once, got {value!r}")
     return surface
 
 
