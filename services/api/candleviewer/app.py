@@ -2527,7 +2527,8 @@ def create_app(
             _compact,
             _LazyAuditEmitter(ctx.audit),
             audit_resolver,
-            # E16-T10: archive import (503 unless the real backend + coverage are composed).
+            # E16-T10: archive import (503 unless the real backend, coverage and the running disk
+            # budget are composed; the import honours the budget's ladder and cap).
             import_runner=build_import_runner(
                 ctx.exchange_bybit.trade_archive(
                     max_concurrency=resolved.import_max_concurrency,
@@ -2538,6 +2539,7 @@ def create_app(
                 resolved.parquet_root,
                 coverage_service,
                 backlog_rows=current_write_backlog_rows,
+                budget=app.state.disk_budget,
             ),
         )
     )
