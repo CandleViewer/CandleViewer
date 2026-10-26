@@ -2107,6 +2107,90 @@ TIMED = (
     r"|\b(?:fast|normal|slow) / (?:standard|decelerate|accelerate)\b|\bgradual\w*|\bsmooth\w*"
 )
 SLOW = r"\bslow(?:er|est|ly)?\b|motion\.duration\.slow"
+# motion no row of this spec has (only opacity and translateX move): denied in any sentence
+OFF_VOCAB = (
+    r"\bbounc\w*|\bspring(?:s|y|ing|ed)?\b|\bsprang\b|\bsprung\b|\bwobbl\w*|\bjiggl\w*"
+    r"|\bshak(?:e|es|ing)\b|\bspin\w*|\brotat\w*|\bzoom\w*|\bmorph\w*|\bswoop\w*|\bwhoosh\w*"
+    r"|\bwiggl\w*|\bjitter\w*|\bvibrat\w*|\bshudder\w*|\bquiver\w*|\bovershoot\w*|\belastic\w*"
+    r"|\brecoil\w*|\bbob(?:s|bing|bed)?\b|\bfl(?:y|ies|ying|ew) (?:in|out|up|down|off)\b"
+    r"|\bpops? (?:in|out|up)\b|\baccordion\w*|\bunfold\w*|\bflip(?:s|ped|ping)? (?:in|over)\b"
+)
+# a motion verb, or a span timed by a speed (a figure alone times a counter or a gap, and a
+# bare `motion.duration.*` is a cap or a binding, not a motion)
+MOTION_VERB = MOVE_VERBS + "|" + OFF_VOCAB
+UNFIGURED_TIMED = (
+    r"\b(?:over|across|during|through|within|for) (?:the |a )?(?:motion\.duration\.)?(?:fast|normal|slow)\b"
+    r"|\beas(?:e|es|ed|ing)\b|\bbezier\b|\bgradual\w*|\bsmooth\w*"
+)
+# the rows a motion sentence may cite: the animated rows and the owners' recipes
+CITABLE = r"\bMo-(?:1|2|3|4|5|6|7|9|11|13)\b"
+# the three general rules that name motion without a row, and the ledger's noun (exact)
+MOTION_RULES = (
+    r"\bevery animation has a defined non animated equivalent\b"
+    r"|\bsets every transition and animation to 0\.01 ms\b"
+    r"|\bonly opacity and transform animate on a blotter row\b|\bdrift corrected by\b"
+)
+CITABLE_N = r"\bmo (?:1|2|3|4|5|6|7|9|11|13)\b"  # CITABLE, as norm_text writes it
+# a motion name that is not a duration (`motion.easing.standard`, CMP-046's `motion.slide`)
+MOTION_NAME = re.compile(r"`?motion\.(?!duration\.)[a-z]+(?:\.[a-z0-9{},*_-]+)*`?")
+
+
+def numbers_claims(texts: list[str]) -> list[str]:
+    """RULED BQ-11, the numbers never tween: every clause (a row: each cell) naming a figure that
+    moves or is timed by a speed, whichever word is its subject ("the row animates the price"); a
+    clause naming a glyph, a word or a state too is G-INSTANT's (KIND), which reads it."""
+    moving = MOTION_VERB + "|" + UNFIGURED_TIMED
+    hits = clause_claims(texts, NUMBERISH, moving, prep=as_names)
+    return [c for c in hits if not re.search(KIND, c)]
+
+
+def owned_elsewhere(s: str, cap: float) -> bool:
+    """A moving sentence another gate reads by its own rule: a timing past the cap or `slow`
+    (G-ROW-200), a layout or paint property or the pointer (G-COMPOSITOR), a reduced reading
+    (G-REDUCE-INSTANT), a figure, a tick or a tween (G-TICK), a loop (G-LOOP) or a quoted figure
+    (G-VALUE). motion_claims leaves it to that gate, so each breach reports once."""
+    n = norm_text(unquote(s))
+    moving = MOVE_VERBS + "|" + TIMED + r"|\btransition\w*"
+    pointer = r"\bunder (?:the )?(?:pointer|cursor|mouse)\b"
+    return bool(
+        long_claims([s], cap)
+        or adjacent(s, NON_COMPOSITOR, moving, 4)
+        or live(s, LAYOUT_MOTION)
+        or adjacent(s, pointer, MOVE_VERBS, 4)
+        or RAW_REDUCED.search(s)
+        or numbers_claims([s])
+        or adjacent(s, MOTIONISH, PER_TICK, 6)
+        or adjacent(s, NUMBERISH, TWEEN, 4)
+        or re.search(LOOP_WORDS, n)
+        or any(re.search(r"\d", q) for q in QUOTED.findall(s))
+    )
+
+
+def motion_claims(texts: list[str], cap: float) -> list[str]:
+    """RULED BQ-9: a sentence (a row: across its cells) asserting motion cites the row it is —
+    an animated row or an owner's recipe — or is one of MOTION_RULES; a sentence opening on a
+    pronoun carries the previous sentence's row. Motion no row has (OFF_VOCAB) is denied in any
+    sentence, cited or not. A name is no claim: `motion.easing.*` and the design-system names
+    read as "a token"."""
+    hits: list[str] = []
+    for text in texts:
+        for u in units(text):
+            cited = False
+            for s in sentences(u):
+                n = norm_text(unquote(s))
+                cited = re.search(CITABLE_N, n) is not None or (cited and bool(PRONOUN.match(n)))
+                raw = as_names(s)
+                frags = [re.sub(MOTION_RULES, " ", f) for f in blanked(raw).split(" ¦ ")]
+                read = " ¦ ".join(frags)
+                if owned_elsewhere(s, cap):
+                    continue
+                if re.search(OFF_VOCAB, read):
+                    hits.append(f"(no row moves so) {read[:64]!r}")
+                elif not cited and re.search(MOTION_VERB + "|" + UNFIGURED_TIMED, read):
+                    hits.append(f"(cites no motion row) {read[:64]!r}")
+    return hits
+
+
 TWIN = "prefers-reduced-motion"
 TWIN_NULL = (
     r"\bnone\b|\bn ?/ ?a\b|\bsame as (?:the )?(?:motion )?safe\b|\bunchanged\b|\bas above\b"
@@ -2331,7 +2415,8 @@ def g_row200(t: Texts) -> list[str]:
     """RULED BQ-9 / BQ-12: no motion row longer than `motion.duration.normal`, `slow` nowhere:
     one motion table, each row's Duration a shipped token with its marker and its Easing a
     shipped curve or none (`by reference` only for an owner's recipe); no free cell, frame,
-    sentence or `16`-block cell times a motion past the cap."""
+    sentence or `16`-block cell times a motion past the cap; the `16` block's Enter cells are
+    ENTER_PINS, exact (no repeat, no added property)."""
     cap = float(t.values["motion.duration.normal"])
     bad: list[str] = []
     if motion_ready(t):
@@ -2375,6 +2460,7 @@ def g_row200(t: Texts) -> list[str]:
         if any(d > cap for d in durations(col(r, "Enter"), anywhere=True)):
             bad.append(f"`16` block {name!r}: its motion runs past {cap:g} ms")
         bad += [f"`16` block {name!r}: {h}" for h in long_claims([col(r, "Hold / clear")], cap)]
+    bad += enter_pins(t.hand)
     texts = [without(x, "3.2 The motion table", "C.6 The `16` block") for x in swept(t)]
     bad += long_claims(texts, cap)
     return one("G-ROW-200", bad)
@@ -2575,7 +2661,8 @@ def g_instant(t: Texts) -> list[str]:
     fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO / LIVE —
     `motion.duration.instant`, no easing. Default-deny: only Mo-1, 2, 3, 4, 6 and 9 animate; a
     frame's Motion names one row or —, only FRAME_ANIMATED's frames name an animated row, and no
-    other frame cell, cut row or sentence animates a state."""
+    other frame cell, cut row or sentence animates a state; a sentence that moves cites its row
+    and no sentence names motion no row has (motion_claims)."""
     bad: list[str] = []
     rows = mo_list(t.spec) if motion_ready(t) else []
     if rows:
@@ -2642,7 +2729,17 @@ def g_instant(t: Texts) -> list[str]:
     moving = MOVE_VERBS + "|" + TIMED + r"|\btransition(?:s|ed|ing)? (?:from|to|between|into)\b"
     hits = clause_claims(texts, KIND, moving, prep=neutral_names)
     bad += [f"claim: {c!r}" for c in hits]
+    cap = float(t.values["motion.duration.normal"])
+    bad += [f"claim {c}" for c in motion_claims(swept(t), cap)]
     return one("G-INSTANT", bad)
+
+
+def as_names(s: str) -> str:
+    """`s` with every design-system name but a duration read as "a token" (neutral_names, then
+    MOTION_NAME), so `motion.easing.standard` is no easing claim, and CMP-038's name
+    (InlineSpinnerText) read as "a component"."""
+    s = re.sub(r"\binline ?spinner ?text\b", " a component ", s, flags=re.IGNORECASE)
+    return MOTION_NAME.sub(" a token ", neutral_names(s))
 
 
 def neutral_names(s: str) -> str:
@@ -2753,6 +2850,72 @@ FLASH_HOLD_PIN = (
 )
 
 
+# every Enter cell of the `16` block, in order, exact (default-deny: R02's Property and R04's
+# one shot are held at the copy E29-T09 pastes, as the flash row's are; a change here is a
+# deliberate edit of this table, never something `--check` takes)
+ENTER_PINS: tuple[str, ...] = (
+    (
+        "the row's own opacity over `fast` / `standard`; `prefers-reduced-motion`: at frame 0 "
+        'with its "New" marker'
+    ),
+    (
+        "the row's opacity over `fast` / `accelerate`, `pointer-events: none` from its first "
+        "frame; `prefers-reduced-motion`: gone at frame 0, its word was the change"
+    ),
+    FLASH_ENTER_PIN,
+    (
+        "the same opacity overlay once, above the row; `prefers-reduced-motion`: no highlight, "
+        "the marker word is the change"
+    ),
+    (
+        "the row's own opacity over `fast` / `standard`, at the list's top only; "
+        "`prefers-reduced-motion`: at frame 0, its time and side word are the change"
+    ),
+    (
+        "`transform: translateX` over `normal`, `decelerate` to open, `accelerate` to close; "
+        "`prefers-reduced-motion`: at frame 0, its heading text is the change"
+    ),
+    "at frame 0; `prefers-reduced-motion`: the same cut at frame 0",
+)
+
+
+def enter_owned(enter: str) -> bool:
+    """An Enter cell another gate reads by its own rule: its twin missing or moving (G-TWIN,
+    G-REDUCE-INSTANT), a layout or paint property or no opacity / transform / frame 0
+    (G-COMPOSITOR), a tick, a frame or a dropped limit (G-TICK)."""
+    twins = re.findall(r"`?prefers-reduced-motion`?:\s*([^;|]*)", enter)
+    pre = enter.split("prefers-reduced-motion")[0]
+    moving = MOVE_VERBS + "|" + TIMED + r"|\btransition\w*"
+    return bool(
+        not twins
+        or not twin_ok(f"{TWIN}: {twins[0]}")
+        or any(moves(x) for x in twins)
+        or adjacent(pre, NON_COMPOSITOR, moving, 2)
+        or live(pre, LAYOUT_MOTION)
+        or not live(pre, r"\bopacity\b|\btransform\b|\bframe 0\b")
+        or live(enter, PER_TICK)
+        or re.search(TICK_DENY, norm_text(enter))
+    )
+
+
+def enter_pins(hand: str) -> list[str]:
+    """The `16` block's Enter cells against ENTER_PINS, by row: changed, added or dropped. The
+    flash row is G-TICK's (FLASH_ENTER_PIN) and a cell another gate reads is left to it
+    (enter_owned), so each breach reports once."""
+    rows = block16_rows(hand)
+    if not rows:
+        return []
+    got = [one_space(col(r, "Enter")) for r in rows]
+    bad = [
+        f"`16` block row {i + 1} Enter {g[:40]!r} is not its pinned text"
+        for i, (g, want) in enumerate(zip(got, ENTER_PINS))
+        if g != want and want != FLASH_ENTER_PIN and not enter_owned(g)
+    ]
+    if len(got) != len(ENTER_PINS):
+        bad.append(f"the `16` block has {len(got)} Enter cells, the pins {len(ENTER_PINS)}")
+    return bad
+
+
 def tick_16_block(hand: str) -> list[str]:
     """The `16` block's rows, each read whole (R10 at the copy E29-T09 pastes): no row runs per
     tick, per update or per frame, none drops its limit, a stale cell never flashes; the flash
@@ -2782,7 +2945,8 @@ def tick_16_block(hand: str) -> list[str]:
 
 def g_tick(t: Texts) -> list[str]:
     """RULED BQ-9 / BQ-11: nothing animates per tick or per price update; every animated row
-    states its limit; the value flash starts on a settled value at most once per `16`'s gap."""
+    states its limit; the value flash starts on a settled value at most once per `16`'s gap; the
+    numbers never tween — no clause naming a figure moves or is timed, whatever its subject."""
     texts = [decamel(x) for x in swept(t)]
     bad = [f"claim: {c!r}" for c in pair_claims(texts, MOTIONISH, PER_TICK, 6)]
     cap = float(t.values["cited.05.flash-max-per-s"])
@@ -2806,6 +2970,7 @@ def g_tick(t: Texts) -> list[str]:
                 if not re.search(r"\bsettled\b", norm_text(col(r, "Trigger"))):
                     bad.append(f"{k}: the flash starts on something other than a settled value")
     bad += [f"claim (tween): {c!r}" for c in pair_claims(texts, NUMBERISH, TWEEN, 4)]
+    bad += [f"claim (numbers move): {c!r}" for c in numbers_claims(texts)]
     bad += tick_16_block(t.hand)
     s34 = section(t.spec, "3.4 Never per tick")
     if not pending(t.spec, "3.4 Never per tick") and "per tick" not in norm_text(s34):
@@ -6135,6 +6300,91 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-2 (§B a line gone)",
         hand=lambda text, _v: "\n".join(
             ln for ln in text.split("\n") if not ln.startswith("| Contrast and CVD")
+        ),
+    ),
+    # delta r2 MAJOR-1 (BQ-11): the numbers never tween, whatever word is the subject
+    Mutation(
+        "M8.14",
+        "G-TICK",
+        "BQ-11 (the price animates)",
+        spec=prose_at("3.1 ", "The price animates over `motion.duration.fast`."),
+    ),
+    Mutation(
+        "M8.15",
+        "G-TICK",
+        "BQ-11 (the row animates the price)",
+        spec=prose_at("3.1 ", "The row animates the price."),
+    ),
+    Mutation("M8.16", "G-TICK", "BQ-11 (no subject)", spec=prose_at("3.4 ", "Animates the price.")),
+    Mutation(
+        "M8.17",
+        "G-TICK",
+        "BQ-11 (a quantity, the hand-off)",
+        hand=prose_at("§E ", "The quantity slides to its new value."),
+    ),
+    Mutation(
+        "M8.18", "G-TICK", "BQ-11 (any case)", spec=prose_at("2.1 ", "THE ROW ANIMATES THE PRICE.")
+    ),
+    # delta r2 MINOR-1 (BQ-9): motion no row has, and a moving sentence that cites no row
+    Mutation("M6.18", "G-INSTANT", "BQ-9 (bounces)", spec=prose_at("3.1 ", "The row bounces in.")),
+    Mutation("M6.19", "G-INSTANT", "BQ-9 (springs)", spec=prose_at("3.1 ", "The row springs in.")),
+    Mutation(
+        "M6.20", "G-INSTANT", "BQ-9 (eases, no row)", spec=prose_at("3.4 ", "The panel eases in.")
+    ),
+    Mutation("M6.21", "G-INSTANT", "BQ-9 (wobbles)", spec=prose_at("3.6 ", "The row wobbles.")),
+    Mutation(
+        "M6.22",
+        "G-INSTANT",
+        "BQ-9 (a toast timed, no row)",
+        spec=prose_at("3.6 ", "The toast eases in over `motion.duration.normal`."),
+    ),
+    Mutation(
+        "M6.23",
+        "G-INSTANT",
+        "BQ-9 (slides, no row)",
+        spec=prose_at("3.6 ", "The tab underline slides."),
+    ),
+    Mutation(
+        "M6.24",
+        "G-INSTANT",
+        "BQ-9 (slides, the hand-off)",
+        hand=prose_at("§E ", "The tab underline slides."),
+    ),
+    Mutation(
+        "M6.25",
+        "G-INSTANT",
+        "BQ-9 (any case, a row cited)",
+        spec=prose_at("3.3 ", "THE ROW BOUNCES IN (MO-1)."),
+    ),
+    # delta r2 MINOR-2 (BQ-9): the `16` block's Enter cells, exact
+    Mutation(
+        "M1.14",
+        "G-ROW-200",
+        "BQ-9 (`16` block: Mo-1 twice)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            "the row's own opacity over `fast` / `standard`;",
+            "the row's own opacity over `fast` / `standard`, twice;",
+        ),
+    ),
+    Mutation(
+        "M1.15",
+        "G-ROW-200",
+        "BQ-9 (`16` block: the drawer adds a colour)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            "`accelerate` to close;",
+            "`accelerate` to close, then `color` over `fast`;",
+        ),
+    ),
+    Mutation(
+        "M1.16",
+        "G-ROW-200",
+        "BQ-9 (`16` block: another row, any case)",
+        hand=sub_in(
+            "C.6 The `16` block",
+            "over `fast` / `standard`, at the list's top only;",
+            "over `FAST` / `STANDARD`, TWICE, at the list's top only;",
         ),
     ),
 )
