@@ -220,6 +220,7 @@
 # Tests
 # ---------------------------------------------------------------------------
 /qa/plans/                              @CandleViewer/qa @basiltt
+/qa/security/                           @CandleViewer/qa @CandleViewer/security @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
 /tests/                                 @CandleViewer/qa @basiltt
 # future: E02/later scaffolding; directory does not exist yet.
