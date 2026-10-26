@@ -60,11 +60,17 @@ ticket's spec and hand-off from the working tree, and the working-tree `14`, `15
    frozen at the filled baseline; each must add exactly one FAIL, from the gate it names (the
    N-n probes must add none), and every text is restored byte-identically (sha256 in memory and
    on disk). It also runs the CVD port's pinned self-test and the fence probe.
+7. **--contact-sheet** writes board 07 (§0, §15.2): the nine types at s = 12 L0, 2 L1 and 0.6 L2
+   under normal vision, greyscale, protanopia, deuteranopia and tritanopia (135 labelled tiles),
+   cut from boards 02 and 03's PNG exports by the rectangles in --frames (the shape is in the
+   comment above SHEET_TIERS); stdlib PNG decode / encode. `--selftest` renders a synthetic pair.
 
 Usage (from the repo root):
   python3 -I docs/design/_tools/e12_d06_series_audit.py --check [--fill] [--json]
   python3 -I docs/design/_tools/e12_d06_series_audit.py --selftest
   python3 -I docs/design/_tools/e12_d06_series_audit.py --repin-ruled
+  python3 -I docs/design/_tools/e12_d06_series_audit.py --contact-sheet B02.png B03.png \\
+      --frames frames.json --out B07.png
 Exit 0 = no FAIL; 1 = at least one FAIL.
 """
 
@@ -78,9 +84,11 @@ import json
 import math
 import re
 import statistics
+import struct
 import subprocess
 import sys
 import unicodedata
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
@@ -3876,6 +3884,10 @@ def selftest(spec: str, hand: str, paths: tuple[Path, ...]) -> tuple[bool, list[
     port = cvd_port_problems()
     lines.append(f"  CVD port self-test (two pinned hex inputs): {'ok' if not port else 'FAIL'}")
     ok = ok and not probe and not port
+    sheet_bad, sheet_info = sheet_selftest(spec_f)
+    lines.append(f"  board 07 contact sheet (synthetic pair): {'ok' if not sheet_bad else 'FAIL'}")
+    lines += [f"    {x}" for x in sheet_info + sheet_bad]
+    ok = ok and not sheet_bad
     pristine = digest_texts(spec_f, hand_f, *(x for _n, x in plans))
     for mu in MUTATIONS:
         if mu.gate == "G-PREDECESSOR" and mu.mid.startswith("X") and predecessor_grams() is None:
@@ -3920,6 +3932,481 @@ def selftest(spec: str, hand: str, paths: tuple[Path, ...]) -> tuple[bool, list[
     return ok, lines
 
 
+# ---------------------------------------------------------------------------- board 07
+#
+# `--contact-sheet BOARD02.png BOARD03.png --frames FRAMES.json --out BOARD07.png` writes board 07
+# (§0, §15.2, §17.1 `cvd/contact-sheet`): the nine types at the three densities (s = 12 L0, 2 L1,
+# 0.6 L2), each tile cut from boards 02 and 03's exports and shown under normal vision, greyscale
+# and the three simulations (`simulate`, per unique colour). Greyscale is the colour's relative
+# luminance Y (the `luminance` / `lab` weights) re-encoded as an sRGB grey, so a tile's grey has
+# the L* the §15.2 greyscale column measures. Labels are drawn in the built-in 5 x 7 font below.
+#
+# FRAMES.json is one object: register frame name (§17.1, e.g. "types/candle · dark") -> {"board":
+# "02" | "03", "x": int, "y": int, "w": int, "h": int}, a rectangle in that PNG's pixel space
+# (top-left origin, so a DPR 2 export doubles the Penpot coordinates). Every name in SHEET_SOURCE
+# must be present; other names are ignored. PNGs: 8-bit RGB / RGBA, non-interlaced, any of the
+# five filters; RGBA is composited over SHEET_BG. The sheet is written as 8-bit RGB, filter 0.
+#
+# Grid: a title strip, then one row per (type, tier) in NINE_TYPES order, L0 / L1 / L2 under each
+# type (27 rows), and one column per simulation in SHEET_SIMS order (5 columns): 135 tiles. Each
+# cell is a two-line label (type, tier and s; simulation) above the unscaled tile; columns share
+# the widest tile or label, a row is as tall as its frame.
+SHEET_TIERS: tuple[tuple[str, str], ...] = (
+    ("L0", SAMPLES[0]),
+    ("L1", CVD_L1_SAMPLE),
+    ("L2", SAMPLES[4]),
+)
+SHEET_SIMS = ("normal", "greyscale", *SIMS)
+SHEET_SIM_WORDS = {"normal": "NORMAL VISION", "greyscale": "GREYSCALE"} | {
+    s: s.upper() for s in SIMS
+}
+_C1, _C2 = "marks/candle-L1 · dark", "marks/candle-L2 · dark"
+# (type) -> the frame each tier's tile is cut from: board 02 at L0, board 03 at L1 / L2. §4.1's
+# "as candle" rows share the candle mark; line, area and baseline draw one position mark at L1 and
+# L2, so both tiers cut board 03's L2 frame; delta-volume's L2 tile is its signed sub-pane.
+SHEET_SOURCE: dict[str, tuple[str, str, str]] = {
+    "Candle": ("types/candle · dark", _C1, _C2),
+    "Hollow candle": ("types/hollow-four-marks · dark", "marks/hollow-L1 · dark", _C2),
+    "OHLC bar": ("types/ohlc · dark", _C1, "marks/ohlc-L2 · dark"),
+    "Heikin-Ashi": ("types/heikin-ashi · dark", _C1, _C2),
+    "Line": ("types/line · dark", "marks/line-L2 · dark", "marks/line-L2 · dark"),
+    "Area": ("types/area · dark", "marks/area-L2 · dark", "marks/area-L2 · dark"),
+    "Baseline": ("types/baseline · dark", "marks/baseline-L2 · dark", "marks/baseline-L2 · dark"),
+    "Equi-volume": ("types/equi-cap · dark", "marks/equi-L1 · dark", _C2),
+    "Delta-volume": ("types/delta-volume · dark", _C1, "marks/delta-subpane-L2 · dark"),
+}
+SHEET_BG = b"\x20\x20\x20"
+SHEET_INK = b"\xe6\xe6\xe6"
+SHEET_MARGIN, SHEET_GAP, SHEET_SCALE = 16, 8, 2
+SHEET_LINE = 7 * SHEET_SCALE + 4  # one text line: the glyph height plus leading
+SHEET_LABEL = 2 * SHEET_LINE + 4  # two label lines above each tile
+SHEET_TITLE = "E12-D06 / 07 CVD-CONTACT-SHEET"
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+# 5 x 7 glyphs: seven rows top to bottom, two hex digits each, bit 4 the leftmost column
+FONT_5X7 = {
+    "A": "0E11111F111111",
+    "B": "1E11111E11111E",
+    "C": "0E11101010110E",
+    "D": "1E11111111111E",
+    "E": "1F10101E10101F",
+    "F": "1F10101E101010",
+    "G": "0E11101711110F",
+    "H": "1111111F111111",
+    "I": "0E04040404040E",
+    "J": "0702020202120C",
+    "K": "11121418141211",
+    "L": "1010101010101F",
+    "M": "111B1515111111",
+    "N": "11111915131111",
+    "O": "0E11111111110E",
+    "P": "1E11111E101010",
+    "Q": "0E11111115120D",
+    "R": "1E11111E141211",
+    "S": "0F10100E01011E",
+    "T": "1F040404040404",
+    "U": "1111111111110E",
+    "V": "11111111110A04",
+    "W": "1111111515150A",
+    "X": "11110A040A1111",
+    "Y": "1111110A040404",
+    "Z": "1F01020408101F",
+    "0": "0E11131519110E",
+    "1": "040C040404040E",
+    "2": "0E11010204081F",
+    "3": "1F02040201110E",
+    "4": "02060A121F0202",
+    "5": "1F101E0101110E",
+    "6": "0608101E11110E",
+    "7": "1F010204080808",
+    "8": "0E11110E11110E",
+    "9": "0E11110F01020C",
+    "-": "0000001F000000",
+    ".": "00000000000C0C",
+    "=": "00001F001F0000",
+    "/": "01010204081010",
+    "(": "02040808080402",
+    ")": "08040202020408",
+    " ": "00000000000000",
+    "·": "00000004000000",
+}
+
+
+@dataclass
+class Raster:
+    """An 8-bit RGB image, rows top to bottom, three bytes per pixel."""
+
+    w: int
+    h: int
+    px: bytearray
+
+    def crop(self, x: int, y: int, w: int, h: int) -> Raster:
+        out = bytearray()
+        for j in range(y, y + h):
+            out += self.px[(j * self.w + x) * 3 : (j * self.w + x + w) * 3]
+        return Raster(w, h, out)
+
+    def blit(self, src: Raster, x: int, y: int) -> None:
+        for j in range(src.h):
+            at = ((y + j) * self.w + x) * 3
+            self.px[at : at + src.w * 3] = src.px[j * src.w * 3 : (j + 1) * src.w * 3]
+
+    def at(self, x: int, y: int) -> str:
+        i = (y * self.w + x) * 3
+        return "#" + bytes(self.px[i : i + 3]).hex().upper()
+
+
+def paeth(a: int, b: int, c: int) -> int:
+    p = a + b - c
+    pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+    return a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+
+
+def png_unfilter(ft: int, line: bytearray, prev: bytearray, bpp: int) -> None:
+    """Undo one scanline's filter in place (PNG filter method 0: None, Sub, Up, Average, Paeth)."""
+    if ft == 0:
+        return
+    if ft == 2:
+        line[:] = bytes((x + b) & 255 for x, b in zip(line, prev, strict=True))
+        return
+    if ft not in (1, 3, 4):
+        raise ValueError(f"PNG filter type {ft} is not 0-4")
+    for i in range(len(line)):
+        a = line[i - bpp] if i >= bpp else 0
+        if ft == 1:
+            pred = a
+        elif ft == 3:
+            pred = (a + prev[i]) >> 1
+        else:
+            pred = paeth(a, prev[i], prev[i - bpp] if i >= bpp else 0)
+        line[i] = (line[i] + pred) & 255
+
+
+def png_filter(ft: int, line: bytes, prev: bytes, bpp: int) -> bytes:
+    """Apply one filter to a scanline (the self-test's encoder uses all five)."""
+    out = bytearray(len(line))
+    for i, x in enumerate(line):
+        a = line[i - bpp] if i >= bpp else 0
+        c = prev[i - bpp] if i >= bpp else 0
+        pred = (0, a, prev[i], (a + prev[i]) >> 1, paeth(a, prev[i], c))[ft]
+        out[i] = (x - pred) & 255
+    return bytes(out)
+
+
+def png_decode(data: bytes) -> Raster:
+    """8-bit RGB / RGBA, non-interlaced, filters 0-4; RGBA is composited over SHEET_BG."""
+    if data[:8] != PNG_SIG:
+        raise ValueError("not a PNG file")
+    pos, idat, ihdr = 8, bytearray(), None
+    while pos + 12 <= len(data):
+        n, kind = struct.unpack(">I4s", data[pos : pos + 8])
+        body = data[pos + 8 : pos + 8 + n]
+        (crc,) = struct.unpack(">I", data[pos + 8 + n : pos + 12 + n])
+        if len(body) != n or zlib.crc32(kind + body) != crc:
+            raise ValueError(f"PNG chunk {kind!r} is truncated or fails its CRC")
+        pos += 12 + n
+        if kind == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", body)
+        elif kind == b"IDAT":
+            idat += body
+        elif kind == b"IEND":
+            break
+    if ihdr is None:
+        raise ValueError("PNG has no IHDR")
+    w, h, depth, ctype, comp, filt, interlace = ihdr
+    if depth != 8 or ctype not in (2, 6) or comp or filt or interlace:
+        raise ValueError(
+            f"PNG must be 8-bit RGB / RGBA, non-interlaced (depth {depth}, colour type {ctype}, "
+            f"interlace {interlace})"
+        )
+    bpp = 3 if ctype == 2 else 4
+    stride = w * bpp
+    raw = zlib.decompress(bytes(idat))
+    if len(raw) != h * (stride + 1):
+        raise ValueError("PNG image data has the wrong length")
+    out, prev = bytearray(), bytearray(stride)
+    bg = SHEET_BG
+    for y in range(h):
+        off = y * (stride + 1)
+        line = bytearray(raw[off + 1 : off + 1 + stride])
+        png_unfilter(raw[off], line, prev, bpp)
+        if bpp == 3:
+            out += line
+        else:
+            for i in range(0, stride, 4):
+                al = line[i + 3]
+                if al == 255:
+                    out += line[i : i + 3]
+                else:
+                    out += bytes(
+                        (line[i + k] * al + bg[k] * (255 - al) + 127) // 255 for k in range(3)
+                    )
+        prev = line
+    return Raster(w, h, out)
+
+
+def png_chunk(kind: bytes, body: bytes) -> bytes:
+    return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+
+def png_encode(
+    w: int, h: int, px: bytes | bytearray, channels: int = 3, filters: tuple[int, ...] = (0,)
+) -> bytes:
+    """8-bit RGB (or RGBA) PNG; row y uses filters[y % len(filters)] (the writer uses filter 0)."""
+    stride, raw, prev = w * channels, bytearray(), bytes(w * channels)
+    for y in range(h):
+        line = bytes(px[y * stride : (y + 1) * stride])
+        ft = filters[y % len(filters)]
+        raw += bytes((ft,)) + (line if ft == 0 else png_filter(ft, line, prev, channels))
+        prev = line
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2 if channels == 3 else 6, 0, 0, 0)
+    return (
+        PNG_SIG
+        + png_chunk(b"IHDR", ihdr)
+        + png_chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        + png_chunk(b"IEND", b"")
+    )
+
+
+def greyscale(hex6: str) -> str:
+    """The sRGB grey with the colour's relative luminance Y (so the same CIELAB L*)."""
+    return "#" + f"{round(linear_to_srgb(luminance(hex6))):02X}" * 3
+
+
+def sheet_colour(sim: str) -> Callable[[str], str]:
+    if sim == "normal":
+        return lambda hex6: hex6
+    if sim == "greyscale":
+        return greyscale
+    return lambda hex6: simulate(hex6, sim)
+
+
+def sheet_tile(src: Raster, sim: str, cache: dict[bytes, bytes]) -> Raster:
+    """The tile under one simulation, computed once per unique colour (boards are flat colour)."""
+    fn, px = sheet_colour(sim), src.px
+    out = bytearray(len(px))
+    for i in range(0, len(px), 3):
+        key = bytes(px[i : i + 3])
+        v = cache.get(key)
+        if v is None:
+            v = cache[key] = bytes.fromhex(fn("#" + key.hex())[1:])
+        out[i : i + 3] = v
+    return Raster(src.w, src.h, out)
+
+
+def text_width(text: str) -> int:
+    return (6 * len(text) - 1) * SHEET_SCALE
+
+
+def draw_text(dst: Raster, x: int, y: int, text: str) -> None:
+    sc = SHEET_SCALE
+    for n, ch in enumerate(text):
+        rows = FONT_5X7[ch]
+        for r in range(7):
+            bits = int(rows[2 * r : 2 * r + 2], 16)
+            for c in range(5):
+                if bits & (16 >> c):
+                    for dy in range(sc):
+                        at = ((y + r * sc + dy) * dst.w + x + (n * 6 + c) * sc) * 3
+                        dst.px[at : at + 3 * sc] = SHEET_INK * sc
+
+
+def sheet_frames() -> dict[str, str]:
+    """Every source frame -> the board it is drawn on (types/ on 02, marks/ on 03)."""
+    names = {f for row in SHEET_SOURCE.values() for f in row}
+    return {f: "02" if f.startswith("types/") else "03" for f in sorted(names)}
+
+
+def sheet_labels(kind: str, tier: str, s: str, sim: str) -> tuple[str, str]:
+    return f"{kind.upper()} {tier} S={s}", SHEET_SIM_WORDS[sim]
+
+
+def load_frames(doc: object, boards: dict[str, Raster]) -> tuple[dict[str, Raster], list[str]]:
+    """FRAMES.json -> the crop of every source frame, or the problems found."""
+    if not isinstance(doc, dict):
+        return {}, ["frames JSON is not an object of frame name -> {board, x, y, w, h}"]
+    crops: dict[str, Raster] = {}
+    bad: list[str] = []
+    for name, board in sheet_frames().items():
+        r = doc.get(name)
+        if not isinstance(r, dict):
+            bad.append(f"frame {name!r} is missing")
+            continue
+        bd = r.get("board")
+        bd = f"{bd:02d}" if isinstance(bd, int) and not isinstance(bd, bool) else bd
+        nums = [r.get(k) for k in ("x", "y", "w", "h")]
+        if bd != board:
+            bad.append(f"frame {name!r} is on board {bd!r}, the register says {board}")
+            continue
+        if not all(isinstance(v, int) and not isinstance(v, bool) for v in nums):
+            bad.append(f"frame {name!r}: x, y, w and h must be integers")
+            continue
+        x, y, w, h = (int(v) for v in nums if isinstance(v, int))
+        img = boards[board]
+        if x < 0 or y < 0 or w < 1 or h < 1 or x + w > img.w or y + h > img.h:
+            bad.append(f"frame {name!r} ({x}, {y}, {w} x {h}) is outside board {board}'s PNG")
+            continue
+        crops[name] = img.crop(x, y, w, h)
+    return crops, bad
+
+
+@dataclass
+class Sheet:
+    raster: Raster
+    tiles: list[tuple[str, str, str, int, int, int, int]]  # type, tier, sim, x, y, w, h
+    legend: list[str] = field(default_factory=list)
+
+
+def contact_sheet(crops: dict[str, Raster]) -> Sheet:
+    """Lay out board 07 (the grid in the comment above SHEET_TIERS)."""
+    rows = [
+        (kind, tier, s, SHEET_SOURCE[kind][i])
+        for kind in NINE_TYPES
+        for i, (tier, s) in enumerate(SHEET_TIERS)
+    ]
+    widths = [crops[f].w for *_r, f in rows]
+    widths += [
+        text_width(t)
+        for k, tr, s, _f in rows
+        for sim in SHEET_SIMS
+        for t in sheet_labels(k, tr, s, sim)
+    ]
+    cw, m, gap = max(widths), SHEET_MARGIN, SHEET_GAP
+    top = m + SHEET_LINE + gap
+    w = 2 * m + len(SHEET_SIMS) * cw + (len(SHEET_SIMS) - 1) * gap
+    h = top + sum(SHEET_LABEL + crops[f].h for *_r, f in rows) + (len(rows) - 1) * gap + m
+    out = Raster(w, h, bytearray(SHEET_BG * (w * h)))
+    draw_text(out, m, m, SHEET_TITLE)
+    caches: dict[str, dict[bytes, bytes]] = {sim: {} for sim in SHEET_SIMS}
+    sheet, y = Sheet(out, []), top
+    for kind, tier, s, frame in rows:
+        src = crops[frame]
+        for c, sim in enumerate(SHEET_SIMS):
+            x = m + c * (cw + gap)
+            one, two = sheet_labels(kind, tier, s, sim)
+            draw_text(out, x, y, one)
+            draw_text(out, x, y + SHEET_LINE, two)
+            out.blit(sheet_tile(src, sim, caches[sim]), x, y + SHEET_LABEL)
+            sheet.tiles.append((kind, tier, sim, x, y + SHEET_LABEL, src.w, src.h))
+        sheet.legend.append(f"{kind} {tier} (s = {s}): {frame}, row at y = {y}")
+        y += SHEET_LABEL + src.h + gap
+    return sheet
+
+
+def write_contact_sheet(b02: Path, b03: Path, frames_json: Path, out: Path) -> int:
+    boards = {"02": png_decode(b02.read_bytes()), "03": png_decode(b03.read_bytes())}
+    crops, bad = load_frames(json.loads(frames_json.read_bytes().decode("utf-8")), boards)
+    if bad:
+        print("\n".join(f"FAIL --contact-sheet: {x}" for x in bad))
+        return 1
+    sheet = contact_sheet(crops)
+    r = sheet.raster
+    out.write_bytes(png_encode(r.w, r.h, r.px))
+    print("\n".join(sheet.legend))
+    print(f"--contact-sheet: {len(sheet.tiles)} tiles, {r.w} x {r.h} px, written to {out}")
+    return 0
+
+
+def synthetic_board(names: list[str], fh: int) -> tuple[Raster, dict[str, dict[str, object]]]:
+    """A flat-colour board: one 14 x fh frame per name in a row, each with a pure red 2 x 2."""
+    inks = ("#2EBD59", "#E5484D", "#0B0E11", "#8B5CF6", "#848E9C", "#F0B90B")
+    w, h = 2 + 16 * len(names), fh + 6
+    img = Raster(w, h, bytearray(b"\x10\x14\x18" * (w * h)))
+    rects: dict[str, dict[str, object]] = {}
+    for i, name in enumerate(names):
+        x, y = 2 + 16 * i, 3
+        ink = bytes.fromhex(inks[i % len(inks)][1:]) * 14
+        for j in range(fh):
+            img.blit(Raster(14, 1, bytearray(ink)), x, y + j)
+        img.blit(Raster(2, 2, bytearray(b"\xff\x00\x00" * 4)), x + 1, y + 1)
+        rects[name] = {
+            "board": "02" if name.startswith("types/") else 3,
+            "x": x,
+            "y": y,
+            "w": 14,
+            "h": fh,
+        }
+    return img, rects
+
+
+def sheet_checks(sheet: Sheet, crops: dict[str, Raster]) -> list[str]:
+    """Tile count, dimensions, normal = source, greyscale R = G = B, red -> TRITAN_SANITY."""
+    bad: list[str] = []
+    want_n = len(NINE_TYPES) * len(SHEET_TIERS) * len(SHEET_SIMS)
+    if len(sheet.tiles) != want_n or want_n != 135:
+        bad.append(f"{len(sheet.tiles)} tiles, want 9 types x 3 densities x 5 simulations")
+    longest = max(len(f"{k.upper()} L2 S={SAMPLES[4]}") for k in NINE_TYPES)
+    cw = (6 * longest - 1) * SHEET_SCALE
+    hs = [crops[SHEET_SOURCE[k][i]].h for k in NINE_TYPES for i in range(3)]
+    want_w = 2 * SHEET_MARGIN + 5 * cw + 4 * SHEET_GAP
+    want_h = 2 * SHEET_MARGIN + SHEET_LINE + 27 * SHEET_LABEL + sum(hs) + 27 * SHEET_GAP
+    r = sheet.raster
+    if (r.w, r.h) != (want_w, want_h) or len(r.px) != 3 * r.w * r.h:
+        bad.append(f"sheet is {r.w} x {r.h}, want {want_w} x {want_h}")
+    red_t = TRITAN_SANITY["#FF0000"]
+    for kind, tier, sim, x, y, w, h in sheet.tiles:
+        tile = r.crop(x, y, w, h)
+        src = crops[SHEET_SOURCE[kind][[t for t, _s in SHEET_TIERS].index(tier)]]
+        if sim == "normal" and tile.px != src.px:
+            bad.append(f"{kind} {tier} normal tile differs from its source frame")
+        if sim == "greyscale" and any(
+            tile.px[i] != tile.px[i + 1] or tile.px[i] != tile.px[i + 2]
+            for i in range(0, len(tile.px), 3)
+        ):
+            bad.append(f"{kind} {tier} greyscale tile has a pixel with R, G, B unequal")
+        if sim == "tritanopia" and tile.at(1, 1) != red_t:
+            bad.append(f"{kind} {tier} tritan tile maps pure red to {tile.at(1, 1)}, not {red_t}")
+    return bad[:6]
+
+
+def sheet_selftest(spec: str) -> tuple[list[str], list[str]]:
+    """Board 07 on a synthetic 2-board pair: register, tiers, PNG codec, layout, one mutation."""
+    bad: list[str] = []
+    reg = {frame_id(r["Frame"]): r.get("Board", "") for r in frames(spec)}
+    bad += [
+        f"{f} is not a board {b} row of §17.1" for f, b in sheet_frames().items() if reg.get(f) != b
+    ]
+    bad += [f"s = {s} is not {t}" for t, s in SHEET_TIERS if tier_of(dec(s)) != t]
+    names = sorted(sheet_frames())
+    img2, r2 = synthetic_board([n for n in names if n.startswith("types/")], 10)
+    img3, r3 = synthetic_board([n for n in names if n.startswith("marks/")], 6)
+    rgba = bytearray()
+    for i in range(0, len(img2.px), 3):
+        rgba += img2.px[i : i + 3] + bytes((0 if i == 0 else 255,))
+    png2 = png_encode(img2.w, img2.h, rgba, 4, (0, 1, 2, 3, 4))
+    png3 = png_encode(img3.w, img3.h, img3.px, 3, (4, 3, 2, 1, 0))
+    boards = {"02": png_decode(png2), "03": png_decode(png3)}
+    want2 = bytearray(img2.px)
+    want2[0:3] = SHEET_BG  # the one transparent pixel, composited
+    if boards["02"].px != want2 or boards["03"].px != img3.px:
+        bad.append("PNG round trip (filters 0-4, RGB and RGBA) changed a pixel")
+    crops, fb = load_frames(json.loads(json.dumps(r2 | r3)), boards)
+    bad += fb
+    if fb:
+        return bad, []
+    sheet = contact_sheet(crops)
+    bad += sheet_checks(sheet, crops)
+    r = sheet.raster
+    again = png_decode(png_encode(r.w, r.h, r.px))
+    if (again.w, again.h, again.px) != (r.w, r.h, r.px):
+        bad.append("the written sheet does not decode to itself")
+    # the mutation: the research tool's defective tritan row in place of the Machado matrix
+    saved = LINEAR_RGB_SIMS.pop("tritanopia")
+    PROJECTIONS["tritanopia"] = RESEARCH_TRITAN_ROW
+    try:
+        hit = sheet_checks(contact_sheet(crops), crops)
+    finally:
+        del PROJECTIONS["tritanopia"]
+        LINEAR_RGB_SIMS["tritanopia"] = saved
+    trit = bool(hit) and all("tritan tile" in x for x in hit)
+    if not trit or cvd_port_problems():
+        bad.append(f"mutation S-1 (research tritan row) MISSED or not restored: {hit[:1]}")
+    info = [
+        f"{len(sheet.tiles)} tiles, {r.w} x {r.h} px",
+        f"S-1 [sheet] {'ok' if trit else 'MISSED'} — {(hit or ['nothing'])[0][:90]}",
+    ]
+    return bad, info
+
+
 # ---------------------------------------------------------------------------- main
 
 
@@ -3936,7 +4423,25 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--fill", action="store_true", help="replace placeholders, then check")
     ap.add_argument("--selftest", "--self-test", action="store_true", help="apply every mutation")
     ap.add_argument("--repin-ruled", action="store_true", help=f"rewrite {RULED_PIN_TXT}")
+    ap.add_argument(
+        "--contact-sheet",
+        nargs=2,
+        metavar=("BOARD02_PNG", "BOARD03_PNG"),
+        help="write board 07 from boards 02 and 03's exports (needs --frames and --out)",
+    )
+    ap.add_argument(
+        "--frames",
+        metavar="FRAMES_JSON",
+        help='{"<§17.1 frame name>": {"board": "02"|"03", "x": int, "y": int, "w": int, '
+        "\"h\": int}, ...}: each source frame's rectangle in its PNG's pixel space",
+    )
+    ap.add_argument("--out", metavar="BOARD07_PNG", help="the contact sheet to write")
     args = ap.parse_args(argv)
+    if args.contact_sheet:
+        if not (args.frames and args.out):
+            ap.error("--contact-sheet needs --frames and --out")
+        b02, b03 = (Path(x) for x in args.contact_sheet)
+        return write_contact_sheet(b02, b03, Path(args.frames), Path(args.out))
     spec_path, hand_path = ROOT / SPEC_REL, ROOT / HAND_REL
     spec = spec_path.read_bytes().decode("utf-8")
     hand = hand_path.read_bytes().decode("utf-8")
