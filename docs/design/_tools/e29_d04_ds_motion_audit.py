@@ -98,9 +98,10 @@ import sys
 import textwrap
 import tokenize
 import unicodedata
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, unified_diff
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -1784,6 +1785,7 @@ class Texts:
     values: Values
     diff_names: tuple[str, ...]  # `git diff --name-only BASE` on disk (G-UNTOUCHED)
     pins: str  # the pinned table the security text is held to
+    text_pins: str  # the whole-text table every block is held to (G-TEXT-PIN)
 
 
 def swept(t: Texts) -> list[str]:
@@ -4012,6 +4014,307 @@ def g_sec_pin(t: Texts) -> list[str]:
     return one("G-SEC-PIN", bad)
 
 
+# ---- the whole text, pinned block by block, default-deny (orchestrator's bar, 2026-10-26)
+# EVERY Markdown block of the spec and the hand-off is pinned in RULED_PIN_TXT: a heading, a prose
+# paragraph, a list item (its continuation lines included), a table row (the rule line too) and a
+# fenced block (fence to fence, its inner lines whole). A block is held by its location (the
+# heading path with that path's occurrence `#n`, and ¶k, its place under the heading; the heading
+# itself is ¶0), its kind, the blank lines before it and its exact text (HTML comments, markers and
+# trailing blanks included). `--repin-ruled` is the ONLY writer (it rewrites RULED_PIN_TXT at the
+# end of this file and prints the diff for review); `--check` reads the table and never re-pins.
+# G-TEXT-PIN runs after every other gate, so a breach a lexicon or a semantic gate reads reports
+# that gate's code first. It FAILs, by location: changed, moved, duplicated, deleted, unpinned (a
+# new block), a new heading and a blank-line change (a squeeze or an added blank line).
+TEXT_DOCS = ("spec", "hand-off")
+TEXT_PATH_SEP = " › "
+TEXT_PIN_WIDTH = 96
+QUOTES3 = '"' * 3  # spelled so, the table's own delimiters appear in this file once each
+TEXT_PIN_BEGIN = "RULED_PIN_TXT = r" + QUOTES3
+TEXT_PIN_END = QUOTES3 + "  # end of RULED_PIN_TXT"
+
+
+@dataclass(frozen=True)
+class DocBlock:
+    doc: str
+    path: str  # the heading path, `#n` its occurrence
+    para: int  # ¶k under that heading (the heading is ¶0)
+    kind: str  # heading, prose, item, row, fence, end
+    gap: int  # the blank lines before it
+    text: str  # the exact text, its lines joined by "\n"
+    line: int  # its first line (0 for a pinned entry)
+
+    @property
+    def where(self) -> str:
+        return f"{self.path} ¶{self.para}"
+
+
+def block_kind(line: str) -> str:
+    """The kind a line opens: a fence, a heading, a table row, a list item or prose."""
+    stripped = line.strip()
+    if stripped.startswith("```"):
+        return "fence"
+    if HEADING.match(line):
+        return "heading"
+    if stripped.startswith("|"):
+        return "row"
+    return "item" if LIST_ITEM.match(line) else "prose"
+
+
+def doc_blocks(doc: str, text: str) -> list[DocBlock]:
+    """Every block of one document in order, then an `end` block holding the trailing blanks."""
+    lines = text.split("\n")
+    out: list[DocBlock] = []
+    stack: list[tuple[int, str]] = []
+    seen: dict[str, int] = {}
+    path, para, gap, i = "(top)#1", 0, 0, 0
+    while i < len(lines):
+        line = lines[i]
+        if not line:  # a line of spaces is no blank: it opens a block, so it FAILs as one
+            gap, i = gap + 1, i + 1
+            continue
+        kind, start = block_kind(line), i
+        i += 1
+        if kind == "fence":
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                i += 1
+            i = min(i + 1, len(lines))
+        elif kind in ("prose", "item"):
+            while i < len(lines) and lines[i].strip() and block_kind(lines[i]) == "prose":
+                i += 1
+        if kind == "heading":
+            m = HEADING.match(line)
+            level, name = (len(m[1]), one_space(m[2])) if m else (6, one_space(line))
+            stack = [(lv, x) for lv, x in stack if lv < level] + [(level, name)]
+            joined = TEXT_PATH_SEP.join(x for _lv, x in stack)
+            seen[joined] = seen.get(joined, 0) + 1
+            path, para = f"{joined}#{seen[joined]}", 0
+        else:
+            para += 1
+        out.append(DocBlock(doc, path, para, kind, gap, "\n".join(lines[start:i]), start + 1))
+        gap = 0
+    out.append(DocBlock(doc, "(end)#1", 0, "end", gap, "", len(lines)))
+    return out
+
+
+def pin_json(value: object) -> str:
+    """JSON with every invisible or control character escaped, so a reviewer sees it."""
+    out: list[str] = []
+    for ch in json.dumps(value, ensure_ascii=False):
+        hidden = ch != " " and unicodedata.category(ch) in (
+            "Cc",
+            "Cf",
+            "Co",
+            "Cs",
+            "Cn",
+            "Zl",
+            "Zp",
+            "Zs",
+        )
+        out.append(json.dumps(ch)[1:-1] if hidden else ch)
+    return "".join(out)
+
+
+def pin_chunks(lead: str, value: object) -> list[str]:
+    """A JSON value cut into lines of at most TEXT_PIN_WIDTH after `lead`; a line never ends on a
+    space (the spaces open the next line; a line of spaces only is written `\\u0020`, no trailing
+    whitespace); joined, the lines are the JSON again."""
+    text, lines = pin_json(value), []
+    while text:
+        part, text = text[:TEXT_PIN_WIDTH], text[TEXT_PIN_WIDTH:]
+        kept = part.rstrip(" ")
+        if kept:
+            text = part[len(kept) :] + text
+        else:
+            kept = "\\u0020" * len(part)
+        lines.append(lead + kept)
+    return lines
+
+
+def render_text_pins(spec: str, hand: str) -> str:
+    """The whole-text table as RULED_PIN_TXT holds it: a `§ ` line (or lines) per heading path,
+    the JSON [doc, path]; an `@ ¶k kind gap` line per block; its text as JSON on lines indented
+    two spaces."""
+    lines: list[str] = []
+    for doc, text in zip(TEXT_DOCS, (spec, hand), strict=True):
+        last = ""
+        for b in doc_blocks(doc, text):
+            if f"{doc}\n{b.path}" != last:
+                lines += pin_chunks("§ ", [doc, b.path])
+                last = f"{doc}\n{b.path}"
+            lines.append(f"@ ¶{b.para} {b.kind} {b.gap}")
+            lines += pin_chunks("  ", b.text) or ['  ""']
+    return "\n".join(lines) + "\n"
+
+
+TEXT_PIN_HEAD = re.compile(r"^@ ¶(\d+) (heading|prose|item|row|fence|end) (\d+)$")
+
+
+def text_pin_rows(table: str) -> list[DocBlock] | None:
+    """The whole-text table parsed, in order; None when it does not parse."""
+    rows: list[DocBlock] = []
+    where: list[str] = []
+    head: re.Match[str] | None = None
+    body: list[str] = []
+
+    def flush() -> bool:
+        nonlocal head
+        if head is None:
+            return True
+        try:
+            doc, path = json.loads("".join(where))
+            text = json.loads("".join(body))
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return False
+        if not (isinstance(doc, str) and isinstance(path, str) and isinstance(text, str)):
+            return False
+        rows.append(DocBlock(doc, path, int(head[1]), head[2], int(head[3]), text, 0))
+        head = None
+        body.clear()
+        return True
+
+    state = ""
+    for line in table.split("\n"):
+        if not line:
+            continue
+        if line.startswith("§ "):
+            if not flush():
+                return None
+            if state != "§":
+                where.clear()
+            where.append(line[2:])
+            state = "§"
+        elif line.startswith("@ "):
+            if not flush():
+                return None
+            head = TEXT_PIN_HEAD.match(line)
+            if head is None or not where:
+                return None
+            state = "@"
+        elif line.startswith("  ") and head is not None:
+            body.append(line[2:])
+        else:
+            return None
+    return rows if flush() else None
+
+
+def first_diff(was: str, now: str, at: int) -> int:
+    """The line of `now` where it first differs from `was` (a long block reports that line)."""
+    a, b = was.split("\n"), now.split("\n")
+    for k, (x, y) in enumerate(zip(a, b, strict=False)):
+        if x != y:
+            return at + k
+    return at + min(len(a), len(b)) - 1
+
+
+def text_pin_problems(doc: str, want: list[DocBlock], have: list[DocBlock]) -> list[str]:
+    """One document's blocks against its pins, each FAILed by its location: changed, moved,
+    duplicated, deleted, unpinned (a new block), a new heading, a blank-line change."""
+    count_w = Counter(b.text for b in want)
+    count_h = Counter(b.text for b in have)
+    paths_w = {b.path for b in want}
+    bad: list[tuple[int, str]] = []
+    gone: list[int] = []
+    added: list[int] = []
+    paired: dict[int, int] = {}
+    match = SequenceMatcher(
+        None,
+        [(b.path, b.kind, b.text) for b in want],
+        [(b.path, b.kind, b.text) for b in have],
+        autojunk=False,
+    )
+    for op, i1, i2, j1, j2 in match.get_opcodes():
+        if op == "equal":
+            for w, h in zip(want[i1:i2], have[j1:j2], strict=True):
+                if w.gap != h.gap:
+                    what = "squeezed" if h.gap < w.gap else "added"
+                    msg = f"blank lines before it {w.gap} → {h.gap} ({what}) {clip(one_space(h.text))!r}"
+                    bad.append((h.line, f"{doc}:{h.line} {h.where}: {msg}"))
+            continue
+        gone += range(i1, i2)
+        added += range(j1, j2)
+        if op == "replace":
+            paired.update(zip(range(j1, j2), range(i1, i2), strict=False))
+    left = {i: want[i].text for i in gone}
+    for j in added:
+        h = have[j]
+        shown = clip(one_space(h.text))
+        moved = next((i for i in gone if i in left and left[i] == h.text), None)
+        if h.kind == "heading" and h.path not in paths_w:
+            if moved is not None:
+                del left[moved]
+            msg = f"a new heading {shown!r}"
+        elif moved is not None and count_h[h.text] <= count_w[h.text]:
+            del left[moved]
+            msg = f"moved from {want[moved].where} {shown!r}"
+        elif count_w[h.text] and count_h[h.text] > count_w[h.text]:
+            once = next(w.where for w in want if w.text == h.text)
+            msg = f"duplicated (pinned at {once}) {shown!r}"
+        elif j in paired and paired[j] in left and want[paired[j]].kind == h.kind:
+            was = left.pop(paired[j])
+            at = first_diff(was, h.text, h.line)
+            bad.append(
+                (at, f"{doc}:{at} {h.where}: changed from {clip(one_space(was))!r} to {shown!r}")
+            )
+            continue
+        else:
+            msg = f"not pinned (a new block) {shown!r}"
+        bad.append((h.line, f"{doc}:{h.line} {h.where}: {msg}"))
+    for i in gone:
+        if i in left:
+            w = want[i]
+            msg = f"{doc} {w.where}: a pinned block is deleted {clip(one_space(w.text))!r}"
+            bad.append((10**9 + i, msg))
+    return [m for _n, m in sorted(bad, key=lambda x: x[0])]
+
+
+def g_text_pin(t: Texts) -> list[str]:
+    """Every block of both documents equals its pin, in order (default-deny; runs last)."""
+    pinned = text_pin_rows(t.text_pins)
+    if not pinned:
+        return one("G-TEXT-PIN", ["RULED_PIN_TXT is empty or does not parse; run --repin-ruled"])
+    bad = [
+        f"RULED_PIN_TXT pins an unknown document {b.doc!r}"
+        for b in pinned
+        if b.doc not in TEXT_DOCS
+    ][:1]
+    for doc, text in zip(TEXT_DOCS, (t.spec, t.hand), strict=True):
+        want = [b for b in pinned if b.doc == doc]
+        if not want:
+            bad.append(f"RULED_PIN_TXT pins nothing of the {doc}")
+            continue
+        bad += text_pin_problems(doc, want, doc_blocks(doc, text))
+    return one("G-TEXT-PIN", bad)
+
+
+def repin_ruled(spec: str, hand: str) -> int:
+    """`--repin-ruled`, the table's only writer: RULED_PIN_TXT rewritten from the current text in
+    this file, the diff printed for review (exit 0; nothing to do when the table already holds)."""
+    path = ROOT / TOOL_REL
+    src = path.read_text(encoding="utf-8")
+    start = src.rfind(TEXT_PIN_BEGIN)
+    end = src.find(TEXT_PIN_END, start)
+    if start < 0 or end < 0 or src.count(TEXT_PIN_BEGIN) != 1:
+        print(f"--repin-ruled: no RULED_PIN_TXT block in {TOOL_REL}")
+        return 1
+    new_table = "\n" + render_text_pins(spec, hand)
+    old_table = src[start + len(TEXT_PIN_BEGIN) : end]
+    if old_table == new_table:
+        print("--repin-ruled: RULED_PIN_TXT already holds the text; nothing written")
+        return 0
+    path.write_text(src[: start + len(TEXT_PIN_BEGIN)] + new_table + src[end:], encoding="utf-8")
+    diff = unified_diff(
+        old_table.split("\n"),
+        new_table.split("\n"),
+        "RULED_PIN_TXT (was)",
+        "RULED_PIN_TXT (now)",
+        lineterm="",
+    )
+    print("\n".join(diff))
+    rows = text_pin_rows(new_table) or []
+    print(f"--repin-ruled: {len(rows)} blocks pinned in {TOOL_REL}; review the diff, then commit")
+    return 0
+
+
 # ---- the inventory, contrast, CVD, drift (AC1, RULED BQ-3, BQ-12, BQ-14)
 
 
@@ -4191,13 +4494,14 @@ GATES: dict[str, Callable[[Texts], list[str]]] = {
     "G-A11Y": g_a11y,
     "G-TOKEN": g_name,
     "G-COPY": g_copy,
-    "G-SEC-PIN": g_sec_pin,
     "G-STATES": g_states,
     "G-ORPHAN": g_orphan,
     "G-CONTRAST": g_contrast,
     "G-CVD-PORT": g_cvd_port,
     "G-CONTRAST-PORT": g_contrast_port,
     "G-DRIFT": g_drift,
+    "G-SEC-PIN": g_sec_pin,
+    "G-TEXT-PIN": g_text_pin,
 }
 GATE_TAGS = tuple(GATES)
 # §8.2's Rule column: what each gate holds, and the ruling it holds it for
@@ -4232,13 +4536,14 @@ GATE_RULES: dict[str, str] = {
     "G-A11Y": "the three a11y lines on every entry (BQ-14)",
     "G-TOKEN": "no new token name, in any spelling (BQ-12)",
     "G-COPY": "registered keys or PROPOSED with an owner, legs and frames (BQ-13)",
-    "G-SEC-PIN": "the security text pinned by word and by place, default-deny (BQ-16)",
     "G-STATES": "D01 D2's statuses, D02's tiers and chip states, the markers (AC1; BQ-5)",
     "G-ORPHAN": "every SCR-063 and SCR-078 component mapped (AC1; BQ-3)",
     "G-CONTRAST": "the tool's pairs, each at its bar in three themes (BQ-14)",
     "G-CVD-PORT": "the CVD port equals `cvd_simulate.py` (BQ-16)",
     "G-CONTRAST-PORT": "the contrast port equals its two helpers; no repo code runs (BQ-1)",
     "G-DRIFT": "every drift row resolved (BQ-12)",
+    "G-SEC-PIN": "the security text pinned by word and by place, default-deny (BQ-16)",
+    "G-TEXT-PIN": "every block of both texts pinned by place and exact text, default-deny; runs last (BQ-16)",
 }
 
 
@@ -4546,6 +4851,34 @@ def duplicate_fixture_sentence(text: str, _v: Values) -> str:
     return prose_at("Deviations", m[0])(text, _v) if m else text
 
 
+def para_moved(prefix: str, dest: str = "", keep: bool = False) -> Edit:
+    """The one-line paragraph starting with `prefix`: appended to the section `dest` (moved;
+    `keep`: copied, so duplicated) or, with no `dest`, deleted."""
+
+    def run(text: str, v: Values) -> str:
+        line = next((ln for ln in text.split("\n") if ln.startswith(prefix)), "")
+        if not line or f"\n\n{line}\n\n" not in text:
+            return text
+        out = text if keep else text.replace(f"\n\n{line}\n\n", "\n\n", 1)
+        return prose_at(dest, line)(out, v) if dest else out
+
+    return run
+
+
+def para_squeezed(prefix: str) -> Edit:
+    """The blank line before the paragraph starting with `prefix` removed."""
+
+    def run(text: str, _v: Values) -> str:
+        line = next((ln for ln in text.split("\n") if ln.startswith(prefix)), "")
+        return text.replace(f"\n\n{line}\n", f"\n{line}\n", 1) if line else text
+
+    return run
+
+
+SPEC_PARA = "What each ticket item traces to"
+HAND_PARA = "Each item names its owner"
+
+
 @dataclass(frozen=True)
 class Mutation:
     mid: str
@@ -4557,6 +4890,9 @@ class Mutation:
     p16: Callable[[str], str] | None = None
     patch: Callable[[], Callable[[], None]] | None = None  # moves tool state; returns the undo
     pinned: bool = False  # True: held to the baseline's pins (a G-SEC-PIN mutation)
+    text_held: bool = False  # True: held to the baseline's whole-text pins (a G-TEXT-PIN mutation)
+    first: str = ""  # a gate that must FAIL before G-TEXT-PIN (both pin tables at the baseline)
+    says: str = ""  # words the gate's FAIL must hold (the FAIL kind a G-TEXT-PIN mutation proves)
     names: Callable[[tuple[str, ...]], tuple[str, ...]] | None = None  # the branch's changed paths
 
 
@@ -6387,6 +6723,70 @@ MUTATIONS: tuple[Mutation, ...] = (
             "over `FAST` / `STANDARD`, TWICE, at the list's top only;",
         ),
     ),
+    # M40 — the whole text, default-deny (G-TEXT-PIN): each FAIL kind in the spec and in the
+    # hand-off, then a lexicon breach that reports its own gate first and the pin last
+    *(
+        Mutation(
+            mid,
+            "G-TEXT-PIN",
+            f"BQ-16 ({says}, {doc})",
+            spec=edit if doc == "spec" else None,
+            hand=edit if doc == "hand-off" else None,
+            text_held=True,
+            says=says,
+        )
+        for mid, doc, says, edit in (
+            ("M40.1", "spec", "changed from", line_edit(SPEC_PARA, " item ", " line ")),
+            ("M40.2", "spec", "moved from", para_moved(SPEC_PARA, "8.1 ")),
+            ("M40.3", "spec", "duplicated", para_moved(SPEC_PARA, "8.1 ", keep=True)),
+            ("M40.4", "spec", "is deleted", para_moved(SPEC_PARA)),
+            ("M40.5", "spec", "not pinned", prose_at("8.1 ", "This paragraph is new.")),
+            ("M40.6", "spec", "a new heading", prose_at("8.1 ", "#### 8.1.1 Notes")),
+            ("M40.7", "spec", "(squeezed)", para_squeezed(SPEC_PARA)),
+            ("M40.8", "hand-off", "changed from", line_edit(HAND_PARA, " its ", " an ")),
+            ("M40.9", "hand-off", "moved from", para_moved(HAND_PARA, "§E Test")),
+            (
+                "M40.10",
+                "hand-off",
+                "duplicated",
+                para_moved(HAND_PARA, "§E Test", keep=True),
+            ),
+            ("M40.11", "hand-off", "is deleted", para_moved(HAND_PARA)),
+            ("M40.12", "hand-off", "not pinned", prose_at("§D Story", "A new line.")),
+            ("M40.13", "hand-off", "a new heading", prose_at("§F Open", "### Notes")),
+            ("M40.14", "hand-off", "(squeezed)", para_squeezed(HAND_PARA)),
+        )
+    ),
+    Mutation(
+        "M40.15",
+        "G-TEXT-PIN",
+        "BQ-16 (a security breach: G-SAFETY first)",
+        spec=prose_at("2.4 ", "A withdrawal control may be added later."),
+        first="G-SAFETY",
+        says="not pinned",
+    ),
+    Mutation(
+        "M40.16",
+        "G-TEXT-PIN",
+        "BQ-16 (a motion breach: G-LOOP first)",
+        spec=prose_at("2.2 ", "The pending tag shows a Shimmer."),
+        first="G-LOOP",
+        says="not pinned",
+    ),
+    Mutation(
+        "M40.17",
+        "G-TEXT-PIN",
+        "BQ-16 (a status breach: G-PENDING first)",
+        spec=edit_row(
+            "2.2 CMP-115",
+            STATE_WORDS,
+            lambda r: "pending" in norm_text(col(r, "State")),
+            "Word",
+            to('"Working"'),
+        ),
+        first="G-PENDING",
+        says="changed from",
+    ),
 )
 # ---------------------------------------------------------------------------- --self-test
 
@@ -6418,7 +6818,9 @@ def selftest(
     s1, h1, values, unknown = baseline(spec, hand)
     used = s1 != fill(spec, values)[0] or h1 != fill(hand, values)[0]
     inputs, names = read_inputs(), diff_names()
-    base_t = Texts(s1, h1, p15, p16, inputs, values, names, render_pins(s1, h1))
+    base_t = Texts(
+        s1, h1, p15, p16, inputs, values, names, render_pins(s1, h1), render_text_pins(s1, h1)
+    )
     base_fails, base_warns = audit(base_t)
     where = "the skeleton with FIXTURE filling its placeholders" if used else "the spec on disk"
     lines = [f"baseline: {where}: {len(base_fails)} FAIL, {len(base_warns)} WARN"]
@@ -6443,14 +6845,28 @@ def selftest(
             continue
         undo = mu.patch() if mu.patch else None
         try:
-            pins = base_t.pins if mu.pinned else render_pins(s, h)
-            fails, _w = audit(Texts(s, h, q15, q16, inputs, values, qnames, pins))
+            pins = base_t.pins if mu.pinned or mu.first else render_pins(s, h)
+            held = mu.text_held or bool(mu.first)
+            text_pins = base_t.text_pins if held else render_text_pins(s, h)
+            fails, _w = audit(Texts(s, h, q15, q16, inputs, values, qnames, pins, text_pins))
         finally:
             if undo:
                 undo()
         new = [x for x in fails if x not in base_fails]
         named = [x for x in new if x.startswith(f"[{mu.gate}]")]
-        hit = bool(named) and len(new) == 1
+        hit = bool(named) and len(new) == 1 and mu.says in named[0]
+        if mu.first:
+            # its own gate's code first, the pin last, nothing between but the security pin
+            ok_tags = (f"[{mu.first}]", "[G-SEC-PIN]", f"[{mu.gate}]")
+            hit = (
+                len(new) >= 2
+                and new[0].startswith(f"[{mu.first}]")
+                and new[-1].startswith(f"[{mu.gate}]")
+                and len(named) == 1
+                and mu.says in named[0]
+                and all(x.startswith(ok_tags) for x in new)
+            )
+            named = [new[0]] if hit else named
         restored = digest_texts(s1, h1, p15, p16) == pristine and digest(paths) == on_disk
         ok = ok and hit and restored
         shown = (named or new or ["nothing new"])[0][:130]
@@ -6494,6 +6910,7 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--fill", action="store_true", help="fill {{audit:NAME}}, then check")
     ap.add_argument("--self-test", "--selftest", dest="selftest", action="store_true")
     ap.add_argument("--repin-security", dest="repin", action="store_true")
+    ap.add_argument("--repin-ruled", dest="repin_ruled", action="store_true")
     ap.add_argument("--fixture", metavar="HEADING", help="print FIXTURE's block for a heading")
     args = ap.parse_args(argv)
     spec, hand, p15, p16 = read_texts()
@@ -6512,6 +6929,8 @@ def main(argv: list[str]) -> int:
     if args.repin:
         print(render_pins(spec, hand))
         return 0
+    if args.repin_ruled:
+        return repin_ruled(spec, hand)
     if args.selftest:
         paths = tuple(ROOT / r for r in (SPEC_REL, HAND_REL, P15_REL, P16_REL))
         ok, lines = selftest(spec, hand, p15, p16, paths)
@@ -6531,7 +6950,7 @@ def main(argv: list[str]) -> int:
     if args.json and not (args.check or args.fill):
         print(json.dumps(doc, ensure_ascii=False, indent=1))
         return 0
-    t = Texts(spec, hand, p15, p16, read_inputs(), values, diff_names(), SEC_PIN_TXT)
+    t = Texts(spec, hand, p15, p16, read_inputs(), values, diff_names(), SEC_PIN_TXT, RULED_PIN_TXT)
     fails, warns = audit(t)
     if args.json:
         doc.update({"fails": fails, "warnings": warns})
@@ -9059,6 +9478,4618 @@ SEC_PIN_TXT = r"""
   the progress line and the watermark
 """
 
+
+# ---------------------------------------------------------------------------- the whole-text table
+# Every block of the spec and the hand-off (G-TEXT-PIN): `§ ` the JSON [doc, heading path#n], then
+# `@ ¶k kind blank-lines-before` and the exact text as JSON on lines indented two spaces (joined,
+# they are the JSON again). `--repin-ruled` alone writes it; `--check` never re-pins.
+RULED_PIN_TXT = r"""
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components#1"]
+@ ¶0 heading 0
+  "# E29-D04 — Design-system contributions and motion spec for the blotter components"
+@ ¶1 prose 1
+  "**Ticket:** E29-D04 (#823) · **Epic:** E29 · **Status:** Draft, **text-first** — this file is t
+  he design-system spec; [E29-D04-handoff.md](E29-D04-handoff.md) carries every copy-ready row; th
+  e ten Penpot boards of §0 are **PENDING** (drawn in the boards PR, which carries the line that c
+  ompletes #823). **Owner approval pending** (agent-delivery adaptations, owner decision 2026-09-2
+  5): the owner's `approved` comment on #823 stands in for \"Design-system team accepted ownership
+  ; CDO sign-off recorded\"; nothing here claims that approval."
+@ ¶2 prose 1
+  "**Scope** (the ticket): the five catalogued components SCR-063 and SCR-078 introduce or extend
+   — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge, CMP-123 FlattenAllButton and CMP-1
+  29 PositionModeToggle — and the reuse contract for CMP-105 AccountMultiSelect, made design-syste
+  m entries with props, states, tokens and the three a11y lines; and the motion spec for the blott
+  er rows (row insert and remove, the value-change flash, the correction highlight), nothing longe
+  r than `motion.duration.normal` on a data row."
+@ ¶3 prose 1
+  "**Start.** `blocked_by` E29-D02 (#735) and E29-D03 (#822): D02 text #4114 (`c4270ba93`) and boa
+  rds #4330 (`75a33c164`); D03 text #4307 (`a59ba382b`), its boards #4472 **PENDING**, named only.
+   The work starts on the orchestrator's deviation ruling of 2026-10-25 on #823 (D03's binding tex
+  t is merged). The rows D01, D02 and D03 address to E29-D04 are inputs cited by id and answered i
+  n §1, never re-decided."
+@ ¶4 prose 1
+  "**Inputs pinned.** Base `origin/main` `6fc8aacc6`: every `file`:line below was re-read there wi
+  th `git show`. Merged texts at their merge shas: E29-D01 #3899 (`9da45ae35`); E29-D02 and E29-D0
+  3 as above, D02's line numbers being its boards merge's (#4330, `75a33c164`), the last change to
+   its text; E30-D04 #4271 (`ca7d61fa1`); E09-D09 #3953 (`baccf724a`); E39-D03 #4175 (`0beb67563`)
+  ; E09-D08 #4073 (`c99ad48d7`); E11-D06 #3957 (`16661c7bd`); E17-D01 #3905 (`da7b0f8a9`), its tex
+  t last touched by #4102 (`c31b67c22`); E30-D02 #3923 (`f798a64e6`); E33-D03 #4375 (`88839ea33`),
+   its boards #4402 (`05aa6fba1`), the last change to its text, where its line numbers are read; E
+  39-D01 #3920 (`1e6c15a1a`); E42-D02 #3926 (`e0bf7db3e`); E42-D04 #4193 (`9b5c0d8bf`); E05-D02 sl
+  ice 1 #3914 (`7c804aacc`), slice 2 #4290 (`c899241c8`), slice 3 #4322 (`3a2fc5c29`) and slice 4
+   #4414 (`04a8caa95`), each a merged text whose owner approval is pending. Unmerged work is named
+   only, PENDING: E33-D04 (#988), the E29-D03 boards (#4472) and E05-D03 (#3174). `15`, `16`, `05`
+  , `14` and `packages/ui/tokens` are read at the base; `15` and `16` stay byte-identical to it (R
+  ULED BQ-2)."
+@ ¶5 prose 1
+  "**Key.** `NN`:line = `docs/plan/NN-*.md`; `D01`:line, `D02`:line and `D03`:line = `docs/design/
+  E29/E29-D0n.md`; `Exx-Dyy`:line = `docs/design/Exx/Exx-Dyy.md`; `PRIM`:line = `packages/ui/token
+  s/primitives.tokens.json`; `T` = the ticket text (#823: `T Scope`, `T AC1` to `T AC3`, `T DoD`,
+   `T Tech`, `T a11y`, `T Perf`). **D04-An** = a copy-ready amendment (hand-off §C), **D04-Cn** a
+   contradiction (§7.2), **D04-Gn** a contract gap (§7.3), **DR-n** a drift-ledger row (§7.4), **M
+  o-n** a motion row (§3.2), **Mn** a gate mutation (§8.2), **BQ-n** a ruled question."
+@ ¶6 prose 1
+  "**Numbers.** Every token, motion, distance, contrast and count figure carries an `audit` marker
+   (an HTML comment `NAME=VALUE`) that `docs/design/_tools/e29_d04_ds_motion_audit.py` re-derives
+   from its `--json` under `--check` (RULED BQ-16); no figure with a unit is typed by hand. Ids, c
+  opy fixtures inside double quotes and `file`:line cites are not measurements."
+@ ¶7 prose 1
+  "**Fixtures.** Every example uses the fixture accounts Main, Sub-1 and Sub-2 and shows LIVE, as
+   D02's boards do; E29 runs on DEMO until R4, where the same frames carry DEMO with identical cop
+  y (D03:46). No key material, signature, full order id or real balance appears in this file, the
+   hand-off or a board."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › Acc
+§ eptance-criteria trace (#823)#1"]
+@ ¶0 heading 1
+  "## Acceptance-criteria trace (#823)"
+@ ¶1 prose 1
+  "Status: **text done** = specified here, the board follows in the boards PR · **met as copy-read
+  y A-rows** = written in `15` §0.1 format in the hand-off and applied verbatim by E29-T09 (the pl
+  an-reconciliation ticket) after the owner's approval (RULED BQ-2; departs from the ticket text;
+   owner approval pending (#2701)) · **routed** = its owner named."
+@ ¶2 row 1
+  "| Ticket item
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                      | Where
+                                                                                                 |
+   Status                                                                                  |"
+@ ¶3 row 0
+  "| ---------------------------------------------------------------------------------------------
+  ----------------------------------------------------------------- | ----------------------------
+  ----------------------------------------------------------------------- | ----------------------
+  ----------------------------------------------------------------- |"
+@ ¶4 row 0
+  "| AC1 — No orphan component: every SCR-063 and SCR-078 element maps to a catalogued component w
+  ith defined props and states                                      | §2.10 (the map); §2.1–§2.9;
+   hand-off §C                                                             | text done; met as cop
+  y-ready A-rows; applied by E29-T09; owner approval pending (#2701) |"
+@ ¶5 row 0
+  "| AC2 — Motion is reduced-motion safe: every animation has a defined non-animated equivalent th
+  at still conveys the change                                       | §3.2 (a `prefers-reduced-mot
+  ion` twin on every row, every twin instant); §3.6 (one source)          | text done
+                                                                                 |"
+@ ¶6 row 0
+  "| AC3 — The destructive control is specified once: FlattenAllButton's confirm is defined in the
+   design system and referenced, not redefined, by E30, E31 and E39 | §2.4 (the composite confirm,
+   defined once); hand-off §C Table A                                     | text done; met as copy
+  -ready A-rows; applied by E29-T09; owner approval pending (#2701) |"
+@ ¶7 row 0
+  "| Scope — CMP-114 PositionsGrid with the liq-proximity warning rows
+                                                                                                |
+   §2.1
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | text done                                                                               |"
+@ ¶8 row 0
+  "| Scope — CMP-115 OrderRow with its pending and rejected variants
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | §2.2: D01 D2's fifteen statuses; pending is a state, never drawn as confirmed (RULED BQ-5)
+            | text done
+                                                                                 |"
+@ ¶9 row 0
+  "| Scope — CMP-116 PnLBadge (sign, currency, R-multiple)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | §2.3
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | text done                                                                               |"
+@ ¶10 row 0
+  "| Scope — CMP-123 FlattenAllButton (destructive, hold-to-confirm)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | §2.4: hold and typed on LIVE (RULED BQ-7)
+                                                             | text done
+                                                                                 |"
+@ ¶11 row 0
+  "| Scope — CMP-129 PositionModeToggle (one-way / hedge, disabled with a reason)
+                                                                                     | §2.5: the r
+  ead-only `display` variant and the toggle (RULED BQ-8)                                   | text
+   done                                                                               |"
+@ ¶12 row 0
+  "| Scope — the CMP-105 AccountMultiSelect reuse contract
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | §2.6
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | text done                                                                               |"
+@ ¶13 row 0
+  "| Scope — the ticket's motion list: \"row insert/remove, value-change flash …, pending shimmer,
+   correction flash on a reconciled row\"                             | §3; no such loop: pending
+   is a state (RULED BQ-10; a C-row in §7.2; owner approval pending (#2701)) | text done
+                                                                                 |"
+@ ¶14 row 0
+  "| Technical note — the flash paired with a text or glyph delta
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+     | §3.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | text done                                                                               |"
+@ ¶15 row 0
+  "| A11y note — keyboard model, accessible-name composition and live-region policy on every entry
+                                                                    | §2.1–§2.7, three lines each
+   (RULED BQ-14)                                                           | text done
+                                                                                 |"
+@ ¶16 row 0
+  "| Performance note — compositor-only motion, no layout animation on a virtualised list
+                                                                             | §3.1; §3.2 (Propert
+  y is opacity, transform or none)                                                 | text done
+                                                                                 |"
+@ ¶17 row 0
+  "| DoD 1 — `15` updated · DoD 2 — the motion spec merged into the `16` addendum
+                                                                                     | hand-off §C
+   (the A-rows) and §C.6 (the `16` block, routed to E05-D03 (#3174) as recipe owner)       | met a
+  s copy-ready A-rows; applied by E29-T09; owner approval pending (#2701)            |"
+@ ¶18 row 0
+  "| DoD 3 — design-system ownership; CDO sign-off
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                    | the owner's `approved` on #823
+                                                                        | routed; owner approval p
+  ending                                                          |"
+@ ¶19 row 0
+  "| Out of scope — implementation and Storybook code
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | nothing here is code; the story lists are hand-off §D, for the implementing sto
+  ries                 | text done
+                                                                                 |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › The
+§  sixteen questions — RULED (orchestrator, comment 6399392172, on the BQ list 6399349188)#1"]
+@ ¶0 heading 1
+  "## The sixteen questions — RULED (orchestrator, comment 6399392172, on the BQ list 6399349188)"
+@ ¶1 prose 1
+  "All sixteen defaults stand as written. BQ-2, BQ-10, BQ-11 and BQ-12 are owner-level and are mar
+  ked \"owner approval pending (#2701)\" wherever they depart from the ticket's AC, DoD or Scope t
+  ext; the twelve others are the orchestrator's. The E33-D04 ruling binds here by analogy only thr
+  ough this comment."
+@ ¶2 row 1
+  "| #     | Question                                                       | Built here
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                             |"
+@ ¶3 row 0
+  "| ----- | -------------------------------------------------------------- | --------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------ |"
+@ ¶4 row 0
+  "| BQ-1  | paths, PR form, the ruling's reach, the tool                   | this file, the hand-
+  off and the tool; PR 1 `Refs #823` + `Partial: PR 1 of 2`; the boards PR completes #823; the dev
+  iations below
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      |"
+@ ¶5 row 0
+  "| BQ-2  | `15` and `16` untouched; who applies the copy-ready rows       | hand-off §C: one A-r
+  ow per entry in `15` §0.1 format and the `16` block in §7.1's shape, routed to E05-D03 (#3174);
+   E29-T09 applies both after the owner's approval; gate G-UNTOUCHED; owner approval pending (#270
+  1)                                                |"
+@ ¶6 row 0
+  "| BQ-3  | the component set and its boundaries                           | contributed CMP-114,
+   CMP-115, CMP-116 and CMP-129; amended CMP-123 and CMP-049; CMP-105 a reuse contract; the routed
+   ones answered by delta or change request (§2.8); the rest consumed (§2.9); D02 gap 8's elements
+   are named parts of their parent entries (§2.10) |"
+@ ¶7 row 0
+  "| BQ-4  | CMP-114 props, variants, states                                | §2.1; row actions ta
+  ke CMP-079's `allowed` + `reason`, never a role prop
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                               |"
+@ ¶8 row 0
+  "| BQ-5  | CMP-115's status vocabulary and its pending variant            | §2.2: D01 D2's fifte
+  en statuses; pending is a state — the ⟳ marker, the tag and the words — never drawn as confirmed
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                   |"
+@ ¶9 row 0
+  "| BQ-6  | CMP-116 tokens, the accent bar, null R, the accessible reading | §2.3
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                   |"
+@ ¶10 row 0
+  "| BQ-7  | CMP-123: the flatten confirm specified once                    | §2.4: a composite, h
+  old and typed on LIVE, composing E33-D04 A-6 (PENDING, by name); E30, E31 and E39 reference it
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     |"
+@ ¶11 row 0
+  "| BQ-8  | CMP-129 and the CMP-105 reuse contract                         | §2.5: the read-only
+   `display` variant, with no control role and no T2, and arrow-browsing never writes; §2.6
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                           |"
+@ ¶12 row 0
+  "| BQ-9  | the motion table                                               | §3.2: every row this
+   spec specifies at most `motion.duration.normal`, Property opacity, transform or none; Mo-5, Mo-
+  7, Mo-11 and Mo-13 its owners' recipes by reference; a twin on every row, every twin instant
+                                                       |"
+@ ¶13 row 0
+  "| BQ-10 | the ticket's \"pending shimmer\"                                 | none drawn: pendin
+  g is a state (§2.2, §3.3); a C-row in §7.2; owner approval pending (#2701)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                           |"
+@ ¶14 row 0
+  "| BQ-11 | state transitions are instant                                  | §3.3: status words,
+   glyphs, fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO / LIVE swap at f
+  rame 0 in both modes; no token CR; owner approval pending (#2701)
+                                                                                   |"
+@ ¶15 row 0
+  "| BQ-12 | missing tokens and the drift ledger                            | no new token name; P
+  ROPOSED names cited to their owners (§5); never `motion.duration.slow` on a data row; drift corr
+  ected by A-rows (§7.4); owner approval pending (#2701)
+                                                                                             |"
+@ ¶16 row 0
+  "| BQ-13 | T2, view-as, environment and the copy keys                     | §4: CMP-079's `allow
+  ed` + `reason`; the legs view-as → permission → account scope or read-only grant → `rbac.env` →
+   client states; exits never gated; no string redefined (§6)
+                                                                                         |"
+@ ¶17 row 0
+  "| BQ-14 | the three a11y lines, densities and themes                     | every entry of §2: k
+  eyboard model, accessible-name composition, live-region policy; dark first, both densities; §5 m
+  easured
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶18 row 0
+  "| BQ-15 | the boards under the cap                                       | §0: 10 <!-- audit:co
+  unt.boards=10 --> boards, 3 <!-- audit:count.boards-light=3 --> of them light twins
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                |"
+@ ¶19 row 0
+  "| BQ-16 | the gate tool, its mutations and the default-deny pins         | `docs/design/_tools/
+  e29_d04_ds_motion_audit.py`; §8.2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  |"
+@ ¶20 prose 1
+  "**Conditions (binding, same comment).** every token / motion / distance / contrast value from `
+  --json`; merged texts at their merge shas (E29-D02, E29-D03 `#4307`, E33-D04 PENDING by name unt
+  il merged), unmerged work PENDING by name only; `15` / `16` / `14` untouched beyond pointer line
+  s; \"RULED\" cites this comment; no lane as authority."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › Dev
+§ iations (recorded, not hidden)#1"]
+@ ¶0 heading 1
+  "## Deviations (recorded, not hidden)"
+@ ¶1 item 1
+  "1. **DoD wording.** DoD 1 and 2 ask for `15` \"updated\" and the motion spec \"merged into `16`
+   addendum\"; `15` and `16` stay byte-identical to the base and every entry ships copy-ready in h
+  and-off §C, applied by E29-T09 after the owner's approval (RULED BQ-2; owner approval pending (#
+  2701)). The ten boards are PENDING in this PR and drawn in the boards PR (RULED BQ-15)."
+@ ¶2 item 0
+  "2. **Paths and title.** The branch is `design/e29-d04-ds-motion` (the claim comment on #823), n
+  ot the brief's `design/oms-core-ds-motion`; the title is a conventional commit (C-4.10), not the
+   brief's \"E29-D04: …\"; the brief's generic web repo paths and `pnpm` commands do not apply to
+   a design PR (the E39-D03 R1 precedent)."
+@ ¶3 item 0
+  "3. **The ticket's motion words.** \"pending shimmer\" and \"correction flash\" are read through
+   RULED BQ-10 and BQ-9: pending carries no loop, and the correction highlight is one opacity over
+  lay (§3.2)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 0.
+§  Planned boards (PENDING; ten: seven dark, three light twins)#1"]
+@ ¶0 heading 1
+  "## 0. Planned boards (PENDING; ten: seven dark, three light twins)"
+@ ¶1 prose 1
+  "Page `E29-D04 DS contributions and motion`, created by name at the boards step, its id recorded
+   then. Boards are `E29-D04 / NN slug`; exports go to `docs/design/E29/img/E29-D04-NN-<slug>.png`
+   at 1×, pinned to the boards PR's head; the D01 and D02 exports in that folder stay untouched. 1
+  0 <!-- audit:count.boards=10 --> boards, 3 <!-- audit:count.boards-light=3 --> of them light twi
+  ns (at most a third; RULED BQ-15). The frame ids are §2's and §3's."
+@ ¶2 row 1
+  "| #   | Board                                         | Draws
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                  | Status
+                            |"
+@ ¶3 row 0
+  "| --- | --------------------------------------------- | ---------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ----------------------------- | ------------------------------- |"
+@ ¶4 row 0
+  "| 01  | `E29-D04 / 01 positions-row-states`           | `CMP-114/*`: the row states, the liq ti
+  ers, the protection chip, the row markers, the group header and totals rows, the \"Updates pause
+  d\" chip, the Closed today line | PENDING: drawn in the boards PR |"
+@ ¶5 row 0
+  "| 02  | `E29-D04 / 02 order-row-lifecycle`            | `CMP-115/*`: the fifteen statuses, each
+   glyph + word; the amend moments (editing, pending, unconfirmed, rejected); the native-stop row
+                                 | PENDING: drawn in the boards PR |"
+@ ¶6 row 0
+  "| 03  | `E29-D04 / 03 pnl-badge-numerics`             | `CMP-116/*`: the bar variant, null R, f
+  ee paid and funding received, provisional and divergent; the greyscale and deuteranopia strips
+                                  | PENDING: drawn in the boards PR |"
+@ ¶7 row 0
+  "| 04  | `E29-D04 / 04 flatten-confirm`                | `CMP-123/*`: default, holding, armed, t
+  he typed word on LIVE, busy, the T2 frames, offline
+                                                                             | PENDING: drawn in t
+  he boards PR |"
+@ ¶8 row 0
+  "| 05  | `E29-D04 / 05 mode-toggle-and-account-filter` | `CMP-129/*`: the display variant and th
+  e toggle with its confirm (§2.5's frames); `CMP-105/*`: the filter picker and its chips
+                                         | PENDING: drawn in the boards PR |"
+@ ¶9 row 0
+  "| 06  | `E29-D04 / 06 motion-storyboard`              | `motion/*`: frame 0 and the last frame
+   of each §3.2 row on opacity or a transform; the state swap at frame 0
+                                                           | PENDING: drawn in the boards PR |"
+@ ¶10 row 0
+  "| 07  | `E29-D04 / 07 motion-reduced-twins`           | `motion/*-reduce`: the `prefers-reduced
+  -motion` twin of every board-06 frame, at frame 0
+                                                                               | PENDING: drawn in
+   the boards PR |"
+@ ¶11 row 0
+  "| 08  | `E29-D04 / 08 positions-row-states-light`     | light twin of 01
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | PENDING: drawn in the boards PR |"
+@ ¶12 row 0
+  "| 09  | `E29-D04 / 09 order-row-lifecycle-light`      | light twin of 02
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | PENDING: drawn in the boards PR |"
+@ ¶13 row 0
+  "| 10  | `E29-D04 / 10 flatten-confirm-light`          | light twin of 04
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | PENDING: drawn in the boards PR |"
+@ ¶14 prose 1
+  "**Specified (drawn on request)** (each fully specified in §2 and §3, named here, not drawn unde
+  r the board cap): the light cells of boards 03, 05, 06 and 07; the high-contrast cells of every
+   board (measured in §5, never drawn); the comfortable-density cells; and the by-reference motion
+   rows Mo-5, Mo-11 and Mo-13 (§3.2), whose frames are their owners'."
+@ ¶15 prose 1
+  "**Companion artefacts.** [E29-D04-handoff.md](E29-D04-handoff.md) (§A placement, §B the `16` §1
+  1.4 checklist with the density and theme matrix, §C the copy-ready `15` entries and the `16` blo
+  ck, §D story lists, §E test hooks, §F open items and the change-request index); the gate tool (s
+  ame PR). No plan document is edited and no `14` pointer line is added (RULED BQ-2)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 1.
+§  Inputs and decisions#1"]
+@ ¶0 heading 1
+  "## 1. Inputs and decisions"
+@ ¶1 prose 1
+  "The inputs are the header's, each at its merge sha. Every row D01, D02 and D03 address to E29-D
+  04 is answered once below, by a section or a row of this spec; none is re-decided here, and the
+   A-, C-, G- and DR-rows named are §7's."
+@ ¶2 row 1
+  "| Row (cited)                                                                  | Asked of E29-D
+  04
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                            | Answered
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                   |"
+@ ¶3 row 0
+  "| ---------------------------------------------------------------------------- | --------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------------------------------------------------- | ------------------
+  ------------------------------------------------------------------------------------------------
+  ------ |"
+@ ¶4 row 0
+  "| D01 F26 and D13e (D01:125 \"E29-D04 caps data-row motion at 200 ms\"; D01:409) | cap data-row
+   motion; pair the value flash with a text or glyph delta; rule on the reduced-motion tint
+                                                                                       | §3.1 and
+   §3.2, every row at most `motion.duration.normal`; §3.5, the paired delta; the tint not adopted
+   (D04-C3)         |"
+@ ¶5 row 0
+  "| D01 D7 (D01:274); D02 gap 13 (D02:622 \"a Live flatten needs hold and typed\") | the flatten
+   confirm: a hold with a discrete second press, and on LIVE the typed confirm as well
+                                                                                             | §2.
+  4, CMP-123's composite, defined once (RULED BQ-7; A-5)
+                                                                  |"
+@ ¶6 row 0
+  "| D01 D2 (D01:170); D02:525; D03:401; D03 CR-10                                | the status, ti
+  er and tag glyph names, proposed for E29-D04
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                  | §2.8.7: a CMP-019 registration request, drawn meanwhile as tex
+  t glyphs                                                   |"
+@ ¶7 row 0
+  "| D01 AM-3 (D01:500); D02 gaps 2 and 3 (D02:611, :612)                         | CMP-115's fift
+  een statuses; CMP-114's `groupBy`, `PositionRow` fields, selection and row actions
+                                                                                            | §2.1
+   and §2.2 (A-1, A-2; RULED BQ-4, BQ-5); `adlRank` stays null (D04-G1)
+                                                  |"
+@ ¶8 row 0
+  "| D02 gap 1 (D02:610); D03 CR-4; E05-D02 G12                                   | treegrid roles
+  , one roving stop, detail lines and the virtualisation thresholds
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+             | §2.7, the CMP-049 base contract (A-6)
+                                                                                      |"
+@ ¶9 row 0
+  "| D02 gap 4 (D02:613); D03 CR-5                                                | CMP-116's unsh
+  ipped tokens, the accent bar, null R, currency, paid and received
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+             | §2.3 (A-3; RULED BQ-6); DR-1, DR-2
+                                                                                         |"
+@ ¶10 row 0
+  "| D02 gaps 5, 6 and 7 (D02:614–616); D02:375, :376                             | T2 and busy on
+   CMP-041, CMP-005 and CMP-057; CMP-055, CMP-056 and CMP-042; CMP-075's row pill; CMP-139 on row
+   actions                                                                     | §2.8.4 to §2.8.6,
+   change requests to their owners; DR-10; §4.3
+                                                             |"
+@ ¶11 row 0
+  "| D02 gap 8 (D02:617)                                                          | the uncatalogu
+  ed elements
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                   | §2.10: named parts of their p
+  arent entries, no new ids (RULED BQ-3)                                                      |"
+@ ¶12 row 0
+  "| D02 gaps 9 and 10 (D02:618, :619); D02:303; D03 CR-7                         | CMP-100's blur
+   auto-round; the comfortable control heights; `font.feature.tabularNums`; the pill and tag heigh
+  ts                                                                          | §2.2, a change req
+  uest to E30-D04; hand-off Q-15; DR-6, DR-9
+                                                               |"
+@ ¶13 row 0
+  "| D02 gap 11 (D02:620)                                                         | the contract g
+  aps
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                           | §7.3, each with its o
+  wner
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  |"
+@ ¶14 row 0
+  "| D02 gap 12 (D02:621); D03 CR-2                                               | CMP-078's acco
+  unt scope; the stale tokens
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                   | §2.8.2; DR-5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+               |"
+@ ¶15 row 0
+  "| D02 gap 13 (D02:622)                                                         | CMP-028's tone
+  ; CMP-105 as a filter picker; CMP-129's read-only display; CMP-019
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | §2.8.1; §2.6; §2.5 (RULED BQ-8); §2.8.7
+                                                                                    |"
+@ ¶16 row 0
+  "| D03 CR-1, CR-3, CR-6, CR-8, CR-9 and CR-11 (D03:536)                         | CMP-028's acco
+  unt line; CMP-239's states; the drawer motion names; registering `color.text.primary` on `color.
+  status.success.subtle` (D03:396); CMP-099's CSV form; CMP-079's reason keys | §2.8.1; §2.8.3; §2
+  .8.8 (A-8; DR-7, DR-8); routed, no entry here binding the pair (hand-off Q-19); §2.8.9; §2.8.10
+   and §6 |"
+@ ¶17 row 0
+  "| D03:401 \"the correction highlight is E29-D04's motion item\"; D03:619         | the correcti
+  on highlight
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                    | Mo-4 (§3.2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                |"
+@ ¶18 row 0
+  "| D02 OQ-C, OQ-L, OQ-R and OQ-S (D02:652, :661, :667, :668)                    | coloured digit
+  s; the row form of `guard.mismatch`; `Ctrl+Shift+F`; 2b on a text SplitButton
+                                                                                                 |
+   cited, never decided: hand-off Q-14, Q-3, Q-11 and Q-8
+                                                                     |"
+@ ¶19 row 0
+  "| E39-D03 C9 and C14 (E39-D03:383, :388); E33-D03 D03-A2 (E33-D03:309)         | CMP-123's data
+   contract; the one-gate reading of FLATTEN ALL; a CMP-123 sentence routed to E33-D04
+                                                                                          | A-5.6;
+   §2.4 and D04-C9; A-5.1 composes with E33-D04 A-6 (PENDING, by name)
+                                                 |"
+@ ¶20 prose 1
+  "**Rules stated once.** R-1: tokens by name, none added, never `motion.duration.slow` on a data
+   row (RULED BQ-12). R-2: every word is its owner's, cited and never redefined, and a key that is
+   not registered is PROPOSED with its owner (RULED BQ-13). R-3: a state swap is a cut at frame 0
+   in both modes, and pending is a state, never drawn as confirmed (RULED BQ-5, BQ-11). R-4: every
+   figure is a marker the tool re-derives from `--json`. R-5: unmerged work is PENDING, named only
+  . R-6: dark first, both densities, high contrast measured (RULED BQ-14)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions#1"]
+@ ¶0 heading 1
+  "## 2. The component contributions"
+@ ¶1 prose 1
+  "Contributed whole (hand-off A-1 to A-4): CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBa
+  dge and CMP-129 PositionModeToggle; amended field by field in Table A: CMP-123 FlattenAllButton
+   (A-5) and the CMP-049 base table (A-6); reused by contract: CMP-105 AccountMultiSelect (A-7); a
+  nswered by a delta or a change request to their owners: the components D02 §15 and D03 §11.2 rou
+  te here (§2.8), CMP-209's drawer motion among them as A-8; consumed as catalogued: the rest (§2.
+  9); D02 gap 8's elements are named parts of their parent entries, never new ids (§2.10; RULED BQ
+  -3). Every state table reads Frame, State, Word, Glyph, Fill, Motion, T2 and Board: the Word is
+   the merged copy, cited and never redefined (RULED BQ-13); Motion names a §3.2 row, and a state
+   swap names only a cut, Mo-8 (Mo-12 for a row's busy glyph; RULED BQ-11); T2 is \"—\" or the rea
+  son key the control shows. Every entry is dark-first and holds in both densities, compact 24 <!-
+  - audit:ds.size.row.compact=24 --> and comfortable 32 <!-- audit:ds.size.row.comfortable=32 -->
+   px rows (`15`:35–36). Forced colours (`forced-colors: active`): the hue-only carriers, CMP-116'
+  s accent bar, the Critical accent, the environment pill's border and the T2 fill and hairline, t
+  ake D02:527's system colours, and every state they mark keeps its word, glyph or `aria-*`."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.1 CMP-114 PositionsGrid#1"]
+@ ¶0 heading 1
+  "### 2.1 CMP-114 PositionsGrid"
+@ ¶1 prose 1
+  "`15` today (`15`:1240–1272): props `positions`, `groupBy` symbol, account or manager, `columns`
+   and `onFlatten`; a `PositionRow` with money as `number`, two margin modes and no environment, R
+  , rPnL today, protection or position mode; an A11y line that defers to CMP-049; a Tokens line na
+  ming two bare status families (`15`:1245); no Variants, States or Motion line. Gap: D02 gaps 1,
+   2 and 8 (D02:610–611, :617) and D01 AM-3 (D01:500). Proposal (hand-off A-1; RULED BQ-4): CMP-04
+  9's `treegrid` (§2.7) with D02 D-1's levels (D02:142); `PositionRow` gains `env`, `rPnlToday`, `
+  r` (null without a stop), `protection` (the B8 state and its `frozen` flag), `positionMode`, `ad
+  lRank` (null: on no frame yet, a contract gap) and `marginMode` cross, isolated or portfolio, ev
+  ery money field the generated `packages/protocol` decimal string, never `number`; `groupBy` gain
+  s `trade_group`, and Group by Manager stays the Owner's view choice, never T2 (D02:374); `rowAct
+  ions` take CMP-079's `allowed` + `reason` (`15`:814), never a role prop (E09-D09:34). Named part
+  s, no new ids: `LiqTierCell`, `ProtectionChip`, `RowMarker`, `GroupHeaderRow`, `TotalsRow`, `Upd
+  atesPausedChip` and `ClosedTodayLine` (D02 §5.6: one per environment block, collapsed by default
+  ; expanded, its own CMP-049 table of closed positions, `role=\"table\"`, whose Net is a CMP-116
+   badge, D02:244); their props are hand-off C.1's `AccountGroup` and `markers`. Variants: `densit
+  y`; `groupBy`; one environment or mixed (the Env column only while the account scope spans both,
+   D02:146; the LIVE block, then the DEMO block, D02:441); the narrow dock at 360 <!-- audit:cited
+  .d02.narrow-dock-px=360 --> px (D02:469). The panel states are D02 §10.1's, named, their copy D0
+  2's and D03's (D02:386–400). The row markers, each a tag in the status cell in its owner's words
+   (D02:414; D03:327–344): \"Verifying\", \"Stop put back\", \"SL auto-attached\", \"Corrected\",
+   \"Updated from Bybit\", \"Rejected — not found on Bybit\", \"Gone from Bybit\", \"Rejected — hi
+  story expired\", \"Unknown — checking\", \"Untracked — not placed by CandleViewer\", \"Anomaly\"
+  , \"Held — owner review\", \"Unpaired fill\", \"Stop restored\", \"Stop not restored\", \"Tighte
+  r stop kept\", \"Untracked stop — not placed by CandleViewer\"."
+@ ¶2 row 1
+  "| Frame                              | State
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                            | Word
+                                                                           | Glyph
+                                              | Fill
+                                                                                  | Motion | T2
+                  | Board |"
+@ ¶3 row 0
+  "| ---------------------------------- | --------------------------------------------------------
+  ---------------------------------------------------------------------- | -----------------------
+  ----------------------------------------------------- | ----------------------------------------
+  -------- | ----------------------------------------------------------------------------------- |
+   ------ | ----------------- | ----- |"
+@ ¶4 row 0
+  "| `CMP-114/row-default`              | default
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | \"BTCUSDT ▲ Long 0.250 BTC\"
+                                                     | ▲ in `color.buy.default`
+                           | `color.surface.raised`
+                                                                | —      | —                 | 01
+      |"
+@ ¶5 row 0
+  "| `CMP-114/row-hover`                | hover
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                            | \"BTCUSDT ▲ Long 0.250 BTC\"
+                                                     | ▲ in `color.buy.default`
+                           | `color.surface.hover`
+                                                                 | —      | —                 | 01
+      |"
+@ ¶6 row 0
+  "| `CMP-114/row-selected`             | selected: the CMP-005 box checked, `aria-selected` (D02:
+  144)                                                                   | \"2 selected · Clear se
+  lection\"                                               | ✓ `check`
+                                          | `color.surface.selected`
+                                                              | —      | —                 | 01
+      |"
+@ ¶7 row 0
+  "| `CMP-114/cell-focused`             | the focused cell: a 2 <!-- audit:cited.d02.focus-ring-px
+  =2 --> px inset `color.focus.ring`, nothing else (D02:461)             | \"+8.00\"
+                                                                        | —
+                                                  | `color.surface.raised`
+                                                                | —      | —                 | 01
+      |"
+@ ¶8 row 0
+  "| `CMP-114/row-new`                  | a new row at the end of its group, the marker static for
+   5 <!-- audit:cited.d01.new-marker-s=5 --> s (D01:407)                 | \"New\"
+                                                                          | —
+                                                  | `color.surface.raised`
+                                                                | Mo-1   | —                 | 01
+      |"
+@ ¶9 row 0
+  "| `CMP-114/row-closing`              | a close in flight: Close in CMP-001's loading state with
+   its label kept, `aria-busy`, not T2 (D02:341)                         | \"Closing…\"
+                                                                     | ⟳ `refresh`
+                                        | `color.surface.raised`
+                                                                | Mo-12  | —                 | 01
+      |"
+@ ¶10 row 0
+  "| `CMP-114/row-lingering-closed`     | closed, lingering about 5 <!-- audit:cited.d01.linger-s=
+  5 --> s; a focused row stays (D01:408)                                 | \"Closed +12.40 USDT\"
+                                                           | —
+                                                  | `color.surface.raised`
+                                                                | Mo-2   | —                 | 01
+      |"
+@ ¶11 row 0
+  "| `CMP-114/row-stale`                | stale: CMP-078's grid-row variant (`15`:803), its words
+   in the group header (D02:398)                                          | \"Not up to date · as
+   of 14:02:11 UTC\"                                        | —
+                                                  | `color.data-confidence.stale.surface`
+                                                 | —      | —                 | 01    |"
+@ ¶12 row 0
+  "| `CMP-114/t2-viewer`                | T2: a Viewer's Close ▾, `aria-disabled`, its reason the
+   panel notice (D02:433)                                                 | \"Close ▾\"
+                                                                      | `lock` \"Not available\"
+                             | `color.surface.raised` with a `color.border.default` hairline
+                         | Mo-8   | `rbac.permission` | 01    |"
+@ ¶13 row 0
+  "| `CMP-114/env-mixed-view`           | a mixed view: the row's name leads with its environment;
+   the pill is text in a `color.env.live` border (D02:441, :516)         | \"LIVE\"
+                                                                         | —
+                                                  | `color.surface.raised`
+                                                                | Mo-8   | —                 | 01
+      |"
+@ ¶14 row 0
+  "| `CMP-114/liq-watch`                | the Watch tier (D02:218)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | \"△ Watch 2.1\"                                                                | △ `tri
+  angle`, `color.text.secondary`             | `color.surface.raised`
+                                                                | Mo-8   | —                 | 01
+      |"
+@ ¶15 row 0
+  "| `CMP-114/liq-near`                 | the Near tier: polite, once per crossing (D02:219)
+                                                                               | \"! Near 1.2\"
+                                                                   | ! `alert-circle`, `color.stat
+  us.warning.strong`  | `color.surface.raised`
+                                                                | Mo-8   | —                 | 01
+      |"
+@ ¶16 row 0
+  "| `CMP-114/liq-critical`             | the Critical tier: assertive, once per crossing; a 2 <!-
+  - audit:cited.d02.critical-accent-px=2 --> px leading accent (D02:220) | \"!! Critical 0.5\"
+                                                              | !! `octagon-alert`, `color.status.
+  danger.strong` | `color.surface.raised`; the accent `color.status.danger.strong`
+                       | Mo-8   | —                 | 01    |"
+@ ¶17 row 0
+  "| `CMP-114/sl-protected`             | `protected` (D02:228)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | \"SL ✓ 63,880.0\"                                                              | ✓ `
+  check`                                        | `color.surface.raised`
+                                                                | Mo-8   | —                 | 01
+      |"
+@ ¶18 row 0
+  "| `CMP-114/sl-attaching`             | `attaching`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      | \"SL attaching…\"
+                                                                | —
+                                                  | `color.surface.raised`, text `color.text.secon
+  dary`                                 | Mo-8   | —                 | 01    |"
+@ ¶19 row 0
+  "| `CMP-114/sl-verifying`             | `verifying`: never ✓ before the exchange read
+                                                                                    | \"SL sent —
+   verifying\"                                                        | —
+                                                  | `color.surface.raised`, text `color.text.secon
+  dary`                                 | Mo-8   | —                 | 01    |"
+@ ¶20 row 0
+  "| `CMP-114/sl-amending`              | `amending`: the confirmed price first (D01 D4)
+                                                                                   | \"SL 63,880.0
+   → 63,950.0 pending\"                                             | ⟳ `refresh`
+                                        | the tag on `color.status.info.subtle`
+                                                 | Mo-8   | —                 | 01    |"
+@ ¶21 row 0
+  "| `CMP-114/sl-naked`                 | `naked`: the timer never speaks
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | \"NO SL ! 12 s\"                                                               | ! `alert-circ
+  le`, `color.status.danger.strong`   | `color.status.danger.subtle`
+                                                          | Mo-8   | —                 | 01    |"
+@ ¶22 row 0
+  "| `CMP-114/sl-naked-unrecoverable`   | `naked_unrecoverable`: the row keeps a reduce-only Close
+                                                                         | \"NO SL — owner paged\"
+                                                          | ! `alert-circle`
+                                   | `color.status.danger.subtle`
+                                                          | Mo-8   | —                 | 01    |"
+@ ¶23 row 0
+  "| `CMP-114/sl-frozen`                | `amend_lock.frozen`: a tighten is still sent (D02:234)
+                                                                           | \"· frozen\"
+                                                                     | —
+                                                  | the tag on `color.status.warning.subtle`
+                                              | Mo-8   | —                 | 01    |"
+@ ¶24 row 0
+  "| `CMP-114/marker-verifying`         | the desync marker while the divergence holds (D02:414)
+                                                                           | \"Verifying\"
+                                                                    | ⚠ `alert-triangle`
+                                 | the tag on `color.status.warning.subtle`
+                                              | Mo-8   | —                 | 01    |"
+@ ¶25 row 0
+  "| `CMP-114/marker-corrected`         | a correction marker, kept until the account's line is di
+  smissed (D03:226)                                                      | \"Corrected\"
+                                                                    | `flag`
+                                             | the tag on `color.status.info.subtle`
+                                                 | Mo-4   | —                 | 01    |"
+@ ¶26 row 0
+  "| `CMP-114/group-header`             | the account group header row, then its state marker and
+   ⋯ (D02:238)                                                            | \"▾ Main · LIVE · One-
+  way · 1 position · uPnL +8.00 · rPnL today +37.40\"      | ▾
+                                                  | `color.surface.canvas`
+                                                                | —      | —                 | 01
+      |"
+@ ¶27 row 0
+  "| `CMP-114/totals-row`               | the totals row, one per environment, a trailing `rowgrou
+  p` (D02:142, :156)                                                     | \"LIVE total\"
+                                                                   | —
+                                                  | `color.surface.overlay`
+                                                               | —      | —                 | 01
+      |"
+@ ¶28 row 0
+  "| `CMP-114/closed-today-collapsed`   | the Closed today line, collapsed by default, one per env
+  ironment block, `aria-expanded=\"false\"` (D02:244)                      | \"▸ Closed today (sin
+  ce 00:00 UTC) · 3 · net +40.20 USDT · incl. provisional\" | ▸
+                                                  | `color.surface.canvas`
+                                                                | Mo-10  | —                 | 01
+      |"
+@ ¶29 row 0
+  "| `CMP-114/closed-today-expanded`    | expanded: its own table of closed positions, Net a CMP-1
+  16 badge (D02:244)                                                     | \"▾ Closed today (since
+   00:00 UTC) · 3 · net +40.20 USDT · incl. provisional\" | ▾
+                                                  | `color.surface.canvas`
+                                                                | Mo-10  | —                 | 01
+      |"
+@ ¶30 row 0
+  "| `CMP-114/closed-today-none`        | nothing closed today: the line does not expand (D02:244)
+                                                                         | \"▸ Closed today (since
+   00:00 UTC) · none\"                                    | ▸
+                                                  | `color.surface.canvas`
+                                                                | —      | —                 | 01
+      |"
+@ ¶31 row 0
+  "| `CMP-114/closed-today-provisional` | a provisional Net: fees pending, updated in place when t
+  hey settle (D02:252)                                                   | \"−6.20 Provisional — f
+  ees pending\"                                           | —
+                                                  | the tag on `color.status.info.subtle`
+                                                 | Mo-8   | —                 | 01    |"
+@ ¶32 row 0
+  "| `CMP-114/closed-today-divergent`   | a divergent Net: Bybit's figure is authoritative, the de
+  scription gives both (D02:252)                                         | \"+25.00 ⚠ Bybit's figu
+  re — ours +25.04\"                                      | ⚠ `alert-triangle`
+                                 | the tag on `color.status.warning.subtle`
+                                              | Mo-8   | —                 | 01    |"
+@ ¶33 row 0
+  "| `CMP-114/updates-paused-chip`      | the \"Updates paused\" chip, a button that applies the h
+  eld changes (D01:406; D02:376)                                           | \"Updates paused · 2
+   new · 1 closed\"                                          | —
+                                                  | `color.neutral.subtle`; `color.status.danger.s
+  ubtle` while a held row carries NO SL | —      | —                 | 01    |"
+@ ¶34 item 1
+  "- **Keyboard:** A treegrid with one roving stop (D02:447): `↑` / `↓` rows, `←` / `→` cells (on
+   a group header `→` expands and `←` collapses), `Home` / `End`, `PageUp` / `PageDown`; `Space` t
+  oggles the row's selection, `Shift+↑` / `Shift+↓` extend it and `Ctrl+A` selects all in view; `E
+  nter` opens SCR-064 on a row; `Shift+F10` or `Menu` opens the row menu; `Ctrl+Delete` acts on th
+  e D01 D9 targets and confirms whenever they exclude the focused row (D02:457); `Ctrl+Shift+F` op
+  ens Flatten account (§2.4), its owner still open (D02:667)."
+@ ¶35 item 0
+  "- **Accessible name:** A row's name is its environment in a mixed view, then symbol, side, size
+   and account (\"LIVE · BTCUSDT · Long · 0.250 BTC · Main\"); the tier cell reads the D5 label wi
+  th the share and the distance (\"Critical — near liquidation: 14 % of the entry buffer left, 0.5
+   % from liquidation\", D02:222); a chip, tag or marker reads its word, its glyph named once; a T
+  2 control keeps its full label and its reason is the description, never the name (E09-D09:49)."
+@ ¶36 item 0
+  "- **Live region:** Row updates are never announced individually (T a11y). The polite region spe
+  aks the focused row's changed values and the environment totals, at most once per 2 <!-- audit:c
+  ited.05.polite-gap-s=2 --> s per field, and the selection count and Near crossings once each; fi
+  lled, rejected, offline and reconnected, NO SL and Critical crossings are assertive, once (D02:4
+  65; `05`:147–148). Ages, \"Last update\", the NO SL timer and Mo-3 never speak."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.2 CMP-115 OrderRow#1"]
+@ ¶0 heading 1
+  "### 2.2 CMP-115 OrderRow"
+@ ¶1 prose 1
+  "`15` today (`15`:1274–1298): `status` has five values and the A11y line names four; the Tokens
+   line binds `color.status.*` and a font name that is not shipped (`15`:1279); no Variants or Sta
+  tes line. Gap: D02 gap 3 (D02:612), D01 AM-3 (D01:500) and the ticket's pending variant (D04-C2)
+  . Proposal (hand-off A-2; RULED BQ-5): `status` widens to D01 D2's fifteen labels (D01:174–191),
+   each a word with the CMP-019 glyph name D01 proposes (D01:170), drawn meanwhile as the text gly
+  ph; null or unmapped reads \"Working — state not reported\" (D02:274); `purpose` joins the type
+   (\"Limit · Take profit\", D02:160, OQ-O pending); the sections are Working and \"Conditional —
+   not triggered\" (D02:281); the native-stop row's Cancel takes its `sl.note` sentence (D02:291).
+   The ticket's variant is named `pending` and drawn as a state, its named part `PendingTag`: the
+   value cell keeps the live value and the State cell says so with the ⟳ marker, the tag and the w
+  ords \"still live\" together (D02:320, :325). The editor is CMP-100 or CMP-101 inside the cell,
+   committed on `Enter` alone (D02:303); their blur auto-round is a change request to their owner,
+   E30-D04 (D02:618). A Cancel sent behind an amend is busy, \"Cancelling…\" with `aria-busy`, nev
+  er T2; a native stop's tighten in flight reads E32-D01's \"Moving the stop to 63,980.0 — waiting
+   for Bybit…\" on the same tag (D02:320). The pending moment is never drawn as confirmed and the
+   old value never dims (D02:325, D01 D4); Confirmed returns \"Working\" and speaks once; Rejected
+   keeps the order live and offers Dismiss; the exchange's own text never reaches the row (D02:152
+  )."
+@ ¶2 row 1
+  "| Frame                        | State
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                  | Word                                              | Glyph
+                    | Fill                                                          | Motion | T2
+                                                      | Board |"
+@ ¶3 row 0
+  "| ---------------------------- | --------------------------------------------------------------
+  ---------------------------------------------------------------------- | -----------------------
+  -------------------------- | ---------------------- | ------------------------------------------
+  ------------------- | ------ | ----------------------------------------------------- | ----- |"
+@ ¶4 row 0
+  "| `CMP-115/status-sending`     | sending (`submitting`)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | \"Sending\"                                         | `loader`               |
+   `color.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶5 row 0
+  "| `CMP-115/status-working`     | working (`submitted`)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  | \"Working\"                                         | `clock`                |
+   `color.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶6 row 0
+  "| `CMP-115/status-triggered`   | triggered: the conditional order fired
+                                                                                                 |
+   \"Triggered\"                                       | `zap`                  | `color.surface.r
+  aised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶7 row 0
+  "| `CMP-115/status-partial`     | partially filled, with its protection signal (D02:286)
+                                                                                 | \"Partial 0.050
+  /0.150 · SL ✓ 63,900.0\"             | `circle-half`          | `color.surface.raised`
+                                          | Mo-8   | —
+                                                       | 02    |"
+@ ¶8 row 0
+  "| `CMP-115/status-cancelling`  | cancelling: a late fill flips it (D01:181)
+                                                                                             | \"C
+  ancelling\"                                      | `refresh`              | `color.surface.raise
+  d`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶9 row 0
+  "| `CMP-115/status-amending`    | amending: the moments below (D01:182)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | \"Amending\"                                        | `refresh`              | `color.surface.
+  raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶10 row 0
+  "| `CMP-115/status-unknown`     | unknown: only reconciliation resolves it (D01:183)
+                                                                                     | \"Unknown —
+   checking\"                              | `help-circle`          | `color.status.warning.subtle
+  `                                 | Mo-8   | `blotter.unknown` (PROPOSED; E29-D03 owns it)
+           | 02    |"
+@ ¶11 row 0
+  "| `CMP-115/status-quarantined` | quarantined: critical, diagnostics only
+                                                                                                |
+   \"Quarantined\"                                     | `octagon-alert`        | `color.status.da
+  nger.subtle`                                  | Mo-8   | —
+                                                       | 02    |"
+@ ¶12 row 0
+  "| `CMP-115/status-held`        | held for the owner's review
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | \"Held — owner review\"                             | `lock`                 | `colo
+  r.status.danger.subtle`                                  | Mo-8   | `blotter.held` (PROPOSED; E2
+  9-D03 owns it)            | 02    |"
+@ ¶13 row 0
+  "| `CMP-115/status-untracked`   | untracked: never rule-managed
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+          | \"Untracked — not placed by CandleViewer\"          | `link-off`             | `color.
+  surface.raised`                                        | Mo-8   | `blotter.untracked` (PROPOSED;
+   E29-D03 owns it)       | 02    |"
+@ ¶14 row 0
+  "| `CMP-115/status-filled`      | filled: lingers about 5 <!-- audit:cited.d01.linger-s=5 --> s,
+   then leaves by Mo-2 (D02:465)                                         | \"Filled\"
+                                            | `check`                | `color.surface.raised`
+                                          | Mo-8   | —
+                                                       | 02    |"
+@ ¶15 row 0
+  "| `CMP-115/status-cancelled`   | cancelled: the same linger
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+             | \"Cancelled\"                                       | `slash`                | `col
+  or.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶16 row 0
+  "| `CMP-115/status-rejected`    | rejected: opens SCR-077
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                | \"Rejected\"                                        | `x`                    | `
+  color.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶17 row 0
+  "| `CMP-115/status-expired`     | expired
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                | \"Expired\"                                         | `clock-str
+  ike`         | `color.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶18 row 0
+  "| `CMP-115/status-killed`      | killed by the kill switch
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | \"Killed (kill switch)\"                            | `stop-square`          | `co
+  lor.surface.raised`                                        | Mo-8   | —
+                                                       | 02    |"
+@ ¶19 row 0
+  "| `CMP-115/amend-editing`      | editing: the editor in the cell, the old value below it, its 2
+   <!-- audit:cited.d02.focus-ring-px=2 --> px `color.focus.ring` border | \"Editing — 2,500.00 is
+   live\"                      | —                      | `color.surface.raised`
+                                          | —      | —
+                                                       | 02    |"
+@ ¶20 row 0
+  "| `CMP-115/amend-pending`      | pending (not applied): the value cell keeps the live value; Ed
+  it takes `blotter.amend_in_flight`                                     | \"Amending → 2,495.00 ·
+   2,500.00 still live\"       | ⟳ `refresh`            | the tag on `color.status.info.subtle`
+                           | Mo-8   | `blotter.amend_in_flight` (PROPOSED; E29-D03 owns it) | 02
+      |"
+@ ¶21 row 0
+  "| `CMP-115/amend-unconfirmed`  | unconfirmed (`unknown`): amend and an unpressed Cancel take `b
+  lotter.unknown`                                                        | \"Unknown — checking ·
+   2,500.00 may still be live\" | `help-circle`          | `color.status.warning.subtle`
+                                   | Mo-8   | `blotter.unknown` (PROPOSED; E29-D03 owns it)
+           | 02    |"
+@ ¶22 row 0
+  "| `CMP-115/amend-rejected`     | a rejected amend: the order unchanged, until Dismiss (D02:323)
+                                                                         | \"⚠ Amend rejected — yo
+  ur order is unchanged\"      | ⚠ `alert-triangle`     | `color.status.warning.subtle`
+                                   | Mo-8   | —
+                                                       | 02    |"
+@ ¶23 row 0
+  "| `CMP-115/native-stop-row`    | a native-stop row: Cancel is T2 with its `sl.note` sentence (D
+  02:291)                                                                | \"Market · Stop loss\"
+                                | —                      | `color.surface.raised`
+                                          | —      | `sl.note` (its D02 sentence PROPOSED to E32-D
+  01)      | 02    |"
+@ ¶24 row 0
+  "| `CMP-115/cancel-t2-held`     | Cancel on a held order: T2, `aria-disabled`, the reason as the
+   item's second line                                                    | \"Cancel ▾\"
+                                          | `lock` \"Not available\" | `color.surface.raised` with
+   a `color.border.default` hairline | Mo-8   | `blotter.held` (PROPOSED; E29-D03 owns it)
+              | 02    |"
+@ ¶25 item 1
+  "- **Keyboard:** CMP-114's treegrid model (§2.1); `Enter`, `F2` or a double-click on Price, Trig
+  ger or Qty opens the cell editor, `↑` / `↓` step a tick or a lot, `Shift` ten, and `Enter` alone
+   commits; `Escape`, `Tab` or a click elsewhere restores the live value (D02:303)."
+@ ¶26 item 0
+  "- **Accessible name:** In a mixed view the environment leads (§4.3), then the state word with i
+  ts glyph named once, then the type with its purpose, price, quantity and account; the State cell
+  's whole line is the description, a pending amend's included (\"Amend to 2,495.00 sent to Bybit.
+   The order is still at 2,500.00 until Bybit confirms.\", D02:320); a T2 control keeps its full l
+  abel, its reason the description."
+@ ¶27 item 0
+  "- **Live region:** Row updates are never announced individually. Filled and rejected are assert
+  ive, once, and so is a rejected amend; \"Amend confirmed: price 2,495.00.\" is polite, once; the
+   pending tag, the age and the counters never speak (D02:465)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.3 CMP-116 PnLBadge#1"]
+@ ¶0 heading 1
+  "### 2.3 CMP-116 PnLBadge"
+@ ¶1 prose 1
+  "`15` today (`15`:1300–1309): `value: number`, `format` abs, pct or r, and `size`; an A11y line
+   that puts an `aria-label` on the value, which CMP-020 rules out on a generic element (`15`:238)
+  ; a Tokens line naming two text colours and a font name that are not shipped (`15`:1305). Gap: D
+  02 gap 4 (D02:613) and D03 CR-5 (D03:536). Proposal (hand-off A-3; RULED BQ-6): the digits in `c
+  olor.text.primary` with `type.num.*`, the sign as text, `+` or U+2212, and the hue on a 2 <!-- a
+  udit:cited.d02.accent-bar-px=2 --> px accent bar through CMP-020's `colorBySign` (`15`:239; D02:
+  147); `variant: \"bar\"` is the grid default and `digits` (coloured digits) waits for E05-D02 E1
+  's text-safe pair (`docs/design/E05/E05-D02-data-display.md`:228–232; D02:652). Props: `value` a
+  s a decimal string, `format` adds `currency`, `currency?`, `direction?` paid or received (D03:12
+  5), `provisional?` and `divergent?` (D02:248, :252), and `size`. The badge has no motion of its
+   own: the host cell's Mo-3 wraps it (`docs/design/E05/E05-D02-data-display.md`:712)."
+@ ¶2 row 1
+  "| Frame                        | State
+                                                                              | Word
+                                                 | Glyph              | Fill
+                                       | Motion | T2  | Board |"
+@ ¶3 row 0
+  "| ---------------------------- | --------------------------------------------------------------
+  ------------------ | -------------------------------------------------- | ------------------ | -
+  --------------------------------------- | ------ | --- | ----- |"
+@ ¶4 row 0
+  "| `CMP-116/bar-profit`         | profit
+                                                                             | \"+8.00 USDT\"
+                                         | —                  | `color.buy.default` (the accent ba
+  r)     | Mo-3   | —   | 03    |"
+@ ¶5 row 0
+  "| `CMP-116/bar-loss`           | loss
+                                                                               | \"−121.50 USDT\"
+                                       | —                  | `color.sell.default` (the accent bar
+  )    | Mo-3   | —   | 03    |"
+@ ¶6 row 0
+  "| `CMP-116/bar-flat`           | flat: zero, unsigned
+                                                               | \"0.00 USDT\"
+                                          | —                  | `color.neutral.default` (the acce
+  nt bar) | —      | —   | 03    |"
+@ ¶7 row 0
+  "| `CMP-116/r-null`             | R unavailable (D02:185)
+                                                            | \"—\", read as \"R unavailable: no s
+  top price\"        | —                  | `color.surface.raised`                   | —      | —
+     | 03    |"
+@ ¶8 row 0
+  "| `CMP-116/fee-paid`           | a fee paid (D03:125)
+                                                               | \"−3.49 USDT\", read as \"fee pai
+  d 3.49 USDT\"         | —                  | `color.sell.default` (the accent bar)    | —      |
+   —   | 03    |"
+@ ¶9 row 0
+  "| `CMP-116/funding-received`   | funding received (D03:125)
+                                                         | \"+0.84 USDT\", read as \"funding recei
+  ved 0.84 USDT\" | —                  | `color.buy.default` (the accent bar)     | —      | —   |
+   03    |"
+@ ¶10 row 0
+  "| `CMP-116/provisional`        | provisional: fees pending, updated in place (D02:252)
+                              | \"Provisional — fees pending\"                       | —
+                    | the tag on `color.status.info.subtle`    | —      | —   | 03    |"
+@ ¶11 row 0
+  "| `CMP-116/divergent`          | divergent: Bybit's figure is authoritative, the description gi
+  ves both (D02:252) | \"⚠ Bybit's figure — ours +25.04\"                   | ⚠ `alert-triangle` |
+   the tag on `color.status.warning.subtle` | —      | —   | 03    |"
+@ ¶12 row 0
+  "| `CMP-116/strip-greyscale`    | the buy and sell bars in greyscale (§5's distances)
+                                | \"+8.00\" beside \"−121.50\"                           | —
+                    | the bars in greyscale                    | —      | —   | 03    |"
+@ ¶13 row 0
+  "| `CMP-116/strip-deuteranopia` | the buy and sell bars under deuteranopia (§5)
+                                      | \"+8.00\" beside \"−121.50\"                           | —
+                    | the bars as simulated                    | —      | —   | 03    |"
+@ ¶14 item 1
+  "- **Keyboard:** None: the badge is not interactive and takes no Tab stop."
+@ ¶15 item 0
+  "- **Accessible name:** The sign and the value in words as visually hidden text, never an `aria-
+  label` on the span (`15`:238): \"profit 8.00 USDT\", \"loss 121.50 USDT\", \"fee paid 3.49 USDT\
+  ", \"funding received 0.84 USDT\"; a null R reads \"R unavailable: no stop price\" (D02:184–185)
+  ; the bar is `aria-hidden`."
+@ ¶16 item 0
+  "- **Live region:** None of its own: the host's policy applies (§2.1), polite at most once per 2
+   <!-- audit:cited.05.polite-gap-s=2 --> s per field, latest value only, never per tick (`16`:553
+  )."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.4 CMP-123 FlattenAllButton (the flatten confirm, defined once)#
+§ 1"]
+@ ¶0 heading 1
+  "### 2.4 CMP-123 FlattenAllButton (the flatten confirm, defined once)"
+@ ¶1 prose 1
+  "`15` today (`15`:1403–1411): `scope` account or all-accounts and `onConfirm`; a Purpose that pi
+  cks one ConfirmDialog variant (`15`:1405); a bare danger family in Tokens (`15`:1408); a Data co
+  ntract naming Bybit's routes and blind to stops (E39-D03:383). Gap: D02 gap 13 (D02:622), and CM
+  P-044 and CMP-211 each describe a hold of their own (`15`:476–478, :2506). Proposal (hand-off A-
+  5; RULED BQ-7): this entry owns the flatten confirm as a composite, defined once here. `scope: \
+  "account\"` is SCR-063's Flatten account… in each account group header's ⋯ menu (D02:155): `canc
+  elAllOrders` for the account with `exclude_reduce_only: true`, then `closeAllPositions` with `ca
+  ncel_open_orders: false`, in one confirmed gesture with an `Idempotency-Key` each; the dialog re
+  states the account, its environment, the positions it closes and the orders it cancels, lists st
+  ops as \"cancelled with the position\" and ends in one `BulkAccountResult` line per account with
+   \"Retry failed\" (D02:353, :349). `scope: \"all-accounts\"` is the shell's FLATTEN ALL…, whose
+   button is CMP-211 and whose dialog is this definition. E30, E31 and E39 reference this section
+   and restate neither its hold nor a confirm step (AC3; D01:522). The confirm is the table below:
+   CMP-044 `hold` with its discrete second press, and on LIVE the typed word first, which CMP-044
+   already allows, as its `typedConfirmValue` gates a `hold` Confirm (`15`:476; `docs/design/E05/E
+  05-D02-feedback-overlays.md`:286–287). The ring, its percentage text, the armed label, the windo
+  w and the key-repeat rule are CMP-044's and E39-D03's, cited and never restated (`15`:478; E39-D
+  03:118–123); the ring is dialog motion, never a data row's, so the data-row cap of §3 does not b
+  ind it (Mo-7, by reference). Flatten account… leaves the ⋯ menu while its account's snapshot fai
+  led, nothing being loaded to act on (D02:389). On LIVE the word typed for `all-accounts` is `FLA
+  TTEN`, the catalogue's fixed word (`15`:476, :2506; `14`:296; E39-D03:123), and E39-D03's one-ga
+  te reading of FLATTEN ALL meets this composite in D04-C9; the word for `account` is its copy own
+  er's and stays open (hand-off Q-17): CMP-044's rule names \"the object's own name\", here the ac
+  count label (`15`:476), and D02 routes the bulk words to D03's deck (\"CLOSE\", D02:349). Compos
+  ition with E33-D04 A-6 (PENDING, by name): A-5.1 replaces the Purpose's \"`hold` or `typed`\" ch
+  oice with this composite and appends after E33-D04 A-6.1's sentence, whichever lands first, and
+   A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-op; the route names sta
+  y E39-D03 C9's."
+@ ¶2 row 1
+  "| Environment | Confirm
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                               | Discrete keyboard path                  | prefers
+  -reduced-motion      | Source                                |"
+@ ¶3 row 0
+  "| ----------- | -------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  -------------------------------------------------------------------- | -------------------------
+  -------------- | --------------------------- | ------------------------------------- |"
+@ ¶4 row 0
+  "| DEMO        | CMP-044 `hold` for 800 <!-- audit:cited.cmp044.hold-ms=800 --> ms (PROPOSED `mo
+  tion.duration.hold-confirm`, E39-D03:407; a 300 <!-- audit:cited.cmp044.hold-min-ms=300 -->–2,00
+  0 <!-- audit:cited.cmp044.hold-max-ms=2000 --> ms setting, `15`:476) | a second `Enter`, CMP-044
+  's armed press | the percentage text, static | D01:274; D02:353                      |"
+@ ¶5 row 0
+  "| LIVE        | CMP-044 `hold` and the typed word (`typedConfirmValue` gates the hold, `15`:476
+  )
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                      | the typed word, then a sec
+  ond `Enter`   | the percentage text, static | D02:353 \"Live adds the typed confirm\" |"
+@ ¶6 row 1
+  "| Frame                              | State
+                                                                              | Word
+                                                                                     | Glyph
+                    | Fill                                        | Motion | T2
+                                                  | Board |"
+@ ¶7 row 0
+  "| ---------------------------------- | --------------------------------------------------------
+  ------------------------ | ---------------------------------------------------------------------
+  ----------------- | ---------------------- | ------------------------------------------- | -----
+  - | ------------------------------------------------- | ----- |"
+@ ¶8 row 0
+  "| `CMP-123/default`                  | default: the item in the account header's ⋯ menu (D02:23
+  8)                       | \"Flatten account…\"
+                                                                       | —                      |
+   `color.surface.overlay`                     | —      | —
+                                                   | 04    |"
+@ ¶9 row 0
+  "| `CMP-123/hover`                    | hover
+                                                                              | \"Flatten account…
+  \"                                                                     | —
+                        | `color.surface.hover`                       | —      | —
+                                                   | 04    |"
+@ ¶10 row 0
+  "| `CMP-123/focus-visible`            | focus-visible: CMP-041's inset ring
+                                                | \"Flatten account…\"
+                                                                       | —                      |
+   `color.surface.overlay`                     | —      | —
+                                                   | 04    |"
+@ ¶11 row 0
+  "| `CMP-123/holding`                  | holding: the ring with its percentage text (`15`:478)
+                              | \"40 %\"
+                                                                                   | —
+                        | `color.status.danger.default` (the ring)    | Mo-7   | —
+                                                   | 04    |"
+@ ¶12 row 0
+  "| `CMP-123/armed`                    | armed after the first discrete press (`15`:478)
+                                    | \"Press again to …\"
+                                                                       | —                      |
+   `color.status.danger.default` (the outline) | —      | —
+                                                   | 04    |"
+@ ¶13 row 0
+  "| `CMP-123/typed-live`               | LIVE: the typed field comes first and the hold starts on
+   a match (`15`:476)      | the typed word: `FLATTEN` for all accounts (`15`:2506); one account's
+   word open (Q-17) | —                      | `color.surface.raised`                      | —
+        | —                                                 | 04    |"
+@ ¶14 row 0
+  "| `CMP-123/busy`                     | busy while its account loads: `aria-busy`, ⟳ leading the
+   label, not T2 (D02:388) | \"Flatten account…\"
+                                                                       | ⟳ `refresh`            |
+   `color.surface.overlay`                     | —      | —
+                                                   | 04    |"
+@ ¶15 row 0
+  "| `CMP-123/t2-view-as`               | T2 under view-as, the panel notice its reason (D02:435)
+                            | \"Flatten account…\"
+                                                                       | `lock` \"Not available\"
+   | `color.surface.overlay`                     | Mo-8   | `rbac.view_as`
+                                      | 04    |"
+@ ¶16 row 0
+  "| `CMP-123/t2-viewer`                | T2 for a Viewer (`positions:write`)
+                                                | \"Flatten account…\"
+                                                                       | `lock` \"Not available\"
+   | `color.surface.overlay`                     | Mo-8   | `rbac.permission`
+                                   | 04    |"
+@ ¶17 row 0
+  "| `CMP-123/t2-read-only`             | T2 on a read-only grant, the account header's notice
+                               | \"Flatten account…\"
+                                                                       | `lock` \"Not available\"
+   | `color.surface.overlay`                     | Mo-8   | `rbac.account_read_only`
+                            | 04    |"
+@ ¶18 row 0
+  "| `CMP-123/t2-manager-kill-switch`   | T2 for a Manager under the kill switch while OD-11 is op
+  en (D02:421)             | \"Flatten account…\"
+                                                                       | `lock` \"Not available\"
+   | `color.surface.overlay`                     | Mo-8   | E39-D01's \"Frozen — the owner closes
+   or releases\" | 04    |"
+@ ¶19 row 0
+  "| `CMP-123/offline-rest-unreachable` | offline with REST unreachable: every write T2 (D02:397)
+                            | \"Flatten account…\"
+                                                                       | `lock` \"Not available\"
+   | `color.surface.overlay`                     | Mo-8   | E17-D01's \"Cannot reach server\" noti
+  ce            | 04    |"
+@ ¶20 item 1
+  "- **Keyboard:** The ⋯ item opens CMP-044 with focus on Cancel; the confirm takes a held `Enter`
+   or a second `Enter` within CMP-044's window, after the typed word on LIVE; `Escape` or blur dis
+  arms and key repeat never confirms (`15`:478); `Ctrl+Shift+F` opens it for one account, its owne
+  r still open (D02:667)."
+@ ¶21 item 0
+  "- **Accessible name:** Scope and effect, \"Flatten account — Sub-1 · LIVE\"; a T2 item keeps th
+  at name and its reason is the description (E09-D09:49)."
+@ ¶22 item 0
+  "- **Live region:** The result is polite, once, a change the user asked for; nothing speaks whil
+  e the hold runs."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.5 CMP-129 PositionModeToggle#1"]
+@ ¶0 heading 1
+  "### 2.5 CMP-129 PositionModeToggle"
+@ ¶1 prose 1
+  "`15` today (`15`:1474–1481): `value` one-way or hedge, `onChange` and `disabled?` / `disabledRe
+  ason?`; Tokens inherit CMP-003; no A11y, Variants or States line. Gap: SCR-063 shows the mode as
+   text in the account group header (D02:238, :590), CMP-129 has no read-only form (D02:622), and
+   a radio group writes on every arrow key (E05-D02:464–467). Proposal (hand-off A-4; RULED BQ-8):
+   two variants. `display` is the mode as text, \"One-way\" or \"Hedge\" (the hedge Side adds \" ·
+   hedge\", D02:180); it is no control and carries no reason. `toggle` is CMP-003's radio group wi
+  th the change held behind its own CMP-044 `standard` confirm, so arrow-browsing never writes; `d
+  isabled?` / `disabledReason?` give way to CMP-079's `allowed` + `reason`, and its reasons are th
+  e view-as leg first, then the permission leg, which E09-D09's chooser reads as `rbac.owner_only`
+   \"Only the owner can change account settings.\" because no other role holds `accounts:write` (E
+  09-D09:90; `15`:1479; D02:353). The open-positions state has no registered key: PROPOSED to E30-
+  D02's owner, never bound to T2 until merged. The mode never animates: a change is a cut (Mo-8)."
+@ ¶2 row 1
+  "| Frame                              | State
+                                                                                           | Word
+        | Glyph                  | Fill                                                          |
+   Motion | T2                                         | Board |"
+@ ¶3 row 0
+  "| ---------------------------------- | --------------------------------------------------------
+  ------------------------------------- | --------- | ---------------------- | -------------------
+  ------------------------------------------ | ------ | ------------------------------------------
+   | ----- |"
+@ ¶4 row 0
+  "| `CMP-129/display-one-way`          | `display`, one-way: text in the group header
+                                                    | \"One-way\" | —                      | `colo
+  r.surface.canvas`                                        | —      | —
+                                            | 05    |"
+@ ¶5 row 0
+  "| `CMP-129/display-hedge`            | `display`, hedge
+                                                                                | \"Hedge\"   | —
+                        | `color.surface.canvas`                                        | —      |
+   —                                          | 05    |"
+@ ¶6 row 0
+  "| `CMP-129/toggle-confirm`           | `toggle`: an arrow lands on Hedge and nothing is written
+   until the CMP-044 `standard` confirm | \"Hedge\"   | —                      | `color.surface.ov
+  erlay` (the confirm)                         | Mo-8   | —
+                                            | 05    |"
+@ ¶7 row 0
+  "| `CMP-129/toggle-t2-owner-only`     | `toggle`, T2 for a Manager or a Viewer
+                                                          | \"One-way\" | `lock` \"Not available\"
+   | `color.surface.raised` with a `color.border.default` hairline | Mo-8   | `rbac.owner_only`
+                            | 05    |"
+@ ¶8 row 0
+  "| `CMP-129/toggle-t2-open-positions` | `toggle`, T2 while the account holds open positions
+                                             | \"Hedge\"   | `lock` \"Not available\" | `color.sur
+  face.raised` with a `color.border.default` hairline | Mo-8   | PROPOSED to E30-D02's owner (no k
+  ey bound) | 05    |"
+@ ¶9 item 1
+  "- **Keyboard:** The `display` variant takes no Tab stop. The `toggle` variant is CMP-003's radi
+  o group: arrows browse, `Enter` or `Space` opens the confirm, only the confirm writes and `Escap
+  e` keeps the old mode (E05-D02:464–467)."
+@ ¶10 item 0
+  "- **Accessible name:** The mode as text, \"One-way\" or \"Hedge\"; the toggle's radio group tak
+  es its host's label, and a T2 option's reason is its description, never its name."
+@ ¶11 item 0
+  "- **Live region:** None of its own: the mode never speaks, and a confirmed change is its host's
+   polite line, once."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.6 CMP-105 AccountMultiSelect (reuse contract)#1"]
+@ ¶0 heading 1
+  "### 2.6 CMP-105 AccountMultiSelect (reuse contract)"
+@ ¶1 prose 1
+  "Delta only; the entry stays E30-D04's (E30-D04:351; `15`:1089–1101; RULED BQ-8). SCR-063's acco
+  unt filter uses it as the picker behind \"+ Filter\" (D02:375): `mode=\"account\"` over the serv
+  er-scoped account list, a Manager's assigned accounts only, set server-side, so no option shows
+   a reason; none of `profileSummary`, `onEditProfile`, the group rows or the leg rows. Each chose
+  n account becomes a CMP-055 chip, \"Account: Sub-1 ✕\", its remove a labelled IconButton; the us
+  e adds no new variant and no T2 ever sits on a filter (D02:433). Frames on board 05: `CMP-105/fi
+  lter-picker`, `CMP-105/filter-chips` and `CMP-105/filter-manager-scope`; hand-off A-7 adds the u
+  se to its Purpose, Props, A11y, API sketch, Storybook and Tests, `profileSummary` and `onEditPro
+  file` becoming optional."
+@ ¶2 item 1
+  "- **Keyboard:** As E30-D04 §8 (E30-D04:361): `Alt+↓` or `Enter` opens, `↑` / `↓`, `Home` / `End
+  `, `Space` toggles, `Escape` closes and returns focus; each chip's remove is its own IconButton.
+  "
+@ ¶3 item 0
+  "- **Accessible name:** A chip reads its filter, \"Account: Sub-1\", and its remove \"Remove fil
+  ter Account: Sub-1\" (D02:375)."
+@ ¶4 item 0
+  "- **Live region:** None of its own: the table's one polite region speaks the filtered result on
+  ce (`15`:530)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.7 CMP-049 Table (the base contract E05-D02 G12 waits for)#1"]
+@ ¶0 heading 1
+  "### 2.7 CMP-049 Table (the base contract E05-D02 G12 waits for)"
+@ ¶1 prose 1
+  "`15` today (`15`:524–533): `table` and `grid` variants, `virtualized` true above 50 <!-- audit:
+  cited.15.virtualized-rows=50 --> rows, and a Purpose that names PositionsGrid as CMP-107, which
+   is OrderTicket (`15`:526, :1114). Gap: E05-D02 G12 holds treegrid rows and the pinned column ou
+  t of the base until E29-D04 writes one contract for both consumers (`docs/design/E05/E05-D02-for
+  m-controls.md`:393–402): SCR-063 and SCR-078 (D02:610; D03:536 CR-4) and E11-D04's chart table.
+   Proposal (hand-off A-6): a `treegrid` variant, implied by `treegrid: true`, whose rows carry `l
+  evel` (outermost first) and, when they hold others, `expanded`, with totals in a trailing `rowgr
+  oup` (D02:142); `stickyFirstColumn?: boolean|number` (`true` pins the first column, E11-D04's as
+  k; a number pins that many leading columns, SCR-063's select, Env, Account and Symbol) and `stic
+  kyLastColumn?` (the actions column, D02:170); a `detail` line under a row, opened by `→` and clo
+  sed by `←` (D03:130, :445). Windowing stays on from 50 <!-- audit:cited.15.virtualized-rows=50 -
+  -> rows, so D01 D8's 1,000 <!-- audit:cited.d01.virtualise-rows=1000 --> rows (D01:284) and D03
+   CR-4's default sit inside it; the two budgets become the variant's tests: the roles, levels and
+   indices on a 500 <!-- audit:cited.d02.fixture-rows=500 -->-row fixture (D02:142) and a 1,000 <!
+  -- audit:cited.d03.fixture-fills=1000 -->-row window painted with no per-row layout read (D03:72
+  ). The base has no row motion: a consumer that inserts or removes live rows takes Mo-1 and Mo-2
+   (§3.2)."
+@ ¶2 item 1
+  "- **Keyboard:** One roving stop (`05`:95): `↑` / `↓` rows, `←` / `→` cells, and on a row that h
+  olds others `→` expands and `←` collapses; `Home` / `End`, `PageUp` / `PageDown`; `Space` select
+  s; `Enter` opens a detail line or activates the focused cell's control; `Shift+F10` opens the ro
+  w menu (`15`:530)."
+@ ¶3 item 0
+  "- **Accessible name:** The caption names the table; a row is named by its `rowheader` cell (the
+   Symbol in SCR-063, D02:142) with its level and position; a totals row by its label (\"LIVE tota
+  l\")."
+@ ¶4 item 0
+  "- **Live region:** A consumer's row updates are never announced individually (§2.1); the base k
+  eeps its one polite region for sort, filter, selection and load results (`15`:530)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.8 The routed components (deltas and change requests, never rede
+§ finitions)#1"]
+@ ¶0 heading 1
+  "### 2.8 The routed components (deltas and change requests, never redefinitions)"
+@ ¶1 prose 1
+  "The components D02 §15 and D03 §11.2 route to E29-D04 beyond the six above (D02:608–622; D03:53
+  6), each answered by a delta or a change request to its owner, cited; no entry is redefined here
+  ."
+@ ¶2 item 1
+  "- **2.8.1 CMP-028 Callout (D03 CR-1).** Answered by the entry as it stands: `live?: \"off\"` mo
+  unts the account line with no live role, the slot's shared regions its only voices, and `actions
+  ?` takes Details, Review and Resolve… (`15`:314, :317; D03:472); the Purpose already names CMP-0
+  74 (`15`:313). The reconciling, desync and locked lines are the info, warning and danger tones (
+  D03:393–395); Resolve… is T2 `rbac.owner_only` for a Manager or a Viewer (D03:220). Delta: three
+   Storybook stories, AccountLineReconciling, AccountLineDesync and AccountLineLocked, a change re
+  quest to E05's owner."
+@ ¶3 item 0
+  "- **2.8.2 CMP-078 StaleDataShade (D03 CR-2; D02 gap 12).** The grid-row variant exists (`15`:80
+  3); the delta is an account scope and a reason line that names the account once (\"Not up to dat
+  e · as of 14:02:11 UTC\", D02:398), a change request to the owners of E17-D02 and E08-D11. Its T
+  okens line names an alias that is not shipped (`15`:806), and `color.data-confidence.stale.surfa
+  ce` resolves to black in dark and high contrast, which `05` §5 rules out (D02:621; D03:397): a c
+  hange request to E05's owner, the pair re-measured in §5 (`stale-row`)."
+@ ¶4 item 0
+  "- **2.8.3 CMP-239 data-confidence states (D03 CR-3).** Reconciling and verifying are not among
+   its eight states, and a consuming screen may not add a local variant (`15`:2786, :2793): a desi
+  gn-system change request to E08's owner for both states and their precedence row. Until it lands
+   the blotter shows them as CMP-114 row and group-header markers (§2.1), never as CMP-239 variant
+  s."
+@ ¶5 item 0
+  "- **2.8.4 CMP-041 Menu, CMP-005 Checkbox and CMP-057 SplitButton (D02 gap 5).** CMP-041 already
+   has the T2 item and the busy item (`15`:448–449), and CMP-005's disabled-with-reason defers to
+   E09-D09 §2.2 (`15`:93), so the other environment's row checkbox is T2 inside CMP-079 (D02:145).
+   CMP-057 has no States line and its `primary` carries neither a reason nor a busy state (`15`:60
+  2): a change request to E05's owner for `allowed` + `reason` on the primary and a busy primary t
+  hat keeps its label (\"Closing…\", \"Cancelling…\": `aria-busy`, the ⟳ leading it, never T2), wi
+  th 2b for a row's own reason (D02:668, OQ-S). The tertiary T2 label measures 3.98 <!-- audit:con
+  trast.t2-label-selected-tertiary.dark=3.98 --> on a dark selected row, so there it takes `color.
+  text.secondary` (D02:614): a deliberate exception for the §7.4 ledger (DR-10)."
+@ ¶6 item 0
+  "- **2.8.5 CMP-055 FilterBar, CMP-056 ColumnPicker and CMP-042 Tabs (D02 gap 6).** CMP-055 gains
+   \"Clear all\" once two or more chips exist (D02:375); its Tokens line names a spacing family th
+  at is not shipped (`15`:586). CMP-056 gains per-tab sets, locked columns that read \"Always show
+  n\" as helper text, outside the T2 grammar, and \"Reset to default\" (D02:376). CMP-042 needs no
+  thing: the tabs carry no counts (D02:158). All three are change requests to E05's owner."
+@ ¶7 item 0
+  "- **2.8.6 CMP-075 EnvBadgeLocal (D02 gap 7).** A compact per-row pill: \"LIVE\" or \"DEMO\" in
+   `color.text.primary` on `color.surface.raised` with a `color.env.live` or `color.env.demo` bord
+  er, LIVE in `font.weight.bold`, `type.ui.caption` and `radius.badge`, never colour alone (D02:51
+  6; D03:392); its 16 <!-- audit:cited.d02.pill-px=16 --> px height waits for a token (D02:619). I
+  n a row the pill is `aria-hidden`, as the row's name already leads with its environment. A chang
+  e request to E05's owner; CMP-139 wraps the other environment's row actions with `guard.mismatch
+  .row`, PROPOSED to E30-D02 (D02:616)."
+@ ¶8 item 0
+  "- **2.8.7 CMP-019 Icon (D01 D2; D03 CR-10).** The glyph names to register (D01:170; D02:525; D0
+  3:401), drawn meanwhile as the text glyphs ⟳ △ ! !! ⚠ ✓ and never a colour emoji: the statuses'
+   `loader`, `clock`, `zap`, `circle-half`, `refresh`, `help-circle`, `octagon-alert`, `lock`, `li
+  nk-off`, `check`, `slash`, `x`, `clock-strike` and `stop-square`; the tiers' `triangle` and `ale
+  rt-circle`; the tags' `alert-triangle` and `flag`; SCR-078's `copy` and `external-link`; and a d
+  elta glyph for the price-like cells distinct from the Side column's ▲ / ▼ and from CMP-001's arr
+  ows (§3.5). A registration change request to E05-T06, routed as E30-D04's icon table is (E30-D04
+  :265)."
+@ ¶9 item 0
+  "- **2.8.8 CMP-046 Drawer and CMP-209 RightRail (D03 CR-6).** CMP-046's Tokens line already bind
+  s `motion.duration.normal` with `motion.easing.decelerate` in and `motion.easing.accelerate` out
+  , its unshipped motion name replaced (`15`:499). CMP-209's still names one (`15`:2489): A-8 give
+  s it the same shipped pair, which is Mo-6 (§3.2; DR-7), for E05's owner. D03 CR-6's drawer width
+   token stays a request to E05; no token is named here."
+@ ¶10 item 0
+  "- **2.8.9 CMP-099 PrintExportBar (D03 CR-9).** SCR-078 uses the CSV form, `formats: [\"csv\"]`;
+   running is CMP-038's busy form (`aria-busy`, the label kept), never T2; the file's first line i
+  s the watermark naming the exporting identity, the accounts and the time (D03:181; D03:79). The
+   record stays a contract gap: an export reaches no server, so SR-098's audit record waits for G7
+  's path (D03:478; D02:605). A change request to E05's owner for the progress line and the waterm
+  ark."
+@ ¶11 item 0
+  "- **2.8.10 CMP-079 RbacGate (D03 CR-11).** Its `reason` is a key of E09-D09 §3 (`15`:814). Regi
+  stered keys bind as they stand: `rbac.*`, `notice.*`, `inflight.*`, `panel.*` and E30-D02's `fro
+  zen`, `lockout`, `arm.*`, `refusal.*` and `guard.mismatch`. `recon.*` (D03:311), `blotter.*`, `g
+  uard.mismatch.row`, `feed.*` and the `sl.note` sentence of a Cancel stay PROPOSED with their own
+  ers until E09-D09's owner registers them (§6; RULED BQ-13); no string is redefined here."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.9 Consumed components (reuse only)#1"]
+@ ¶0 heading 1
+  "### 2.9 Consumed components (reuse only)"
+@ ¶1 prose 1
+  "Used as catalogued, never redefined: CMP-001 Button, CMP-002 IconButton, CMP-009 Select (Group
+   by), CMP-011 Tag (chips; the Fills Type toggle chips take a `toggle` variant with `aria-pressed
+  ` at control height, D02:299, :495, a change request to E05's owner, D02:617, and are never draw
+  n as CMP-042 tabs), CMP-015 Skeleton, CMP-016 Tooltip (the T2 echo), CMP-017 Popover (the slot's
+   expansion), CMP-020 NumericText, CMP-026 EmptyState, CMP-027 ErrorState, CMP-036 KeyValueRow, C
+  MP-038 InlineSpinnerText, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-045 Toast, CMP-063 DensityT
+  oggle, CMP-076 ConnectionStatus, CMP-077 ReconnectOverlay, CMP-092 DegradedModeBanner, CMP-093 A
+  uditActionTrigger, CMP-100 PriceInput, CMP-101 QtyInput, CMP-117 RiskLockoutBanner, CMP-139 Envi
+  ronmentAwareOrderGuard and CMP-211 PanicButtons (the shell's FLATTEN ALL…, whose dialog is CMP-1
+  23's, §2.4); CMP-079 RbacGate wraps every T2 control and CMP-019 Icon gives it its `lock`, \"Not
+   available\"."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 2.
+§  The component contributions › 2.10 The AC1 map (every SCR-063 and SCR-078 element to a catalogu
+§ ed component)#1"]
+@ ¶0 heading 1
+  "### 2.10 The AC1 map (every SCR-063 and SCR-078 element to a catalogued component)"
+@ ¶1 row 1
+  "| CMP
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                  | Name
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                      | Role here
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          | Section        |"
+@ ¶2 row 0
+  "| ---------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------- | --------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------------------------------------- | ------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ---------------------------------- | -------------- |"
+@ ¶3 row 0
+  "| CMP-114
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | PositionsGrid, wit
+  h its named parts the liquidation tier cell, the protection chip, the correction markers, the gr
+  oup header row, the totals row, the \"Updates paused\" chip and the Closed today line
+                                                                     | contributed whole (A-1): th
+  e Positions tab
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                         | §2.1           |"
+@ ¶4 row 0
+  "| CMP-115
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | OrderRow, with its
+   named part the pending tag
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                             | contributed whole (A-2): the Working-orders tab
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                    | §2.2           |"
+@ ¶5 row 0
+  "| CMP-116, CMP-020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | PnLBadge, NumericText
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     | contributed (A-3), CMP-020 consumed: every
+   signed money cell, SCR-078's fees and funding
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                           | §2.3           |"
+@ ¶6 row 0
+  "| CMP-123, CMP-211
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | FlattenAllButton, PanicButt
+  ons
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            | amended (A-5): Flatten account… and its dialog; CMP-
+  211 consumed: the shell's FLATTEN ALL… button
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                  | §2.4           |"
+@ ¶7 row 0
+  "| CMP-129
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | PositionModeToggle
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                        | contributed whole (A-4): the mode in the
+   group header
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | §2.5           |"
+@ ¶8 row 0
+  "| CMP-105, CMP-055
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | AccountMultiSelect, FilterB
+  ar
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                             | reused by contract (A-7), CMP-055 consumed with a c
+  hange request: the account filter and its chips
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                 | §2.6, §2.8.5   |"
+@ ¶9 row 0
+  "| CMP-049
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | Table
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | amended (A-6): the treegrid
+   under both tabs and SCR-078's fills
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | §2.7           |"
+@ ¶10 row 0
+  "| CMP-011
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | Tag / Chip, with t
+  he Fills Type toggle chips
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                              | consumed; a `toggle` variant requested
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                             | §2.9           |"
+@ ¶11 row 0
+  "| CMP-028, CMP-017, CMP-078, CMP-239
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                   | Callout, Popover, StaleDataShade, FreshnessMa
+  rker
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                         | consumed with deltas or change requests: the account line and its expan
+  sion, the stale rows, the account states
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                    | §2.8.1–§2.8.3  |"
+@ ¶12 row 0
+  "| CMP-041, CMP-005, CMP-057, CMP-056, CMP-042
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          | Menu, Checkbox, SplitButton, ColumnPicker, Tabs
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                           | consumed: the row actions, the select column, Columns, the tab strip
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                               | §
+  2.8.4, §2.8.5 |"
+@ ¶13 row 0
+  "| CMP-075, CMP-139, CMP-019
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                            | EnvBadgeLocal, EnvironmentAwareOrder
+  Guard, Icon
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                           | consumed: the per-row pill, the other environment's block, the glyph
+   names
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                         | §2.8.6,
+   §2.8.7 |"
+@ ¶14 row 0
+  "| CMP-046, CMP-209
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | Drawer, RightRail
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                         | consumed, CMP-209's drawer motion amend
+  ed (A-8): SCR-078's host
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | §2.8.8         |"
+@ ¶15 row 0
+  "| CMP-099
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | PrintExportBar
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                            | consumed: SCR-078's Export CSV
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                     | §2.8.9         |"
+@ ¶16 row 0
+  "| CMP-079
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | RbacGate
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                  | consumed: every T2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                 | §2.8.10        |"
+@ ¶17 row 0
+  "| CMP-001, CMP-002, CMP-009, CMP-015, CMP-016, CMP-026, CMP-027, CMP-063, CMP-036, CMP-038, CMP
+  -043, CMP-044, CMP-045, CMP-076, CMP-077, CMP-092, CMP-093, CMP-100, CMP-101, CMP-117 | Button,
+   IconButton, Select, Skeleton, Tooltip, EmptyState, ErrorState, DensityToggle, KeyValueRow, Inli
+  neSpinnerText, Dialog, ConfirmDialog, Toast, ConnectionStatus, ReconnectOverlay, DegradedModeBan
+  ner, AuditActionTrigger, PriceInput, QtyInput, RiskLockoutBanner | consumed: Export CSV, the sel
+  ection bar, the \"N new fills\" pill, Group by, the panel states, the T2 echo, density; SCR-078'
+  s summary and running export, the confirms, the cancel toast, the connection and account states,
+   every write's audit, the cell editor | §2.9, §2.2     |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec#1"]
+@ ¶0 heading 1
+  "## 3. The motion spec"
+@ ¶1 prose 1
+  "This section is the blotter's one motion definition (RULED BQ-9): the rows and cells of SCR-063
+   and SCR-078 (CMP-114, CMP-115 and CMP-116 on the CMP-049 treegrid) and the SCR-078 drawer. Ever
+  y host cites a Mo id and restates no recipe; hand-off C.6 carries §3 copy-ready in `16` §7.1's s
+  hape for E05-D03 (#3174), the recipe owner. Tokens by name, none added (RULED BQ-12): `motion.du
+  ration.{instant,fast,normal}` and `motion.easing.{standard,decelerate,accelerate}` (`PRIM`:450–4
+  77). Reduced motion has one source, `data-motion` (§3.6)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.1 Data-row rules#1"]
+@ ¶0 heading 1
+  "### 3.1 Data-row rules"
+@ ¶1 prose 1
+  "Every §3.2 row this spec specifies runs at most `motion.duration.normal` (200 <!-- audit:motion
+  .duration.normal=200 --> ms), the ticket's cap on a data row (T Scope; D01:125 \"E29-D04 caps da
+  ta-row motion at 200 ms\"), and never `motion.duration.slow`; Mo-5, Mo-7, Mo-11 and Mo-13 are th
+  eir owners' recipes, cited by reference, and none of them is a data row's. Property is `opacity`
+  , a `transform` or none (T Perf): no `height`, `width`, `top` or `box-shadow` animates and no co
+  lour tweens on the virtualised list (`14`:1477 \"virtualised; handles 500 rows at 60 fps\"; E09-
+  D08:214, :215). Nothing moves under the pointer (D01:406): while it rests on the grid, or an edi
+  tor or a row menu is open, inserts, exits and re-sorts wait behind the \"Updates paused\" chip,
+   and values still change in place. Rows sit at index positions, so neighbours never animate: an
+   insert, an exit, a re-sort or an expand re-places them at frame 0, and only the joining or leav
+  ing row's own opacity changes. Live data never moves focus (`05`:96), a focused row never leaves
+   (D01:408), and a focused control never sits inside a fading element (`docs/design/E05/E05-D02-f
+  eedback-overlays.md`:165). No transition runs continuously on a row (`16`:202): the busy glyph o
+  f a Close or a Cancel in flight is static (Mo-12), and an exit takes `pointer-events: none` from
+   its first frame (`docs/design/E05/E05-D02-feedback-overlays.md`:169)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.2 The motion table#1"]
+@ ¶0 heading 1
+  "### 3.2 The motion table"
+@ ¶1 row 1
+  "| Mo    | Component
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | Trigger
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                           | Property                            | Duration
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          | Easing
+                                                                    | prefers-reduced-motion twin
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | Limit
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                           | Board  |"
+@ ¶2 row 0
+  "| ----- | -------------------------------------------------------------------------------------
+  ------------------------------------------------ | ---------------------------------------------
+  ---------------------------------------------------------------------------------- | -----------
+  ------------------------ | ---------------------------------------------------------------------
+  -------------------------------------------------------------------------- | -------------------
+  ---------------------------------------------------- | -----------------------------------------
+  ---------------------------------------------------------------------------------------- | -----
+  ------------------------------------------------------------------------------------------------
+  -------------------------------------------------------- | ------ |"
+@ ¶3 row 0
+  "| Mo-1  | CMP-114 / CMP-115 row insert
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | a position or an order joins the end of its account group (D01:407)
+                                                               | opacity
+                               | `motion.duration.fast` (100 <!-- audit:motion.duration.fast=100 -
+  -> ms)                                                                         | `motion.easing.
+  standard`                                                | prefers-reduced-motion: the row is th
+  ere at frame 0 with its \"New\" marker, static for 5 <!-- audit:cited.d01.new-marker-s=5 --> s |
+   once per row
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                    | 06, 07 |"
+@ ¶4 row 0
+  "| Mo-2  | CMP-114 / CMP-115 row exit after the linger
+                                                                                             | abo
+  ut 5 <!-- audit:cited.d01.linger-s=5 --> s after a position closes or an order ends (D01:408)
+                                  | opacity                             | `motion.duration.fast` (
+  100 <!-- audit:motion.duration.fast=100 --> ms)
+                                                                           | `motion.easing.accele
+  rate`                                              | prefers-reduced-motion: the row is gone at
+   frame 0; its word (\"Closed +12.40 USDT\", \"Filled\", \"Cancelled\") was the change         |
+   once per row; a focused row stays
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | 06, 07 |"
+@ ¶5 row 0
+  "| Mo-3  | the value-change flash on a numeric cell (CMP-114, CMP-115, CMP-116)
+                                                                    | a settled value differs from
+   the last one painted (D01:409)
+                                                                       | opacity (an overlay above
+   the cell) | `motion.duration.fast` (100 <!-- audit:motion.duration.fast=100 --> ms)
+                                                                           | `motion.easing.standa
+  rd`                                                | prefers-reduced-motion: no flash; the signe
+  d text, the ▲ / ▼ glyph and the description are the change                             | ≥ 500 <
+  !-- audit:cited.16.flash-gap-ms=500 --> ms between starts per cell; at most 20 <!-- audit:cited.
+  16.flash-cells-per-frame=20 --> cells per frame (§3.5) | 06, 07 |"
+@ ¶6 row 0
+  "| Mo-4  | the correction highlight on a reconciled row (CMP-114, CMP-115)
+                                                                         | a reconciliation marker
+   arrives in the row's status cell (D02:414; D03:401 \"the correction highlight is E29-D04's moti
+  on item\") | opacity (an overlay above the row)  | `motion.duration.fast` (100 <!-- audit:motion
+  .duration.fast=100 --> ms)
+                                                                           | `motion.easing.standa
+  rd`                                                | prefers-reduced-motion: no highlight; the m
+  arker word is the change                                                               | once pe
+  r marker; its later words are Mo-8 cuts, and it stays until the account's banner is dismissed
+                                                            | 06, 07 |"
+@ ¶7 row 0
+  "| Mo-5  | skeleton rows of a loading account group (CMP-015; a panel state, not a data row, D02
+  :388)                                            | the account's first load
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+          | by reference (CMP-015)              | by reference: one sweep per 1,200 <!-- audit:cit
+  ed.cmp015.period-ms=1200 --> ms, stopped at 5 <!-- audit:cited.cmp015.stop-s=5 --> s (`15`:192)
+   | by reference                                                            | prefers-reduced-mot
+  ion: static two-tone, per CMP-015
+                                                                                | per CMP-015 (`15
+  `:192): a panel state, never a data row (D02:388)
+                                                                                               | —
+        |"
+@ ¶8 row 0
+  "| Mo-6  | the SCR-078 drawer (CMP-046 in CMP-209) over the canvas
+                                                                                 | it opens or clo
+  ses (D03:401)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+      | transform: translateX               | `motion.duration.normal` (200 <!-- audit:motion.dura
+  tion.normal=200 --> ms)                                                                     | `m
+  otion.easing.decelerate` to open, `motion.easing.accelerate` to close | prefers-reduced-motion:
+   open or closed at frame 0; its heading text is the change
+                                                   | once per open or close
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          | 06, 07 |"
+@ ¶9 row 0
+  "| Mo-7  | CMP-123's hold ring (the flatten confirm, §2.4)
+                                                                                         | a point
+  er hold or a held `Enter`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | by reference (§2.4)                 | by reference
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      | by reference
+                                                              | prefers-reduced-motion: static per
+  centage text at frame 0, per CMP-123
+                                                              | per CMP-123: dialog motion, not a
+   data row
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      | 04     |"
+@ ¶10 row 0
+  "| Mo-8  | a state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled
+  , DEMO / LIVE)                                   | the state changes
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | none (a cut)                        | `motion.duration.instant` (0 <!-- audit:m
+  otion.duration.instant=0 --> ms)
+                                                                         | none
+                                                                      | prefers-reduced-motion: th
+  e same cut at frame 0
+                                                                                     | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                               | 06, 07 |"
+@ ¶11 row 0
+  "| Mo-9  | a new fill row in Fills (the Fills tab; CMP-049 in SCR-078)
+                                                                             | a fill arrives whil
+  e the list is at its top (D01:411; D03:185)
+                                                                    | opacity
+                               | `motion.duration.fast` (100 <!-- audit:motion.duration.fast=100 -
+  -> ms)                                                                         | `motion.easing.
+  standard`                                                | prefers-reduced-motion: the fill row
+   is there at frame 0; its time, side word and quantity are the change                         |
+   once per row, at most one start per painted batch; scrolled away, nothing moves and the \"3 new
+   fills\" pill appears (D03:176)                                  | 06, 07 |"
+@ ¶12 row 0
+  "| Mo-10 | a disclosure state swap (expanded ↔ collapsed): a CMP-114 group header, the Closed to
+  day disclosure, a CMP-049 detail line in SCR-078 | the user toggles it
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+               | none (a cut)                        | `motion.duration.instant` (0 <!-- audit:mot
+  ion.duration.instant=0 --> ms)
+                                                                         | none
+                                                                      | prefers-reduced-motion: th
+  e same cut at frame 0; the ▸ / ▾ glyph and `aria-expanded` carry it
+                                       | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                               | 06, 07 |"
+@ ¶13 row 0
+  "| Mo-11 | CMP-123's confirm dialog (CMP-044 on CMP-043)
+                                                                                           | it op
+  ens or closes
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                | by reference (CMP-043)              | by reference
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      | by reference
+                                                              | prefers-reduced-motion: the scrim
+   and the card at frame 0, per CMP-043
+                                                              | per CMP-043 (`15`:469)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          | —      |"
+@ ¶14 row 0
+  "| Mo-12 | the busy glyph of a row's Close or Cancel (CMP-001 `loading`: \"Closing…\", \"Cancell
+  ing…\")                                              | the busy state swaps in or out
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | none (a cut)                        | `motion.duration.instant` (0 <!-- audit:motion.duratio
+  n.instant=0 --> ms)                                                                       | none
+                                                                      | prefers-reduced-motion: th
+  e same cut; the ⟳ glyph and the word stay static from frame 0
+                                             | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                               | 01     |"
+@ ¶15 row 0
+  "| Mo-13 | the account banner lines (CMP-028) in SCR-063's slot and SCR-078's notice band
+                                                          | a notice arrives; Dismiss
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | by reference (CMP-028)              | by reference
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      | by reference
+                                                              | prefers-reduced-motion: at frame 0
+  , per CMP-028
+                                                                                     | per CMP-028
+   (`15`:321)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          | —      |"
+@ ¶16 prose 1
+  "Mo-6 slides only in D03:71's overlay fallback: docked, the drawer reflows the WorkspaceCanvas a
+  nd arrives or leaves in one frame in both modes, as CMP-046 binds it (`15`:499), so no width eve
+  r animates (a C-row, §7.2). A closed position then joins Closed today at frame 0 (D01:408). An o
+  rder's fill is Mo-3 on its filled quantity plus a Mo-8 cut of its status word; Mo-9 is the new f
+  ill row. **Coverage tally (AC2).** 13 <!-- audit:count.motion-rows=13 --> rows; 6 <!-- audit:cou
+  nt.motion-animated=6 --> animate under motion-safe (Mo-1, Mo-2, Mo-3, Mo-4, Mo-6, Mo-9) and each
+   has an instant twin that keeps the change in a word, a glyph, a sign, text or a marker; Mo-8, M
+  o-10 and Mo-12 are cuts in both modes; Mo-5, Mo-7, Mo-11 and Mo-13 are their owners' recipes by
+   reference, each with its owner's instant twin."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.3 State swaps are instant (RULED BQ-11; owner approval pending (#2701))#1"]
+@ ¶0 heading 1
+  "### 3.3 State swaps are instant (RULED BQ-11; owner approval pending (#2701))"
+@ ¶1 prose 1
+  "Status words, glyphs, fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO /
+   LIVE swap at frame 0 in both modes (Mo-8): `motion.duration.instant` (0 <!-- audit:motion.durat
+  ion.instant=0 --> ms), no easing; the word, the glyph, the fill and a control's availability cha
+  nge in the same frame (E30-D04:553; E09-D08:220; E11-D06:359). It covers an order's pending → wo
+  rking → filled or rejected steps (the ⟳ marker, the tag and the \"still live\" words of a pendin
+  g amend arrive and leave at frame 0, D02:320), a liq-tier crossing and the Critical row's leadin
+  g accent, every B8 state of the protection chip, a PnL sign and its accent bar's hue, the hover,
+   selection and focus treatments, a disclosure (Mo-10), the busy glyph (Mo-12), the \"Updates pau
+  sed\" chip, the \"3 new fills\" pill, CMP-129's mode word and every T2 reason. A pending row is
+   a state and carries no shimmer; its only motion is Mo-3, when a settled value changes (RULED BQ
+  -10; owner approval pending (#2701)). Mo-3 follows a value change, never a state change, and the
+   numbers never tween. A frame that reads as neither state is one a trader may act on (E09-D08:22
+  0); a C-row records the ticket's untimed reading, and no token CR is raised (§7.2)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.4 Never per tick#1"]
+@ ¶0 heading 1
+  "### 3.4 Never per tick"
+@ ¶1 prose 1
+  "Nothing animates per tick or per price update (D02:465 \"Never per tick\"): ages and the \"Last
+   update\" counter repaint as text at most once a second (D02:272), the NO SL timer swaps its dig
+  its as text, the account line and the row markers change only on a notice (D03:477), and no tab
+   carries a count (D02:158). Display coalescing paints positions and fills in batches while the `
+  orders` and `executions` streams are never throttled, so a state change shows at the next painte
+  d frame (D01:412) and adds no motion."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.5 The flash: rate limit and the paired delta#1"]
+@ ¶0 heading 1
+  "### 3.5 The flash: rate limit and the paired delta"
+@ ¶1 prose 1
+  "Mo-3 is `16` §7.1's value-change emphasis on the blotter's numeric cells (`16`:199; E30-D04:546
+  ), which E05-D02 leaves to the consuming cell (`docs/design/E05/E05-D02-data-display.md`:712): a
+  n opacity overlay of `color.status.info.subtle` above the cell at peak 0.25 <!-- audit:cited.16.
+  flash-peak-opacity=0.25 -->, decaying over `motion.duration.fast`. It starts at most once per ce
+  ll every 500 <!-- audit:cited.16.flash-gap-ms=500 --> ms, so a cell never flashes more than twic
+  e a second against `05`'s limit of 3 <!-- audit:cited.05.flash-max-per-s=3 --> per second (`05`:
+  208); at most 20 <!-- audit:cited.16.flash-cells-per-frame=20 --> cells per frame take it, open
+   positions and the focused symbol first; a cell changing at 1 <!-- audit:cited.16.flash-stop-hz=
+  1 --> Hz or more for 10 <!-- audit:cited.16.flash-stop-after-s=10 --> s stops until it is quiet;
+   the latest value wins, nothing queues, and a stale cell never takes it. Every flash pairs with
+   a text or glyph delta (T Tech; D01:409): the signed value, ▲ / ▼ on price-like cells and the ce
+  ll's accessible description, so colour never carries the direction. The price-like cells are Mar
+  k, Entry, Avg fill and Price: the ▲ or ▼ follows the numerals in `color.text.secondary` and stay
+  s until the cell's next settled change, swapped by a Mo-8 cut and never animated; it is D01's gl
+  yph and the Side column's too (D02:147), so §2.8.7 asks CMP-019 for a delta glyph distinct from
+   both and from CMP-001's `arrow-up` / `arrow-down` (`15`:52). The digits keep `color.text.primar
+  y` at the overlay's peak: 13.49 <!-- audit:contrast.digits-flash-peak.dark=13.49 --> against the
+   4.5 <!-- audit:contrast.bar.text=4.5 --> text bar in dark (§5, `digits-flash-peak`). The tint D
+  01:409 leaves to this spec is not adopted: `16`:179's \"colour-only momentary text tint\" is a c
+  olour-only cue (`05` §4), not `05`:206's single low-amplitude cross-fade, so with reduced motion
+   there is no flash and the new text is the change (a C-row, §7.2); E30-D04's static tick is not
+   adopted on a data row either, a second colour-only cue. Mo-4 is the same overlay once per recon
+  ciliation marker; a later value change on that row is Mo-3's."
+@ ¶2 row 1
+  "| Candidate                             | Rate
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                     | Verdict
+                                                                                         |"
+@ ¶3 row 0
+  "| ------------------------------------- | -----------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------- | ------------------------------------------------------------
+  --------------------------------- |"
+@ ¶4 row 0
+  "| Mo-1 insert, Mo-2 exit, Mo-9 new fill | once per row; Mo-9 at most one start per painted batc
+  h
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                   | not a flash
+                                                                                     |"
+@ ¶5 row 0
+  "| Mo-3 value overlay                    | at most two starts per cell per second (≥ 500 <!-- au
+  dit:cited.16.flash-gap-ms=500 --> ms between starts), at most 20 <!-- audit:cited.16.flash-cells
+  -per-frame=20 --> cells per frame | below `05`'s 3 <!-- audit:cited.05.flash-max-per-s=3 --> per
+   second (`05`:208); the worst row |"
+@ ¶6 row 0
+  "| Mo-4 correction overlay; Mo-6 drawer  | once per marker; once per open or close
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                  | not a flash
+                                                                                     |"
+@ ¶7 row 0
+  "| Mo-8, Mo-10 and Mo-12 cuts            | once per state change, in one frame
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                      | not a flash
+                                                                                     |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 3.
+§  The motion spec › 3.6 Reduced motion: one source#1"]
+@ ¶0 heading 1
+  "### 3.6 Reduced motion: one source"
+@ ¶1 prose 1
+  "`data-motion` on the document root (`safe` or `reduce`) is the one source (`16`:138): `packages
+  /ui/src/theme/prepaint.ts`:23 writes it before first paint, the in-app setting wins over the OS
+   signal in both directions (`16`:183; E09-D08:174), and `theme.css` sets every transition and an
+  imation to 0.01 <!-- audit:cited.theme.reduce-ms=0.01 --> ms under it, and under the OS preferen
+  ce until it is written (`packages/ui/src/theme/theme.css`:56–66, :69–80). No component reads the
+   media query (E30-D04:561). Every twin is instant: each §3.2 twin names what carries the change
+   at frame 0 (a word, a glyph, a sign, a marker or text), so nothing here needs a named recipe to
+   outlive the global rule. A transition already running when the mode flips (at most `motion.dura
+  tion.normal` here) finishes on its own clock, and the next one starts in the new mode (E09-D08:1
+  78)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 4.
+§  T2, view-as and environment on the components#1"]
+@ ¶0 heading 1
+  "## 4. T2, view-as and environment on the components"
+@ ¶1 prose 1
+  "Every gated control of §2 takes CMP-079's `allowed` + `reason` (`15`:814) and keeps its native
+   role and its full label; no entry offers a `role` prop or a per-role variant, because the rule
+   branches on what the session carries, never on a role name (E09-D09:34). The T2 anatomy is E09-
+  D09's, stated once in each merged spec and only pointed to here (E09-D09:49; D02:429; D03:208):
+   `aria-disabled=\"true\"`, never the `disabled` attribute, so the control stays in the Tab order
+   and the roving grid; the reason node in the DOM at mount, named by `aria-describedby` and swapp
+  ed in place (E09-D09:236); the CMP-019 `lock` named \"Not available\" leading the label (2a) or
+   badging the control (2b); the label in `color.text.tertiary`, the reason in `color.text.seconda
+  ry`, a filled control on `color.surface.raised` with a `color.border.default` hairline, never `c
+  olor.text.disabled` or `opacity.disabled` (the selected row's label is §5's measured exception).
+   While `GET /auth/session/view-as` reports a context, `rbac.view_as` is checked ahead of every o
+  ther leg and one panel-header notice describes every write; reads answer as the target, so the t
+  arget's own read-side reasons still render (D02:435; E09-D09:95). The C-2.6 carve-out stays send
+  able where the target's own permission and grant allow it (§4.2). The shell's view-as banner, it
+  s Exit and its countdown are E42-D02 D10's, cited and never restated here (E42-D02:136, :415); t
+  he countdown sits outside the live region (E42-D02:424) and never animates (§3.3). Account label
+  s are the fixtures' \"Main\", \"Sub-1\" and \"Sub-2\", ellipsised with the full label in the too
+  ltip and the accessible name (D02:149). A reason never repeats the account, which is named once,
+   in its header marker and line (D03:321). A Manager's rows, filter options, headings, totals, fo
+  oter and CSV watermark name and count only the Manager's own accounts and legs (D02:92; D03:76).
+   After `403 account_scope_denied` the refused control is T2 `rbac.account`, sticky until the nex
+  t `permission_change` or `GET /me` re-read, and the page echoes only an id the client itself sen
+  t (E09-D09:55, :158). No `ret_msg` and no server `message` reach the DOM; a rejected amend shows
+   D02's own line, and the exchange's text lives only behind the audited diagnostics (D02:152; D03
+  :78, :80). E09-D09's security statement holds for every entry, density, theme and story: \"Every
+   treatment in this document is presentation. The server authorises every request against the 4-t
+  uple of `24` §15.2 and answers `403` with a stable code and an audit record (`rbac.denied`) rega
+  rdless of what the UI showed — a disabled button, a hidden route or a missing palette command is
+   never relied on to prevent anything (C-2.12, C-12.4, `04` §7.3, E09-X01 D1-shared). No flag, de
+  nsity, theme or role variant changes this (C-4.14).\" (E09-D09:410; C-2.12, C-12.4)"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 4.
+§  T2, view-as and environment on the components › 4.1 The gated controls (legs in order)#1"]
+@ ¶0 heading 1
+  "### 4.1 The gated controls (legs in order)"
+@ ¶1 prose 1
+  "One row per gated control of §2. Legs follow the server's order of E09-D09 §2.1, view-as first
+   (E09-D09:40); a key that is not registered is PROPOSED with its owner on its row and in §6; a c
+  ontrol's own drawn cases that are not legs sit under Drawn exceptions. **Renderings** (E09-D09:4
+  9; D02:429, :431): 2a is inline, beside a toolbar button or as a menu item's second line; 2b, th
+  e tooltip echo, sits only on a row's text SplitButton and only for the row's own reason, always
+   repeated in the row menu, D02's extension of E09-D09 §2.2 (OQ-S, D02:668); a reason that covers
+   a scope renders once as a notice that every gated control of the scope points at — the panel he
+  ader for a Viewer, for view-as and offline, the other environment's section row, the account hea
+  der for a read-only grant."
+@ ¶2 row 1
+  "| Control
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+      | Component                                                                     | Kind
+                                                             | Legs (in order)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                               | Drawn exceptions
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                  | Renders
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                  | Source
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+               |"
+@ ¶3 row 0
+  "| ---------------------------------------------------------------------------------------------
+  ------------- | ----------------------------------------------------------------------------- |
+   -------------------------------------------------------------- | ------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ----------------------------- | ----------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------- | --------------
+  ------------------------------------------------------------------------------------------------
+  ---------------------------------------- | -----------------------------------------------------
+  ------------------------------------------------------------- |"
+@ ¶4 row 0
+  "| \"Close ▾\" and its items \"Close 25 %\", \"Close 50 %\", \"Close custom size…\" and \"Close
+   at limit…\"             | CMP-114 (CMP-057 per row)
+                                                       | exit
+                                                             | `rbac.view_as` → `rbac.permission`
+   → `rbac.account_read_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   offline with REST unreachable; a Manager under the kill switch, E39-D01's \"Frozen — the owner
+   closes or releases\" (OD-11 pending); the other environment's rows, `guard.mismatch.row` (PROPO
+  SED, E30-D02)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                         | 2b on the row's SplitButton, repeated as the row menu i
+  tem's second line; a scope's reason through its notice
+                                            | D02:333, :421, :429
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  |"
+@ ¶5 row 0
+  "| \"Reverse…\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+   | CMP-114 (a row menu item)                                                     | new exposure
+                                                     | `rbac.view_as` → `rbac.permission` → `rbac.
+  account_read_only` → `rbac.env` (a LIVE row) → client states: `frozen`, `recon.*`, `feed.*`, `re
+  fusal.trading_disabled.*`, `arm.locked`, `blotter.close_in_flight`, E39-D01's lockout line, E17-
+  D01's feed lines | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                 | 2a, the item's second line
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | D02:337, :431; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01),
+   `blotter.close_in_flight` (E29-D03), §6          |"
+@ ¶6 row 0
+  "| \"Edit price\", \"Edit trigger\" and a quantity-up commit (the inline editors)
+                                   | CMP-115 (CMP-100 or CMP-101 in the cell)
+                                        | new exposure (an entry order's amend)
+                            | `rbac.view_as` → `rbac.permission` → `rbac.account_read_only` → `rba
+  c.env` (a risk-increasing amend on a LIVE row) → client states: `frozen`, `recon.*`, `feed.*`, `
+  blotter.amend_in_flight`, E39-D01's lockout line                                        | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                 | 2a under the editor; a T2 cell keeps its value
+   with no glyph among the numerals
+                                                                          | D02:345, :149; D03:208
+  ; PROPOSED: `recon.*` (E29-D03), `feed.*` (E17-D01), `blotter.amend_in_flight` (E29-D03), §6 |"
+@ ¶7 row 0
+  "| \"Cancel ▾\" (the primary)
+                                                                                     | CMP-115 (CM
+  P-057 per row)                                                     | exit
+                                                             | `rbac.view_as` → `rbac.permission`
+   → `rbac.account_read_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   offline with REST unreachable; the other environment's rows, `guard.mismatch.row` (PROPOSED, E3
+  0-D02); the order's own kind, never an account state: a native-stop row, `sl.note`'s first sente
+  nce (PROPOSED to E32-D01), and Untracked, Held and Unknown orders, `blotter.untracked`, `blotter
+  .held` and `blotter.unknown` (PROPOSED, E29-D03) | 2b on the row's SplitButton, repeated as the
+   row menu item's second line
+                                                                                 | D02:345, :429
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        |"
+@ ¶8 row 0
+  "| \"Edit qty\" lowering the quantity; a recorded take-profit's edit and Cancel
+                                   | CMP-115 (CMP-101 in the cell; the take-profit row, through `s
+  etPositionTpSl`) | exit (a quantity cut; a protective write)                      | `rbac.view_a
+  s` → `rbac.permission` → `rbac.account_read_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   offline with REST unreachable; while an amend of the order, or another TP/SL write for the posi
+  tion, is in flight: `blotter.amend_in_flight` (PROPOSED, E29-D03), the twin of the server's refu
+  sal of a second amend and of one write per position at a time
+                                                                                      | 2a under t
+  he editor; 2b on the take-profit row, repeated as its menu item's second line
+                                                                  | D02:345, :431, :435; D03:208,
+   :222                                                                                 |"
+@ ¶9 row 0
+  "| \"Close selected\" and \"Close all in view…\" (CMP-114); \"Cancel selected\" and \"Cancel all
+   in view…\" (CMP-115) | CMP-114 and CMP-115 (the selection bar and the toolbar, CMP-001)
+                | exit (bulk)                                                    | `rbac.view_as`
+   → `rbac.permission` → `rbac.account_read_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   offline with REST unreachable; a Manager's closes under the kill switch (OD-11 pending); every
+   target keeps its own row's gates
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                   | 2a beside the button; a scope's reason through its notice
+                                                                                                |
+   D02:349, :433
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        |"
+@ ¶10 row 0
+  "| \"Flatten account…\" (the account header's ⋯ and `Ctrl+Shift+F`)
+                                               | CMP-123 (`scope: account`)
+                                                      | exit (bulk, one account)
+                                         | `rbac.view_as` → `rbac.permission` → `rbac.account_read
+  _only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   offline with REST unreachable; a Manager under the kill switch, E39-D01's \"Frozen — the owner
+   closes or releases\" (OD-11 pending)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | 2a, the menu item's second line
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | D02:353, :421
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        |"
+@ ¶11 row 0
+  "| \"Edit risk caps…\" (the account header's ⋯); the position-mode `toggle`
+                                       | CMP-041 item in CMP-114's group header; CMP-129
+                                 | an account setting (`accounts:write`; the position-mode write)
+   | `rbac.view_as` → `rbac.owner_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                            | —
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                 | 2a, the item's second line, its admin link drop
+  ped (E09-D09:44); 2a beside the radio group, the open-positions reason waiting for its owner's k
+  ey (§6) | D02:97, :353, :622; E09-D09:76, :104; `15`:1479
+                                                                      |"
+@ ¶12 row 0
+  "| \"Resolve…\" on the account line
+                                                                               | CMP-028 (the acco
+  unt line, §2.8.1)                                            | an owner action (the B19 lock)
+                                   | `rbac.view_as` → `rbac.owner_only` with the verb \"resolve th
+  e lock\" (PROPOSED, an E09-D09 §3.2 amendment)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     | drawn \"pending route\": out of the build u
+  ntil its route exists
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                    | 2a, the reas
+  on beside it
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                 | D03:220, :321
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        |"
+@ ¶13 row 0
+  "| the row checkbox
+                                                                                             | CMP
+  -005 in CMP-114 and CMP-115                                                | selection (sends no
+  thing)                                      | none: a Viewer and view-as keep it
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                            | the other environment's rows, `guard.mismatch.row` (PROPOSED, E30-D0
+  2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                            | the block's section-
+  row notice
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                           | D02:145, :433
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 4.
+§  T2, view-as and environment on the components › 4.2 Never gated#1"]
+@ ¶0 heading 1
+  "### 4.2 Never gated"
+@ ¶1 item 1
+  "- **Exits keep their legs and nothing more.** Cancel, close and its items, the bulk closes and
+   cancels, Flatten account…, a quantity cut and a recorded take-profit's edit and Cancel are neve
+  r gated by a state key or `rbac.env`: in every account state of D02 §10.2 and §10.3, and under t
+  he kill switch for the Owner, they take only the legs of §4.1 (D02:412, :420; D03:82). The drawn
+   exceptions are two account states and one environment: offline with REST unreachable, where eve
+  ry write is T2 (D02:333, :431); a Manager's closes and Flatten account… under the kill switch, E
+  39-D01's \"Frozen — the owner closes or releases\" while OD-11 is pending, a Manager's Cancel st
+  aying sendable there (D02:421; E39-D01:66, :687); and the other environment's rows, read-only be
+  hind `guard.mismatch.row` (D-4, D02:145). A Cancel's own reasons — a native-stop row, an Untrack
+  ed, Held or Unknown order (§4.1) — name what the order is, and an exit's own write in flight, `b
+  lotter.amend_in_flight` on a quantity cut or a recorded take-profit's edit and Cancel (§4.1), na
+  mes that write; neither is the account's state, and a Cancel sent while the order's amend is in
+   flight stays busy, \"Cancelling…\", until it resolves (D02:345)."
+@ ¶2 item 0
+  "- **The C-2.6 carve-out.** A stop's tighten — a native stop's through `setPositionTpSl`, an ord
+  inary stop order's through `amendOrder`, an attach and a re-stamp — is never T2 by view-as, by t
+  he kill switch, by a lockout or by a `recon.*` state: it takes the session's permission and trad
+  e grant, under view-as the target's, and a loosen is refused inline for every role, E32-D01's `s
+  l.loosen.refused` (D02:435; D03:222; C-2.6). SL/TP… and `Enter` into SCR-064 never take view-as,
+   the kill switch, a lockout, a `recon.*` state or a pending TP/SL write, because they only open
+   SCR-064, which applies those gates itself; they are T2 only for a Viewer, a read-only grant, th
+  e other environment's rows and offline with REST unreachable (D02:338)."
+@ ¶3 item 0
+  "- **Reads and view choices carry no T2 for any role:** sorting, grouping, the FilterBar's chips
+  , \"+ Filter\" and \"Clear all\", the CMP-105 account filter, selecting the session environment'
+  s rows, Columns, density, Chart and opening SCR-078 (D02:339, :433). RBAC narrows a filter's opt
+  ions server-side and shows no reason there: a Manager's account filter lists the assigned accoun
+  ts only (D02:375; RULED BQ-8). Export CSV builds its file client-side, a read that stays T1; sho
+  uld G7's path become a write-method operation, it takes `rbac.view_as` alone, in 2b in the drawe
+  r's title bar (D03:181, :519). **Nothing is hidden.** A Viewer sees every control, each write T2
+   with its reason (`14`:85; D02:433); hiding belongs to admin navigation alone (E09-D09:44). The
+   one choice not offered is Group by: Manager, for a Manager and a Viewer, a view choice, not a c
+  apability (D02:374)."
+@ ¶4 item 0
+  "- **Busy and form validity are not T2** (E09-D09:231): a close in flight (\"Closing…\"), a canc
+  el held behind an amend (\"Cancelling…\"), an account loading, its Flatten account… included, an
+  d an export running take CMP-001's loading state, `aria-busy=\"true\"` with the ⟳ glyph leading
+   the label, no `lock`, no reason node and no CMP-079; a second press does nothing (D02:341, :345
+  , :353, :388; D03:181). \"Close all in view…\" and \"Cancel all in view…\" leave the toolbar whi
+  le nothing is in view (D02:380), and the mandatory Columns read \"Always shown\" as helper text,
+   with no `lock` and no reason (D02:376)."
+@ ¶5 item 0
+  "- **A T2 press is quiet to the server, and its swaps are cuts:** `Enter`, `Space`, `F2` or the
+   bound hotkey sends nothing and re-shows the reason inline with one polite announcement, and it
+   emits no audit and no analytics (E09-D09:49, :243; D02:429). T2 ↔ enabled and a change of reaso
+  n are frame-0 cuts in both modes with no motion row (§3.3); a permission change re-renders every
+   gated control where it stands, and focus stays (D02:400)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 4.
+§  T2, view-as and environment on the components › 4.3 Environment#1"]
+@ ¶0 heading 1
+  "### 4.3 Environment"
+@ ¶1 prose 1
+  "The environment is the text pill \"LIVE\" or \"DEMO\" (CMP-075): `color.text.primary` on `color
+  .surface.raised` with a `color.env.live` or `color.env.demo` border, never colour alone (`14`:81
+  ; D02:516); CMP-075's grammar, its weight, dot and border included, is E30-D04 D7's (E30-D04:141
+  ), and its compact per-row form is §2.8.6's change request (D02:616). In a mixed view every row'
+  s accessible name leads with its environment, group headers read \"Main · DEMO\" and the panel i
+  s named \"Positions and orders — LIVE and DEMO\" (D02:441). The session environment's block come
+  s first, each block with its section row, its account groups, its Closed today line and its own
+   pinned totals row; a trade group never mixes environments, so its row carries one pill (D02:441
+  ). Totals are per environment and never summed: one totals row per environment, its rowheader \"
+  LIVE total\" (D02:142, :156). The other environment's rows stay visible and read-only behind the
+  ir block's notice, `guard.mismatch.row` (PROPOSED, E30-D02), and `Ctrl+A`, \"all in view\" and e
+  very bulk dialog take the session environment's rows only (D02:145; C-2.11). The Env column exis
+  ts while the session's account scope spans both environments, decided on a scope change and neve
+  r on a row's arrival (D02:146); in a one-environment view a row carries no pill and its name doe
+  s not lead with its environment, so the CMP-075 badge in the tab strip carries it (D02:146), wit
+  h the group header (\"Main · LIVE\", D02:238) and the totals row (\"LIVE total\", D02:142). The
+   blotter offers no environment switch, and no hotkey switches the environment (C-2.11; E30-D02:2
+  67). DEMO ↔ LIVE is a frame-0 cut in both modes, and the pill never animates (§3.3)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 5.
+§  Tokens and contrast (measured; every number from `--json`)#1"]
+@ ¶0 heading 1
+  "## 5. Tokens and contrast (measured; every number from `--json`)"
+@ ¶1 prose 1
+  "Every ratio below is the tool's, which executes no repo code (RULED BQ-1): its ports of `contra
+  st_check.contrast_ratio()` and of the `verify_tokens.py` theme loader and `over()` (gated agains
+  t their source at the base by G-CONTRAST-PORT, as G-CVD-PORT gates the CVD projection against `d
+  ocs/research/_tools/cvd_simulate.py`) over the token JSON at the base for dark, light and high c
+  ontrast as `themes.json` layers them, the flash peak painting `color.status.info.subtle` at 0.25
+   <!-- audit:cited.16.flash-peak-opacity=0.25 --> over `color.surface.raised` (`16`:199). The bar
+  s are 4.5 <!-- audit:contrast.bar.text=4.5 --> for text and 3 <!-- audit:contrast.bar.non-text=3
+   --> for a non-text mark (`05`:125, :126). Every gated row meets its bar in all three themes; th
+  e two `measured` rows are not gated and record why a binding is not used. The entries bind token
+  s by name in §2; this section adds none."
+@ ¶2 row 1
+  "| Pair                         | fg                                 | bg
+                                                       | Role     | Dark
+                                                                | Light
+                                                                | HC
+                                                                |"
+@ ¶3 row 0
+  "| ---------------------------- | ---------------------------------- | -------------------------
+  ----------------------------- | -------- | -----------------------------------------------------
+  ------------ | ------------------------------------------------------------------ | ------------
+  --------------------------------------------------- |"
+@ ¶4 row 0
+  "| `digits`                     | `color.text.primary`               | `color.surface.raised`
+                                   | text     | 14.35 <!-- audit:contrast.digits.dark=14.35 -->
+                     | 15.62 <!-- audit:contrast.digits.light=15.62 -->                   | 16.25
+   <!-- audit:contrast.digits.hc=16.25 -->                   |"
+@ ¶5 row 0
+  "| `digits-selected`            | `color.text.primary`               | `color.surface.selected`
+                                 | text     | 10.17 <!-- audit:contrast.digits-selected.dark=10.17
+   -->          | 12.82 <!-- audit:contrast.digits-selected.light=12.82 -->          | 11.51 <!--
+   audit:contrast.digits-selected.hc=11.51 -->          |"
+@ ¶6 row 0
+  "| `digits-flash-peak`          | `color.text.primary`               | `color.status.info.subtle
+  ` over `color.surface.raised` | text     | 13.49 <!-- audit:contrast.digits-flash-peak.dark=13.4
+  9 -->        | 15.58 <!-- audit:contrast.digits-flash-peak.light=15.58 -->        | 15.28 <!-- a
+  udit:contrast.digits-flash-peak.hc=15.28 -->        |"
+@ ¶7 row 0
+  "| `bar-buy`                    | `color.buy.default`                | `color.surface.raised`
+                                   | non-text | 7.03 <!-- audit:contrast.bar-buy.dark=7.03 -->
+                      | 4.68 <!-- audit:contrast.bar-buy.light=4.68 -->                    | 9.40
+   <!-- audit:contrast.bar-buy.hc=9.40 -->                    |"
+@ ¶8 row 0
+  "| `bar-sell`                   | `color.sell.default`               | `color.surface.raised`
+                                   | non-text | 4.42 <!-- audit:contrast.bar-sell.dark=4.42 -->
+                     | 4.51 <!-- audit:contrast.bar-sell.light=4.51 -->                   | 7.17 <
+  !-- audit:contrast.bar-sell.hc=7.17 -->                   |"
+@ ¶9 row 0
+  "| `bar-neutral`                | `color.neutral.default`            | `color.surface.raised`
+                                   | non-text | 5.62 <!-- audit:contrast.bar-neutral.dark=5.62 -->
+                  | 5.92 <!-- audit:contrast.bar-neutral.light=5.92 -->                | 5.62 <!--
+   audit:contrast.bar-neutral.hc=5.62 -->                |"
+@ ¶10 row 0
+  "| `bar-buy-selected`           | `color.buy.default`                | `color.surface.selected`
+                                 | non-text | 4.98 <!-- audit:contrast.bar-buy-selected.dark=4.98
+   -->           | 3.84 <!-- audit:contrast.bar-buy-selected.light=3.84 -->           | 6.66 <!--
+   audit:contrast.bar-buy-selected.hc=6.66 -->           |"
+@ ¶11 row 0
+  "| `bar-sell-selected`          | `color.sell.default`               | `color.surface.selected`
+                                 | non-text | 3.13 <!-- audit:contrast.bar-sell-selected.dark=3.13
+   -->          | 3.70 <!-- audit:contrast.bar-sell-selected.light=3.70 -->          | 5.08 <!-- a
+  udit:contrast.bar-sell-selected.hc=5.08 -->          |"
+@ ¶12 row 0
+  "| `bar-neutral-selected`       | `color.neutral.default`            | `color.surface.selected`
+                                 | non-text | 3.98 <!-- audit:contrast.bar-neutral-selected.dark=3
+  .98 -->       | 4.86 <!-- audit:contrast.bar-neutral-selected.light=4.86 -->       | 3.98 <!-- a
+  udit:contrast.bar-neutral-selected.hc=3.98 -->       |"
+@ ¶13 row 0
+  "| `pending-tag`                | `color.text.primary`               | `color.status.info.subtle
+  `                             | text     | 10.74 <!-- audit:contrast.pending-tag.dark=10.74 -->
+                | 15.44 <!-- audit:contrast.pending-tag.light=15.44 -->              | 12.16 <!--
+   audit:contrast.pending-tag.hc=12.16 -->              |"
+@ ¶14 row 0
+  "| `pending-glyph`              | `color.status.info.strong`         | `color.status.info.subtle
+  `                             | non-text | 7.30 <!-- audit:contrast.pending-glyph.dark=7.30 -->
+                | 4.34 <!-- audit:contrast.pending-glyph.light=4.34 -->              | 7.30 <!-- a
+  udit:contrast.pending-glyph.hc=7.30 -->              |"
+@ ¶15 row 0
+  "| `rejected-line`              | `color.text.primary`               | `color.status.warning.sub
+  tle`                          | text     | 9.86 <!-- audit:contrast.rejected-line.dark=9.86 -->
+                | 15.62 <!-- audit:contrast.rejected-line.light=15.62 -->            | 11.16 <!--
+   audit:contrast.rejected-line.hc=11.16 -->            |"
+@ ¶16 row 0
+  "| `rejected-glyph`             | `color.status.warning.strong`      | `color.status.warning.sub
+  tle`                          | non-text | 7.56 <!-- audit:contrast.rejected-glyph.dark=7.56 -->
+               | 4.11 <!-- audit:contrast.rejected-glyph.light=4.11 -->             | 7.56 <!-- au
+  dit:contrast.rejected-glyph.hc=7.56 -->             |"
+@ ¶17 row 0
+  "| `liq-watch-glyph`            | `color.text.secondary`             | `color.surface.raised`
+                                   | non-text | 8.81 <!-- audit:contrast.liq-watch-glyph.dark=8.81
+   -->            | 8.98 <!-- audit:contrast.liq-watch-glyph.light=8.98 -->            | 14.35 <!-
+  - audit:contrast.liq-watch-glyph.hc=14.35 -->          |"
+@ ¶18 row 0
+  "| `liq-near-glyph`             | `color.status.warning.strong`      | `color.surface.raised`
+                                   | non-text | 11.00 <!-- audit:contrast.liq-near-glyph.dark=11.0
+  0 -->           | 4.11 <!-- audit:contrast.liq-near-glyph.light=4.11 -->             | 11.00 <!-
+  - audit:contrast.liq-near-glyph.hc=11.00 -->           |"
+@ ¶19 row 0
+  "| `liq-critical-glyph`         | `color.status.danger.strong`       | `color.surface.raised`
+                                   | non-text | 9.32 <!-- audit:contrast.liq-critical-glyph.dark=9
+  .32 -->         | 4.11 <!-- audit:contrast.liq-critical-glyph.light=4.11 -->         | 9.32 <!--
+   audit:contrast.liq-critical-glyph.hc=9.32 -->         |"
+@ ¶20 row 0
+  "| `no-sl-chip`                 | `color.text.primary`               | `color.status.danger.subt
+  le`                           | text     | 12.06 <!-- audit:contrast.no-sl-chip.dark=12.06 -->
+                 | 14.64 <!-- audit:contrast.no-sl-chip.light=14.64 -->               | 13.66 <!--
+   audit:contrast.no-sl-chip.hc=13.66 -->               |"
+@ ¶21 row 0
+  "| `no-sl-glyph`                | `color.status.danger.strong`       | `color.status.danger.subt
+  le`                           | non-text | 7.83 <!-- audit:contrast.no-sl-glyph.dark=7.83 -->
+                  | 3.85 <!-- audit:contrast.no-sl-glyph.light=3.85 -->                | 7.83 <!--
+   audit:contrast.no-sl-glyph.hc=7.83 -->                |"
+@ ¶22 row 0
+  "| `t2-label`                   | `color.text.tertiary`              | `color.surface.raised`
+                                   | text     | 5.62 <!-- audit:contrast.t2-label.dark=5.62 -->
+                     | 5.92 <!-- audit:contrast.t2-label.light=5.92 -->                   | 11.21
+   <!-- audit:contrast.t2-label.hc=11.21 -->                 |"
+@ ¶23 row 0
+  "| `t2-reason`                  | `color.text.secondary`             | `color.surface.raised`
+                                   | text     | 8.81 <!-- audit:contrast.t2-reason.dark=8.81 -->
+                    | 8.98 <!-- audit:contrast.t2-reason.light=8.98 -->                  | 14.35 <
+  !-- audit:contrast.t2-reason.hc=14.35 -->                |"
+@ ¶24 row 0
+  "| `t2-label-selected`          | `color.text.secondary`             | `color.surface.selected`
+                                 | text     | 6.24 <!-- audit:contrast.t2-label-selected.dark=6.24
+   -->          | 7.37 <!-- audit:contrast.t2-label-selected.light=7.37 -->          | 10.17 <!--
+   audit:contrast.t2-label-selected.hc=10.17 -->        |"
+@ ¶25 row 0
+  "| `env-live-border`            | `color.env.live`                   | `color.surface.raised`
+                                   | non-text | 4.42 <!-- audit:contrast.env-live-border.dark=4.42
+   -->            | 4.51 <!-- audit:contrast.env-live-border.light=4.51 -->            | 4.42 <!--
+   audit:contrast.env-live-border.hc=4.42 -->            |"
+@ ¶26 row 0
+  "| `env-demo-border`            | `color.env.demo`                   | `color.surface.raised`
+                                   | non-text | 3.64 <!-- audit:contrast.env-demo-border.dark=3.64
+   -->            | 4.13 <!-- audit:contrast.env-demo-border.light=4.13 -->            | 3.64 <!--
+   audit:contrast.env-demo-border.hc=3.64 -->            |"
+@ ¶27 row 0
+  "| `focus-row`                  | `color.focus.ring`                 | `color.surface.raised`
+                                   | non-text | 6.66 <!-- audit:contrast.focus-row.dark=6.66 -->
+                    | 5.86 <!-- audit:contrast.focus-row.light=5.86 -->                  | 17.30 <
+  !-- audit:contrast.focus-row.hc=17.30 -->                |"
+@ ¶28 row 0
+  "| `focus-selected`             | `color.focus.ring`                 | `color.surface.selected`
+                                 | non-text | 4.72 <!-- audit:contrast.focus-selected.dark=4.72 --
+  >             | 4.81 <!-- audit:contrast.focus-selected.light=4.81 -->             | 12.26 <!--
+   audit:contrast.focus-selected.hc=12.26 -->           |"
+@ ¶29 row 0
+  "| `flatten-confirm-label`      | `color.text.on-action`             | `color.status.danger.defa
+  ult`                          | text     | 5.05 <!-- audit:contrast.flatten-confirm-label.dark=5
+  .05 -->      | 10.31 <!-- audit:contrast.flatten-confirm-label.light=10.31 -->    | 4.54 <!-- au
+  dit:contrast.flatten-confirm-label.hc=4.54 -->      |"
+@ ¶30 row 0
+  "| `stale-row`                  | `color.data-confidence.stale.text` | `color.data-confidence.st
+  ale.surface`                  | text     | 10.69 <!-- audit:contrast.stale-row.dark=10.69 -->
+                  | 7.37 <!-- audit:contrast.stale-row.light=7.37 -->                  | 17.42 <!-
+  - audit:contrast.stale-row.hc=17.42 -->                |"
+@ ¶31 row 0
+  "| `t2-label-selected-tertiary` | `color.text.tertiary`              | `color.surface.selected`
+                                 | measured | 3.98 <!-- audit:contrast.t2-label-selected-tertiary.
+  dark=3.98 --> | 4.86 <!-- audit:contrast.t2-label-selected-tertiary.light=4.86 --> | 7.94 <!-- a
+  udit:contrast.t2-label-selected-tertiary.hc=7.94 --> |"
+@ ¶32 row 0
+  "| `digits-coloured-sell`       | `color.sell.default`               | `color.surface.raised`
+                                   | measured | 4.42 <!-- audit:contrast.digits-coloured-sell.dark
+  =4.42 -->       | 4.51 <!-- audit:contrast.digits-coloured-sell.light=4.51 -->       | 7.17 <!--
+   audit:contrast.digits-coloured-sell.hc=7.17 -->       |"
+@ ¶33 prose 1
+  "**Read from the table.** The closest margins pass: `bar-sell-selected` at 3.13 <!-- audit:contr
+  ast.bar-sell-selected.dark=3.13 --> in dark and 3.70 <!-- audit:contrast.bar-sell-selected.light
+  =3.70 --> in light, `env-demo-border` at 3.64 <!-- audit:contrast.env-demo-border.dark=3.64 -->
+   in dark, `bar-buy-selected` at 3.84 <!-- audit:contrast.bar-buy-selected.light=3.84 --> and `no
+  -sl-glyph` at 3.85 <!-- audit:contrast.no-sl-glyph.light=3.85 --> in light, and `flatten-confirm
+  -label` at 4.54 <!-- audit:contrast.flatten-confirm-label.hc=4.54 --> in high contrast; none of
+   them carries meaning alone, since a word, a sign or a glyph does (§2). On a selected row `color
+  .text.tertiary` measures 3.98 <!-- audit:contrast.t2-label-selected-tertiary.dark=3.98 --> in da
+  rk, under the text bar, so a T2 label on a selected row takes `color.text.secondary` at 6.24 <!-
+  - audit:contrast.t2-label-selected.dark=6.24 --> (D02:614): the one deliberate exception to E09-
+  D09's tertiary label (E09-D09:49), recorded in §7.4 and routed to E09-D09's owner. Sell digits i
+  n `color.sell.default` would measure 4.42 <!-- audit:contrast.digits-coloured-sell.dark=4.42 -->
+   in dark, so CMP-116's digits stay `color.text.primary` and the hue rides on the accent bar; the
+   `digits` variant waits for E05-D02 E1's text tokens (the register below; D02:147). **Colour vis
+  ion and greyscale** (CIE76 ΔE after the tool's Brettel / Viénot port, ΔL* in CIELAB, the floor t
+  he E11-D05 tool's). Under deuteranopia the buy and sell accent bars stay ΔE76 8.3 <!-- audit:cvd
+  .bar-buy-sell.deutan.dark=8.3 --> apart in dark and 5.8 <!-- audit:cvd.bar-buy-sell.deutan.hc=5.
+  8 --> in high contrast, against the floor ΔE76 5.0 <!-- audit:cvd.jnd=5.0 -->, and in greyscale
+   on light only ΔL* 1.0 <!-- audit:grey.bar-buy-sell.light=1.0 -->: the bar never carries directi
+  on alone, because the sign is text and the side word leads (D02:147, :148). In light the Near an
+  d Critical glyph colours resolve to one colour, ΔE76 0.0 <!-- audit:cvd.liq-near-critical.normal
+  .light=0.0 --> apart, so the tier rides on its glyph, its word and the Critical row's leading ac
+  cent, never on hue (D02:211–222). Pending and rejected stay ΔE76 67.6 <!-- audit:cvd.pending-rej
+  ected.protan.dark=67.6 --> or more apart under every simulation but only ΔL* 1.8 <!-- audit:grey
+  .pending-rejected.light=1.8 --> in greyscale on light, so ⟳, ⚠ and the words carry them (D02:320
+  , :323). LIVE and DEMO stay ΔE76 91.9 <!-- audit:cvd.env-live-demo.protan.dark=91.9 --> or more
+   apart under every simulation and ΔL* 2.4 <!-- audit:grey.env-live-demo.light=2.4 --> in greysca
+  le on light, so the words LIVE and DEMO carry the environment (§4.3; `14`:81). **The PROPOSED na
+  mes register** (RULED BQ-12: each cited to its owner, never re-proposed here; none is bound on a
+   row). Every other token-shaped name that a merged source binds and the tokens do not ship sits
+   in a §7.4 Bound cell with its exact replacement; this spec adds no token name (RULED BQ-12)."
+@ ¶34 row 1
+  "| Name                                                      | Owner (cited)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+           | Used for
+                                                                                         |"
+@ ¶35 row 0
+  "| --------------------------------------------------------- | ---------------------------------
+  ------------------------------------------------------------------------------------ | ---------
+  ------------------------------------------------------------------------------------- |"
+@ ¶36 row 0
+  "| `motion.duration.hold-confirm`                            | E39-D03 G12 for the E05 token lan
+  e (E39-D03:407), named by CMP-044 at `15`:476; PENDING its owner's approval          | the CMP-0
+  44 `hold` that §2.4 composes; no row of this spec binds the name                      |"
+@ ¶37 row 0
+  "| `motion.hold.*`                                           | E08-D11, named at `16`:190; PENDI
+  NG its owner's approval                                                              | the hold
+   and clear timing constants of `16` §7.1, cited, bound to no row here                  |"
+@ ¶38 row 0
+  "| `color.text.buy`, `color.text.sell`, `color.text.neutral` | E05-D02 E1, for the next E05 toke
+  n pass (`docs/design/E05/E05-D02-data-display.md`:229); PENDING its owner's approval | CMP-116's
+   held `digits` variant (§2.3); bound nowhere until they ship                          |"
+@ ¶39 row 0
+  "| `font.feature.tabularNums`                                | `16` §2.2 names it (`16`:86), for
+   the E05 token lane; never shipped                                                   | nothing:
+   `type.num.*` on `font.family.mono` carries the tabular figures through CMP-020 (§7.4) |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 6.
+§  Copy keys#1"]
+@ ¶0 heading 1
+  "## 6. Copy keys"
+@ ¶1 prose 1
+  "Every reason and notice string the entries carry is its owner's, cited at its line; this spec w
+  rites no string of its own (RULED BQ-13). Registered keys are E09-D09's (E09-D09:89–95, :263–273
+  ), E30-D02's state keys and the state vocabularies E09-D09 registers beside them, E39-D01's and
+   E17-D01's (E09-D09:85; D02:431). A PROPOSED key carries its owner on its row, here and in §4.1,
+   and binds no T2 until its owner registers it, because CMP-079's `reason` is a key of E09-D09's
+   vocabulary (`15`:814; D03:536). A PROPOSED reason is one data-free sentence of at most sixty ch
+  aracters with a full stop (E09-D09:85); `sl.note`'s sentence keeps its owner's words. D02 §10.2
+   and §10.3 still print `blotter.reconciling`, `blotter.verifying`, `blotter.stale_locked` and `b
+  lotter.locked_after_kill` (D02:408–410, :422); D03 replaced them with the `recon.*` keys (D03:55
+  2), so the entries bind `recon.*` alone, and the merged D02 text is its owner's to correct, neve
+  r edited here (hand-off §F). D03's fifth key, `recon.reduce`, sits on SCR-060's Submit alone (D0
+  3:319), on no component of this spec. No reason names an account, a symbol, a price or a count,
+   and none restates a registered string in other words (E09-D09:85; D03:321)."
+@ ¶2 row 1
+  "| Key
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | String
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                         | Status
+                                                                                              | Ow
+  ner                                                | Used on
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                               |"
+@ ¶3 row 0
+  "| ---------------------------------------------------------------------------------------------
+  ---------------------------------- | -----------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  - | --------------------------------------------------------------------------------------------
+  ----- | ---------------------------------------------------- | ---------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------ |"
+@ ¶4 row 0
+  "| `rbac.view_as`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                    | \"Read-only while viewing as {user}.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                           | registered (E09-D09:95)
+                                                                             | E09-D09
+                                                | §4.1: the first leg of every write; the panel-he
+  ader notice while viewing (D02:435)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                   |"
+@ ¶5 row 0
+  "| `rbac.permission`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | \"Your role can't {verb}.\" with the verbs \"change positions\" and \"place ord
+  ers\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                 | registered (E09
+  -D09:89, :110)                                                                     | E09-D09
+                                                | §4.1: the Viewer's panel-header notice, \"Your r
+  ole can't change positions.\" and \"Your role can't place orders.\" (D02:433)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                             |"
+@ ¶6 row 0
+  "| `rbac.owner_only`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | \"Only the owner can {verb}.\" with the verb \"change account settings\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                           | regis
+  tered (E09-D09:90, :104)                                                                     | E
+  09-D09                                              | §4.1: \"Edit risk caps…\" and CMP-129's to
+  ggle
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶7 row 0
+  "| `rbac.owner_only` with the verb \"resolve the lock\"
+                                                                                | \"Only the owner
+   can resolve the lock.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                         | PROPOSED: the verb, an amendment to E09-D09 §3.2 (D03:321)
+                                          | E29-D03, for E09-D09's owner                         |
+   §4.1: \"Resolve…\" on the account line
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                  |"
+@ ¶8 row 0
+  "| `rbac.account`, `rbac.account_read_only`
+                                                                                          | \"This
+   account isn't assigned to you.\"; \"You can view this account, not trade it.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | registered (E09-D0
+  9:91, :92)                                                                      | E09-D09
+                                                | a refused write after `403 account_scope_denied`
+  , sticky (E09-D09:55); §4.1: every write of an account held with a read-only grant, through its
+   header's notice (D02:433)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                             |"
+@ ¶9 row 0
+  "| `rbac.env`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                        | \"Live trading isn't enabled for you.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | registered (E09-D09:93)
+                                                                             | E09-D09
+                                                | §4.1: Reverse… and a risk-increasing amend on a
+   LIVE row, never an exit (D02:95)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      |"
+@ ¶10 row 0
+  "| `notice.panel_read_only`, `glyph.name`, `panel.no_longer_shown`, `inflight.not_sent`, `inflig
+  ht.read_only`                      | \"Read-only — {rbac sentence, first letter lower-cased}\";
+   \"Not available\"; \"No longer shown — access to {account} was withdrawn.\"; \"Not sent — your
+   access changed. {reason}\"; \"Not sent — read-only after three wrong codes.\"
+                                  | registered (E09-D09:263, :264, :269, :270, :273)
+                                                    | E09-D09
+                                                | the panel-header notice for a Viewer, for view-a
+  s and offline (D02:431); the name of the CMP-019 `lock` on every T2 control; a revoked account's
+   rows (D02:400); the refusal at the point of action after a role or grant change, and after thre
+  e wrong codes, where the control stays T1 (D02:437) |"
+@ ¶11 row 0
+  "| `frozen`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | \"Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel
+   and close still work.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                    | registered (E30-D02:422)
+                                                                            | E30-D02
+                                                | §4.1: the Owner's Reverse… and entry edits under
+   the kill switch (D02:420)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                            |"
+@ ¶12 row 0
+  "| `arm.locked`, `arm.refused`, `refusal.trading_disabled.maintenance`, `refusal.trading_disable
+  d.no_active_key`, `guard.mismatch` | \"One-click trading is locked\" (`arm.refused`; `arm.locked
+  `'s description reads \"one-click off — Ctrl+Shift+T to arm\"); \"Order entry is paused for main
+  tenance\"; \"{account} has no active API key\"; \"Order is for a LIVE account while the workspac
+  e is DEMO\" | registered (E30-D02:405, :406, :431, :436, :438)
+                                                    | E30-D02
+                                                | §4.1: Reverse… on a Live account, before a press
+   and after one (D02:337); new exposure under maintenance, and with no active key, held once by t
+  he account header (D02:395); CMP-139's reason, whose row form is PROPOSED below
+                                                                       |"
+@ ¶13 row 0
+  "| E39-D01's control string and lockout line (no key)
+                                                                                | \"Frozen — the o
+  wner closes or releases\"; \"Locked · daily loss limit · until 00:00 UTC · closing and reducing
+   still work\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                       | registered with E39-D01's vocabulary (E09-D09:85; D02:431
+  )                                        | E39-D01 (E39-D01:66, :508)
+                             | §4.1: a Manager's closes and Flatten account… under the kill switch
+  , OD-11 pending (D02:421); new exposure under a risk lockout (D02:423)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                             |"
+@ ¶14 row 0
+  "| E17-D01's feed and offline lines (no key)
+                                                                                         | \"Price
+   feed stale Ns\"; \"Rate limited — retry in N s\"; \"Cannot reach server\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                    | registered w
+  ith E17-D01's vocabulary (E09-D09:85)                                                 | E17-D01
+   (E17-D01:179, :194, :197)                    | §4.1: new exposure on a stale symbol and in the
+   429 window (D02:393, :394); every write while offline with REST unreachable (D02:397)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                 |"
+@ ¶15 row 0
+  "| `recon.reconciling`, `recon.desync`, `recon.stale`, `recon.killlock`
+                                                              | \"Reconciling with Bybit — new ord
+  ers are paused.\"; \"Data being verified — new orders are paused.\"; \"Stale — new orders locked
+   until the owner resolves it.\"; \"After the kill switch — new orders locked until resolved.\"
+                                       | PROPOSED (D03:315–318)
+                                                                              | E29-D03, for E09-D
+  09's owner (D03:536)               | §4.1: every new-exposure control of an account that is reco
+  nciling, being verified, on a stale lock or on the lock the kill switch leaves
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                             |"
+@ ¶16 row 0
+  "| `guard.mismatch.row`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | \"DEMO rows are read-only in a LIVE session.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                   | PROPOSED (D02:145; OQ-L, D02:661), with its converse \"LIVE rows are read-onl
+  y in a DEMO session.\" | E30-D02                                              | §4.1 and §4.3: t
+  he other environment's block notice, its controls and its checkboxes
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  |"
+@ ¶17 row 0
+  "| `feed.clock_drift`, `feed.system_unknown`
+                                                                                         | \"New o
+  rders wait until the clock is back in sync.\"; \"New orders wait until the trading status is kno
+  wn.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | PROPOSED (D02:395)
+                                                                                  | E17-D01
+                                                | §4.1: new exposure while the clock is out of syn
+  c, and while `system` is unknown
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      |"
+@ ¶18 row 0
+  "| `blotter.close_in_flight`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | \"A close for this position is already in flight.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | PROPOSED (D02:341); named for E29-D03, which registers none (D03:311)
+                               | E29-D03, the D02 and D03 author, for E09-D09's owner | §4.1: Reve
+  rse… and the close items while a close of the position is in flight
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                         |"
+@ ¶19 row 0
+  "| `blotter.amend_in_flight`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | \"An amend is already in flight.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | PROPOSED (D02:345, :431)
+                                                                            | E29-D03, the D02 and
+   D03 author, for E09-D09's owner | §4.1: an entry's edits and a quantity cut while an amend is i
+  n flight; a native stop's edit and a recorded take-profit's edit and Cancel while a TP/SL write
+   for the position is pending
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              |"
+@ ¶20 row 0
+  "| `blotter.untracked`, `blotter.held`, `blotter.unknown`
+                                                                            | \"Not placed by Cand
+  leViewer — manage it on Bybit.\"; \"Held for owner review — nothing can be sent.\"; \"We could n
+  ot confirm this order with Bybit; checking.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | PROPOSED (D02:345; D01:183, :186)
+                                                                   | E29-D03, the D02 and D03 auth
+  or, for E09-D09's owner | §4.1: Cancel on an Untracked, a Held or an Unknown order, and an amend
+   on an Unknown one
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              |"
+@ ¶21 row 0
+  "| `sl.note`, its first sentence
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+     | \"Every position keeps a native stop — you can move it, not delete it.\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                         | PROPOSE
+  D as a Cancel's reason (D02:345); its owner's words, outside the sixty-character bound     | E32
+  -D01                                              | §4.1: Cancel on a native-stop row (C-2.6)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                             |"
+@ ¶22 row 0
+  "| the open-positions reason (no key yet)
+                                                                                            | none
+   written here
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                              | PROPOSED: a key and its string, asked of E30-D02's
+   owner (RULED BQ-8)                             | E30-D02
+                                                | `CMP-129/toggle-t2-open-positions` (§2.5); no T2
+   binds it until it is registered
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
+§  Rows: A, C, G and the drift ledger#1"]
+@ ¶0 heading 1
+  "## 7. Rows: A, C, G and the drift ledger"
+@ ¶1 prose 1
+  "The A-rows are hand-off §C's, placed by its §A and indexed in §7.1; the C-rows, the G-rows and
+   the drift ledger follow, each row with its owner."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
+§  Rows: A, C, G and the drift ledger › 7.1 A-rows#1"]
+@ ¶0 heading 1
+  "### 7.1 A-rows"
+@ ¶1 prose 1
+  "A-1 to A-4 are the whole entries of CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge a
+  nd CMP-129 PositionModeToggle (hand-off C.1 to C.4); A-5 (CMP-123 FlattenAllButton, A-5.1 to A-5
+  .8, composing E33-D04 A-6, PENDING, by name), A-6 (CMP-049 Table, A-6.1 to A-6.7), A-7 (CMP-105
+   AccountMultiSelect, A-7.1 to A-7.6) and A-8 (CMP-209 RightRail, one row; DR-7) are Old → New ro
+  ws (hand-off C.5); the `16` block is a new block (hand-off C.6), its recipe owner E05-D03 (#3174
+  )."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
+§  Rows: A, C, G and the drift ledger › 7.2 Contradictions (C-rows)#1"]
+@ ¶0 heading 1
+  "### 7.2 Contradictions (C-rows)"
+@ ¶1 row 1
+  "| C       | Ticket or source says
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | Resolution
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                         | Owner
+                                                    |"
+@ ¶2 row 0
+  "| ------- | -----------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------------------------------- | ------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------ | ------------------------------------------------------ |"
+@ ¶3 row 0
+  "| D04-C1  | T DoD 1 and 2: \"`15-component-catalogue.md` updated for CMP-114/115/116/123/129\";
+   \"Motion spec merged into `16-design-system-brief.md` addendum\"
+                                                                                               | `
+  15` and `16` stay byte-identical; every entry ships copy-ready in hand-off §C and E29-T09 applie
+  s it verbatim after the owner's approval (RULED BQ-2; Deviation 1; owner approval pending (#2701
+  ))
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                | the owner (#823); E29-T09
+                                |"
+@ ¶4 row 0
+  "| D04-C2  | T Scope: CMP-115 \"incl. pending/optimistic and rejected variants\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              | the variant is nam
+  ed `pending` and drawn as a state: the ⟳ marker, the tag and the \"still live\" words, the live
+   value kept (D02:320; D02:325 \"never optimistically as confirmed\"; RULED BQ-5)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                      | the orchestrator (RULED BQ-5); E29-D02's t
+  ext (merged) |"
+@ ¶5 row 0
+  "| D04-C3  | `16`:179 gives the value flash a reduced-motion twin, a \"colour-only momentary tex
+  t tint\"; D01:125 (F26) restates it, and D01:409 leaves the call to E29-D04
+                                                                                   | Not adopted:
+   the tint is a colour-only cue (`05` §4), not `05`:206's single low-amplitude cross-fade, so wit
+  h reduced motion there is no flash and the signed text, ▲ / ▼ and the description are the change
+   (Mo-3, §3.5); hand-off C.6 carries the corrected twin for `16`
+                                                                        | E05-D03 (#3174), the rec
+  ipe owner; applied by E29-T09  |"
+@ ¶6 row 0
+  "| D04-C4  | T Scope: the ticket's motion list names a \"pending shimmer\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                    | Nothing of t
+  he kind is drawn: pending is a state, and the ⟳ marker, the tag on `color.status.info.subtle` an
+  d the \"still live\" words appear at frame 0 in both modes and stay until Bybit acknowledges (D0
+  2:320, :325); the only motion a pending row carries is Mo-3 when a settled value changes (RULED
+   BQ-10; owner approval pending (#2701)) | the owner (#823)
+                                         |"
+@ ¶7 row 0
+  "| D04-C5  | T Scope times the row motion (\"row insert/remove, value-change flash … correction
+   flash\") and leaves a state change untimed; `16`:173 counts \"state change\" among what transit
+  ions communicate                                               | Every state swap is a cut: stat
+  us words, glyphs, fills, pills, the liq tier, the protection chip, T2 ↔ enabled and DEMO / LIVE
+   change at frame 0 in both modes, `motion.duration.instant`, no easing (§3.3; Mo-8, Mo-10, Mo-12
+  ); no token CR (RULED BQ-11; owner approval pending (#2701))
+                                                         | the owner (#823)
+                                         |"
+@ ¶8 row 0
+  "| D04-C6  | The token names `15`, D02 and D03 bind that are not shipped: `color.text.buy`, `col
+  or.text.sell`, `font.mono`, the bare `color.status.danger` and `color.status.warning`, `color.ov
+  erlay.stale`, `font.feature.tabularNums`, `motion.drawer` | Corrected by A-rows to their owners
+   and recorded in §7.4; no new token name, every PROPOSED name cited to its owner in §5 (RULED BQ
+  -12; owner approval pending (#2701))
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                            | the owner (#823)
+                                         |"
+@ ¶9 row 0
+  "| D04-C7  | D02:341 draws \"the ⟳ spinner\" before \"Closing…\" as CMP-001's `loading` state, w
+  hich has no time cap (`15`:53)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                  | On a blotter row the ⟳ glyph is static in both modes (Mo-12):
+   no transition runs continuously on a row (`16`:202; RULED BQ-9), and nothing on a data row outl
+  asts `motion.duration.normal`; `aria-busy` and the word carry the busy state
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+          | E29-T09, with CMP-001's owner (E05)                    |"
+@ ¶10 row 0
+  "| D04-C8  | D03:401 slides the SCR-078 drawer in and out; `15`:499 has a docked CMP-046 drawer
+   that reflows its host arrive in one frame, and D03:71 docks this one beside the reflowing Works
+  paceCanvas                                                 | Mo-6 slides only in D03:71's overla
+  y fallback; docked, the drawer arrives and leaves in one frame in both modes, and nothing animat
+  es the canvas width (T Perf; E09-D08:214)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                       | E29-T09, with E29-D03's o
+  wner (#822)                   |"
+@ ¶11 row 0
+  "| D04-C9  | E39-D03:123 and :388 (C14) read FLATTEN ALL as one gate per action, `hold` in DEMO
+   and `typed` in LIVE: E39-D03:388 \"in LIVE the typed word replaces the hold\"; `14`:294 \"plus
+   a typed confirm in Live\" asks for both                        | §2.4 composes them on LIVE, th
+  e typed word first and then the hold (RULED BQ-7; `15`:476), C14's compose branch, said so, in t
+  he other order (typed, then hold); `FLATTEN` stays the word for `all-accounts` (`15`:2506), and
+   CMP-211's `confirmMode` takes CMP-123's dialog (D04-G7)
+                                                              | E39-D03's owner and E39-S05, with
+   E29-T09              |"
+@ ¶12 row 0
+  "| D04-C10 | T a11y: \"row updates are **not** announced individually; only state changes the us
+  er requested are\"
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            | Widened by `05`:148 and D02:465 to the discrete safe
+  ty events nobody requested: Near and Critical crossings, NO SL, a fill, a rejection, offline and
+   reconnected (§2.1, §2.2); a row update is still never announced individually
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  | the owner (#823), with E29-D05 (hand-off Q-16)         |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
+§  Rows: A, C, G and the drift ledger › 7.3 Contract gaps (G-rows)#1"]
+@ ¶0 heading 1
+  "### 7.3 Contract gaps (G-rows)"
+@ ¶1 row 1
+  "| G      | Gap
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | Owner                                   |"
+@ ¶2 row 0
+  "| ------ | ------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  -------------------------------------- | --------------------------------------- |"
+@ ¶3 row 0
+  "| D04-G1 | ADL rank, `opened_at`, the created time and the initial margin are on no frame (D02:
+  620; D01 OQ-9): CMP-114's `adlRank` stays null and its column out of view
+                                                                | the `23` contract owner (D01 OQ-
+  9)      |"
+@ ¶4 row 0
+  "| D04-G2 | R-130's `groupBy` enum lacks `trade_group` (`12`:282): A-1's `trade_group` grouping
+   has no deep-link form yet
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                | the `12` owner, with E29-T07            |"
+@ ¶5 row 0
+  "| D04-G3 | `ClosedPnl` has no gross, fees, funding, provisional or divergence field (D02:620):
+   CMP-116's `provisional` and `divergent` read E29-S06's composition
+                                                                       | E29-S06
+                                   |"
+@ ¶6 row 0
+  "| D04-G4 | `closeAllPositions` states neither the order of its close and cancel nor that a fail
+  ed close keeps its stop (D02:620): A-5.6 names the routes and shapes neither
+                                                             | E29-T07
+                                   |"
+@ ¶7 row 0
+  "| D04-G5 | CSV export has no endpoint, permission, audit action or size limit (D03:519, G7): CM
+  P-099's export writes no server record yet
+                                                                                               | E
+  29-S04, with the `22` owner            |"
+@ ¶8 row 0
+  "| D04-G6 | No route for \"Resolve…\" and no server refusal while reconciling or desync (D03:522
+  , G10): CMP-028's Resolve… is drawn \"pending route\", and the `recon.*` pause binds this client
+   only                                      | D03 §11.1's owners (D03:619)            |"
+@ ¶9 row 0
+  "| D04-G7 | CMP-211 offers a `group` scope (`15`:2505) and CMP-123 has none; SCR-063 draws Flatt
+  en account… alone (D02:155); `confirmMode` is one-valued (`15`:2505), so CMP-211 cannot carry ho
+  ld and typed together on LIVE (D04-C9) | E39-D03's owner (CMP-211), with E29-T09 |"
+@ ¶10 row 0
+  "| D04-G8 | E17-D01 §6 counts an entry's price change as a risk-increasing amend and `24` §8.10
+   does not (D02:669, OQ-T): the `rbac.env` leg on \"Edit price\" follows E17-D01 until it rules
+                                              | E17-D01's owner, with the `24` owner    |"
+@ ¶11 row 0
+  "| D04-G9 | `position.reversed`, `grid.exported` and `order.diagnostics_viewed` are not in `24`
+   §15.5 (D02:620; `14`:1478; D03:521, G9): Reverse…, Export CSV and the diagnostics read emit no
+   registered audit action yet             | the `24` §15.5 owner, with E29-T07      |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 7.
+§  Rows: A, C, G and the drift ledger › 7.4 Drift ledger (RULED BQ-12; owner approval pending (#27
+§ 01))#1"]
+@ ¶0 heading 1
+  "### 7.4 Drift ledger (RULED BQ-12; owner approval pending (#2701))"
+@ ¶1 prose 1
+  "Classes: (a) shipped and conforming · (b) missing · (c) shipped, divergent from a design-system
+   owner's ruling · (d) a primitive where a semantic name exists. Merged specs and boards are neve
+  r edited: each correction is an A-row to its owner (hand-off §C), and a justified row carries it
+  s \"Deliberate exception (DR-n):\" line in that A-row."
+@ ¶2 row 1
+  "| DR    | Source (merged at)                                      | Bound
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      | Class | Replacement (exact)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                       | Owner
+                                                 | Verdict   |"
+@ ¶3 row 0
+  "| ----- | ------------------------------------------------------- | ---------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------- | ----- | ------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------- | --------------------------------------------------- | --------
+  - |"
+@ ¶4 row 0
+  "| DR-1  | `15`:1305; D02:613 (`75a33c164`); D03:536 (`a59ba382b`) | CMP-116 `color.text.buy` /
+   `color.text.sell`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                               | b
+       | `color.buy.default` / `color.sell.default` on the 2 <!-- audit:cited.d02.accent-bar-px=2
+   --> px accent bar through CMP-020's `colorBySign`, the digits `color.text.primary` (A-3); E05-D
+  02 E1's text tokens stay PROPOSED (§5)
+                                                                            | E29-T09 (A-3)
+                                         | corrected |"
+@ ¶5 row 0
+  "| DR-2  | `15`:1279, :1305                                        | CMP-115 and CMP-116 `font.m
+  ono`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+            | b     | `font.family.mono` through `type.num.base` (A-2, A-3)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     | E29-T09 (A-2, A-3)
+                                    | corrected |"
+@ ¶6 row 0
+  "| DR-3  | `15`:1408                                               | CMP-123 `color.status.dange
+  r`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | b     | `color.status.danger.default` (A-5.5; the same row as E33-D04 A-6.2, PENDI
+  NG: whichever lands first applies it)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                           | E29-T
+  09 (A-5.5)                                     | corrected |"
+@ ¶7 row 0
+  "| DR-4  | `15`:1245; D02:219–220 (`75a33c164`)                    | CMP-114 `color.status.warni
+  ng` / `color.status.danger`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                     | b     | `co
+  lor.status.warning.strong` for the Near glyph and `color.status.danger.strong` for the Critical
+   glyph and its leading accent, per D02 §5.3 (A-1)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | E29-T09 (A-1)
+                                         | corrected |"
+@ ¶8 row 0
+  "| DR-5  | `15`:806; D02:621 (`75a33c164`); D03:536 (`a59ba382b`)  | CMP-078 `color.overlay.stal
+  e`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | b     | `color.data-confidence.stale.surface`, composited as `15`:806 binds it and
+   measured in §5 (`stale-row`); its black in dark and high contrast stays E05's (D03 CR-2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                       | E05 (CMP-078; D03 CR-2)                             | cor
+  rected |"
+@ ¶9 row 0
+  "| DR-6  | `16`:86; D02:525, :619 (`75a33c164`)                    | `font.feature.tabularNums`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                 | b     | `type.num.base` / `type.num.sm` on `font.family.mono`, with CMP-020's t
+  abular figures; no feature token (A-1, A-2, A-3)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                   | E05-D03 (#317
+  4), `16` §2.2's owner                  | corrected |"
+@ ¶10 row 0
+  "| DR-7  | `15`:2489; D03:536 (`a59ba382b`)                        | CMP-209 `motion.drawer`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                    | b     | `motion.duration.normal` with `motion.easing.decelerate` to open and
+   `motion.easing.accelerate` to close, as CMP-046 (`15`:499) and Mo-6
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                  | E29-T09 (A-8; D03 CR-6)
+                               | corrected |"
+@ ¶11 row 0
+  "| DR-8  | D03:401 (`a59ba382b`)                                   | CMP-046 `motion.slide`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                     | b     | `motion.duration.normal` with `motion.easing.decelerate` / `motion.
+  easing.accelerate`, already bound at the base (`15`:499)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                               | E05 (CMP-046, mer
+  ged)                               | corrected |"
+@ ¶12 row 0
+  "| DR-9  | D02:619 (`75a33c164`); D03:536 (`a59ba382b`)            | the 16 <!-- audit:cited.d02
+  .pill-px=16 --> px pill and 20 <!-- audit:cited.d02.tag-px=20 --> px tag heights (no name)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      | b     | Deliberate exception (DR-9): no height token; a pill or a tag size
+  s to `type.ui.caption` with `space.inset.xs`, and an interactive one takes `size.control.height`
+   (D03:377); D03 CR-7 asks E05 for a name
+                                                                                                |
+   E05 (D03 CR-7)                                      | justified |"
+@ ¶13 row 0
+  "| DR-10 | D02:614 (`75a33c164`)                                   | E09-D09's T2 label `color.t
+  ext.tertiary` on a dark selected row
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                            | c     | Deliberate e
+  xception (DR-10): `color.text.secondary` there, 6.24 <!-- audit:contrast.t2-label-selected.dark=
+  6.24 --> against the 4.5 <!-- audit:contrast.bar.text=4.5 --> text bar, where tertiary measures
+   3.98 <!-- audit:contrast.t2-label-selected-tertiary.dark=3.98 --> (§5, `t2-label-selected`) | E
+  09-D09's owner, through E29-T09                    | justified |"
+@ ¶14 row 0
+  "| DR-11 | `15`:526                                                | CMP-049's Purpose names Pos
+  itionsGrid as CMP-107, which is OrderTicket (`15`:1114)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                         | b     | CMP-114, the PositionsGrid id (
+  A-6.1)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | E29-T09 (A-6.1)
+                                       | corrected |"
+@ ¶15 row 0
+  "| DR-12 | D02:408–410, :422 (`75a33c164`); D03:552 (`a59ba382b`)  | the reason keys `blotter.re
+  conciling`, `blotter.verifying`, `blotter.stale_locked` and `blotter.locked_after_kill`, which D
+  03 superseded, and the five `blotter.*` names D02 leaves to E29-D03, registered nowhere (D02:341
+  , :345, :431) | c     | `recon.reconciling`, `recon.desync`, `recon.stale` and `recon.killlock`
+   (D03:552) in place of the four, bound alone here (§6); the five registered or replaced by their
+   owner, the Old → New pair in hand-off Q-2
+                                                                                         | the E29
+  -D02 and E29-D03 author, for E09-D09's owner | corrected |"
+@ ¶16 prose 1
+  "12 <!-- audit:count.drift-rows=12 --> rows · 10 <!-- audit:count.drift-corrected=10 --> correct
+  ed · 2 <!-- audit:count.drift-justified=2 --> justified · 0 <!-- audit:count.drift-unresolved=0
+   --> unresolved. `--check` fails a row without its class, exact replacement, owner or verdict, a
+  nd a token-shaped name that is neither shipped nor recorded here or in §5."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 8.
+§  Traceability#1"]
+@ ¶0 heading 1
+  "## 8. Traceability"
+@ ¶1 prose 1
+  "What each ticket item traces to (§8.1), and the gate tool's gates with the mutations that prove
+   them (§8.2)."
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 8.
+§  Traceability › 8.1 Ticket, stories and screens#1"]
+@ ¶0 heading 1
+  "### 8.1 Ticket, stories and screens"
+@ ¶1 row 1
+  "| Item                                                                               | SCR
+                                 | CMP                                | US
+                                   |"
+@ ¶2 row 0
+  "| ---------------------------------------------------------------------------------- | --------
+  ------------------------- | ---------------------------------- | -------------------------------
+  --- |"
+@ ¶3 row 0
+  "| The positions grid: the liq tiers, the protection chip and the row markers (§2.1)  | SCR-063
+                             | CMP-114 on CMP-049                 | US-POS-001, US-POS-007, US-POS
+  -008 |"
+@ ¶4 row 0
+  "| The working-orders row and its amend moments (§2.2)                                | SCR-063
+                             | CMP-115, CMP-100, CMP-101          | US-POS-002
+                           |"
+@ ¶5 row 0
+  "| The signed money cells (§2.3)                                                      | SCR-063,
+   SCR-078                  | CMP-116, CMP-020                   | US-POS-001, US-POS-009
+               |"
+@ ¶6 row 0
+  "| The flatten confirm, defined once (§2.4; AC3)                                      | SCR-063;
+   the shell's FLATTEN ALL… | CMP-123, CMP-044, CMP-211          | US-ORD-010
+                           |"
+@ ¶7 row 0
+  "| The position mode and the account filter (§2.5, §2.6)                              | SCR-063
+                             | CMP-129, CMP-105, CMP-055          | US-POS-007, US-POS-006
+               |"
+@ ¶8 row 0
+  "| The fills drawer: its treegrid, its host and its CSV export (§2.7, §2.8.8, §2.8.9) | SCR-078
+                             | CMP-049, CMP-046, CMP-209, CMP-099 | US-POS-009, US-POS-005
+               |"
+@ ¶9 row 0
+  "| The account states and corrections (§2.8.1 to §2.8.3)                              | SCR-152,
+   SCR-063                  | CMP-028, CMP-078, CMP-239          | US-POS-008
+                           |"
+@ ¶10 row 0
+  "| The motion spec (§3; AC2)                                                          | SCR-063,
+   SCR-078                  | CMP-114, CMP-115, CMP-116, CMP-046 | US-POS-001, US-POS-002
+               |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 8.
+§  Traceability › 8.2 The gate tool: gates and mutations#1"]
+@ ¶0 heading 1
+  "### 8.2 The gate tool: gates and mutations"
+@ ¶1 row 1
+  "| Gate             | Rule (RULED)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | Mutations
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                      |"
+@ ¶2 row 0
+  "| ---------------- | --------------------------------------------------------------------------
+  ---------------------------------------- | -----------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------------- |"
+@ ¶3 row 0
+  "| G-VALUE          | every figure is a marker the tool re-derives (condition)
+                                                             | M16.1 · M16.2 · M16.3 · M16.4 · M16
+  .5 · M16.6 · M16.7 · M16.8 · M16.9
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          |"
+@ ¶4 row 0
+  "| G-CITE           | cites, quoted fragments and Table A's Old cells hold at the base (conditio
+  n)                                       | M29.1 · M29.2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                  |"
+@ ¶5 row 0
+  "| G-PIN            | merged texts at their merge shas (condition)
+                                                                         | M30
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶6 row 0
+  "| G-RULED          | RULED cites the #823 ruling; BQ-1 to BQ-16 (BQ-1)
+                                                                    | M20
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶7 row 0
+  "| G-OWNER          | the owner-level rows marked; §B's Sign-off never ticked (BQ-2, BQ-10 to BQ
+  -12)                                     | M21 · M21.2 · M21.3 · M21.4 · M21.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                            |"
+@ ¶8 row 0
+  "| G-AC             | AC1, AC3 and DoD 1-2 met as copy-ready A-rows (BQ-2)
+                                                                 | M22
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶9 row 0
+  "| G-CROW           | every departure has its C-row (BQ-2, BQ-5, BQ-9 to BQ-12)
+                                                            | M23
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶10 row 0
+  "| G-BOARDS         | at most ten boards, at most three light twins (BQ-15)
+                                                                | M24.1 · M24.2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                  |"
+@ ¶11 row 0
+  "| G-BUDGET         | the spec at most 600 lines, §9 at most ten (BQ-1)
+                                                                    | M25.1 · M25.2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                  |"
+@ ¶12 row 0
+  "| G-HANDOFF        | one hand-off, §A to §F (BQ-1)
+                                                                                        | M26
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶13 row 0
+  "| G-UNTOUCHED      | `15` and `16` byte-identical; the branch changes its three files only (BQ-
+  2)                                       | M15.1 · M15.2 · M15.3 · M15.4 · M15.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶14 row 0
+  "| G-PLACEHOLDER    | no section left to write
+                                                                                             | M27
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶15 row 0
+  "| G-MUTLIST        | this table lists the tool's mutations (BQ-16)
+                                                                        | M28
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶16 row 0
+  "| G-ROW-200        | no motion past `motion.duration.normal`, never `slow`; one table; the `16`
+   block's Enter cells exact (BQ-9, BQ-12) | M1 · M1.2 · M1.3 · M1.4 · M1.5 · M1.6 · M1.7 · M1.8 ·
+   M1.9 · M1.10 · M1.11 · M1.12 · M1.13 · M1.14 · M1.15 · M1.16 · M2 · M2.2 · M2.3 · M2.4 · M2.5
+                                            |"
+@ ¶17 row 0
+  "| G-COMPOSITOR     | Property is opacity, a transform or none; no layout motion (BQ-9)
+                                                    | M3 · M3.2 · M3.3 · M3.4 · M3.5 · M3.6 · M3.7
+   · M3.8
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶18 row 0
+  "| G-TWIN           | a `prefers-reduced-motion` twin on every row (BQ-9; AC2)
+                                                             | M4 · M4.2 · M4.3 · M4.4 · M4.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                 |"
+@ ¶19 row 0
+  "| G-REDUCE-INSTANT | every twin instant (BQ-9; AC2)
+                                                                                       | M5 · M5.2
+   · M5.3 · M5.4
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                        |"
+@ ¶20 row 0
+  "| G-INSTANT        | state swaps at frame 0; six rows and six frames animate; a moving sentence
+   cites its row (BQ-9, BQ-11)             | M6.1 · M6.2 · M6.3 · M6.4 · M6.5 · M6.6 · M6.7 · M6.8
+   · M6.9 · M6.10 · M6.11 · M6.12 · M6.13 · M6.14 · M6.15 · M6.16 · M6.17 · M6.18 · M6.19 · M6.20
+   · M6.21 · M6.22 · M6.23 · M6.24 · M6.25 |"
+@ ¶21 row 0
+  "| G-LOOP           | no shimmer, pulse or loop word, any case (BQ-10)
+                                                                     | M7.1 · M7.2 · M7.3 · M7.4 ·
+   M7.5 · M7.6
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                        |"
+@ ¶22 row 0
+  "| G-TICK           | nothing per tick or update; the numbers never tween; the flash rate; the `
+  16` block (BQ-9, BQ-11)                  | M8.1 · M8.2 · M8.3 · M8.4 · M8.5 · M8.6 · M8.7 · M8.8
+   · M8.9 · M8.10 · M8.11 · M8.12 · M8.13 · M8.14 · M8.15 · M8.16 · M8.17 · M8.18
+                                                           |"
+@ ¶23 row 0
+  "| G-PENDING        | pending is a state, never drawn as confirmed (BQ-5)
+                                                                  | M9.1 · M9.2 · M9.3 · M9.4 · M9
+  .5 · M9.6 · M9.7 · M9.8
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          |"
+@ ¶24 row 0
+  "| G-FLATTEN        | hold and typed on LIVE, defined once (BQ-7; AC3)
+                                                                     | M10.1 · M10.2 · M10.3 · M10
+  .4 · M10.5 · M10.6 · M10.7
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          |"
+@ ¶25 row 0
+  "| G-DISPLAY        | CMP-129's display variant: no control role, no T2 (BQ-8)
+                                                             | M11.1 · M11.2 · M11.3 · M11.4 · M11
+  .5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶26 row 0
+  "| G-VIEWAS         | the legs in order, view-as first; nothing hidden (BQ-13)
+                                                             | M12.1 · M12.2 · M12.3 · M12.4 · M12
+  .5 · M12.6 · M12.7 · M12.8 · M12.9
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          |"
+@ ¶27 row 0
+  "| G-EXITS          | exits never gated by a state key or `rbac.env` (BQ-13)
+                                                               | M13.1 · M13.2 · M13.3 · M13.4 · M
+  13.5 · M13.6 · M13.7
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          |"
+@ ¶28 row 0
+  "| G-ENV            | totals per environment; never colour alone; no switch (BQ-13; C-2.11)
+                                                | M36 · M36.2 · M36.3 · M36.4 · M36.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                            |"
+@ ¶29 row 0
+  "| G-SAFETY         | no sentence contradicts a security invariant (C-2.8, C-2.9, C-12.4)
+                                                  | M39.1 · M39.2 · M39.3 · M39.4 · M39.5 · M39.6
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                  |"
+@ ¶30 row 0
+  "| G-A11Y           | the three a11y lines on every entry (BQ-14)
+                                                                          | M14.1 · M14.2 · M14.3
+   · M14.4 · M14.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶31 row 0
+  "| G-TOKEN          | no new token name, in any spelling (BQ-12)
+                                                                           | M17.1 · M17.2 · M17.3
+   · M17.4 · M17.5
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                          |"
+@ ¶32 row 0
+  "| G-COPY           | registered keys or PROPOSED with an owner, legs and frames (BQ-13)
+                                                   | M37.1 · M37.2 · M37.3
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                          |"
+@ ¶33 row 0
+  "| G-SEC-PIN        | the security text pinned by word and by place, default-deny (BQ-16)
+                                                  | M18.1 · M18.2 · M18.3 · M18.4 · M18.5 · M18.6
+   · M19 · M19.2
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                    |"
+@ ¶34 row 0
+  "| G-STATES         | D01 D2's statuses, D02's tiers and chip states, the markers (AC1; BQ-5)
+                                              | M31
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶35 row 0
+  "| G-ORPHAN         | every SCR-063 and SCR-078 component mapped (AC1; BQ-3)
+                                                               | M32
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶36 row 0
+  "| G-CONTRAST       | the tool's pairs, each at its bar in three themes (BQ-14)
+                                                            | M33
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶37 row 0
+  "| G-CVD-PORT       | the CVD port equals `cvd_simulate.py` (BQ-16)
+                                                                        | M34
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶38 row 0
+  "| G-CONTRAST-PORT  | the contrast port equals its two helpers; no repo code runs (BQ-1)
+                                                   | M38
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶39 row 0
+  "| G-DRIFT          | every drift row resolved (BQ-12)
+                                                                                     | M35
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶40 row 0
+  "| G-TEXT-PIN       | every block of both texts pinned by place and exact text, default-deny; ru
+  ns last (BQ-16)                          | M40.1 · M40.2 · M40.3 · M40.4 · M40.5 · M40.6 · M40.7
+   · M40.8 · M40.9 · M40.10 · M40.11 · M40.12 · M40.13 · M40.14 · M40.15 · M40.16 · M40.17
+                                                  |"
+§ ["spec", "E29-D04 — Design-system contributions and motion spec for the blotter components › 9.
+§  Summary for #823 (at most ten lines)#1"]
+@ ¶0 heading 1
+  "## 9. Summary for #823 (at most ten lines)"
+@ ¶1 item 1
+  "- Text-first PR 1 of 2 (`Refs #823`): this spec, the hand-off and the gate tool; the ten boards
+   of §0 are PENDING for the boards PR, which completes #823."
+@ ¶2 item 0
+  "- Four entries are written whole (CMP-114, CMP-115, CMP-116, CMP-129), three amended field by f
+  ield (CMP-123, CMP-049, CMP-209) and one reused by contract (CMP-105); hand-off §C holds them co
+  py-ready for E29-T09, and `15` and `16` stay byte-identical (RULED BQ-2; owner approval pending
+   (#2701))."
+@ ¶3 item 0
+  "- CMP-115 takes D01 D2's fifteen statuses; a pending amend is a state, the ⟳ marker, the tag an
+  d \"still live\", never drawn as confirmed (RULED BQ-5)."
+@ ¶4 item 0
+  "- CMP-123 owns the flatten confirm once, CMP-044's hold with the typed word added on LIVE; E30,
+   E31 and E39 reference it (AC3; RULED BQ-7)."
+@ ¶5 item 0
+  "- CMP-129 gains a read-only `display` variant with no control role, and its toggle writes only
+   behind a confirm (RULED BQ-8)."
+@ ¶6 item 0
+  "- The motion table has 13 <!-- audit:count.motion-rows=13 --> rows, each this spec specifies at
+   most `motion.duration.normal` on opacity, a transform or a cut and four its owners' recipes by
+   reference, each with an instant `prefers-reduced-motion` twin; state swaps cut at frame 0 in bo
+  th modes, and nothing animates per tick (RULED BQ-9 to BQ-11)."
+@ ¶7 item 0
+  "- Every gated control takes CMP-079's `allowed` + `reason` with view-as first, and exits are ne
+  ver gated by a state key (RULED BQ-13); §5 measures 27 <!-- audit:count.pairs=27 --> gated pairs
+   and 2 <!-- audit:count.pairs-measured=2 --> measured ones in three themes."
+@ ¶8 item 0
+  "- The tool holds 38 <!-- audit:count.gates=38 --> gates behind 210 <!-- audit:count.mutations=2
+  10 --> mutations, and every figure here is its `--json`."
+§ ["spec", "(end)#1"]
+@ ¶0 end 1
+  ""
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons)#1"]
+@ ¶0 heading 0
+  "# E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributions)"
+@ ¶1 prose 1
+  "Four entries written whole — CMP-114 PositionsGrid, CMP-115 OrderRow, CMP-116 PnLBadge and CMP-
+  129 PositionModeToggle — and the field deltas to CMP-123 FlattenAllButton, the CMP-049 base tabl
+  e, the CMP-105 reuse contract and CMP-209 RightRail's drawer motion, plus the `16` motion block.
+   The spec is [E29-D04.md](E29-D04.md); every \"§\" below without a prefix is the spec's. Nothing
+   here edits `15` or `16`: §C is copy-ready, applied verbatim by E29-T09 (the plan-reconciliation
+   ticket) after the owner's approval (RULED BQ-2, comment 6399392172; departs from the ticket tex
+  t; owner approval pending (#2701)). Every figure carries its `audit` marker from the tool's `--j
+  son`; E29-T09 keeps the value and drops the marker when it pastes a block. Base `6fc8aacc6`; D01
+   is cited at its merge `9da45ae35`, D02 at `c4270ba93` (text) and `75a33c164` (boards, the last
+   change to its text, where its line numbers are read), D03 at `a59ba382b` (text; its boards #447
+  2 PENDING)."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §A Placement#1"]
+@ ¶0 heading 1
+  "## §A Placement"
+@ ¶1 row 1
+  "| A   | Component                  | Form
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                      | Placement in `15`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     |"
+@ ¶2 row 0
+  "| --- | -------------------------- | ----------------------------------------------------------
+  --------------------------------------------------------------------------------------------- |
+   -----------------------------------------------------------------------------------------------
+  -------------------------------------------------------------------- |"
+@ ¶3 row 0
+  "| A-1 | CMP-114 PositionsGrid      | the whole entry (§C.1)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                    | in place of `15`:1240–1272
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶4 row 0
+  "| A-2 | CMP-115 OrderRow           | the whole entry (§C.2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                    | in place of `15`:1274–1298
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶5 row 0
+  "| A-3 | CMP-116 PnLBadge           | the whole entry (§C.3)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                    | in place of `15`:1300–1309
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶6 row 0
+  "| A-4 | CMP-129 PositionModeToggle | the whole entry (§C.4)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                    | in place of `15`:1474–1481
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                            |"
+@ ¶7 row 0
+  "| A-5 | CMP-123 FlattenAllButton   | Old → New by field (§C.5), composing E33-D04 A-6 (PENDING,
+   by name): whichever lands first applies the shared Tokens row, and the other is then a no-op |
+   in place, field by field, `15`:1403–1411
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                              |"
+@ ¶8 row 0
+  "| A-6 | CMP-049 Table              | Old → New by field (§C.5): the base contract for both cons
+  umers                                                                                         |
+   in place, field by field, `15`:524–533
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                |"
+@ ¶9 row 0
+  "| A-7 | CMP-105 AccountMultiSelect | Old → New by field (§C.5): the filter use's reuse contract
+  , no new variant                                                                              |
+   in place, field by field, `15`:1089–1100
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                              |"
+@ ¶10 row 0
+  "| A-8 | CMP-209 RightRail          | Old → New, one field (§C.5): its drawer motion, the shippe
+  d pair of Mo-6 (spec §2.8.8; DR-7)                                                            |
+   in place, `15`:2489
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                   |"
+@ ¶11 row 0
+  "| —   | the `16` block             | a new block (§C.6); its recipe owner is E05-D03 (#3174)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+   | after `16` §7.1 (`16`:185–204), numbered §7.n, the next free number when E29-T09 applies it:
+   §7.2 is claimed by E33-D04 §C.8 (PENDING) and by E42-D04 (E42-D04:882) |"
+@ ¶12 prose 1
+  "E29-T09 pastes each block verbatim after the owner's approval (RULED BQ-2; owner approval pendi
+  ng (#2701)), keeping every value and dropping its `audit` marker. The routed components of spec
+   §2.8 are change requests to their owners and are not placed by this hand-off, CMP-209's drawer
+   motion (A-8) aside; the components of spec §2.9 are consumed and stay as `15` has them."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §B The `16` §11.4 checklist, density and themes#1"]
+@ ¶0 heading 1
+  "## §B The `16` §11.4 checklist, density and themes"
+@ ¶1 prose 1
+  "The per-component handoff checklist of `16` §11.4, which a `design` CMP ticket commits beside i
+  ts spec (`16`:656; `02`:101): one column per entry, Table A's deltas included, every line `[x]`
+   with its evidence or `[ ]` with its route; the boards PR ticks the Penpot line and leaves no li
+  ne open at Done, each `[x]` or \"N/A — <reason>\" (`16`:656; `02`:101)."
+@ ¶2 row 1
+  "| `16` §11.4 line                             | CMP-114 | CMP-115 | CMP-116 | CMP-123 (A-5) | C
+  MP-129 | CMP-049 (A-6) | CMP-105 (A-7) | Evidence
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                |"
+@ ¶3 row 0
+  "| ------------------------------------------- | ------- | ------- | ------- | ------------- | -
+  ------ | ------------- | ------------- | -------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  -------------- |"
+@ ¶4 row 0
+  "| Final Penpot link                           | [ ]     | [ ]     | [ ]     | [ ]           | [
+   ]     | [ ]           | [ ]           | PENDING: boards 01 to 05 and their light twins 08 to 10
+   on spec §0's page, drawn in the boards PR, which ticks this line; CMP-049 through boards 01 and
+   02
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              |"
+@ ¶5 row 0
+  "| Variants × States                           | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | spec §2.1 to §2.5's frame tables, §2.6's three filter f
+  rames, §2.7's treegrid states and Table A's States rows; one story each (§D)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                     |"
+@ ¶6 row 0
+  "| Keyboard table                              | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | each entry's Keyboard line (key → action, spec §2.1 to
+   §2.7); focus after: the grid's one roving stop returns to the last focused cell (D02:447) and C
+  MP-044's dialog starts on Cancel (`15`:478); global conflicts: `Ctrl+Shift+F` open (Q-11), `Ctrl
+  +A` and `Ctrl+Delete` per D02:447 and :457
+                                                                        |"
+@ ¶7 row 0
+  "| Accessible name and role                    | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | each entry's Accessible name line; roles `treegrid`, `r
+  ow`, `rowheader` and the trailing totals `rowgroup` (A-6.5), CMP-044's `alertdialog` (`15`:478),
+   CMP-003's radio group for the `toggle`, and none for `display` and CMP-116
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                      |"
+@ ¶8 row 0
+  "| Live data                                   | [x]     | [x]     | N/A     | [x]           | [
+  x]     | [x]           | [x]           | polite at most once per 2 <!-- audit:cited.05.polite-ga
+  p-s=2 --> s per field, the latest value; assertive once for a fill, a rejection, offline and rec
+  onnected, NO SL and a Critical crossing; never per tick (spec §2.1, §2.2; D02:465); CMP-116 N/A:
+   the host's region speaks for it (spec §2.3)
+                                                                     |"
+@ ¶9 row 0
+  "| Motion pair                                 | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | the spec §3.2 rows and their instant twins: CMP-114 and
+   CMP-115 Mo-1, Mo-2, Mo-3, Mo-4, Mo-8, Mo-10 and Mo-12; CMP-116 none of its own, the host's Mo-3
+  ; CMP-123 Mo-7 and Mo-11 by reference; CMP-129 Mo-8 alone; CMP-049 the consumer's Mo-1 and Mo-2
+   (A-6.4); CMP-105 unchanged (`15`:1100)
+                                                                           |"
+@ ¶10 row 0
+  "| Density notes                               | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | compact 24 <!-- audit:ds.size.row.compact=24 --> px and
+   comfortable 32 <!-- audit:ds.size.row.comfortable=32 --> px rows (`size.row.compact`, `size.row
+  .comfortable`) with `space.inset.sm` / `space.inset.md` (the matrix below); the smallest target
+   is `size.target.min`, 24 <!-- audit:ds.size.target.min=24 --> px, in both; a pill or a tag is n
+  o target (DR-9) |"
+@ ¶11 row 0
+  "| Essential exceptions                        | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | none to log (`05` §3.4.7): every interactive part takes
+   `size.control.height` or the row height (DR-9); the token exceptions DR-9 and DR-10 are spec §7
+  .4's
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+             |"
+@ ¶12 row 0
+  "| Tokens used                                 | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | each entry's Tokens line (§C; Table A), none invented (
+  RULED BQ-12); token sets = `packages/ui/tokens` at `6fc8aacc6`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                   |"
+@ ¶13 row 0
+  "| Data contract confirmed                     | [x]     | [x]     | [x]     | [x]           | [
+  x]     | [x]           | [x]           | each entry's Data contract line; the gaps D04-G1 to D04
+  -G9 recorded with their owners (spec §7.3)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                       |"
+@ ¶14 row 0
+  "| Contrast and CVD                            | [ ]     | [ ]     | [ ]     | [ ]           | [
+   ]     | [ ]           | [ ]           | measured: spec §5, 27 <!-- audit:count.pairs=27 --> gat
+  ed pairs and 2 <!-- audit:count.pairs-measured=2 --> measured ones in three themes, with the CVD
+   and greyscale distances; open: registering in `tools/contrast/pairs.mjs` the §5 pairs it does n
+  ot list yet, routed with Q-19
+                                                                                    |"
+@ ¶15 row 0
+  "| Design QA (`16` §12) and a11y AC (`05` §10) | [ ]     | [ ]     | [ ]     | [ ]           | [
+   ]     | [ ]           | [ ]           | routed: the a11y acceptance criteria to E29-D05, the ac
+  cessibility review; the `16` §12 design QA to E29-D07, of the shipped blotters (T Test plan)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                     |"
+@ ¶16 row 0
+  "| Sign-off                                    | [ ]     | [ ]     | [ ]     | [ ]           | [
+   ]     | [ ]           | [ ]           | owner approval pending (#2701)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                          |"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §B The `16` §11.4 checklist, density and themes › Density and theme matrix#1"]
+@ ¶0 heading 1
+  "### Density and theme matrix"
+@ ¶1 row 1
+  "| Entry                                                         | dark compact
+                                           | dark comfortable | light compact         | light comf
+  ortable | high contrast                                     |"
+@ ¶2 row 0
+  "| ------------------------------------------------------------- | -----------------------------
+  ----------------------- | ---------------- | --------------------- | ----------------- | -------
+  ------------------------------------------ |"
+@ ¶3 row 0
+  "| CMP-114 PositionsGrid                                         | board 01
+                                               | on request       | board 08              | on req
+  uest        | measured (spec §5); on request                    |"
+@ ¶4 row 0
+  "| CMP-115 OrderRow                                              | board 02
+                                               | on request       | board 09              | on req
+  uest        | measured (spec §5); on request                    |"
+@ ¶5 row 0
+  "| CMP-116 PnLBadge                                              | board 03, with the greyscale
+   and deuteranopia strips | on request       | on request            | on request        | measur
+  ed (spec §5); on request                    |"
+@ ¶6 row 0
+  "| CMP-123 FlattenAllButton                                      | board 04
+                                               | on request       | board 10              | on req
+  uest        | measured (spec §5); on request                    |"
+@ ¶7 row 0
+  "| CMP-129 PositionModeToggle                                    | board 05
+                                               | on request       | on request            | on req
+  uest        | measured (spec §5); on request                    |"
+@ ¶8 row 0
+  "| CMP-105 AccountMultiSelect, the filter use                    | board 05
+                                               | on request       | on request            | on req
+  uest        | on request; its pairs are E30-D04's (E30-D04:351) |"
+@ ¶9 row 0
+  "| CMP-049 Table, the base contract                              | board 01 and board 02, throug
+  h CMP-114 and CMP-115   | on request       | board 08 and board 09 | on request        | measure
+  d (spec §5); on request                    |"
+@ ¶10 row 0
+  "| Motion (spec §3.2)                                            | board 06
+                                               | on request       | on request            | on req
+  uest        | spec §3.6                                         |"
+@ ¶11 row 0
+  "| The `prefers-reduced-motion` readings, at frame 0 (spec §3.2) | board 07
+                                               | on request       | on request            | on req
+  uest        | spec §3.6                                         |"
+@ ¶12 prose 1
+  "Density changes spacing and row height only, 24 <!-- audit:ds.size.row.compact=24 --> px compac
+  t and 32 <!-- audit:ds.size.row.comfortable=32 --> px comfortable (`size.row.compact`, `size.row
+  .comfortable`), never the type ramp or the information shown (`15`:36; D02:161). Light is a toke
+  n swap of the dark layout (`15`:35); high contrast is measured over `themes.json` in spec §5 and
+   drawn on request. \"On request\" cells are fully specified in spec §2 and §3 and listed under s
+  pec §0's \"Specified (drawn on request)\"."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval)#1"]
+@ ¶0 heading 1
+  "## §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the owne
+  r's approval)"
+@ ¶1 prose 1
+  "Whole entries C.1 to C.4 in `15` §0.1's order as `15`'s trading entries apply it (Tier · Purpos
+  e, Props, Variants, States, A11y, Tokens, API sketch, Data contract, Storybook, Tests, Motion sp
+  ec, Design), the A11y bullet holding Keyboard, Accessible name and Live region on one line; the
+   field deltas to CMP-123, CMP-049, CMP-105 and CMP-209 in Table A (C.5), each Old cell verbatim
+   at its `15` line; the `16` block is C.6. E29-T09 replaces an entry from its heading to its last
+   bullet, keeps each figure and drops its `audit` marker."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.1 A-1 — CMP-114 PositionsGrid#1"]
+@ ¶0 heading 1
+  "### C.1 A-1 — CMP-114 PositionsGrid"
+@ ¶1 prose 1
+  "Replaces `15`:1240–1272 (D02 §5, §10–§12 and D01 AM-3 with this ticket's deltas; spec §2.1)."
+@ ¶2 fence 1
+  "```markdown\n### CMP-114 PositionsGrid\n\n- **Tier**: Organism (trading) · **Purpose**: the cro
+  ss-account positions grid of SCR-063, a CMP-049 `treegrid` whose named parts are the liquidation
+   tier cell, the protection chip, the row markers, the group header row, the totals row, the \"Up
+  dates paused\" chip and the Closed today line; CMP-115 OrderRow is its Working-orders sibling an
+  d CMP-123 the account header's Flatten account….\n- **Props**: `positions: PositionRow[]` · `gro
+  upBy: \"account\" | \"symbol\" | \"trade_group\" | \"manager\"` (default `account`; Group by Man
+  ager is the Owner's view choice, never T2) · `columns: ColumnId[]` (per tab; select, Env, Accoun
+  t and Symbol always shown) · `envScope: \"one\" | \"mixed\"` (from the account list, never from
+   the rows in view) · `density: \"compact\" | \"comfortable\"` · `selectedRowIds: string[]` · `on
+  SelectionChange` · `rowActions: Record<RowActionId, { allowed: boolean; reason?: string; busy?:
+   boolean }>` (CMP-079's pair; never a role prop) · `held?: { newRows: number; closedRows: number
+  ; noSl: boolean }` (the \"Updates paused\" chip) · `accounts: AccountGroup[]` (the group header
+   rows, the totals rows and each block's Closed today line) · `onRowOpen(rowId)` · `onFlattenAcco
+  unt(accountId)`.\n- **Variants**: compact and comfortable, 24 <!-- audit:ds.size.row.compact=24
+   --> and 32 <!-- audit:ds.size.row.comfortable=32 --> px rows; grouped by account (default), sym
+  bol, trade group or manager; one environment or mixed (the Env column and the LIVE, then DEMO bl
+  ocks); the narrow dock at 360 <!-- audit:cited.d02.narrow-dock-px=360 --> px (Symbol · Side · Si
+  ze · uPnL · Status).\n- **States**: rows: default, hover, selected (the CMP-005 box, `color.surf
+  ace.selected`, `aria-selected`), focused cell (the 2 <!-- audit:cited.d02.focus-ring-px=2 --> px
+   inset ring), new (\"New\" for 5 <!-- audit:cited.d01.new-marker-s=5 --> s), closing (Close in C
+  MP-001's loading state with its label kept and `aria-busy`, not T2), lingering closed (\"Closed
+   +12.40 USDT\" for about 5 <!-- audit:cited.d01.linger-s=5 --> s), stale (CMP-078's grid-row var
+  iant). The other environment's block is read-only behind `guard.mismatch.row` (PROPOSED to E30-D
+  02), and a gated control is T2 per E09-D09 §2.2. The liquidation tier cell: none, Watch, Near, C
+  ritical (with a 2 <!-- audit:cited.d02.critical-accent-px=2 --> px leading accent). The protecti
+  on chip: the B8 states with `amend_lock.frozen` (`flat` leaves the frame). The row markers of E2
+  9-D02 and E29-D03; the group header row with its state marker and ⋯ menu; the totals row, one pe
+  r environment, never summed; the \"Updates paused\" chip, critical while a held row carries NO S
+  L; the Closed today line per environment block, collapsed (\"▸ Closed today (since 00:00 UTC) ·
+   3 · net +40.20 USDT · incl. provisional\"), expanded (its own table, `role=\"table\"`, Net a CM
+  P-116 badge), \"· none\" (does not expand), and a row's Net provisional or divergent; the panel
+   states of E29-D02 §10.1, by name.\n- **A11y**: Keyboard: a treegrid with one roving stop; arrow
+  s by row and cell, `→` and `←` expand and collapse a group header, `Space` selects, `Enter` open
+  s SCR-064, `Shift+F10` the row menu, `Ctrl+Delete` the D01 D9 targets with a confirm whenever th
+  ey exclude the focused row; Accessible name: the environment leads in a mixed view, then symbol,
+   side, size and account; a tier, chip or marker reads its word with its glyph named once; a T2 c
+  ontrol keeps its full label and its reason is the description; Live region: row updates are neve
+  r announced individually; the focused row's changed values and the environment totals speak poli
+  tely at most once per 2 <!-- audit:cited.05.polite-gap-s=2 --> s per field; filled, rejected, of
+  fline and reconnected, NO SL and Critical crossings are assertive, once.\n- **Tokens**: rows `si
+  ze.row.compact` / `size.row.comfortable`; cells `space.inset.sm` / `space.inset.md`; words `type
+  .ui.body`, numerals `type.num.base`, chips and tags `type.ui.caption` with `radius.badge` and `s
+  pace.inset.xs` (Deliberate exception (DR-9): no height token, E29-D04 §7.4); fills `color.surfac
+  e.raised`, `color.surface.hover` and `color.surface.selected`, group headers `color.surface.canv
+  as`, totals `color.surface.overlay`; focus `color.focus.ring` with `border.focus`; the tier glyp
+  hs `color.text.secondary`, `color.status.warning.strong` and `color.status.danger.strong`; tags
+   `color.status.info.subtle`, `color.status.warning.subtle` and `color.status.danger.subtle` unde
+  r `color.text.primary`; stale rows `color.data-confidence.stale.surface` and `color.data-confide
+  nce.stale.text`; the environment pill `color.env.live` / `color.env.demo`; the T2 look per CMP-0
+  79, its label `color.text.secondary` on a dark selected row (Deliberate exception (DR-10), E29-D
+  04 §7.4); the Closed today line `color.surface.canvas`; forced colours per E29-D02 §12 (D02:527)
+  . (Replaces the two bare status families of the old Tokens line.)\n- **API sketch**: `interface
+   PositionRow { id: string; accountId: string; env: \"live\" | \"demo\"; symbol: string; side: \"
+  long\" | \"short\"; positionIdx: 0 | 1 | 2; size: string; entryPrice: string; markPrice: string;
+   liqPrice: string | null; unrealizedPnl: string; rPnlToday: string; r: string | null; leverage:
+   string; marginMode: \"cross\" | \"isolated\" | \"portfolio\"; positionMode: \"one-way\" | \"hed
+  ge\"; protection: { state: \"protected\" | \"attaching\" | \"verifying\" | \"amending\" | \"nake
+  d\" | \"naked_unrecoverable\"; frozen: boolean }; adlRank: number | null; liqTier: \"none\" | \"
+  watch\" | \"near\" | \"critical\"; markers?: RowMarkerId[]; closed?: { net: string } }`, `closed
+  ` set on a lingering closed row with its realised net (D01:408), `RowMarkerId` being the sevente
+  en row markers of E29-D02 and E29-D03; `interface AccountGroup { id: string; label: string; env:
+   \"live\" | \"demo\"; positionMode: \"one-way\" | \"hedge\"; state?: string; rPnlToday: string;
+   closedToday?: { count: number; net: string; provisional: boolean } }`, `state` being the accoun
+  t's D02 §10.2 marker key; money and price fields are the generated `packages/protocol` decimal s
+  trings, never `number`.\n- **Data contract**: `positions` from the private `positions` WS topic
+   (`23` §15.2 `PositionUpdate`) merged with the REST position-list snapshot; `positionMode` from
+   `ExchangeAccount.position_mode`; the tier derived client-side from the mark, the liquidation pr
+  ice and the entry buffer (E29-D02 §5.3); `adlRank` is on no frame yet and its column stays out o
+  f view (a contract gap).\n- **Storybook**: Default, GroupedByAccount, GroupedByTradeGroup, Mixed
+  Env, LiqWarningRows, ProtectionStates, RowMarkers, Selected, Updating (the \"Updates paused\" ch
+  ip), ClosedToday, Narrow, Empty, Loading, T2Viewer, ReducedMotion; each dark and light × compact
+   and comfortable.\n- **Tests**: unit, visual, axe, keyboard row and cell navigation, the treegri
+  d roles, levels and indices on a 500 <!-- audit:cited.d02.fixture-rows=500 -->-row fixture, the
+   live-region cadence (never per tick), the T2 tests (view-as first, `aria-disabled`, no audit or
+   analytics on a T2 press), busy is never T2, performance (1,000 <!-- audit:cited.d01.virtualise-
+  rows=1000 --> rows at the frame budget).\n- **Motion spec**: Mo-1 (a row joins its group), Mo-2
+   (a row leaves after its linger), Mo-3 (the value-change flash on numeric cells, paired with the
+   sign and ▲ / ▼), Mo-4 (the correction highlight) and Mo-8 (every state swap is a cut at frame 0
+  ) of E29-D04 §3.2; nothing animates per tick; each `prefers-reduced-motion` twin is instant.\n-
+   **Design (DS spec):** [E29-D04.md](../design/E29/E29-D04.md) §2.1 (E29-D04; owner approval pend
+  ing).\n```"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.2 A-2 — CMP-115 OrderRow#1"]
+@ ¶0 heading 1
+  "### C.2 A-2 — CMP-115 OrderRow"
+@ ¶1 prose 1
+  "Replaces `15`:1274–1298 (D01 D2 and D02 §6–§8 with this ticket's deltas; spec §2.2)."
+@ ¶2 fence 1
+  "```markdown\n### CMP-115 OrderRow\n\n- **Tier**: Molecule (trading) · **Purpose**: one row of S
+  CR-063's Working-orders tab, in a CMP-049 `treegrid` that shares CMP-114's model: symbol, side,
+   type with its purpose, quantity, filled, average fill, price, trigger, time in force, flags, ag
+  e, parent and the D01 D2 state word, with Cancel ▾ and the inline editors; its named part `Pendi
+  ngTag` draws a pending amend as a state (the ⟳ marker, the tag and \"still live\"). The type's p
+  urpose follows E29-D02 D-19, pending its owner (OQ-O).\n- **Props**: `order: OrderRowData` · `ro
+  wActions: Record<\"cancel\" | \"editPrice\" | \"editTrigger\" | \"editQty\", { allowed: boolean;
+   reason?: string; busy?: boolean }>` (CMP-079's pair) · `onCancel` · `onAmend(field, value)` · `
+  amend?: { moment: \"editing\" | \"pending\" | \"unconfirmed\" | \"rejected\"; value: string }` ·
+   `onDismissRejected`.\n- **Variants**: compact and comfortable, as CMP-114; the sections Working
+   and \"Conditional — not triggered\"; the native-stop row, whose Cancel is T2 with its `sl.note`
+   sentence (PROPOSED to E32-D01); the narrow dock, where the purpose folds into the state word (\
+  "Working · Stop loss\").\n- **States**: the fifteen D01 D2 words, each with its glyph: Sending,
+   Working, Triggered, Partial, Cancelling, Amending, Unknown — checking, Quarantined, Held — owne
+  r review, Untracked — not placed by CandleViewer, Filled, Cancelled, Rejected, Expired, Killed (
+  kill switch). Null or unmapped reads \"Working — state not reported\". The amend moments: editin
+  g (\"Editing — 2,500.00 is live\"); `pending`, a state (\"Amending → 2,495.00 · 2,500.00 still l
+  ive\", the ⟳ marker and the tag on `color.status.info.subtle`, the value cell keeping the live v
+  alue); unconfirmed (\"Unknown — checking · 2,500.00 may still be live\"); rejected (\"⚠ Amend re
+  jected — your order is unchanged\" with Dismiss). A Cancel sent behind an amend is busy (\"Cance
+  lling…\", `aria-busy`), never T2. The T2 reasons `blotter.untracked`, `blotter.held`, `blotter.u
+  nknown` and `blotter.amend_in_flight` are PROPOSED with E29-D03 as their owner. Filled and Cance
+  lled linger about 5 <!-- audit:cited.d01.linger-s=5 --> s.\n- **A11y**: Keyboard: CMP-114's tree
+  grid model; `Enter`, `F2` or a double-click opens the cell editor (CMP-100 or CMP-101 in the cel
+  l), `↑` / `↓` step a tick or a lot, `Enter` alone commits and `Escape`, `Tab` or a click elsewhe
+  re restores the live value; Accessible name: in a mixed view the environment leads, then the sta
+  te word with its glyph named once, then the type with its purpose, price, quantity and account,
+   the State cell's whole line in the description; Live region: row updates are never announced in
+  dividually; filled and rejected are assertive, once, and so is a rejected amend; \"Amend confirm
+  ed: price 2,495.00.\" is polite, once; the pending tag, the age and the counters never speak.\n-
+   **Tokens**: as CMP-114; state words `type.ui.body`, numerals `type.num.base` with `font.family.
+  mono`; the pending and checking tags `color.status.info.subtle` with the ⟳ glyph in `color.statu
+  s.info.strong`; the rejected line and the unconfirmed tag `color.status.warning.subtle` with ⚠ i
+  n `color.status.warning.strong`; Quarantined and Held on `color.status.danger.subtle`; the edito
+  r's border `color.focus.ring`; forced colours per E29-D02 §12 (D02:527). (Replaces a font name t
+  hat is not a shipped token.)\n- **API sketch**: `interface OrderRowData { id: string; accountId:
+   string; env: \"live\" | \"demo\"; symbol: string; side: \"buy\" | \"sell\"; type: string; purpo
+  se: string; price: string | null; triggerPrice: string | null; qty: string; filledQty: string; a
+  vgFillPrice: string | null; timeInForce: string; reduceOnly: boolean; closeOnTrigger: boolean; c
+  reatedAt: string | null; parent: string | null; status: OrderStatus; nativeStop: boolean; marker
+  s?: RowMarkerId[] }`, `OrderStatus` being the fifteen D01 D2 states (`submitting`, `submitted`,
+   `triggered`, `partially_filled`, `cancel_pending`, `amend_pending`, `unknown`, `quarantined`, `
+  held`, `untracked`, `filled`, `cancelled`, `rejected`, `expired`, `killed`); decimals as the gen
+  erated `packages/protocol` strings.\n- **Data contract**: the private `orders` WS topic (`23` §1
+  5.1 `OrderUpdate`, never throttled) merged with the REST open-orders snapshot; `lifecycle_state`
+   maps to the D01 D2 word, null or unmapped to \"Working — state not reported\"; a pending amend
+   waits for the `change: \"amend\"` frame and a native stop's edit for the read that shows it; th
+  e exchange's text never reaches the row (`getOrderDiagnostics` only).\n- **Storybook**: one stor
+  y per status family (StatusActive, StatusInFlight, StatusChecking, StatusCritical, StatusTermina
+  l), PendingAmend, Unconfirmed, RejectedAmend, Editing, NativeStopRow, T2Held, ReducedMotion; eac
+  h dark and light × compact and comfortable.\n- **Tests**: unit (the fifteen-word map; null reads
+   \"Working — state not reported\"), visual, axe, keyboard (the editor commits on `Enter` alone),
+   the pending test (the live value and \"still live\" stay until the frame), the T2 and busy test
+  s, the live-region cadence.\n- **Motion spec**: Mo-1 and Mo-2 (a row joins its group; a terminal
+   row leaves after its linger), Mo-3 (the value-change flash on Price, Qty, Filled and Avg fill)
+   and Mo-8 (every state swap, the pending tag included, is a cut at frame 0) of E29-D04 §3.2; not
+  hing animates per tick; each `prefers-reduced-motion` twin is instant.\n- **Design (DS spec):**
+   [E29-D04.md](../design/E29/E29-D04.md) §2.2 (E29-D04; owner approval pending).\n```"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.3 A-3 — CMP-116 PnLBadge#1"]
+@ ¶0 heading 1
+  "### C.3 A-3 — CMP-116 PnLBadge"
+@ ¶1 prose 1
+  "Replaces `15`:1300–1309 (D02 D-6, D03 CR-5 and E05-D02 E1; spec §2.3)."
+@ ¶2 fence 1
+  "```markdown\n### CMP-116 PnLBadge\n\n- **Tier**: Atom (trading) · **Purpose**: a signed money v
+  alue (unrealised and realised PnL, R, fees, funding) whose digits stay neutral and whose sign is
+   text; its hue rides on a 2 <!-- audit:cited.d02.accent-bar-px=2 --> px accent bar.\n- **Props**
+  : `value: string` (a decimal string) · `format: \"abs\" | \"pct\" | \"r\" | \"currency\"` · `cur
+  rency?: string` · `direction?: \"paid\" | \"received\"` (fees and funding) · `variant?: \"bar\"
+   | \"digits\"` (default `bar`; `digits` waits for E05-D02 E1's text-safe pair) · `provisional?:
+   boolean` · `divergent?: { ours: string }` · `size?: \"sm\" | \"md\" | \"lg\"`.\n- **Variants**:
+   `bar`, the grid default; `digits`, held; compact and comfortable through the host row.\n- **Sta
+  tes**: profit, loss and flat (zero, unsigned); R unavailable (\"—\"); fee paid and funding recei
+  ved; provisional (\"Provisional — fees pending\", updated in place); divergent (\"⚠ Bybit's figu
+  re — ours +25.04\", the description giving both values).\n- **A11y**: Keyboard: none, the badge
+   is not interactive; Accessible name: the sign and the value in words as visually hidden text, n
+  ever an `aria-label` on the span: \"profit 8.00 USDT\", \"loss 121.50 USDT\", \"fee paid 3.49 US
+  DT\", \"funding received 0.84 USDT\", a null R \"R unavailable: no stop price\"; the bar is `ari
+  a-hidden`; Live region: none of its own; the host's polite region at most once per 2 <!-- audit:
+  cited.05.polite-gap-s=2 --> s per field, latest value only, never per tick.\n- **Tokens**: digit
+  s `color.text.primary` with `type.num.sm`, `type.num.base` or `type.num.md` by `size` (`font.fam
+  ily.mono`, tabular figures); the bar `color.buy.default`, `color.sell.default` or `color.neutral
+  .default` through CMP-020's `colorBySign`, `border.thick` wide; the provisional tag `color.statu
+  s.info.subtle`; the divergent tag `color.status.warning.subtle` with ⚠ in `color.status.warning.
+  strong`; forced colours per E29-D02 §12 (D02:527), the bar to `CanvasText`. (Replaces two text c
+  olour names and a font name that are not shipped tokens.)\n- **API sketch**: `interface PnLBadge
+  Props { value: string; format: \"abs\" | \"pct\" | \"r\" | \"currency\"; currency?: string; dire
+  ction?: \"paid\" | \"received\"; variant?: \"bar\" | \"digits\"; provisional?: boolean; divergen
+  t?: { ours: string }; size?: \"sm\" | \"md\" | \"lg\" }`\n- **Data contract**: the host passes t
+  he server's figure (unrealised PnL from the position frame, realised PnL from E29-S06's composit
+  ion, fees and funding from `executions`); the badge formats and computes nothing.\n- **Storybook
+  **: Profit, Loss, Flat, RMultiple, RNull, FeePaid, FundingReceived, Provisional, Divergent, Grey
+  scale, Deuteranopia; each dark and light × compact and comfortable.\n- **Tests**: unit (the sign
+  , U+2212, the words), visual, axe (no `aria-label` on a generic element), the greyscale and deut
+  eranopia strips against the bar's distance floor.\n- **Motion spec**: none of its own: the host
+   cell's Mo-3 (E29-D04 §3.2) wraps it, paired with the sign; under `prefers-reduced-motion` the n
+  ew text is the change at frame 0.\n- **Design (DS spec):** [E29-D04.md](../design/E29/E29-D04.md
+  ) §2.3 (E29-D04; owner approval pending).\n```"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.4 A-4 — CMP-129 PositionModeToggle#1"]
+@ ¶0 heading 1
+  "### C.4 A-4 — CMP-129 PositionModeToggle"
+@ ¶1 prose 1
+  "Replaces `15`:1474–1481 (D02 gap 13 and E05-D02 D5; spec §2.5)."
+@ ¶2 fence 1
+  "```markdown\n### CMP-129 PositionModeToggle (One-Way/Hedge)\n\n- **Tier**: Molecule (trading) ·
+   **Purpose**: the account's position mode, shown as text in SCR-063's account group header, or c
+  hanged behind its own confirm.\n- **Props**: `value: \"one-way\" | \"hedge\"` · `variant: \"disp
+  lay\" | \"toggle\"` (default `display`) · `allowed?: boolean` · `reason?: string` (CMP-079's pai
+  r, `toggle` only) · `onRequestChange(value)` · `onConfirm`.\n- **Variants**: `display`: the word
+   as text, read-only, outside the Tab order, with neither a control role nor a reason. `toggle`:
+   CMP-003's radio group, its change held behind a CMP-044 `standard` confirm, so arrow-browsing n
+  ever writes.\n- **States**: `display`: one-way, hedge. `toggle`: default, hover, focus-visible,
+   an option arrowed but unwritten, the confirm open, T2 (the view-as leg first, then the permissi
+  on leg, read as `rbac.owner_only` for `accounts:write`; the open-positions reason PROPOSED to E3
+  0-D02's owner, no key bound), busy while the write is in flight.\n- **A11y**: Keyboard: `display
+  ` takes no Tab stop; `toggle` is CMP-003's radio group, where arrows browse, `Enter` or `Space`
+   opens the confirm, only the confirm writes and `Escape` keeps the old mode; Accessible name: th
+  e mode as text, \"One-way\" or \"Hedge\"; the radio group takes its host's label and a T2 option
+  's reason is its description; Live region: none of its own; a confirmed change is the host's pol
+  ite line, once.\n- **Tokens**: `display`: `type.ui.body` in `color.text.primary` on the header's
+   `color.surface.canvas`. `toggle`: CMP-003's, with the T2 look per CMP-079 (`color.text.tertiary
+  `, `color.text.secondary`, `color.surface.raised`, `color.border.default`), never `opacity.disab
+  led`.\n- **Data contract**: reads the position mode from `ExchangeAccount.position_mode` (REST);
+   the `toggle` writes it through the account-config endpoint after the confirm, the Owner's alone
+   (`accounts:write`).\n- **Storybook**: DisplayOneWay, DisplayHedge, ToggleConfirm, T2OwnerOnly,
+   T2OpenPositions (its reason PROPOSED); each dark and light × compact and comfortable.\n- **Test
+  s**: unit, visual, axe (`display` exposes no role), keyboard (arrows never write; only the confi
+  rm sends), the T2 test.\n- **Motion spec**: none: a mode change is a cut at frame 0 (E29-D04 §3.
+  2, Mo-8), the same under `prefers-reduced-motion`.\n- **Design (DS spec):** [E29-D04.md](../desi
+  gn/E29/E29-D04.md) §2.5 (E29-D04; owner approval pending).\n```"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field#1"]
+@ ¶0 heading 1
+  "### C.5 Table A — Old (verbatim at `6fc8aacc6`) → New, field by field"
+@ ¶1 prose 1
+  "A-5 composes with E33-D04 A-6 (PENDING, by name; RULED BQ-7): A-5.1 replaces the Old Purpose's
+   \"`hold` or `typed`\" choice with the composite and appends after E33-D04 A-6.1's sentence, whi
+  chever lands first, and A-5.5 is E33-D04 A-6.2's own replacement, so the second to land is a no-
+  op. A \"new bullet\" row inserts the bullet after the line its Old cell sits on."
+@ ¶2 row 1
+  "| A     | Component | Field (`15`:line)                              | Old (verbatim)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                 |
+   New
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                            |"
+@ ¶3 row 0
+  "| ----- | --------- | ---------------------------------------------- | ------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------ | ---------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ----------------------------------------------------------------------------------- |"
+@ ¶4 row 0
+  "| A-5.1 | CMP-123   | Tier · Purpose (`15`:1405)                     | **Tier**: Molecule (trad
+  ing, risk-critical) · **Purpose**: global panic-button — closes all positions and cancels all wo
+  rking orders for the active scope, gated by ConfirmDialog `hold` or `typed` variant. | the Old t
+  ext with \"gated by ConfirmDialog `hold` or `typed` variant\" replaced by \"gated by CMP-044 `ho
+  ld`, and on LIVE by the typed word as well (E29-D04 §2.4)\", then (after E33-D04 A-6.1's sentenc
+  e once that row has landed; PENDING): Two scopes: `account`, SCR-063's Flatten account… in each
+   account group header's ⋯ menu, and `all-accounts`, the shell's FLATTEN ALL…, whose button is CM
+  P-211 and whose dialog is this entry's. Its confirm, CMP-044 `hold` with the typed word first on
+   LIVE (`FLATTEN` for `all-accounts`), is defined once here and referenced, never restated, by E3
+  0, E31 and E39.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                            |"
+@ ¶5 row 0
+  "| A-5.2 | CMP-123   | Props (`15`:1406)                              | `scope: \"account\"\\|\"
+  all-accounts\"`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                             | `scope: \"account\"
+   \\| \"all-accounts\"` · `env: \"live\" \\| \"demo\"` (the account's; E29-D04 §2.4's confirm key
+  s on it) · `allowed: boolean` · `reason?: string` (CMP-079's pair; never a role prop) · `busy?:
+   boolean` (the account loading: `aria-busy`, never T2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                 |"
+@ ¶6 row 0
+  "| A-5.3 | CMP-123   | Variants, States (new bullets after `15`:1406) | `onConfirm`.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+   | the Old text, then two new bullets. **Variants**: `account` (SCR-063's Flatten account…) and
+   `all-accounts` (the shell's FLATTEN ALL…, its button CMP-211), each on DEMO or LIVE (E29-D04 §2
+  .4's confirm table). **States**: default, hover, focus-visible; the CMP-044 dialog restating the
+   account, its environment, the positions it closes and the orders it cancels, stops \"cancelled
+   with the position\"; holding (CMP-044's ring with its percentage text); armed (\"Press again to
+   …\"); the typed word on LIVE (`FLATTEN` for `all-accounts`); busy while the account loads (`ari
+  a-busy`, never T2); out of the ⋯ menu while the account's snapshot failed; T2 for view-as, a Vie
+  wer and a read-only grant, and for a Manager under the kill switch while OD-11 is open; offline
+   with REST unreachable (T2); the result, one `BulkAccountResult` line per account with \"Retry f
+  ailed\". |"
+@ ¶7 row 0
+  "| A-5.4 | CMP-123   | A11y (`15`:1407)                               | CMP-044 composition, alw
+  ays keyboard-operable (never a mouse-hold-only gate).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                  | the Old text, then: Keyboard: the item opens CMP-044 with focu
+  s on Cancel; the confirm takes a held `Enter` or a second `Enter` within CMP-044's window, after
+   the typed word where E29-D04 §2.4 asks for it; `Escape` or blur disarms and key repeat never co
+  nfirms. Accessible name: scope and effect, \"Flatten account — {account} · {environment}\"; a T2
+   item keeps it and its reason is the description. Live region: the result is polite, once; nothi
+  ng speaks while the hold runs.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+     |"
+@ ¶8 row 0
+  "| A-5.5 | CMP-123   | Tokens (`15`:1408)                             | `color.status.danger`.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                         | `color.
+  status.danger.default`. (The same replacement as E33-D04 A-6.2, PENDING: whichever lands first a
+  pplies and the other is then a no-op.)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                  |"
+@ ¶9 row 0
+  "| A-5.6 | CMP-123   | Data contract (`15`:1409)                      | Bybit `/v5/order/cancel-
+  all` + market-close per position
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | the server's routes, their names E39-D03
+   C9's content fix (its owner's, E39-D03:383): for `scope: \"account\"`, `cancelAllOrders` for th
+  e account with `exclude_reduce_only: true`, then `closeAllPositions` with `cancel_open_orders: f
+  alse`, in one confirmed gesture with an `Idempotency-Key` each; stops end with their position, n
+  ever as separate cancels, and a failed cancel does not hold the close back
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                               |"
+@ ¶10 row 0
+  "| A-5.7 | CMP-123   | Storybook (`15`:1410)                          | AccountScope, AllAccount
+  sScope.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                | AccountScope, Al
+  lAccountsScope, DemoHold, LiveHoldAndTyped, Armed, Busy, T2ViewAs, T2Viewer, T2ReadOnly, T2Manag
+  erKillSwitch, OfflineRestUnreachable, Result, ReducedMotion; each dark and light × compact and c
+  omfortable.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                    |"
+@ ¶11 row 0
+  "| A-5.8 | CMP-123   | Tests (`15`:1411), then Motion spec and Design | unit, visual, axe, keybo
+  ard-only confirm path test.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                            | the Old text, then: on LIVE the hold
+   starts once the typed word matches; key repeat never confirms; view-as is the first leg; a T2 p
+  ress emits no audit or analytics; busy is never T2; the reduced-motion twin shows the percentage
+   text, static. Then two new bullets. **Motion spec**: Mo-7, CMP-044's ring by reference (E29-D04
+   §3.2). **Design (DS spec):** E29-D04 §2.4 (E29-D04; owner approval pending).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                              |"
+@ ¶12 row 0
+  "| A-6.1 | CMP-049   | Tier · Purpose (`15`:526)                      | PositionsGrid (CMP-107)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                        | Position
+  sGrid (CMP-114)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                        |"
+@ ¶13 row 0
+  "| A-6.2 | CMP-049   | Props (`15`:527)                               | `caption: string` · `loa
+  ding?: boolean` · `error?: {message, onRetry}`.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                        | the Old text, then: `treegrid?: boolean` (implies `grid`
+  ; rows carry `level`, outermost first, and a row that holds others `expanded`) · `stickyFirstCol
+  umn?: boolean \\| number` (`true` pins the first column; a number pins that many leading columns
+  ) · `stickyLastColumn?: boolean` (an actions column) · `detail?: (row: T) => ReactNode` (a detai
+  l line under a row, opened by `→`)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+      |"
+@ ¶14 row 0
+  "| A-6.3 | CMP-049   | Variants (`15`:528)                            | forced by `grid` for a s
+  tatic table).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                          | the Old text, then: tr
+  eegrid (the APG Treegrid pattern: rows nest by `level`, `→` expands and `←` collapses a row that
+   holds others, a detail line opens under its row; implied by `treegrid`; SCR-063, SCR-078 and E1
+  1-D04's chart table).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                    |"
+@ ¶15 row 0
+  "| A-6.4 | CMP-049   | States (`15`:529)                              | or badges an inline Icon
+  Button, 2b).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                           | the Old text, then: w
+  ith `treegrid`, a row that holds others is expanded or collapsed (`aria-expanded`), a detail lin
+  e is open or closed and totals sit in a trailing `rowgroup`; the base has no row motion, a consu
+  mer's insert and exit being E29-D04 Mo-1 and Mo-2.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                        |"
+@ ¶16 row 0
+  "| A-6.5 | CMP-049   | A11y (`15`:530)                                | one polite live region f
+  or sort, filter, selection and load results.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                           | the Old text, then: with `treegrid`, `role=\"treegrid
+  \"`, `aria-level` per layer, `aria-expanded` on a row that holds others, `aria-rowcount` and `ar
+  ia-rowindex` across the window, the first cell a `rowheader` and totals in a trailing `rowgroup`
+  . Keyboard: one roving stop; arrows by row and cell, `→` expands and `←` collapses, `Home` / `En
+  d`, `PageUp` / `PageDown`, `Space` selects, `Enter` opens a detail line or activates the cell's
+   control, `Shift+F10` the row menu. Accessible name: the caption names the table, a row its `row
+  header` cell with its level and position. Live region: a consumer's row updates are never announ
+  ced individually; the base keeps its one polite region for results.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                          |"
+@ ¶17 row 0
+  "| A-6.6 | CMP-049   | Storybook (`15`:532)                           | FilteredEmpty, Reflow.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                         | Filtere
+  dEmpty, Reflow, Treegrid, TreegridExpanded, StickyLeadColumns, DetailLines, TotalsRowgroup.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                             |"
+@ ¶18 row 0
+  "| A-6.7 | CMP-049   | Tests (`15`:533), then Design                  | performance test (scroll
+   10k rows @60fps).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     | the Old text, then: with `t
+  reegrid`, the roles, levels and indices asserted on a 500 <!-- audit:cited.d02.fixture-rows=500
+   -->-row fixture, a 1,000 <!-- audit:cited.d03.fixture-fills=1000 -->-row window painted with no
+   per-row layout read, and expand and collapse by keyboard. Then a new bullet: **Design (DS spec)
+  :** E29-D04 §2.7 (E29-D04; owner approval pending).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  |"
+@ ¶19 row 0
+  "| A-7.1 | CMP-105   | Tier · Purpose (`15`:1091)                     | the account / trade-grou
+  p selector of SCR-061 (E30-D03 §8).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                    | the Old text, then: Also SCR-063's account-f
+  ilter picker, reused by contract (E29-D04 §2.6): `mode=\"account\"` over the server-scoped accou
+  nt list, without `profileSummary`, `onEditProfile`, group rows or leg rows; each chosen account
+   becomes a CMP-055 chip, \"Account: Sub-1 ✕\".
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+          |"
+@ ¶20 row 0
+  "| A-7.2 | CMP-105   | Storybook (`15`:1099)                          | HighContrast, ReducedMot
+  ion.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                   | HighContrast,
+   ReducedMotion, FilterPicker, FilterManagerScope.
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                 |"
+@ ¶21 row 0
+  "| A-7.3 | CMP-105   | Tests (`15`:1100)                              | unit (cap enforcement),
+   visual, axe, keyboard multi-select
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                     | the Old text, then: the filter use (a Manag
+  er's options are the assigned accounts only, set server-side; no T2 on a filter)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                    |"
+@ ¶22 row 0
+  "| A-7.4 | CMP-105   | Props (`15`:1092)                              | `accounts: {id,label,bad
+  ge:ProfileBadgeProps,selected,profileSummary}[]` · `onToggle` · `onSelectAll` · `onEditProfile(a
+  ccountId)`                                                                           | `accounts
+  : {id,label,badge:ProfileBadgeProps,selected,profileSummary?}[]` · `onToggle` · `onSelectAll` ·
+   `onEditProfile?(accountId)` (`profileSummary` and `onEditProfile` optional: SCR-063's account-f
+  ilter picker passes neither, E29-D04 §2.6)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                             |"
+@ ¶23 row 0
+  "| A-7.5 | CMP-105   | A11y (`15`:1095)                               | `aria-describedby` → the
+   shared reason).
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                       | the Old text, then: the a
+  ccount-filter use (E29-D04 §2.6). Keyboard: `Alt+↓` or `Enter` opens, `↑` / `↓`, `Home` / `End`,
+   `Space` toggles, `Escape` closes and returns focus, and each chip's remove is its own IconButto
+  n. Accessible name: a chip reads \"Account: Sub-1\" and its remove \"Remove filter Account: Sub-
+  1\". Live region: none of its own; the table's one polite region speaks the filtered result once
+  .
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                         |"
+@ ¶24 row 0
+  "| A-7.6 | CMP-105   | API sketch (`15`:1097)                         | profileSummary: string }
+  >; onToggle: (id: string) => void; onSelectAll: () => void; onEditProfile: (id: string) => void;
+                                                                                       | profileSu
+  mmary?: string }>; onToggle: (id: string) => void; onSelectAll: () => void; onEditProfile?: (id:
+   string) => void;
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                     |"
+@ ¶25 row 0
+  "| A-8   | CMP-209   | Tokens (`15`:2489)                             | `motion.drawer`
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                                |
+   `motion.duration.normal` with `motion.easing.decelerate` to open and `motion.easing.accelerate`
+   to close, as CMP-046 (`15`:499); a docked drawer that reflows its host arrives in one frame; `p
+  refers-reduced-motion`: at frame 0 (DR-7; E29-D04 Mo-6)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                         |"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §C Copy-ready `15` entries and the `16` block (PROPOSED; E29-T09 applies them after the o
+§ wner's approval) › C.6 The `16` block (copy-ready; recipe owner E05-D03 (#3174); applied by E29-
+§ T09)#1"]
+@ ¶0 heading 1
+  "### C.6 The `16` block (copy-ready; recipe owner E05-D03 (#3174); applied by E29-T09)"
+@ ¶1 prose 1
+  "One block for `16`, placed after §7.1 (`16`:185–204) and titled §7.n: `16` §7.2 is already clai
+  med by E33-D04 §C.8 (PENDING) and by E42-D04's Appendix A, so E29-T09 numbers it when it applies
+   the block, keeping each value and dropping its marker."
+@ ¶2 fence 1
+  "```markdown\n### 7.n Blotter row motion (E29-D04; PROPOSED until the owner's approval)\n\nSpec:
+   `docs/design/E29/E29-D04.md` §3 (the motion table §3.2, the state swaps §3.3, the flash §3.5, o
+  ne source §3.6). Tokens used by name, none added: `motion.duration.{instant,fast,normal}` and `m
+  otion.easing.{standard,decelerate,accelerate}`; never `motion.duration.slow` on a blotter row.\n
+  \n| Surface
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                               | Enter
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                     | Hold / clea
+  r
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+              | Source                     |\n| --------------------------------------------------
+  --------------------------------------------------------------------------------- | ------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------------------------------------------------- | ------------------
+  ------------------------------------------------------------------------------------------------
+  ----- | -------------------------- |\n| row insert (CMP-114, CMP-115)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+         | the row's own opacity over `fast` / `standard`; `prefers-reduced-motion`: at frame 0 wi
+  th its \"New\" marker
+                                                                                | the marker, stat
+  ic, for 5 <!-- audit:cited.d01.new-marker-s=5 --> s; held under the pointer by \"Updates paused\
+  "         | E29-D04 Mo-1; D01:407      |\n| row exit after the linger
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+             | the row's opacity over `fast` / `accelerate`, `pointer-events: none` from its first
+   frame; `prefers-reduced-motion`: gone at frame 0, its word was the change
+                             | the linger, about 5 <!-- audit:cited.d01.linger-s=5 --> s; a focuse
+  d row stays                                          | E29-D04 Mo-2; D01:408      |\n| value-cha
+  nge flash (numeric cells)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | an opacity overlay of `color.status.info.subtle` above the cell at `16` §7.1's peak, decayin
+  g over `fast`; `prefers-reduced-motion`: no flash, the signed text and ▲ / ▼ are the change | `1
+  6` §7.1's limits for the value-change emphasis, unchanged and not restated (`16`:199); latest wi
+  ns; never while stale | E29-D04 Mo-3; `16`:199     |\n| correction highlight
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                  | the same opacity overlay once, above the row; `prefers-reduced-motion`: no hig
+  hlight, the marker word is the change
+                                                                       | the marker, until the acc
+  ount's banner is dismissed                                                                     |
+   E29-D04 Mo-4; D02:414      |\n| new fill row
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                          | the row's own opacity over `fast` / `standard`, at the list's top only
+  ; `prefers-reduced-motion`: at frame 0, its time and side word are the change
+                                       | scrolled away, nothing moves and the \"3 new fills\" pill
+   appears                                                         | E29-D04 Mo-9; D01:411      |\
+  n| SCR-078 drawer over the canvas
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        | `transform: translateX` over `normal`, `decelerate` to open, `accelerate` to close; `pre
+  fers-reduced-motion`: at frame 0, its heading text is the change
+                                  | docked, it arrives in one frame in both modes (CMP-046)
+                                                                   | E29-D04 Mo-6; D03:401      |\
+  n| state swap (status word, glyph, fill, pill, liq tier, protection chip, T2 ↔ enabled, DEMO / L
+  IVE; a disclosure; a row's busy glyph) | at frame 0; `prefers-reduced-motion`: the same cut at f
+  rame 0
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                             | none
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                      | E29-D04 Mo-8, Mo-10, Mo-12 |\n\nRules: only `opacity` and `transform` anim
+  ate on a blotter row, each one-shot and at most `normal`; words, glyphs, fills and pills swap at
+   frame 0 in both modes, and the numbers never tween; nothing animates per tick or per price upda
+  te; nothing moves under the pointer, and live data never moves focus; every row has an instant `
+  prefers-reduced-motion` twin, and `data-motion` is its one source.\n```"
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §D Storybook stories per entry#1"]
+@ ¶0 heading 1
+  "## §D Storybook stories per entry"
+@ ¶1 prose 1
+  "The story names live once, in each entry's Storybook line of §C (C-16.5); this table says what
+   they cover and which story builds them."
+@ ¶2 row 1
+  "| Entry                      | Stories
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                             | Bui
+  lt in                                                                      |"
+@ ¶3 row 0
+  "| -------------------------- | ----------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  --------------------------------- | ------------------------------------------------------------
+  ----------------- |"
+@ ¶4 row 0
+  "| CMP-114 PositionsGrid      | §C.1's Storybook line (RULED BQ-4): the default and grouped grid
+  s, the mixed environments, the liq tiers, the protection chip, the row markers, selection, the p
+  aused chip, the Closed today line, the narrow dock, the empty and loading panels, the Viewer's T
+  2 and the reduced-motion readings | E29-S01
+                                                                         |"
+@ ¶5 row 0
+  "| CMP-115 OrderRow           | §C.2's Storybook line (RULED BQ-5): one story per status family,
+   the pending, unconfirmed and rejected amend, the editor, the native-stop row, the T2 Held order
+   and the reduced-motion readings
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+    | E29-S02                                                                       |"
+@ ¶6 row 0
+  "| CMP-116 PnLBadge           | §C.3's Storybook line: the `15` four (`15`:1308), null R, fees a
+  nd funding, provisional, divergent, and the greyscale and deuteranopia strips
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                       | E29-S01
+                                                                         |"
+@ ¶7 row 0
+  "| CMP-123 FlattenAllButton   | Table A's Storybook row (§C.5; RULED BQ-7): the `15` two (`15`:1
+  410), the DEMO hold, the LIVE hold and typed word, armed, busy, every T2 frame of spec §2.4, off
+  line, the result and the reduced-motion reading
+                                                                                     | E29-S01 for
+   `scope: account`; the shell's host of `scope: all-accounts` (E39) |"
+@ ¶8 row 0
+  "| CMP-129 PositionModeToggle | §C.4's Storybook line (RULED BQ-8): the two display stories, the
+   toggle's confirm and its T2 frames, the open-positions one with its reason PROPOSED
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                | E29-S01
+                                                                         |"
+@ ¶9 row 0
+  "| CMP-105 AccountMultiSelect | E30-D04's twelve, unchanged (E30-D04:365), and Table A's two fil
+  ter-use stories (§C.5), no new variant
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                              | E2
+  9-S01                                                                       |"
+@ ¶10 row 0
+  "| CMP-049 Table              | the `15` eleven, unchanged (`15`:532), and Table A's treegrid st
+  ories (§C.5) for spec §2.7's base contract
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                          | E29-S0
+  1                                                                       |"
+@ ¶11 prose 1
+  "Every story renders in dark and light × compact and comfortable (`15`:41). A T2 story shows the
+   reason node and the `lock` and never the `disabled` attribute (spec §4); a ReducedMotion story
+   sets `data-motion=\"reduce\"` and shows every reading at frame 0 (spec §3.6). The story code be
+  longs to the implementing stories (T Out of scope)."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §E Test hooks#1"]
+@ ¶0 heading 1
+  "## §E Test hooks"
+@ ¶1 row 1
+  "| Entry                                      | Tests
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+   | Run by                    |"
+@ ¶2 row 0
+  "| ------------------------------------------ | ------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ------------------------------------------------------------------------------------------------
+  ----------------------------------------------------- | ------------------------- |"
+@ ¶3 row 0
+  "| CMP-114 PositionsGrid                      | axe with no serious or critical violation (`15`:
+  41); the treegrid's accessibility tree, its roles, levels and indices on a 500 <!-- audit:cited.
+  d02.fixture-rows=500 -->-row fixture (D02:142); the keyboard model of D02 §11.1 (D02:447); the l
+  ive-region cadence: the focused row's changed values and the environment totals at most once per
+   2 <!-- audit:cited.05.polite-gap-s=2 --> s per field, and row updates never announced individua
+  lly (D02:465); the environment test: totals per environment never summed, the Env column only on
+   a scope change (D02:146, :156); the exits test of spec §4.2; the T2 test of spec §4.1; every `p
+  refers-reduced-motion` reading at frame 0 (spec §3.2) | E29-S01; E29-Q02; E29-Q05 |"
+@ ¶4 row 0
+  "| CMP-115 OrderRow                           | axe; CMP-114's treegrid keyboard, `Enter` or `F2
+  ` opening the editor and only `Enter` committing (D02:303); the live-region cadence: filled and
+   rejected assertive once, every other status change silent (D02:465); the environment (in a mixe
+  d view), then the status word, leading the row's name; pending never drawn as confirmed, the con
+  firmed value staying with \"still live\" until Bybit answers (D02:320, :325); the T2 test of spe
+  c §4.1; every `prefers-reduced-motion` reading at frame 0
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  | E29-S02; E29-Q02; E29-Q05 |"
+@ ¶5 row 0
+  "| CMP-116 PnLBadge                           | axe; the accessible reading as visually hidden t
+  ext, never an `aria-label` (spec §2.3); the sign as text in greyscale and under deuteranopia (sp
+  ec §5); no live region of its own
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                       | E29-S01; E29-Q05          |"
+@ ¶6 row 0
+  "| CMP-123 FlattenAllButton                   | axe; the keyboard-only confirm path of spec §2.4
+  , key repeat never confirming; the result line polite once; the exits test: sendable for the Own
+  er in every account state (spec §4.2); the T2 test of spec §4.1's flatten row; the hold's static
+   `prefers-reduced-motion` reading (spec §3.2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+           | E29-S01; E29-Q02; E29-Q05 |"
+@ ¶7 row 0
+  "| CMP-129 PositionModeToggle                 | axe; the display variant is no Tab stop and has
+   no control role (spec §2.5); arrows browse the toggle and only its confirm writes (E05-D02 D5);
+   the toggle's T2 frames as spec §4.1's toggle row
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+        | E29-S01; E29-Q05          |"
+@ ¶8 row 0
+  "| CMP-105 AccountMultiSelect, the filter use | E30-D04's tests, unchanged (E30-D04:366), and th
+  e filter use: a Manager's options are the assigned accounts only, set server-side, and no T2 sit
+  s on a filter (Table A A-7.3; spec §4.2)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                | E29-S01; E29-X02          |"
+@ ¶9 row 0
+  "| CMP-049 Table                              | the `15` tests, unchanged (`15`:533), and with `
+  treegrid` the roles, levels and indices on a 500 <!-- audit:cited.d02.fixture-rows=500 -->-row f
+  ixture, a 1,000 <!-- audit:cited.d03.fixture-fills=1000 -->-row window painted with no per-row l
+  ayout read, and expand and collapse by keyboard (Table A A-6.7)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                                                         | E29-S01
+  ; E29-Q03          |"
+@ ¶10 row 0
+  "| Motion (spec §3)                           | a value flash starts at most once per 500 <!-- a
+  udit:cited.16.flash-gap-ms=500 --> ms per cell and nothing animates per tick (spec §3.4, §3.5);
+   with `data-motion=\"reduce\"` no transition runs and every reading is at frame 0 (spec §3.6)
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+  \u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020\u0020
+                                                              | E29-S01; E29-S02; E29-Q05 |"
+@ ¶11 prose 1
+  "**The T2 test** (every row of spec §4.1): the legs fire in their order, view-as first; the cont
+  rol keeps its role and its full label with `aria-disabled=\"true\"`, never the `disabled` attrib
+  ute; its reason node is in the DOM at mount; a press sends nothing, re-shows the reason once, po
+  litely, and emits no audit or analytics (E09-D09:228, :243; `15`:819). **The exits test** (spec
+   §4.2): in every account state of D02 §10.2 and §10.3 the Owner's Cancel, Close, the bulk closes
+   and cancels and Flatten account… send; the drawn exceptions of spec §4.2 are the only T2 on an
+   exit (D02:412)."
+§ ["hand-off", "E29-D04 — Per-component hand-off (`16` §11.4; the blotter design-system contributi
+§ ons) › §F Open items#1"]
+@ ¶0 heading 1
+  "## §F Open items"
+@ ¶1 prose 1
+  "Each item names its owner; none is decided here, and none blocks E29-T09's paste of §C."
+@ ¶2 item 1
+  "- **Q-1** The `recon.*` keys (D03:315–319) wait for E09-D09's owner to register them beside E30
+  -D02's (D03:536, :619); until then they stay PROPOSED on every row that names them, and CMP-079
+   cannot carry them (`15`:814). Owner: E09-D09's owner, with E29-D03 as the vocabulary owner."
+@ ¶3 item 0
+  "- **Q-2** The five `blotter.*` keys D02 names for E29-D03 (D02:341, :345, :431) are registered
+   nowhere, since D03 registers only `recon.*` (D03:311); D02's four superseded keys still print a
+  t D02:408–410 and :422 (D03:552). The copy-ready pair for that author (spec DR-12): in D02 §10.2
+   and §10.3, `blotter.reconciling` → `recon.reconciling`, `blotter.verifying` → `recon.desync`, `
+  blotter.stale_locked` → `recon.stale` and `blotter.locked_after_kill` → `recon.killlock`, each w
+  ith D03's string (D03:315–318). Owner: the E29-D02 and E29-D03 author, to register or replace th
+  em with E09-D09's owner and to correct the merged D02 text."
+@ ¶4 item 0
+  "- **Q-3** `guard.mismatch.row` and its converse, the other environment's block notice (D02:145)
+  : a row form of `guard.mismatch` (OQ-L, D02:661). Owner: E30-D02's owner."
+@ ¶5 item 0
+  "- **Q-4** `feed.clock_drift` and `feed.system_unknown` (D02:395, :620). Owner: E17-D01's owner.
+  "
+@ ¶6 item 0
+  "- **Q-5** `sl.note`'s first sentence as the native-stop row's Cancel reason (D02:345). Owner: E
+  32-D01's owner."
+@ ¶7 item 0
+  "- **Q-6** The verb \"resolve the lock\" for `rbac.owner_only` (D03:321), and Resolve…'s route,
+   which G10 records as missing (D03:522). Owners: E09-D09's owner for the verb; D03's §11.1 owner
+  s, E29-T05, E29-T06, E29-T07 and E45, for the route (D03:619)."
+@ ¶8 item 0
+  "- **Q-7** CMP-129's open-positions reason: a key and its string, asked of E30-D02's owner (RULE
+  D BQ-8); until it is registered the toggle's T2 frames show `rbac.view_as` and `rbac.owner_only`
+   only (spec §4.1), and no E29 surface hosts the toggle (D02:622). Owner: E30-D02's owner."
+@ ¶9 item 0
+  "- **Q-8** Rendering 2b on a row's text SplitButton (OQ-S, D02:668) and the selected-row T2 labe
+  l in `color.text.secondary` (spec §5; D02:614), both extensions of E09-D09 §2.2. Owner: E09-D09'
+  s owner."
+@ ¶10 item 0
+  "- **Q-9** A Manager's closes under the kill switch read E39-D01's \"Frozen — the owner closes o
+  r releases\" until OD-11 rules (E39-D01:687; D02:654). Owner: E39-D01's owner (OD-11)."
+@ ¶11 item 0
+  "- **Q-10** CSV export for a Viewer (OQ-G, D02:656), and SR-098's identity watermark and audit r
+  ecord, which need G7's server path (D03:519, :619). Owners: the owner for OQ-G; E29-S04 for the
+   record."
+@ ¶12 item 0
+  "- **Q-11** `Ctrl+Shift+F`: Flatten account in the Positions context, or E39-D03's global flatte
+  n (OQ-R, D02:667), stays open; CMP-123 cites it and decides nothing (spec §2.4). Owner: the owne
+  r, who rules OQ-R with E39-D03's owner."
+@ ¶13 item 0
+  "- **Q-12** CMP-123's Table A rows compose with E33-D04 A-6 (PENDING, by name): whichever lands
+   first applies the shared Tokens row, and the other is then a no-op; if A-5.1 lands first, A-6.1
+  's Old cell no longer matches the Purpose it quotes, and A-6.1 is re-based on A-5.1's New. Owner
+  : E29-T09, after the owner's approval (owner approval pending (#2701))."
+@ ¶14 item 0
+  "- **Q-13** The `16` block takes the next free §7.n when it is applied, since §7.2 is claimed by
+   E33-D04 §C.8 (PENDING) and by E42-D04 (E42-D04:882). Owner: E05-D03 (#3174) as recipe owner; E2
+  9-T09 applies it."
+@ ¶15 item 0
+  "- **Q-14** CMP-116's `digits` variant waits for E05-D02 E1's text tokens (spec §5's register; O
+  Q-C, D02:652); the accent bar carries the hue until then. Owner: the E05 token lane."
+@ ¶16 item 0
+  "- **Q-15** `16` §3 rule 3 and CMP-002 name a comfortable control height that differs from the s
+  hipped row and control tokens (D02:618); the entries bind the tokens (§B). Owner: E05's owner."
+@ ¶17 item 0
+  "- **Q-16** The assertive NO SL, Critical-crossing and amend-rejected announcements are proposed
+   for E29-D05 (D02:465); the entries' live-region lines follow D02 until its review rules, a wide
+  ning of the ticket's a11y note recorded as spec D04-C10. Owner: E29-D05."
+@ ¶18 item 0
+  "- **Q-17** The typed word on LIVE: for `all-accounts` it is `FLATTEN` (`15`:476, :2506; `14`:29
+  6; E39-D03:123); for `account` no merged text names it: D02:353 names none and D02:349 routes th
+  e bulk words to D03's deck (\"CLOSE\"), which has none. CMP-044's rule offers the candidate, \"t
+  he object's own name\" (`15`:476), here the account label, which ties the word to its target acc
+  ount; spec §2.4 draws the field with its copy open. Owner: E29-D03's owner, the copy deck's."
+@ ¶19 item 0
+  "- **Q-18** The contract gaps the entries carry without shaping them (spec §7.3), each with its
+   owner there; and the boards: this ticket's are PENDING (spec §0), E29-D03's are PENDING by name
+   (#4472), and E29-D06 packages the hand-off after E29-D05 (`docs/plan/backlog/E29.json` E29-D06)
+  . Owners: as spec §7.3 names them; E29-D06."
+@ ¶20 item 0
+  "- **Q-19** D03 CR-8 asks for `color.text.primary` on `color.status.success.subtle`, the recover
+  ed summary of SCR-152 (D03:396), to be registered in `tools/contrast/pairs.mjs`; the pair is D03
+  's, no entry of this spec binds it, and the registry and its generated matrix change outside thi
+  s text-first PR; the same route registers the spec §5 pairs the registry does not list yet (§B).
+   Owner: E29-T09, with E29-D03's owner and the `/tools/` owners."
+@ ¶21 item 0
+  "- **Q-20** CMP-049's `virtualized` default stays \"above 50 rows\" (`15`:527) and the 500 <!--
+   audit:cited.d02.fixture-rows=500 -->- and 1,000 <!-- audit:cited.d03.fixture-fills=1000 -->-row
+   budgets become the treegrid variant's tests (A-6.7), the reading spec §2.7 takes of D02 gap 1 (
+  D02:610), where BQ-3's default read them as a new threshold. Owner: E29-T09, which applies A-6,
+   with E05's owner."
+@ ¶22 prose 1
+  "**Change requests** (spec §2.2, §2.8, §2.9; one index so E29-T09 and E29-D06 can route them; no
+  ne is decided here):"
+@ ¶23 row 1
+  "| CR                                                    | Owner
+                                         | Change
+                                                                                    | Status    |"
+@ ¶24 row 0
+  "| ----------------------------------------------------- | -------------------------------------
+  ------ | ---------------------------------------------------------------------------------------
+   | --------- |"
+@ ¶25 row 0
+  "| CMP-028 Callout (spec §2.8.1)                         | E05's owner
+                                   | the stories AccountLineReconciling, AccountLineDesync and Acc
+  ountLineLocked             | requested |"
+@ ¶26 row 0
+  "| CMP-078 StaleDataShade (spec §2.8.2)                  | E17-D02's and E08-D11's owners; E05's
+   owner | an account scope and a reason line; the stale surface's black in dark and high contrast
+   | requested |"
+@ ¶27 row 0
+  "| CMP-239 data-confidence states (spec §2.8.3)          | E08's owner
+                                   | the reconciling and verifying states with their precedence ro
+  w                          | requested |"
+@ ¶28 row 0
+  "| CMP-057 SplitButton (spec §2.8.4)                     | E05's owner
+                                   | `allowed` + `reason` and a busy state on the primary; 2b for
+   a row's own reason         | requested |"
+@ ¶29 row 0
+  "| CMP-055 FilterBar, CMP-056 ColumnPicker (spec §2.8.5) | E05's owner
+                                   | \"Clear all\"; per-tab sets, locked columns, \"Reset to defau
+  lt\"                           | requested |"
+@ ¶30 row 0
+  "| CMP-075 EnvBadgeLocal (spec §2.8.6)                   | E05's owner
+                                   | the compact per-row pill
+                                                                  | requested |"
+@ ¶31 row 0
+  "| CMP-139 EnvironmentAwareOrderGuard (spec §2.8.6)      | E30-D02's owner
+                               | the row form `guard.mismatch.row` (Q-3)
+                                                   | PROPOSED  |"
+@ ¶32 row 0
+  "| CMP-019 Icon (spec §2.8.7)                            | E05-T06
+                                       | the glyph names and a delta glyph for the price-like cell
+  s                              | requested |"
+@ ¶33 row 0
+  "| CMP-099 PrintExportBar (spec §2.8.9)                  | E05's owner
+                                   | the progress line and the watermark
+                                                       | requested |"
+@ ¶34 row 0
+  "| CMP-011 Tag (spec §2.9)                               | E05's owner
+                                   | a `toggle` variant for the Fills Type chips
+                                               | requested |"
+@ ¶35 row 0
+  "| CMP-100 PriceInput, CMP-101 QtyInput (spec §2.2)      | E30-D04's owner
+                               | no blur auto-round inside a cell (D02:618)
+                                                | requested |"
+@ ¶36 row 0
+  "| the comfortable control height (Q-15)                 | E05's owner
+                                   | one height for `16` §3 rule 3, CMP-002 and the shipped tokens
+                             | requested |"
+§ ["hand-off", "(end)#1"]
+@ ¶0 end 1
+  ""
+"""  # end of RULED_PIN_TXT
 
 if __name__ == "__main__":
     sys.exit(main(sys.argv[1:]))
