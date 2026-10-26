@@ -33,6 +33,7 @@ from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator, OrderLin
 from candleviewer.oms.order_machine import OrderMachinePorts, OrderMachines
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
+    MarketReading,
     SizedOrder,
     SizingRequest,
     StopOffset,
@@ -154,11 +155,22 @@ class Instruments:
 
 @dataclass
 class Prices:
-    """`ReferencePrices` answering one price for every symbol; `refuse` raises instead."""
+    """`ReferencePrices` answering one price for every symbol, `market` reading it as the mid
+    beside `last`; `refuse` raises instead. `asked` lists the reference reads, `read` the
+    market's."""
 
     price: Px | None = REFERENCE
     refuse: BaseException | None = None
     asked: list[str] = field(default_factory=list)
+    last: Px | None = None
+    read: list[str] = field(default_factory=list)
+
+    async def market(self, symbol: Symbol) -> MarketReading:
+        self.read.append(symbol)
+        await asyncio.sleep(0)
+        if self.refuse is not None:
+            raise self.refuse
+        return MarketReading(mid=self.price, last=self.last)
 
     async def reference_price(self, symbol: Symbol) -> Px | None:
         self.asked.append(symbol)

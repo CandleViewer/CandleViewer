@@ -95,6 +95,7 @@ from candleviewer.oms.ports import (
     ClockHealth,
     Interim,
     KeyedRecord,
+    MarketReading,
     NoHandoverStore,
     Profiles,
     RequestRecord,
@@ -470,21 +471,30 @@ class ReferencePricesBinding:
         self._tickers, self._demand = tickers, demand
 
     async def reference_price(self, symbol: Symbol) -> Px | None:
-        price = self._price(symbol)
-        if self._demand is not None:
-            self._demand.asked(symbol, priced=price is not None)
-        return price
+        return (await self.market(symbol)).reference
 
-    def _price(self, symbol: Symbol) -> Px | None:
+    async def market(self, symbol: Symbol) -> MarketReading:
+        """The market read (24 Sec.8.4 step 3a): mid and last apart, each None when not a price
+        above zero; the same staleness and the same demand as `reference_price`."""
+        reading = self._reading(symbol)
+        if self._demand is not None:
+            self._demand.asked(symbol, priced=reading.reference is not None)
+        return reading
+
+    def _reading(self, symbol: Symbol) -> MarketReading:
         if self._tickers is None or self._tickers.is_stale(symbol):
-            return None
+            return _UNREAD
         ticker = self._tickers.latest(symbol)
         if ticker is None:
-            return None
-        bid, ask = ticker.bid1_price, ticker.ask1_price
+            return _UNREAD
+        bid, ask, last = ticker.bid1_price, ticker.ask1_price, ticker.last_price
+        mid = None
         if bid is not None and ask is not None and _priced(bid) and _priced(ask):
-            return (bid + ask) / 2
-        return ticker.last_price
+            mid = (bid + ask) / 2
+        return MarketReading(mid=mid, last=last if last is not None and _priced(last) else None)
+
+
+_UNREAD: Final = MarketReading(mid=None, last=None)
 
 
 def _priced(price: Px) -> bool:
@@ -2010,7 +2020,7 @@ class OmsRuntime:
                 anchors=anchors, clock_halt=halt, metrics=metrics, now=self._now,
                 monotonic=self._monotonic, pager=self._pager,
                 store_timeout_s=bounds.store_timeout_s, place_wait_s=bounds.place_wait_s,
-                result_wait_s=bounds.result_wait_s,
+                result_wait_s=bounds.result_wait_s, price_band=self._settings.oms_price_band_pct,
             )  # fmt: skip
             # `pg_stores`' one group adapter serves the system port and the scoped read alike.
             reader = TradeGroupReader(stores.groups)

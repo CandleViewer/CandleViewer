@@ -247,6 +247,9 @@ RULE_TAKE_PROFIT_SIDE: Final = "take_profit_side"
 #: stop-loss where the venue sets neither on one (`ExchangeCapabilities.supports_reduce_only_tpsl`,
 #: 24 Sec.14.1), refused before anything is recorded or sent, one error per side.
 RULE_REDUCE_ONLY_TPSL: Final = "reduce_only_tpsl"
+#: #913 S4-S rulings Q3 and Q4: a limit entry's price, or a conditional entry's trigger, outside
+#: the band around mid, else last; the limit price behind a trigger, outside it around the trigger.
+RULE_PRICE_BAND: Final = "price_band"
 
 
 @dataclass(frozen=True, slots=True)

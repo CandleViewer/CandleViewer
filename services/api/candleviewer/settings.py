@@ -24,6 +24,7 @@ import math
 import os
 import re
 from collections.abc import Mapping
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Final, Literal
@@ -93,6 +94,10 @@ OMS_INFLIGHT_STUCK_MAX_S: Final = 120.0
 #: What the OMS runtime's stop keeps after its drain for its closers (the machines, its sink and its
 #: pool) and then the order lane's join, of the supervised OMS module's grace (`TEARDOWN_BUDGET_S`).
 OMS_STOP_RESERVE_S: Final = 5.0
+#: The price band's default and bounds (22 `placeOrder`, #913 S4-S ruling Q3), the pipeline's own.
+OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
+OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
+OMS_PRICE_BAND_MAX: Final = Decimal("0.20")
 
 
 class Environment(StrEnum):
@@ -746,6 +751,14 @@ class Settings(BaseSettings):
     # lifespan's first stop after the gateway's, which `_refuse_unfittable_stop_budget` counts.
     oms_drain_s: float = Field(
         default=10.0, ge=1.0, le=TEARDOWN_BUDGET_S - OMS_STOP_RESERVE_S, allow_inf_nan=False
+    )
+    # #913 S4-S: the band around mid, else last, a limit entry's price or a trigger must lie in
+    # (22 `placeOrder`, 24 Sec.8.4 step 3a). No off value (C-4.14): a value outside is refused.
+    oms_price_band_pct: Decimal = Field(
+        default=OMS_PRICE_BAND_DEFAULT,
+        ge=OMS_PRICE_BAND_MIN,
+        le=OMS_PRICE_BAND_MAX,
+        allow_inf_nan=False,
     )
     # Live trading's process-level precondition, with the `trading.live_enabled` flag (rulings Q4,
     # Q6): a live account's order is admitted only while both are on; B17 stays the user's truth.

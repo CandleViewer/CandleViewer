@@ -400,6 +400,33 @@ async def test_the_reference_price_is_the_quoted_mid_else_the_last_price_else_no
     assert await ReferencePricesBinding(tickers).reference_price("BTCUSDT") == price
 
 
+@pytest.mark.parametrize(
+    ("tickers", "mid", "last"),
+    [
+        (_Tickers("100", "101", "99"), "100.5", "99"),  # mid and last apart
+        (_Tickers(None, "101", "99"), None, "99"),
+        (_Tickers("100", "101", None), "100.5", None),
+        (_Tickers("100", "101", "0"), "100.5", None),  # a last at zero is no price
+        (_Tickers("100", "101", "99", stale=True), None, None),
+        (None, None, None),
+    ],
+)
+async def test_the_market_read_keeps_mid_and_last_apart(
+    tickers: _Tickers | None, mid: str | None, last: str | None
+) -> None:
+    reading = await ReferencePricesBinding(tickers).market("BTCUSDT")
+    wanted = tuple(None if p is None else Decimal(p) for p in (mid, last))
+    assert (reading.mid, reading.last) == wanted
+
+
+async def test_a_market_read_with_no_price_takes_the_same_ticker_demand() -> None:
+    stream = _Stream()
+    prices = ReferencePricesBinding(stream, demand=ReferenceDemand(stream, monotonic=lambda: 0.0))
+    assert (await prices.market("SOLUSDT")).reference is None
+    assert (await prices.market("SOLUSDT")).reference == Decimal("100.5")
+    assert stream.acquired == ["SOLUSDT"]
+
+
 class _Stream(_Tickers):
     """The ticker stream with its demand: a symbol held has a quote; one no catalogue lists is
     refused, as `TickerStream.acquire` refuses it."""
