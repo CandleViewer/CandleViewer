@@ -63,10 +63,10 @@ from .stop_terms import (
     TermsKey,
     carried,
     differs,
-    held,
     terms_of,
     terms_payload,
 )
+from .stop_terms import held as held_terms
 
 HANDOVER_BOUND_S: Final = 5.0  # 24 Sec.8.12: one bound, all of a push's reads
 PORT_TIMEOUT_S: Final = 5.0  # the lockout, the hand-over, the records (C-2.18)
@@ -310,7 +310,9 @@ class StreamPushes:
         """The account's pending terms whose row sent none in the last second (24 Sec.8.12), at
         its next row or `heartbeat` status (`StreamConsumer`): at most `MAX_FLUSH_TERMS`, the rest
         waiting for the next, so a backlog never holds the account's loop for more than that many
-        sends. Each slot is taken only as it is sent. Raises nothing but `CancelledError`.
+        sends, and it stops at the first send the facade does not take, so a hung facade holds
+        the loop for one slot's bound, not four. Each slot is taken only as it is sent. Raises
+        nothing but `CancelledError`.
 
         A slot waiting across a resync is sent after it: the facade's watermark, carried to the
         rebuilt machine, refuses it when a later push was taken, and reconciliation writes no
@@ -319,7 +321,8 @@ class StreamPushes:
             slot = self._pending.next_due(account_id, self._now())
             if slot is None:
                 return
-            await self._send_terms(slot)
+            if not await self._send_terms(slot):
+                return
 
     async def _deliver(self, ctx: _Ctx, row: OrderRow, *, held: bool) -> None:
         r = ctx.route
@@ -368,7 +371,7 @@ class StreamPushes:
         of the hand-over bound and, when it shows a larger quantity, sends its terms unless they
         are the ones just sent. Else the fill is delivered anyway, counted: B1's fill guard refuses
         it and the facade's `FAULT` quarantines the row for E29-T06. Never dropped, never held."""
-        terms = held(row)
+        terms = held_terms(row)
         pending = self._pending.take((ctx.account_id, row.id))
         if pending is not None and await self._send_terms(pending):
             terms |= terms_of(pending.payload)  # sent, and the exchange's read must agree

@@ -267,6 +267,23 @@ async def test_flush_sends_at_most_max_flush_terms_and_leaves_the_rest_waiting(
     ]
 
 
+async def test_flush_stops_at_the_first_send_the_facade_does_not_take() -> None:
+    """The S7a security delta's 1: a hung facade holds the account's loop for one slot's bound,
+    not `MAX_FLUSH_TERMS`; the slot behind it is not taken and waits for the next flush."""
+    rig = TwoRows()
+    for trigger in ("93000", "92000"):
+        for xid in (XID, "x-other"):
+            await rig.run(moved(triggerPrice=trigger, orderId=xid))
+    rig.now += stop_terms.TERMS_MIN_INTERVAL_S
+    rig.push_errors += [OrderStepUnknown("TERMS_CHANGED", "x")] * 2
+    await flush(rig)
+    assert len(rig.pushed) == 4 and rig.counts[-1] == "unknown_twice"
+    await flush(rig)
+    assert [(oid, body["trigger_price"]) for oid, _, body in rig.pushed[4:]] == [
+        (OTHER.id, "92000")
+    ]
+
+
 def test_pending_terms_next_due_looks_only_at_that_accounts_slots() -> None:
     """The fold of the S7a code lens's 2: slots are kept by account (C-2.20)."""
     pending: PendingTerms[str] = PendingTerms()
