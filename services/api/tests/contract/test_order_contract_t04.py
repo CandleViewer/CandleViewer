@@ -916,8 +916,8 @@ def test_place_order_states_the_price_band_its_setting_and_rule() -> None:
         "ref \N{MULTIPLICATION SIGN} (1 + b)]`, `ref` the market's mid price, else its last "
         "price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to "
         "`0.20`, with no off value; `20-architecture.md` section 7.2)",
-        "A per-profile value, when the profile carries one, is allowed only inside `0.005` to "
-        "`0.20`; a value outside is refused at save, never clamped, the setting being the default",
+        "A per-profile value, when the profile carries one (the setting being the default), is "
+        "allowed only inside `0.005` to `0.20`; a value outside is refused at save, never clamped",
         "A conditional entry, market or limit, has its `trigger.price` judged against `ref`, and "
         "the limit `price` behind a trigger is judged too, against its trigger price, with the "
         "same `b`",
@@ -984,8 +984,10 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
         _words(figures),
         'an announced interim, `DayRiskFigures` (`oms_interim_ports{port="risk_figures"}`',
         "It serves demo and testnet accounts only and refuses `live` at construction",
-        "the cached committed-risk figure is dropped on every accepted send on the account, so "
-        "no two entries inside the cache window are sized against the same room",
+        "the cached committed-risk figure is dropped on every accepted send or amend on the "
+        "account, so no two entries inside the cache window are sized against the same room, and "
+        "two entries on one account whose size steps overlap are judged one after the other or "
+        "with the first one's `risk_usdt` counted",
         "On a live process nothing serves `risk_figures`, so every figure is unknown and every "
         "live entry is `figure_unknown`, answered `503 sizing_unavailable`, until E39-T01",
         "Until E39-T01 (#881) serves real day figures",

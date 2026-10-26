@@ -5652,8 +5652,8 @@ paths:
           reduce-only must lie within `[ref × (1 − b), ref × (1 + b)]`, `ref` the market's mid
           price, else its last price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`,
           from `0.005` to `0.20`, with no off value; `20-architecture.md` section 7.2). A
-          per-profile value, when the profile carries one, is allowed only inside `0.005` to `0.20`;
-          a value outside is refused at save, never clamped, the setting being the default. A conditional entry, market or limit, has its
+          per-profile value, when the profile carries one (the setting being the default), is allowed only inside `0.005` to `0.20`;
+          a value outside is refused at save, never clamped. A conditional entry, market or limit, has its
           `trigger.price` judged against `ref`, and the limit `price` behind a trigger is judged
           too, against its trigger price, with the same `b`. A price outside the band is refused
           with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}`, before the
