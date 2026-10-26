@@ -63,6 +63,7 @@ from candleviewer.oms.ports import (
     INTERIM_PORTS_METRIC,
     PASSED,
     PORT_NAMES,
+    UNKNOWN_FIGURES,
     AccountNoticeReason,
     AccountNotices,
     ArmToken,
@@ -70,6 +71,7 @@ from candleviewer.oms.ports import (
     AuditSeverity,
     ClockHealth,
     ExecutionHandovers,
+    FiguresReading,
     Finding,
     FixedQtySizer,
     ForeignOrderLockout,
@@ -78,10 +80,12 @@ from candleviewer.oms.ports import (
     InterimStopResolver,
     KeyedRecord,
     NoArmRecords,
+    NoDayFigures,
     NoHandoverStore,
     NoPositionProtection,
     NoReconciliation,
     OrderEffect,
+    OrderFigures,
     OrderHandovers,
     PositionKey,
     Profiles,
@@ -96,6 +100,7 @@ from candleviewer.oms.ports import (
     StreamedAccounts,
     SubmissionPorts,
     SubmitActor,
+    SymbolRates,
     TradingAccounts,
     Verdict,
     announce_interim_port,
@@ -599,8 +604,8 @@ def test_announce_one_port_refuses_a_label_outside_the_closed_set_before_any_ser
 
 def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     [spec] = [s for s in CATALOGUE if s.name == INTERIM_PORTS_METRIC]
-    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), 6)
-    assert INTERIM_PORT_LABELS == (*PORT_NAMES, "kill_switch", "machine_event_sink")
+    assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), 7)
+    assert INTERIM_PORT_LABELS == (*PORT_NAMES, "kill_switch", "machine_event_sink", "risk_figures")
     assert (spec.status, spec.owner_epic) == ("planned", "E29")
     metrics = Metrics("demo")
     announce_interim_ports(SubmissionPorts.interim(now=lambda: NOW), metrics=metrics)
@@ -983,3 +988,33 @@ def test_an_undecided_fill_is_a_finding_of_its_own() -> None:
 def test_the_lockout_stand_ins_record_is_a_registered_action() -> None:
     """24 Sec.8.12 and Sec.15.5, contract first: the writer refuses an action it does not list."""
     assert "oms.no_intent_detected" in AUDIT_ACTIONS
+
+
+# -- the order path's figures (`OrderFigures`, #913 S4-S ruling Q1) ------------------------------
+
+
+async def test_no_day_figures_answers_every_figure_none() -> None:
+    stand_in: OrderFigures = NoDayFigures()
+    ref = AccountRef(account_id=ACCOUNT, uid="100001", environment="demo", key_ref="kref-1")
+    reading = await stand_in.read(ref, ["BTCUSDT"], fallback_sl_offset_pct=Decimal("0.02"))
+    assert reading.account is UNKNOWN_FIGURES
+    assert set(UNKNOWN_FIGURES.model_dump().values()) == {None}
+    assert reading.symbols == {"BTCUSDT": SymbolRates()}
+    stand_in.invalidate(ACCOUNT)  # nothing kept, nothing to drop
+
+
+def test_no_day_figures_is_the_announced_risk_figures_interim() -> None:
+    metrics = Metrics("live")
+    with capture_logs() as logs:
+        assert announce_interim_port("risk_figures", NoDayFigures(), metrics=metrics) is True
+    assert [(e["port"], e["replaced_by"]) for e in logs] == [("risk_figures", "E39-T01 (#881)")]
+    assert metrics.get(INTERIM_PORTS_METRIC).series_count == 1
+
+
+def test_a_figures_reading_holds_a_read_only_copy_of_its_symbols() -> None:
+    rates = {"BTCUSDT": SymbolRates(taker_fee_rate=Decimal("0.00055"))}
+    reading = FiguresReading(UNKNOWN_FIGURES, rates)
+    rates["ETHUSDT"] = SymbolRates()
+    assert list(reading.symbols) == ["BTCUSDT"]
+    with pytest.raises(TypeError):
+        reading.symbols["ETHUSDT"] = SymbolRates()  # type: ignore[index]  # the refusal under test

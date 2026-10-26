@@ -96,6 +96,7 @@ from candleviewer.oms.ports import (
     Interim,
     KeyedRecord,
     MarketReading,
+    NoDayFigures,
     NoHandoverStore,
     Profiles,
     RequestRecord,
@@ -1934,6 +1935,9 @@ class OmsRuntime:
             audit = OmsAudit(ServedAudit(self._audit, serving), environment=env)
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
+            # S4-S-b3: built and announced; S4-S-b2 hands it to the size step (24 Sec.9.3.6)
+            figures = NoDayFigures()
+            announce_interim_port("risk_figures", figures, metrics=metrics)
             clock = None if ingestion.clock is None else ServedClock(ingestion.clock, serving)
             halt = ClockHalt(ClockHealthBinding(clock), monotonic=self._monotonic, metrics=metrics)
             command_accounts = CommandAccounts(accounts, self._pager)

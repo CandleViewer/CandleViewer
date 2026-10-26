@@ -46,7 +46,7 @@ from candleviewer.oms.errors import (
 from candleviewer.oms.exits import ExitCaller, ExitOutcome, OrderExits
 from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemorySubmissionStore
 from candleviewer.oms.order_machine import OrderMachines
-from candleviewer.oms.ports import PositionKey, SubmitActor
+from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
 from candleviewer.oms_wiring import (
@@ -352,8 +352,9 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
             assert world.log == ["sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
-    assert warned == [*INTERIMS, "machine_event_sink"]  # one WARNING each
-    assert [world.gauge(name) for name in (*INTERIMS, "machine_event_sink")] == [1.0] * 6
+    assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
+    runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures")
+    assert [world.gauge(name) for name in runtime_ports] == [1.0] * 7
     assert world.log == ["sink.start", "sink.stop", "pool.release"] and port.closed
     assert not b01.ports_wired()
 
@@ -408,6 +409,10 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
             else:
                 assert world.log == (["sink.start"] if sink == "standalone" else [])
                 assert failed_closed(logs) == [] and b01.ports_wired()
+                # S4-S-b3: the refusing stand-in on every environment until the day figures land
+                [figures] = [e for e in logs if e.get("port") == "risk_figures"]
+                assert figures["serves"] == NoDayFigures.serves
+                assert world.gauge("risk_figures") == 1.0
     assert world.gauge("machine_event_sink") == (0.0 if with_bundle else 1.0)
 
 

@@ -21,6 +21,7 @@ from uuid import UUID
 from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profile_validator import SaveFigures, SymbolFigures
 from candleviewer.accounts.sizer import SizingMarket
+from candleviewer.accounts.tiers import lowest_tier_rate
 from candleviewer.accounts.wallet import WalletView
 from candleviewer.exchange.base.models import TickerEvent
 from candleviewer.ingestion.instruments import CatalogueSnapshot
@@ -83,9 +84,7 @@ class SaveTimeFigures:
 
 def _symbol(symbol: str, snap: CatalogueSnapshot | None, tickers: Tickers | None) -> SymbolFigures:
     instrument = None if snap is None else snap.get(symbol)
-    tiers = None if snap is None else snap.risk_limit_tiers(symbol)
-    lowest = min(tiers, key=lambda t: t.risk_limit_value) if tiers else None
-    mmr = None if lowest is None else lowest.maintenance_margin_rate
+    mmr = lowest_tier_rate(None if snap is None else snap.risk_limit_tiers(symbol))
     return SymbolFigures(instrument, _market(symbol, tickers), mmr)
 
 

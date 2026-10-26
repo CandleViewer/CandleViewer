@@ -61,6 +61,11 @@ and `Profiles` (`accounts.profile_cache.EffectiveProfiles`, in its own shape). A
 name its principal (`SubmitActor`, C-2.9): `RequestRecord`, written through `SubmitAudit` beside the
 keyed records, which an entry's stop requests carry with their actor.
 
+`OrderFigures` (#913 S4-S ruling Q1, 24 Sec.9.3.6) answers what `size_leg` needs that the request
+does not carry (`FiguresReading`). Until E39-T01 (#881) announced interims serve it: `NoDayFigures`
+answers every figure None, so every entry it serves fails `figure_unknown`; S4-S-b2 hands it to
+the size step.
+
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
 `Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
 and compared in constant time (SR-043), and `SizedOrder`, the order the validator, the risk gate
@@ -73,16 +78,18 @@ Verdicts are B1's gate values (`statechart/bindings/b01_order.py`).
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, ClassVar, Final, Literal, Protocol, get_args
 from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Qty, Side, Symbol
@@ -117,9 +124,10 @@ OrderType = Literal["market", "limit"]
 PortName = Literal["sizer", "stop_resolver", "risk_gate", "arm_records"]
 PORT_NAMES: Final[tuple[PortName, ...]] = get_args(PortName)
 #: The interim ports the OMS runtime announces beside the `SubmissionPorts` slots (#913 slice 3):
-#: the B18 kill switch until E39-S03 (ruling Q5), and B1's `machine_events` sink while no statechart
-#: persistence bundle serves it (20 Sec.6.2). Their binders announce them (`announce_interim_port`).
-RuntimePortName = Literal["kill_switch", "machine_event_sink"]
+#: the B18 kill switch until E39-S03 (ruling Q5), B1's `machine_events` sink while no statechart
+#: persistence bundle serves it (20 Sec.6.2), and the order path's figures (`OrderFigures`) until
+#: E39-T01 (#913 S4-S ruling Q1). Their binders announce them (`announce_interim_port`).
+RuntimePortName = Literal["kill_switch", "machine_event_sink", "risk_figures"]
 #: `oms_interim_ports{port}`'s closed label set, one series each.
 INTERIM_PORT_LABELS: Final[tuple[PortName | RuntimePortName, ...]] = (
     *PORT_NAMES,
@@ -374,6 +382,46 @@ class Profiles(Protocol):
     async def get_effective_profile(
         self, account_id: UUID, profile_id: UUID | None = None
     ) -> AccountProfile: ...
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolRates:
+    """One symbol's rates for `size_leg`, each None when unknown: the maintenance margin rate of
+    its lowest risk-limit tier by value, and the account's taker fee rate on it."""
+
+    maintenance_margin_rate: Decimal | None = None
+    taker_fee_rate: Decimal | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FiguresReading:
+    """What `size_leg` needs that the request does not carry (24 Sec.9.3.6): the account's
+    figures, each None when unknown (the leg then fails `figure_unknown`), and each symbol's
+    rates. The `*_after` counts, `maintenance_margin_rate` and `taker_fee_rate` of `account` are
+    None, for the size step to fill from the leg's symbol."""
+
+    account: AccountFigures
+    symbols: Mapping[Symbol, SymbolRates]
+
+    def __post_init__(self) -> None:  # a read-only copy: no caller edits another's reading
+        object.__setattr__(self, "symbols", MappingProxyType(dict(self.symbols)))
+
+
+class OrderFigures(Protocol):
+    """The order path's figures (24 Sec.9.3.6, #913 S4-S ruling Q1), served by an interim until
+    E39-T01 (#881). `account` is the one `TradingAccounts` resolved. A figure that cannot be
+    read is None, never an invented value. `invalidate` is called on every accepted send or
+    amend on the account, so the next entry is not sized against room a previous one took."""
+
+    async def read(
+        self,
+        account: AccountRef,
+        symbols: Sequence[Symbol],
+        *,
+        fallback_sl_offset_pct: Decimal | None,
+    ) -> FiguresReading: ...
+
+    def invalidate(self, account_id: AccountId) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -853,6 +901,36 @@ class NoArmRecords(Interim):
         self, *, session_id: UUID, environment: Environment, token: ArmToken | None
     ) -> Verdict:
         return FAILED if environment in _ARMED else PASSED
+
+
+#: Every `AccountFigures` field unknown: the reading a stand-in or a refused read answers.
+UNKNOWN_FIGURES: Final = AccountFigures(
+    equity=None, available_margin=None, committed_risk=None, realised_loss_today=None,
+    open_positions_after=None, open_orders_after=None, orders_in_minute_after=None,
+    taker_fee_rate=None, maintenance_margin_rate=None,
+)  # fmt: skip
+
+
+class NoDayFigures(Interim):
+    """`OrderFigures` where nothing reads the day's figures yet: every figure None, so every entry
+    fails `figure_unknown` (`503 sizing_unavailable`); announced as an interim, so
+    `oms_interim_ports{port="risk_figures"}` at 1 on live shows it (20 Sec.12.1)."""
+
+    port: ClassVar[RuntimePortName] = "risk_figures"
+    replaced_by: ClassVar[str] = "E39-T01 (#881)"
+    serves: ClassVar[str] = "nothing: every figure is unknown, so every entry is refused"
+
+    async def read(
+        self,
+        account: AccountRef,
+        symbols: Sequence[Symbol],
+        *,
+        fallback_sl_offset_pct: Decimal | None,
+    ) -> FiguresReading:
+        return FiguresReading(UNKNOWN_FIGURES, dict.fromkeys(symbols, SymbolRates()))
+
+    def invalidate(self, account_id: AccountId) -> None:
+        return None
 
 
 @dataclass(frozen=True, slots=True)
