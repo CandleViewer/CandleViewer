@@ -58,6 +58,7 @@ from tests.contract.test_step_up_challenge_contract import (
 )
 from tests.unit.api.test_step_up_router import (
     _H,
+    _MISSING,
     _PW,
     _T0,
     _Auth,
@@ -168,7 +169,7 @@ async def _world() -> _World:
     def _sid(request: Request) -> str:
         return str(sessions[request.headers["authorization"].removeprefix("Bearer ")].id)
 
-    @app.put("/users/{uid}/roles")
+    @app.post("/users/{uid}/invite")
     async def roles(uid: str) -> dict[str, bool]:
         return {"ok": True}
 
@@ -290,7 +291,7 @@ async def test_refused_challenge_and_wrong_factor_rows_are_told_apart() -> None:
     `step_up_challenge` and the refusal rule as reason; a wrong password or code is outcome
     `failure`, has no object and gives `<class>:remaining=<n>`."""
     w = await _world()
-    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live `users` challenge
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live `users` challenge
     assert w.step_up(challenge_id=str(uuid.uuid4())).status_code == 400
     assert w.step_up(code="000000").status_code == 401
 
@@ -322,7 +323,7 @@ async def test_step_up_body_outside_its_schema_is_400_before_any_factor(
     """`extra="forbid"` and the contract's `code` pattern hold server-side: nothing is checked,
     counted or elevated."""
     w = await _world()
-    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live grace challenge
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live grace challenge
     r = w.step_up(**member)
     assert r.status_code == 400
     _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
@@ -343,8 +344,8 @@ async def test_challenge_id_is_unknown_to_any_other_session(who: str) -> None:
 @pytest.mark.parametrize("answer", ["with-challenge-id", "without-challenge-id"])
 async def test_grace_challenge_is_answered_with_or_without_challenge_id(answer: str) -> None:
     w = await _world()
-    path = f"/users/{uuid.uuid4()}/roles"
-    denied = w.client.put(path, headers=w.h())
+    path = f"/users/{uuid.uuid4()}/invite"
+    denied = w.client.post(path, headers=w.h())
     assert denied.status_code == 403
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(denied.json())
     sent = {"challenge_id": denied.json()["challenge_id"]} if answer == "with-challenge-id" else {}
@@ -352,13 +353,13 @@ async def test_grace_challenge_is_answered_with_or_without_challenge_id(answer: 
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == w.clock.now + timedelta(minutes=5)
-    assert w.client.put(path, headers=w.h()).status_code == 200
+    assert w.client.post(path, headers=w.h()).status_code == 200
 
 
 @pytest.mark.parametrize("value", ["challenge-1", 7], ids=["not-a-uuid", "not-a-string"])
 async def test_malformed_challenge_id_is_400(value: object) -> None:
     w = await _world()
-    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
     r = w.step_up(challenge_id=value)
     assert r.status_code == 400
     # The fixed message, not the UUID parser's, which quotes a character of the input.
@@ -401,57 +402,110 @@ async def test_unregistered_class_fails_closed_without_a_challenge() -> None:
     ]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#2304 route slice: the path-gated middleware (`make_read_only_guard`) challenges "
-    "before the route's own RBAC; remove this marker when the route slice gates behind it",
-)
+class _Gone(_Store):
+    async def get_roles(self, user_id: uuid.UUID) -> frozenset[str] | None:
+        return None
+
+
+def _roles_client(w: _World, role: str, store: _Store | None = None) -> TestClient:
+    """The real `PUT /users/{userId}/roles` behind the deployed path guard, over `w`'s service."""
+    granted = frozenset({Permission.USERS_WRITE}) if role == "owner" else frozenset()
+    who = PrincipalSnapshot(
+        user_id=w.sessions["tok"].user_id, roles=frozenset({role}), permissions=granted
+    )
+    app = FastAPI()
+    users = store or _Store({"viewer"}, 1)
+    app.include_router(make_users_router(users, w.audit, _Resolver(who), _Notifier(), auth=w.auth))
+    app.middleware("http")(make_read_only_guard(w.auth, w.audit))
+    return TestClient(app)
+
+
 async def test_challenge_not_issued_to_a_refused_caller() -> None:
     """Contract: a challenge goes only to a caller the operation would otherwise admit, so a
     Manager without `users:write` gets `403 forbidden`, never a challenge (threat model U35)."""
     w = await _world()
-    manager = PrincipalSnapshot(
-        user_id=w.sessions["tok"].user_id, roles=frozenset({"manager"}), permissions=frozenset()
-    )
-    app = FastAPI()
-    app.include_router(
-        make_users_router(
-            _Store({"viewer"}, 1), w.audit, _Resolver(manager), _Notifier(), auth=w.auth
-        )
-    )
-    app.middleware("http")(make_read_only_guard(w.auth, w.audit))
     roles = {"roles": ["viewer"]}
-    r = TestClient(app).put(f"/users/{uuid.uuid4()}/roles", headers=w.h(), json=roles)
+    r = _roles_client(w, "manager").put(f"/users/{uuid.uuid4()}/roles", headers=w.h(), json=roles)
     assert r.status_code == 403 and r.json()["code"] == "forbidden"
     assert "challenge_id" not in r.json() and not w.of("auth.step_up_required")
 
 
-async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge() -> None:
-    """No step-up cures a self-reset, so the re-sent request must not be challenged again (a
-    client holding it would loop). The path-gated middleware still challenges the first send
-    until the route slice of #2304 moves the gate behind the route's own checks."""
-    c, em, seed, clock, owner = await _build()
-    body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
-    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
+@pytest.mark.parametrize(
+    ("body", "store", "status"),
+    [
+        ({"roles": ["root"]}, None, 400),
+        ({"roles": []}, None, 400),
+        ({"roles": ["viewer"]}, _Gone({"viewer"}, 1), 404),
+    ],
+    ids=["unknown-role", "empty-roles", "missing-user"],
+)
+async def test_role_change_refused_before_the_gate_is_never_a_challenge(
+    body: dict[str, Any], store: _Store | None, status: int
+) -> None:
+    """#2304: the body and the lookup come before the step-up, so an un-elevated Owner hears of
+    them, and no challenge is issued or audited."""
+    w = await _world()
+    r = _roles_client(w, "owner", store).put(
+        f"/users/{uuid.uuid4()}/roles", headers=w.h(), json=body
+    )
+    assert r.status_code == status and "challenge_id" not in r.json()
+    assert not w.of("auth.step_up_required")
+
+
+async def test_role_change_challenge_restates_the_validated_roles() -> None:
+    w = await _world()
+    target, body = uuid.uuid4(), {"roles": ["viewer", "manager"]}
+    r = _roles_client(w, "owner").put(f"/users/{target}/roles", headers=w.h(), json=body)
+    assert r.status_code == 403 and r.json()["code"] == "step_up_required"
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(r.json())
+    summary = f"Set the roles of user {target} to manager, viewer"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
+    assert len(w.of("auth.step_up_required")) == 1
+
+
+async def test_owner_self_reset_without_elevation_is_403_forbidden_never_a_challenge() -> None:
+    """No step-up cures a self-reset, so even the first send is refused, never challenged (#2304
+    slice 3a: the gate is the handler's, after the self-reset refusal)."""
+    c, em, _seed, _clock, owner = await _build()
     r = c.post(f"/users/{owner}/mfa/reset", headers=_H)
     assert r.status_code == 403 and r.json()["code"] == "forbidden"
     assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#2304 route slice: the path-gated middleware (`make_read_only_guard`, the `users` row "
-    "of `DANGEROUS_ROUTES`) challenges the first send before the handler's self-reset refusal; "
-    "remove this marker when the route slice gates behind the route's own checks",
-)
-async def test_owner_self_reset_without_elevation_is_403_forbidden_never_a_challenge() -> None:
-    """No step-up cures a self-reset, so even the first, un-elevated send is refused, not
-    challenged: a challenge would ask for a code that cannot make the request succeed."""
-    c, em, _seed, _clock, owner = await _build()
+async def test_reset_challenge_restates_the_reset() -> None:
+    """#2304: the reset's challenge comes after the owner check and the lookup, restating it."""
+    c, em, *_ = await _build()
+    target = uuid.uuid4()
+    r = c.post(f"/users/{target}/mfa/reset", headers=_H)
+    assert r.status_code == 403 and r.json()["code"] == "step_up_required"
+    summary = f"Reset the authenticator and end every session of user {target}"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
+    assert "auth.step_up_required" in em.actions()
+
+
+async def test_reset_refused_by_rbac_is_never_a_challenge() -> None:
+    """#2304: a caller without the owner's `users:write` is refused, never challenged."""
+    c, em, *_ = await _build(owner_role=False)
+    r = c.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H)
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
+    assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
+
+
+async def test_reset_of_a_missing_user_is_404_never_a_challenge() -> None:
+    c, em, *_ = await _build()
+    r = c.post(f"/users/{_MISSING}/mfa/reset", headers=_H)
+    assert r.status_code == 404 and "challenge_id" not in r.json()
+    assert "auth.step_up_required" not in em.actions()
+
+
+async def test_elevated_owner_self_reset_is_403_forbidden_not_another_challenge() -> None:
+    """No step-up cures a self-reset, so the re-sent request must not be challenged again (a
+    client holding it would loop)."""
+    c, em, seed, clock, owner = await _build()
+    body = {"code": _code(seed, clock), "password": _PW, "action_class": "users"}
+    assert c.post("/auth/step-up", headers=_H, json=body).status_code == 200
     r = c.post(f"/users/{owner}/mfa/reset", headers=_H)
-    assert (r.status_code, r.json()["code"]) == (403, "forbidden")
+    assert r.status_code == 403 and r.json()["code"] == "forbidden"
     assert "challenge_id" not in r.json() and "auth.step_up_required" not in em.actions()
 
 
@@ -509,8 +563,8 @@ async def test_no_password_code_or_request_body_reaches_logs_or_audit(
 ) -> None:
     caplog.set_level(logging.DEBUG)
     w = await _world()
-    path = f"/users/{uuid.uuid4()}/roles"
-    challenge_id = w.client.put(path, headers=w.h(), json={"note": "private-note-7731"}).json()[
+    path = f"/users/{uuid.uuid4()}/invite"
+    challenge_id = w.client.post(path, headers=w.h(), json={"note": "private-note-7731"}).json()[
         "challenge_id"
     ]
     code = _code(w.seed, w.clock)

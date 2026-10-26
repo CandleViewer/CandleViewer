@@ -68,7 +68,7 @@ class _Resolver:
 async def _setup(
     role: str = "owner", audit_ok: bool = True, auth: type[_InvAuth] = _InvAuth
 ) -> tuple[TestClient, _Emitter, Any, Any, FakeRepo, Any]:
-    c, em, seed, clock, user = await _build()
+    c, em, seed, clock, user = await _build(gated_stub=False)  # the real invite routes
     repo = FakeRepo()
     svc = InviteService(repo, FakeHasher(), FakeMfa(), clock=clock)  # type: ignore[arg-type]  # fakes
     snap = PrincipalSnapshot(

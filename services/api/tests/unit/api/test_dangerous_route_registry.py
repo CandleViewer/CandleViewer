@@ -531,18 +531,13 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
 @pytest.mark.parametrize(
     ("method", "path", "action_class"),
     [
-        ("PUT", "/users/u/roles", "users"),
         ("POST", "/users", "users"),
         ("POST", "/users/u/invite", "users"),
         ("DELETE", "/users/u/invite", "users"),
-        ("POST", "/users/u/mfa/reset", "users"),
         ("POST", "/exchange-accounts/a/keys", "keys"),
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
-        ("PATCH", "/users/u", "users"),  # updateUser (04 row 38)
-        ("DELETE", "/users/u", "users"),  # deleteUser (04 row 38)
-        ("PUT", "/users/u/account-access", "users"),  # setUserAccountAccess (04 row 40)
         ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
         ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
@@ -558,6 +553,27 @@ def test_contract_dangerous_routes_map_to_action_class(
     method: str, path: str, action_class: str
 ) -> None:
     assert dangerous_action_class(method, path) == action_class
+
+
+#: #2304 slice 3a: the `users` writes whose handler gates after RBAC, validation and the lookup.
+_USERS_HANDLER_GATED = [
+    ("PUT", "/users/{userId}/roles"),  # setUserRoles (04 row 38)
+    ("POST", "/users/{userId}/mfa/reset"),  # resetUserMfa (04 row 39)
+    ("PATCH", "/users/{userId}"),  # updateUser (04 row 38)
+    ("DELETE", "/users/{userId}"),  # deleteUser (04 row 38)
+    ("DELETE", "/users/{userId}/sessions/{sessionId}"),  # revokeUserSession (04 row 40a)
+    ("PUT", "/users/{userId}/account-access"),  # setUserAccountAccess (04 row 40)
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _USERS_HANDLER_GATED)
+def test_users_writes_are_handler_gated_not_path_gated(method: str, path: str) -> None:
+    """A path row would challenge before the handler's RBAC, validation and lookup, so a refused
+    caller could get a challenge restating nothing (#2304): no path row, one `users` handler row,
+    and the route is served."""
+    assert dangerous_action_class(method, _concrete(path)) is None
+    assert _registered_classes(method, path) == {"users"}
+    assert (method, path) in served_operations(create_app()) - _PENDING_HANDLER_GATES
 
 
 def test_safe_reads_are_not_gated() -> None:

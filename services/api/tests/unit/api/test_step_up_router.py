@@ -114,8 +114,14 @@ def _record(user: uuid.UUID) -> SessionRecord:
 
 
 async def _build(
-    owner_role: bool = True, positions: Any = None, audit_ok: bool = True, target: Any = None
+    owner_role: bool = True,
+    positions: Any = None,
+    audit_ok: bool = True,
+    target: Any = None,
+    gated_stub: bool = True,
 ) -> tuple[TestClient, _Emitter, bytes, _Clock, uuid.UUID]:
+    """`gated_stub` mounts a stand-in for a path-gated `users` write (the invite reissue, still
+    in `DANGEROUS_ROUTES`); a caller mounting the real invite router turns it off."""
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
     mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
     user = uuid.uuid4()
@@ -158,9 +164,11 @@ async def _build(
     )
     app.middleware("http")(make_read_only_guard(auth, emitter))
 
-    @app.put("/users/{uid}/roles")
-    async def roles(uid: str) -> dict[str, bool]:
-        return {"ok": True}
+    if gated_stub:
+
+        @app.post("/users/{uid}/invite")
+        async def reissue(uid: str) -> dict[str, bool]:
+            return {"ok": True}
 
     @app.post("/exchange-accounts/{aid}/keys/{kid}/rotate")
     async def rotate(aid: str, kid: str) -> dict[str, bool]:
@@ -259,7 +267,7 @@ async def test_step_up_rejects_unauthenticated_and_bad_class() -> None:
 async def test_dangerous_route_is_403_without_elevation_then_passes() -> None:
     c, em, seed, clock, _ = await _build()
     uid = uuid.uuid4()
-    r = c.put(f"/users/{uid}/roles", headers=_H)
+    r = c.post(f"/users/{uid}/invite", headers=_H)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
     assert "auth.step_up_required" in em.actions()
     c.post(
@@ -267,9 +275,9 @@ async def test_dangerous_route_is_403_without_elevation_then_passes() -> None:
         headers=_H,
         json={"code": _code(seed, clock), "password": _PW, "action_class": "users"},
     )
-    assert c.put(f"/users/{uid}/roles", headers=_H).status_code == 200
+    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 200
     clock.now += timedelta(minutes=5, seconds=1)
-    assert c.put(f"/users/{uid}/roles", headers=_H).status_code == 403
+    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 403
 
 
 async def test_preview_without_position_store_is_unavailable_and_reset_needs_ack() -> None:
@@ -313,13 +321,13 @@ def _modal_body(code: str) -> dict[str, str]:
 async def test_real_modal_payload_elevates_challenged_class_end_to_end() -> None:
     c, em, seed, clock, _ = await _build()
     uid = uuid.uuid4()
-    denied = c.put(f"/users/{uid}/roles", headers=_H)
+    denied = c.post(f"/users/{uid}/invite", headers=_H)
     assert denied.status_code == 403 and denied.json()["action_class"] == "users"
     ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock)))
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == clock.now + timedelta(minutes=5)
-    assert c.put(f"/users/{uid}/roles", headers=_H).status_code == 200
+    assert c.post(f"/users/{uid}/invite", headers=_H).status_code == 200
     assert "auth.step_up_granted" in em.actions()
 
 
@@ -331,7 +339,7 @@ async def test_code_only_without_pending_challenge_is_400() -> None:
 
 async def test_client_action_class_mismatching_challenge_is_400() -> None:
     c, _em, seed, clock, _ = await _build()
-    c.put(f"/users/{uuid.uuid4()}/roles", headers=_H)
+    c.post(f"/users/{uuid.uuid4()}/invite", headers=_H)
     r = c.post(
         "/auth/step-up",
         headers=_H,

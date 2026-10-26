@@ -71,6 +71,63 @@ def typed_target(label: str, identifier: str, others: Iterable[str]) -> str:
     return label if unique and label.isascii() and label.isprintable() else identifier
 
 
+# -- The `users` routes' templates (#2304 slice 3a) -----------------------------------------------
+# Each route validates its request, then RBAC, then the target's lookup, and only then composes
+# one of these: a user, a session and an account grant are named by their identifiers (never a
+# label: the routes read none), roles and statuses are validated enum values (bare), and a free
+# text field (`display_name`) is named, never quoted. None asks for a typed confirmation.
+
+
+def set_roles_text(user_id: object, roles: Iterable[str]) -> ChallengeText:
+    """`setUserRoles`: the role set the request would leave the user with."""
+    return ChallengeText(f"Set the roles of user {user_id} to {', '.join(sorted(roles))}")
+
+
+def mfa_reset_text(user_id: object) -> ChallengeText:
+    """`resetUserMfa`: the reset revokes every factor and session of the user."""
+    return ChallengeText(f"Reset the authenticator and end every session of user {user_id}")
+
+
+def account_access_text(user_id: object, grants: int) -> ChallengeText:
+    """`setUserAccountAccess`: the replacement's size (accounts are named nowhere in it)."""
+    noun = "grant" if grants == 1 else "grants"
+    return ChallengeText(f"Replace the account access of user {user_id} with {grants} {noun}")
+
+
+def disable_user_text(user_id: object, *, purge: bool) -> ChallengeText:
+    """`deleteUser`: the disable, and the purge 90 days out when the request asks for it."""
+    tail = " and schedule its purge" if purge else ""
+    return ChallengeText(f"Disable user {user_id}{tail}")
+
+
+#: `updateUser` fields whose value `update_user_text` restates: validated enums and a boolean.
+#: Every other field (free text such as `display_name`, or one added later) is named only.
+UPDATE_USER_RENDERED: frozenset[str] = frozenset({"status", "roles", "mfa_required"})
+
+
+def update_user_text(user_id: object, change: dict[str, object]) -> ChallengeText:
+    """`updateUser`: each field the patch sets, in name order. Only `UPDATE_USER_RENDERED`
+    fields show their value (bare); any other is named without it, so free text never reaches
+    the restatement."""
+    parts = []
+    for field in sorted(change):
+        value = change[field]
+        if field not in UPDATE_USER_RENDERED:
+            parts.append(field.replace("_", " "))
+        elif isinstance(value, bool):
+            parts.append(f"{field} {'true' if value else 'false'}")
+        elif isinstance(value, list | tuple | frozenset | set):
+            parts.append(f"{field} {', '.join(sorted(str(v) for v in value))}")
+        else:
+            parts.append(f"{field} {value}")
+    return ChallengeText(f"Update user {user_id}: {'; '.join(parts) or 'no change'}")
+
+
+def revoke_session_text(user_id: object, session_id: object) -> ChallengeText:
+    """`revokeUserSession`: one live session of the user."""
+    return ChallengeText(f"Revoke session {session_id} of user {user_id}")
+
+
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
 _ES_PLAIN_LOW, _ES_PLAIN_HIGH = -6, 21
 #: An IEEE-754 double holds every integer up to 2**53 exactly; beyond it a JSON integer is not
@@ -171,11 +228,18 @@ def request_fingerprint(method: str, target: bytes, body: object | None) -> str:
 
 
 __all__ = [
+    "UPDATE_USER_RENDERED",
     "ChallengeText",
+    "account_access_text",
     "account_reference",
     "canonical_json",
+    "disable_user_text",
+    "mfa_reset_text",
     "quote_label",
     "raw_request_target",
     "request_fingerprint",
+    "revoke_session_text",
+    "set_roles_text",
     "typed_target",
+    "update_user_text",
 ]

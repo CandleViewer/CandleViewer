@@ -45,7 +45,7 @@ from candleviewer.api.csrf import (
     SESSION_REFUSALS_PER_WINDOW,
     source_ip,
 )
-from candleviewer.api.step_up_challenge import ChallengeText
+from candleviewer.api.step_up_challenge import ChallengeText, mfa_reset_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.access import AuditPrincipal
@@ -516,8 +516,6 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/users$"), "users"),  # invite
     ("POST", re.compile(r"^/users/[^/]+/invite$"), "users"),  # reissue mints a new token
     ("DELETE", re.compile(r"^/users/[^/]+/invite$"), "users"),  # revoke
-    ("PUT", re.compile(r"^/users/[^/]+/roles$"), "users"),
-    ("POST", re.compile(r"^/users/[^/]+/mfa/reset$"), "users"),
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys$"), "keys"),
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/rotate$"), "keys"),
     ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+$"), "keys"),
@@ -528,12 +526,8 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     # rotateAuditSigningKey (#889 S7, ADR-0039 decision 5): a grace class, as `rewrapKek`'s.
     ("POST", re.compile(r"^/admin/keys/audit-signing/rotate$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
-    # #2751 (SR-025, 04 §7.2.2 rows 38, 40, 50, 52). Mounted today: the export and deleteUser.
-    ("PATCH", re.compile(r"^/users/[^/]+$"), "users"),  # updateUser
-    ("DELETE", re.compile(r"^/users/[^/]+$"), "users"),  # deleteUser
-    # E42-T09 (#2649, 04 §7.2.2 row 40a): revokeUserSession; listing a user's sessions is a read.
-    ("DELETE", re.compile(r"^/users/[^/]+/sessions/[^/]+$"), "users"),
-    ("PUT", re.compile(r"^/users/[^/]+/account-access$"), "users"),  # setUserAccountAccess
+    # #2751 (SR-025, 04 §7.2.2 rows 50, 52). The `users` rows of rows 38, 40 and 40a moved to
+    # `HANDLER_GATED_ROUTES` (#2304 slice 3a).
     ("POST", re.compile(r"^/admin/audit/export$"), "audit"),  # exportAuditLog
     # #2738 (SR-025, 04 §7.2.2 row 9, Owner and Manager): every request changes retention.
     ("PUT", re.compile(r"^/recording/retention-policies$"), "recorder"),  # setRetentionPolicies
@@ -613,6 +607,16 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     # code per delete, which the handler spends after the 404 and the 501, bound to the request
     # it validated; each `backup.deleted` record after the spend names its `challenge_id`.
     ("DELETE", "/admin/backups/{backupId}", "backups"),
+    # #2304 slice 3a (SR-025, 04 §7.2.2 rows 38, 40, 40a): a challenge goes only to a caller the
+    # operation would otherwise admit, so each handler decides RBAC, the self-target, its query and
+    # body and the target's lookup, then demands `users` with the restatement of
+    # `api.step_up_challenge` (a path row would challenge before all of them, restating nothing).
+    ("PUT", "/users/{userId}/roles", "users"),  # setUserRoles
+    ("POST", "/users/{userId}/mfa/reset", "users"),  # resetUserMfa: after the self-reset 403
+    ("PATCH", "/users/{userId}", "users"),  # updateUser
+    ("DELETE", "/users/{userId}", "users"),  # deleteUser
+    ("DELETE", "/users/{userId}/sessions/{sessionId}", "users"),  # revokeUserSession
+    ("PUT", "/users/{userId}/account-access", "users"),  # setUserAccountAccess
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
@@ -897,7 +901,10 @@ def make_step_up_router(
             return missing
         if user_id == record.user_id:  # no step-up can cure it: a refusal, never a challenge
             return _problem(403, "forbidden", "Forbidden", "owners cannot reset their own TOTP")
-        gate = await require_elevation_for(auth, str(record.id), "users")
+        # #2304: the gate after the owner check, the lookup and the self-reset refusal, so a
+        # caller they refuse is never challenged; the challenge restates the reset.
+        restated = mfa_reset_text(user_id)
+        gate = await require_elevation_for(auth, str(record.id), "users", text=restated)
         if gate is not None:  # audited by B16 (`ACTION_REQUEST`)
             return gate
         if positions is None:
@@ -953,7 +960,7 @@ def make_step_up_router(
                 challenge = await auth.step_up.record_pending(str(record.id), "users")
             except SessionRevoked:  # the session ended in that window: nothing to challenge
                 return _unauthenticated()
-            return required_problem(challenge)
+            return required_problem(challenge, restated)
         except AuditRefused:
             return _audit_unavailable()
         # Reveals nothing: no secret, recovery code or position data.
