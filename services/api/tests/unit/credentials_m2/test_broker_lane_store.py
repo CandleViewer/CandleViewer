@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
 import pytest
+from pydantic import SecretStr
 
 from candleviewer import app
 from candleviewer.admin import wiring
@@ -29,6 +30,7 @@ from candleviewer.secrets.errors import CredentialUnavailable, SigningLoopMismat
 from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS, SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Settings
+from candleviewer.storage.repositories.credentials_sqlalchemy import SqlAlchemyCredentialStore
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from tests.unit.credentials_m2.test_broker_two_loops import BORROWED, FAILED, MSG, _Rig, rig
 from tests.unit.exchange.bybit.test_rate_limit_two_loops import JOIN_S, _on
@@ -374,13 +376,17 @@ def test_a_lane_binding_with_no_store_factory_wired_is_refused(rig: _Rig) -> Non
     assert _pools_in_use() == before
 
 
-async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Q10 at the root: on the real backend, `_build_secrets` hands M2 the lane store's factory,
-    never a store; M2 builds it when it binds, on that loop: a pool of its own (`oms-secrets` in
-    `pg_stat_activity`), apart from the serving store's, bounded at M2's ask with no overflow,
-    lazy (nothing connects), and disposed of by its release, never the serving one."""
+#: A fake DSN: no database listens there, and building a pool never connects.
+_DSN = "postgresql+asyncpg://lane:fake@localhost:5432/cv"
+
+
+def _real() -> Settings:
+    return Settings(storage_backend="real", pg_dsn=SecretStr(_DSN))
+
+
+def _noted_pools(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every pool the root builds, in order, each with its suffix, its bound and whether it was
+    disposed of."""
     pools: list[Any] = []
 
     class Noted(SqlAlchemyRelationalRepository):
@@ -394,7 +400,31 @@ async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
             await super().dispose()
 
     monkeypatch.setattr(app, "SqlAlchemyRelationalRepository", Noted)
-    bundle = app._build_secrets(Settings(storage_backend="real"), build_audit_service())
+    return pools
+
+
+def _noted_stores(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The pool under every credential store the root builds, in order."""
+    under: list[Any] = []
+
+    class Noted(SqlAlchemyCredentialStore):
+        def __init__(self, relational: Any, **kw: Any) -> None:
+            super().__init__(relational, **kw)
+            under.append(relational)
+
+    monkeypatch.setattr(app, "SqlAlchemyCredentialStore", Noted)
+    return under
+
+
+async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Q10 at the root: on the real backend, `_build_secrets` hands M2 the lane store's factory,
+    never a store; M2 builds it when it binds, on that loop: a pool of its own (`oms-secrets` in
+    `pg_stat_activity`), apart from the serving store's, bounded at M2's ask with no overflow,
+    lazy (nothing connects), and disposed of by the binding's `aclose`, never the serving one."""
+    pools = _noted_pools(monkeypatch)
+    bundle = app._build_secrets(_real(), build_audit_service())
     assert [pool.suffix for pool in pools] == ["secrets"]  # the serving store's alone
     signing = bundle.lane_signing(audit=_Writer())  # bound on this loop, as the lane binds
     serving, lane = pools
@@ -402,3 +432,33 @@ async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
     assert (lane.suffix, lane.bound, serving.bound) == ("oms-secrets", bound, {})
     await signing.aclose()
     assert (lane.disposed, serving.disposed) == (True, False)
+
+
+async def test_the_roots_lane_store_reads_through_the_lanes_own_pool_never_the_serving_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Minor 2 (Q10): the store M2 builds for the lane sits over the lane's own pool, and the
+    serving store over the serving one: never a store over the other loop's pool."""
+    pools, under = _noted_pools(monkeypatch), _noted_stores(monkeypatch)
+    signing = app._build_secrets(_real(), build_audit_service()).lane_signing(audit=_Writer())
+    assert under == pools and [pool.suffix for pool in under] == ["secrets", "oms-secrets"]
+    await signing.aclose()
+
+
+def test_the_roots_lane_store_factory_holds_no_plaintext_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """L-2 (C-12.6): the factory the root hands M2 lives as long as M2's binder, so it unwraps the
+    DSN at each call and its closure holds none in plaintext, only what keeps it secret."""
+    factories: list[Any] = []
+    real = app.build_secrets_service
+
+    def noted(*args: Any, **kw: Any) -> Any:
+        factories.append(kw["loop_store"])
+        return real(*args, **kw)
+
+    monkeypatch.setattr(app, "build_secrets_service", noted)
+    app._build_secrets(_real(), build_audit_service())
+    (factory,) = factories
+    held = [cell.cell_contents for cell in factory.__closure__ or ()]
+    assert held and [value for value in held if isinstance(value, str) and value == _DSN] == []
