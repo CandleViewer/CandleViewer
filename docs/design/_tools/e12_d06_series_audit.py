@@ -17,6 +17,7 @@ ticket's spec and hand-off from the working tree, and the working-tree `14`, `15
    the notch, the P&F floor), LADDER and TIER (the sample steps on `26`'s tiers and hysteresis,
    parsed at the base), TINT (opaque `a c + (1 - a) canvas` per theme), HEX (every bound token in
    dark / light / hc), CONTRAST (WCAG 2.x), CVD (CIE76 ΔE after the Brettel / Viénot projection,
+   protan / deutan, or the Machado 2009 tritan matrix,
    minimum over the three themes; greyscale as the CIELAB L* gap), COUNT and BUDGET (parsed from
    the cited texts and the docs' own tables). `color.chart.line` is CHOSEN here (RULED BQ-17):
    among the chromatic primitives (a hue, A-12), the one that clears 3:1 on the canvas in all
@@ -47,13 +48,13 @@ ticket's spec and hand-off from the working tree, and the working-tree `14`, `15
    numbered item, `p` prose, `f` fence), a prose, bullet or numbered tag followed by its sentence
    count and any tag led by `>n` for an n-column indent, so squeezing blank lines, turning a
    bullet into prose, moving a sentence across a line, paragraph or table boundary (order kept)
-   or indenting a line (a nested bullet, a code block) changes a pin. A unit changed, moved, duplicated, deleted or added FAILs by location; a
-   repeated heading is a duplicated region and a repeated location FAILs (the first copy is
-   kept), so a shadow copy cannot mask an edit. `--repin-ruled` is the only writer (it refuses
-   while a placeholder is unfilled); `--check` writes nothing. NOTE demotion: when a lexicon or
-   measured gate already FAILs a section, the pin findings of that section print as NOTE lines,
-   so one wrong form yields one FAIL.
-6. **--selftest** (alias `--self-test`) applies every §17.2 mutation M-1 … M-54 in memory, plus
+   or indenting a line (a nested bullet, a code block) changes a pin. A unit changed, moved,
+   duplicated, deleted or added FAILs by location; a repeated heading is a duplicated region and
+   a repeated location FAILs (the first copy is kept), so a shadow copy cannot mask an edit.
+   `--repin-ruled` is the only writer (it refuses while a placeholder is unfilled); `--check`
+   writes nothing. NOTE demotion: when a lexicon or measured gate already FAILs a section, the
+   pin findings of that section print as NOTE lines, so one wrong form yields one FAIL.
+6. **--selftest** (alias `--self-test`) applies every §17.2 mutation M-1 … M-55 in memory, plus
    the tool's own X-n (the RULED allow-list, the predecessor shingle, the dash meanings, the
    comment strip, the anchors, the tool-state gates) and P-n (one per pin class), with the values
    frozen at the filled baseline; each must add exactly one FAIL, from the gate it names (the
@@ -121,7 +122,17 @@ SIM_KEY = {"protanopia": "protan", "deuteranopia": "deutan", "tritanopia": "trit
 # ---- the ruling and the fixed facts
 RULING_ID = "6415375587"
 BQ_LIST_ID = "6415040959"
-RULED_IDS = (RULING_ID, BQ_LIST_ID)  # the allow-list: every comment id the docs may cite
+CONFIRM_ID = "6420049971"  # the orchestrator's round-1 record: confirms the five derived values
+RULED_IDS = (RULING_ID, BQ_LIST_ID, CONFIRM_ID)  # the allow-list: every comment id the docs cite
+# the five values derived from the DESIGN decisions (geom_values), ruled defaults (CONFIRM_ID)
+DERIVED_KEYS = (
+    "outline.full-from",
+    "tint.span-min",
+    "notch.min-w",
+    "notch.min-body-h",
+    "ring.weight",
+)
+OWNER_PENDING = "owner approval pending (#2701)"  # the record: D06-C11 and the AC2 trace
 PREDECESSOR = "#2324"  # the closed, unmerged first attempt: named once in §0, never quoted
 # the predecessor's last commit, read ONLY to prove that no run of its text is quoted (G-PREDECESSOR)
 PREDECESSOR_REF = "e1b08be2e9"
@@ -185,11 +196,23 @@ LINE_NEIGHBOURS = (
     "color.cvd.sell",
 )
 NEUTRAL_FAMILIES = ("palette.neutral.", "palette.light.neutral.", "palette.white", "palette.black")
-# the CVD port's pinned self-test (RULED BQ-19): two known hex inputs and their simulations,
-# computed ONCE with `docs/research/_tools/cvd_simulate.py` at the base (protan, deutan, tritan)
+# the CVD port's pinned self-test (RULED BQ-19): two known hex inputs and their simulations.
+# Protan / deutan were computed ONCE with `docs/research/_tools/cvd_simulate.py` at the base;
+# tritan ONCE from the published Machado 2009 matrix below (TRITAN_MACHADO), not from that file.
 CVD_PINNED = {
-    "#2EBD59": ("#B4B458", "#A3A35D", "#8E8EFF"),
-    "#E5484D": ("#6B6B4E", "#8F8F44", "#ADAD00"),
+    "#2EBD59": ("#B4B458", "#A3A35D", "#00B9A6"),
+    "#E5484D": ("#6B6B4E", "#8F8F44", "#FB194B"),
+}
+# (#2EBD59 / #E5484D are `color.candle.up` / `.down`: under tritan the up hue turns teal, the
+# down hue stays red, so the pair separates by hue as tritanopes see it.)
+# Tritan sanity pins, computed from the published matrix: pure red stays red and pure green turns
+# cyan (no R = G collapse); pure blue turns teal (ΔE76 to green 259 -> 72) and yellow turns
+# pink-white (ΔE76 to blue 235 -> 69), the blue / green and yellow / violet tritan confusions.
+TRITAN_SANITY = {
+    "#FF0000": "#FF000F",
+    "#00FF00": "#00F7D9",
+    "#0000FF": "#006B96",
+    "#FFFF00": "#FFEED9",
 }
 # load-bearing fragments: (cite id, line at the base, text the line must hold)
 CITED: tuple[tuple[str, int, str], ...] = (
@@ -715,6 +738,8 @@ def mix(c: str, under: str, pct: str) -> str:
 # The Brettel (1997) / Viénot projection, carried as constants (RULED BQ-19: no import).
 # Provenance: `docs/research/_tools/cvd_simulate.py` at 89fd1f1555 (RGB_TO_LMS, LMS_TO_RGB,
 # PROJECTIONS, srgb/linear transfer and the rounding of `rgb_to_hex`); CVD_PINNED is the self-test.
+# Protan and deutan only: that file's tritan row (S = -0.395913 L + 0.801109 M) is defective (it
+# maps every colour onto R = G: red -> #BABA00, green -> #BDBDFF), so this tool carries its own.
 RGB_TO_LMS = (
     (17.8824, 43.5161, 4.11935),
     (3.45565, 27.1554, 3.86714),
@@ -728,8 +753,25 @@ LMS_TO_RGB = (
 PROJECTIONS: dict[str, tuple[float, ...]] = {
     "protanopia": (0.0, 2.02344, -2.52581, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0),
     "deuteranopia": (1.0, 0.0, 0.0, 0.494207, 0.0, 1.24827, 0.0, 0.0, 1.0),
-    "tritanopia": (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.395913, 0.801109, 0.0),
 }
+# Tritanopia: Machado, Oliveira & Fernandes 2009, "A Physiologically-based Model for Simulation of
+# Color Vision Deficiency" (IEEE TVCG 15(6)), the published tritanomaly matrix at severity 1.0,
+# applied to linear RGB (each row sums to 1, so white and greys are preserved).
+TRITAN_MACHADO = (
+    1.255528,
+    -0.076749,
+    -0.178779,
+    -0.078411,
+    0.930809,
+    0.147602,
+    0.004733,
+    0.691367,
+    0.303900,
+)
+LINEAR_RGB_SIMS: dict[str, tuple[float, ...]] = {"tritanopia": TRITAN_MACHADO}
+# the research tool's defective tritan row: §1.2 quotes what it gives and X-21 probes it; never
+# used by `simulate`
+RESEARCH_TRITAN_ROW = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.395913, 0.801109, 0.0)
 
 
 def matvec(flat: tuple[float, ...], v: tuple[float, float, float]) -> tuple[float, float, float]:
@@ -749,10 +791,23 @@ def linear_to_srgb(c: float) -> float:
     return max(0.0, min(1.0, s)) * 255.0
 
 
+def lms_project(lin: tuple[float, ...], row: tuple[float, ...]) -> tuple[float, float, float]:
+    lms = matvec(flat3(RGB_TO_LMS), (lin[0], lin[1], lin[2]))
+    return matvec(flat3(LMS_TO_RGB), matvec(row, lms))
+
+
+def research_tritan_hex(hex6: str) -> str:
+    """What the research tool's defective tritan row gives (quoted in §1.2 as the defect)."""
+    lin2 = lms_project(tuple(srgb_to_linear(v) for v in rgb(hex6)), RESEARCH_TRITAN_ROW)
+    return "#" + "".join(f"{max(0, min(255, round(linear_to_srgb(c)))):02X}" for c in lin2)
+
+
 def simulate(hex6: str, deficiency: str) -> str:
     lin = tuple(srgb_to_linear(v) for v in rgb(hex6))
-    lms = matvec(flat3(RGB_TO_LMS), (lin[0], lin[1], lin[2]))
-    lin2 = matvec(flat3(LMS_TO_RGB), matvec(PROJECTIONS[deficiency], lms))
+    if deficiency in LINEAR_RGB_SIMS:
+        lin2 = matvec(LINEAR_RGB_SIMS[deficiency], (lin[0], lin[1], lin[2]))
+    else:
+        lin2 = lms_project(lin, PROJECTIONS[deficiency])
     return "#" + "".join(f"{max(0, min(255, round(linear_to_srgb(c)))):02X}" for c in lin2)
 
 
@@ -774,12 +829,19 @@ def delta_e76(a: str, b: str) -> float:
 
 
 def cvd_port_problems() -> list[str]:
-    """The pinned self-test: two known hex inputs simulate to the values the research tool gave."""
+    """The pinned self-test: two known hex inputs simulate to the pinned values (protan / deutan as
+    the research tool gave, tritan from the Machado matrix), plus the tritan sanity pins."""
     bad: list[str] = []
     for src, want in CVD_PINNED.items():
         got = tuple(simulate(src, s) for s in SIMS)
         if got != want:
             bad.append(f"{src} simulates to {got}, pinned {want}")
+    for src, want_t in TRITAN_SANITY.items():
+        if simulate(src, "tritanopia") != want_t:
+            bad.append(f"{src} tritan simulates to {simulate(src, 'tritanopia')}, pinned {want_t}")
+    for src in ("#FF0000", "#00FF00"):
+        if simulate(src, "tritanopia")[1:3] == simulate(src, "tritanopia")[3:5]:
+            bad.append(f"{src} tritan collapses onto R = G")
     return bad
 
 
@@ -1254,6 +1316,8 @@ def colour_values() -> Values:
         v[f"TINT:up.{t}"], v[f"TINT:down.{t}"] = ink["tint.up"], ink["tint.down"]
         v[f"TINT:neutral.{t}"] = ink["tint.neutral"]
     v["HEX:chart.line.primitive"] = line_choice()[0]
+    v["HEX:research-tritan.red"] = research_tritan_hex("#FF0000")
+    v["HEX:research-tritan.green"] = research_tritan_hex("#00FF00")
     v |= {f"TINT:{k}": f"{p} %" for k, p in TINTS.items()}
     v["CONTRAST:mark.min"] = fmt(mark_min())
     v["CONTRAST:text.min"] = fmt(text_min())
@@ -2145,6 +2209,35 @@ def g_unbuilt(t: Texts) -> list[Finding]:
     return bad
 
 
+def g_derived(t: Texts) -> list[Finding]:
+    """CONFIRM_ID (M-55): the five derived values are stated, in the RULED section, as ruled
+    defaults (the spec's own decisions, confirmed by the orchestrator)."""
+    said = f"ruled defaults: the spec's own decisions, confirmed by the orchestrator, {CONFIRM_ID}"
+    for ln in section(t.spec, "The twenty questions").split("\n"):
+        keys = all(re.search(rf"(?:<!--=|\{{\{{)GEOM:{re.escape(k)}\b", ln) for k in DERIVED_KEYS)
+        if keys and said in ln:
+            return []
+    sec = spec_sec(t, "The twenty questions")
+    return [F("G-DERIVED", "the five derived values are not confirmed ruled defaults", "spec", sec)]
+
+
+def g_pending(t: Texts) -> list[Finding]:
+    """The record (X-22): the D06-C11 row and the AC2 trace say the owner's approval is pending."""
+    bad: list[Finding] = []
+    for lead, head in (("| D06-C11 ", "18.1"), ("| AC2 ", "Acceptance-criteria trace")):
+        line = next((ln for ln in t.spec.split("\n") if ln.startswith(lead)), "")
+        if OWNER_PENDING not in line:
+            bad.append(
+                F(
+                    "G-PENDING",
+                    f"{lead.strip('| ')} lacks {OWNER_PENDING!r}",
+                    "spec",
+                    spec_sec(t, head),
+                )
+            )
+    return bad[:1]
+
+
 def g_ruled(t: Texts) -> list[Finding]:
     """Ruling form: "RULED" cites the allow-list only (the ruling 6415375587 and the BQ list
     6415040959), in any form; the RULED heading cites both; nothing cites a lane thread."""
@@ -2566,6 +2659,8 @@ LEXICON_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_predecessor,
     g_unbuilt,
     g_g1,
+    g_derived,
+    g_pending,
     g_ruled,
 )
 MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
@@ -3167,6 +3262,18 @@ def nudge_projection() -> Callable[[], None]:
     return lambda: PROJECTIONS.__setitem__(sim, old)
 
 
+def research_tritan() -> Callable[[], None]:
+    """Swap the Machado tritan matrix for `cvd_simulate.py`'s defective LMS row (R = G collapse)."""
+    old = LINEAR_RGB_SIMS.pop("tritanopia")
+    PROJECTIONS["tritanopia"] = RESEARCH_TRITAN_ROW
+
+    def undo() -> None:
+        PROJECTIONS.pop("tritanopia")
+        LINEAR_RGB_SIMS["tritanopia"] = old
+
+    return undo
+
+
 def pushed[T](lst: list[T], item: T) -> Callable[[], Callable[[], None]]:
     """Push `item` onto a tool-state lever; the undo pops it."""
 
@@ -3447,7 +3554,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=sub_in(
             "0. Status",
             "Page `E12-D06 series visual language`,",
-            "Page `E12-D06 series visual language` (https://design.penpot.app/#/workspace),",
+            "Page `E12-D06 series visual language` (https://example.invalid/workspace),",
         ),
     ),
     Mutation(
@@ -3471,6 +3578,12 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=line_edit("- **D06-G1**", "**blocking until the CMP-181 A-row lands**", "blocking"),
     ),
     Mutation("M-54", "G-BUDGET", "BQ-1", spec=overrun),
+    Mutation(
+        "M-55",
+        "G-DERIVED",
+        "CONFIRM_ID",
+        spec=sub_in("The twenty questions", f", confirmed by the orchestrator, {CONFIRM_ID}", ""),
+    ),
     # the tool's own: the ruled sentences §17.2 does not list, and the tool-state gates
     Mutation(
         "X-1",
@@ -3503,6 +3616,18 @@ MUTATIONS: tuple[Mutation, ...] = (
         spec=reg("types/ohlc · dark", "Dash", to("`dash.2-2`")),
     ),
     Mutation("X-6", "G-CVD-PORT", "BQ-19: the matrices' pinned self-test", patch=nudge_projection),
+    Mutation(
+        "X-21",
+        "G-CVD-PORT",
+        "the research tool's defective tritan row is not carried",
+        patch=research_tritan,
+    ),
+    Mutation(
+        "X-22",
+        "G-PENDING",
+        "the record: D06-C11 says the owner's approval is pending",
+        spec=line_edit("| D06-C11 ", f"; {OWNER_PENDING}", ""),
+    ),
     Mutation(
         "X-7",
         "G-ANCHOR",
