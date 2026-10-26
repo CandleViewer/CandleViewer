@@ -107,8 +107,9 @@ to), `isMaster` and `parentUid` from that account's kind (`true` and `"0"` for a
 `false` and the main account's UID for a sub account), `createdAt`, `expiredAt` (`""` when there is
 no expiry, the form the adapter reads as absent) and `deadlineDay`: the days left to `expiredAt`,
 rounded up and never below 0, as the source fixture's `180` is against its expiry, and absent when
-there is no expiry. This anchors exchange-side times only; it is not an application clock (plan
-§9.5): a running stack's test clock is #2893's.
+there is no expiry. The private-WS socket sends a push's integer `creationTime` on the same stub
+exchange clock when it sends the push (`_base/ws_wallet.json`). This anchors exchange-side times
+only; it is not an application clock (plan §9.5): a running stack's test clock is #2893's.
 
 ## Scenario index
 
@@ -218,7 +219,7 @@ its web policy, so no page was re-read for this pack; #2893 S15 later checked th
 | `_base/wallet_balance.json`                                                   | `GET /v5/account/wallet-balance`                                                        | `account/wallet-balance`                    | `key_verification/wallet_balance.json`                                                                                                                                                                                             | as source            |
 | `_base/error_10003.json`, `_base/error_10004.json`                            | any signed call                                                                         | error-code table                            | `key_verification/error_10003.json`, `error_10004.json`                                                                                                                                                                            | as source            |
 | `_base/ws_auth_ok.json`, `ws_subscribe_ok.json`, `ws_pong.json`               | private WS `auth`, `subscribe`, `ping`                                                  | `ws/connect`                                | the repo's WS control frames (`success`, `op`); op names from `24-internal-schemas.md` §14.3                                                                                                                                       | no: a subset         |
-| `_base/ws_wallet.json`                                                        | private WS `wallet` push                                                                | `websocket/private/wallet`                  | `topic`, `data`; `data` holds the wallet-balance account object (research 06 §10)                                                                                                                                                  | no: a subset         |
+| `_base/ws_wallet.json`                                                        | private WS `wallet` push                                                                | `websocket/private/wallet`                  | `topic`, `creationTime` (anchored), `data`; `data` holds the wallet-balance account object (research 06 §10)                                                                                                                       | no: a subset         |
 | `_base/fee_rate.json`                                                         | `GET /v5/account/fee-rate`                                                              | `account/fee-rate`                          | `symbol`, `makerFeeRate`, `takerFeeRate` (research 06 §7, §17); `list` per the corpus                                                                                                                                              | no                   |
 | `_base/set_leverage_ok.json`                                                  | `POST /v5/position/set-leverage`                                                        | `position/leverage`                         | the corpus envelope with an empty `result`                                                                                                                                                                                         | no                   |
 | `_base/trading_stop_ok.json`                                                  | `POST /v5/position/trading-stop`                                                        | `position/trading-stop`                     | the corpus envelope with an empty `result`                                                                                                                                                                                         | no                   |
@@ -277,7 +278,10 @@ and the system derives the restriction from `createdAt` (plan §10 DC-23).
 Shapes not re-verified:
 
 - the private-WS frames are subsets (the connect page's replies and the wallet push carry more
-  fields, such as a connection id, a message, an id and a creation time);
+  fields, such as a connection id, a message and an id). The wallet push carries `creationTime`
+  because the adapter's push envelope requires it
+  (`candleviewer/exchange/bybit/private_parse.py`, `PushEnvelope.creationTime`): without it
+  `classify` rejects the frame as `malformed`. Its value is the stub clock's, not a capture's;
 - right names: `SpotTrade`, `OptionsTrade` and `ExchangeHistory` (not re-read), `FiatP2POrder`
   and `FaitPayOrder` (spelt as the E27 threat model, section 5, gives them). No right name is
   documented in the repository for `FiatConvertBroker`, `BitCard`, `NFT` or `Affiliate`, so the
@@ -423,3 +427,22 @@ Both are files in `CV_ACCOUNT_FIXTURE_DIR`, beside the request log, so they surv
 Tests call `FixtureClock.set`/`advance` and `KeyStates.switch` in process; a stack gets a command
 line for them with the fixture compose override (#2893 S14). A harness may also write either file
 itself, to a temporary file renamed into place; a key file off the rules refuses the key's calls.
+
+### The private-WS socket (#2893 S12)
+
+`services/api/cvdev/account_fixture/private_ws.py` plays `ws.private` to the adapter's private
+socket, after the same guards as REST: the demo private stream only, a pack key id in `auth` (any
+other trips the process latch), and its signature over `GET/realtime` and `expires` with the secret
+of the scenario the key is stored under. A connect answers as the stack default
+(`CV_ACCOUNT_FIXTURE`, from boot), so TC-115 runs with `demo_ws_unreachable`; after a verified
+`auth` the socket follows the key's scenario on the fixture clock, a switch included. A connect
+carries no key, so a stack default's `refuse_reconnects` refuses the dial, while under a key's
+scenario the refusal happens at `auth`, which closes the socket. TC-403 therefore runs
+`ws_auth_then_drop` as the stack default, so the adapter's reconnect is refused at the dial. A
+refused `auth` gets the auth reply with `success: false`, a stand-in like the WS frames above. A
+frame the script does not answer, a subscribe before `auth` or of a topic the adapter does not use,
+closes the socket unanswered. The request log has one `ws` line per connect, `auth` and close; its
+`method` names the event, prefixed so no HTTP-method check takes it for one: `WS:CONNECT`,
+`WS:REFUSE` (refused by the script), `WS:AUTH`, `WS:DROP` (closed by the stub) or `WS:CLOSE` (closed
+by the client). The log refuses any other `method` on a `ws` line, and a `WS:` value on any other
+line.

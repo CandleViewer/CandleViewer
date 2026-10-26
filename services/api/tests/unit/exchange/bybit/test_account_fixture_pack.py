@@ -861,7 +861,8 @@ def test_compliant_ws_authenticates_then_streams_the_probe_wallet() -> None:
     assert ws.on_ping.frame == {"op": "pong"}
     assert [(s.after_ms, s.every_ms) for s in ws.after_auth] == [(0, None), (5000, 5000)]
     wallet = load("compliant", now=NOW).reply("GET", PROBE_PATH).body["result"]["list"]
-    assert all(s.frame == {"topic": "wallet", "data": wallet} for s in ws.after_auth)
+    push = {"topic": "wallet", "creationTime": NOW_MS, "data": wallet}  # S12 sends it re-timed
+    assert all(s.frame == push for s in ws.after_auth)
     assert ws.timeline == ()
 
 
