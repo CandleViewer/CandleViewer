@@ -209,3 +209,30 @@ def test_missing_section_fails() -> None:
 def test_committed_files_match_regeneration() -> None:
     assert generate.main(["--check"]) == 0
     assert gate.main() == 0
+
+
+def _titles() -> dict[str, str]:
+    return {e["code"]: e["title"] for e in generate.load_registry(YAML)}
+
+
+def test_internal_error_title_names_no_rest_only_field() -> None:
+    # #2553: the title serves REST and WS clients; WS frames have no `instance`.
+    title = _titles()["internal_error"]
+    assert title == "Unhandled server error"
+    assert "instance" not in title
+
+
+def test_registry_titles_carry_no_exchange_brand() -> None:
+    # #2553: titles land in ws/_generated and the TS catalogue; they say "the exchange".
+    branded = {code: t for code, t in _titles().items() if "bybit" in t.lower()}
+    assert branded == {}
+    assert all("bybit" not in text.lower() for text in FRESH.values())
+
+
+def test_reworded_titles_keep_their_meaning_and_the_md_row() -> None:
+    titles = _titles()
+    assert titles["unsupported_category"] == "Only the exchange's USDT linear perpetuals are supported in v1"
+    assert titles["exchange_error"] == "The exchange returned a non-zero refusal code"
+    assert titles["exchange_rate_limited"].startswith("The exchange's per-UID rate budget is exhausted")
+    assert titles["unsupported_symbol"] == "Not one of the exchange's USDT linear perpetuals, or unknown instrument"
+    assert f"{titles['unsupported_symbol']}." in MD

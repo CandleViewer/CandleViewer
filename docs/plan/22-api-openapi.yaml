@@ -503,7 +503,7 @@ x-error-codes:
     retryable: false
   - code: unsupported_category
     status: 400
-    title: Only Bybit USDT linear perpetuals are supported in v1
+    title: Only the exchange's USDT linear perpetuals are supported in v1
     retryable: false
   - code: tick_size_violation
     status: 400
@@ -734,12 +734,12 @@ x-error-codes:
     retryable: true
   - code: exchange_rate_limited
     status: 429
-    title: Bybit per-UID rate budget exhausted (10006/10018) — request shed locally
+    title: The exchange's per-UID rate budget is exhausted (10006/10018) — request shed locally
     retryable: true
   # --- 500 family ---------------------------------------------------------
   - code: internal_error
     status: 500
-    title: "Unhandled server error (correlation id in `instance`)"
+    title: Unhandled server error
     retryable: true
     surface: [rest, ws] # same slug, same meaning on the WS (23-ws-protocol.md §10.2)
   - code: not_implemented
@@ -748,7 +748,7 @@ x-error-codes:
     retryable: false
   - code: exchange_error
     status: 502
-    title: Bybit returned a non-zero exchange refusal code
+    title: The exchange returned a non-zero refusal code
     retryable: true
   - code: exchange_unavailable
     status: 503
@@ -865,7 +865,7 @@ x-error-codes-ws:
   - code: unsupported_symbol
     scope: topic
     retryable: false
-    title: Not a Bybit USDT linear perpetual, or unknown instrument
+    title: Not one of the exchange's USDT linear perpetuals, or unknown instrument
     rest_analogue: unsupported_category
   - code: invalid_options
     scope: topic
@@ -3279,8 +3279,10 @@ paths:
         Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account
         gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025,
         SR-E28-02): without a live one the answer is `403 step_up_required`, audited as
-        `auth.step_up_required`, and nothing is stored. The write is path-gated, so a Manager meets
-        the step-up first and `403 forbidden` after one. The profile is
+        `auth.step_up_required`, and nothing is stored. The write is handler-gated: the step-up
+        comes after authentication, request validation, RBAC and the account lookup, as
+        `POST /auth/step-up` ("Challenges") describes, so a Manager gets `403 forbidden` and is
+        never challenged. The profile is
         created as an alternate at `version` 1, so `is_default: true` is refused
         (`default_has_own_operation`): the default binding moves only through its own operation
         (`setAccountDefaultProfile`).
@@ -3527,8 +3529,11 @@ paths:
         has since come back to the profile it was on, because the tag names the binding's
         version. Either way nothing changes: reload, then move again. A retry with the same
         `Idempotency-Key` and body is answered from the stored `200` before `If-Match` is read,
-        so a move whose answer was lost is not refused; the key with another body is
-        `409 idempotency_key_reuse`.
+        so a move whose answer was lost is not refused, but only once the session holds the
+        `risk_caps` step-up: a retry without one is challenged (`403 step_up_required`) before the
+        stored answer is served; the key with another body is
+        `409 idempotency_key_reuse`. A first send's stale `If-Match` (`412`) or missing profile
+        (`404`) is refused before the step-up, never challenged.
 
         The move is audited write-ahead in its transaction, as `profile.unbound` for the default
         it replaces, then `profile.bound` for the new one: when either record cannot be written
@@ -15611,7 +15616,7 @@ components:
             signatureRefused:
               value:
                 type: "https://candleviewer.local/errors/exchange_error"
-                title: "Bybit returned a non-zero exchange refusal code"
+                title: "The exchange returned a non-zero refusal code"
                 status: 502
                 detail: "The exchange refused the signed call, so the key could not be verified; nothing was stored."
                 instance: "urn:cv:req:0193f2bb-c001"
@@ -15919,7 +15924,7 @@ components:
               value:
                 {
                   type: "https://candleviewer.local/errors/exchange_rate_limited",
-                  title: "Bybit per-UID rate budget exhausted",
+                  title: "The exchange's per-UID rate budget is exhausted",
                   status: 429,
                   detail: "UID 10234567 budget exhausted (Bybit 10006); shed locally to protect the connection.",
                   instance: "urn:cv:req:0193f2bb-bbbb",
@@ -15944,7 +15949,7 @@ components:
               value:
                 {
                   type: "https://candleviewer.local/errors/internal_error",
-                  title: "Unhandled server error (correlation id in `instance`)",
+                  title: "Unhandled server error",
                   status: 500,
                   code: internal_error,
                 }
@@ -15972,7 +15977,7 @@ components:
             bybitReject:
               value:
                 type: "https://candleviewer.local/errors/exchange_error"
-                title: "Bybit returned a non-zero exchange refusal code"
+                title: "The exchange returned a non-zero refusal code"
                 status: 502
                 detail: "Order rejected: insufficient available balance."
                 instance: "urn:cv:req:0193f2bb-cccc"
@@ -16000,7 +16005,7 @@ components:
             bybitReject:
               value:
                 type: "https://candleviewer.local/errors/exchange_error"
-                title: "Bybit returned a non-zero exchange refusal code"
+                title: "The exchange returned a non-zero refusal code"
                 status: 502
                 detail: "Order rejected: insufficient available balance."
                 instance: "urn:cv:req:0193f2bb-cccd"

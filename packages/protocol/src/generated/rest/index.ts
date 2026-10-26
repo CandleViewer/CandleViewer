@@ -2322,8 +2322,11 @@ export interface paths {
      *     has since come back to the profile it was on, because the tag names the binding's
      *     version. Either way nothing changes: reload, then move again. A retry with the same
      *     `Idempotency-Key` and body is answered from the stored `200` before `If-Match` is read,
-     *     so a move whose answer was lost is not refused; the key with another body is
-     *     `409 idempotency_key_reuse`.
+     *     so a move whose answer was lost is not refused, but only once the session holds the
+     *     `risk_caps` step-up: a retry without one is challenged (`403 step_up_required`) before the
+     *     stored answer is served; the key with another body is
+     *     `409 idempotency_key_reuse`. A first send's stale `If-Match` (`412`) or missing profile
+     *     (`404`) is refused before the step-up, never challenged.
      *
      *     The move is audited write-ahead in its transaction, as `profile.unbound` for the default
      *     it replaces, then `profile.bound` for the new one: when either record cannot be written
@@ -2637,7 +2640,7 @@ export interface paths {
     put?: never;
     /**
      * Create a per-account profile (leverage, sizing, offsets, risk caps, allowed symbols)
-     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is path-gated, so a Manager meets the step-up first and `403 forbidden` after one. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). An account of another environment than this server's is `404`, as a missing one is, on every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`. The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
+     * @description Owner only: `accounts:write` is held by the Owner role alone, so no grant on an account gives a Manager this write. The write needs a step-up for class `risk_caps` (SR-025, SR-E28-02): without a live one the answer is `403 step_up_required`, audited as `auth.step_up_required`, and nothing is stored. The write is handler-gated: the step-up comes after authentication, request validation, RBAC and the account lookup, as `POST /auth/step-up` ("Challenges") describes, so a Manager gets `403 forbidden` and is never challenged. The profile is created as an alternate at `version` 1, so `is_default: true` is refused (`default_has_own_operation`): the default binding moves only through its own operation (`setAccountDefaultProfile`). An account of another environment than this server's is `404`, as a missing one is, on every profile write (C-2.11), and a body over 64 KiB is `413 payload_too_large`. The body is checked first, as `ProfileRejected` describes, and a `name` the account already uses, in any letter case, is `409 conflict`. Audited write-ahead as `profile.created`: when that record cannot be written nothing is stored (`503 audit_unavailable`). `Idempotency-Key` records are the caller's own (SR-E28-17) and kept 24 h at most; one that is lost re-runs the request, which then meets its own `name` (`409 conflict`).
      */
     post: operations["createAccountProfile"];
     delete?: never;
