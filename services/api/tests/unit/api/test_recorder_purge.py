@@ -14,14 +14,22 @@ import uuid
 from typing import Any
 
 import httpx
+import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from candleviewer.api.recorder_admin import AdminJobStore
-from candleviewer.api.recorder_purge import make_recorder_purge_router
+from candleviewer.api.recorder_purge import _holds, make_recorder_purge_router
 from candleviewer.audit.access import AuditPrincipal
 from candleviewer.audit.actions import AUDIT_ACTIONS
-from candleviewer.recorder.retention import PrunePlan, RetentionManager, RunReport, day_key
+from candleviewer.recorder.retention import (
+    Protected,
+    PruneItem,
+    PrunePlan,
+    RetentionManager,
+    RunReport,
+    day_key,
+)
 from tests.unit.api._job_poll import mount_job_poll
 from tests.unit.recorder._retention_fakes import NOW, T, World, day, manager
 
@@ -385,3 +393,57 @@ async def test_purge_non_owner_never_reaches_step_up_even_unelevated() -> None:
     assert r.status_code == 403 and r.json().get("code") != "step_up_required"
     assert env.elevation_checks == 0
     assert env.audit.calls[0][1]["reason"] == "purge_owner_only"
+
+
+@pytest.mark.parametrize(
+    "symbol",
+    ["", "*", "BTC*", "../BTCUSDT", "BTCUSDT/..", "btcusdt", "A" * 30 + "USDT", "BTCUSDT\x00"],
+    ids=["empty", "star", "prefix-glob", "dot-dot-lead", "dot-dot-tail", "lower", "long", "nul"],
+)
+async def test_purge_symbol_outside_the_closed_charset_is_422_and_nothing_is_planned(
+    symbol: str,
+) -> None:
+    """The purge scope is one exact symbol: no wildcard, traversal or case fold widens it."""
+    env = _Env()
+    r = await env.post(BODY | {"symbol": symbol, "confirm_symbol": symbol})
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    assert env.backend.plans == 0 and env.backend.runs == 0 and env.w.deletes == []
+
+
+async def test_purge_unknown_body_field_is_422_and_nothing_is_planned() -> None:
+    env = _Env()
+    r = await env.post(BODY | {"all": True})
+    assert r.status_code == 422 and r.json()["code"] == "validation_failed"
+    assert env.backend.plans == 0 and env.w.deletes == []
+
+
+async def test_purge_owner_without_step_up_is_refused_before_the_body_is_read() -> None:
+    """An unelevated Owner gets the step-up refusal even for a body that would not validate:
+    `include_pinned` and an unknown field are never parsed before elevation."""
+    env = _Env(elevated=False)
+    env.w.pinned.add("BTCUSDT")
+    r = await env.post(BODY | {"include_pinned": True, "junk": 1})
+    assert r.status_code == 403 and r.json()["code"] == "step_up_required"
+    assert env.elevation_checks == 1
+    assert env.backend.plans == 0 and env.w.deletes == []
+    assert [kw["reason"] for _, kw in env.audit.calls] == ["purge_requires_elevation"]
+
+
+async def test_purge_replayed_with_the_same_key_and_body_deletes_once() -> None:
+    env = _Env()
+    key = str(uuid.uuid4())
+    first = await env.post(BODY, key)
+    replay = await env.post(BODY, key)
+    assert first.status_code == replay.status_code == 202 and first.json() == replay.json()
+    await env.wait(first.json()["job_id"])
+    again = await env.post(BODY, key)
+    assert again.json() == first.json()
+    assert env.backend.plans == 1 and env.backend.runs == 1 and len(env.w.deletes) == 2
+
+
+def test_purge_holds_name_the_partition_key_and_reason_only() -> None:
+    """A held partition is reported by its key and reason; the hold's internal detail stays out."""
+    key = "trades/symbol=BTCUSDT/dt=2026-01-01"
+    item = PruneItem("cold", "trades", ("BTCUSDT",), key, 0, 1, 1, 1)
+    held = [Protected(item, "leased", "lease=replay-1 volume=/srv/rec")]
+    assert _holds(held) == [{"partition": key, "reason": "leased"}]
