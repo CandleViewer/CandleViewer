@@ -12,6 +12,7 @@ never wired in) reappears silently.
 from __future__ import annotations
 
 import asyncio
+import gc
 import os
 import re
 import threading
@@ -502,3 +503,34 @@ async def test_lifespan_runs_the_audit_budget_flush_and_drains_it_before_audit_s
     async with _lifespan(app):
         assert seen == ["start"]
     assert seen == ["start", "stop, audit stopped=False"] and ctx.audit.stopped
+
+
+async def test_lifespan_freezes_the_startup_heap_and_unfreezes_at_shutdown() -> None:
+    """B13 / #2523: once startup completes, its heap is in the permanent generation, so the GC
+    passes that kline pages trigger skip it; the teardown makes it collectable again."""
+    app = FastAPI()
+    app.state.app_context = _fake_ctx()
+    gc.unfreeze()  # a clean slate whatever ran before
+
+    async with _lifespan(app):
+        assert gc.get_freeze_count() > 0
+
+    assert gc.get_freeze_count() == 0
+
+
+async def test_lifespan_leaves_the_heap_unfrozen_when_startup_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = FastAPI()
+    ctx = _fake_ctx()
+    app.state.app_context = ctx
+    gc.unfreeze()
+
+    async def boom() -> None:
+        raise RuntimeError("boot check failed")
+
+    monkeypatch.setattr(ctx.mesh_self_check, "run_once", boom)
+    with pytest.raises(RuntimeError):
+        async with _lifespan(app):
+            pass  # never reached
+    assert gc.get_freeze_count() == 0

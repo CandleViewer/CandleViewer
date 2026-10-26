@@ -14,6 +14,7 @@ concern, does that.
 
 from __future__ import annotations
 
+import gc
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -100,6 +101,17 @@ class _Teardown:
                 raise held
             finally:
                 del held  # its traceback holds this frame: no reference cycle back to it
+
+
+def freeze_startup_heap() -> None:
+    """B13 / #2523: move the heap startup built (modules, routers, wired services) to the
+    permanent generation, so the full GC passes that per-request allocations trigger (5 000-bar
+    kline pages) no longer walk it; under five concurrent cold reads those passes were the p95
+    tail. Collect first so no startup garbage is pinned. Only cyclic GC is affected: refcounting
+    frees as before. A startup object that later becomes cyclic garbage waits for `unfreeze`
+    at shutdown (the lifespan's last step)."""
+    gc.collect()
+    gc.freeze()
 
 
 @asynccontextmanager
@@ -251,6 +263,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         ws_runtime = getattr(app.state, "ws_runtime", None)
         if ws_runtime is not None:
             ws_runtime.start()
+        freeze_startup_heap()  # B13 / #2523: last, once everything startup builds exists
         yield
     finally:
         # #3403: each step below is isolated (`_Teardown.run`), so whatever one raises, the later
@@ -347,6 +360,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             await teardown.run("supervisor.stop_all", supervisor.stop_all)
             if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself
                 await teardown.run("statechart_persistence", persistence.stop)
+            gc.unfreeze()  # B13 / #2523: what startup built is collectable again
             teardown.raise_held()
 
 
