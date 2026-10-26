@@ -66,9 +66,12 @@ async def test_book_stream_anchor_names_a_book_that_is_not_live() -> None:
     assert rig.stream.anchor("BTCUSDT") == "not_live"
 
 
-async def test_book_stream_anchor_names_a_live_book_that_stopped_applying_frames() -> None:
+async def test_book_stream_anchor_serves_a_quiet_live_book() -> None:
+    """F1: Bybit sends nothing while a book does not change; a LIVE book past the frame-age
+    limit is still valid, so it is still anchored (the watchdog takes a dead feed out of LIVE)."""
     rig = _Rig()
     await rig.feed(100)
-    rig.t = STALENESS_S["book"]
+    rig.t = 30 * STALENESS_S["book"]
 
-    assert rig.stream.anchor("BTCUSDT") == "stale"
+    assert rig.stream.is_stale("BTCUSDT")
+    assert isinstance(rig.stream.anchor("BTCUSDT"), BookSnapshot)

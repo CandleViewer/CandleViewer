@@ -301,16 +301,15 @@ class BookStream:
             return True
         return self._clock() - at >= BOOK_STALE_AFTER_S
 
-    def anchor(self, symbol: str) -> BookSnapshot | Literal["no_book", "not_live", "stale"]:
+    def anchor(self, symbol: str) -> BookSnapshot | Literal["no_book", "not_live"]:
         """#2223: the recorder's periodic seek anchor, the active tier's full book stamped with
-        its last applied frame, or why there is none (a stale book is not an anchor)."""
+        its last applied frame, or why there is none. Gated on LIVE, not on frame age: Bybit
+        sends nothing while a book does not change, so a quiet LIVE book is still valid."""
         tb = self._books.get(symbol)
         if tb is None:
             return "no_book"
         snap = tb.active.anchor_snapshot()
-        if snap is None:
-            return "not_live"
-        return "stale" if self.is_stale(symbol) else snap
+        return "not_live" if snap is None else snap
 
     def phase(self, symbol: str) -> BookPhase | None:
         tb = self._books.get(symbol)

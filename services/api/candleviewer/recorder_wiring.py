@@ -292,7 +292,7 @@ def build_recorder(
     if books is not None:
         anchors = SnapshotAnchors(
             books, writer, interval_s=float(settings.recorder_snapshot_interval_s),
-            clock=clocks.mono_s,
+            clock=clocks.mono_s, wall_us=wall_us,
         )  # fmt: skip
     runtime = RecorderRuntime(
         policy=policy, sessions=manager, writer=writer, restore_b11=restore_b11,

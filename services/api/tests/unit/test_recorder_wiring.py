@@ -21,6 +21,7 @@ from candleviewer.health_wiring import register_recorder_probe
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import ComponentState, HealthRegistry
 from candleviewer.recorder.budget import DiskBudget
+from candleviewer.recorder.metrics import recorder_anchor_skipped_total
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.recorder.sessions import SessionConfig
 from candleviewer.recorder.snapshot_anchors import NoAnchor
@@ -349,10 +350,12 @@ async def test_build_recorder_with_books_anchors_on_the_settings_interval(tmp_pa
     )  # fmt: skip
     assert rec.anchors is not None
     rec.writer.seed(["BTCUSDT"])
+    counted = recorder_anchor_skipped_total.labels(reason="not_live")
+    before = counted._value.get()
     await rec.anchors.tick()
     mono.advance(6)
     await rec.anchors.tick()
-    assert books.asked == []
+    assert counted._value.get() == before  # between slots a book not LIVE is only retried
     mono.advance(1)
     await rec.anchors.tick()
-    assert books.asked == ["BTCUSDT"]
+    assert counted._value.get() == before + 1 and books.asked == ["BTCUSDT"] * 3
