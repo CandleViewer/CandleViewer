@@ -33,7 +33,10 @@ def test_trading_disabled_problem_is_problem_plus_a_required_reason() -> None:
     assert (problem, extra["required"]) == (_ref("Problem"), ["reason"])
     assert extra["properties"]["code"] == {"const": "trading_disabled"}
     assert extra["properties"]["reason"] == _ref("OrderEntryRefusalReason")
-    assert "reason" not in _SCHEMAS["Problem"]["properties"]
+    # #2304: `Problem.reason` is the `step_up_required` challenge's free-standing sentence, a
+    # plain string; the gate's closed set lives only on `TradingDisabledProblem`.
+    assert _SCHEMAS["Problem"]["properties"]["reason"]["type"] == "string"
+    assert "$ref" not in _SCHEMAS["Problem"]["properties"]["reason"]
     assert set(api.TradingDisabledProblem.model_fields) == set(api.Problem.model_fields) | {
         "reason"
     }

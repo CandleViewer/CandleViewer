@@ -45,7 +45,7 @@ from candleviewer.api.csrf import (
     SESSION_REFUSALS_PER_WINDOW,
     source_ip,
 )
-from candleviewer.api.step_up_challenge import ChallengeText, mfa_reset_text
+from candleviewer.api.step_up_challenge import ChallengeText, challenge_reason, mfa_reset_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.access import AuditPrincipal
@@ -275,10 +275,14 @@ def _invalid_body(exc: ValidationError) -> JSONResponse:
 
 def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = None) -> JSONResponse:
     """`403 step_up_required`: the challenge issued for the one request it refused (#2304),
-    restating it in the server-composed `text` of a route that validated its request."""
+    restating it in the server-composed `text` of a route that validated its request, with the
+    class's fixed `reason` when the dialog design draws one."""
     restated = (
         {} if text is None else {"action_summary": text.action_summary, "target": text.target}
     )
+    reason = challenge_reason(challenge.action_class)
+    if reason is not None:
+        restated["reason"] = reason
     return _problem(
         403,
         "step_up_required",

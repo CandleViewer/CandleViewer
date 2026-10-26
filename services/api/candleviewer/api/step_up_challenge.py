@@ -44,6 +44,25 @@ class ChallengeText:
     target: str | None = None
 
 
+#: `Problem.reason`: SCR-006's line saying why the action needs a fresh step-up (E09-D06), the
+#: frame text verbatim, one per class. Only `no-grace-live-enable` draws a class reason ("Same
+#: frame for kill-switch disable"); a class whose frame draws none has no entry, so no copy is
+#: invented (AGENTS.md §8.13). Fixed text: never built from the request.
+_NO_GRACE_REASON = (
+    "Live enablement and kill-switch disable always need a fresh code, even right after a "
+    "recent step-up."
+)
+CHALLENGE_REASONS: dict[str, str] = {
+    "live_enablement": _NO_GRACE_REASON,
+    "killswitch": _NO_GRACE_REASON,
+}
+
+
+def challenge_reason(action_class: str) -> str | None:
+    """`Problem.reason` of a challenge for `action_class`, or None to omit the member."""
+    return CHALLENGE_REASONS.get(action_class)
+
+
 def quote_label(label: str) -> str:
     """A label quoted for `action_summary`: `'` and `\\` get a backslash, and every character
     outside printable ASCII is written `\\u{XXXX}` (upper-case hex, at least four digits)."""
@@ -365,11 +384,13 @@ def request_fingerprint(method: str, target: bytes, body: object | None) -> str:
 
 
 __all__ = [
+    "CHALLENGE_REASONS",
     "UPDATE_USER_RENDERED",
     "ChallengeText",
     "account_access_text",
     "account_reference",
     "canonical_json",
+    "challenge_reason",
     "disable_user_text",
     "export_audit_text",
     "import_key_text",

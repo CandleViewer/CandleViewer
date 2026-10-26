@@ -158,6 +158,7 @@ def test_step_up_required_is_a_403_in_the_error_catalogue(spec: dict[str, Any]) 
         ("action_class", {"type": "string"}),
         ("action_summary", {"type": "string"}),
         ("target", {"type": ["string", "null"]}),
+        ("reason", {"type": "string"}),
     ],
 )
 def test_problem_declares_the_step_up_challenge_field(
@@ -263,6 +264,38 @@ def test_kill_switch_release_challenge_restates_what_would_execute(spec: dict[st
     assert body["action_class"] == "killswitch"
     assert body["action_summary"] == "Release kill switch, scope global"
     assert set(_CHALLENGE_FIELDS) <= set(body)
+    assert body["reason"] == (
+        "Live enablement and kill-switch disable always need a fresh code, even right after a "
+        "recent step-up."
+    )
+
+
+def test_challenge_without_a_designed_reason_omits_it(spec: dict[str, Any]) -> None:
+    """`reason` is optional: a class with no designed SCR-006 line sends none (`keys`)."""
+    body = _forbidden_example(spec, "stepUpRequiredTypedConfirmation")
+    _validator(spec, _STEP_UP_REQUIRED_BODY).validate(body)
+    assert "reason" not in body
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "the server-composed sentence saying why this action needs a fresh step-up",
+        "the line the step-up dialog (SCR-006, E09-D06) shows under the action",
+        "shown verbatim; the client adds no prefix and never composes its own",
+        "One fixed sentence per action class, never built from the request",
+        "Omitted for a class whose dialog frame draws no such line",
+        "additive (C-6.3)",
+        "`TradingDisabledProblem.reason`",
+    ],
+)
+def test_problem_reason_states_its_rule(spec: dict[str, Any], rule: str) -> None:
+    assert rule in _problem_text(spec, "reason")
+
+
+def test_forbidden_response_names_the_step_up_reason(spec: dict[str, Any]) -> None:
+    text = _flat(spec["components"]["responses"]["Forbidden"]["description"])
+    assert "and, when its class has one, `reason`" in text
 
 
 def test_typed_confirmation_challenge_names_its_target(spec: dict[str, Any]) -> None:

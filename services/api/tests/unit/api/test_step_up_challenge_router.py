@@ -251,6 +251,21 @@ async def test_restatement_comes_from_server_records_never_the_request(
     assert _account_reference(_SPEC).fullmatch(account_part)
 
 
+async def test_challenge_states_why_the_action_needs_a_fresh_step_up() -> None:
+    """SCR-006's "why" line (E09-D06), composed by the server per class next to
+    `action_summary`: the no-grace frame's sentence for `killswitch`, and no member at all for a
+    class whose frame draws none (`users`)."""
+    w = await _world()
+    release = w.send(_RELEASE)
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(release.json())
+    assert release.json()["reason"] == (
+        "Live enablement and kill-switch disable always need a fresh code, even right after a "
+        "recent step-up."
+    )
+    invite = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
+    assert invite.json()["code"] == "step_up_required" and "reason" not in invite.json()
+
+
 @pytest.mark.parametrize("stale", ["expired", "unknown", "superseded"])
 async def test_stale_challenge_id_is_400_challenge_expired(stale: str) -> None:
     """AC "Challenge expiry": a challenge issued more than 5 minutes ago is refused 400. The
