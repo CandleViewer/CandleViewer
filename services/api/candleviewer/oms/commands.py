@@ -1148,13 +1148,14 @@ class OmsCommandPort:
         *,
         reason: str = STOP_REFUSED,
         by: float | None = None,
+        actor: SubmitActor | None = None,
     ) -> None:
         """The request's answer on its rows: `answered`, or `refused`, each void audited ahead
-        (`sl.modified`, or `tp.modified` for a take-profit side) with `reason`. A void's key names
-        the reason, `<reason>:<row id>`, as the stop gate's and the sweep's do: an amend's request
-        holds `<row id>` under the same action, and a void keyed the same would be deduped
-        against it and lost (#4587). A settle that fails leaves the rows in flight, for the
-        complete read (21 Sec.3.3.11), and is logged: the exchange's answer stands."""
+        with `reason` (`_void_record`, keyed apart from its request, #4587) under the request's
+        `actor`, the principal its rows hold: the writer refuses a record that names a user
+        without the role (C-2.9), so a void without it would never land. A settle that fails
+        leaves the rows in flight, for the complete read (21 Sec.3.3.11), and is logged: the
+        exchange's answer stands."""
         ids = [row.id for row in recorded]
         account_id, at = recorded[0].exchange_account_id, _at(self._now_us())
         try:
@@ -1162,13 +1163,7 @@ class OmsCommandPort:
                 await self._bounded(self._stops.settle(account_id, ids, "answered", at=at), by=by)
                 return
             voided = {**detail, "error_code": error_code}
-            records = [
-                _stop_record(
-                    _MODIFIED[row.kind], row, "denied", "warning", reason, voided,
-                    name=f"{reason}:{row.id}",
-                )
-                for row in recorded
-            ]  # fmt: skip
+            records = [_void_record(row, reason, voided, actor) for row in recorded]
 
             async def void(_rows: tuple[RecordedStopRow, ...]) -> None:
                 for record in records:
@@ -1399,7 +1394,9 @@ class OmsCommandPort:
         except RateBudgetExceededError as exc:  # nothing left: the rows are void, unsent
             code = OmsErrorCode.RATE_BUDGET_EXCEEDED.value
             if recorded:
-                await self._settle_stop(recorded, False, code, detail, reason=AMEND_REFUSED, by=by)
+                await self._settle_stop(
+                    recorded, False, code, detail, reason=AMEND_REFUSED, by=by, actor=actor
+                )
             _log().warning("oms_amend_rate_refused", order_link_id=row.order_link_id)
             retry = retry_after(exc.retry_after_s)
             return {"ok": False, "error_code": code, "retry_after_s": retry}
@@ -1407,7 +1404,7 @@ class OmsCommandPort:
             await self._venue(account, ack.error_code, ack.exchange_ret_code, by=by)
         if recorded:
             await self._settle_stop(
-                recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by
+                recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by, actor=actor
             )
         if ack.ok:
             kept = order_id_kept(ack.exchange_order_id)
@@ -1647,8 +1644,9 @@ def _stop_record(
     name: str | None = None,
 ) -> KeyedRecord:
     """A stop request's record, the row its object and the row's id its name (21 Sec.3.3.11), or
-    `name` when given (a void's, `<reason>:<row id>`); it names the row's own principal
-    (`actor_user_id`), with the role when the request's `actor` is given (C-2.9)."""
+    `name`, which only a void's gives (`_void_record`); it names the row's own principal
+    (`actor_user_id`) and, for a user's, the request's `actor` with the role, which the writer
+    refuses it without (C-2.9)."""
     return KeyedRecord(
         action=action,
         name=str(row.id) if name is None else name,
@@ -1661,4 +1659,18 @@ def _stop_record(
         actor_user_id=row.actor_user_id,
         actor=actor,
         detail={**detail, "kind": row.kind, "source": row.source},
+    )
+
+
+def _void_record(
+    row: RecordedStopRow, reason: str, detail: Mapping[str, str | None], actor: SubmitActor | None
+) -> KeyedRecord:
+    """A refused request's void of `row`, `sl.modified` (`tp.modified` for a take-profit side)
+    denied with `reason` under the request's `actor`; every void the port writes is built here.
+    It is named `<reason>:<row id>`, as the stop gate's and the sweep's voids are, never as its
+    request: an amend's request holds `<row id>` under the same action, and a void named so would
+    be deduped against it and lost (#4587)."""
+    name = f"{reason}:{row.id}"
+    return _stop_record(
+        _MODIFIED[row.kind], row, "denied", "warning", reason, detail, actor, name=name
     )
