@@ -190,6 +190,6 @@ Feature: SCR-023 sync groups and the per-panel scale link — accessibility acce
   Scenario: Colour independence and zoom
     Given the three group badges and the synced crosshair
     Then every badge carries its letter and glyph, and reads under protanopia, deuteranopia, tritanopia, greyscale and forced-colors
-    And at 200 % the popover becomes a modal with one column, a sticky footer and a scrolling body, nothing clipped
+    And at 200 % zoom and at the 150 % text scale the popover becomes a modal with one column, a sticky footer and a scrolling body, nothing clipped
     And the modal sits between the TopBar and the StatusBar, so the ENV badge, the Safety cluster, the banner band and the StatusBar stay visible and unscrimmed
 ```
