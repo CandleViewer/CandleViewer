@@ -39,8 +39,6 @@ from candleviewer.recorder.writer import AnchorShed, BookSnapshotLike
 
 #: Why the source has no anchor for a symbol (`BookStream.anchor`).
 NoAnchor = Literal["no_book", "not_live"]
-#: The default cadence (24 §13.1 `RecordingPolicy.snapshot_interval_s`, `RecorderConfig`).
-DEFAULT_INTERVAL_S: Final = 60
 #: How far a quiet book's anchor is stamped before the slot's wall-clock time: the bound on a
 #: frame still in flight (network, dispatch lane) plus the local clock's lead on the exchange's
 #: (its default receive window). A delta the book lacks was stamped by the exchange after it.
