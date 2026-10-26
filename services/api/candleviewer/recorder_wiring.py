@@ -48,7 +48,9 @@ from candleviewer.recorder.sessions import (
     SessionStore,
     TopicResolver,
 )
+from candleviewer.recorder.snapshot_anchors import AnchorBooks, NoAnchor, SnapshotAnchors
 from candleviewer.recorder.writer import (
+    BookSnapshotLike,
     DiskGate,
     RecorderStore,
     RowSink,
@@ -113,6 +115,18 @@ async def _no_b11_restore() -> None:
     logger().warning("recorder_b11_restore_not_wired")
 
 
+class LazyAnchorBooks:
+    """#2223: the ingestion book stream is attached after the recorder is composed, so it is
+    read per call; until it exists every recorded symbol has `no_book` (counted, not a gap)."""
+
+    def __init__(self, books: Callable[[], AnchorBooks | None]) -> None:
+        self._books = books
+
+    def anchor(self, symbol: str) -> BookSnapshotLike | NoAnchor:
+        books = self._books()
+        return "no_book" if books is None else books.anchor(symbol)
+
+
 class BoundedStore:
     """The policy's store with each call bounded: `RecordedStore`'s members all are, so a new one
     is too. A call that outlives `timeout_s` raises `TimeoutError`, leaving the lock to the next."""
@@ -165,6 +179,7 @@ class ComposedRecorder:
     writer: StreamWriter
     runtime: RecorderRuntime
     on_ready: Callable[[], Awaitable[None]]
+    anchors: SnapshotAnchors | None = None  # #2223: the runtime's last tick step
 
 
 def policy_config(settings: Settings) -> PolicyConfig:
@@ -222,8 +237,10 @@ def build_recorder(
     clocks: Clocks = SYSTEM,
     bounds: RuntimeBounds = BOUNDS,
     restore_b11: Callable[[], Awaitable[None]] = _no_b11_restore,
+    books: AnchorBooks | None = None,
 ) -> ComposedRecorder:
-    """The recorder for `settings.environment`, its runtime not started (the supervisor does)."""
+    """The recorder for `settings.environment`, its runtime not started (the supervisor does).
+    With `books`, the runtime's tick writes the periodic seek anchors (#2223)."""
     env = settings.environment.value
     halted, refuses = _disk(budget)
 
@@ -271,10 +288,16 @@ def build_recorder(
         writer.seed(list(policy.effective_set()))
         await open_missing()
 
+    anchors = None
+    if books is not None:
+        anchors = SnapshotAnchors(
+            books, writer, interval_s=float(settings.recorder_snapshot_interval_s),
+            clock=clocks.mono_s, wall_us=wall_us,
+        )  # fmt: skip
     runtime = RecorderRuntime(
         policy=policy, sessions=manager, writer=writer, restore_b11=restore_b11,
         seed=NoPositionSource(env), process_start_us=clocks.process_start_us, env=env,
         clock=clocks.mono_s, sleep=clocks.sleep, rng=clocks.rng, bounds=bounds, on_ready=on_ready,
-        heal=open_missing,
+        heal=open_missing, anchors=None if anchors is None else anchors.tick,
     )  # fmt: skip
-    return ComposedRecorder(policy, rows, budget, env, manager, writer, runtime, on_ready)
+    return ComposedRecorder(policy, rows, budget, env, manager, writer, runtime, on_ready, anchors)

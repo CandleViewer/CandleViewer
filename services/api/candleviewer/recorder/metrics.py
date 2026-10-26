@@ -55,6 +55,15 @@ recorder_spill_bytes = Gauge("recorder_spill_bytes", "Recorder WAL spill size on
 recorder_write_backlog_rows = Gauge(
     "recorder_write_backlog_rows", "Rows queued in memory, not yet flushed to QuestDB."
 )
+#: #2223: periodic seek anchors not written (`no_book`, `not_live`, `error`, `late`,
+#: `timeout`, `gated`, `spilling`).
+#: Not a gap: the deltas are still recorded and a seek falls back to the previous anchor.
+recorder_anchor_skipped_total = Counter(
+    "recorder_anchor_skipped_total",
+    "Periodic book seek anchors skipped, by reason: no_book, not_live, error, late, timeout,"
+    " gated, spilling (24-internal-schemas.md 13.7).",
+    ["reason"],
+)
 recorder_flush_duration_seconds = Histogram(
     "recorder_flush_duration_seconds",
     "Time to write + flush one recorder batch.",
@@ -100,6 +109,7 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "recorder_spill_bytes",
         "recorder_write_backlog_rows",
         "recorder_flush_duration_seconds",
+        "recorder_anchor_skipped_total",
         "disk_used_ratio",
         "disk_free_bytes",
         "recorder_disk_pressure_level",

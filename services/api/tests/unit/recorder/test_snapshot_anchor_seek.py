@@ -1,0 +1,172 @@
+"""#2223 replay seek over a recorded day: an anchor at every `snapshot_interval_s` boundary.
+
+A synthetic, deterministic 200-depth book whose last applied delta is half a second before each
+tick, driven by a fake clock and ticked once a second as the recorder runtime does, is anchored
+through the real `StreamWriter` lane. The flushed `orderbook_snapshots` rows are mapped by the
+storage mapper every tier shares (`event_from_row`) into an in-memory hot tier, and the replay
+merge's own `anchor_at` (E26-T04) is asked at every boundary of the day. A resync stretch shows a
+skipped anchor: counted, no gap row, and the seek falls back to the previous anchor (§13.7).
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+from pathlib import Path
+from uuid import UUID
+
+from candleviewer.domain.primitives import EventId
+from candleviewer.exchange.base.models import BookLevel, BookSnapshot
+from candleviewer.recorder.metrics import recorder_anchor_skipped_total
+from candleviewer.recorder.snapshot_anchors import NoAnchor, SnapshotAnchors, anchor_ts
+from candleviewer.recorder.writer import StreamWriter
+from candleviewer.storage.models import StreamKind
+from candleviewer.storage.repositories.recorded import (
+    RecordedBookDelta,
+    RecordedBookSnapshot,
+    RecordedEvent,
+    event_from_row,
+)
+from tests.unit.recorder._writer_helpers import FakeClock, make_writer
+from tests.unit.replay._events import SECOND, SYM, T0, Harness, delta, request
+
+INTERVAL_S = 60
+DAY_S = 86_400
+#: The book is resyncing from 05:00:30 to 05:03:30: the 05:01, 05:02 and 05:03 anchors are skipped.
+RESYNC_S = (5 * 3_600 + 30, 5 * 3_600 + 210)
+
+
+class SyntheticBook:
+    """`AnchorBooks` over a deterministic book that moves once a second with the clock."""
+
+    def __init__(self, clock: FakeClock) -> None:
+        self._clock, self._t0 = clock, clock.t
+
+    def offset_s(self) -> int:
+        return int(self._clock.t - self._t0)
+
+    def anchor(self, symbol: str) -> BookSnapshot | NoAnchor:
+        s = self.offset_s()
+        if RESYNC_S[0] <= s < RESYNC_S[1]:
+            return "not_live"
+        ts = T0 + s * SECOND - SECOND // 2  # the last applied delta, half a second ago
+        mid = 650_000 + s % 97
+        return BookSnapshot(
+            event_id=EventId(UUID(int=s + 1)), ts_event=ts, ts_ingest=ts, source="live",
+            symbol=symbol, depth=200, update_id=s, cross_seq=s * 10, ts_match=ts,
+            reason="subscribe",
+            bids=tuple(_lv(mid - 1 - i, i + 1) for i in range(200)),
+            asks=tuple(_lv(mid + 1 + i, i + 1) for i in range(200)),
+        )  # fmt: skip
+
+
+def _lv(ticks: int, qty: int) -> BookLevel:
+    return BookLevel(price=Decimal(ticks) / 10, qty=Decimal(qty), price_ticks=ticks)
+
+
+class IdleBook:
+    """A LIVE book that last changed at `T0` and then stayed quiet (Bybit sends nothing)."""
+
+    def anchor(self, symbol: str) -> BookSnapshot | NoAnchor:
+        return BookSnapshot(
+            event_id=EventId(UUID(int=1)), ts_event=T0, ts_ingest=T0, source="live",
+            symbol=symbol, depth=200, update_id=42, cross_seq=420, ts_match=T0,
+            reason="subscribe", bids=(_lv(649_999, 1),), asks=(_lv(650_001, 1),),
+        )  # fmt: skip
+
+
+async def _record(
+    tmp_path: Path, book: SyntheticBook | IdleBook | None, seconds: int
+) -> tuple[list[dict[str, object]], StreamWriter, list[dict[str, object]]]:
+    """Tick the anchors once a second for `seconds`, the wall clock at `T0` + elapsed."""
+    writer, sink, store, _events, clock = await make_writer(tmp_path, env="live")
+    writer.seed([SYM])
+    t0 = clock.t
+    anchors = SnapshotAnchors(
+        book or SyntheticBook(clock), writer, interval_s=INTERVAL_S, clock=clock,
+        wall_us=lambda: T0 + round((clock.t - t0) * SECOND),
+    )  # fmt: skip
+    await anchors.tick()  # the runtime's first tick arms the grid (and anchors a LIVE book)
+    for _ in range(seconds):
+        clock.advance(1)
+        await anchors.tick()
+    clock.advance(1)
+    await writer.pump("orderbook_snapshots")
+    await writer.flush_gaps()
+    return sink.rows("orderbook_snapshots"), writer, store.gaps
+
+
+async def _late_boundaries(rows: list[dict[str, object]], seconds: int) -> list[int]:
+    """Every interval boundary whose `anchor_at` finds none, or one older than an interval."""
+    harness = Harness(
+        hot=[event_from_row(StreamKind.ORDERBOOK_SNAPSHOT, row) for row in rows],
+        req=request(start_us=0, end_us=seconds * SECOND, streams=(StreamKind.ORDERBOOK_SNAPSHOT,)),
+    )
+    merge = harness.merge()
+    late: list[int] = []
+    for slot in range(1, seconds // INTERVAL_S + 1):
+        at = T0 + slot * INTERVAL_S * SECOND
+        anchor = await merge.anchor_at(SYM, at)
+        if anchor is None or at - anchor.ts_us > INTERVAL_S * SECOND:
+            late.append(slot)
+            continue
+        assert isinstance(anchor.payload, RecordedBookSnapshot)
+        assert len(anchor.payload.bids) == len(anchor.payload.asks) >= 1
+    return late
+
+
+async def test_seek_finds_an_anchor_at_most_one_interval_old_at_every_boundary_of_a_day(
+    tmp_path: Path,
+) -> None:
+    skipped = recorder_anchor_skipped_total.labels(reason="not_live")
+    before = skipped._value.get()
+
+    rows, _writer, gaps = await _record(tmp_path, None, DAY_S)
+
+    skipped_slots = {s // INTERVAL_S for s in range(*RESYNC_S) if s % INTERVAL_S == 0}
+    # One anchor at the first tick (a new LIVE book), then one per slot less the skipped ones.
+    assert len(rows) == 1 + DAY_S // INTERVAL_S - len(skipped_slots) == 1_438
+    # Only the skipped boundaries fall back to an older anchor (the 05:00 one), within the
+    # replay's one-hour lookback; every other boundary has one no more than an interval old.
+    assert await _late_boundaries(rows, DAY_S) == sorted(skipped_slots) == [301, 302, 303]
+    assert skipped._value.get() == before + 3
+    assert gaps == []
+
+
+async def test_seek_finds_an_anchor_every_slot_of_a_live_book_idle_for_two_hours(
+    tmp_path: Path,
+) -> None:
+    """F1: an anchor stamped at its last delta would fall out of the replay's one-hour lookback;
+    stamped at the slot it is found within one interval of every boundary."""
+    span = 2 * 3_600
+    rows, _writer, _gaps = await _record(tmp_path, IdleBook(), span)
+
+    assert len(rows) == 1 + span // INTERVAL_S
+    assert {r["update_id"] for r in rows} == {42}  # the unchanged book, valid at every slot
+    assert await _late_boundaries(rows, span) == []
+
+
+async def test_seek_from_an_anchor_never_redelivers_a_delta_at_or_below_it() -> None:
+    """F6: the anchor follows the last delta it holds (`anchor_ts` > that delta's `ts`) and
+    precedes the next one, so a replay from the anchor starts at the first delta it lacks."""
+    ms = 1_000
+    held = [delta(d * 100 * ms, update_id=d) for d in range(1, 4)]  # whole-ms exchange stamps
+    stamp = anchor_ts(held[-1].ts_us, held[-1].ts_us + 40 * ms)  # read 40 ms later, busy book
+    anchor = RecordedEvent(
+        stamp, 3, SYM, StreamKind.ORDERBOOK_SNAPSHOT, (3, 200, -1),
+        RecordedBookSnapshot(200, 3, None, ((Decimal(1), Decimal(1)),), ()),
+    )  # fmt: skip
+    later = [delta(d * 100 * ms, update_id=d) for d in range(4, 6)]
+    harness = Harness(
+        hot=[*held, anchor, *later],
+        req=request(
+            start_us=stamp - T0, end_us=SECOND,
+            streams=(StreamKind.ORDERBOOK_DELTA, StreamKind.ORDERBOOK_SNAPSHOT),
+        ),
+    )  # fmt: skip
+
+    items = await harness.read_all()
+
+    replayed = [i for i in items if isinstance(i, RecordedEvent)]
+    assert replayed[0].ts_us == stamp and replayed[0].stream is StreamKind.ORDERBOOK_SNAPSHOT
+    deltas = [e.payload for e in replayed if isinstance(e.payload, RecordedBookDelta)]
+    assert [d.update_id for d in deltas] == [4, 5]

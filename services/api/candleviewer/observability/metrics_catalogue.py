@@ -3017,6 +3017,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "recorder_anchor_skipped_total",
+        "counter",
+        "anchors",
+        ("reason",),
+        "Periodic book seek anchors skipped, by reason: no_book, not_live, error, late, timeout,"
+        " gated, spilling (24-internal-schemas.md 13.7).",
+        "a reason other than late rising for 10 min (seek falls back an interval)",
+        _L,
+        "E16",
+        max_series=7,
+        exported=True,
+    ),
+    _s(
         "recorder_flush_duration_seconds",
         "histogram",
         "seconds",

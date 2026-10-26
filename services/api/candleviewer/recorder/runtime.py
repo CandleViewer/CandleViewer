@@ -77,13 +77,15 @@ class RecorderRuntime:
         bounds: RuntimeBounds,
         on_ready: Callable[[], Awaitable[None]] | None = None,
         heal: Callable[[], Awaitable[None]] | None = None,
+        anchors: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         """`clock` is monotonic seconds, `rng` a uniform draw in [0, 1) (the backoff's jitter).
         `on_ready` runs once, after the startup and before `startup_complete` turns true: it opens
         what a restored chart never published (S3a finding 1). It is isolated: a raise is logged and
         health degrades. `heal` is a tick step after the policy's: it reopens what a failed fan-out
-        left without a session (SEC-B1), bounded like every step."""
-        self._on_ready, self._heal = on_ready, heal
+        left without a session (SEC-B1), bounded like every step. `anchors` is the last step: the
+        periodic book seek anchors (#2223), which keep their own cadence on `clock`."""
+        self._on_ready, self._heal, self._anchors = on_ready, heal, anchors
         self._on_ready_error: type[Exception] | None = None
         self._policy, self._sessions, self._writer = policy, sessions, writer
         self._restore_b11, self._seed, self._env = restore_b11, seed, env
@@ -249,6 +251,8 @@ class RecorderRuntime:
         )
         if self._heal is not None:
             steps = (*steps, ("heal", self._heal))
+        if self._anchors is not None:
+            steps = (*steps, ("anchors", self._anchors))
         for step, call in steps:  # each isolated: a failing one never skips the other
             try:
                 async with asyncio.timeout(self._bounds.tick_timeout_s):

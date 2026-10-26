@@ -21,8 +21,10 @@ from candleviewer.health_wiring import register_recorder_probe
 from candleviewer.observability.health import HealthReport, HealthStatus
 from candleviewer.observability.health_probes import ComponentState, HealthRegistry
 from candleviewer.recorder.budget import DiskBudget
+from candleviewer.recorder.metrics import recorder_anchor_skipped_total
 from candleviewer.recorder.policy import PolicyConfig, RecordingPolicy, user_actor
 from candleviewer.recorder.sessions import SessionConfig
+from candleviewer.recorder.snapshot_anchors import NoAnchor
 from candleviewer.recorder.writer import WriterConfig
 from candleviewer.settings import Environment, Settings
 from tests.unit.recorder._fakes import FakeAudit, FakeBus, FakeClock, Mem
@@ -316,3 +318,44 @@ async def test_the_probe_maps_the_runtime_status_and_no_detail_reaches_the_regis
     assert health.state is expected
     assert "MARKER" not in repr(snap) and "MARKER" not in repr(events.written)
     assert events.written  # the edge was written, without the detail
+
+
+class _Books:
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    def anchor(self, symbol: str) -> NoAnchor:
+        self.asked.append(symbol)
+        return "not_live"
+
+
+def test_lazy_anchor_books_read_the_stream_per_call_and_name_a_missing_one() -> None:
+    """#2223: the ingestion book stream is attached after the recorder is composed."""
+    books: list[_Books] = []
+    lazy = rw.LazyAnchorBooks(lambda: books[0] if books else None)
+    assert lazy.anchor("BTCUSDT") == "no_book"
+    books.append(_Books())
+    assert lazy.anchor("BTCUSDT") == "not_live" and books[0].asked == ["BTCUSDT"]
+
+
+async def test_build_recorder_with_books_anchors_on_the_settings_interval(tmp_path: Path) -> None:
+    settings = Settings(parquet_root=str(tmp_path / "parquet"), recorder_snapshot_interval_s=7)
+    mono, books = FakeClock(50.0), _Books()
+    rec = rw.build_recorder(
+        settings, rw.policy_config(settings), recorded=Mem(), sessions=MemRecorderStore(),
+        counters=FakeStore(), rows=cast(Any, object()), audit=FakeAudit(), bus=FakeBus(),
+        budget=None, invalidate=lambda _s: None, topics=lambda t: (t, ()),
+        sinks=lambda _s: FakeSink(), events=FakeEvents(),
+        clocks=rw.Clocks(mono_s=mono, process_start_us=0), books=books,
+    )  # fmt: skip
+    assert rec.anchors is not None
+    rec.writer.seed(["BTCUSDT"])
+    counted = recorder_anchor_skipped_total.labels(reason="not_live")
+    before = counted._value.get()
+    await rec.anchors.tick()
+    mono.advance(6)
+    await rec.anchors.tick()
+    assert counted._value.get() == before  # between slots a book not LIVE is only retried
+    mono.advance(1)
+    await rec.anchors.tick()
+    assert counted._value.get() == before + 1 and books.asked == ["BTCUSDT"] * 3

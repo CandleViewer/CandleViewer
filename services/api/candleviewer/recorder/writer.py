@@ -47,6 +47,7 @@ import structlog
 from candleviewer.observability import spawn
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
 from candleviewer.recorder.metrics import (
+    recorder_anchor_skipped_total,
     recorder_bytes_written_total,
     recorder_flush_duration_seconds,
     recorder_rows_total,
@@ -76,6 +77,10 @@ STREAM_KIND: Final[dict[Stream, str]] = {
     "liquidations": "liquidations",
 }
 GAP_CAUSE: Final = "backpressure_drop"
+#: `orderbook_snapshots.source` of a periodic seek anchor, a book built locally (21 Sec.4.3).
+ANCHOR_SOURCE: Final = "synthetic"
+#: Why the writer shed an anchor (`recorder_anchor_skipped_total{reason}`, #2223).
+AnchorShed = Literal["gated", "spilling"]
 _EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -294,7 +299,10 @@ def delta_records(ev: BookDeltaLike) -> list[WalRecord]:
     return out
 
 
-def snapshot_records(ev: BookSnapshotLike) -> list[WalRecord]:
+def snapshot_records(
+    ev: BookSnapshotLike, *, ts: int | None = None, source: str = "exchange"
+) -> list[WalRecord]:
+    """`ts` overrides the event's time (a seek anchor's stamp), `source` the row's origin."""
     import orjson
 
     # `epoch_id` (a DEDUP key) is the book module's rebuild counter, which is not on the event,
@@ -305,12 +313,17 @@ def snapshot_records(ev: BookSnapshotLike) -> list[WalRecord]:
         "update_id": ev.update_id,
         "cross_seq": ev.cross_seq,
         "ts_match": ev.ts_match,
-        "source": "exchange",
+        "source": source,
         "bids": orjson.dumps([[_num(lv.price), _num(lv.qty)] for lv in ev.bids]).decode(),
         "asks": orjson.dumps([[_num(lv.price), _num(lv.qty)] for lv in ev.asks]).decode(),
         "level_count": len(ev.bids) + len(ev.asks),
     }
-    return [_rec("orderbook_snapshots", ev.symbol, ev.ts_event, ev.update_id, 0, row)]
+    at = ev.ts_event if ts is None else ts
+    return [_rec("orderbook_snapshots", ev.symbol, at, ev.update_id, 0, row)]
+
+
+def _is_anchor(rec: WalRecord) -> bool:
+    return rec.stream == "orderbook_snapshots" and rec.row.get("source") == ANCHOR_SOURCE
 
 
 _TICKER_COLS: Final = (
@@ -559,6 +572,10 @@ class StreamWriter:
     def is_recording(self, symbol: str) -> bool:
         return symbol in self._active
 
+    def recorded(self) -> frozenset[str]:
+        """The effective set, for the periodic anchors (#2223)."""
+        return frozenset(self._active)
+
     def note_reconnect(self, symbol: str) -> None:
         self._ctr(symbol).reconnects += 1
 
@@ -584,6 +601,30 @@ class StreamWriter:
         if ev.symbol in self._active:
             self._last_update_id[ev.symbol] = ev.update_id
             await self._admit("orderbook_snapshots", ev.symbol, snapshot_records(ev))
+
+    async def on_book_anchor(self, ev: BookSnapshotLike, *, at_us: int) -> AnchorShed | None:
+        """A periodic seek anchor (#2223, 24 Sec.13.7), stamped `at_us`: queued on the
+        `orderbook_snapshots` lane, or shed (the reason returned) while the disk gate drops the
+        symbol or the lane spills or would start to: an anchor never spends the WAL budget the
+        deltas need. No data is lost either way, so it is never a gap, a received or dropped
+        message or an event bound, and it never moves the delta sequence tracker (the bus may
+        still hold deltas older than the book it was read from). Never awaits I/O."""
+        if ev.symbol not in self._active:
+            return None
+        try:
+            gated = self._gate.halted() and not self._gate.position_open(ev.symbol)
+        except Exception:  # as in `_admit`: a failing check never stops recording
+            gated = False
+        if gated:
+            return "gated"
+        lane = self._lanes["orderbook_snapshots"]
+        if lane.spilling or len(lane.queue) + 1 > self._cfg.max_queue_rows:
+            return "spilling"
+        if not lane.queue:
+            lane.oldest_at = self._clock()
+        lane.queue.extend(snapshot_records(ev, ts=at_us, source=ANCHOR_SOURCE))
+        self._publish_gauges()
+        return None
 
     async def on_ticker(self, ev: TickerLike) -> None:
         if ev.symbol in self._active:
@@ -772,6 +813,10 @@ class StreamWriter:
             self._inflight_copy = entry
 
     async def _drop(self, lane: _Lane, records: list[WalRecord]) -> None:
+        anchors = [r for r in records if _is_anchor(r)]
+        if anchors:  # queued before the lane spilled: shed, not lost data (no gap, no drop)
+            recorder_anchor_skipped_total.labels(reason="spilling").inc(len(anchors))
+            records = [r for r in records if not _is_anchor(r)]
         new_episodes: set[str] = set()
         for rec in records:
             self._ctr(rec.symbol).dropped += 1
