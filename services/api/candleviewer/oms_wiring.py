@@ -134,7 +134,7 @@ from candleviewer.oms.repository import (
 )
 from candleviewer.oms.routing import RoutedPort, TradingRouter
 from candleviewer.oms.stop_gate import ResolvingStopGate, StopVoidAudit
-from candleviewer.oms.stop_resolution import CompleteRead, StopResolver
+from candleviewer.oms.stop_resolution import CompleteRead, StopResolver, store_timeout_for
 from candleviewer.oms.submit import (
     RESULT_WAIT_S,
     STORE_TIMEOUT_S,
@@ -1167,9 +1167,10 @@ OmsState = Literal["starting", "ok", "degraded"]
 STARTUP_POLL_S: Final = 0.25
 #: The sweep's own statement cap on its reads, in milliseconds (CR-S3C1C-01). 21 Sec.13.1 row 49
 #: scans the environment's orders for `held` rows, which no index serves, and a history the order
-#: stores' 2 s cap cannot scan would fail every retry and leave the OMS never ready. 15 s, beside
-#: the startup wait's 45 s ceiling, keeps the sweep inside a deploy's 60 s `/readyz` window, and
-#: scans about 3 million rows at a conservative 200 000 rows a second.
+#: stores' cap (`CV_OMS_STATEMENT_TIMEOUT_MS`, 2 s by default, 5 s at most) cannot scan would fail
+#: every retry and leave the OMS never ready. 15 s, beside the startup wait's 45 s ceiling, keeps
+#: the sweep inside a deploy's 60 s `/readyz` window, and scans about 3 million rows at a
+#: conservative 200 000 rows a second.
 SWEEP_STATEMENT_TIMEOUT_MS: Final = 15_000
 #: What the client waits past that cap for one sweep read or write, in seconds, before it gives up
 #: on a stalled connection (CR-S3E3-03): the attempt is retried and logged.
@@ -1477,14 +1478,15 @@ def pg_stores(settings: Settings, metrics: Metrics) -> OmsStores:
     ops = PersistOps(metrics, where="order_lane")  # its pending rows apart from a bundle's
     counts = MachineEventSinkMetrics(flushed=ops.flushed, pending=ops.pending)
     audit_wal = lane_audit_wal(settings)
+    cap_ms = settings.oms_statement_timeout_ms  # every capped store's but the sweep's (20 Sec.7.2)
     return OmsStores(
-        orders=SqlAlchemyOrderStore(pool),
-        executions=SqlAlchemyExecutionStore(pool),
-        submissions=SqlAlchemySubmissionStore(pool),
-        anchors=SqlAlchemyIdempotencyAnchorStore(pool),
-        stops=SqlAlchemyRecordedStopStore(pool),
-        groups=SqlAlchemyTradeGroupStore(pool),
-        accounts=SqlAlchemyTradingAccountReads(pool),
+        orders=SqlAlchemyOrderStore(pool, statement_timeout_ms=cap_ms),
+        executions=SqlAlchemyExecutionStore(pool, statement_timeout_ms=cap_ms),
+        submissions=SqlAlchemySubmissionStore(pool, statement_timeout_ms=cap_ms),
+        anchors=SqlAlchemyIdempotencyAnchorStore(pool, statement_timeout_ms=cap_ms),
+        stops=SqlAlchemyRecordedStopStore(pool, statement_timeout_ms=cap_ms),
+        groups=SqlAlchemyTradeGroupStore(pool, statement_timeout_ms=cap_ms),
+        accounts=SqlAlchemyTradingAccountReads(pool, statement_timeout_ms=cap_ms),
         sweep=SqlAlchemyOrderStore(pool, statement_timeout_ms=SWEEP_STATEMENT_TIMEOUT_MS),
         audit=lambda alarm: build_lane_audit_writer(
             SqlAlchemyAuditRepository(pool), audit_wal, on_alarm=alarm
@@ -2457,8 +2459,9 @@ class OmsRuntime:
             halt = ClockHalt(ClockHealthBinding(clock), monotonic=self._monotonic, metrics=metrics)
             command_accounts = CommandAccounts(accounts, self._pager)
             resolver = StopResolver(
-                stops, CompleteRead(orders), StopVoidAudit(audit), now=self._now
-            )
+                stops, CompleteRead(orders), StopVoidAudit(audit), now=self._now,
+                store_timeout_s=store_timeout_for(settings.oms_statement_timeout_ms),
+            )  # fmt: skip
             gate = ResolvingStopGate(
                 stops, resolver, accounts=command_accounts, port_for=router.port_for,
                 bound_s=bounds.stop_request_s, now=self._now, monotonic=self._monotonic,

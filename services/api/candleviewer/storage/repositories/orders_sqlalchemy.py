@@ -37,10 +37,11 @@ Before any statement, `transition` refuses a fill's event and `filled`, `append`
 (`require_no_fill`): a fill comes with its execution.
 
 Every unit of work first caps each of its statements, lock waits included, at the store's
-`statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS`, the #845 default of `CV_OMS_STATEMENT_TIMEOUT_MS`,
-instead of the repository-wide 30 s), so a blocked order write fails within it and the OMS can
-refuse the order (24 Sec.8.2 S7) rather than hold the submit path. The cap does not cover opening
-a connection or waiting for the pool; the OMS bounds each call itself (`orders.py`).
+`statement_timeout` (`CV_OMS_STATEMENT_TIMEOUT_MS`, which the runtime builds it with; by default
+`OMS_STATEMENT_TIMEOUT_MS`, the #845 default, instead of the repository-wide 30 s), so a blocked
+order write fails within it and the OMS can refuse the order (24 Sec.8.2 S7) rather than hold the
+submit path. The cap does not cover opening a connection or waiting for the pool; the OMS bounds
+each call itself (`orders.py`).
 
 A failure of any call, read or write, never leaves with its statement, parameters or `DETAIL`,
 which carry P1 money values (21 Sec.12), and is never chained (C-12.6). A database error is
@@ -81,6 +82,7 @@ from candleviewer.db.models import (
     users,
 )
 from candleviewer.domain.primitives import Environment
+from candleviewer.settings import OMS_STATEMENT_TIMEOUT_DEFAULT_MS
 from candleviewer.storage.errors import (
     StorageQueryFailed,
     StorageTierUnavailable,
@@ -150,8 +152,9 @@ UNSCOPED: Final = frozenset({
     "create_statement", "link_taken_statement", "environment_accounts_statement",
     "list_unfinished_statement",
 })  # fmt: skip
-#: The default per-statement cap of the order store, in ms (#845 technical notes).
-OMS_STATEMENT_TIMEOUT_MS: Final = 2000
+#: The default per-statement cap of the OMS stores, in ms (#845 technical notes): the default of
+#: `CV_OMS_STATEMENT_TIMEOUT_MS`, which the runtime builds each store with (`oms_wiring.pg_stores`).
+OMS_STATEMENT_TIMEOUT_MS: Final = OMS_STATEMENT_TIMEOUT_DEFAULT_MS
 #: Transaction-local (`true`), like the repository's `SET LOCAL`; the admin read model's form.
 _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 #: SQLSTATEs that carry a constraint name: unique, check and foreign-key violations.

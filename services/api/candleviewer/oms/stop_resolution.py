@@ -99,6 +99,7 @@ import structlog
 
 from candleviewer.exchange.base.models import AccountRef, Order, Position
 from candleviewer.exchange.base.ports import TradingPort
+from candleviewer.settings import OMS_STATEMENT_TIMEOUT_DEFAULT_MS
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.storage.repositories.orders import OrderRow
 from candleviewer.storage.repositories.recorded_stops import (
@@ -116,26 +117,38 @@ from .stop_shown import PositionState, full_shows, position_state, trail_unreada
 
 __all__ = [
     "ENTRY_HELD", "FILL_PAGE", "HISTORY_LEAD_S", "HISTORY_SPAN_S", "MAX_HISTORY_WINDOWS",
-    "READ_TIMEOUT_S", "RESTORE_HELD", "SPAN_HELD", "STORE_MARGIN_S", "STORE_TIMEOUT_S",
+    "READ_TIMEOUT_S", "RESTORE_HELD", "SPAN_HELD", "STORE_SLACK_S", "STORE_TIMEOUT_S",
     "TRAIL_HELD", "UNSEEN_PAGE", "WHOLE_READ_TIMEOUT_S", "CompleteRead", "EntryOrders",
     "EntryState", "Move", "Outcome", "PageReason", "PositionState", "Reading", "RequestDecision",
     "ResolutionStore", "StopRequest", "StopResolver", "VoidAudit", "VoidReason", "VoidWriteAhead",
     "decide", "entry_view", "full_shows", "group_requests", "order_matches", "position_state",
-    "shows_no_stop", "trail_unreadable",
+    "shows_no_stop", "store_timeout_for", "trail_unreadable",
 ]  # fmt: skip
 
 #: Each venue read's bound, and the whole read's, in seconds (the orchestrator's 00:47Z spec).
 READ_TIMEOUT_S: Final = 5.0
 WHOLE_READ_TIMEOUT_S: Final = 15.0
+#: The slack each store call's bound (`STORE_TIMEOUT_S`, below) keeps past the audit's bound and
+#: the two capped statements, in seconds.
+STORE_SLACK_S: Final = 1.0
+
+
+def store_timeout_for(statement_timeout_ms: int) -> float:
+    """Each store call's bound (`STORE_TIMEOUT_S`, below) for the stores' statement cap
+    `statement_timeout_ms`: the audit's bound, then two statements at the cap, then the slack."""
+    return STOP_AUDIT_TIMEOUT_S + 2 * statement_timeout_ms / 1000 + STORE_SLACK_S
+
+
 #: Each store call's bound (21 Sec.3.3.5): the stop audit's write-ahead bound
-#: (`recorded_stops.STOP_AUDIT_TIMEOUT_S`, every recorded-stop store's default) plus a 5 s margin
-#: for the statements before the hook (the lock and the update, each capped at the store's 2 s
-#: `OMS_STATEMENT_TIMEOUT_MS`) and some slack, so a late audit surfaces as the audit's own error,
-#: and only a store call stuck elsewhere (the pool, a connection) as this bound's `TimeoutError`.
+#: (`recorded_stops.STOP_AUDIT_TIMEOUT_S`, every recorded-stop store's default) plus a margin for
+#: the statements before the hook (the lock and the update, each capped at the stores' statement
+#: cap, `CV_OMS_STATEMENT_TIMEOUT_MS`) and `STORE_SLACK_S`, so a late audit surfaces as the audit's
+#: own error, and only a store call stuck elsewhere (the pool, a connection) as this bound's
+#: `TimeoutError`. The margin follows the setting (`store_timeout_for`, which the runtime builds
+#: the resolver with, #913 S4-G2); `STORE_TIMEOUT_S` is the bound at its default, 2 s: 10 s.
 #: The store raises `WriteAheadTimeout`; only the facade, `RecordedStopRepository`, maps it to
 #: `AuditNotDurable`, so H3 wires the resolver over the facade, never over a bare store.
-STORE_MARGIN_S: Final = 5.0
-STORE_TIMEOUT_S: Final = STOP_AUDIT_TIMEOUT_S + STORE_MARGIN_S
+STORE_TIMEOUT_S: Final = store_timeout_for(OMS_STATEMENT_TIMEOUT_DEFAULT_MS)
 #: How many of the venue's 7-day history windows one read may walk (Fable, fold 2): 4 weeks, so
 #: the adapter's walk stays far inside its cap (106) and the read's bound.
 MAX_HISTORY_WINDOWS: Final = 4

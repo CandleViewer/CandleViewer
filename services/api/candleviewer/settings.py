@@ -99,6 +99,12 @@ OMS_STOP_RESERVE_S: Final = 5.0
 OMS_PRICE_BAND_DEFAULT: Final = Decimal("0.05")
 OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
 OMS_PRICE_BAND_MAX: Final = Decimal("0.20")
+#: The OMS stores' per-statement cap in ms (#845; 20 Sec.7.2, 21 Sec.3.3.5, 24 Sec.8.2 S7): the
+#: default every OMS store holds when built without the setting, and the setting's bounds, above
+#: `CV_PERSIST_TIMEOUT` (1 s) and at most the default submit bound.
+OMS_STATEMENT_TIMEOUT_DEFAULT_MS: Final = 2000
+OMS_STATEMENT_TIMEOUT_MIN_MS: Final = 1500
+OMS_STATEMENT_TIMEOUT_MAX_MS: Final = 5000
 
 #: #4648: `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`. A failed sign-in returns no sooner than this many
 #: milliseconds after the attempt started, and since #4664 so does a refused second factor,
@@ -811,6 +817,16 @@ class Settings(BaseSettings):
         ge=OMS_PRICE_BAND_MIN,
         le=OMS_PRICE_BAND_MAX,
         allow_inf_nan=False,
+    )
+    # #845, #913 S4-G2: the OMS stores' per-statement cap, lock waits included, so a blocked order
+    # write fails within it and order entry is refused (20 Sec.7.2); every store the runtime builds
+    # that caps its statements reads it (`oms_wiring.pg_stores`), but the startup sweep, which keeps
+    # its own 15 s, and the machine-event store, its own 2 s. Postgres reads 0 as no cap; the floor
+    # leaves no off value (C-4.14).
+    oms_statement_timeout_ms: int = Field(
+        default=OMS_STATEMENT_TIMEOUT_DEFAULT_MS,
+        ge=OMS_STATEMENT_TIMEOUT_MIN_MS,
+        le=OMS_STATEMENT_TIMEOUT_MAX_MS,
     )
     # Live trading's process-level precondition, with the `trading.live_enabled` flag (rulings Q4,
     # Q6): a live account's order is admitted only while both are on; B17 stays the user's truth.
