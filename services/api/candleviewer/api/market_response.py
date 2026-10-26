@@ -25,10 +25,13 @@ from __future__ import annotations
 import base64
 import binascii
 import json
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
+from itertools import repeat
+from operator import attrgetter
 from typing import Final, Protocol
 
+import numpy as np
 import orjson
 from fastapi.responses import JSONResponse, Response
 
@@ -41,6 +44,13 @@ _KEY_CURSOR_TAG: Final = "v2:"
 _KEY_PART_MAX: Final = 2**62  # generation/index bound: a LONG, with headroom; larger is forged
 _CURSOR_MAX_LEN: Final = 128
 _DELTA_FIELDS: Final = ("delta", "min_delta", "max_delta")
+#: `serialize_bar`'s keys for a row with no optional field, and the attributes behind them.
+_BAR_KEYS: Final = ("t", "o", "h", "l", "c", "v", "turnover", "confirm")
+_BAR_ATTRS: Final = ("open", "high", "low", "close", "volume", "turnover", "confirmed")
+_NULL_DELTA_KEYS: Final = (*_DELTA_FIELDS, "cvd")
+#: `iso_us` divides by 1e6 in float: exact to the µs while that double's half-ulp stays under
+#: 0.5 µs, i.e. below 2**32 s (year 2106). Outside [0, this) `iso_us_many` defers to `iso_us`.
+_ISO_VECTOR_MAX_US: Final = 2**32 * 1_000_000
 
 
 class InvalidCursor(ValueError):
@@ -164,6 +174,24 @@ def iso_us(ts_us: int) -> str:
     return datetime.fromtimestamp(ts_us / 1_000_000, tz=UTC).isoformat()
 
 
+def iso_us_many(ts_us: Sequence[int]) -> list[str]:
+    """`[iso_us(t) for t in ts_us]` in one numpy pass (#2523): `+00:00`, and `.ffffff` only
+    on a value with microseconds, as `datetime.isoformat` writes. Anything numpy cannot take
+    as plain int64 in [0, 2**32 s) goes through `iso_us` itself."""
+    arr = np.asarray(ts_us) if len(ts_us) else np.zeros(0, dtype=np.int64)
+    if arr.dtype != np.int64 or not ((arr >= 0) & (arr < _ISO_VECTOR_MAX_US)).all():
+        return [iso_us(t) for t in ts_us]
+    stamps = arr.astype("datetime64[us]")
+    whole = arr % 1_000_000 == 0
+    if whole.all():
+        text = np.datetime_as_string(stamps, unit="s")
+    else:
+        text = np.datetime_as_string(stamps, unit="us")
+        text[whole] = np.datetime_as_string(stamps[whole], unit="s")
+    out: list[str] = np.char.add(text, "+00:00").tolist()
+    return out
+
+
 class BarRowLike(Protocol):
     """What either tier hands the assembler. Kline rows lack the order-flow attributes."""
 
@@ -212,6 +240,30 @@ def serialize_bar(row: BarRowLike, *, include_delta: bool) -> dict[str, object]:
             bar[name] = value if isinstance(value, str) else None
         bar["cvd"] = None  # not persisted per bar (24 §3.1); never fabricated
     return bar
+
+
+def serialize_bars(rows: Sequence[BarRowLike], *, include_delta: bool) -> list[dict[str, object]]:
+    """`[serialize_bar(r, include_delta=...) for r in rows]`, column-wise (#2523).
+
+    A page whose rows carry none of the optional attributes (`index`, `generation`,
+    `close_ts_us`; with `include_delta`, `trades` and the delta fields), the kline case, is
+    built by C-level `map`s: one column per attribute, `iso_us_many` for `t`, `dict(zip())`
+    per bar. Any other page goes through `serialize_bar` row by row. Equal dicts in equal key
+    order either way, so the response bytes are identical (golden + property tests)."""
+    optional = ["index", "generation", "close_ts_us"]
+    if include_delta:
+        optional += ["trades", *_DELTA_FIELDS]
+    n = len(rows)
+    if any(list(map(getattr, rows, repeat(name), repeat(None))).count(None) != n
+           for name in optional):  # fmt: skip
+        return [serialize_bar(r, include_delta=include_delta) for r in rows]
+    cols: list[Iterable[object]] = [iso_us_many(list(map(attrgetter("ts_us"), rows)))]
+    cols += [list(map(attrgetter(name), rows)) for name in _BAR_ATTRS]
+    keys: tuple[str, ...] = _BAR_KEYS
+    if include_delta:  # kline rows: delta fields and cvd are null, never "0" (BR-07)
+        keys += _NULL_DELTA_KEYS
+        cols += [[None] * n for _ in _NULL_DELTA_KEYS]
+    return list(map(dict, map(zip, repeat(keys), zip(*cols, strict=True))))
 
 
 def build_meta(
@@ -266,7 +318,9 @@ __all__ = [
     "encode_cursor",
     "encode_key_cursor",
     "iso_us",
+    "iso_us_many",
     "kline_response",
     "problem",
     "serialize_bar",
+    "serialize_bars",
 ]

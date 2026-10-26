@@ -6,10 +6,18 @@ is read through `ParquetKlineReader.__call__`.
 The bound is a ratio, not milliseconds: the reader's fastest call over a bare DuckDB
 `execute` + `to_arrow_table` of the same window in the same process, so runner speed cancels
 out. It fails on the pre-#2523 row build (tz-aware datetimes, per-row dicts, Decimal text).
+
+The concurrent rig (#2523 lever 3) is the pack's own shape: five simultaneous cold 5 000-bar
+reads through the in-process ASGI app (`fixture_app.build_app`, driven as
+`rest_load.drive_inprocess` drives it), round after round, its p95 read against Budget #13 in
+milliseconds. Sequential timings hide the GIL-held per-row work that concurrency multiplies.
+It is reported, not gated, as the pack's smoke rows are (`rest_load.py`, #399): the gate flips
+to an assertion in the follow-up gc.freeze PR under #2523. The budget itself never moves.
 """
 
 from __future__ import annotations
 
+import asyncio
 import gc
 import random
 import time
@@ -17,9 +25,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
+import httpx
 import pyarrow as pa
 import pytest
 
+from bench.ingestion.budgets import B13_READ_P95_MS
+from bench.ingestion.fixture_app import (
+    assert_loopback_target,
+    build_app,
+    requests_plan,
+    write_cold_lake,
+)
 from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.storage.cold.kline_reader import ParquetKlineReader
 from candleviewer.storage.cold.layout import DatasetRegistry
@@ -111,3 +127,50 @@ async def test_cold_5000_bar_read_cost_over_a_bare_duckdb_scan_is_bounded(tmp_pa
         f"(all {[round(x, 1) for x in bare_ms]}), ratio {ratio:.2f} (bound {MAX_RATIO})"
     )
     assert ratio <= MAX_RATIO
+
+
+CONCURRENCY = 5  # the pack's REST profile (`scenarios/rest_k6.json`, k6 VUs)
+ROUNDS = 20
+
+
+def _p95(samples: list[float]) -> float:
+    """Nearest-rank p95, as the pack reads it."""
+    ordered = sorted(samples)
+    return ordered[max(0, -(-95 * len(ordered) // 100) - 1)]
+
+
+@pytest.mark.perf
+async def test_five_concurrent_cold_5000_bar_reads_report_their_p95_against_budget_13(
+    tmp_path: Path,
+) -> None:
+    write_cold_lake(tmp_path)
+    app = await build_app(tmp_path)
+    base = "http://127.0.0.1"
+    assert_loopback_target(base)
+    spec = requests_plan()["klines_cold"]
+    transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
+    samples: list[float] = []
+    async with httpx.AsyncClient(transport=transport, base_url=base) as client:
+
+        async def one() -> float:
+            t0 = time.perf_counter()
+            r = await client.get(spec["path"], params=spec["params"])
+            ms = (time.perf_counter() - t0) * 1000
+            assert r.status_code == 200
+            assert len(r.json()["bars"]) == WINDOW
+            return ms
+
+        await one()  # untimed warm-up: verifies the month once, opens the shared instance
+        for _ in range(ROUNDS):
+            samples += await asyncio.gather(*(one() for _ in range(CONCURRENCY)))
+    p95 = _p95(samples)
+    verdict = "pass" if p95 <= B13_READ_P95_MS else f"{p95:.1f} > {B13_READ_P95_MS:g}"
+    # Reported, not gated (#399's smoke pattern): this becomes `assert p95 <= B13_READ_P95_MS`
+    # in the follow-up gc.freeze PR under #2523.
+    print(
+        f"\n#2523 {CONCURRENCY} concurrent cold {WINDOW}-bar reads x {ROUNDS} rounds: "
+        f"p50 {sorted(samples)[len(samples) // 2]:.1f} ms, p95 {p95:.1f} ms, "
+        f"max {max(samples):.1f} ms (Budget #13 {B13_READ_P95_MS} ms): {verdict}, "
+        "reported, not gated"
+    )
+    assert len(samples) == ROUNDS * CONCURRENCY

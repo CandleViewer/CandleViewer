@@ -7,6 +7,7 @@ import dataclasses
 import math
 import random
 import shutil
+import tempfile
 import threading
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -20,7 +21,7 @@ import pytest
 from duckdb.sqltypes import BIGINT
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from hypothesis import example, given
+from hypothesis import example, given, settings
 from hypothesis import strategies as st
 from structlog.testing import capture_logs
 
@@ -1236,3 +1237,68 @@ async def test_read_rows_columns_no_file_carries_default_like_before(tmp_path: P
     assert {(r.close, r.turnover, r.confirmed, r.source) for r in got} == {
         ("0", "0", True, "parquet")
     }
+
+
+def _read_both(table: pa.Table, t0: int) -> tuple[list[ColdKlineRow], list[ColdKlineRow]]:
+    """`_read_rows` and the pre-#2523 reference over one part file holding `table`."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _write_table(Path(tmp), "2026-03", table)
+        files = _part_files(Path(tmp))
+        hi = t0 + 31 * 24 * H
+        got = kr._read_rows(duckdb.connect(":memory:"), files, t0, hi, 5_100)
+        want = _old_read_rows(duckdb.connect(":memory:"), files, t0, hi, 5_100)
+    return got, want
+
+
+@settings(max_examples=60, deadline=None)
+@given(
+    st.lists(st.floats(allow_nan=True, allow_infinity=True) | st.none(), min_size=1, max_size=40)
+)
+def test_duckdb_double_text_gives_the_pre_2523_rows_for_any_float(
+    values: list[float | None],
+) -> None:
+    """#2523 lever 3: every price column leaves DuckDB as text. For each finite float that text
+    is `repr`; exponent forms, inf, nan (`-nan` in DuckDB) and nulls go through `_num` from the
+    float itself, so the rows equal the pre-#2523 construction byte for byte."""
+    t0 = _us(2026, 3)
+    n = len(values)
+    table = pa.table(
+        {
+            "ts": pa.array([t0 + i * MIN for i in range(n)], type=pa.timestamp("us", tz="UTC")),
+            **{c: pa.array(values, pa.float64()) for c in kr._NUM_COLS},
+            "confirmed": [True] * n,
+            "source": ["ws"] * n,
+        }
+    )
+    got, want = _read_both(table, t0)
+    assert [dataclasses.astuple(r) for r in got] == [dataclasses.astuple(r) for r in want]
+
+
+def test_non_double_price_columns_keep_the_str_path() -> None:
+    """Text, decimal, float32 and integer columns are not DuckDB-formatted: `_num` as before."""
+    t0 = _us(2026, 3)
+    n = 4
+    table = pa.table(
+        {
+            "ts": pa.array([t0 + i * MIN for i in range(n)], type=pa.timestamp("us", tz="UTC")),
+            "open": pa.array(["1.50", "2", "1e3", ""], pa.string()),
+            "high": pa.array(
+                [Decimal("1.50"), Decimal("-0.001"), None, Decimal(7)], pa.decimal128(9, 3)
+            ),
+            "low": pa.array([0.1, 1e-7, 3.4e38, None], pa.float32()),
+            "close": pa.array([1, -2, 0, None], pa.int64()),
+            "volume": pa.array([0.5, None, 2.0, 1e-9], pa.float64()),
+            "turnover": pa.array([1.0, 2.0, 3.0, 4.0], pa.float64()),
+            "confirmed": pa.array([True, None, False, True]),
+            "source": pa.array([1, 0, None, 7], pa.int64()),
+        }
+    )
+    got, want = _read_both(table, t0)
+    assert [dataclasses.astuple(r) for r in got] == [dataclasses.astuple(r) for r in want]
+    assert [r.source for r in got] == ["1", "parquet", "parquet", "7"]
+    assert got[1].volume == "None"  # a null float keeps its pre-#2523 text
+
+
+def test_text_column_prefix_is_never_read_as_a_kline_column() -> None:
+    assert all(not c.startswith(kr._TXT) for c in kr._NUM_COLS)
+    assert all(f"'{c}'" in kr._READ_SQL for c in ("ts", *kr._NUM_COLS))

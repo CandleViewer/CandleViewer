@@ -26,6 +26,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
+from operator import attrgetter
 from typing import Final, Protocol
 
 from candleviewer.ingestion.kline_backfill import KlineBackfillService
@@ -38,6 +39,8 @@ SOURCE_EXCHANGE: Final = "exchange_rest"
 SOURCE_TAPE: Final = "tape"
 #: Row `source` tags that mean "this bar came from the exchange REST kline endpoint".
 _EXCHANGE_ROW_SOURCES: Final = frozenset({"rest", "kline"})
+_TS: Final = attrgetter("ts_us")
+_SOURCE: Final = attrgetter("source")
 
 
 class KlineRowLike(Protocol):
@@ -131,14 +134,14 @@ class KlineReadService:
                 symbol, interval, Range(rng.start_us, min(rng.end_us, boundary))
             )
             rows.extend(cold_rows)
-            cold_ids = {id(r) for r in cold_rows}
+            cold_ids = set(map(id, cold_rows))
         holes: list[Range] = []
         backfilling = False
         if rng.end_us > boundary:
             hot_rng = Range(max(rng.start_us, boundary), rng.end_us)
             hot_rows = await self._hot.read_klines(symbol, interval, hot_rng, limit=limit)
             rows.extend(hot_rows)
-            hot_ids = {id(r) for r in hot_rows}
+            hot_ids = set(map(id, hot_rows))
             holes, backfilling = await self._schedule_backfill(symbol, interval, hot_rng)
         tape_ids: set[int] = set()
         if self._tape is not None:
@@ -147,21 +150,22 @@ class KlineReadService:
                 taped = {r.ts_us for r in tape_rows}
                 rows = [r for r in rows if r.ts_us not in taped]  # tape wins on overlap
                 rows.extend(tape_rows)
-                tape_ids = {id(r) for r in tape_rows}
+                tape_ids = set(map(id, tape_rows))
         # A4: claim the exchange tier only once exchange-sourced rows are actually merged into
         # this response; a running job alone is reported via `backfilling`, not `sources`.
-        rows.sort(key=lambda r: r.ts_us)
+        rows.sort(key=_TS)
         if limit is not None:
             rows = rows[-limit:] if limit else []  # newest `limit` across both tiers
         # `sources` describes the rows actually returned (a tier whose rows were all trimmed
-        # away is not claimed).
-        if any(id(r) in cold_ids for r in rows):
+        # away is not claimed). Set operations over `map`, no per-row Python (#2523).
+        returned = set(map(id, rows))
+        if not returned.isdisjoint(cold_ids):
             sources.append(SOURCE_COLD)
-        if any(id(r) in hot_ids for r in rows):
+        if not returned.isdisjoint(hot_ids):
             sources.append(SOURCE_HOT)
-        if any(id(r) in tape_ids for r in rows):
+        if not returned.isdisjoint(tape_ids):
             sources.append(SOURCE_TAPE)
-        if any(r.source in _EXCHANGE_ROW_SOURCES for r in rows):
+        if not _EXCHANGE_ROW_SOURCES.isdisjoint(map(_SOURCE, rows)):
             sources.append(SOURCE_EXCHANGE)
         started = await self._recording_started(symbol) if self._recording_started else None
         return KlineRead(rows, sources, started, holes, backfilling)
