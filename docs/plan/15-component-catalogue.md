@@ -382,7 +382,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 - **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, secret auto-hide.
 - **Props**: `expiresAt: number` (epoch ms) · `format: "mm:ss"|"words"` · `onExpire?`.
-- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused wherever a countdown appears.
+- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused wherever a countdown appears, except countdowns in a grid column, which announce nothing (SCR-100 "Funding in", E08-D07 D22, §4.5).
 - **Tokens**: `font.mono`, `color.text.warning` (under threshold).
 - **Storybook**: Default, UnderThreshold, Expired.
 - **Tests**: unit (threshold announcement logic), visual, axe.
@@ -524,12 +524,12 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-049 Table (base data table)
 
 - **Tier**: Molecule · **Purpose**: base virtualized sortable table underlying PositionsGrid (CMP-107), OrdersTable, AuditLogTable, JournalTable.
-- **Props**: `columns: ColumnDef[]` · `rows: T[]` · `sort?/onSortChange` · `rowKey` · `onRowSelect?` (renders the select column; the table becomes a grid) · `virtualized?: boolean` (default true above 50 rows) · `emptyState?: ReactNode` · `grid?: boolean` (the APG grid pattern; default `false`) · `sortPending?: string` (the column whose requested sort waits on rows the consumer is still reading; its header is busy) · `caption: string` · `loading?: boolean` · `error?: {message, onRetry}`.
+- **Props**: `columns: ColumnDef[]` · `rows: T[]` · `sort?/onSortChange` · `rowKey` · `onRowSelect?` (renders the select column; the table becomes a grid) · `virtualized?: boolean` (default true above 50 rows) · `emptyState?: ReactNode` · `grid?: boolean` (the APG grid pattern; default `false`) · `sortPending?: string` (the column whose requested sort waits on rows the consumer is still reading; its header is busy) · `caption: string` · `loading?: boolean` · `error?: {message, onRetry}` · `virtualizeAbove?: number` (default 50; SCR-100 passes 60).
 - **Variants**: table (static cells, the APG Table pattern: no control in a body row; default), grid (interactive cells, the APG Grid pattern; implied whenever a body column is interactive — `onRowSelect`'s select column, an actions column, an inline control — and forced by `grid` for a static table).
 - **States**: populated; loading (the header row kept, CMP-015 skeleton rows, `aria-busy`); empty and filtered-empty (the header row kept, CMP-026 across every column); error (the header row kept, CMP-027 with Retry, announced politely); sorting (the `sortPending` header busy, never T2); reflow (stacked below the fit width and at 200 % zoom, one row element per record); rows: hover (`color.surface.hover`), selected (`color.action.selected` with the checked box), focused (the CMP-039 ring); a gated row action is `docs/design/E09/E09-D09.md` §2.2 T2 through CMP-079 (the CMP-019 `lock` leads a row-menu item, whose second line is the reason, or badges an inline IconButton, 2b).
-- **A11y**: semantic `<table>` with `scope` on headers even when virtualized (windowed rendering keeps ARIA table role structure via `role="rowgroup"/"row"/"cell"` with `aria-rowindex`/`aria-colindex` when native table elements aren't feasible in the virtualization window); sortable headers are buttons with `aria-sort`; with `grid`, `role="grid"` with `row`/`columnheader`/`gridcell`, one Tab stop and a roving tabindex (`05-accessibility-standard.md` §3.4 item 2), `↑`/`↓` by row including the header row, `←`/`→` by cell, `Enter` activates the focused cell's control; the header button of the `sortPending` column keeps its label and its `aria-sort`, a spinner replaces its sort glyph, it takes `aria-busy="true"` and stays focusable (with `grid`, arrow-reachable), and pressing it again changes nothing (`docs/design/E09/E09-D09.md` §9.1, loading). The header row is sticky and a focused cell (grid mode) scrolls below it (`scroll-margin-top`); table mode's Tab stops are the scroll region (focusable, named by the caption) and the header buttons, and its body rows carry no controls; an interactive body column makes the table a grid (one Tab stop, `05-accessibility-standard.md` §3.4 item 2): selection is a CMP-005 column with a mixed select-all, `aria-selected` and `Space`; `Shift+F10` opens the row menu, whose T2 items stay arrow-reachable; one polite live region for sort, filter, selection and load results.
+- **A11y**: semantic `<table>` with `scope` on headers even when virtualized (windowed rendering keeps ARIA table role structure via `role="rowgroup"/"row"/"cell"` with `aria-rowindex`/`aria-colindex` when native table elements aren't feasible in the virtualization window); sortable headers are buttons with `aria-sort`; with `grid`, `role="grid"` with `row`/`columnheader`/`gridcell`, one Tab stop and a roving tabindex (`05-accessibility-standard.md` §3.4 item 2), `↑`/`↓` by row including the header row, `←`/`→` by cell, `Enter` activates the focused cell's control; the header button of the `sortPending` column keeps its label and its `aria-sort`, a spinner replaces its sort glyph, it takes `aria-busy="true"` and stays focusable (with `grid`, arrow-reachable), and pressing it again changes nothing (`docs/design/E09/E09-D09.md` §9.1, loading). The header row is sticky and a focused cell (grid mode) scrolls below it (`scroll-margin-top`); table mode's Tab stops are the scroll region (focusable, named by the caption) and the header buttons, and its body rows carry no controls; an interactive body column makes the table a grid (one Tab stop, `05-accessibility-standard.md` §3.4 item 2): selection is a CMP-005 column with a mixed select-all, `aria-selected` and `Space`; `Shift+F10` opens the row menu, whose T2 items stay arrow-reachable; one polite live region for sort, filter, selection and load results. With `grid`, the grid also carries `aria-rowcount` (rows + header) with absolute `aria-rowindex`, `aria-colcount`, `aria-current` on the active row, and merged cells by `aria-colspan`. A sortable `columnheader` whose sort is gated may be T2 (E08-D07 §6.6): `aria-disabled`, a CMP-019 `lock` glyph before the label, `aria-describedby` to a host note. With `grid`, a T2 key press on a cell (`Enter`, `Space`, `Alt+↑/↓`, `Del`) changes nothing and opens a CMP-016 echo of its reason on that cell (E08-D07 §6.6).
 - **Tokens**: header `color.surface.hover` + `type.ui.label` + `color.text.primary`, a 1 px `color.border.subtle` rule; sort glyph `size.icon` + `color.text.tertiary`; rows `size.row.height`, odd `color.surface.canvas`, even `color.surface.raised`, hover `color.surface.hover`, selected `color.action.selected`; cells `space.inset.sm`, `type.ui.body` + `color.text.primary` or `color.text.secondary`, numbers `type.num.base` end-aligned (numeric columns); caption `type.ui.label` + `color.text.secondary`. (Replaces `font.mono`.)
-- **Storybook**: Default, Sortable, Virtualized(10k rows), Empty, Selectable, Grid, SortPending, Loading, Error, FilteredEmpty, Reflow.
+- **Storybook**: Default, Sortable, Virtualized(10k rows), Empty, Selectable, Grid, SortPending, Loading, Error, FilteredEmpty, Reflow, MergedCell, SortUnavailable.
 - **Tests**: unit, visual, axe, keyboard header-sort + row navigation (`↑/↓`), performance test (scroll 10k rows @60fps).
 
 ### CMP-050 Card
@@ -589,11 +589,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-056 ColumnPicker
 
-- **Tier**: Molecule · **Purpose**: show/hide/reorder table columns (Positions grid, Deep Stats rows).
-- **Props**: `columns: {id,label,visible}[]` · `onChange` · `onReorder`.
-- **A11y**: checkbox list inside CMP-041 Menu pattern; reorder via keyboard (`Alt+↑/↓` moves focused item) in addition to drag.
+- **Tier**: Molecule · **Purpose**: show/hide/reorder table columns (Positions grid, Deep Stats rows) and watchlist columns (SCR-100, SCR-101).
+- **Props**: `columns: {id,label,visible}[]` · `onChange` · `onReorder` · `locked?`.
+- **A11y**: checkbox list inside CMP-041 Menu pattern; reorder via keyboard (`Alt+↑/↓` moves focused item) in addition to drag; "Move <column> up/down" buttons where the list sits in a dialog, a `locked` item shown checked and T2 with its reason (E09-D09 §2.2: `aria-disabled`, a CMP-019 `lock` glyph), the move buttons at the ends of the movable range T2 (2b) with "Already first." or "Already last.", every item and move button T2 in CMP-079 RbacGate without `workspaces:write` or while viewing as, described by the host's notice (E08-D07 §6.6), and one polite "Funding % moved to position 4 of 9."
 - **Tokens**: inherits CMP-005/CMP-041.
-- **Storybook**: Default, Reordering.
+- **Storybook**: Default, Reordering, Locked, ReadOnly.
 - **Tests**: unit, visual, axe, keyboard reorder.
 
 ### CMP-057 SplitButton
@@ -689,11 +689,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### CMP-067 FileDrop / Import control
 
-- **Tier**: Molecule · **Purpose**: CSV/JSON import (journal import, rule import/export).
-- **Props**: `accept` · `onFiles` · `multiple?`.
-- **A11y**: native `<input type=file>` under the hood (drag-and-drop is additive, never the only path), fully keyboard-operable via the native file picker.
+- **Tier**: Molecule · **Purpose**: CSV/JSON import (journal import, rule import/export) and plain-text symbol lists (SCR-101).
+- **Props**: `accept` · `onFiles` · `multiple?` · `maxBytes` with its rejection text, and a preview step before applying (SCR-026's pattern); file content is rendered as text, never interpreted.
+- **A11y**: native `<input type=file>` under the hood (drag-and-drop is additive, never the only path), fully keyboard-operable via the native file picker. Without `workspaces:write`, or while viewing as, the import control is T2 in CMP-079 RbacGate, and a full apply target ("Add to Majors" at 200) is T2 with its reason, each with a CMP-019 `lock` glyph (E08-D07 §6.6).
 - **Tokens**: `color.border.dashed`.
-- **Storybook**: Default, DragOver, Error.
+- **Storybook**: Default, DragOver, Error, Oversized, NotText, ImportPreview, ReadOnly, TargetFull.
 - **Tests**: unit, visual, axe, keyboard-only file selection test.
 
 ### CMP-068 CopyableCodeBlock
@@ -1831,7 +1831,7 @@ interface NodeGraphCanvasProps {
 
 - **Tier**: Molecule (trading) · **Purpose**: fuzzy symbol search with instrument preview (tick/lot, category, funding) — entry point for chart/DOM/watchlist symbol changes.
 - **Props**: `value` · `onSelect(symbol)` · `category?: "linear"` (locked to USDT perps for v1) · `recentSymbols?: string[]`.
-- **A11y**: extends CMP-048 Combobox; recent symbols shown as a labelled group before search results.
+- **A11y**: extends CMP-048 Combobox; recent symbols shown as a labelled group before search results; the input may be T2 (E08-D07 §6.6: a CMP-019 `lock` glyph, the reason).
 - **Tokens**: inherits CMP-048.
 - **API sketch**: `interface SymbolSearchInputProps { value: string; onSelect: (symbol: string) => void; recentSymbols?: string[]; }`
 - **Storybook**: Default, WithRecents, NoResults, WithPreviewPopover(CMP-125).
@@ -1839,10 +1839,10 @@ interface NodeGraphCanvasProps {
 
 ### CMP-161 WatchlistRow
 
-- **Tier**: Molecule (trading) · **Purpose**: one row in a watchlist — symbol, last price, %chg, volume, funding-Δ, OI-Δ, quick-add-to-chart action.
-- **Props**: `row: WatchlistRowData` · `onOpenChart` · `onRemove` · `columns: string[]` (configurable via CMP-056 ColumnPicker).
-- **A11y**: extends CMP-049 row contract; %chg/PnL-style values use CMP-020 NumericText.
-- **Tokens**: `font.mono`, `color.text.buy/sell`.
+- **Tier**: Molecule (trading) · **Purpose**: one interactive-grid row over the E08-D07 §4.1 column registry.
+- **Props**: `row` · `columns: WatchlistColumnId[]` · `freshness` (ticker, OI baseline and recorder, each a CMP-239 state with an age) · `rowState` (live, initialising, not live or delisted) · `active` · `onActivate` · `onMenu` · `onMove` · `onRemove`.
+- **A11y**: extends CMP-049 row contract; %chg/PnL-style values use CMP-020 NumericText. A delisted row's activation and drag are T2 (E08-D07 §6.6): `aria-disabled`, a CMP-019 `lock` glyph, the merged cell's reason by `aria-describedby`. `onMove` (`Alt+↑/↓`) is T2 while sorted or filtered and at the ends, and `onMove` and `onRemove` (`Del`) are T2 in CMP-079 RbacGate without `workspaces:write` or while viewing as (E08-D07 §6.6).
+- **Tokens**: `font.family.mono`, `color.text.buy/sell/neutral` (E08-D07 DS-CR-2).
 - **E08-D04**: each per-value cell carries an optional CMP-239 FreshnessMarker (rendered as a CSS class change on the existing cell — no extra DOM node — per the freshness-marker contract) reflecting the data-confidence state for that field's feed. If the row's overall connection is `disconnected`, the row shows only that state (precedence rule, `docs/design/E08/E08-D01.md` §2) — per-cell markers are suppressed rather than stacked.
 - **API sketch**:
 
@@ -1857,16 +1857,18 @@ interface WatchlistRowData {
 }
 ```
 
-- **Storybook**: Default, Gainer, Loser, CustomColumns, StaleCell, DisconnectedRow.
+- **API**: `WatchlistRowData` adds `priceScale`, `turnover24h`, `nextFundingTimeMs`, `spreadBps`, `rec`, and `openInterestChangePct24h` in place of `openInterestDelta`.
+- **Storybook**: Default, Gainer, Loser, CustomColumns, StaleCell, DisconnectedRow, Initialising, NotLive, StaleRow, StaleRowEscalated, StaleServer, StaleColumn, Delisted, Active, RecStates, ReadOnly.
 - **Tests**: unit, visual, axe, keyboard.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the per-cell settle vs the container-class mass transition; the value-change emphasis cap — PROPOSED).
 
 ### CMP-162 WatchlistGroupTabs
 
 - **Tier**: Molecule (trading) · **Purpose**: saved watchlist groups (e.g. "Majors", "My Setups") as tabs above the watchlist table.
-- **Props**: `groups: {id,name}[]` · `activeId` · `onSwitch` · `onCreate` · `onRename` · `onDelete`.
+- **Props**: `groups: {id,name}[]` · `activeId` · `onSwitch` · `onCreate` · `onRename` · `onDelete` · `counts` · `onDuplicate` · `onManage`.
+- **A11y**: the CMP-042 Tabs pattern with manual activation (arrows move focus; `Enter`/`Space` switch, because a switch changes subscriptions, `23` L1190); each tab named with its count ("Majors, 12 symbols"); a tab menu on `Shift+F10` (Rename, Duplicate, Delete…, Manage watchlists…); overflow into "More lists". Without `workspaces:write`, or while viewing as, the tab menu's Rename, Duplicate and Delete… and the "+" (`onCreate`) are T2 in CMP-079 RbacGate (E08-D07 §6.6), with a CMP-019 `lock` glyph.
 - **Tokens**: inherits CMP-042 Tabs.
-- **Storybook**: Default, CreateNew.
+- **Storybook**: Default, CreateNew, Overflow, TabMenu, ReadOnly.
 - **Tests**: unit, visual, axe.
 
 ### CMP-163 AlertRow
@@ -2787,6 +2789,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Props**: `state: DataConfidenceState` · `lastUpdatedAgeMs?: number` (renders as "Stale 4s" text for `stale`) · `label?: string` (override for compound rows).
 - **Contract**: exactly one state is shown at a time (never stacked — a row in `disconnected` never additionally shows a `stale` marker on individual cells). State changes are a single flip on enter/exit, no pulsing/flashing, respects `prefers-reduced-motion`. `live` renders no visible chip (baseline — absence of a marker IS the live state, so it costs nothing at 4 Hz+ update rates).
 - **Renderable as a pure CSS class change** — no extra DOM node per cell on hot surfaces (watchlist, tape, DOM ladder); the accessible name/text content already exists in the cell and the marker only swaps a class plus (for `stale`) appends the age text node, so the row does not gain a wrapper element per update.
+- **`compact` presentation for dense grids**: the cell only swaps a class; the age text lives once per row (the Status chip) or once per panel (the footer line) and reaches assistive tech through `aria-describedby`. Age format "Stale 7s", "Stale 2m", "Stale 1h".
 - **A11y**: never colour-only — text label (mandatory for every non-`live` state) pairs with the reinforcing colour; `disconnected`/`reconnecting` states bubble to the parent CMP-028 banner (`role="alert"`/`role="status"`) rather than re-announcing per cell; a degraded state entering/exiting a _panel_ (not per-row) announces once via the parent's live region, collapsing flapping within 5s into one announcement — individual FreshnessMarker instances do not each own a live region.
 - **Tokens**: `color.data-confidence.{state}.text`, `color.data-confidence.{state}.indicator`, `color.data-confidence.{state}.surface` (only `stale` defines a surface tint; see `packages/ui/tokens/semantic-*.tokens.json`).
 - **Composition rule with CMP-227 EstimatedBadge**: see CMP-227 entry — they are always rendered as two separate, non-overlapping elements, never merged.
