@@ -296,8 +296,11 @@ _LEFT: Final = {
         "rs_px", "rs_size", "rs_trail", "rs_finite", "rs_marker", "rs_status", "rs_times",
         "rs_release",
     },
+    # `ia_bound` (0052): `NewAnchor` has no `before_us` and its `Literal` refuses the purge's
+    # operation, so an order anchor always meets it; `NewPurgeAnchor` refuses a negative bound.
     "idempotency_anchors": {
         "ia_operation", "ia_ref_fmt", "ia_target", "ia_decided", "ia_code", "ia_ret_code",
+        "ia_bound",
     },
 }  # fmt: skip
 _MET: Final = {

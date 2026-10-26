@@ -300,10 +300,11 @@ STEP_UP_FAILURE_CAP = 3
 #: Ticket: the downgrade lasts 5 minutes.
 READONLY_DOWNGRADE_US = 5 * 60 * 1_000_000
 #: Ticket "No-grace list": a fresh code is *always* required for these.
-#: `backups` (#2751): a restore, download-link issue or delete cannot be undone.
-NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups"})
-#: `recorder` (04 §7.2.2 rows 9 and 9a): retention and pin changes (#2738) and the
-#: irreversible recorded-data purge (E16-T06); a grace class.
+#: `backups` (#2751): a restore, download-link issue or delete cannot be undone; nor can
+#: `recorder_purge`'s purge of recorded data (E16-T06).
+NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups", "recorder_purge"})
+#: `recorder` (04 §7.2.2 row 9): retention and pin changes (#2738); a grace class.
+#: `recorder_purge` (04 §7.2.2 row 9a, E16-T06): the irreversible recorded-data purge, no-grace.
 #: `audit` and `backups` (#2751, SR-025): the audit-log export, and a backup's restore,
 #: download-link issue or delete.
 #: `flags` (#3083): a feature-flag write; a grace class, as the contract's `setFeatureFlag` says.
@@ -315,6 +316,7 @@ ACTION_CLASSES = frozenset(
         "killswitch",
         "risk_caps",
         "recorder",
+        "recorder_purge",
         "flags",
         "audit",
         "backups",

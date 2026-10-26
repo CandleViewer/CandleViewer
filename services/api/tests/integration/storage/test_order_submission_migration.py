@@ -91,10 +91,12 @@ def _fence(heading: str, index: int) -> str:
 
 def _doc_ddl() -> str:
     """21 Sec.3.3.10 and Sec.3.3.11, both blocks each: each table's second block holds its guard
-    and its TRUNCATE trigger."""
+    and its TRUNCATE trigger. Sec.3.3.10's third block is `0052_ia_purge_anchor`'s, which head
+    holds too (the purge's bound)."""
     anchors = "3.3.10 `idempotency_anchors`"
     stops = "3.3.11 `recorded_stops`"
-    blocks = [_fence(anchors, 0), _fence(anchors, 1), _fence(stops, 0), _fence(stops, 1)]
+    blocks = [_fence(anchors, 0), _fence(anchors, 1), _fence(anchors, 2)]
+    blocks += [_fence(stops, 0), _fence(stops, 1)]
     return "\n".join(blocks)
 
 

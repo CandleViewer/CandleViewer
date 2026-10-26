@@ -52,6 +52,7 @@ from candleviewer.auth.totp import generate_code, time_step_for
 from tests.contract.rbac import rbac_harness as matrix
 from tests.csrf_helpers import csrf_headers
 from tests.security.auth._stack import Clock, RegistryAudit
+from tests.unit.api._purge_anchors import InMemoryPurgeAnchors
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
@@ -295,6 +296,7 @@ def open_admin_world(mp: pytest.MonkeyPatch) -> Iterator[AdminWorld]:
     mp.setattr(appmod, "build_auth_service", lambda *_a, **_k: auth)
     mp.setattr(appmod, "build_identity_provider", lambda _s: Identity(spec))
     mp.setattr(appmod, "build_retention_manager", lambda *_a, **_k: purge)
+    mp.setattr(appmod, "build_purge_anchors", lambda *_a, **_k: InMemoryPurgeAnchors())
     mp.setattr(appmod, "build_admin_backups", lambda *_a, **_k: BackupCatalogue(matrix._Backups()))
     mp.setattr(appmod, "build_backup_downloads", matrix._backup_downloads)
     app = appmod.create_app(

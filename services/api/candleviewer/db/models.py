@@ -2846,9 +2846,17 @@ idempotency_anchors = Table(
     Column("outcome_ret_code", Integer),
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default=text("now()")),
     Column("decided_at", TIMESTAMP(timezone=True)),
+    # 0052 (E16-T06): a purge of recorded data anchors its key with the window's bound.
+    Column("before_us", BigInteger),
     CheckConstraint(
-        "operation IN ('placeOrder','closePosition','reversePosition','closeAllPositions')",
+        "operation IN ('placeOrder','closePosition','reversePosition','closeAllPositions',"
+        "'purgeRecordedData')",
         name="ia_operation",
+    ),
+    CheckConstraint(
+        "(before_us IS NOT NULL) = (operation = 'purgeRecordedData') "
+        "AND (before_us IS NULL OR before_us >= 0)",
+        name="ia_bound",
     ),
     CheckConstraint(f"client_ref ~ '{GROUP_REF_PATTERN}'", name="ia_ref_fmt"),
     CheckConstraint(

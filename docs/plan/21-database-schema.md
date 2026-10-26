@@ -2461,6 +2461,7 @@ The request-level record of SR-E29-07 that [#913 ruling R3](https://github.com/C
 | `outcome_ret_code` | integer     | yes  | NULL    | The exchange's `retCode` of an `exchange_error`, as `OrderExchangeProblem` carries it                   |
 | `created_at`       | timestamptz | no   | `now()` |                                                                                                         |
 | `decided_at`       | timestamptz | yes  | NULL    | When the outcome was recorded                                                                           |
+| `before_us`        | bigint      | yes  | NULL    | A purge's window bound `before` (µs, UTC); set exactly on `purgeRecordedData` rows (`ia_bound`, 0052)   |
 
 ```sql
 CREATE TABLE idempotency_anchors (
@@ -2527,6 +2528,43 @@ CREATE TRIGGER trg_ia_no_truncate BEFORE TRUNCATE ON idempotency_anchors
   FOR EACH STATEMENT EXECUTE FUNCTION audit_refuse_truncate();
 ALTER TABLE idempotency_anchors ENABLE ALWAYS TRIGGER trg_ia_no_truncate;
 -- REVOKE DELETE, TRUNCATE ON idempotency_anchors FROM cv_app, cv_ro;
+```
+
+**Purge anchors (E16-T06, #490).** `purgeRecordedData` (`22-api-openapi.yaml`) anchors its `Idempotency-Key` here too, so the key outlives the process's job store and a restart: one row per caller and key, `operation` `purgeRecordedData`, `request_sha256` the request's fingerprint (`api/step_up_challenge.request_fingerprint`, the one its step-up grant is bound to), `before_us` the window's exclusive upper bound, and `id` the purge's job id; no target and no outcome. It is inserted after the purge's write-ahead `retention.purge` record and before its job exists; a store failure there is `503` and no job starts. A repeat with the same fingerprint answers that job and purges nothing; one with another `before_us` is `409 idempotency_key_reuse` naming the anchored bound; any other difference is `422 idempotency_key_reused`. The route reads and writes it through its own principal-scoped port (`storage/repositories/purge_anchors.py`), never the OMS's. `ia_bound` ties `before_us` to the operation, and `trg_ia_write_once` freezes it. Its migration is `0052_ia_purge_anchor`: the column is added nullable, `ia_operation` is replaced and `ia_bound` added `NOT VALID` and validated in their own statements (C-5.6), and the function is replaced in place; the downgrade refuses while a purge anchor exists (the anchor is permanent), then restores 0043's function and `ia_operation`.
+
+```sql
+ALTER TABLE idempotency_anchors
+  ADD COLUMN before_us bigint,
+  DROP CONSTRAINT ia_operation,
+  ADD CONSTRAINT ia_operation CHECK (operation IN ('placeOrder','closePosition','reversePosition','closeAllPositions','purgeRecordedData')) NOT VALID,
+  ADD CONSTRAINT ia_bound CHECK ((before_us IS NOT NULL) = (operation = 'purgeRecordedData') AND (before_us IS NULL OR before_us >= 0)) NOT VALID;
+ALTER TABLE idempotency_anchors VALIDATE CONSTRAINT ia_operation;
+ALTER TABLE idempotency_anchors VALIDATE CONSTRAINT ia_bound;
+CREATE OR REPLACE FUNCTION ia_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.created_by IS DISTINCT FROM OLD.created_by THEN 'created_by'
+    WHEN NEW.operation IS DISTINCT FROM OLD.operation THEN 'operation'
+    WHEN NEW.client_ref IS DISTINCT FROM OLD.client_ref THEN 'client_ref'
+    WHEN NEW.request_sha256 IS DISTINCT FROM OLD.request_sha256 THEN 'request_sha256'
+    WHEN NEW.trade_group_id IS DISTINCT FROM OLD.trade_group_id THEN 'trade_group_id'
+    WHEN NEW.order_id IS DISTINCT FROM OLD.order_id THEN 'order_id'
+    WHEN NEW.before_us IS DISTINCT FROM OLD.before_us THEN 'before_us'
+    WHEN NEW.created_at IS DISTINCT FROM OLD.created_at THEN 'created_at'
+    WHEN OLD.outcome_status IS NOT NULL
+      AND (NEW.outcome_status, NEW.outcome_code, NEW.outcome_ret_code, NEW.decided_at)
+        IS DISTINCT FROM (OLD.outcome_status, OLD.outcome_code, OLD.outcome_ret_code, OLD.decided_at)
+      THEN 'outcome'
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_ia_write_once: idempotency_anchors.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_ia_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
 ```
 
 #### 3.3.11 `recorded_stops` — the stop the OMS recorded for each position (E29-T04)
