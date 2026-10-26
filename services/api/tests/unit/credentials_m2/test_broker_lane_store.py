@@ -23,7 +23,7 @@ from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS, SecretsService
 from candleviewer.secrets.store import InMemoryCredentialStore
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
-from tests.unit.credentials_m2.test_broker_two_loops import BORROWED, MSG, _Rig, rig
+from tests.unit.credentials_m2.test_broker_two_loops import BORROWED, FAILED, MSG, _Rig, rig
 from tests.unit.exchange.bybit.test_rate_limit_two_loops import JOIN_S, _on
 
 __all__ = ["rig"]
@@ -162,6 +162,26 @@ def test_a_signing_after_aclose_is_refused_with_nothing_read(rig: _Rig) -> None:
     with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
         rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
     assert rig.log[logged:] == []
+
+
+def test_a_signing_parked_in_its_read_while_aclose_runs_is_refused_at_the_fence(
+    rig: _Rig,
+) -> None:
+    """L-1 (C-2.9): a signing past its loop check whose binding closes, and its pool is freed,
+    while it reads is refused at the fence after its record, `signing_loop_mismatch`: the record
+    is closed as failed, nothing is decrypted, and no MAC is returned."""
+    writer, lane = _Writer(), rig.sides["lane"]
+    signing = _bound(rig, _Pools(lane, rig.ios), writer)
+    parked = lane.park("get")
+    pending = rig.lane.start(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
+    assert parked.wait(JOIN_S)
+    rig.lane.run(signing.aclose())
+    lane.release("get")
+    with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
+        pending.result(JOIN_S)
+    assert [action for action, _ in writer.emitted] == [BORROWED, FAILED]
+    assert writer.emitted[1][1]["after_state"]["reason"] == "signing_loop_mismatch"
+    assert ("lane", "open") not in rig.log
 
 
 def test_an_aclose_from_another_loop_closes_and_frees_nothing(rig: _Rig) -> None:
