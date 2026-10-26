@@ -14,10 +14,16 @@ export interface StepUpCredentials {
   readonly code: string;
 }
 
-/** A refused step-up: the text is announced assertively; a new `seq` clears the code field. */
+/**
+ * A failed step-up attempt; the text is announced assertively. A refused credential
+ * (`credentials`, the default) marks the code field invalid and, on each new `seq`, clears the
+ * password and the code and returns focus to the password. Any other failure (no answer, a `5xx`)
+ * keeps what was typed.
+ */
 export interface StepUpFailure {
   readonly message: string;
   readonly seq: number;
+  readonly credentials?: boolean;
 }
 
 export interface StepUpDialogProps {
@@ -41,7 +47,6 @@ export interface StepUpDialogProps {
 
 /** SCR-006 copy (E09-D06 frames `code-only` and `code+confirmation`). */
 export const STEP_UP_TITLE = "Confirm with two-factor";
-export const STEP_UP_WHY = "Why: this action needs a fresh authenticator code.";
 /** The toast of E09-D06 §2 item 7: the held request was dropped without being sent. */
 export const STEP_UP_NOT_SENT = "Not sent";
 
@@ -97,6 +102,8 @@ const primary: CSSProperties = {
 };
 
 /**
+ * Temporary feature component (#2725): re-base on CMP-043 / CMP-044 (#266) when they land.
+ *
  * SCR-006 step-up dialog (E09-D06): `role="alertdialog"`, password + authenticator code, plus a
  * typed confirmation when the challenge names a `target`. Focus starts on the password, Tab is
  * trapped inside, Esc and Cancel call `onCancel`, a scrim click never dismisses, and on close focus
@@ -117,6 +124,7 @@ export function StepUpDialog({
   const [code, setCode] = useState("");
   const [typed, setTyped] = useState("");
   const seq = failure?.seq;
+  const refused = failure !== null && failure.credentials !== false;
 
   useEffect(() => {
     const opener = document.activeElement;
@@ -127,8 +135,11 @@ export function StepUpDialog({
   }, []);
 
   useEffect(() => {
-    if (seq !== undefined) setCode("");
-  }, [seq]);
+    if (seq === undefined || !refused) return;
+    setPassword("");
+    setCode("");
+    passwordField.current?.focus();
+  }, [seq, refused]);
 
   // Esc cancels and Tab cycles inside the dialog (E09-D06 §5, §6), on the native element so the
   // alertdialog itself takes no React key handler.
@@ -188,7 +199,6 @@ export function StepUpDialog({
             Action: <span id={describedBy}>{actionSummary}</span>
           </p>
         )}
-        <p style={{ margin: 0, color: "var(--color-text-secondary)" }}>{STEP_UP_WHY}</p>
         <form
           onSubmit={submit}
           style={{ display: "flex", flexDirection: "column", gap: "var(--space-2)" }}
@@ -213,9 +223,9 @@ export function StepUpDialog({
             autoComplete="one-time-code"
             maxLength={6}
             required
-            aria-invalid={failure === null ? undefined : true}
+            aria-invalid={refused ? true : undefined}
             aria-describedby={failure === null ? undefined : `${id}-failure`}
-            style={failure === null ? field : failed}
+            style={refused ? failed : field}
             value={code}
             onChange={(event) => setCode(event.target.value)}
           />

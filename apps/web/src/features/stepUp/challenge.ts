@@ -29,13 +29,39 @@ export interface StepUpChallenge {
   /** Server-composed; shown verbatim, never composed by the client. Null when the route sent none. */
   readonly actionSummary: string | null;
   readonly target: string | null;
+  /**
+   * Server clock minus client clock when the `403` arrived, from its `Date` header (0 without one),
+   * so `challenge_expires_at` (server clock) is never judged by the client's clock alone.
+   */
+  readonly clockOffsetMs: number;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
-/** The challenge of a `403 step_up_required` body, or null when the body is not one. */
-export function readChallenge(body: unknown): StepUpChallenge | null {
+/** Server minus client clock from a response `Date` header; 0 when it is absent or unreadable. */
+export function clockOffsetMs(
+  serverDate: string | null | undefined,
+  now: number = Date.now(),
+): number {
+  const server = serverDate ? Date.parse(serverDate) : Number.NaN;
+  return Number.isNaN(server) ? 0 : server - now;
+}
+
+/** Milliseconds until the challenge expires, on the server's clock. */
+export function msUntilExpiry(challenge: StepUpChallenge, now: number = Date.now()): number {
+  return Date.parse(challenge.expiresAt) - (now + challenge.clockOffsetMs);
+}
+
+/**
+ * The challenge of a `403 step_up_required` body, or null when the body is not one. `serverDate`
+ * is the response's `Date` header.
+ */
+export function readChallenge(
+  body: unknown,
+  serverDate: string | null = null,
+  now: number = Date.now(),
+): StepUpChallenge | null {
   if (!isRecord(body) || body["code"] !== STEP_UP_REQUIRED) return null;
   const problem = body as Partial<StepUpProblem>;
   const { challenge_id: id, challenge_expires_at: expires, action_class: cls } = problem;
@@ -48,6 +74,7 @@ export function readChallenge(body: unknown): StepUpChallenge | null {
     actionClass: cls,
     actionSummary: typeof problem.action_summary === "string" ? problem.action_summary : null,
     target: typeof problem.target === "string" ? problem.target : null,
+    clockOffsetMs: clockOffsetMs(serverDate, now),
   };
 }
 
@@ -85,9 +112,13 @@ export function holdRequest(
   });
 }
 
-/** Sends a held request (first send or the one re-send); a fresh `RequestInit` every time. */
-export function sendHeld(held: HeldRequest): Promise<Response> {
+/**
+ * Sends a held request (first send or the one re-send); a fresh `RequestInit` every time. The
+ * optional `signal` bounds the wait; it is not part of the request.
+ */
+export function sendHeld(held: HeldRequest, signal?: AbortSignal): Promise<Response> {
   const init: RequestInit = { method: held.method, headers: held.headers.map(([k, v]) => [k, v]) };
   if (held.body !== null) init.body = held.body;
+  if (signal !== undefined) init.signal = signal;
   return apiFetch(held.url, init);
 }

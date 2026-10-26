@@ -12,7 +12,9 @@ import {
 /** A refused call waiting on its step-up, and what to do with the answer to its re-send. */
 interface PendingStepUp {
   readonly hold: StepUpHold;
-  readonly onAnswer: (res: ApiResult<CreatedInvite>) => void;
+  readonly onAnswer: (res: ApiResult<CreatedInvite>, retried: boolean) => void;
+  /** True when this challenge refused a re-send: a further challenge is not opened. */
+  readonly retried: boolean;
 }
 
 /** SCR-123 Admin: invite user (R-303). Link is shown once; only revoke/re-issue afterwards. */
@@ -51,22 +53,27 @@ export function AdminInviteScreen(): JSX.Element {
     onCreateAnswer(await inviteApi.create({ username, email, roles: [role] }));
   }
 
-  function onCreateAnswer(res: ApiResult<CreatedInvite>): void {
+  function onCreateAnswer(res: ApiResult<CreatedInvite>, retried = false): void {
     if (res.ok && res.data) show(res.data);
-    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: onCreateAnswer });
+    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: onCreateAnswer, retried });
     else if (res.status === 409) setError("That email or username is already in use.");
     else setError("The invitation could not be created.");
   }
 
-  function reissued(res: ApiResult<CreatedInvite>): void {
+  function reissued(res: ApiResult<CreatedInvite>, retried = false): void {
     if (res.ok && res.data) show(res.data);
-    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: reissued });
+    else if (res.stepUp) setStepUp({ hold: res.stepUp, onAnswer: reissued, retried });
     else setError("The invitation could not be re-issued.");
   }
 
+  /**
+   * A re-send refused by a fresh challenge opens at most one new step-up cycle; a second refusal is
+   * shown as the call's ordinary error, so a server that keeps challenging never loops the user.
+   */
   async function onResent(pending: PendingStepUp, response: Response): Promise<void> {
     setStepUp(null);
-    pending.onAnswer(await readResult<CreatedInvite>(response, pending.hold.held));
+    const res = await readResult<CreatedInvite>(response, pending.hold.held);
+    pending.onAnswer(pending.retried ? { ...res, stepUp: null } : res, true);
   }
 
   async function copy(): Promise<void> {

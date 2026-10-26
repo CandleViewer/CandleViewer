@@ -34,7 +34,9 @@ export async function readResult<T>(response: Response, held: HeldRequest): Prom
     json = null;
   }
   const obj = (json ?? {}) as { code?: string };
-  const challenge = response.status === 403 ? readChallenge(json) : null;
+  // The `Date` header gives the server clock the challenge's expiry is on (plain test doubles have no headers).
+  const date = response.headers?.get("Date") ?? null;
+  const challenge = response.status === 403 ? readChallenge(json, date) : null;
   return {
     ok: response.ok,
     status: response.status,
@@ -44,14 +46,14 @@ export async function readResult<T>(response: Response, held: HeldRequest): Prom
   };
 }
 
+const SAFE_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "OPTIONS"]);
+
 async function call<T>(method: string, path: string, body?: unknown): Promise<ApiResult<T>> {
   const payload = body === undefined ? null : JSON.stringify(body);
-  const held = holdRequest(
-    method,
-    `${BASE}${path}`,
-    { "Content-Type": "application/json" },
-    payload,
-  );
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  // One key per call, held with the request, so a re-send after a step-up is the same submission (C-2.10).
+  if (!SAFE_METHODS.has(method)) headers["Idempotency-Key"] = crypto.randomUUID();
+  const held = holdRequest(method, `${BASE}${path}`, headers, payload);
   let response: Response;
   try {
     response = await sendHeld(held);

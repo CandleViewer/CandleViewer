@@ -9,7 +9,9 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 import type { generated } from "@candleviewer/protocol";
 import {
   STEP_UP_REQUIRED,
+  clockOffsetMs,
   isStaleChallenge,
+  msUntilExpiry,
   readChallenge,
   type StepUpGranted,
   type StepUpProblem,
@@ -59,6 +61,7 @@ describe("step-up challenge consumer contract (C-6.2, #2304)", () => {
       actionClass: "killswitch",
       actionSummary: "Release kill switch, scope global",
       target: null,
+      clockOffsetMs: 0,
     });
   });
 
@@ -70,7 +73,21 @@ describe("step-up challenge consumer contract (C-6.2, #2304)", () => {
       actionClass: "keys",
       actionSummary: "Rotate API key for account 'sub_002' (live, UID 1001234)",
       target: "sub_002",
+      clockOffsetMs: 0,
     });
+  });
+
+  it("test_contract_challenge_expiry_is_judged_on_the_server_clock", () => {
+    const now = Date.parse("2026-09-14T10:41:02Z"); // the client clock runs 10 minutes ahead
+    const challenge = readChallenge(
+      example("stepUpRequired"),
+      "Mon, 14 Sep 2026 10:31:02 GMT",
+      now,
+    );
+    expect(challenge?.clockOffsetMs).toBe(-10 * 60_000);
+    expect(challenge && msUntilExpiry(challenge, now)).toBe(5 * 60_000);
+    expect(clockOffsetMs(null, now)).toBe(0);
+    expect(clockOffsetMs("not a date", now)).toBe(0);
   });
 
   it("test_contract_non_challenge_bodies_are_not_challenges", () => {

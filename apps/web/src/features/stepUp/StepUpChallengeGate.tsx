@@ -6,12 +6,13 @@ import {
   stepUpOutcomePending,
   type StepUpCredentials,
   type StepUpFailure,
-} from "@candleviewer/ui";
+} from "./StepUpDialog";
 import { recordStepUp } from "../../lib/auth/meCache";
 import { apiFetch } from "../../lib/http/csrfFetch";
 import {
   STEP_UP_PATH,
   isStaleChallenge,
+  msUntilExpiry,
   sendHeld,
   type HeldRequest,
   type StepUpChallenge,
@@ -21,8 +22,22 @@ import {
 
 /** The third consecutive invalid code downgrades the session to read-only (`session_read_only`). */
 export const MAX_STEP_UP_FAILURES = 3;
-/** The one generic refusal text: it never reveals which factor failed. */
-export const STEP_UP_INVALID = "Invalid password or code.";
+/**
+ * A refused password or code (`401 mfa_invalid`): the E09-D06 `failure-1-of-3` / `failure-2-of-3`
+ * frame text without its attempts count, which the server does not send yet.
+ */
+export const STEP_UP_INVALID = "Incorrect code.";
+/**
+ * The step-up itself got no answer, or a `429` / `5xx`: nothing was judged, nothing is counted and
+ * the held request stays held. The existing text of the change-password screen; it fits a
+ * network error, and a `429` / `5xx` has no designed copy yet (E09-D06 gap).
+ */
+export const STEP_UP_UNREACHABLE = "Cannot reach the server. Try again.";
+/**
+ * How long the held request's re-send may take before its outcome counts as unknown. The app has no
+ * shared HTTP timeout; this matches its other auth waits (`REFRESH_WAIT_MS`, `BOOTSTRAP_TIMEOUT_MS`).
+ */
+export const RESEND_TIMEOUT_MS = 10_000;
 /** A timer past 2^31 ms would fire at once. */
 const MAX_DELAY_MS = 2 ** 31 - 1;
 
@@ -30,7 +45,12 @@ export interface StepUpChallengeGateProps {
   readonly challenge: StepUpChallenge;
   /** The refused request, held unchanged; sent again at most once, after a matching `200`. */
   readonly held: HeldRequest;
-  /** The answer to the re-send, whatever its status. */
+  /**
+   * The answer to the re-send, whatever its status. A re-send refused by a fresh
+   * `403 step_up_required` is a new challenge; the caller may open one more gate for it and must not
+   * open a further one (the invite screen caps it at one new cycle), so a server that keeps
+   * challenging never loops the user.
+   */
   readonly onResent: (response: Response) => void;
   /**
    * Reads the affected state back when the re-send got no answer (a network error or a timeout):
@@ -88,22 +108,23 @@ export function StepUpChallengeGate({
   }, []);
 
   useEffect(() => {
-    const ms = Date.parse(challenge.expiresAt) - Date.now();
+    const ms = msUntilExpiry(challenge);
     const timer = setTimeout(drop, Number.isNaN(ms) ? 0 : Math.min(Math.max(ms, 0), MAX_DELAY_MS));
     return () => clearTimeout(timer);
-  }, [challenge.expiresAt, drop]);
+  }, [challenge, drop]);
 
-  function refuse(): void {
+  function fail(message: string, credentials: boolean): void {
     setSubmitting(false);
-    setFailure((prev) => ({ message: STEP_UP_INVALID, seq: (prev?.seq ?? 0) + 1 }));
+    setFailure((prev) => ({ message, credentials, seq: (prev?.seq ?? 0) + 1 }));
   }
 
   async function resend(): Promise<void> {
     settled.current = true;
     let answer: Response;
     try {
-      answer = await sendHeld(held);
+      answer = await sendHeld(held, AbortSignal.timeout(RESEND_TIMEOUT_MS));
     } catch {
+      // A network error or the timeout: the action may have executed (E09-D06 §2 item 4).
       setStage("pending");
       try {
         await readBack();
@@ -127,7 +148,7 @@ export function StepUpChallengeGate({
         body: JSON.stringify(request),
       });
     } catch {
-      if (!settled.current) refuse();
+      if (!settled.current) fail(STEP_UP_UNREACHABLE, false);
       return;
     }
     const body: unknown = await response.json().catch(() => null);
@@ -141,11 +162,12 @@ export function StepUpChallengeGate({
       return resend();
     }
     if (endsChallenge(response.status, body)) return drop();
+    if (response.status === 429 || response.status >= 500) return fail(STEP_UP_UNREACHABLE, false);
     if (response.status === 401) {
       failures.current += 1;
       if (failures.current >= MAX_STEP_UP_FAILURES) return drop();
     }
-    refuse();
+    fail(STEP_UP_INVALID, true);
   }
 
   if (stage === "not-sent") return <StepUpNotice message={STEP_UP_NOT_SENT} />;
