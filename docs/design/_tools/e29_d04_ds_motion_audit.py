@@ -4573,8 +4573,11 @@ def read_inputs() -> tuple[tuple[str, str], ...]:
 
 def diff_names() -> tuple[str, ...]:
     """Every path the branch changes against the base: committed, staged, in the tree or new and
-    untracked (G-UNTOUCHED)."""
-    changed = git_out("diff", "--name-only", BASE).split("\n")
+    untracked (G-UNTOUCHED). After a rebase the branch's fork point from `origin/main` stands in for
+    the base, so commits merged to `main` since the base are not counted as the branch's."""
+    fork = git_out("merge-base", "HEAD", "origin/main").strip()
+    since = fork if fork and git_ok("merge-base", "--is-ancestor", BASE, fork) else BASE
+    changed = git_out("diff", "--name-only", since).split("\n")
     changed += git_out("ls-files", "--others", "--exclude-standard").split("\n")
     return tuple(sorted({n for n in changed if n}))
 
