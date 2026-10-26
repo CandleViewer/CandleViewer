@@ -20,6 +20,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from decimal import Decimal
 from types import SimpleNamespace
 from typing import cast
 from uuid import UUID, uuid4
@@ -65,6 +66,16 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
     world.store.submissions.seed_account(cr.ref())  # its environment, as Postgres holds it
     listed = {SYMBOL: instrument()}  # the catalogue's snapshot, built once as the refresh does
     world.ingestion.instruments = SimpleNamespace(snapshot=lambda: listed)
+    # A fresh quote whose mid is the bodies' price, inside the band the limit entry is checked in.
+    quote = SimpleNamespace(
+        bid1_price=Decimal("59999"), ask1_price=Decimal("60001"), last_price=Decimal("60000")
+    )
+    world.ingestion.tickers = SimpleNamespace(
+        latest=lambda _symbol: quote,
+        is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None,
+        release=lambda _consumer, _symbol: None,
+    )
     for flag in world.flags:
         flag.read()
 
