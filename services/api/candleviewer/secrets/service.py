@@ -883,24 +883,26 @@ LoopStoreFactory = Callable[[int], tuple[CredentialStore, Callable[[], Awaitable
 
 def mint_loop_signing(
     service: SecretsService, caller_module: str, *, loop_store: LoopStoreFactory | None = None
-) -> Callable[[CredentialStore | None, AuditSink], LoopSigning]:
+) -> Callable[[AuditSink], LoopSigning]:
     """Wiring-time binder of signing to one more event loop (#913 L3b), minted once, in
     `admin.wiring.secrets_bundle`. It runs on the loop it serves (else `RuntimeError`) with that
-    loop's store and sink, wrapped as the service's own; its borrower resolves the broker per call,
-    as `mint_borrower`'s: closed while degraded. #913 L1d: given no store, it builds the loop's own
-    there with `loop_store`, at `LOOP_STORE_CONNECTIONS`, holds it alone, counted in
-    `cv_credential_loop_pools_in_use`, and frees its pool at `LoopSigning.aclose`."""
+    loop's sink, wrapped as the service's own; its borrower resolves the broker per call, as
+    `mint_borrower`'s: closed while degraded. #913 L1d: the loop's store is M2's own, built there
+    with `loop_store` at `LOOP_STORE_CONNECTIONS` (none wired: `RuntimeError`), never the serving
+    loop's (`ValueError`), held by M2 alone and counted in `cv_credential_loop_pools_in_use` until
+    `LoopSigning.aclose` frees its pool."""
     if caller_module not in ALLOWED_CALLERS:
         raise ValueError("caller not permitted to borrow credentials")
 
-    def bind(store: CredentialStore | None, audit: AuditSink) -> LoopSigning:
+    def bind(audit: AuditSink) -> LoopSigning:
         loop = asyncio.get_running_loop()  # nothing is built off the loop it serves
-        free: Callable[[], Awaitable[None]] | None = None
-        if store is None:
-            if loop_store is None:
-                raise RuntimeError("no loop credential store is wired")
-            store, free = loop_store(LOOP_STORE_CONNECTIONS)
-            m.credential_loop_pools.inc()
+        if loop_store is None:
+            raise RuntimeError("no loop credential store is wired")
+        store, dispose = loop_store(LOOP_STORE_CONNECTIONS)
+        if store is service._store:  # a wiring fault, refused before it is counted or read
+            raise ValueError("the loop's credential store is its own, never the serving loop's")
+        free: Callable[[], Awaitable[None]] | None = dispose
+        m.credential_loop_pools.inc()
 
         async def sink(action: str, fields: dict[str, str]) -> None:
             await _sink_call(audit, action, fields)
