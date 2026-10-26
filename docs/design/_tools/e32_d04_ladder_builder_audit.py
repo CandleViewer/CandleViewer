@@ -52,7 +52,8 @@ The text approval's carries (orchestrator, 2026-10-24): `ladder.stop.line.mixed`
 the per-child clauses' resting and placing… / queued rows; the custodian scan is case-insensitive
 and also runs on every not-yet-confirmed clause of a mixed row; every Σ line (sections 2, 4.2,
 4.3, 5.2) and every figure a section 3 row restates equal the tool's. Each has one self-test
-mutation, caught exactly once. E32-D03 and E32-D05 are read for the class word's glyph only.
+mutation, caught exactly once. E32-D03 and E32-D05 are read for the class word's glyph only, at
+their merge commits (`git show <sha>:path`, local and offline).
 
 Usage: python3 -I docs/design/_tools/e32_d04_ladder_builder_audit.py [--json] [--check]
        [--self-test] [--extra F ...]
@@ -64,6 +65,7 @@ import copy
 import importlib
 import json
 import re
+import subprocess
 import sys
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -76,6 +78,12 @@ PLAN = ROOT / "docs" / "plan"
 DESIGN = ROOT / "docs" / "design"
 SPEC = DESIGN / "E32" / "E32-D04.md"
 UPSTREAM = DESIGN / "E32" / "E32-D02.md"
+# E32-D03 / E32-D05 are read at their merge commits (#4421, #4417), not at `main`: their boards
+# PRs (#4453, #4440) moved the cited lines, and the spec cites the text "at those merge commits".
+SIBLING_PINS = {
+    "E32-D03": "edca4c31ade27fcf2ed22f1f7ab2164cb4b28829",
+    "E32-D05": "e8f8558aaf9f931d960bfc987c6d92306ee29045",
+}
 PRIM, DARK, LIGHT, HC = (
     "primitives.tokens.json",
     "semantic-dark.tokens.json",
@@ -242,67 +250,67 @@ BINDINGS = (
 # doc | line at the base | text the line must hold, unique in the file; a `14` / `15` line below
 # the pointer line may sit one lower (the shift is counted, never assumed).
 CITED_TABLE = """
-14 | 1510 | **Type:** Modal. Split size across N orders
-14 | 1526 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
-14 | 1527 | ("Child 5 is below the minimum — reduce the order count")
-14 | 1528 | placing (per-child progress) · partial placement failure with retry.
-14 | 1529 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
-14 | 1532 | Preview recomputes locally within one frame
-14 | 1533 | `algo.scaled_created` with `{symbol, side, levels, totalQty
-14 | 1534 | (flat / linear / exponential / custom) drawn
-14 | 1535 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
+14 | 1522 | **Type:** Modal. Split size across N orders
+14 | 1538 | `POST /api/v1/orders` (backend places N children and tracks them as one algo)
+14 | 1539 | ("Child 5 is below the minimum — reduce the order count")
+14 | 1540 | placing (per-child progress) · partial placement failure with retry.
+14 | 1541 | CMP-130 SlippageEstimateChip, CMP-228 PreviewTile.
+14 | 1544 | Preview recomputes locally within one frame
+14 | 1545 | `algo.scaled_created` with `{symbol, side, levels, totalQty
+14 | 1546 | (flat / linear / exponential / custom) drawn
+14 | 1547 | recommendations PROPOSED pending the owner's sessions: the preview as a real table
 15 | 139 | ### CMP-010 Slider
 15 | 144 | `role="slider"`, `aria-valuenow/min/max/text`
-15 | 224 | ### CMP-019 Icon
-15 | 261 | ### CMP-023 Progress Bar
-15 | 512 | ### CMP-049 Table (base data table)
-15 | 515 | `virtualized?: boolean` (default true above 50 rows)
-15 | 799 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
-15 | 1310 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
-15 | 1335 | ### CMP-119 BracketEditor (SL/TP attach widget)
-15 | 1470 | ### CMP-130 SlippageEstimateChip
-15 | 1790 | ### CMP-158 SafetyInvariantNotice
-15 | 2654 | ### CMP-228 PreviewTile
-15 | 2656 | the live miniature preview inside settings dialogs
-22 | 6252 | /trade-groups:
-22 | 6286 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
-22 | 6300 | `403 risk_limit_breached` with one `errors[]` entry per offending leg, audited, before
-22 | 6331 | Fan-out is scheduled against a **per-UID** rate budget
-22 | 6537 | /trade-groups/{tradeGroupId}/amend:
-22 | 6602 | operationId: cancelTradeGroup
-22 | 12703 | /trade-groups/preview:
-22 | 12717 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
-22 | 14393 | name: X-Arm-Token
-22 | 17193 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
-22 | 17334 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
-22 | 17338 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
-22 | 18186 | levels: { type: integer, minimum: 2, maximum: 50 }
-22 | 18189 | distribution: { type: string, enum: [equal, linear, geometric] }
-22 | 18193 | description: ">1 weights size toward `to_price`.",
-22 | 18466 | CreateTradeGroupRequest:
-22 | 18510 | ResolvedLegParams:
-22 | 18544 | TradeGroupLeg:
-22 | 18595 | LegError:
-22 | 18612 | retryable: { type: boolean }
-22 | 21326 | TradeGroupPreview:
-22 | 21357 | rate_budget_exhausted,
+15 | 225 | ### CMP-019 Icon
+15 | 262 | ### CMP-023 Progress Bar
+15 | 524 | ### CMP-049 Table (base data table)
+15 | 527 | `virtualized?: boolean` (default true above 50 rows)
+15 | 811 | ### CMP-079 RbacGate (disabled-with-reason wrapper)
+15 | 1323 | ### CMP-118 AlgoProgressCard (emulated TWAP/Iceberg/Chase/Scaled)
+15 | 1348 | ### CMP-119 BracketEditor (SL/TP attach widget)
+15 | 1483 | ### CMP-130 SlippageEstimateChip
+15 | 1803 | ### CMP-158 SafetyInvariantNotice
+15 | 2667 | ### CMP-228 PreviewTile
+15 | 2669 | the live miniature preview inside settings dialogs
+22 | 6467 | /trade-groups:
+22 | 6501 | summary: Place one ticket across N accounts (fan-out) with per-leg overrides
+22 | 6517 | `403 risk_limit_breached` with one `errors[]` entry per offending leg: its `field`
+22 | 6551 | Fan-out is scheduled against a **per-UID** rate budget
+22 | 6764 | /trade-groups/{tradeGroupId}/amend:
+22 | 6829 | operationId: cancelTradeGroup
+22 | 12940 | /trade-groups/preview:
+22 | 12954 | who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token.
+22 | 14693 | name: X-Arm-Token
+22 | 17532 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600 }
+22 | 17673 | max_concurrent_orders: { type: ["integer", "null"], minimum: 1, maximum: 500 }
+22 | 17677 | max_orders_per_minute: { type: integer, minimum: 1, maximum: 600, default: 30 }
+22 | 18526 | levels: { type: integer, minimum: 2, maximum: 50 }
+22 | 18529 | distribution: { type: string, enum: [equal, linear, geometric] }
+22 | 18533 | description: ">1 weights size toward `to_price`.",
+22 | 18806 | CreateTradeGroupRequest:
+22 | 18850 | ResolvedLegParams:
+22 | 18884 | TradeGroupLeg:
+22 | 18935 | LegError:
+22 | 18952 | retryable: { type: boolean }
+22 | 21666 | TradeGroupPreview:
+22 | 21697 | rate_budget_exhausted,
 23 | 3144 | ### 14.8 `TickerUpdate`
 23 | 3310 | ### 15.1 `OrderUpdate`
 23 | 3720 | ### 15.5 `TradeGroupUpdate`
 24 | 135 | `mode="conservative"` rounds a buy limit _down_ and a sell limit _up_
-24 | 2075 | ### 8.7 Rate budgeting
-24 | 2106 | submission fails fast with `RATE_BUDGET_EXCEEDED`
-24 | 2113 | ### 8.8 Safety invariant — native stop-loss
-24 | 2482 | | `risk_caps.max_orders_per_minute`
-24 | 2556 | **9.3.1 Stop resolution.**
-24 | 2562 | ### 9.4 Fan-out algorithm
-24 | 2602 | 4. **Rate budget is checked across all UIDs before the first send.**
-24 | 2885 | ### 10.6 Scaled (laddered) orders
-24 | 2892 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
-24 | 2898 | batch_size: int = 10
-24 | 2901 | duplicate prices after rounding are **merged**
-24 | 2903 | Submission uses Bybit's batch endpoint (1
-24 | 4850 | ### 15.5 Audited action vocabulary (closed set)
+24 | 2077 | ### 8.7 Rate budgeting
+24 | 2108 | submission fails fast with `RATE_BUDGET_EXCEEDED`
+24 | 2115 | ### 8.8 Safety invariant — native stop-loss
+24 | 2493 | | `risk_caps.max_orders_per_minute`
+24 | 2597 | **9.3.1 Stop resolution.**
+24 | 2640 | ### 9.4 Fan-out algorithm
+24 | 2680 | 4. **Rate budget is checked across all UIDs before the first send.**
+24 | 2963 | ### 10.6 Scaled (laddered) orders
+24 | 2970 | distribution: Literal["equal","linear","geometric","custom"] = "equal"
+24 | 2976 | batch_size: int = 10
+24 | 2979 | duplicate prices after rounding are **merged**
+24 | 2981 | Submission uses Bybit's batch endpoint (1
+24 | 4928 | ### 15.5 Audited action vocabulary (closed set)
 28 | 1914 | ## B2 — TradeGroup
 28 | 2183 | ### B2.2 States
 28 | 2198 | ### B2.3 Events and transitions
@@ -316,7 +324,7 @@ CITED_TABLE = """
 16 | 113 | | **Compact** (default for trading surfaces)
 16 | 114 | | **Comfortable** (default for admin/onboarding/settings)
 16 | 125 | 1. Density changes spacing-token resolution only
-23 | 4348 | `oms.account_stale`
+23 | 4350 | `oms.account_stale`
 E32-D02 | 285 | Account stale (`oms.account_stale`
 E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
 E32-D02 | 466 | stale refuses order entry, never a tighten
@@ -1160,8 +1168,14 @@ def flatten(d: object, prefix: str = "") -> dict[str, object]:
 def read_texts() -> dict[str, str]:
     t = {k: p.read_text(encoding="utf-8") for k, p in DOCS.items()}
     t["E32-D02"] = UPSTREAM.read_text(encoding="utf-8")
-    for sibling in ("E32-D03", "E32-D05"):  # the class word's glyph only (D04-A10, D04-A11)
-        t[sibling] = (DESIGN / "E32" / f"{sibling}.md").read_text(encoding="utf-8")
+    for sibling, sha in SIBLING_PINS.items():  # the class word's glyph only (D04-A10, D04-A11)
+        t[sibling] = subprocess.run(
+            ["git", "-C", str(ROOT), "show", f"{sha}:docs/design/E32/{sibling}.md"],
+            capture_output=True,
+            check=True,
+            text=True,
+            encoding="utf-8",
+        ).stdout
     for name in ("E30/E30-D02", "E30/E30-D04", "E09/E09-D09", "E33/E33-D03"):
         t[name.split("/")[1]] = (DESIGN / f"{name}.md").read_text(encoding="utf-8")
     return t
