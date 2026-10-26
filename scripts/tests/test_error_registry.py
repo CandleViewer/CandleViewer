@@ -60,6 +60,37 @@ def test_generator_rejects_a_title_outside_the_bmp() -> None:
         generate.render_py(entries)
 
 
+def test_generator_rejects_a_lone_surrogate_title_naming_the_code() -> None:
+    entries = generate.load_registry(MINI)
+    entries[0]["title"] = "bad \ud800 title"
+    with pytest.raises(generate.RegistryError, match="not_found"):
+        generate.render_py(entries)
+
+
+@pytest.mark.parametrize("code", ["9lives", "a-b", "a b", "a.b", "_x", "caf\u00e9", 'a"b'])
+def test_load_registry_rejects_a_code_outside_the_identifier_shape(code: str) -> None:
+    text = MINI.replace("Not_Found", f"'{code}'")
+    with pytest.raises(generate.RegistryError, match="code"):
+        generate.load_registry(text)
+
+
+def test_scope_and_analogue_strings_containing_null_survive_python_emission() -> None:
+    text = MINI.replace("scope: topic", "scope: nullable").replace(
+        "rest_analogue: not_found", "rest_analogue: nullish"
+    )
+    py = generate.render_py(generate.load_registry(text))
+    assert '"nullable"' in py and '"nullish"' in py
+    assert "Nonetable" not in py and "Noneish" not in py
+    ns: dict[str, object] = {}
+    exec(compile(py, "<generated>", "exec"), ns)  # noqa: S102 - trusted generator output in a test
+
+
+def test_gate_reports_a_render_refusal_as_a_registry_line() -> None:
+    text = MINI.replace("title: t", "title: '\U0001f600'", 1)
+    errs = gate.check(MINI_MD, text, {})
+    assert len(errs) == 1 and errs[0].startswith("registry: ") and "not_found" in errs[0]
+
+
 def test_generator_keeps_a_bmp_title_as_a_valid_literal() -> None:
     entries = generate.load_registry(MINI.replace("title: t", "title: '\u2014'", 1))
     assert "\\u2014" in generate.render_py(entries)

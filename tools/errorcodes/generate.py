@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,9 @@ OPENAPI = REPO / "docs" / "plan" / "22-api-openapi.yaml"
 OUT_PY = REPO / "services" / "api" / "candleviewer" / "ws" / "_generated" / "error_codes.py"
 OUT_TS = REPO / "packages" / "protocol" / "src" / "errorCodes.ts"
 SRC_NOTE = "docs/plan/22-api-openapi.yaml (x-error-codes, x-error-codes-ws)"
+
+
+CODE_SHAPE = re.compile(r"[a-z][a-z0-9_]*")
 
 
 class RegistryError(ValueError):
@@ -46,6 +50,11 @@ def load_registry(text: str) -> list[dict[str, Any]]:
                 raise RegistryError(f"{origin}: entry without a code: {raw!r}")
             if code in seen:
                 raise RegistryError(f"duplicate error code {code!r} (second seen in {origin})")
+            if CODE_SHAPE.fullmatch(code) is None:
+                raise RegistryError(
+                    f"{origin}: error code {code!r} must match [a-z][a-z0-9_]* "
+                    "(codes are emitted unescaped into Python and TypeScript)"
+                )
             seen.add(code)
             if origin == "x-error-codes":
                 surface = [str(s).strip().lower() for s in raw.get("surface", ["rest"])]
@@ -67,6 +76,11 @@ def load_registry(text: str) -> list[dict[str, Any]]:
                 }
             )
     return entries
+
+
+def _py_literal(value: object) -> str:
+    """A Python literal for a JSON-shaped scalar: ``None`` for null, never a text replacement."""
+    return "None" if value is None else json.dumps(value)
 
 
 def _member(code: str) -> str:
@@ -108,17 +122,20 @@ def render_py(entries: list[dict[str, Any]]) -> str:
         surf = "(" + "".join(f'"{s}", ' for s in e["surface"]).rstrip() + ")"
         if len(e["surface"]) == 1:
             surf = f'("{e["surface"][0]}",)'
-        scope = json.dumps(e["scope"])
-        ra = json.dumps(e["rest_analogue"])
+        scope = _py_literal(e["scope"])
+        ra = _py_literal(e["rest_analogue"])
         # json.dumps escapes non-BMP text as a surrogate pair, which is not a valid Python string
         # literal for that character, so a title must stay inside the Basic Multilingual Plane.
+        # A lone surrogate passes that range test but cannot be encoded as UTF-8, so refuse it too.
         if any(ord(ch) > 0xFFFF for ch in str(e["title"])):
             raise RegistryError(f"error title for {e['code']!r} must stay in the BMP")
+        if any(0xD800 <= ord(ch) <= 0xDFFF for ch in str(e["title"])):
+            raise RegistryError(f"error title for {e['code']!r} must not contain a lone surrogate")
         cc = "None" if e["close_code"] is None else str(e["close_code"])
         rt = "True" if e["retryable"] else "False"
         out.append(
-            f'    ErrorCode.{_member(e["code"])}: ErrorMeta({surf}, {scope.replace("null", "None")}, '
-            f'{rt}, {ra.replace("null", "None")}, {cc}, {json.dumps(e["title"])}),'
+            f'    ErrorCode.{_member(e["code"])}: ErrorMeta({surf}, {scope}, '
+            f'{rt}, {ra}, {cc}, {json.dumps(e["title"])}),'
         )
     out += [
         "}",
@@ -158,7 +175,7 @@ def render_ts(entries: list[dict[str, Any]]) -> str:
     ]
     for e in entries:
         surf = ", ".join(f'"{s}"' for s in e["surface"])
-        scope = json.dumps(e["scope"]).replace("null", "null")
+        scope = json.dumps(e["scope"])
         ra = json.dumps(e["rest_analogue"])
         cc = "null" if e["close_code"] is None else str(e["close_code"])
         out.append(
