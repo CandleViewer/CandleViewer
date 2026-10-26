@@ -45,18 +45,27 @@ class _Writer:
 
 
 class _Pools:
-    """The root's lane store factory: hands out the rig's lane side as the store, noting the
-    bound M2 asks for and the thread, and each release of the pool and its thread."""
+    """The root's lane store factory: hands out a store (the rig's lane side), noting the bound
+    M2 asks for and the thread, and each dispose of the pool: its thread, and whether the lane's
+    I/O (the last of `ios`) was closed by then. Each of `faults` spoils one dispose: "raise"
+    fails it, "stall" parks it until cancelled."""
 
-    def __init__(self, store: Any) -> None:
-        self.store, self.built = store, list[tuple[int, threading.Thread]]()
-        self.released = list[threading.Thread]()
+    def __init__(self, store: Any, ios: list[Any] | None = None) -> None:
+        self.store, self.ios, self.faults = store, ios, list[str]()
+        self.built = list[tuple[int, threading.Thread]]()
+        self.released = list[tuple[threading.Thread, bool | None]]()
 
     def __call__(self, connections: int) -> tuple[Any, Release]:
         self.built.append((connections, threading.current_thread()))
 
         async def release() -> None:
-            self.released.append(threading.current_thread())
+            closed = self.ios[-1].closed if self.ios else None
+            fault = self.faults.pop(0) if self.faults else ""
+            if fault == "raise":
+                raise RuntimeError("the pool's dispose failed")
+            if fault == "stall":
+                await asyncio.Event().wait()  # never set: only a bound ends it
+            self.released.append((threading.current_thread(), closed))
 
         return self.store, release
 
@@ -81,7 +90,7 @@ def test_the_lane_binding_builds_its_own_bounded_store_on_the_lane_and_counts_it
     """Q10: the store is built by M2 on the lane's loop, only there (never off a loop), at M2's
     bound, counted while M2 holds it; a lane signing reads it there and writes its record ahead
     through the lane's own writer with M2's columns (C-2.9)."""
-    pools, writer, before = _Pools(rig.sides["lane"]), _Writer(), _pools_in_use()
+    pools, writer, before = _Pools(rig.sides["lane"], rig.ios), _Writer(), _pools_in_use()
     bind = secrets_bundle(rig.svc, loop_store=pools).lane_signing
     with pytest.raises(RuntimeError, match="no running event loop"):
         bind(audit=writer)
@@ -97,24 +106,87 @@ def test_the_lane_binding_builds_its_own_bounded_store_on_the_lane_and_counts_it
     assert (action, columns["actor_label"], columns["object_id"]) == (
         BORROWED, "system:exchange_adapter", str(rig.key_id)
     )  # fmt: skip
-    rig.lane.run(signing.release())
-    assert (pools.released, _pools_in_use()) == ([on_lane], before)
+    rig.lane.run(signing.aclose())
+    assert (pools.released, _pools_in_use()) == ([(on_lane, True)], before)
 
 
-def test_its_pool_is_released_once_after_the_close_and_only_on_its_loop(rig: _Rig) -> None:
-    """Q10: the release closes the signing first, so no signing reads a freed store, then frees
-    the pool once, on the lane; from another loop it is refused with nothing closed or freed."""
-    pools, before = _Pools(rig.sides["lane"]), _pools_in_use()
+def test_aclose_alone_frees_the_pool_on_the_lane_once_closed_and_the_gauge_falls(
+    rig: _Rig,
+) -> None:
+    """M-1 (Q10): the one close frees the pool M2 built: the signing is closed first, so no
+    signing reads a freed store, then the pool is disposed of on the lane, and counted no more."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing = _bound(rig, pools, _Writer())
+    assert _pools_in_use() == before + 1
+    rig.lane.run(signing.aclose())
+    on_lane = rig.lane.run(_on(threading.current_thread))
+    assert (pools.released, _pools_in_use()) == ([(on_lane, True)], before)
+
+
+def test_a_second_aclose_frees_nothing_more(rig: _Rig) -> None:
+    """M-1: `aclose` is idempotent: the pool is disposed of once and counted down once."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing = _bound(rig, pools, _Writer())
+    for _ in range(2):
+        rig.lane.run(signing.aclose())
+    assert (len(pools.released), _pools_in_use()) == (1, before)
+
+
+def test_a_signing_after_aclose_is_refused_with_nothing_read(rig: _Rig) -> None:
+    """M-1: once closed, the binding signs nothing: `signing_loop_mismatch`, before any read."""
+    signing = _bound(rig, _Pools(rig.sides["lane"], rig.ios), _Writer())
+    rig.lane.run(signing.aclose())
+    logged = len(rig.log)
+    with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
+        rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
+    assert rig.log[logged:] == []
+
+
+def test_an_aclose_from_another_loop_closes_and_frees_nothing(rig: _Rig) -> None:
+    """Q10: from another loop the close is refused before anything is closed or freed."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
     signing = _bound(rig, pools, _Writer())
     with pytest.raises(SigningLoopMismatch, match=r"^signing_loop_mismatch$"):
-        rig.serving.run(signing.release())
-    assert pools.released == [] and not rig.ios[-1].closed
-    for _ in range(2):  # idempotent
-        rig.lane.run(signing.release())
-    on_lane = rig.lane.run(_on(threading.current_thread))
-    assert (pools.released, _pools_in_use(), rig.ios[-1].closed) == ([on_lane], before, True)
-    with pytest.raises(SigningLoopMismatch):
-        rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
+        rig.serving.run(signing.aclose())
+    assert (pools.released, rig.ios[-1].closed, _pools_in_use()) == ([], False, before + 1)
+    rig.lane.run(signing.aclose())
+
+
+def test_a_failed_dispose_raises_and_keeps_the_pool_counted_for_the_next_aclose(
+    rig: _Rig,
+) -> None:
+    """Minor 5: the gauge falls only once the pool is disposed of; a dispose that fails raises
+    from `aclose` and leaves the pool held and counted, and the next `aclose` frees it."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing, pools.faults[:] = _bound(rig, pools, _Writer()), ["raise"]
+    with pytest.raises(RuntimeError, match="dispose failed"):
+        rig.lane.run(signing.aclose())
+    assert (pools.released, _pools_in_use()) == ([], before + 1)
+    rig.lane.run(signing.aclose())
+    assert (len(pools.released), _pools_in_use()) == (1, before)
+
+
+def test_a_stalled_dispose_ends_at_m2s_bound_and_the_next_aclose_frees_the_pool(
+    rig: _Rig,
+) -> None:
+    """Nit 14: the dispose is bounded as the close's own waits are (M2's `io_timeout_s`; 0 here,
+    so a dispose that waits at all is past it, with no time passing); past it, as a failed one.
+    The `TimeoutError` is caught on the lane, so it is M2's bound's, never this test's wait."""
+    pools, before = _Pools(rig.sides["lane"], rig.ios), _pools_in_use()
+    signing, pools.faults[:] = _bound(rig, pools, _Writer()), ["stall"]
+    rig.broker._timeout = 0.0
+
+    async def closing() -> str:
+        try:
+            await signing.aclose()
+        except TimeoutError:
+            return "timed out"
+        return "closed"
+
+    assert rig.lane.run(closing()) == "timed out"
+    assert (pools.released, _pools_in_use()) == ([], before + 1)
+    rig.lane.run(signing.aclose())
+    assert (len(pools.released), _pools_in_use()) == (1, before)
 
 
 def test_a_destroy_on_the_serving_loop_fences_the_lanes_own_store_binding(rig: _Rig) -> None:
@@ -130,7 +202,7 @@ def test_a_destroy_on_the_serving_loop_fences_the_lanes_own_store_binding(rig: _
         rig.lane.run(signing.borrower.sign(rig.key_id, MSG, purpose="sign_rest"))
     rig.lane.run(asyncio.wait([write], timeout=JOIN_S))
     assert write.cancelled()
-    rig.lane.run(signing.release())
+    rig.lane.run(signing.aclose())
 
 
 def test_the_self_check_does_nothing_on_its_loop_and_refuses_off_it_or_once_closed(
@@ -198,5 +270,5 @@ async def test_the_root_hands_m2_a_factory_of_a_small_pool_of_the_lanes_own(
     serving, lane = pools
     bound = {"pool_size": LOOP_STORE_CONNECTIONS, "max_overflow": 0}
     assert (lane.suffix, lane.bound, serving.bound) == ("oms-secrets", bound, {})
-    await signing.release()
+    await signing.aclose()
     assert (lane.disposed, serving.disposed) == (True, False)
