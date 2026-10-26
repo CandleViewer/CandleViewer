@@ -32,8 +32,10 @@ The clock and the key's file are read, off the event loop, on every read, so a s
 open socket. A read waits for the next due frame, at most `POLL_S`, on the injected `sleep`, or
 until a frame is sent: no task outlives a read. At most `OUTBOX_FRAMES` replies wait unread;
 one more drops the socket. Each connect, `auth` and close is one request-log line (transport
-`ws`, the event as `method`: `CONNECT`, `REFUSE`, `AUTH`, `DROP`, `CLOSE`), never a frame, a
-signature or a secret; a line that cannot be written refuses the connect or closes the socket.
+`ws`, the event as `method`, prefixed so it is never taken for an HTTP method: `WS:CONNECT`,
+`WS:REFUSE`, `WS:AUTH`, `WS:DROP`, `WS:CLOSE`), never a frame, a signature or a secret; a line
+that cannot be written refuses the connect or closes the socket. A push's integer `creationTime`
+is sent on the stub exchange's clock, as REST's envelope `time` (pack README, 'Clock').
 """
 
 from __future__ import annotations
@@ -43,7 +45,7 @@ import json
 from collections import deque
 from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta
-from typing import Any, Final, Literal
+from typing import Any, Final
 from urllib.parse import urlsplit
 
 from candleviewer.exchange.bybit.errors import FrameTooLarge
@@ -51,7 +53,7 @@ from candleviewer.observability import spawn
 from cvdev.account_fixture import guards
 from cvdev.account_fixture.control import KeyStateError
 from cvdev.account_fixture.pack import PrivateWs, Scenario, WsReaction, merge_patch, payload
-from cvdev.account_fixture.requestlog import KeyClass, Outcome, RequestLogFileError
+from cvdev.account_fixture.requestlog import KeyClass, Outcome, RequestLogFileError, WsMethod
 from cvdev.account_fixture.transport import ClockInvalid, FixtureTransport, logger
 
 #: The adapter's private topics (24 section 14.2 rule 13): the only ones a subscribe may name.
@@ -71,7 +73,6 @@ _MS: Final = timedelta(milliseconds=1)
 _P0: Final = "p0-critical"
 #: The socket's wait: `asyncio.sleep` on a stack, a fake in tests.
 Sleep = Callable[[float], Coroutine[Any, Any, None]]
-WsEvent = Literal["CONNECT", "REFUSE", "AUTH", "DROP", "CLOSE"]
 
 
 def _message(code: str) -> str:
@@ -111,13 +112,13 @@ class FixtureSockets:
     async def connect(self, url: str) -> FixtureSocket:
         socket = FixtureSocket(self._rest, url, sleep=self._sleep, refused_auth=self._refused_auth)
         if url != guards.DEMO_PRIVATE_WS:
-            socket.refuse("CONNECT", "refused_host", p0=True)
+            socket.refuse("WS:CONNECT", "refused_host", p0=True)
         if self._rest.latched:
-            socket.refuse("CONNECT", "refused_key", p0=False)
+            socket.refuse("WS:CONNECT", "refused_key", p0=False)
         now, scenario, started = await socket.state()
         refusing, _ = _timeline(scenario.ws, _ms(now, started))
         refused = scenario.ws.on_connect == "refuse" or refusing
-        event: WsEvent = "REFUSE" if refused else "CONNECT"
+        event: WsMethod = "WS:REFUSE" if refused else "WS:CONNECT"
         if not socket.record(event, "served", scenario):
             raise ConnectionRefusedError(_message("request_log_failed"))
         if refused:
@@ -190,7 +191,7 @@ class FixtureSocket:
         if not self._closed:
             self._closed = True
             self._wake.set()
-            self.record("CLOSE", "served", None)
+            self.record("WS:CLOSE", "served", None)
 
     async def state(self) -> tuple[datetime, Scenario, datetime]:
         """The fixture clock and the scenario the socket follows: its key's once a verified `auth`
@@ -229,7 +230,8 @@ class FixtureSocket:
                 if due <= since:
                     missed = (since - push.after_ms) // push.every_ms if push.every_ms else 0
                     self._sent[index] = max(count, missed) + 1
-                    return json.dumps(push.frame, separators=(",", ":")), None
+                    frame = _anchored(push.frame, scenario.at(now, started=started))
+                    return json.dumps(frame, separators=(",", ":")), None
                 waits.append((due - since) / 1000)
         return None, min(waits, default=None)
 
@@ -237,7 +239,7 @@ class FixtureSocket:
         key = args[0] if isinstance(args, list) and args else None
         if not isinstance(key, str) or key not in self._rest.key_ids:
             self._rest.trip()  # FX-S01: a key the pack does not hold
-            self.refuse("AUTH", "refused_key", p0=True, key_class="non_fixture", close=True)
+            self.refuse("WS:AUTH", "refused_key", p0=True, key_class="non_fixture", close=True)
             return
         self._open()  # then the latch: a pack key on a latched process is refused, unanswered
         if not (
@@ -248,14 +250,14 @@ class FixtureSocket:
             logger().warning(
                 "exchange.account_fixture_signature_mismatch", **self._fields(key, verified=False)
             )
-            if self.record("AUTH", "signature_mismatch", None, key=key, verified=False):
+            if self.record("WS:AUTH", "signature_mismatch", None, key=key, verified=False):
                 self._queue(self._refused_auth)
             else:
                 self._closed = True
             return
         self._key = key
         now, scenario, started = await self.state()
-        if not self.record("AUTH", "served", scenario):
+        if not self.record("WS:AUTH", "served", scenario):
             self._closed = True
             return
         refusing, silent = _timeline(scenario.ws, _ms(now, started))
@@ -298,18 +300,18 @@ class FixtureSocket:
         """Raise if the socket is closed; close it first when the process is latched."""
         if not self._closed and self._rest.latched:
             self._closed = True
-            self._log("DROP", "refused_key", p0=False)
+            self._log("WS:DROP", "refused_key", p0=False)
         if self._closed:
             raise ConnectionResetError(_message("closed"))
 
     def _drop(self, outcome: Outcome, scenario: Scenario | None) -> None:
         if not self._closed:
             self._closed = True
-            self.record("DROP", outcome, scenario)
+            self.record("WS:DROP", outcome, scenario)
 
     def refuse(
         self,
-        event: WsEvent,
+        event: WsMethod,
         outcome: Outcome,
         *,
         p0: bool,
@@ -323,7 +325,7 @@ class FixtureSocket:
             raise ConnectionRefusedError(_message(outcome))
 
     def _log(
-        self, event: WsEvent, outcome: Outcome, *, p0: bool, key_class: KeyClass | None = None
+        self, event: WsMethod, outcome: Outcome, *, p0: bool, key_class: KeyClass | None = None
     ) -> None:
         fields = self._fields(key_class=key_class)
         record: dict[str, object] = {"outcome": outcome, "priority": _P0 if p0 else None}
@@ -356,7 +358,7 @@ class FixtureSocket:
 
     def record(
         self,
-        event: WsEvent,
+        event: WsMethod,
         outcome: Outcome,
         scenario: Scenario | None,
         *,
@@ -384,6 +386,14 @@ class FixtureSocket:
             )
             return False
         return True
+
+
+def _anchored(frame: Any, scenario: Scenario) -> Any:
+    """The push sent now: an integer `creationTime` on the stub exchange's clock, which the
+    adapter's push envelope requires; any other frame as the pack holds it."""
+    if isinstance(frame, dict) and type(frame.get("creationTime")) is int:
+        return {**frame, "creationTime": scenario.clock.server_ms}
+    return frame
 
 
 def _overlays(scenario: Scenario) -> tuple[str, ...]:

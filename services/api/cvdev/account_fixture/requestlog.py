@@ -9,7 +9,10 @@ no character of it. Text values match their field's rule and, but for the order-
 symbol (exact shapes), carry no run of 18 or more letters and digits (a key, or a hex MAC) and not
 the word "secret", which every derived pack secret holds. A line no guard may produce is refused. A
 refusal names the field, never the value, and writes nothing; no field name is on the redaction
-deny-list.
+deny-list. On a `ws` line `method` names the socket's event, prefixed so no HTTP-method check or
+grep takes it for one: exactly one of `WS:CONNECT`, `WS:AUTH`, `WS:DROP`, `WS:CLOSE`, `WS:REFUSE`
+(#2893 S12). Any other line keeps the HTTP rule, which a `WS:` value never meets, so no frame
+text reaches the field on either transport.
 
 Neither the directory, however it is spelled, nor the file is opened through a symlink
 (`O_NOFOLLOW`; Settings refuses one above the directory). The file is a regular file of this user
@@ -43,6 +46,8 @@ MAX_LINE_BYTES: Final = 4096
 
 HostEnv = Literal["demo", "live", "testnet"]
 Transport = Literal["rest", "ws"]
+#: The private-WS socket's events, the only `method` of a `ws` line (#2893 S12).
+WsMethod = Literal["WS:CONNECT", "WS:AUTH", "WS:DROP", "WS:CLOSE", "WS:REFUSE"]
 KeyClass = Literal["fixture", "non_fixture", "unsigned"]
 Refusal = Literal["refused_host", "refused_key", "signature_mismatch", "refused_fund_path"]
 Outcome = Literal["served", "unstubbed", "switch", Refusal]
@@ -131,6 +136,13 @@ def _amount(name: str, value: object) -> str | None:
         if len(text := format(value, "f")) <= 32:
             return text
     raise RequestLogFieldError(f"{name} must be a finite, non-negative Decimal")
+
+
+def _method(transport: object, value: object) -> str | None:
+    """A `ws` line's event (`WsMethod`, required), else an HTTP method by `_METHOD`."""
+    if transport == "ws":
+        return _choice("method", value, get_args(WsMethod), required=True)
+    return _text("method", value, _METHOD)
 
 
 def _overlays(value: object) -> list[str | None]:
@@ -268,7 +280,7 @@ class RequestLog:
             "host_env": _choice("host_env", host_env, get_args(HostEnv)),
             "process_env": self._process_env,
             "transport": _choice("transport", transport, get_args(Transport)),
-            "method": _text("method", method, _METHOD),
+            "method": _method(transport, method),
             "path": _text("path", path, _PATH),
             "signing_key_id": signing_key_id,
             "key_class": _choice("key_class", key_class, get_args(KeyClass)),

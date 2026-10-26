@@ -24,9 +24,11 @@ import httpx
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.exchange.base.models import Wallet
 from candleviewer.exchange.bybit.config import PRIVATE_WS_URLS
 from candleviewer.exchange.bybit.errors import FrameTooLarge
 from candleviewer.exchange.bybit.key_ws_probe import KeyWsProbe
+from candleviewer.exchange.bybit.private_parse import FrameRejected, Push, classify, read_push
 from candleviewer.exchange.bybit.private_stream import OPTIONAL_OPS, REQUIRED_OPS
 from candleviewer.net.read_only_gate import ReadOnlyGate
 from candleviewer.secrets import CredentialBorrower, RequestSignature, Secret
@@ -34,7 +36,7 @@ from candleviewer.secrets.signing import check_message
 from candleviewer.settings import Environment
 from cvdev.account_fixture import guards
 from cvdev.account_fixture.control import KEYS_DIR, KeyStates
-from cvdev.account_fixture.pack import PrivateWs, Scenario, WsStep, payload
+from cvdev.account_fixture.pack import PrivateWs, Scenario, WsSend, WsStep, payload
 from cvdev.account_fixture.private_ws import PRIVATE_TOPICS, FixtureSocket, FixtureSockets
 from cvdev.account_fixture.requestlog import FILE_NAME, RequestLog
 from cvdev.account_fixture.transport import FixtureTransport
@@ -42,6 +44,7 @@ from tests._account_fixtures import PACK
 from tests._signing import CREDENTIAL_ID, assemble
 from tests.unit.cvdev.test_transport_guards import NON_FIXTURE_KEY, _get, _key, _of, _p0, _secret
 from tests.unit.cvdev.test_transport_serving import KEY_IDS, WALLET
+from tests.unit.exchange.bybit._trading import account
 from tests.unit.exchange.bybit.test_account_fixture_pack import NOW, NOW_MS
 
 DEMO_WS: Final = PRIVATE_WS_URLS["demo"]
@@ -49,6 +52,8 @@ EXPIRES: Final = NOW_MS + 10_000
 AUTH_OK, SUBSCRIBED, PONG, WALLET_PUSH = (
     payload(PACK, f"_base/ws_{n}.json") for n in ("auth_ok", "subscribe_ok", "pong", "wallet")
 )
+#: The wallet push as `_frame` returns it: its `creationTime`, the send's clock, checked apart.
+WALLET_PUSH = {name: value for name, value in WALLET_PUSH.items() if name != "creationTime"}
 PING: Final = '{"op":"ping"}'
 SUBSCRIBE: Final = json.dumps({"op": "subscribe", "args": ["wallet"]})
 _S: Final = timedelta(seconds=1)
@@ -141,7 +146,11 @@ def _auth(scenario: str = "compliant", *, signed_as: str | None = None, key: str
 
 
 async def _frame(socket: FixtureSocket, max_bytes: int = 1_048_576) -> Any:
-    return json.loads(await socket.recv(max_bytes))
+    """The next frame, a push's `creationTime` (an int) taken off: its value has its own tests."""
+    frame = json.loads(await socket.recv(max_bytes))
+    if "topic" in frame:
+        assert type(frame.pop("creationTime")) is int
+    return frame
 
 
 async def _dropped(socket: FixtureSocket) -> list[Any]:
@@ -163,13 +172,63 @@ async def test_auth_then_the_after_auth_frames_on_the_script(rig: Rig) -> None:
     assert await _frame(socket) == WALLET_PUSH
     assert rig.clock.now == NOW + timedelta(hours=1, seconds=15)
     assert rig.logged() == [
-        ("CONNECT", "served", "unsigned", None, None, "compliant"),
-        ("AUTH", "served", "fixture", _key("compliant"), True, "compliant"),
+        ("WS:CONNECT", "served", "unsigned", None, None, "compliant"),
+        ("WS:AUTH", "served", "fixture", _key("compliant"), True, "compliant"),
     ]
     line = rig.lines()[0]
     assert _of(line, "host", "host_env", "path", "transport") == (
         "stream-demo.bybit.com", "demo", "/v5/private", "ws",
     )  # fmt: skip
+
+
+async def _created(socket: FixtureSocket) -> int:
+    created: int = json.loads(await socket.recv(1_048_576))["creationTime"]
+    return created
+
+
+async def test_a_push_is_created_on_the_stub_exchange_clock_when_sent(rig: Rig) -> None:
+    socket = await rig.authed()
+    assert [await _created(socket) for _ in range(2)] == [NOW_MS, NOW_MS + 5_000]
+    rig.clock.now += timedelta(hours=1)  # the overdue push is created when it is sent
+    assert await _created(socket) == NOW_MS + 3_600_000 + 5_000
+    skewed = await rig.authed("clock_skew")  # the key's scenario: its server clock runs 6 s ahead
+    assert await _created(skewed) == NOW_MS + 3_600_000 + 5_000 + 6_000
+
+
+async def test_the_wallet_push_is_read_by_the_adapters_parser(rig: Rig) -> None:
+    """The adapter's push envelope requires `creationTime`: the pack's push carries it, and the
+    production parser reads the pushed frame as one wallet event, not `malformed`."""
+    socket = await rig.authed()
+    pushed = classify(await socket.recv(1_048_576))
+    assert isinstance(pushed, Push)
+    assert (pushed.topic, pushed.label, pushed.created_ms) == ("wallet", "wallet", NOW_MS)
+    (event,) = read_push(pushed, account(), now_us=NOW_MS * 1_000)
+    assert isinstance(event.payload, Wallet)
+    with pytest.raises(FrameRejected) as rejected:  # the push without it, as before S12
+        classify(json.dumps(WALLET_PUSH))
+    assert rejected.value.reason == "malformed"
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        {"topic": "wallet", "data": []},
+        {"topic": "wallet", "creationTime": "1"},
+        ["not", "a", "map"],
+    ],
+    ids=["none", "text", "list"],
+)
+async def test_a_push_without_an_integer_creation_time_is_sent_as_the_pack_holds_it(
+    boot: Callable[..., Rig], frame: Any
+) -> None:
+    class _Other(FixtureTransport):
+        def _selection(self, key_id: str | None, now: datetime) -> tuple[Scenario, datetime]:
+            scenario, started = super()._selection(key_id, now)
+            sends = (WsSend(0, frame, None, None),)
+            return replace(scenario, ws=replace(scenario.ws, after_auth=sends)), started
+
+    socket = await boot(kind=_Other).authed()
+    assert json.loads(await socket.recv(1_048_576)) == frame
 
 
 async def test_ping_answers_the_packs_pong_before_and_after_auth(rig: Rig) -> None:
@@ -199,7 +258,8 @@ async def test_ws_auth_then_drop_drops_at_5s_and_refuses_reconnects(
     with pytest.raises(ConnectionRefusedError):
         await rig.sockets.connect(DEMO_WS)
     assert [line[:2] for line in rig.logged()] == [
-        ("CONNECT", "served"), ("AUTH", "served"), ("DROP", "served"), ("REFUSE", "served"),
+        ("WS:CONNECT", "served"), ("WS:AUTH", "served"),
+        ("WS:DROP", "served"), ("WS:REFUSE", "served"),
     ]  # fmt: skip
 
 
@@ -211,8 +271,8 @@ async def test_a_keys_drop_counts_from_its_start_and_refuses_its_reconnect(rig: 
     await again.send(_auth("ws_auth_then_drop"))  # the key's script refuses it at auth
     assert await _dropped(again) == []
     assert rig.logged()[-2:] == [
-        ("AUTH", "served", "fixture", _key("ws_auth_then_drop"), True, "ws_auth_then_drop"),
-        ("DROP", "served", "fixture", _key("ws_auth_then_drop"), True, "ws_auth_then_drop"),
+        ("WS:AUTH", "served", "fixture", _key("ws_auth_then_drop"), True, "ws_auth_then_drop"),
+        ("WS:DROP", "served", "fixture", _key("ws_auth_then_drop"), True, "ws_auth_then_drop"),
     ]
 
 
@@ -252,7 +312,9 @@ async def test_demo_ws_unreachable_refuses_every_connect(boot: Callable[..., Rig
     for _ in range(2):
         with pytest.raises(ConnectionRefusedError):
             await rig.sockets.connect(DEMO_WS)
-    assert rig.logged() == [("REFUSE", "served", "unsigned", None, None, "demo_ws_unreachable")] * 2
+    assert (
+        rig.logged() == [("WS:REFUSE", "served", "unsigned", None, None, "demo_ws_unreachable")] * 2
+    )
 
 
 async def test_on_connect_follows_the_stack_default_not_the_key(rig: Rig) -> None:
@@ -264,7 +326,7 @@ async def test_live_key_on_demo_closes_on_auth(rig: Rig) -> None:
     socket = await rig.sockets.connect(DEMO_WS)
     await socket.send(_auth("live_key_on_demo"))
     assert await _dropped(socket) == []
-    assert [line[:2] for line in rig.logged()][-1] == ("DROP", "served")
+    assert [line[:2] for line in rig.logged()][-1] == ("WS:DROP", "served")
 
 
 async def test_ws_auth_timeout_never_answers_auth(rig: Rig) -> None:
@@ -282,7 +344,7 @@ async def test_a_wrong_secret_answers_success_false_and_verified_false(rig: Rig)
         await socket.send(_auth(signed_as="ws_quiet"))
     assert await _frame(socket) == {"success": False, "op": "auth"}
     assert rig.logged()[-1] == (
-        "AUTH",
+        "WS:AUTH",
         "signature_mismatch",
         "fixture",
         _key("compliant"),
@@ -298,7 +360,7 @@ async def test_a_wrong_secret_answers_success_false_and_verified_false(rig: Rig)
     assert not rig.latch.is_set()
 
 
-MISMATCH: Final = ("AUTH", "signature_mismatch", "fixture", _key("compliant"), False, None)
+MISMATCH: Final = ("WS:AUTH", "signature_mismatch", "fixture", _key("compliant"), False, None)
 
 
 @pytest.mark.parametrize("given", ["\udc80", "\u00e9" * 64], ids=["lone-surrogate", "non-ascii"])
@@ -343,7 +405,7 @@ async def test_a_non_pack_key_trips_the_process_latch_unanswered(rig: Rig, args:
     assert _p0(events, "refused_key")
     assert rig.latch.is_set() and rig.gate.latched_reason_code == guards.GUARD_REASON_CODE
     assert await _dropped(socket) == []
-    assert rig.logged()[-1] == ("AUTH", "refused_key", "non_fixture", None, None, None)
+    assert rig.logged()[-1] == ("WS:AUTH", "refused_key", "non_fixture", None, None, None)
     with pytest.raises(ConnectionRefusedError, match="refused_key"):
         await rig.sockets.connect(DEMO_WS)
     with pytest.raises(httpx.ConnectError):  # the REST transport shares the latch
@@ -372,7 +434,7 @@ async def test_every_other_url_is_refused_p0(rig: Rig, url: str, host: str, env:
     assert _of(line, "host", "host_env", "method", "outcome") == (
         host,
         env,
-        "CONNECT",
+        "WS:CONNECT",
         "refused_host",
     )
 
@@ -390,7 +452,7 @@ async def test_the_latch_closes_a_live_socket(boot: Callable[..., Rig], how: str
         assert isinstance(rig.transport, _Tripping)
         rig.transport.trip_on_select = True
     assert await _dropped(socket) == []
-    assert rig.logged()[-1][:2] == ("DROP", "refused_key")
+    assert rig.logged()[-1][:2] == ("WS:DROP", "refused_key")
     with pytest.raises(ConnectionResetError):
         await socket.send(PING)
     with pytest.raises(ConnectionRefusedError, match="refused_key"):
@@ -429,14 +491,14 @@ async def test_an_unscripted_frame_closes_the_socket_unanswered(rig: Rig, frame:
     socket = await rig.authed()
     await socket.send(frame)
     assert await _dropped(socket) == []
-    assert rig.logged()[-1][:3] == ("DROP", "unstubbed", "fixture")
+    assert rig.logged()[-1][:3] == ("WS:DROP", "unstubbed", "fixture")
 
 
 async def test_a_subscribe_before_auth_is_unscripted(rig: Rig) -> None:
     socket = await rig.sockets.connect(DEMO_WS)
     await socket.send(SUBSCRIBE)
     assert await _dropped(socket) == []
-    assert rig.logged()[-1][:3] == ("DROP", "unstubbed", "unsigned")
+    assert rig.logged()[-1][:3] == ("WS:DROP", "unstubbed", "unsigned")
 
 
 class _Silenced(FixtureTransport):
@@ -494,9 +556,9 @@ async def test_close_is_logged_once_and_ends_the_socket(rig: Rig) -> None:
         with pytest.raises(ConnectionResetError):
             await ended
     assert [line[:2] for line in rig.logged()] == [
-        ("CONNECT", "served"),
-        ("AUTH", "served"),
-        ("CLOSE", "served"),
+        ("WS:CONNECT", "served"),
+        ("WS:AUTH", "served"),
+        ("WS:CLOSE", "served"),
     ]
 
 
@@ -529,20 +591,25 @@ async def test_a_reader_that_never_reads_is_dropped_at_the_bound(rig: Rig) -> No
     with pytest.raises(ConnectionResetError):
         for _ in range(64):
             await socket.send(PING)
-    assert rig.logged()[-1][:2] == ("DROP", "served")
+    assert rig.logged()[-1][:2] == ("WS:DROP", "served")
 
 
 async def test_a_state_off_its_rule_refuses_by_a_fixed_code(rig: Rig) -> None:
     (rig.directory / KEYS_DIR / f"{_key('compliant')}.json").write_text("{}")
     socket = await rig.sockets.connect(DEMO_WS)
-    with capture_logs() as events, pytest.raises(ConnectionResetError, match="key_state_invalid"):
+    with capture_logs() as events, pytest.raises(ConnectionResetError) as reset:
         await socket.send(_auth())
     assert events[-1]["event"] == "exchange.account_fixture_key_state_invalid"
     assert await _dropped(socket) == []
     rig.clock.broken = True
-    with capture_logs() as events, pytest.raises(ConnectionRefusedError, match="clock_invalid"):
+    with capture_logs() as more, pytest.raises(ConnectionRefusedError) as refused:
         await rig.sockets.connect(DEMO_WS)
-    assert events[0]["event"] == "exchange.account_fixture_clock_invalid"
+    assert more[0]["event"] == "exchange.account_fixture_clock_invalid"
+    for raised, code in ((reset.value, "key_state_invalid"), (refused.value, "clock_invalid")):
+        assert str(raised) == f"the account fixture socket refused: {code}"
+        # raised outside the handler: no cause, and no suppressed context to carry a path
+        assert (raised.__cause__, raised.__context__) == (None, None)
+    assert str(rig.directory) not in repr([*events, *more])
 
 
 @pytest.mark.parametrize("signed_as", ["compliant", "ws_quiet"], ids=["verified", "mismatch"])
@@ -632,7 +699,7 @@ async def test_a_close_while_a_frame_is_read_logs_one_line(rig: Rig) -> None:
     await asyncio.sleep(0)  # the send now waits for its state, off the event loop
     await socket.close()
     await sending
-    assert [line[0] for line in rig.logged()] == ["CONNECT", "CLOSE"]
+    assert [line[0] for line in rig.logged()] == ["WS:CONNECT", "WS:CLOSE"]
 
 
 async def test_a_latched_process_trips_then_refuses_an_auth(rig: Rig) -> None:
@@ -645,5 +712,5 @@ async def test_a_latched_process_trips_then_refuses_an_auth(rig: Rig) -> None:
     with pytest.raises(ConnectionResetError):
         await member.send(_auth())
     assert [line[:3] for line in rig.logged()[-2:]] == [
-        ("AUTH", "refused_key", "non_fixture"), ("DROP", "refused_key", "unsigned"),
+        ("WS:AUTH", "refused_key", "non_fixture"), ("WS:DROP", "refused_key", "unsigned"),
     ]  # fmt: skip

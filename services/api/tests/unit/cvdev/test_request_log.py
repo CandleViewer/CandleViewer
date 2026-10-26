@@ -240,7 +240,7 @@ def test_line_no_guard_may_produce_is_refused(
         {"host": "api.bybit.com", "host_env": "live", "status": None, "outcome": "refused_host"},
         {"method": "POST", "path": "/v5/asset/transfer", "outcome": "refused_fund_path"},
         {"transport": None, "method": None, "path": None, "host": None, "outcome": "switch"},
-        {"transport": "ws", "method": "AUTH", "path": "/v5/private", "status": None},
+        {"transport": "ws", "method": "WS:AUTH", "path": "/v5/private", "status": None},
         {"overlays": ["working_orders_2"] * 16},
     ],
 )
@@ -279,6 +279,46 @@ def test_field_outside_its_rule_is_refused(
 ) -> None:
     with pytest.raises(RequestLogFieldError):
         _served(log, **fields)
+    assert _empty(log_dir)
+
+
+#: The private-WS socket's five events (#2893 S12): a `ws` line's only `method`s.
+WS_EVENTS = ("WS:CONNECT", "WS:AUTH", "WS:DROP", "WS:CLOSE", "WS:REFUSE")
+WS_LINE: dict[str, Any] = {
+    "transport": "ws",
+    "host": "stream-demo.bybit.com",
+    "path": "/v5/private",
+}
+WS_LINE |= {"status": None, "ret_code": None, "code_unconfirmed": None}
+
+
+@pytest.mark.parametrize("event", WS_EVENTS)
+def test_a_ws_line_logs_each_socket_event_prefixed(
+    log: RequestLog, log_dir: Path, event: str
+) -> None:
+    _served(log, **WS_LINE, method=event)
+    (line,) = _lines(log_dir)
+    assert (line["transport"], line["method"]) == ("ws", event)
+
+
+@pytest.mark.parametrize(
+    "method",
+    [None, "AUTH", "GET", "WS:PING", "WS:auth", "WS:", "WS:AUTH ", "WS:WS:AUTH", "WS:AUTHX" * 2],
+)
+def test_a_ws_line_refuses_any_other_method(log: RequestLog, log_dir: Path, method: Any) -> None:
+    with pytest.raises(RequestLogFieldError) as refused:
+        _served(log, **WS_LINE, method=method)
+    assert str(refused.value) == f"method must be one of: {', '.join(WS_EVENTS)}"  # no value
+    assert _empty(log_dir)
+
+
+@pytest.mark.parametrize("event", WS_EVENTS)
+@pytest.mark.parametrize("transport", ["rest", None], ids=["http", "switch"])
+def test_a_ws_event_off_a_ws_line_is_refused(
+    log: RequestLog, log_dir: Path, event: str, transport: str | None
+) -> None:
+    with pytest.raises(RequestLogFieldError, match="method is outside its rule"):
+        _served(log, transport=transport, method=event)
     assert _empty(log_dir)
 
 
