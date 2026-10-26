@@ -1,5 +1,6 @@
 """Background metric tasks (E04-T03): loop-lag sampler, cardinality check, fallback snapshot,
-and the garbage-collection pause timer (#3641).
+the garbage-collection pause timer (#3641), and the startup heap freeze that shapes what that
+timer sees.
 
 The three tasks are plain coroutines the caller owns (TaskGroup / supervisor, C-2.18);
 each takes an injected `sleep` so tests drive them deterministically.
@@ -95,11 +96,15 @@ class GcPauseTimer:
     to `cv_gc_pause_seconds{generation}`. After a full collection, `cv_gc_blocks_in_use` reads
     the allocated pymalloc blocks, a proxy for the heap that collection walked: about 55 us to
     read, where counting `gc.get_objects()` costs about 19 ms and is a block itself. It reads 0
-    until the first full collection. The callback runs inside the collector on whichever thread
-    allocates, so it only reads a clock and updates children bound here; a `stop` without its
-    `start` (an `install` from another thread mid-collection) is skipped. That is safe only with
-    prometheus_client's in-process value lock (`single_process_values`, which `MetricsRuntime`
-    checks), and an `on_pause` hook runs in the collector too, so it must be as cheap."""
+    until the first full collection. Once startup has frozen its heap (`freeze_startup_heap`),
+    the proxy still counts the frozen blocks, which a full collection no longer walks: read the
+    walked heap as the gauge less the `blocks` that the `gc_startup_heap_frozen` line logged at
+    startup, an approximation, so the ms-per-block link survives the freeze. The callback runs
+    inside the collector on whichever thread allocates, so it only reads a clock and updates
+    children bound here; a `stop` without its `start` (an `install` from another thread
+    mid-collection) is skipped. That is safe only with prometheus_client's in-process value lock
+    (`single_process_values`, which `MetricsRuntime` checks), and an `on_pause` hook runs in the
+    collector too, so it must be as cheap."""
 
     def __init__(
         self,
@@ -140,3 +145,34 @@ class GcPauseTimer:
         self._started = None
         if self in gc.callbacks:
             gc.callbacks.remove(self)
+
+
+def freeze_startup_heap(*, clock: Callable[[], float] = time.perf_counter) -> None:
+    """Move the heap startup built (modules, routers, wired services, loaded stores) to the
+    permanent generation, so the full collections that later allocation triggers stop walking it
+    (#3641; under five concurrent cold kline reads those passes were the p95 tail). One full
+    collection runs first, so no startup garbage is pinned. Only the cyclic collector changes:
+    reference counting frees a frozen object as before, and cyclic garbage among them waits for
+    `unfreeze_startup_heap`. Call it as the last startup step, and before `GcPauseTimer` is
+    installed, which would otherwise time that forced collection as a natural full one in
+    `cv_gc_pause_seconds{generation="2"}`. One `gc_startup_heap_frozen` line records what was
+    frozen: the `frozen` objects (`gc.get_freeze_count()`, which also holds the few hundred
+    immortal objects CPython 3.12 moves there itself), the allocated `blocks` (see `GcPauseTimer`:
+    `cv_gc_blocks_in_use` still counts them) and the `collect_ms` of the collection."""
+    started = clock()
+    gc.collect()
+    collect_ms = (clock() - started) * 1000
+    gc.freeze()
+    _log().info(
+        "gc_startup_heap_frozen",
+        frozen=gc.get_freeze_count(),
+        blocks=sys.getallocatedblocks(),
+        collect_ms=round(collect_ms, 1),
+    )
+
+
+def unfreeze_startup_heap() -> None:
+    """`freeze_startup_heap`'s partner: what it froze is collectable again. `gc.unfreeze()` moves
+    every permanent object back, another caller's included, so only the caller whose own freeze
+    happened calls it."""
+    gc.unfreeze()

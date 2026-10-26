@@ -13,6 +13,11 @@
 
 Auth is a fixed bench principal with read permissions only (test-only identity, no credentials).
 `serve()` binds 127.0.0.1 only (C-12.9); `assert_no_exchange_egress()` is the security-notes guard.
+
+`build_app` ends as the production lifespan's startup does (#3641): it freezes the heap built so
+far (`freeze_startup_heap`), so the pack's cold-read figures come from the heap shape the app
+serves from. The freeze is process-wide and never undone here: the pack's runner ends with the
+run, and a caller that outlives it (a test) calls `unfreeze_startup_heap` once it is done.
 """
 
 from __future__ import annotations
@@ -49,6 +54,7 @@ from candleviewer.exchange.bybit.trades import parse_trade_frame, trade_topic
 from candleviewer.ingestion.instruments import CatalogueSnapshot
 from candleviewer.ingestion.kline_read import KlineReadService
 from candleviewer.ingestion.trade_stream import TradeStream
+from candleviewer.observability.metrics_runtime import freeze_startup_heap
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.storage.cold.kline_reader import ColdKlineRow, ParquetKlineReader
@@ -297,6 +303,7 @@ async def build_app(cold_root: Path) -> FastAPI:
             symbol_listed=lambda s: listed(s) is not None,
         )
     )
+    freeze_startup_heap()  # #3641: the lifespan's last startup step, so the pack sees the freeze
     return app
 
 

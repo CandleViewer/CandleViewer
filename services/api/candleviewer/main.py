@@ -14,7 +14,6 @@ concern, does that.
 
 from __future__ import annotations
 
-import gc
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from typing import Any
@@ -32,6 +31,7 @@ from candleviewer.app import (
 )
 from candleviewer.observability.logging import configure_logging
 from candleviewer.observability.metrics import Metrics
+from candleviewer.observability.metrics_runtime import freeze_startup_heap, unfreeze_startup_heap
 from candleviewer.observability.metrics_server import MetricsRuntime
 from candleviewer.recorder.rolloff import RollOffTask
 from candleviewer.settings import Settings
@@ -103,17 +103,6 @@ class _Teardown:
                 del held  # its traceback holds this frame: no reference cycle back to it
 
 
-def freeze_startup_heap() -> None:
-    """B13 / #2523: move the heap startup built (modules, routers, wired services) to the
-    permanent generation, so the full GC passes that per-request allocations trigger (5 000-bar
-    kline pages) no longer walk it; under five concurrent cold reads those passes were the p95
-    tail. Collect first so no startup garbage is pinned. Only cyclic GC is affected: refcounting
-    frees as before. A startup object that later becomes cyclic garbage waits for `unfreeze`
-    at shutdown (the lifespan's last step)."""
-    gc.collect()
-    gc.freeze()
-
-
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx: AppContext = app.state.app_context
@@ -147,6 +136,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     audit_exports = oms_runtime = profile_notices = None
     alert_tasks: list[Any] = []
     metrics_runtime: MetricsRuntime | None = None
+    frozen = False  # #3641: set once this lifespan's own freeze is in place; only it is undone
     try:
         await audit_test_clock_boot(ctx)  # #2728: before serving; a failed write fails boot
         await account_fixture_record(fixture_boot, ctx.audit)  # #2893 S8: its record, likewise
@@ -244,6 +234,18 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         audit_exports = getattr(app.state, "audit_exports", None)
         if audit_exports is not None:  # #889 S9: the hard-link probe and the first sweep, awaited
             await audit_exports.start()
+        profile_notices = getattr(app.state, "profile_notices", None)
+        if profile_notices is not None:  # #906 D3e: holds the profile writes' bus pattern
+            profile_notices.start()
+        ws_runtime = getattr(app.state, "ws_runtime", None)
+        if ws_runtime is not None:
+            ws_runtime.start()
+        # #3641 (20 §4.1, §6.2): the last step that builds state, once every start call above has
+        # returned, so the full collections later allocation triggers do not walk what startup
+        # built. The metrics runtime starts after it: its GC pause timer must not time this forced
+        # collection as a natural full one.
+        freeze_startup_heap()
+        frozen = True
         if ctx.settings.metrics_enabled:
             # E04-T06: create_app() owns the single facade (telemetry series hang
             # off it); fall back for apps built without one.
@@ -257,13 +259,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             facade.add_process_collectors()
             metrics_runtime = MetricsRuntime(facade, ctx.settings.metrics_bind)
             metrics_runtime.start()
-        profile_notices = getattr(app.state, "profile_notices", None)
-        if profile_notices is not None:  # #906 D3e: holds the profile writes' bus pattern
-            profile_notices.start()
-        ws_runtime = getattr(app.state, "ws_runtime", None)
-        if ws_runtime is not None:
-            ws_runtime.start()
-        freeze_startup_heap()  # B13 / #2523: last, once everything startup builds exists
         yield
     finally:
         # #3403: each step below is isolated (`_Teardown.run`), so whatever one raises, the later
@@ -357,10 +352,17 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
             if profiles is not None:  # #906 D1a: the cache's loads, then its pool
                 await teardown.run("profiles", profiles.dispose)
         finally:
-            await teardown.run("supervisor.stop_all", supervisor.stop_all)
-            if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself
-                await teardown.run("statechart_persistence", persistence.stop)
-            gc.unfreeze()  # B13 / #2523: what startup built is collectable again
+            try:
+                await teardown.run("supervisor.stop_all", supervisor.stop_all)
+                if persistence is not None:  # E50-T63: drained after `stop_all`, bounded by itself
+                    await teardown.run("statechart_persistence", persistence.stop)
+            finally:
+                # #3641: the last stop, after `stop_all` has zeroed the KEK and DEK (the zeroing is
+                # explicit, never the collector's): what startup built is collectable again. In its
+                # own `finally`, so a `GeneratorExit` or an unloggable failure out of the stops
+                # above cannot skip it; only a freeze this lifespan made is undone.
+                if frozen:
+                    unfreeze_startup_heap()
             teardown.raise_held()
 
 

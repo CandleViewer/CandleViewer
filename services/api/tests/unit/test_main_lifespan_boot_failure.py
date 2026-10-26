@@ -10,13 +10,17 @@ shutdown, with the same order and bounds: the steps the boot had reached, the fa
 runs; a step the boot never reached does not stop, so `WsRuntime.stop()` never waits out its grace
 for a server that never served; then `stop_all`, with the teardown's grace, stops every module in
 reverse. The exception leaves unchanged. Nothing sleeps or reads a clock: no fake suspends.
+
+The heap's freeze (#3641) is a boot call as well: one the boot made before the metrics runtime, so
+a failure after it must leave nothing frozen, and one before it never freezes at all.
 """
 
 from __future__ import annotations
 
 import asyncio
+import gc
 import inspect
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 import pytest
@@ -26,6 +30,7 @@ from structlog.testing import capture_logs
 from candleviewer import main
 from candleviewer.app import Supervisor
 from candleviewer.settings import TEARDOWN_BUDGET_S
+from tests._gc_freeze import Marker, is_frozen
 from tests.unit.test_main_lifespan_teardown_isolation import (
     _app,
     _failed_steps,
@@ -36,7 +41,7 @@ from tests.unit.test_main_lifespan_teardown_isolation import (
 
 #: Every call the boot makes after `start_all`, in the lifespan's order: `<object>.<method>`, the
 #: object a step or the metrics facade, or the name of one of `main`'s own (the two boot records,
-#: the metrics runtime's class).
+#: the heap's freeze, the metrics runtime's class). The metrics runtime starts after the freeze.
 _BOOT = (
     "audit_test_clock_boot",
     "account_fixture_record",
@@ -66,10 +71,11 @@ _BOOT = (
     "health_registry.start",
     "account_health.start",
     "oms_runtime.start",
+    "ws_runtime.start",
+    "freeze_startup_heap",
     "metrics_facade.add_process_collectors",
     "MetricsRuntime",
     "metrics_runtime.start",
-    "ws_runtime.start",
 )
 #: The teardown steps the lifespan never starts: it stops them however far the boot got.
 _ALWAYS = frozenset(
@@ -85,6 +91,14 @@ _ALWAYS = frozenset(
         "profiles",
     }
 )
+
+
+@pytest.fixture(autouse=True)
+def _unfrozen() -> Iterator[None]:
+    """The freeze is the lifespan's own: a clean slate whatever ran before, nothing left after."""
+    gc.unfreeze()
+    yield
+    gc.unfreeze()
 
 
 def _raiser(original: Callable[..., object], exc: BaseException) -> Callable[..., object]:
@@ -153,6 +167,7 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
     ran: list[str] = []
     graces: list[float] = []
     app, steps = _app(ran, monkeypatch)
+    marker = Marker()
     monkeypatch.setattr(main, "Supervisor", _recording(graces))
     exc = RuntimeError(f"{call} failed")
     _fail(call, exc, app, steps, monkeypatch)
@@ -161,10 +176,12 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
     assert raised.value is exc
     assert ran == stopped
     assert graces == [TEARDOWN_BUDGET_S]
+    assert not is_frozen(marker)  # a boot that failed after its freeze undoes it
 
 
 @pytest.mark.parametrize(
-    "call", ["audit_test_clock_boot", "bars_runtime.start", "ws_runtime.start"]
+    "call",
+    ["audit_test_clock_boot", "bars_runtime.start", "ws_runtime.start", "metrics_runtime.start"],
 )
 @pytest.mark.parametrize(
     "make",
@@ -174,9 +191,9 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
 async def test_lifespan_boot_cancelled_or_exiting_after_start_all_stops_what_started_then_reraises(
     monkeypatch: pytest.MonkeyPatch, call: str, make: Callable[[], BaseException]
 ) -> None:
-    """A cancellation or a process exit at the first, an awaited and the last boot call: never
-    swallowed, it leaves the lifespan, the same object, once the same teardown has run. Caught
-    only as an `Exception`, it skips the teardown, and that fails."""
+    """A cancellation or a process exit at the first, an awaited, the last before the freeze and
+    the last boot call: never swallowed, it leaves the lifespan, the same object, once the same
+    teardown has run. Caught only as an `Exception`, it skips the teardown, and that fails."""
     stopped = await _stopped_after(call, monkeypatch)
     ran: list[str] = []
     app, steps = _app(ran, monkeypatch)
