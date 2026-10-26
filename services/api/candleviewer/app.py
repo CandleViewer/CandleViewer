@@ -577,8 +577,9 @@ def oms_runtime_of(state: State) -> OmsRuntime | None:
 
 
 def _oms_state(runtime: OmsRuntime | None) -> str | None:
-    """`/readyz`'s `oms` check: the runtime's state while it runs, else no check."""
-    return runtime.state if runtime is not None and runtime.started else None
+    """`/readyz`'s `oms` check: the runtime's readiness while it runs (its state, `degraded` too
+    once its environment's lock is lost, #913 L2), else no check."""
+    return runtime.readiness if runtime is not None and runtime.started else None
 
 
 def bind_recording_runtime(

@@ -105,6 +105,7 @@ from .errors import (
     RULE_SIZING_MODE_UNSUPPORTED,
     FieldError,
     HandoverUnavailable,
+    OmsNotReady,
     OrderInvalid,
     ProtectionReadingsUnavailable,
     ReconciliationUnavailable,
@@ -592,12 +593,14 @@ class CredentialRejections(Protocol):
 
 class TradingSwitches(Protocol):
     """The synchronous switches checked just before a send (C-2.21): live trading enabled for a
-    live account, the B18 kill switch and the order-entry gate (#3382, ruling R1's second check).
-    The refusal, or None; it reads in-memory state and never awaits."""
+    live account, the B18 kill switch and the order-entry gate (#3382, ruling R1's second check),
+    and the composed runtime's fence once its environment's lock is lost (#913 L2, SEC-S3L2-02).
+    The refusal, `TradingDisabled` or the fence's `OmsNotReady`, or None; it reads in-memory state
+    and never awaits."""
 
     def refusal(
         self, account_id: AccountId, environment: Environment
-    ) -> TradingDisabled | None: ...
+    ) -> TradingDisabled | OmsNotReady | None: ...
 
 
 @dataclass(frozen=True, slots=True)

@@ -268,16 +268,22 @@ class Pipeline:
 
 @dataclass
 class Runtime:
-    """`OmsRuntime`: its `state`, its parts, and `run`, which records each task it tracks.
+    """`OmsRuntime`: its `state` and its `readiness`, `degraded` too once `fenced` (its
+    environment's lock lost, #913 L2), its parts, and `run`, which records each task it tracks.
     `stopped` is the stop race: a stop begun after step 3 read `ok`, which `route` or `run` meets
     first and answers `OmsNotReady`, as the runtime's own do (closing the coroutine it refuses)."""
 
     state: str = "ok"
+    fenced: bool = False
     reads: Reads = field(default_factory=Reads)
     anchors: Anchors = field(default_factory=Anchors)
     submission: Pipeline = field(default_factory=Pipeline)
     tasks: list[asyncio.Task[Response]] = field(default_factory=list)
     stopped: str | None = None
+
+    @property
+    def readiness(self) -> str:
+        return "degraded" if self.fenced else self.state
 
     @property
     def route(self) -> Reads:
@@ -567,7 +573,7 @@ async def test_a_runtime_that_is_not_ready_is_503_counted_never_audited_and_runs
     state: str,
 ) -> None:
     """SEC-S3E2-01: `run` admits a composed runtime that is not ready, so step 3 is the route's
-    alone, and it reads `state` only."""
+    alone, and it reads the runtime's readiness only."""
     world = World()
     world.oms.state = state
     answer = await post(world)
@@ -575,6 +581,20 @@ async def test_a_runtime_that_is_not_ready_is_503_counted_never_audited_and_runs
     assert answer.headers["retry-after"] == str(answer.json()["retry_after_seconds"])
     assert (world.audit.actions(), world.oms.tasks, world.oms.anchors.calls) == ([], [], [])
     assert world.rejected("oms_not_ready") == 1
+
+
+async def test_a_runtime_whose_lock_is_lost_is_503_at_step_3_never_audited_runs_nothing() -> None:
+    """SEC-S3L2-02 (the Fable lens at 864fa082; 20 Sec.6.2): step 3 reads the runtime's
+    `readiness`, `degraded` once its environment's lock is lost, while its `state`, which the exit
+    routes read, stays `ok`: a new order is refused there, `oms_not_ready` with `Retry-After`,
+    counted and never audited, nothing looked up or run."""
+    world = World()
+    world.oms.fenced = True
+    answer = await post(world)
+    assert (answer.status_code, answer.json()["code"]) == (503, "oms_not_ready")
+    assert answer.headers["retry-after"] == str(answer.json()["retry_after_seconds"])
+    assert (world.audit.actions(), world.oms.tasks, world.oms.anchors.calls) == ([], [], [])
+    assert world.rejected("oms_not_ready") == 1 and world.oms.state == "ok"
 
 
 @pytest.mark.parametrize("meets", ["route", "anchors", "run"])

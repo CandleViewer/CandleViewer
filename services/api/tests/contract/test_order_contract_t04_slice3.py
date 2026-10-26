@@ -24,21 +24,30 @@ from candleviewer.oms import submit
 from candleviewer.oms.errors import OmsNotReady
 from candleviewer.oms_lane import BLOCK_TIMEOUT_S, HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
+    ENVIRONMENT_FENCE_GRACE_S,
+    ENVIRONMENT_LOCK_NAMESPACE,
+    ENVIRONMENT_LOCK_TIMEOUT_S,
     LANE_AUDIT_PAGE_S,
     LANE_AUDIT_STOP_S,
+    LANE_STALE_S,
+    LANE_TICK_S,
     LANE_WAL_PREFIX,
     REFERENCE_DEMAND_MAX,
     REFERENCE_DEMAND_NEW,
     REFERENCE_DEMAND_TTL_S,
     REFERENCE_DEMAND_WINDOW_S,
+    SWEEP_MAX_FAILURES,
+    SWEEP_RETRY_S,
     SWEEP_STATEMENT_TIMEOUT_MS,
     SYSTEM_ACTOR,
+    EnvironmentLocked,
     OmsAudit,
     OmsBounds,
     OmsRuntime,
     OrderStateFeed,
     ReferenceDemand,
     UnclaimedMachineEvents,
+    environment_lock_key,
 )
 from candleviewer.settings import (
     OMS_AFTER_ANCHOR_S,
@@ -47,6 +56,7 @@ from candleviewer.settings import (
     Settings,
 )
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
+from candleviewer.storage.repositories.session_lock_sqlalchemy import KEEPALIVE, STALE_HOLDER_S
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 from candleviewer.ws.topics import MACHINE_KINDS
 from tests.openapi_helpers import deref
@@ -247,6 +257,93 @@ def test_live_needs_both_preconditions_and_the_switches_run_live_b18_gate() -> N
         "slice 3 ruling Q5: `kill_switch`, the B18 kill switch until E39-S03",
         "slice 3: `machine_event_sink`, B1's `machine_events` sink while no statechart persistence",
         "Status of these two: served since #913 slice 3 (sub-slices B to G merged)",
+    )
+
+
+def test_a_new_holder_waits_out_the_fence_and_a_fenced_runtime_admits_nothing_new() -> None:
+    """SEC-S3L2-01, -02 (the Fable lens at 864fa082): 20 states the fencing grace from the code's
+    own names and bound, and the fence at the route's step 3 and in the switches; 24 gives the
+    switches' first refusal and both routes' step 3; the E29 model's §12.2 the grace's residual."""
+    assert not _missing(
+        _RUNTIME,
+        "The route's step 3 reads the runtime's readiness, `degraded` once the lock is lost, "
+        "while the exit routes read its state, and the fence is the switches' first refusal "
+        "(`TradingSwitches`, 24 §8.4), so a submit any caller makes on the lane, a resumed create "
+        "and a risk-increasing amend included, is refused `oms_not_ready` there too (SEC-S3L2-02).",
+        f"A process that takes the lock waits {ENVIRONMENT_FENCE_GRACE_S:g} s from then "
+        "(`ENVIRONMENT_FENCE_GRACE_S`, a tick and the watchdog's bound, step 1's waits counting "
+        "toward it) before its startup sweep, and so before its first admit: a previous holder "
+        "whose session ended has fenced itself by then, so the two never sweep or admit at once "
+        "(SEC-S3L2-01).",
+    )
+    switches = _between(_INTERNAL_DOC, "**`TradingSwitches`", "**A refused")
+    assert not _missing(
+        switches,
+        "the first refusal wins: the environment's lock held, then live trading enabled",
+        f"the binding refuses every order first, `{OmsNotReady.__name__}` "
+        "(`503 oms_not_ready`), whatever the rest say",
+    )
+    placed = _between(_INTERNAL_DOC, "\n3. the OMS runtime: none composed", "\n4. ")
+    assert "or one whose environment's lock is lost (its readiness, SEC-S3L2-02)" in placed
+    exits = _between(_INTERNAL_DOC, "\n3. the OMS runtime, as the route's step 3", "\n4. ")
+    assert "by its state, so a lost environment lock refuses no exit (C-2.6)" in exits
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    residuals = _between(
+        threat.read_text(encoding="utf-8"), "### 12.2 Accepted residual risks", "### 12.3"
+    )
+    assert not _missing(
+        residuals,
+        "**The environment lock's fencing grace (#913 L2, SEC-S3L2-01).**",
+        f"A process that takes the lock waits those {ENVIRONMENT_FENCE_GRACE_S:g} s "
+        "(`ENVIRONMENT_FENCE_GRACE_S`) before its startup sweep and its first admit",
+    )
+
+
+def test_the_e29_model_gives_the_fencing_grace_an_owner_a_ticket_and_a_review_date() -> None:
+    """CR-S3L2X-07: §12.2's fencing-grace residual carries what the table's rows carry: its level,
+    its owner, its ticket and a review date."""
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    residuals = _between(
+        threat.read_text(encoding="utf-8"), "### 12.2 Accepted residual risks", "### 12.3"
+    )
+    grace = residuals.split("**The environment lock's fencing grace (#913 L2, SEC-S3L2-01).**")[1]
+    assert (
+        "Like the rows above it has a level, an owner, a ticket and a review date: Low; Owner/PO; "
+        "E29-T04;" in grace
+    )
+    assert re.search(r"review by \d{4}-\d{2}-\d{2}", grace)
+
+
+def test_20_says_a_dead_lane_keeps_the_environments_lock_until_the_process_exits() -> None:
+    """CR-S3L2X-07: nothing on a lane that has died can release the lock, so 20 says it is held
+    until the process exits, a second process refused until then."""
+    assert (
+        "A lane that has died keeps the lock until the process exits: its watchdog ticks no more, "
+        "and the stop's release, a call on that lane, is refused, so nothing ends the lock's "
+        "session before the exit does, and a second process is refused until then (CR-S3L2X-07)."
+        in _RUNTIME
+    )
+
+
+def test_20_pages_a_lane_with_no_reader_and_an_unanswered_lock_and_closes_a_raced_compose() -> None:
+    """SEC-S3L2-04 to -06 (the Fable lens at 864fa082): 20 says the serving loop reads the lane's
+    state itself, a heartbeat's end pages, the unanswered lock pages once while the asking goes
+    on, and nothing a composition built outlives a stop or a cancelled start that races it."""
+    assert SWEEP_MAX_FAILURES == 5  # "the fifth"
+    assert not _missing(
+        _RUNTIME,
+        "The fifth unanswered ask in a row (`SWEEP_MAX_FAILURES`), the start's own counted, is "
+        "logged CRITICAL and paged once, and the asking goes on (SEC-S3L2-06).",
+        f"The serving loop reads that state itself every {LANE_STALE_S:g} s, so a dead or wedged "
+        "lane pages with nothing else reading it, and a heartbeat that ends on an error is logged "
+        "CRITICAL (`oms_lane_heartbeat_ended`) and paged at once (SEC-S3L2-04).",
+    )
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert (
+        "A composition hands what it built to the runtime under a lock its stop takes too, so a "
+        "stop that begins as one ends either takes it and closes it, or is seen by it, which then "
+        "closes it itself, and a start cancelled once it has ended closes what was handed over: "
+        "nothing composed outlives a stop or a cancelled start (SEC-S3L2-05)." in lane
     )
 
 
@@ -452,7 +549,8 @@ def test_the_flag_is_narrower_than_the_gate_and_the_security_lens_nits_are_writt
 def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
     """CR-S3N-01, -03, -06, -08, -09a: the one-process presumption and what breaks it as the code
     does (the sweep voids an unsent entry's attach rows, and its KILL and the first process's
-    `SEND` race on the order row), a testnet process's `/readyz`, and the loop of the facade."""
+    `SEND` race on the order row), the lock that enforces it (SEC-S3N-01, #913 L2) from the code's
+    own names and bound, a testnet process's `/readyz`, and the loop of the facade."""
     assert not _missing(
         _RUNTIME,
         "builds it in its `start()`, on the order lane (below), and unwires it in its `stop()`.",
@@ -472,14 +570,48 @@ def test_20_says_what_a_second_oms_process_and_a_testnet_one_do() -> None:
         "so 24 §8.5 step 5 has no record to restore the position's stop against.",
         "Its step 3 also resumes the first's in-flight `submitting` creates under their own "
         '`orderLinkId`s (24 §8.2 "Recovery", C-2.10).',
-        "A per-environment advisory lock held for the facade's life would enforce the "
-        "presumption; that follow-up is not scheduled. On the real backend, while the runtime "
-        "runs, `/readyz` carries an `oms` check",
+        "The runtime enforces the presumption (SEC-S3N-01, #913 slice 3 L2): before its facade "
+        "or any machine exists, `start()` takes the environment's Postgres advisory lock, "
+        "`pg_try_advisory_lock` on the signed 64-bit key BLAKE2b gives for "
+        f"`{ENVIRONMENT_LOCK_NAMESPACE.decode()}` and the environment "
+        f"(`oms_wiring.{environment_lock_key.__name__}`), outside the 32-bit range every "
+        "`hashtext` key lies in, on a connection of the OMS pool's own, and holds it for the "
+        "facade's life, releasing it in `stop()` after every other closer.",
+        f"it fails closed (`{EnvironmentLocked.__name__}`, logged CRITICAL as "
+        "`oms_runtime_failed_closed` with `phase` `environment_lock`, and paged), sweeps and "
+        "hydrates nothing, is never `ready` and is not asked again",
+        "That connection is one of the pool's 15 (`pool_size` 10, `max_overflow` 5), taken for the "
+        "process's life; the pool's dispose at the stop leaves a checked-out connection open, so "
+        "the release after it still unlocks on that session, then ends it (CR-S3L2-06).",
+        f"A lock that cannot be asked within {ENVIRONMENT_LOCK_TIMEOUT_S:g} s "
+        "(`ENVIRONMENT_LOCK_TIMEOUT_S`, for the pool's connection and again for the statement), "
+        "Postgres unreachable, is no other holder: the start returns `starting` and asks again, "
+        "the whole composition with it, after the sweep's backoff "
+        f"({SWEEP_RETRY_S[0]:g} s, doubling to {SWEEP_RETRY_S[1]:g} s), each failure logged "
+        "(`oms_environment_lock_unanswered`), so `placeOrder` answers `503 oms_not_ready` "
+        "meanwhile, as a sweep that meets a store failure does (CR-S3L2-01/02).",
+        f"(`tcp_keepalives_idle` {KEEPALIVE['idle']} s, `tcp_keepalives_interval` "
+        f"{KEEPALIVE['interval']} s, `tcp_keepalives_count` {KEEPALIVE['count']}, "
+        f"`tcp_user_timeout` {STALE_HOLDER_S} s)",
+        f"and with it the lock, within about {STALE_HOLDER_S} s: that is the stale-holder window",
+        f"the lane ticks every {LANE_TICK_S:g} s (`LANE_TICK_S`) and, on the same tick, asks "
+        f"within {ENVIRONMENT_LOCK_TIMEOUT_S:g} s whether the lock's session still holds the key",
+        "every new submit is refused `503 oms_not_ready` from then on, while cancels, stop "
+        "attaches and repairs, KILLs and the exit routes run on (C-2.6, C-2.21): never a silent "
+        "run without the lock, never a blocked exit.",
+        f"A lane that has not ticked for {LANE_STALE_S:g} s (`LANE_STALE_S`) is wedged, alive but "
+        "stuck: the runtime reads `degraded`, as for a dead lane, and pages the first read of "
+        "each stall (CR-S3L1A-02).",
+        "and `degraded` whenever its order lane has died or stalled, or the environment's lock is "
+        "lost (below)",
+        "On the real backend, while the runtime runs, `/readyz` carries an `oms` check",
         "A testnet process's runtime is `degraded` from its start, before any sink is built: "
         "testnet serves connectivity smoke tests only (CONSTITUTION §1.2), and the exchange "
         "adapter builds no testnet trading port, so the runtime fails closed and its `/readyz` "
         "check stays `degraded`.",
     )
+    assert "that follow-up is not scheduled" not in _RUNTIME
+    assert "loses it without noticing until its stop" not in _RUNTIME
     assert "no request can send any more" in _words(_SCHEMA_DOC)  # the sentence 20 quotes
     guard = _SCHEMA_DOC.split("CREATE FUNCTION rs_guard()", 1)[1].split("END $BODY$;", 1)[0]
     assert "('pending','void')" in guard and "('void'," not in guard  # a `void` row never leaves

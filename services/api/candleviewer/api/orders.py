@@ -187,10 +187,12 @@ class _Anchors(Protocol):
 
 
 class OrderRuntime(Protocol):
-    """`oms_wiring.OmsRuntime` as the route reads it (20 Sec.6.2)."""
+    """`oms_wiring.OmsRuntime` as the route reads it (20 Sec.6.2): its readiness, its state and
+    `degraded` too once its environment's lock is lost (#913 L2, SEC-S3L2-02), which the exit
+    routes, reading the state, do not meet."""
 
     @property
-    def state(self) -> str: ...
+    def readiness(self) -> str: ...
     @property
     def submission(self) -> _Pipeline: ...
     @property
@@ -439,10 +441,10 @@ def make_orders_router(
                 snapshot, _PERMISSION, scope=Scope.GRANTED_ACCOUNTS,
                 exchange_account_id=account_id, requires_trade=True,
             ))  # fmt: skip
-        oms = runtime()  # step 3: its `state` alone decides (SEC-S3E2-01)
+        oms = runtime()  # step 3: its readiness alone decides (SEC-S3E2-01, SEC-S3L2-02)
         if oms is None:
             return problem(501, "not_implemented", "No OMS is composed on this backend.")
-        if oms.state != "ok":
+        if oms.readiness != "ok":
             return not_ready()
         try:
             reads, anchors, pipeline = oms.route, oms.anchors, oms.submission
