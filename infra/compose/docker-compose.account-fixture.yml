@@ -1,0 +1,37 @@
+# infra/compose/docker-compose.account-fixture.yml — #2893 S14, the account fixture override.
+#
+# Opt-in only: the default stack never reads it. It runs the demo stub stack on the dev-only
+# account fixture transport (ADR-0036), layered over the base file and the dev override:
+#   docker compose -f infra/compose/docker-compose.yml -f infra/compose/docker-compose.dev.yml \
+#     -f infra/compose/docker-compose.account-fixture.yml --profile core up -d
+# Pick the stack default with CV_ACCOUNT_FIXTURE=<key scenario> on the command line (decision 6).
+# Drive the clock and key switches with the switch CLI (packages/fixtures/accounts/README.md):
+#   docker compose ... exec api python -m cvdev.account_fixture.cli switch <key id> [--to S]
+#
+# Rule 7 of infra/scripts/lint_compose.py holds it to this shape, and
+# scripts/tests/test_compose_fixture_override.py to its rules:
+# - the builder stage only, and never an image: no documented path mounts `cvdev` into a release
+#   image (ADR-0036, Enforcement);
+# - demo and the synthetic feed, fixed here, and no CV_BYBIT_API_* or CV_TEST_CLOCK: Settings
+#   refuses the fixture otherwise, and the S8 boot guard still runs before any module starts;
+# - `cvdev` and the fixtures package read-only under the working directory, so `cvdev` imports
+#   and `packages/fixtures/accounts` (pack.PACK_ROOT) resolves; the whole fixtures package, as
+#   the pack reads payloads from the corpus beside it;
+# - CV_ACCOUNT_FIXTURE_DIR absolute and on its own named volume (no symlink, no host path).
+services:
+  api:
+    build:
+      target: builder
+    working_dir: /build
+    environment:
+      CV_ENVIRONMENT: demo
+      CV_FEED: synthetic
+      CV_ACCOUNT_FIXTURE: ${CV_ACCOUNT_FIXTURE:-compliant}
+      CV_ACCOUNT_FIXTURE_DIR: /var/lib/candleviewer/account-fixture
+    volumes:
+      - ../../services/api/cvdev:/build/cvdev:ro
+      - ../../packages/fixtures:/build/packages/fixtures:ro
+      - cv-account-fixture:/var/lib/candleviewer/account-fixture
+
+volumes:
+  cv-account-fixture: {}
