@@ -158,6 +158,7 @@ def test_enum_texts_restate_every_value_of_their_generated_literal() -> None:
     environments = get_args(KekRewrapRequest.model_fields["environment"].annotation)
     reasons = get_args(RotateAuditSigningKeyRequest.model_fields["reason"].annotation)
     assert environments and reasons
+    assert all(isinstance(v, str) for v in environments + reasons)  # a bare Literal, never `| None`
     for environment in environments:
         assert f" {environment} " in kek_rewrap_text(environment, 2).action_summary
     for reason in reasons:
