@@ -28,6 +28,7 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
+from candleviewer.audit.writer import keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
@@ -161,15 +162,21 @@ class Sink(InMemoryMachineEventSink):
 
 @dataclass
 class Writer:
-    """The audit writer: each append, by its action and reason."""
+    """The audit writer: each append, by its action and reason; a keyed one stored as the writer
+    stores it, under `keyed_record_id(action, name)`, so one whose id is already stored lands
+    nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587)."""
 
     actions: list[tuple[str, str | None]] = field(default_factory=list)
+    stored: set[UUID] = field(default_factory=set)
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.actions.append((action, fields.get("reason")))
 
     async def emit_keyed(self, action: str, name: str, **fields: Any) -> None:
-        self.actions.append((action, fields.get("reason")))
+        key = keyed_record_id(action, name)
+        if key not in self.stored:
+            self.stored.add(key)
+            self.actions.append((action, fields.get("reason")))
 
 
 class InlineLane:

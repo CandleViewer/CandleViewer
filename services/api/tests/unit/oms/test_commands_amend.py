@@ -36,6 +36,13 @@ from tests.unit.oms.command_rig import T0, T0_US, Rig
 _TP, _SL2 = Decimal("64000"), Decimal("58500")
 _NO: dict[str, Any] = {"ok": False}
 _REDUCE = {"reduce_only": True, "intent": "take_profit", "stop_loss": None, "take_profit": None}
+#: A refused amend's records as the writer keeps them: each row's request, then its void (C-2.9).
+_REQUESTED_THEN_VOIDED = [
+    ("sl.modified", oc.AMEND_REASON),
+    ("tp.modified", oc.AMEND_REASON),
+    ("sl.modified", oc.AMEND_REFUSED),
+    ("tp.modified", oc.AMEND_REFUSED),
+]
 
 
 async def _live(rig: Rig, **over: Any) -> Any:
@@ -164,16 +171,15 @@ async def test_the_rows_exist_when_the_venue_call_lands(
 
 
 async def test_a_refused_amend_voids_its_rows_audited_ahead(rig: Rig) -> None:
+    """#4587: the writer keeps both of each row's records, the void never deduped against the
+    request's record."""
     order = await _live(rig)
     rig.demo.script("amend_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "hidden"))
     answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     codes = {key: answer[key] for key in ("ok", "error_code", "exchange_ret_code")}
     assert codes == _NO | {"error_code": "INSTRUMENT_FILTER", "exchange_ret_code": 110003}
     assert "hidden" not in repr(answer) and [r.status for r in _rows(rig)] == ["void"] * 2
-    assert rig.audits.actions()[2:] == [
-        ("sl.modified", oc.AMEND_REFUSED),
-        ("tp.modified", oc.AMEND_REFUSED),
-    ]
+    assert rig.audits.actions() == _REQUESTED_THEN_VOIDED
 
 
 async def test_an_amend_whose_send_raises_leaves_its_rows_in_flight(rig: Rig) -> None:
@@ -194,6 +200,7 @@ async def test_a_refused_rate_token_voids_the_rows_with_nothing_sent(rig: Rig) -
     answer = await rig.port.amend(_amend(order, stop_loss="58500"))
     assert answer == _NO | {"error_code": "RATE_BUDGET_EXCEEDED", "retry_after_s": 2}
     assert [r.status for r in _rows(rig)] == ["void", "void"]
+    assert rig.audits.actions() == _REQUESTED_THEN_VOIDED
 
 
 async def test_one_insert_shares_one_created_at() -> None:

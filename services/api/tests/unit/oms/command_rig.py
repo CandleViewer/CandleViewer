@@ -12,6 +12,7 @@ from decimal import Decimal
 from typing import Any, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from candleviewer.audit.writer import keyed_record_id
 from candleviewer.domain.primitives import AccountId, Environment, GroupId, Side
 from candleviewer.exchange.base.errors import ServiceUnavailableError
 from candleviewer.exchange.base.fakes import FakeTradingPort
@@ -240,18 +241,28 @@ class Monotonic:
 class Audits:
     """`OrderAudit` and `SubmitAudit` in one: each record lands in `written` with the count of
     exchange calls made before it (`sent_before`); `refuse` raises instead. The pipeline's
-    request records (`RequestRecord`) land here too (`submit_rig`)."""
+    request records (`RequestRecord`) land here too (`submit_rig`). A keyed record is stored as
+    the writer stores it, under `keyed_record_id(action, name)` (`record_id`): one whose id is
+    already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587)."""
 
     sent: Callable[[], int] = lambda: 0
     written: list[tuple[AnyRecord, int]] = field(default_factory=list)
     refuse: BaseException | None = None
+    stored: set[UUID] = field(default_factory=set)
 
     def record_id(self, action: str, name: str) -> UUID:
-        return uuid5(NAMESPACE_URL, f"{action}:{name}")
+        return keyed_record_id(action, name)
 
     async def write(self, record: AnyRecord) -> None:
+        key: UUID | None = None
+        if isinstance(record, KeyedRecord):  # named first, as `emit_keyed` names it
+            key = keyed_record_id(record.action, record.name)
         if self.refuse is not None:
             raise self.refuse
+        if key in self.stored:
+            return
+        if key is not None:
+            self.stored.add(key)
         self.written.append((record, self.sent()))
 
     def actions(self) -> list[tuple[str, str]]:
