@@ -9,7 +9,7 @@ order is `create_app()`'s."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Callable, Coroutine
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from types import SimpleNamespace
@@ -18,7 +18,7 @@ from uuid import UUID, uuid4
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import Response
 from httpx import ASGITransport, AsyncClient
 from jsonschema import Draft202012Validator
@@ -30,9 +30,12 @@ from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.view_as_policy import ProtectiveWrites
+from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
+from candleviewer.api.view_as_subject import STATE_KEY
 from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.view_as import ViewAsRequestContext, bound_view_as
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.observability.correlation import CORRELATION_HEADER, CorrelationMiddleware
@@ -48,7 +51,7 @@ from candleviewer.oms.errors import (
     TradingDisabled,
 )
 from candleviewer.oms.fakes import InMemorySubmissionStore
-from candleviewer.oms.ports import RequestRecord, SubmitActor
+from candleviewer.oms.ports import KeyedRecord, RequestRecord, SubmitActor
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import (
     GatewayDegradedError,
@@ -139,6 +142,19 @@ class Emitted:
         self.records.append({"action": action, **fields})
 
 
+def stamped(context: ViewAsRequestContext) -> Callable[..., Awaitable[Response]]:
+    """The view-as guard's stamp on a request it passes to a registered protective write's
+    handler (`api/view_as_guard.py`): the context on the request's state and bound."""
+
+    async def stamp(request: Request, call_next: Callable[..., Awaitable[Response]]) -> Response:
+        request.scope.setdefault("state", {})[STATE_KEY] = context
+        with bound_view_as(context):
+            answer: Response = await call_next(request)
+        return answer
+
+    return stamp
+
+
 @dataclass
 class Runtime:
     """`OmsRuntime` as the route reads it. `stopped` is the stop race, a stop begun after step 3
@@ -166,7 +182,10 @@ class Runtime:
 
 @dataclass
 class World:
-    """The router over the exit service `oms.service`, whose records land in `audits`."""
+    """The router over the exit service `oms.service`, whose records land in `audits`. `viewing`,
+    when set, is the view-as context the guard stamps on each request it passes to a protective
+    write's handler (22 "View-as session"), and `refusals` the recorder the route reads per
+    request for a viewer's refusal."""
 
     oms: Runtime
     audits: cr.Audits
@@ -177,16 +196,21 @@ class World:
     metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
     cache: IdempotencyCache = field(default_factory=IdempotencyCache)
     pages: list[str] = field(default_factory=list)
+    viewing: ViewAsRequestContext | None = None
+    refusals: ViewAsRefusalRecorder | None = None
 
     def raise_alert(self, severity: str, summary: str, *, machine_kind: str) -> None:
         self.pages.append(summary)
 
     def app(self) -> FastAPI:
         app = FastAPI()
+        more = {} if self.refusals is None else {"view_as_refusals": lambda: self.refusals}
         app.include_router(make_order_exits_router(
             self.principals, lambda: self.oms if self.composed else None, audit=self.audit,
-            metrics=self.metrics, replays=self.cache, pager=self,
+            metrics=self.metrics, replays=self.cache, pager=self, **more,
         ))  # fmt: skip
+        if self.viewing is not None:
+            app.middleware("http")(stamped(self.viewing))
         app.add_middleware(CorrelationMiddleware)  # binds `request_id`, as `create_app` does
         return app
 
@@ -959,6 +983,7 @@ def scopes(world: World, monkeypatch: pytest.MonkeyPatch) -> list[object]:
     return seen
 
 
+@pytest.mark.parametrize("method", ["DELETE", "PATCH"])
 @pytest.mark.parametrize(
     ("target", "status", "code", "denied"),
     [
@@ -968,31 +993,43 @@ def scopes(world: World, monkeypatch: pytest.MonkeyPatch) -> list[object]:
         ("ungranted", 404, "not_found", ex.NOT_GRANTED),
     ],
 )
-async def test_a_viewing_owners_cancel_runs_as_the_viewer_in_the_targets_scope(
-    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, target: str, status: int, code: str | None,
-    denied: str | None,
+async def test_a_viewing_owners_exit_runs_as_the_viewer_in_the_targets_scope(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, method: str, target: str, status: int,
+    code: str | None, denied: str | None,
 ) -> None:  # fmt: skip
-    """22's dual check, its account half (24 Sec.8.4 step 4, `scope_for_target`): an Owner viewing
-    as a Manager cancels only what the Manager may cancel, the order the Manager created on an
-    account it trades. The scope is the Manager's trade grants alone, so a Manager who did not
-    create the order is refused as its own cancel would be (ruling Q6), and an account it may only
-    view, or not at all, is outside the scope (`404`, SR-E29-13). The viewer stays the actor of
-    every record, the target never: the cancel runs as the viewer."""
-    row = await tx.placed(rig)
-    world = granted(rig, target)
-    seen = scopes(world, monkeypatch)
-    answer = await delete(world, row.id, f"viewing:{target}")
-    assert answer.status_code == status
+    """22's dual check, its account half (24 Sec.8.4 step 4, `scope_for_target`), for each exit:
+    an Owner viewing as a Manager cancels, or amends with a protective body (its stop alone,
+    tightened), only what the Manager may, the order the Manager created on an account it trades.
+    The scope is the Manager's trade grants alone, so a Manager who did not create the order is
+    refused as its own exit would be (ruling Q6), and an account it may only view, or not at all,
+    is outside the scope (`404`, SR-E29-13). The viewer stays the actor of every record, the
+    target never: the exit runs as the viewer."""
     user = sr.USER if target == "creator" else OTHER
+    if method == "PATCH":  # the amend's route helpers: that module imports this one
+        from tests.unit.api import test_order_amend_route as ar
+
+        world, row = await ar.amendable(rig, target)
+        ar.viewed(world, "live", target=user)  # the guard's stamp on the write it passes
+        seen = scopes(world, monkeypatch)
+        answer = await ar.patch(world, row.id, ar._TIGHTER, who=f"viewing:{target}")
+    else:
+        row = await tx.placed(rig)
+        world = granted(rig, target)
+        seen = scopes(world, monkeypatch)
+        answer = await delete(world, row.id, f"viewing:{target}")
+    assert answer.status_code == status, answer.text
     held = frozenset() if target in ("view_only", "ungranted") else frozenset({cr.ACCOUNT})
     assert seen == [GrantScope(user, held)]  # the Manager's grants, never the Owner's every account
-    assert {actor for actor, _ in world.named()} == {ACTOR}  # the viewer, never the target
-    if code is None:
-        assert (answer.json()["lifecycle_state"], rig.calls().count("cancel_order")) == (
-            "cancelled", 1,
-        )  # fmt: skip
+    records = [record for record, _ in world.audits.written[world.since :]]
+    actors = [r.actor for r in records if isinstance(r, RequestRecord | KeyedRecord)]
+    assert records and len(actors) == len(records)  # each a request's or a keyed record
+    assert set(actors) == {ACTOR}  # the viewer, never the target
+    venue = "cancel_order" if method == "DELETE" else "amend_order"
+    if code is None:  # the order as its exit left it, the venue called once
+        state = "cancelled" if method == "DELETE" else "submitted"
+        assert (answer.json()["lifecycle_state"], rig.calls().count(venue)) == (state, 1)
         return
-    assert (answer.json()["code"], rig.calls().count("cancel_order")) == (code, 0)
+    assert (answer.json()["code"], rig.calls().count(venue)) == (code, 0)
     assert world.actions() == [("rbac.denied", denied)]
 
 
@@ -1010,17 +1047,17 @@ async def test_in_the_hold_a_viewing_owners_cancel_runs_in_the_viewers_own_scope
     assert {actor for actor, _ in world.named()} == {ACTOR}
 
 
-def test_the_router_registers_cancel_order_as_a_protective_write() -> None:
-    """Its handler decides a viewer's cancel itself, protective whole (C-2.6), so the view-as
-    guard passes it to it (22 "View-as session"). The amend stays refused as any write until its
-    handler classifies it (fail closed)."""
+def test_the_router_registers_both_exits_as_protective_writes() -> None:
+    """Its handlers decide a viewer's cancel and amend themselves, so the view-as guard passes
+    them on (22 "View-as session"): a cancel protective whole (C-2.6), an amend by its components
+    (24 Sec.8.10, `amendOrder`'s step 5)."""
     protective = ProtectiveWrites(declared_operations(load_openapi_spec()))
-    assert not protective.is_registered(("DELETE", "/orders/{orderId}"))
+    exits = {("DELETE", "/orders/{orderId}"), ("PATCH", "/orders/{orderId}")}
+    assert not any(protective.is_registered(operation) for operation in exits)
     make_order_exits_router(
         None, lambda: None, audit=Emitted(), metrics=Metrics("demo"), protective=protective
     )
-    assert protective.is_registered(("DELETE", "/orders/{orderId}"))
-    assert not protective.is_registered(("PATCH", "/orders/{orderId}"))
+    assert all(protective.is_registered(operation) for operation in exits)
 
 
 # --- the app -------------------------------------------------------------------------------------
