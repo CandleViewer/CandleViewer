@@ -258,7 +258,7 @@ def make_invites_router(
 
     async def _not_invited(user_id: uuid.UUID) -> JSONResponse | None:
         """A re-issue's: an `invited` user. No store wired is a wiring fault, 503, as the other
-        unwired ports answer: the lookup is never skipped (C-2.21)."""
+        unwired ports answer: the lookup is never skipped (C-12.4)."""
         if users is None:
             return _problem(503, "Service unavailable", "the user store is not wired")
         return await _looked_up(_invited(user_id, users), "no invited user with this id")
