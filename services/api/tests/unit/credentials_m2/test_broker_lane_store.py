@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import inspect
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
@@ -19,12 +20,14 @@ from pydantic import SecretStr
 from candleviewer import app
 from candleviewer.admin import wiring
 from candleviewer.admin.wiring import (
+    LaneAuditWriter,
     SecretsBundle,
     build_audit_service,
     build_secrets_service,
     secrets_bundle,
 )
 from candleviewer.audit.service import AuditService
+from candleviewer.audit.writer import AuditWriter
 from candleviewer.secrets import _metrics as m
 from candleviewer.secrets.errors import CredentialUnavailable, SigningLoopMismatch
 from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS, SecretsService
@@ -48,9 +51,6 @@ class _Writer:
 
     async def emit(self, action: str, **columns: Any) -> None:
         self.emitted.append((action, columns))
-
-    async def emit_keyed(self, action: str, name: str, **columns: Any) -> None:
-        raise AssertionError("M2 writes no keyed record")
 
 
 class _Failing(_Writer):
@@ -368,6 +368,17 @@ def test_a_lane_bound_to_the_serving_loops_audit_writer_is_refused(given: str) -
     with pytest.raises(ValueError, match="never the serving loop's"):
         bind(audit=cast(Any, served if given == "service" else writer))
     assert pools.built == []
+
+
+def test_the_lane_audit_writer_port_is_the_writers_emit_alone() -> None:
+    """Nit (C-2.9): M2 writes its records ahead through `emit` alone, so that is the whole of the
+    lane writer's port, each parameter of the kind and with the default `AuditWriter.emit` has."""
+    lane = inspect.signature(LaneAuditWriter.emit).parameters
+    real = inspect.signature(AuditWriter.emit).parameters
+    assert [name for name in vars(LaneAuditWriter) if not name.startswith("_")] == ["emit"]
+    assert [(name, p.kind, p.default) for name, p in lane.items()] == [
+        (name, real[name].kind, real[name].default) for name in lane
+    ]
 
 
 def test_the_bundle_binds_the_lane_through_lane_signing_alone() -> None:
