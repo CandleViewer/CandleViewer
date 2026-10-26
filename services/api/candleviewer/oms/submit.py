@@ -187,6 +187,7 @@ from .order_link import OrderLinkIdParts, OrderPurpose
 from .order_link_allocator import MAX_SEQ_INCREMENTS, OrderLinkIdAllocator
 from .order_machine import OrderMachines
 from .ports import (
+    NO_TIER_REQUESTS,
     AuditOutcome,
     AuditSeverity,
     Instruments,
@@ -207,6 +208,7 @@ from .ports import (
     SubmissionPorts,
     SubmitActor,
     SubmitAudit,
+    TierRequests,
     TradingAccounts,
     TradingSwitches,
 )
@@ -461,7 +463,9 @@ class SubmissionDeps:
     slice 3's wiring: the account a request is signed for, the instruments, the market's
     reference prices, the effective profiles, the synchronous switches, the stop-request gate,
     the audit writer and the trade-group facade the leg's and the group's status go through
-    (S2-Q4, a system surface no route reaches, C-12.4)."""
+    (S2-Q4, a system surface no route reaches, C-12.4). `tier_requests` is the catalogue's tier
+    bridge (S4-S-d), which the size step calls on a `figure_unknown` caused by missing tiers
+    (S4-S-b2a); nothing calls it yet."""
 
     accounts: TradingAccounts
     instruments: Instruments
@@ -471,6 +475,7 @@ class SubmissionDeps:
     gate: StopRequestGate
     audit: SubmitAudit
     groups: TradeGroupRepository
+    tier_requests: TierRequests = NO_TIER_REQUESTS
 
 
 @dataclass(frozen=True, slots=True)

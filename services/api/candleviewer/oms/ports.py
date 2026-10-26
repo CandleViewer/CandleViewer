@@ -322,6 +322,26 @@ class ClockHealth(Protocol):
         ...
 
 
+class TierRequests(Protocol):
+    """A symbol's risk-limit tiers asked of the catalogue (24 Sec.9.3.6, #913 S4-S-d): what a
+    `figure_unknown` caused by missing tiers calls, so the refresh fetches them and the next entry
+    on the symbol is sized. Never awaited and never raises into its caller: a request the bridge
+    cannot take (full, or the serving loop stopped) is dropped and counted, never an error."""
+
+    def request_tiers(self, symbol: Symbol) -> None: ...
+
+
+class NoTierRequests:
+    """`TierRequests` where no catalogue is composed: every request is a no-op."""
+
+    def request_tiers(self, symbol: Symbol) -> None:
+        return None
+
+
+#: The no-op the pipeline holds until its composition binds the bridge.
+NO_TIER_REQUESTS: Final = NoTierRequests()
+
+
 class TradingAccounts(Protocol):
     """The account an order is signed for (SR-E27-21, KV-E14): the exchange account the OMS has
     already scope-checked, as the trading port's `AccountRef`, whose `key_ref` is that account's

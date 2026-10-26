@@ -51,6 +51,11 @@ Design notes tying back to the ticket's Gherkin:
   on-demand path waits `on_demand_cooldown_s` before it calls the venue for that symbol again.
 - S4-S-c (#913): each refresh seeds the refreshed set from `order_path_symbols`, so the order
   path's symbols get tiers without a detail-route visit, after a restart too (`_tier_set`).
+- S4-S-d (#913): `request_tiers` is the order path's ask for a symbol's tiers, from a
+  `figure_unknown` caused by missing ones (a wildcard profile's symbol, which no seed names): it
+  joins the refreshed set at once and gets one on-demand fetch (`ensure_risk_limits`, so its
+  bounds) per `TIER_REQUEST_WINDOW_S`, at most `TIER_REQUESTS_MAX` in a window. Its caller, the
+  OMS's bridge, never awaits it.
 """
 
 from __future__ import annotations
@@ -60,7 +65,7 @@ import dataclasses
 import math
 import random
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from candleviewer.domain.events import Instrument
@@ -111,6 +116,13 @@ TIERS_RETRY_S = 60.0
 ORDER_PATH_WINDOW_S = 86_400
 #: S4-S-c: the seed read, at most this long; a late or failed read seeds nothing that tick.
 ORDER_PATH_SEED_TIMEOUT_S = 2.0
+#: S4-S-d (#913): a requested symbol gets at most one on-demand tier fetch in this many seconds.
+TIER_REQUEST_WINDOW_S = 60.0
+#: S4-S-d: at most this many symbols requested in one window; a request past it is `full`.
+TIER_REQUESTS_MAX = 100
+
+#: S4-S-d: why `request_tiers` dropped a request: its window is full, or the scheduler stopped.
+TierRequestDrop = Literal["full", "stopped"]
 
 
 def retry_backoff_s(failures: int, rand: float) -> float:
@@ -222,6 +234,10 @@ class InstrumentsRefreshScheduler:
         self._starting = False
         #: S-RL: when a symbol's last tier fetch failed (the on-demand cooldown's start).
         self._tier_failed_us: dict[str, int] = {}
+        #: S4-S-d: when each requested symbol's fetch was last kicked, within the last window.
+        self._tier_kicked_us: dict[str, int] = {}
+        #: S4-S-d: the kicked fetches still running, which `stop()` cancels.
+        self._tier_kicks: set[asyncio.Task[Any]] = set()
         self._repository = repository
         self._publish = publish
         self.cache = (
@@ -304,7 +320,9 @@ class InstrumentsRefreshScheduler:
         to `grace_s`. A cancellation of the caller of `stop()` propagates."""
         self._stopping = True
         tasks = [task for task in (self._task, self._on_demand) if task is not None]
+        tasks += self._tier_kicks
         self._task = self._on_demand = None
+        self._tier_kicks = set()
         for task in tasks:
             task.cancel()
         try:
@@ -403,6 +421,40 @@ class InstrumentsRefreshScheduler:
                 "risk_limits_fetch_failed", symbol=symbol, error=type(exc).__name__
             )
             return None
+
+    def request_tiers(self, symbol: str) -> TierRequestDrop | None:
+        """S4-S-d (#913): the order path asks for `symbol`'s tiers, never waiting: a listed,
+        not `closed` symbol with no tiers joins the refreshed set (within `TIER_SYMBOLS_MAX`) and
+        its fetch is kicked as a task here, through `ensure_risk_limits` (its timeout, cooldown and
+        the adapter's `MARKET_DATA` bucket), at most once per `TIER_REQUEST_WINDOW_S`. Answers why
+        it dropped the request: `full`, `TIER_REQUESTS_MAX` symbols already kicked in the window,
+        or `stopped`; None otherwise, a request with nothing to do (known tiers, an unlisted
+        symbol, a kick in the window) included."""
+        if self._stopping:
+            return "stopped"
+        current = self.cache.current()
+        if self._fetch_risk_limits is None or current is None:
+            return None
+        listed = current.get(symbol)
+        if listed is None or listed.status == "closed":
+            return None
+        if current.risk_limit_tiers(symbol) is not None:
+            return None
+        now = self._now_us()
+        window_us = TIER_REQUEST_WINDOW_S * 1_000_000
+        kicked = {s: at for s, at in self._tier_kicked_us.items() if now - at < window_us}
+        self._tier_kicked_us = kicked
+        if symbol in kicked:
+            return None
+        if len(kicked) >= TIER_REQUESTS_MAX:
+            return "full"
+        kicked[symbol] = now
+        if len(self._tier_symbols) < TIER_SYMBOLS_MAX:
+            self._tier_symbols.add(symbol)
+        task = spawn(self.ensure_risk_limits(symbol), name="instruments-tier-request")
+        self._tier_kicks.add(task)
+        task.add_done_callback(self._tier_kicks.discard)
+        return None
 
     def _tier_cooling(self, symbol: str) -> bool:
         """S-RL: `symbol`'s last tier fetch failed less than `on_demand_cooldown_s` ago."""
