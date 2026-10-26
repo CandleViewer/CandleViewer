@@ -16,7 +16,8 @@ docs/research/
 # Backlog/board tooling scripts, repo-internal and not shipped (#1778 B5)
 docs/plan/backlog/_tools/
 # Design audit tools: lane-run scripts executed locally with `python -I`, never deployed and never
-# imported by services/api, apps/ or packages/; no cv-* rule targets them. One is over 1 MB and trips
+# imported by services/api, apps/ or packages/; no cv-* rule includes them by path, and the tree-wide
+# rules lose only offline scripts with no network, key or exchange use. One is over 1 MB and trips
 # Semgrep's per-rule timeouts on slow runners, which the gate rightly refuses as a partial scan
 # (#4614). CodeQL (python) keeps scanning them; Bandit never did (`-r services/api/...`).
 /docs/design/_tools/
