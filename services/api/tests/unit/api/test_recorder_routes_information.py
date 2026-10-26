@@ -3,7 +3,8 @@
 A static check over the routes' problem helpers: every string literal passed to one of them is
 a fixed, host-independent message. The handlers' runtime refusals are covered per route; this
 keeps a new literal from carrying a filesystem location or a connection string into a response
-a non-owner can read."""
+a non-owner can read. The path pattern is deliberately broad (any two-segment path or any
+scheme): a literal that trips it should be reworded, not the pattern loosened."""
 
 from __future__ import annotations
 

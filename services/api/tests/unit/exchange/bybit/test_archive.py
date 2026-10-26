@@ -131,7 +131,9 @@ def test_config_accepts_the_pinned_origin_and_normalises_it_to_a_bare_origin() -
     assert ArchiveConfig(base_url=f"{BASE}/").base_url == BASE
 
 
-def test_owned_client_is_built_with_tls_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_owned_client_is_built_with_tls_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     built: list[dict[str, object]] = []
     real = httpx.AsyncClient
 
@@ -140,7 +142,9 @@ def test_owned_client_is_built_with_tls_verification(monkeypatch: pytest.MonkeyP
         return real(**kwargs)
 
     monkeypatch.setattr(httpx, "AsyncClient", capture)
-    BybitTradeArchive()._http()
+    archive = BybitTradeArchive()
+    archive._http()
+    await archive.aclose()
     assert len(built) == 1 and built[0]["verify"] is True
 
 
