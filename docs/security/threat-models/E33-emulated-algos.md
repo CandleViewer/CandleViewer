@@ -1,9 +1,12 @@
 # E33 — STRIDE threat model: the emulated-algo supervisor
 
-- Ticket: E33-X01 (issue #995). Owner: Security engineer (CODEOWNER). Status: **Draft** (revision 3; the delivery
-  orchestrator runs the security lens and signs off under the Owner's 2026-10-20 delegation on #2701, as for E39).
-  Open, and not blockers to the model: the §1.4 inputs, the Owner decisions D6 to D8 (§4.3) and the Owner's acceptance
-  of the §11.2 residuals, queued on #2701 by the orchestrator (2026-10-21). Review log: end of §11.
+- Ticket: E33-X01 (issue #995). Owner: Security engineer (CODEOWNER). Status: **Approved** (revision 4, 2026-10-26;
+  independent reviews: sonnet code and Fable security at `933fa0e0` on #3997, and the code and security lenses on the
+  approval PR, recorded on that PR; the delivery orchestrator signs off on #995 under the Owner's 2026-10-20 delegation
+  on #2701, as for E39). Open, and not blockers to the model: the §1.4 inputs O-2 to O-7 (O-1 is answered, §4.2), the
+  Owner decisions D6 to D8 (§4.3) and the Owner's acceptance of the §11.2 residuals (RR-29 in
+  `04-security-program.md` §16.1, RSK-090 in `32-risk-register.md`), Owner sign-off pending, queued on #2701. Review
+  log: end of §11.
 - Method: the `04-security-program.md` §5 template (L x I = risk), STRIDE per element and per flow (C-12.1), in the
   four-question frame (building §1-§2; what can go wrong §3, §4, §6; response §5, §7 to §10; review §11), formatted as
   the E29 model. E27's, E28's, E29's, E35's, E39's, E17's and E08's rows are **referenced, not repeated**.
@@ -17,13 +20,17 @@
   `rules` and `exchange/bybit`, with their tests. Revision 3 is re-pinned at `22064fc8` (2026-10-21) for the 15
   commits merged since, #3997 among them: no claim of revision 2 changes (§11 review log). It also reads B14 in
   `28-statechart-catalogue.md`, the E08 model (W2, E8-6, E8-7, E8-13), programme A-20 (`04-security-program.md`
-  §3), `ingestion/clock.py` (`ClockGuard`) and `admin/account_access.py`.
+  §3), `ingestion/clock.py` (`ClockGuard`) and `admin/account_access.py`. Revision 4 is re-pinned at `df19904ab` (2026-10-26) for the 519
+  commits merged since: still no algo module, migration, `/algos` path, `algo.*` audit action, reserve in the governor,
+  algo step in the cascades or wired `AlgoCanceller`; the order-entry gate now has its OMS consumer (#913) and
+  statechart persistence is wired (#4015), neither for an algo lane (§1.1). No row, rating or requirement changes.
 - Path: the ticket asks for the model "with the other epic threat models"; GOV-008 naming makes it
   `E33-emulated-algos.md` (D3).
 - Timing: design-time. No supervisor, scheduler, state store or `/algos` route exists (§1.1). E33-T01 (#993) and
   E33-T02 (#994) wait for this model, so its requirements (§9) are written as their acceptance criteria and tests.
-  E33-X01 is `blocked_by` E33-D01 (#857, open); the orchestrator waived that under the Owner's #2701 delegation, and the
-  rows resting on D01's binding copy carry `[O-1]`, re-read when #857 lands.
+  E33-X01 was `blocked_by` E33-D01 (#857); the orchestrator waived that under the Owner's #2701 delegation, and the
+  rows resting on D01's binding copy carry `[O-1]`. #857 closed on 2026-10-23 (#4046, #4295), and revision 4 re-reads
+  those rows against its memo §9c (§4.2): none re-rates.
 - Gate note: design-level weaknesses only. No credential, account identifier, UID or exploit detail appears.
 
 ## 1. Scope
@@ -52,13 +59,13 @@ algo half of its F-02 are owned here (§3).
 | Wire `AlgoSpec`                                                      | contract, generated model   | `22-api-openapi.yaml`, `api/_generated/openapi_models.py`; bounds weaker than 24 §10 (§6 CX-07)                                                                                                                                                                                          |
 | Flags `algo.twap`, `.chase`, `.iceberg`, `.scaled`, `.oco`           | built                       | `admin/flags/catalogue.py`: default false, rollout category, per-user and per-role overrides allowed                                                                                                                                                                                     |
 | Maintenance cancel of runs                                           | port only                   | `AlgoCanceller` (`admin/flags/maintenance.py`); `flags_wiring.py` builds the controller without it, so entering maintenance logs `maintenance_algo_cancel_unavailable` and cancels nothing                                                                                               |
-| Order-entry gate                                                     | built, no consumer          | `OrderEntryGate` (`domain/order_entry.py`); its scope text names algo children (`api/order_entry_gate.py`)                                                                                                                                                                               |
+| Order-entry gate                                                     | built, consumed by the OMS  | `OrderEntryGate` (`domain/order_entry.py`); `app.py` composes it with the account check and hands it to the OMS runtime (#913); its scope text names algo children (`api/order_entry_gate.py`), and no algo child exists to pass it                                                      |
 | Kill switch (B18), lockouts (B20), caps                              | stubs and tables            | E39 model §1                                                                                                                                                                                                                                                                             |
 | Rate governor                                                        | built, no reserve           | `TokenBucketGovernor` (`exchange/bybit/rate_limit.py`): one FIFO bucket per (UID, endpoint class) and an IP bucket; no purpose class, priority or reserve (E34-T02)                                                                                                                      |
 | Authority                                                            | per request                 | `PrincipalSnapshot` (`auth/scopes.py`); no production loader grants `can_trade` (`ws_wiring.py`); the disable and access cascades leave orders and have no algo step (`admin/user_disable.py`)                                                                                           |
 | Audit                                                                | built, no algo action       | `audit/actions.py` registers no `algo.*`; `orders` and `order_events` carry no actor or algo column                                                                                                                                                                                      |
 | WS `machines.algo:{id}.state`                                        | built                       | `ws/topics.py`: `orders:read` on granted accounts, scope from the owning module's record (`statechart/plugins/state_feed.py`), no `context_summary` keys (23 §6.4)                                                                                                                       |
-| Statechart persistence                                               | library code, unwired       | HMAC seal, restore and the `chain_trips` latch (`statechart/persistence.py`); `Persister` and `Restorer` are built nowhere (`statechart_wiring.py`)                                                                                                                                      |
+| Statechart persistence                                               | wired, no algo lane         | HMAC seal, restore and the `chain_trips` latch (`statechart/persistence.py`); `statechart_wiring.py` builds one `Persister` and a `Restorer` per lane since #4015 (E50-T63); no B4 to B7 lane or run exists                                                                              |
 | `trade_groups.algo`, `.algo_params`                                  | migrated                    | `0039_trade_groups`: `algo_params` P1, outside `trg_tg_write_once`                                                                                                                                                                                                                       |
 
 A row resting on unbuilt work names the ticket that builds the control; E33-X03 re-triages it if that ticket does not.
@@ -100,15 +107,15 @@ ids are `AS-xnn`.
 
 Assumptions a blocker must confirm; rows that depend on one carry its tag and re-rate if the answer differs (D4).
 
-| Id  | Assumption in this model                                                                                                              | Confirmed by                                                                    |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| O-1 | The binding emulation caveat and disconnect message make the residual of §4.2 visible; users expect `freeze` on a disconnect          | E33-D01 (#857, open; X01's `blocked_by` waived by the orchestrator under #2701) |
-| O-2 | The seam is persist-then-submit with the deterministic `orderLinkId`, and a crashed child is recovered by its whole id                | E33-K01 (#991)                                                                  |
-| O-3 | E34-T02 builds purpose classes and one protective reserve value into the shipped governor                                             | E34-T02 (#859; RSK-086)                                                         |
-| O-4 | The kill switch, a lockout and a freeze reach a run through one synchronous gate keyed on (environment, account, acting user, origin) | E39-S01 (#954), E39-S03 (#956); E39 model §5                                    |
-| O-5 | Who may adopt an `untracked` order is E29's open D6, which this model's D7 extends                                                    | D7, queued on #2701 by the orchestrator (2026-10-21); E29's D6                  |
-| O-6 | ADR-0031 (reserved for E45-K01, #1252) fences test-only hooks out of the release image                                                | E45-K01                                                                         |
-| O-7 | E32-T01's closed allow-list (`algo_child_over_attach`) persists a `pending_native_sl` row before a deferred child is sent             | E32-X01 (#933), E32-T01 (#931)                                                  |
+| Id  | Assumption in this model                                                                                                              | Confirmed by                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| O-1 | The binding emulation caveat and disconnect message make the residual of §4.2 visible; users expect `freeze` on a disconnect          | Answered by E33-D01 (#857, closed 2026-10-23; memo §4 and §9c); no row re-rates (§4.2) |
+| O-2 | The seam is persist-then-submit with the deterministic `orderLinkId`, and a crashed child is recovered by its whole id                | E33-K01 (#991)                                                                         |
+| O-3 | E34-T02 builds purpose classes and one protective reserve value into the shipped governor                                             | E34-T02 (#859; RSK-086)                                                                |
+| O-4 | The kill switch, a lockout and a freeze reach a run through one synchronous gate keyed on (environment, account, acting user, origin) | E39-S01 (#954), E39-S03 (#956); E39 model §5                                           |
+| O-5 | Who may adopt an `untracked` order is E29's open D6, which this model's D7 extends                                                    | D7, queued on #2701 by the orchestrator (2026-10-21); E29's D6                         |
+| O-6 | ADR-0031 (reserved for E45-K01, #1252) fences test-only hooks out of the release image                                                | E45-K01                                                                                |
+| O-7 | E32-T01's closed allow-list (`algo_child_over_attach`) persists a `pending_native_sl` row before a deferred child is sent             | E32-X01 (#933), E32-T01 (#931)                                                         |
 
 ### 1.5 Controls already decided in the docs
 
@@ -432,9 +439,36 @@ The accepted mitigation, the ticket's set, made testable by SR-E33-20:
 4. **Restart order.** Reconcile, repair stops, then resume (SR-E33-10).
 
 Residual after the mitigation: Medium (AS-D05), Owner/PO, ticket E33-T01, review by 2027-02-04 (R3 gate) after the
-E33-Q04 chaos runs. Owner sign-off pending: queued on #2701 by the orchestrator (2026-10-21). This model does not
-record it as accepted: the approval PR adds the register entry and the §16.1 row, and the Owner's acceptance only once
-the Owner gives it.
+E33-Q04 chaos runs. Owner sign-off pending: queued on #2701. This model does not record it as accepted: the approval
+PR (revision 4) adds the register entry (RSK-090 in `32-risk-register.md`) and the §16.1 row (RR-29 in
+`04-security-program.md`), and the Owner's acceptance is recorded only once the Owner gives it.
+
+**O-1, re-read against E33-D01 (revision 4).** #857 closed on 2026-10-23 (#4046, #4295). Its memo
+(`docs/design/research/e33-emulated-algo-trust.md`) confirms the assumption: §4 takes `on_disconnect="freeze"` as the
+system's answer, and its §1a default ships `freeze` only in R3, stated as text, never a control (SR-E33-05). Its §9c
+hands this model twelve transparency controls, the UI side of item 3 above. Each lands on an existing row and
+requirement, so no row re-rates and no requirement is added; E33-S05 (#1105), E33-S06 (#1106) and E33-D07 test them,
+and the `[O-1]` tags stay as pointers to this table.
+
+| §9c control                                                                   | Lands on                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| T1 the caveat in every builder state and the tag's accessible name            | Item 3's caveat and residual note; SR-E33-20; AS-D05; CX-19 (the copy says server-side, not client-side)                                                                                         |
+| T2 the three-case disconnect copy and the reconnect report                    | Items 2 and 3 (`freeze`, the degraded banner); SR-E33-20, SR-E33-05; AS-D05                                                                                                                      |
+| T3 orders at Bybit per run and in total                                       | Item 3's monitor; SR-E33-20; AS-D05 (what rests unmanaged if the backend stops)                                                                                                                  |
+| T4 the "Checked with Bybit" age                                               | Item 3's "last reconciled" time and stale marking; SR-E33-20                                                                                                                                     |
+| T5 the pause cause and whether the run resumes by itself                      | SR-E33-10 (a resume passes reconcile and the guards), SR-E33-22; AS-T05, AS-D02. The memo's proposed self-resume after a disconnect pause (its OQ-4) is the Owner's; it stays bound by SR-E33-10 |
+| T6 a halt with its cause, who and when; a restart only as a new confirmed run | SR-E33-19, SR-E33-06 and §4.1 item 5 (no resume by itself; the Owner takes a run over by a new one); AS-E03, AS-R04                                                                              |
+| T7 orphans, adopted per D7                                                    | SR-E33-14, D7; AS-E02                                                                                                                                                                            |
+| T8 per-item bulk results                                                      | SR-E33-13 (cancel-all reports per item); AS-D04                                                                                                                                                  |
+| T9 each run's stop at Bybit                                                   | Item 1; SR-E33-07, SR-E33-20; AS-E04                                                                                                                                                             |
+| T10 the "if" lines before submit                                              | Item 3's residual note in the builder; SR-E33-20; AS-D05; for a live start, D8's typed worst case                                                                                                |
+| T11 the running-algo count, restated at sign-out and on SCR-074's block       | Item 3 (nothing runs invisibly); SR-E33-20; the cascades' `running_algos` report (SR-E33-02)                                                                                                     |
+| T12 a close or flatten names the algos it cancels                             | SR-E33-12 and SR-E33-13 (a manual act on a run's position or child is visible and attributable); AS-T06, AS-D04; SR-E33-16 records it                                                            |
+
+Two memo findings bear on copy, not on a rating: "freeze" is the kill switch's word, so the UI never uses it for the
+disconnect behaviour (memo SC-8, F11), which leaves `on_disconnect="freeze"` an internal value; and closing a position
+does not stop its algos on every chart (memo F29, SC-19), which E33-T03 (#1107) settles in 24 §10.1 with the plan-doc
+reconciliation it already owns.
 
 ### 4.3 Decisions recorded
 
@@ -664,7 +698,16 @@ in it, requested on the issue when the model is approved (§10.1).
 ### 10.1 Requests to post at approval
 
 As for E28 and E29, one signed comment per ticket above that has a "required" item, listing its rows and
-requirements, is posted when the model is approved; the links are recorded in the approval PR.
+requirements, is posted when the model is approved; the links are recorded in the approval PR. The 28 targets are the
+16 E33 tickets with a "required" item, E33-K01 (#991), E33-T01 (#993), E33-T02 (#994), E33-T03 (#1107), E33-S01
+(#992), E33-S02 (#1102), E33-S03 (#1103), E33-S04 (#1104), E33-S05 (#1105), E33-S06 (#1106), E33-Q01 (#1042), E33-Q03
+(#1098), E33-Q04 (#1099), E33-Q06 (#1101), E33-X02 (#1108) and E33-X03 (#1109), and 12 tickets of other epics, E34-T02
+(#859), E39-S01 (#954), E39-S03 (#956), E32-T01 (#931), E29-T04 (#913), E29-T03 (#847), E29-T06 (#914), E35-S04
+(#864), E45-S01 (#1291), E34-X01 (#1045), E29-T05 (#848) and E30-S04 (#1088). E29-T03 and E35-S04 are closed, so
+theirs ask for confirmation that what shipped covers the requirement. E42-T04 (#965) and E42-T08 (#2648), which own
+the call into the supervisor's port (§4.1 item 3), are closed with no algo step, and E17's projection revocation names
+no ticket; neither gets a request, and the owner of that call is the orchestrator's to name before E33-T02 merges.
+E33-X02 (#1108) also receives the §7 abuse-case hand-off.
 
 ## 11. Findings, residual risks, review and sign-off
 
@@ -699,8 +742,8 @@ on E29's SR-E29-07 and SR-043, with its demo residual in §11.2; AS-D05 is §4.2
 
 ### 11.2 Accepted residual risks
 
-Accepted risks await Owner sign-off (agent-delivery adaptation), queued on #2701 by the orchestrator (2026-10-21); none
-is recorded as accepted. Each has an owner, a ticket and a review date; an expired acceptance is re-decided, not
+Accepted risks await Owner sign-off (agent-delivery adaptation): Owner sign-off pending, queued on #2701 (RR-29 in
+`04-security-program.md` §16.1; AS-D05 also as RSK-090 in `32-risk-register.md`); none is recorded as accepted. Each has an owner, a ticket and a review date; an expired acceptance is re-decided, not
 extended (`32-risk-register.md` §1.3).
 
 | Row          | Residual                                                                                                                               | Level  | Owner    | Ticket  | Sign-off and review by                                                                                                                                                                  |
@@ -709,19 +752,21 @@ extended (`32-risk-register.md` §1.3).
 | AS-S02       | On demo, with no arm nonce, a stolen session can start a run inside the caps; each child carries its stop and is audited               | Low    | Owner/PO | E30-S04 | Owner sign-off pending: queued on #2701 by the orchestrator (2026-10-21); 2027-02-25 (R4)                                                                                               |
 
 No High residual remains once the requirements ship; until then every Critical and High row is open. The approval PR
-records the Critical and High findings in `32-risk-register.md` (in the register's taxonomy, CX-01), refining existing
-entries rather than opening twins where one fits (F-01 and F-02 RSK-084, F-03 RSK-086 and RSK-013, F-04 RSK-077, F-11
-RSK-017), and these residuals in `04-security-program.md` §16.1, each with Owner sign-off pending, queued on #2701 by
-the orchestrator (2026-10-21); E33-T03 adds the register text its body names.
+(revision 4) records the Critical and High findings in `32-risk-register.md` (in the register's taxonomy, CX-01),
+refining existing entries rather than opening twins (F-01 and F-02 RSK-084, F-03 RSK-086 and RSK-013, F-04 RSK-077,
+F-11 RSK-017), and as RR-28 in `04-security-program.md` §16.1, a release blocker for R3 that is not accepted; AS-D05,
+which no existing entry fits, is the new RSK-090; the two residuals above are RR-29. Each reads Owner sign-off pending,
+queued on #2701; E33-T03 adds the register text its body names.
 
 ### 11.3 Amendment notes owed
 
-The approval PR owns notes 1 and 2, E33-T01's migration PR note 4, and E33-T03 (#1107) notes 3, 5 and 6. Note 7 was
-made by #3997 (revision 2); revision 3 extends it to the cancels a run paces and records it in the E29 model's log.
+The approval PR made notes 1 and 2 (revision 4); E33-T01's migration PR owns note 4, and E33-T03 (#1107) notes 3, 5
+and 6. Note 7 was made by #3997 (revision 2); revision 3 extends it to the cancels a run paces and records it in the
+E29 model's log.
 
-1. SR-081: the kill switch also halts every emulated algo (CX-09).
+1. SR-081: the kill switch also halts every emulated algo (CX-09). Made: `04-security-program.md` §6, SR-081 item 2.
 2. `30-release-roadmap.md`: §7.4's R3 security gate names E33, which the ticket holds to that bar; §7.2's E33 row
-   drops "DCP where appropriate" (CX-05).
+   drops "DCP where appropriate" (CX-05). Made: both rows.
 3. `24-internal-schemas.md` §10.1: `halted` with `halt_reason` (CX-10) and `on_disconnect` `freeze` only in R3 (CX-14);
    §16.2's flag names (CX-02); §15.5's algo vocabulary (SR-E33-16).
 4. `21-database-schema.md`: `algo_runs.params`, the planned `algo_slices` rows and any seed classed P1 (§12),
@@ -732,7 +777,7 @@ made by #3997 (revision 2); revision 3 extends it to the cancels a run paces and
 6. CMP-118 and SCR-067: server-side, not client-side (CX-19), with E33-D04.
 7. SR-E29-01: an algo child is never protective by its `reduce_only` flag, nor is a cancel its run paces (CX-08); the
    E29 model carries it as a clause at SR-E29-01 (SR-E33-08), made by #3997, extended in revision 3 and recorded as
-   the E29 model's revision 14.
+   the E29 model's revision 19 (revision 14 before the rebase onto `main`, where E29-T04 had taken 14 to 18).
 
 ### Review log
 
@@ -742,3 +787,5 @@ made by #3997 (revision 2); revision 3 extends it to the cancels a run paces and
 | 2026-10-21 | author (E33-X01 agent for virtarix-worker-4)                      | Revision 2 folds the orchestrator's six rulings of 2026-10-21 07:40Z: (1) D6 to D8 and the acceptance of AS-D05 and AS-S02 are queued on #2701 by the orchestrator (2026-10-21), none recorded as decided; (2) CX-20: E33-T01's `blocked_by` not extended, the flags off until E34-T02, E39-S01 and E39-S03 merge, the live start refusing without a risk policy or lockout service (new SR-E33-21); (3) E33-X02 case 4 aligned to the halt (SR-E33-02, AC-04), a contract-first alignment in `E33.json` and its twin `all-tickets.json`; (4) the seed override is absent from any production build, so E33-Q02 runs on a test build (AS-T03, SR-E33-17); (5) CX-08: a clause at SR-E29-01 in the E29 model; (6) CX-02: a flag is not a safety control, noted for the Owner as information. 29 rows, SR-E33-01..21, AC-01..19, CX-01..21, F-01..17                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | 2026-10-21 | code-reviewer (sonnet) and security-reviewer (fable), independent | APPROVE ×2 at `933fa0e0` on #3997, round 1: 11 minor and 6 nit findings (CR-995-01 to CR-995-10, SEC-995-01 to SEC-995-07), none blocker or major, deferred to the approval PR; #3997 merged as `3aba6578`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2026-10-21 | author (E33-X01 agent for virtarix-worker-4)                      | Revision 3, the round-1 findings of #3997, folded ahead of the approval PR. Re-pinned at `22064fc8`: no claim changes, though G-6 (#3972) rewrote 24 §8.3, §8.5, §8.8 and §8.10 and E17-T08 (#3988) hardened the machines feed. Folded: after `authority_revoked` no child of any kind, working reduce-only children kept, §4.1 item 4 limited to the halt's own work with 24 §8.10 quoted (CR-995-01); narrowing defined, an extend inside the original `max_duration_ms`, a compress never raising the rate (CR-995-02); CX-15's scoping in E33-T01's obligations and §11.3 note 4 (CR-995-03); CX-22, admission refusing a plan past `max_children` (CR-995-04); offsets in AS-T01, SR-E33-03 and AC-02 (CR-995-05); E33-X02 case 3 and its RBAC-matrix scenario aligned to the one 404, contract-first in `E33.json` and `all-tickets.json` (CR-995-06); the book, its B14 health and the clock referenced, with SR-E33-22 and AC-20 (CR-995-07, SEC-995-07); AS-S02 accepted, A 2, carried to 04's AL15 and §5.11, AS-S01 in F-05 rated Critical, the High rows without a finding explained (CR-995-08, SEC-995-05); §1.5, the controls decided in the docs (CR-995-09); the re-pin, §4.1 item 3's port with E42-T04 and E42-T08, the Q06 pairing (CR-995-10); the reconcile tick for idle runs and AC-04's variant (SEC-995-01); a cancel the run paces draws `entry` in CX-08, SR-E33-08 and the SR-E29-01 clause (SEC-995-02); SR-E33-21 refuses a start with no protective reserve in every environment, which extends the CX-20 ruling and which the orchestrator confirmed (RelayRoom [LANE-13], 2026-10-21 11:27Z; the refusal names the missing reserve, never the environment) (SEC-995-03); the orchestrator also confirmed SEC-995-02's cancel classes and added SR-E33-13's view-as clause; the E29 model's revision 14 records its SR-E29-01 clause (SEC-995-04); a rule's run halts with `rule_disarmed` (SEC-995-06). 29 rows, SR-E33-01..22, AC-01..20, CX-01..22, F-01..17 |
+| 2026-10-26 | author (E33-X01 approval PR, for hpe-worker-1)                    | Revision 4, the approval: Draft to Approved; rebased onto `main` and re-pinned at `df19904ab` (§1.1: the order-entry gate's OMS consumer, #913, and the wired statechart persistence, #4015; no claim changes); O-1 answered by E33-D01 (#857, memo §9c T1 to T12 mapped in §4.2, no row re-rates); §10.1 names the 28 request targets; §11.2 points at RR-28 and RR-29 in `04-security-program.md` §16.1 and at RSK-013, RSK-017, RSK-077, RSK-084, RSK-086 and the new RSK-090 in `32-risk-register.md`, Owner sign-off pending, queued on #2701; §11.3 notes 1 and 2 made (SR-081, `30-release-roadmap.md` §7.2 and §7.4); the E29 model's SR-E29-01 record renumbered revision 19 after the rebase; contract-first in `E33.json` and its twin, the epic's security notes link this model, E33-T01's and E33-T02's name their SR-E33 ids (§10) and E33-X02's names the §7 list. 29 rows, SR-E33-01..22, AC-01..20, CX-01..22, F-01..17                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| 2026-10-26 | code lens and security lens on the approval PR                    | Reviewed: code lens + security lens on PR <n>, delegated sign-off comment on #995                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
