@@ -138,12 +138,13 @@ text). The K list carries r13's table forms too: "an unavailable `Esc`", "`Esc` 
 "`Esc`, greyed out," (``k9.exit``) and "an unusable confirm while the summary loads"
 (``k4.loading``) in those eight cells, r14's two confirms with the state word after a semicolon
 ("...; it is shown", "...; still visible", ``k4.loading``) in the same cells, and the confirm with
-no state word on frame 53. Then 7f's (r6o): ten exit states (the lens's five and five fresh
-paraphrases) in section 11's keyboard table, section 3.3's table, section 7's prose, frame 53 and
+no state word on frame 53. Then 7f's (r6o): fourteen exit states (the lens's five, five fresh
+paraphrases and four bracketed labels in UPPER case) in section 11's keyboard table (SCR-125's row), section 3.3's table, section 7's prose, frame 53 and
 the hand-off (``exit-state``), the revision marker with a gated exit in a table and in prose
 (``k9.exit``), the exit carried into an "It" sentence in two tables, prose and the hand-off
 (``exit-state`` and ``k9.exit``), and the confirm drawn while the summary loads in the hand-off's
-table and prose (``k4.loading``): each raises its own codes and none but the pins' beside them.
+table and prose (``k4.loading``): each raises its own codes and none but the pins' beside them,
+and a neutral sentence at each of those sites raises none of the three.
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
        [--repin-security] [--repin-confirm-look] [--repin-exit-state]
@@ -2665,7 +2666,8 @@ def confirm_look_gate(spec: str, handoff: str, out: Out) -> None:
 
 
 # --- 7f. the exit's state, pinned default-deny (r6o) ---------------------------------------------
-# An exit is K9's: [Cancel], [Close], [Close card], [Back], Esc in any case (backticked or bare),
+# An exit is K9's: [Cancel], [Close], [Close card], [Back] (r6o fold: the bracketed labels in any
+# case, so "[CLOSE]" and "[BACK]" are exits), Esc in any case (backticked or bare),
 # Cancel / Close / Back and "Close card" in Title or UPPER case ("held back", "close to" stay
 # prose), and "cancel" in any case after "a", "an", "the" or "its" (one word between allowed).
 # There is no list of bad states: an exit is paired with a state unless what follows it is one of
@@ -2680,7 +2682,7 @@ def confirm_look_gate(spec: str, handoff: str, out: Out) -> None:
 # 11); the other pinned clauses give an exit its place, order, presence, label, variant or focus,
 # never a look, or (section 16 and the revision line) quote the forms the tool refuses.
 EXIT_WORD = re.compile(
-    r"\[(?:Cancel|Close(?: card)?|Back)\]|`(?i:esc)`|\b(?i:esc)\b"
+    r"\[(?i:cancel|close(?: card)?|back)\]|`(?i:esc)`|\b(?i:esc)\b"
     r"|\b(?:Close card|CLOSE CARD|Cancel|CANCEL|Close|CLOSE|Back|BACK)\b"
 )
 EXIT_LOWER = re.compile(r"\b(?i:a|an|the|its) +(?:[\w-]+ +)?((?i:cancel))\b")
@@ -2696,7 +2698,7 @@ EXIT_CITE = r"(?:`[\w.-]+:\d+(?:-\d+)?`|§[\d.]+|D\d+|CMP-\d+)"
 EXIT_STOP = r"\s*(?:$|[.;:)\]\"”·|→/—])"
 EXIT_NEXT = re.compile(
     r"\s*(?:$|[.;:)\]\"”·|→/—]|\["
-    r"|(?:and|or|,|=|is)\s+(?:\[(?:Cancel|Close(?: card)?|Back)\]|`(?i:esc)`|(?i:esc)\b"
+    r"|(?:and|or|,|=|is)\s+(?:\[(?i:cancel|close(?: card)?|back)\]|`(?i:esc)`|(?i:esc)\b"
     r"|(?:Cancel|Close|Back)\b)"
     rf"|{EXIT_ACT}"
     rf"|\({EXIT_CITE}(?:[,;] *{EXIT_CITE})*\){EXIT_STOP}"
@@ -5140,13 +5142,13 @@ def look_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
 
 
 # r6o: §7f's own list. The lens's five exit states and five fresh paraphrases, each a sentence of
-# its own (or a part after a semicolon) in section 11's keyboard table (SCR-129's row), section
+# its own (or a part after a semicolon) in section 11's keyboard table (SCR-125's row), section
 # 3.3's data table, section 7's prose, frame 53 and the hand-off's prose: no closed word list may
 # pass them (``exit-state``). The bold revision marker with a gated exit in section 11's table and
 # section 7's prose (``k9.exit``: the exemption is the revision line's own range). An exit carried
 # into a next sentence that opens on "It" in a table cell, prose and the hand-off (``exit-state``
 # and ``k9.exit``). The confirm drawn while the summary loads in a hand-off table row and its prose
-# (``k4.loading``).
+# (``k4.loading``). The r6o fold adds four bracketed labels in UPPER case to EXIT_FORMS.
 EXIT_FORMS = (
     "`Esc` is dormant",
     "`Esc` is deactivated",
@@ -5158,10 +5160,21 @@ EXIT_FORMS = (
     "the muted [Close]",
     "Esc stops working",
     "[Back] is out of action",
+    # r6o fold (round 6 lens): the bracketed labels in UPPER case
+    "THE MUTED [CLOSE]",
+    "[BACK] is out of action",
+    "a frozen [CANCEL]",
+    "[CLOSE CARD] is switched off",
 )
 EXIT_REVISION = "**Revision:** `Esc` (disabled) while it reads"
 EXIT_CARRY = "`Esc` closes it. It is disabled while it reads"
 HAND_LOADING = "the confirm rendered while the summary loads"
+# r6o fix: section 11's site is SCR-125's row, which holds no pinned exit-state clause. SCR-129's
+# row is pinned, so any edit there raised ``exit-state`` and its mutations proved nothing. Each
+# site's neutral twin (EXIT_NEUTRAL) must raise none of the exit codes, or the site is no probe.
+EXIT_ROW11 = "SCR-125 list"
+EXIT_NEUTRAL = "See the row above"
+EXIT_CODES = frozenset({"exit-state", "k9.exit", "k4.loading"})
 PINS_BESIDE = frozenset(PIN_CODES)
 
 
@@ -5182,7 +5195,7 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
                 f'"{form}" in section 11\'s keyboard table',
                 state,
                 "spec",
-                table_add("11", "SCR-129 disable", form),
+                table_add("11", EXIT_ROW11, form),
             ),
             (
                 f"E{i}b",
@@ -5220,7 +5233,7 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
             "the revision marker with a gated exit in section 11's keyboard table",
             gated,
             "spec",
-            table_add("11", "SCR-129 disable", EXIT_REVISION),
+            table_add("11", EXIT_ROW11, EXIT_REVISION),
         ),
         (
             "ER2",
@@ -5244,7 +5257,7 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
             f'"{EXIT_CARRY}." in section 11\'s keyboard table',
             both,
             "spec",
-            table_add("11", "SCR-129 disable", f"{EXIT_CARRY}."),
+            table_add("11", EXIT_ROW11, f"{EXIT_CARRY}."),
         ),
         (
             "EC3",
@@ -5284,6 +5297,22 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
 EXIT_MUTATIONS = exit_mutations()
 
 
+def exit_controls() -> tuple[tuple[str, str, Mutation], ...]:
+    """(name, the document it edits, the edit): EXIT_NEUTRAL at every site EXIT_MUTATIONS edits."""
+    n = EXIT_NEUTRAL
+    return (
+        ("section 11's keyboard table", "spec", table_add("11", EXIT_ROW11, n)),
+        ("section 3.3's data table", "spec", table_add("3.3", "", n)),
+        ("section 7's prose", "spec", sec_sub("7", S7_PARA, f"{S7_PARA}{n}. ")),
+        ("frame 53", "spec", frame_sub(53, F53_END, f"{F53_END} {n}.")),
+        ("the hand-off's prose", "hand-off", hand_sub(H_ENTRIES, f"{n}. {H_ENTRIES}")),
+        ("a hand-off table row", "hand-off", hand_sub(HAND_ROW, f"{HAND_ROW}; {n}")),
+    )
+
+
+EXIT_CONTROLS = exit_controls()
+
+
 def exit_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
     """§7f's mutations (and r6o's K4 / K9 folds) on the spec and the hand-off on disk: rc 1, every
     code it must raise among the new FAILs, and no other code but the pins' beside them."""
@@ -5293,6 +5322,21 @@ def exit_selftest(spec: str, base: dict[str, Any]) -> tuple[bool, list[str]]:
             f"exit list: the spec on disk has {len(before.fails)} FAIL; nothing to mutate"
         ]
     ok, lines = True, []
+    for name, doc, fn in EXIT_CONTROLS:
+        text = spec if doc == "spec" else base["handoff"]
+        mutated = fn(text)
+        if not mutated or mutated == text:
+            ok = False
+            lines.append(f"control at {name}: n/a (the {doc} lacks its target)")
+            continue
+        got = gates(mutated, base) if doc == "spec" else gates(spec, {**base, "handoff": mutated})
+        codes = {c for c, _m in set(got.fails) - set(before.fails)}
+        quiet = not codes & EXIT_CODES
+        ok = ok and quiet
+        lines.append(
+            f'control "{EXIT_NEUTRAL}" at {name}: {"ok" if quiet else "WRONG"} — '
+            f"{', '.join(sorted(codes)) or 'none'} (no exit code may fire)"
+        )
     for k, name, need, doc, fn in EXIT_MUTATIONS:
         text = spec if doc == "spec" else base["handoff"]
         mutated = fn(text)
@@ -5387,7 +5431,8 @@ def selftest(base: dict[str, Any], spec: str) -> tuple[bool, list[str]]:
         f"and {2 * (GRID_DRAWS + FUND_DRAWS)} drawn phrasings, each refused by the pin; "
         f"{len(LOOK_MUTATIONS)} confirm-look mutations, each one distinct FAIL (confirm-look); "
         f"{len(EXIT_MUTATIONS)} exit mutations, each raising its own codes (exit-state, k9.exit, "
-        "k4.loading) and no other but the pins'"
+        f"k4.loading) and no other but the pins', at {len(EXIT_CONTROLS)} sites whose neutral "
+        "edit raises none of them"
     )
     return ok, [mask_vendor(x) for x in lines]
 
