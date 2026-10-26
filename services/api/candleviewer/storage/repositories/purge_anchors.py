@@ -4,10 +4,11 @@ Sec.3.3.10, revisions `0043_order_submission` and `0052_ia_purge_anchor`, M10).
 `purgeRecordedData` (`22-api-openapi.yaml`) anchors its `Idempotency-Key` for its caller in
 `idempotency_anchors`, operation `purgeRecordedData`, with the request's fingerprint and the
 window's exclusive upper bound `before_us`, so the key outlives the process's job store and a
-restart. The anchor's id is the purge's job id. `find` matches (`created_by`, operation,
-`client_ref`), so another principal's key reads as missing, and compares the fingerprint in SQL,
-answering only whether it matches; the key and the fingerprint are never read back (class P1,
-21 Sec.12). `create` inserts once: a key the caller already holds writes nothing.
+restart. The anchor's id is the first job's id (a same-window re-purge after a restart gets a
+fresh job id). `find` matches (`created_by`, operation, `client_ref`), so another principal's
+key reads as missing, and compares the fingerprint in SQL, answering only whether it matches;
+the key and the fingerprint are never read back (class P1, 21 Sec.12). `create` inserts once:
+a key the caller already holds writes nothing.
 
 Stdlib only (ADR-0003); `purge_anchors_sqlalchemy.py` is the Postgres implementation. Every value
 a writer gives is refused, before any statement, by the rule the table would refuse it with
@@ -50,7 +51,7 @@ def require_bound(before_us: int) -> None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewPurgeAnchor:
-    """A purge anchor to insert. `id` is the server's (the job's id); `created_by` is the
+    """A purge anchor to insert. `id` is the server's (the first job's id); `created_by` is the
     authenticated principal's id, never a client value."""
 
     id: UUID
@@ -67,8 +68,8 @@ class NewPurgeAnchor:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class PurgeAnchor:
-    """A purge anchor as `find` reads it: its id (the job's), its bound, and whether the stored
-    fingerprint equals the one given."""
+    """A purge anchor as `find` reads it: its id (the first job's), its bound, and whether the
+    stored fingerprint equals the one given."""
 
     id: UUID
     before_us: int
