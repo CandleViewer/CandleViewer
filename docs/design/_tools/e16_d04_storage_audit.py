@@ -3211,7 +3211,8 @@ def gates(
 # table block, the deck's table included), and the fenced sketch whole; a soft-wrapped line belongs
 # to its block, so a new line under a pinned paragraph changes that block. A unit is keyed by its
 # region (the heading path, each heading by its section id, plus its occurrence `#n`) and its index
-# in the region; every line is whitespace-normalised. EVERY unit is pinned in RULED_PIN_TXT (key,
+# in the region; every line is whitespace-normalised, except the fenced sketch's, pinned verbatim
+# (its columns are content; trailing spaces aside). EVERY unit is pinned in RULED_PIN_TXT (key,
 # kind, exact text): a changed, moved, duplicated or missing unit, a unit the pins do not hold and a
 # region the pins do not hold (a new or repeated heading) FAIL R-23 naming the location, so a new or
 # edited unit anywhere fails until `--repin-ruled` (a deliberate act, read in the diff); `--check`
@@ -3298,7 +3299,12 @@ def heading_id(ln: str) -> tuple[int, str]:
 
 def mask(text: str) -> str:
     """The exempt spans (PIN_EXEMPT) read as their names."""
-    return re.sub(MARKER_RE, lambda m: f"⟦audit:{m.group(2)}⟧", text, flags=re.DOTALL)
+
+    def read(m: re.Match[str]) -> str:
+        shown = m.group(1)  # only the number is masked: a leading `(` / `~` stays pinned
+        return f"{shown[: len(shown) - len(shown.lstrip('(~'))]}⟦audit:{m.group(2)}⟧"
+
+    return re.sub(MARKER_RE, read, text, flags=re.DOTALL)
 
 
 def ruled_units(spec: str) -> list[PinUnit]:
@@ -3329,7 +3335,7 @@ def ruled_units(spec: str) -> list[PinUnit]:
     for raw in spec.split("\n"):
         ln = " ".join(raw.split())
         if fence:
-            block.append(ln)
+            block.append(raw.rstrip())  # the sketch's columns are content: verbatim, trailing aside
             if raw.startswith("```"):
                 fence = False
                 flush("sketch")
@@ -3364,6 +3370,11 @@ def render_pins(spec: str) -> str:
     for key, kind, text in ruled_units(spec):
         lines.append(f"@ {key}{PIN_SEP}{kind}")
         for ln in text.split("\n"):
+            if kind == "sketch":  # verbatim: no wrap, no collapse; a line never opens on a space
+                if ln.startswith(" "):
+                    raise SystemExit(f"repin: a sketch line opens on a space ({key})")
+                lines.append("  " + ln if ln else "  ⏎")
+                continue
             parts = textwrap.wrap(ln, PIN_WIDTH, break_long_words=False, break_on_hyphens=False)
             if " ".join(parts) != ln:
                 raise SystemExit(f"repin: a line does not survive the wrap ({key})")
@@ -3595,6 +3606,14 @@ def _first(spec: str, old: str, new: str) -> str:
     if old not in spec:
         raise SystemExit(f"mutation target not found: {old[:60]}")
     return spec.replace(old, new, 1)
+
+
+def _sketch_shift(spec: str, col: int) -> str:
+    """The sketch's second `[ Purge data… ]` line, its box moved to column `col` by spaces alone."""
+    old = "|" + " " * 28 + "[ Purge data… ]"
+    line = next(x for x in spec.split("\n") if x.startswith(old))
+    inner = line[1:-1]
+    return _first(spec, line, "|" + (" " * col + inner.strip()).ljust(len(inner)) + "|")
 
 
 def _counts(spec: str, **marks: tuple[int, int]) -> str:
@@ -5938,6 +5957,26 @@ MUTATIONS: list[Mutation] = [
         ),
         "R-23 §16 row 14:2780 error state when a tier is unrea: a pinned unit changed",
     ),
+    # Q01-Q02: the orchestrator's gate re-check 4's Major: the sketch's columns are content
+    (
+        "Q01 sketch: [ Purge data… ] shifted by spaces onto the Postgres card's column",
+        lambda s: _sketch_shift(s, 55),
+        "R-23 §2 sketch: a pinned unit changed (sketch, a line edited)",
+    ),
+    (
+        "Q02 sketch: [ Purge data… ] shifted by spaces off the Parquet card's column",
+        lambda s: _sketch_shift(s, 20),
+        "R-23 §2 sketch: a pinned unit changed (sketch, a line edited)",
+    ),
+    (
+        "Q03 header prose: a `~` written before a marked number (it was masked with the number)",
+        lambda s: _first(
+            s,
+            "about 560 <!-- audit:fixture.runway_days",
+            "about ~560 <!-- audit:fixture.runway_days",
+        ),
+        "R-23 header prose: a pinned unit changed (paragraph, a line edited)",
+    ),
 ]
 # Valid twins: each must raise nothing (a captioned inset line, the gap's own G-row, a negated mention).
 VALID: list[tuple[str, Callable[[str], str]]] = [
@@ -6047,6 +6086,16 @@ VALID: list[tuple[str, Callable[[str], str]]] = [
     (
         "V20 dialog-validity: Esc is never hidden",
         _dot(PDV, CT, "Esc is never hidden or ignored"),
+    ),
+    (
+        "V21 trailing spaces on a sketch line and a prose line (no pinned text changes)",
+        lambda s: _first(
+            _first(
+                s, "(every 60 s)   [view-as notice]  |\n", "(every 60 s)   [view-as notice]  |  \n"
+            ),
+            "\n**Penpot page:** ",
+            "\n**Penpot page:**  ",
+        ),
     ),
 ]
 
@@ -6218,6 +6267,7 @@ def numbers_of(
     n["mutations_pin"] = sum(d.startswith("Z") for d, _, _ in MUTATIONS)
     n["mutations_text4"] = sum(d.startswith("S") for d, _, _ in MUTATIONS)
     n["mutations_text4_own"] = sum(d.startswith("W") for d, _, _ in MUTATIONS)
+    n["mutations_text5"] = sum(d.startswith("Q") for d, _, _ in MUTATIONS)
     n["valid_twins"] = len(VALID)
     n["pins"] = pin_counts(RULED_PIN_TXT)
     n["bq_rows"] = count(r"^\| BQ-\d+ ", spec)
@@ -6660,9 +6710,9 @@ RULED_PIN_TXT = r"""
    an open question, **D04-Dn** = a decision of this spec. **Fixture** (derived by the tool from
    the `22` `getStorageUsage` example :5015–5042, never typed): report sampled
    ⟦audit:fixture.sample_date⟧ ⟦audit:fixture.sample_time⟧ UTC; disk ⟦audit:fixture.disk_total_tb⟧
-   TB, ⟦audit:fixture.disk_used_tb⟧ TB used ⟦audit:fixture.volume_pct⟧ %),
+   TB, ⟦audit:fixture.disk_used_tb⟧ TB used (⟦audit:fixture.volume_pct⟧ %),
    ⟦audit:fixture.disk_free_tb⟧ TB free; recording budget ⟦audit:fixture.cap_gb⟧ GB with
-   ⟦audit:fixture.budget_used_gb⟧ GB recorded ⟦audit:fixture.budget_pct⟧ %: QuestDB
+   ⟦audit:fixture.budget_used_gb⟧ GB recorded (⟦audit:fixture.budget_pct⟧ %: QuestDB
    ⟦audit:fixture.questdb_gb⟧ GB over ⟦audit:fixture.retention_questdb⟧ days, Parquet
    ⟦audit:fixture.parquet_gb⟧ GB over ⟦audit:fixture.retention_parquet⟧ days; Postgres
    ⟦audit:fixture.postgres_gb⟧ GB outside the budget); growth ⟦audit:fixture.growth_gb_day⟧ GB/day;
@@ -6671,7 +6721,7 @@ RULED_PIN_TXT = r"""
    ⟦audit:fixture.volume_wall_days⟧ days away); BTCUSDT pinned, ⟦audit:fixture.btc_gb⟧ GB,
    ⟦audit:fixture.btc_mb_day⟧ MB/day; ETHUSDT ⟦audit:fixture.eth_gb⟧ GB, ⟦audit:fixture.eth_mb_day⟧
    MB/day. **D04-CG3:** the example's `symbols[]` sum to ⟦audit:fixture.symbols_sum_gb⟧ GB while
-   its QuestDB + Parquet tiers hold 1,188.0 GB ⟦audit:fixture.attributed_pct⟧ % attributed): the
+   its QuestDB + Parquet tiers hold 1,188.0 GB (⟦audit:fixture.attributed_pct⟧ % attributed): the
    example is internally inconsistent; the tool prints both figures, the per-symbol table says so
    (§4), and nothing here "fixes" the example. The level fixtures scale the recorded bytes to the
    ladder steps (`20` :905–907; the `14` :2748 figure for level 1): ⟦audit:fixture.level1_pct⟧ %,
@@ -6783,7 +6833,7 @@ RULED_PIN_TXT = r"""
   | BQ-20 | the audit-name mismatch | a C-row (D04-C1, owner `14`); the confirm line stays "This
    action is audited." | RULED |
   | BQ-21 | the light twin set | board 10 = three twins: `SCR-142/low-disk-warning`,
-   `IMPORT/running-with-skips`, `SCR-142/view-as` ⟦audit:twin_frames⟧ of ⟦audit:frames_total⟧,
+   `IMPORT/running-with-skips`, `SCR-142/view-as` (⟦audit:twin_frames⟧ of ⟦audit:frames_total⟧,
    under one third of the boards) | RULED |
   | BQ-22 | the sparkline source | the shipped frame draws the Growth column alone; the sparkline
    is one PROPOSED inset on board 02 (D04-G2 `symbols[].history_bytes[]`) with its DOM-mirror
@@ -6812,7 +6862,7 @@ RULED_PIN_TXT = r"""
    (`docs/design/E16/img/E16-D02-05-scr-140-disk-warning.png`,
    `E16-D02-19-scr-140-purge-confirm.png`) is redrawn: they are cited by name and path.
    ⟦audit:boards⟧ boards, ⟦audit:light_twins⟧ light board, ⟦audit:frames_total⟧ frames
-   ⟦audit:frames_scr⟧ SCR-142 · ⟦audit:frames_tier⟧ TIER · ⟦audit:frames_job⟧ JOB ·
+   (⟦audit:frames_scr⟧ SCR-142 · ⟦audit:frames_tier⟧ TIER · ⟦audit:frames_job⟧ JOB ·
    ⟦audit:frames_purge⟧ PURGE · ⟦audit:frames_import⟧ IMPORT, plus the 3 twins of board 10); the
    state tables, this table and the board script's frame inventory reconcile (§12 R-18).
 @ §0#1 ¶3 ‖ table
@@ -6843,7 +6893,7 @@ RULED_PIN_TXT = r"""
    `docs/design/E16/img/E16-D04-04-states-health.png` | pending |
   | 05 | `E16-D04 / 05 maintenance-jobs` | ⟦audit:board_frames.05⟧ frames of §6:
    `JOB/confirm-compact` (CMP-044 standard) · `JOB/confirm-vacuum` (captioned PROPOSED) ·
-   `JOB/strip-running` (two jobs with their pct; Cancel captioned PROPOSED) ·
+   `JOB/strip-running` (two jobs with their pct; Stop job (PROPOSED D04-G10)) ·
    `JOB/strip-refused-409` (T4) · `JOB/outcomes` (succeeded / failed / cancelled / unknown insets
    for compact and, captioned PROPOSED (D04-G8), vacuum) | dark |
    `docs/design/E16/img/E16-D04-05-maintenance-jobs.png` | pending |
@@ -6968,7 +7018,7 @@ RULED_PIN_TXT = r"""
    one; D04-Q4 names the one candidate and keeps it a status).
 @ §1 › §1.3#1 ¶3 ‖ paragraph
   **The validity look is not T2** (E09-D09 §9.1 :230; E30-D02 D3 :128): a control disabled by form
-   validity keeps its own fill and label at `opacity.disabled` ⟦audit:opacity_disabled⟧), the
+   validity keeps its own fill and label at `opacity.disabled` (⟦audit:opacity_disabled⟧), the
    reason at full opacity under or beside it in `color.text.secondary` (never inside),
    `aria-disabled`, focusable; a press shows the error summary; no lock glyph, no CMP-079, no key;
    board layer `validity-reason`. On SCR-142 two controls take it: Import archives while the range
@@ -7069,27 +7119,26 @@ RULED_PIN_TXT = r"""
 @ §2#1 ¶3 ‖ sketch
   ```
   +-- Admin area · Recorder › Storage and database -------------------------- re-auth mm:ss --+
-  | (a) Storage and database Sampled 10:31:03 UTC (every 60 s) [view-as notice] |
-  | (b) Recording budget [########------------] 1,188.0 GB of 2,000.0 GB cap_bytes (59.4 %) |
-  | Growing · auto-record pauses in about 422 days 80 % · 90 % · 95 % scale |
-  | Disk volume [######--------------] 1.2 TB of 4.0 TB disk_total_bytes (30.1 %) |
-  | Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall |
-  | (c) [QuestDB · hot] [Parquet/DuckDB · cold] [Postgres · relational] |
-  | Size 640.0 GB Size 548.0 GB Size 16.0 GB |
-  | Retention 7 d Retention 30 d Retention — |
-  | Growth/day — ¹ Growth/day — ¹ Growth/day — ¹ |
-  | Projected full — ¹ Projected full — ¹ Projected full — ¹ |
-  | Health ✓ healthy Health ✓ healthy Health ✓ healthy · Migration — |
-  | [ Purge data… ] [ Compact Parquet… ] (no purge entry) |
-  | [ Purge data… ] |
-  | (d) ▸ Tables ² (e) Per-symbol (hot); Purge… in the row popover (f) Queries ³ |
-  | (g) Maintenance [ Compact Parquet… ] ┆ Vacuum Postgres… ⁴ ┆ |
-  | jobs strip: (empty at rest) |
-  | (h) Import archives Symbol [BTCUSDT ▾] From [2026-01-01] To [2026-01-31] [Import archives]|
-  | Archive-derived · trades only · no book data |
+  | (a) Storage and database            Sampled 10:31:03 UTC (every 60 s)   [view-as notice]  |
+  | (b) Recording budget  [########------------]  1,188.0 GB of 2,000.0 GB cap_bytes (59.4 %)  |
+  |     Growing · auto-record pauses in about 422 days   80 % · 90 % · 95 % scale              |
+  |     Disk volume       [######--------------]  1.2 TB of 4.0 TB disk_total_bytes (30.1 %)   |
+  |     Full in about 560 days (2028-03-27) at 1.45 GB/day: the budget is the nearer wall        |
+  | (c) [QuestDB · hot]        [Parquet/DuckDB · cold]      [Postgres · relational]             |
+  |     Size 640.0 GB          Size 548.0 GB                Size 16.0 GB                        |
+  |     Retention 7 d          Retention 30 d               Retention —                         |
+  |     Growth/day — ¹         Growth/day — ¹               Growth/day — ¹                      |
+  |     Projected full — ¹     Projected full — ¹           Projected full — ¹                  |
+  |     Health ✓ healthy       Health ✓ healthy             Health ✓ healthy · Migration —      |
+  |     [ Purge data… ]        [ Compact Parquet… ]         (no purge entry)                    |
+  |                            [ Purge data… ]                                                  |
+  | (d) ▸ Tables ²     (e) Per-symbol (hot); Purge… in the row popover     (f) Queries ³        |
+  | (g) Maintenance  [ Compact Parquet… ]   ┆ Vacuum Postgres… ⁴ ┆                               |
+  |     jobs strip: (empty at rest)                                                             |
+  | (h) Import archives  Symbol [BTCUSDT ▾]  From [2026-01-01] To [2026-01-31]  [Import archives]|
+  |     Archive-derived · trades only · no book data                                            |
   +---------------------------------------------------------------------------------------------+
-  ¹ PROPOSED — D04-G1, owner approval pending (#2701); the shipped fallback beside it: all tiers
-   1.45 GB/day, all tiers 2028-03-27
+  ¹ PROPOSED — D04-G1, owner approval pending (#2701); the shipped fallback beside it: all tiers 1.45 GB/day, all tiers 2028-03-27
   ² PROPOSED — D04-G3, owner approval pending (#2701): a captioned second row per tier
   ³ PROPOSED — D04-G5, owner approval pending (#2701): a captioned second row
   ⁴ PROPOSED — D04-G8, owner approval pending (#2701): a captioned inset
@@ -7192,7 +7241,7 @@ RULED_PIN_TXT = r"""
    :18104–18112) | GB, MB/day, % | — |
   | per-symbol oldest / newest, the sparkline history | none | UTC date, GB | D04-G2 |
   | rows by table, oldest / newest per table | none; the table names are `21` §4.1–4.13's
-   ⟦audit:facts.questdb_tables⟧ headings) and §5.1's partition families | count, GB, UTC date |
+   (⟦audit:facts.questdb_tables⟧ headings) and §5.1's partition families | count, GB, UTC date |
    D04-G3 |
   | ingestion pressure; "ingestion lag" | WS `ingest_rate_msgs_per_sec`, `write_backlog_rows`
    (`23` :4060–4061); `24` :494's `ingest_lag_seconds{stream}` is a metric, not a field | msg/s,
@@ -7227,7 +7276,7 @@ RULED_PIN_TXT = r"""
    :13501 names; ⟦audit:fixture.healthy_pending⟧ pending on the healthy card); the import BTCUSDT
    2026-01-01 → 2026-01-31, ⟦audit:fixture.import_days⟧ days (≤ 366), ⟦audit:fixture.running_done⟧
    done at ⟦audit:fixture.running_pct⟧ % on the running frame, ⟦audit:fixture.skip_processed⟧
-   processed ⟦audit:fixture.skip_done⟧ done, 1 skipped) at ⟦audit:fixture.skip_pct⟧ % on the skip
+   processed (⟦audit:fixture.skip_done⟧ done, 1 skipped) at ⟦audit:fixture.skip_pct⟧ % on the skip
    frame, ⟦audit:fixture.overlap_rows⟧ overlapping rows (10 min of `14` :2792's 1.1k trades/s) and
    ⟦audit:fixture.rows_per_day⟧ rows per imported day; a compaction at ⟦audit:fixture.compact_pct⟧
    % (E16-D02 :425's figure); the compaction thresholds ⟦audit:fixture.merge_mib⟧ MiB,
@@ -7860,27 +7909,30 @@ RULED_PIN_TXT = r"""
    ⟦audit:mutations_text4⟧ passing forms rebuilt verbatim in its places (two of them soft-wrapped
    lines, two new paragraphs, the M6 synonym twice, the BQ-12 and BQ-15 rewrites) and
    ⟦audit:mutations_text4_own⟧ paraphrases of this fold (M2, M3, M4 and M6, three each, in units no
-   pin held before it) — and each must make `--check` fail with **one** FAIL, its own message; no
-   two share a message, ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's own G-row, a
-   negated mention, the exit Cancel, "Esc closes the dialog", the ruled order reworded four ways, a
-   sibling PENDING by name, the typed field starting empty) raise no gate FAIL and nothing once
-   re-pinned (until then R-23 alone refuses each, as it edits a unit), the unmutated file passes
-   and the file is byte-identical afterwards; `--mutate N` exits 1 when the gate caught the
-   mutation, 2 when it slipped. **Two layers (the gate re-check 3: whole-document default-deny).**
-   The vocabulary gates above are the first line: each reads its ruled sentence through its words,
-   their synonyms and the negators that govern them. R-23 is the backstop and pins **every unit**
-   of this file in the tool's committed `RULED_PIN_TXT`: a unit is a Markdown block — a heading, or
-   a run of consecutive non-blank lines (each paragraph, list block and table block, the deck's
-   table among them) — and the fenced sketch whole; a soft-wrapped line belongs to its block. A
-   unit is keyed by its region (the heading path, plus the heading's occurrence) and its place in
-   the region, and read with its exact text: ⟦audit:pins.total⟧ units (headings
+   pin held before it) and the gate re-check 4's ⟦audit:mutations_text5⟧ forms (the sketch's Purge
+   box shifted by spaces alone, onto the Postgres card and off the Parquet card, and a `~` written
+   before a marked number) — and each must make `--check` fail with **one** FAIL, its own message;
+   no two share a message, ⟦audit:valid_twins⟧ valid twins (a captioned inset, the gap's own G-row,
+   a negated mention, the exit Cancel, "Esc closes the dialog", the ruled order reworded four ways,
+   a sibling PENDING by name, the typed field starting empty, trailing spaces) raise no gate FAIL
+   and nothing once re-pinned (until then R-23 alone refuses each, as it edits a unit), the
+   unmutated file passes and the file is byte-identical afterwards; `--mutate N` exits 1 when the
+   gate caught the mutation, 2 when it slipped. **Two layers (the gate re-check 3: whole-document
+   default-deny).** The vocabulary gates above are the first line: each reads its ruled sentence
+   through its words, their synonyms and the negators that govern them. R-23 is the backstop and
+   pins **every unit** of this file in the tool's committed `RULED_PIN_TXT`: a unit is a Markdown
+   block — a heading, or a run of consecutive non-blank lines (each paragraph, list block and table
+   block, the deck's table among them) — and the fenced sketch whole, its lines verbatim (its
+   columns are content; every other unit's whitespace is normalised); a soft-wrapped line belongs
+   to its block. A unit is keyed by its region (the heading path, plus the heading's occurrence)
+   and its place in the region, and read with its exact text: ⟦audit:pins.total⟧ units (headings
    ⟦audit:pins.heading⟧, paragraphs ⟦audit:pins.paragraph⟧, tables ⟦audit:pins.table⟧, the sketch
    ⟦audit:pins.sketch⟧). A changed, moved, duplicated or missing unit, a unit the pins do not hold,
    a new or repeated heading and a duplicate location FAIL naming the location, so a new or edited
    unit anywhere fails until `--repin-ruled` rewrites the table, a deliberate act read in the diff;
    `--check` never re-pins. **Left unpinned, by name (the exemption list, the tool's
    `PIN_EXEMPT`):** ⟦audit:pins.exempt⟧ class — the `audit:` markers and the number printed before
-   each, §12's among them ⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives
+   each, §12's among them (⟦audit:pins.masked⟧ spans, each read as its key): `--check` re-derives
    each key's value and reads the number before the marker. Nothing else is exempt: §12's R-rows,
    §15's matrix and the caption carriers have no exact gate that reads them whole, so they stay
    pinned. An R-23 FAIL is reported only when no other gate FAILs, else counted beside it on a NOTE
@@ -8553,7 +8605,7 @@ RULED_PIN_TXT = r"""
    dialog, compact and the PROPOSED vacuum (D04-G8) are standard confirms that delete nothing; the
    degradation order is stated in text on every warning state; every missing field is a captioned
    PROPOSED carrier beside its shipped fallback; every number is the tool's and every frame gate is
-   mutation-tested ⟦audit:mutations⟧ mutations, each its mutation's only FAIL with a distinct
+   mutation-tested (⟦audit:mutations⟧ mutations, each its mutation's only FAIL with a distinct
    message); the boards land in the second PR with the page id.
 """
 
