@@ -9,7 +9,8 @@ answer where the route gives it (R4, R5, R7, R8, R12), the two rate refusals (#2
 the profile's own refusal among them; `createTradeGroup`'s repeats; an order's provenance; the
 pairing rule of the 2026-10-21 rulings on #3972 (28's text and the threat model's anchor); and B1's
 entry of a recorded stop's row (CR-G6-R3-01 on #3972): 24 section 8.2's event kinds pinned to the
-chart and the step writer, and the texts that say the row exists.
+chart and the step writer, and the texts that say the row exists; and the size step, its outcome
+mapping, the price band and `sizing_unavailable` (#913 S4-S), as text and registry only.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import pytest
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from candleviewer.accounts.sizer import FailReason, SkipReason
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.domain.order_link import EXT_ID, OUR_ID
@@ -50,6 +52,7 @@ _PLACE: Any = _OPS["placeOrder"]
 _EXAMPLES: Any = _PLACE["responses"]["202"]["content"]["application/json"]["examples"]
 _CODES: dict[str, Any] = {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
 _PLAN = OPENAPI_SPEC_PATH.parent
+_ARCH = (_PLAN / "20-architecture.md").read_text(encoding="utf-8")
 _SCHEMA_DOC = (_PLAN / "21-database-schema.md").read_text(encoding="utf-8")
 _INTERNAL_DOC = (_PLAN / "24-internal-schemas.md").read_text(encoding="utf-8")
 _CATALOGUE = (_PLAN / "28-statechart-catalogue.md").read_text(encoding="utf-8")
@@ -335,7 +338,7 @@ def test_the_anchor_table_is_principal_scoped_permanent_and_written_with_its_ord
 
 
 def test_place_order_declares_each_answer_the_pipeline_gives() -> None:
-    """R12 and R4: clock drift, a lost store, the spent id bound, the interim ports (the rate
+    """R12 and S4-S: clock drift, a lost store, the spent id bound, the size step (the rate
     budget's two refusals have a test of their own, below)."""
     responses = _PLACE["responses"]
     for status, name in (
@@ -353,8 +356,9 @@ def test_place_order_declares_each_answer_the_pipeline_gives() -> None:
         "A store failure after the send is never a `503`",
         "sends nothing and answers `500 internal_error`, which pages",
         "refuse with `403 trading_disabled` before anything reaches the exchange",
-        "another `sizing.mode` is refused with `validation_failed` / `sizing_mode_unsupported`",
-        "with `validation_failed` / `stop_unit_unsupported` (#913 ruling R4)",
+        "an order that is not reduce-only is sized by the profile's sizer (24-internal-schemas.md "
+        "section 9.3, `size_leg`), never by a client figure",
+        "an `r_multiple` stop, which defines R, is `validation_failed` / `stop_unit_unsupported`",
         "`400` for `validation_failed` (each failing rule in `errors[]`)",
         "and `403` for `risk_limit_breached`",
     )
@@ -553,6 +557,11 @@ def test_a_profile_that_is_off_or_does_not_allow_the_symbol_is_a_risk_refusal() 
         "trading-enabled and allow the symbol, otherwise `risk_limit_breached` "
         "(24-internal-schemas.md section 9.3 step 1; the profile an account is created with is "
         "not trading-enabled" in _words(_PLACE["description"])
+    )
+    assert (
+        "The size step's skips `profile_disabled`, `symbol_not_allowed` and `symbol_denied` are "
+        "this refusal, as are its failures `cap_breached` and `insufficient_margin`, a cap the "
+        "sized order would break" in _words(_PLACE["description"])
     )
     gate = _INTERNAL_DOC.split("### 9.3 Sizing algorithm", 1)[1].split("# 2. Reference price")[0]
     assert not _missing(
@@ -820,6 +829,18 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
         "one (`ExchangeCapabilities.supports_reduce_only_tpsl`",
         "is refused with `validation_failed` / `reduce_only_tpsl`, one `errors[]` item per side, "
         "before anything is recorded or sent",
+        "`sizing.mode` `profile` sizes by the profile; another mode, except `pct_position`, "
+        "overlays the request's values onto a copy of the profile, judged by `judge_leg` "
+        "(24-internal-schemas.md section 9.3.2a) as a resulting leg and refused whole, never "
+        "clamped, when it goes past the profile's caps (ADR-0040; #913 S4-S ruling Q2)",
+        "`pct_position` on an order that is not reduce-only, is `validation_failed` / "
+        "`sizing_mode_unsupported`; `pct_position` on a reduce-only one is refused the same way "
+        "until the position read reaches the size step (an interim)",
+        "an `atr` stop uses `fallback_sl_offset_pct`, recorded as `stop_fallback`",
+        "until the E13 kernel port reaches `oms`",
+        "a profile with no fallback fails closed",
+        "A reduce-only order is not sized by the profile: its `fixed_qty` `qty` is floored to the "
+        "lot step",
     )
     general = _words(_SPEC["info"]["description"]).split("### Idempotency", 1)[1]
     assert (
@@ -840,6 +861,16 @@ def test_the_pipelines_own_rules_are_in_22_and_24() -> None:
         "A later repeat answers `202` with the order's reconciled state, `reconciling` while "
         "reconciliation has not resolved it",
     )
+    steps = _between(_INTERNAL_DOC, "### 8.4 ", "\n3. Risk checks")
+    sub_steps = (
+        "**3a** the market read, mid and last kept apart, then the price band",
+        "**3b** the reference price, `size_leg`'s anchor",
+        "**3c** the size: `size_leg` for an order that is not reduce-only",
+        "**3d** the effect (SR-E29-01), then `NativeStopGuard` over the sizer's own `ResolvedStop`",
+    )
+    at = [steps.index(sub_step) for sub_step in sub_steps]  # each present, 3a to 3d in order
+    assert at == sorted(at)
+    assert "The stop the order carries is the stop its `risk_usdt` was computed from" in steps
 
 
 def test_the_rules_the_provenance_texts_cite_are_in_24() -> None:
@@ -872,3 +903,119 @@ def test_the_threat_model_gives_a_recorded_stops_order_its_row() -> None:
         "executions has an `order_id` (24 §8.3 rule 7)"
     ) in requirement
     assert "and no local row `[O-4]`" not in _THREAT_MODEL
+
+
+def test_place_order_states_the_price_band_its_setting_and_rule() -> None:
+    """#913 S4-S rulings Q3 and Q4: a limit entry's price, or a conditional entry's trigger, within
+    `CV_OMS_PRICE_BAND_PCT` of mid, judged before sizing; no mid is the 503 a market order meets."""
+    band = _between(_PLACE["description"], "* The price band", "* A reduce-only order carries")
+    assert not _missing(
+        band,
+        "the `price` of a limit order that is not reduce-only must lie within "
+        "`[ref \N{MULTIPLICATION SIGN} (1 \N{MINUS SIGN} b), "
+        "ref \N{MULTIPLICATION SIGN} (1 + b)]`, `ref` the market's mid price, else its last "
+        "price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`, from `0.005` to "
+        "`0.20`, with no off value; `20-architecture.md` section 7.2)",
+        "A per-profile value, when the profile carries one (the setting being the default), is "
+        "allowed only inside `0.005` to `0.20`; a value outside is refused at save, never clamped",
+        "A conditional entry, market or limit, has its `trigger.price` judged against `ref`, and "
+        "the limit `price` behind a trigger is judged too, against its trigger price, with the "
+        "same `b`",
+        "is refused with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}` "
+        "(or `trigger.price`), "
+        "before the order is sized",
+        "A reduce-only order is never judged",
+        "With neither a mid nor a last price to judge against the request is "
+        "`503 exchange_unavailable` with `Retry-After`",
+    )
+    sizer = _INTERNAL_DOC.split("**9.3.5 ", 1)[1].split("**9.3.6 ", 1)[0]
+    assert "the band's scope, rule and setting are defined in `22-api-openapi.yaml`" in sizer
+
+
+def test_the_price_band_setting_has_a_row_in_20() -> None:
+    """The band's setting sits in 20's configuration table, process-level, with its range."""
+    section = _ARCH.split("### 7.2 Configuration model", 1)[1].split("### 7.3 ", 1)[0]
+    cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in section.split("\n")]
+    rows = {row[0].strip("`"): row[1:] for row in cells if len(row) == 5 and row[0][:4] == "`CV_"}
+    assert rows["CV_OMS_PRICE_BAND_PCT"][:3] == ["float", "`0.05`", "process"]
+    assert "0.005-0.20, no off value (C-4.14)" in rows["CV_OMS_PRICE_BAND_PCT"][3]
+
+
+def test_place_order_maps_each_sizer_outcome_to_one_answer() -> None:
+    """24 section 9.3.4's closed skip and fail reasons, each one row of `placeOrder`'s mapping."""
+    table = _PLACE["description"].split("| Sizer outcome | Answer |", 1)[1].split("\n\n", 1)[0]
+    answers: dict[str, str] = {}
+    for line in table.strip().splitlines()[1:]:
+        outcomes, answer = (cell.strip() for cell in line.strip().strip("|").split("|"))
+        for outcome in re.findall(r"`([a-z_]+)`", outcomes):
+            answers[outcome] = answer.split(",", 1)[0].split(" with ", 1)[0].split(" on ", 1)[0]
+    reasons = set(re.findall(r"`([a-z_]+)`", _between(_INTERNAL_DOC, "| `skip` |", "\n\n")))
+    assert set(answers) == reasons - {"fail"}  # the kind's own cell is no reason
+    assert set(answers) == {str(r) for r in SkipReason} | {str(r) for r in FailReason}
+    assert answers == {
+        "profile_disabled": "`403 risk_limit_breached`",
+        "symbol_not_allowed": "`403 risk_limit_breached`",
+        "symbol_denied": "`403 risk_limit_breached`",
+        "cap_breached": "`403 risk_limit_breached`",
+        "insufficient_margin": "`403 risk_limit_breached`",
+        "below_min_notional": "`400 lot_size_violation`",
+        "leverage_unavailable": "`400 validation_failed`",
+        "invalid_stop_distance": "`400 validation_failed`",
+        "stop_beyond_liquidation": "`400 validation_failed`",
+        "no_reference_price": "`503 exchange_unavailable`",
+        "figure_unknown": "`503 sizing_unavailable`",
+    }
+    for answer in set(answers.values()):
+        status, code = answer.strip("`").split(" ")
+        assert _CODES[code]["status"] == int(status)
+
+
+def test_sizing_unavailable_is_a_retryable_503() -> None:
+    """#913 S4-S ruling Q5: a figure with no source is its own 503, never a venue outage."""
+    entry = _CODES["sizing_unavailable"]
+    assert (entry["status"], entry["retryable"]) == (503, True)
+    assert set(entry) == {"code", "status", "title", "retryable"}  # REST only, as its neighbours
+    assert ERROR_META[ErrorCode("sizing_unavailable")].title == entry["title"]
+    assert re.search(r"(?i)\bbybit\b|\d{4,}", entry["title"]) is None  # C-6.5
+    assert "Retry-After" in _RESPONSES["ServiceUnavailable"]["headers"]
+    assert _PLACE["responses"]["503"] == {"$ref": "#/components/responses/ServiceUnavailable"}
+    assert "`figure_unknown` | `503 sizing_unavailable` with `Retry-After`" in _PLACE["description"]
+    figures = _INTERNAL_DOC.split("**9.3.6 ", 1)[1].split("### 9.4 ", 1)[0]
+    assert not _missing(
+        _words(figures),
+        'an announced interim, `DayRiskFigures` (`oms_interim_ports{port="risk_figures"}`',
+        "It serves demo and testnet accounts only and refuses `live` at construction",
+        "The day's loss is the net closed P&L the venue reports, fees included and gains "
+        "offsetting losses, floored at 0, a reading E39-T01's counters keep",
+        "The recorded stop is the venue's native stop on the position or order (C-2.6), not the "
+        "OMS's own record",
+        "never the stop and cancel reserve (C-12.7), and a budget refusal is `figure_unknown`, "
+        "not a retry",
+        "the cached committed-risk figure is dropped on every accepted send or amend on the "
+        "account, so no two entries inside the cache window are sized against the same room, and "
+        "two entries on one account whose size steps overlap are judged one after the other or "
+        "with the first one's `risk_usdt` counted",
+        "On a live process nothing serves `risk_figures`, so every figure is unknown and every "
+        "live entry is `figure_unknown`, answered `503 sizing_unavailable`, until E39-T01",
+        "Until E39-T01 (#881) serves real day figures",
+        "the recorded stop or, without one, the profile's fallback distance (which errs high)",
+        "`taker_fee_rate` is the venue's fee rate per (account, symbol), cached for seconds",
+        "E39-T01 (#881) replaces the counters; the fee source stays",
+        "answered `503 sizing_unavailable`",
+    )
+    row = _ARCH.split("| OMS | `oms_interim_ports{port}` |", 1)[1].split("\n", 1)[0]
+    assert not _missing(
+        _words(row),
+        "`risk_figures`, the demo and testnet `DayRiskFigures`, which refuses `live` at "
+        "construction",
+        "`atr`, an `atr` stop's `fallback_sl_offset_pct` until the E13 kernel port reaches `oms`",
+        "`stop_resolver`, `risk_gate`, `arm_records` and `sizer`, until S4-S-b2 retires it",
+        "`risk_figures` at 1 on a live process means every live entry is refused "
+        "`503 sizing_unavailable` (dashboard)",
+    )
+    assert "E39-S01 serves real day figures" not in _INTERNAL_DOC
+    assert "Planned (wired by `oms.submit`'s size step) for a single order" in _ARCH
+    assert "0.005-0.20, no off value (C-4.14)     |" in _ARCH
+    pct = _SCHEMAS["SizingMode"]["description"]
+    assert "`placeOrder` refuses it (`sizing_mode_unsupported`) until the position read" in pct
+    assert 'oms_interim_ports{port="atr"}' in _words(_INTERNAL_DOC.split("**9.3.5 ", 1)[0])

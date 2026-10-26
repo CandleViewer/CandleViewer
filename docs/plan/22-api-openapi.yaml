@@ -762,6 +762,10 @@ x-error-codes:
     status: 503
     title: Order entry is not open yet; the order service is starting or a dependency it needs is not ready
     retryable: true
+  - code: sizing_unavailable
+    status: 503
+    title: A figure the order's size needs (the day's loss, the committed risk, the fee rate) cannot be read yet; nothing was recorded or sent
+    retryable: true
   - code: store_unavailable
     status: 503
     title: QuestDB / Postgres / Parquet tier unavailable
@@ -5582,7 +5586,9 @@ paths:
           trading-enabled and allow the symbol,
           otherwise `risk_limit_breached` (24-internal-schemas.md section 9.3 step 1; the profile
           an account is created with is not trading-enabled, `21-database-schema.md` section
-          3.2.4).
+          3.2.4). The size step's skips `profile_disabled`, `symbol_not_allowed` and
+          `symbol_denied` are this refusal, as are its failures `cap_breached` and
+          `insufficient_margin`, a cap the sized order would break (the mapping below).
         * Price, trigger price, stop and take-profit are held to the instrument's `min_price` to
           `max_price`, and the quantity above zero and within its ceiling (`max_order_qty`, or
           `max_mkt_order_qty` for a market order): each figure outside is listed in `errors[]`
@@ -5605,15 +5611,56 @@ paths:
           order that is not an entry; `errors[]` lists every rule that fails, so a mislabelled
           opening order with no stop to apply carries both `native_stop_required` and
           `intent_mismatch`. `reverse` and `algo_child` are server-assigned (`reversePosition`,
-          the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too. Until
-          E28-T03's sizer and stop resolver (#907) land, the interim pipeline sizes `fixed_qty`
-          only: another `sizing.mode` is refused with `validation_failed` /
-          `sizing_mode_unsupported`, and a stop in `atr` or `r_multiple` units, whether
-          `stop_loss` or the profile's offset, with `validation_failed` / `stop_unit_unsupported`
-          (#913 ruling R4); the `marketWithBracket` and `conditional` examples need #907. A
+          the emulated algos), so `placeOrder` refuses them with `intent_mismatch` too. A
           `take_profit` in `price`, `ticks` or `percent` lands on a tick rounded toward the entry;
           one in `atr` or `r_multiple` is `stop_unit_unsupported` on `take_profit`, and one that is
           no finite price above zero on the profit side is `take_profit_side`.
+        * The size step (24-internal-schemas.md section 8.4 item 2, steps 3a to 3d; #913 S4-S): an
+          order that is not reduce-only is sized by the profile's sizer (24-internal-schemas.md
+          section 9.3, `size_leg`), never by a client figure. `sizing.mode` `profile` sizes by the
+          profile; another mode, except `pct_position`, overlays the request's values onto a copy of the
+          profile, judged by `judge_leg` (24-internal-schemas.md section 9.3.2a) as a resulting leg
+          and refused whole, never clamped, when it goes past the profile's caps (ADR-0040; #913
+          S4-S ruling Q2). The stop sent is
+          the one the sizer measured the order's risk from, `stop_loss` or else the profile's
+          offset, and the native-stop rule above still judges it (C-2.6, C-4.14): an `atr` stop
+          uses `fallback_sl_offset_pct`, recorded as `stop_fallback` (SR-E28-12; ruling Q6), until
+          the E13 kernel port reaches `oms` (the announced interim
+          `oms_interim_ports{port="atr"}`, `20-architecture.md` section 12.1), and a profile with
+          no fallback fails closed; an `r_multiple` stop, which defines R, is
+          `validation_failed` / `stop_unit_unsupported`. A reduce-only order is not sized by the
+          profile: its `fixed_qty` `qty` is floored to the lot step, and another mode on it, or
+          `pct_position` on an order that is not reduce-only, is `validation_failed` /
+          `sizing_mode_unsupported`; `pct_position` on a reduce-only one is refused the same
+          way until the position read reaches the size step (an interim).
+        * Each outcome of the size step but `ok` (24-internal-schemas.md section 9.3.4) is one
+          answer, before anything is recorded or sent:
+
+          | Sizer outcome | Answer |
+          |---|---|
+          | `profile_disabled`, `symbol_not_allowed`, `symbol_denied` | `403 risk_limit_breached` |
+          | `cap_breached`, `insufficient_margin` | `403 risk_limit_breached`, its `rule` the binding cap or `insufficient_margin` |
+          | `below_min_notional` | `400 lot_size_violation`, `field` `sizing`, its `rule` the minimum missed |
+          | `leverage_unavailable` | `400 validation_failed`, `rule` `max_leverage` |
+          | `invalid_stop_distance`, `stop_beyond_liquidation` | `400 validation_failed` on `stop_loss`, its `rule` the reason |
+          | `no_reference_price` | `503 exchange_unavailable` with `Retry-After` |
+          | `figure_unknown` | `503 sizing_unavailable` with `Retry-After` (#913 S4-S ruling Q5) |
+
+          `sizing_unavailable` says a figure the sizer needs has no source yet, never that the
+          exchange is down; the request may be sent again after `Retry-After`.
+        * The price band (#913 S4-S rulings Q3 and Q4): the `price` of a limit order that is not
+          reduce-only must lie within `[ref × (1 − b), ref × (1 + b)]`, `ref` the market's mid
+          price, else its last price, and `b` the `CV_OMS_PRICE_BAND_PCT` setting (default `0.05`,
+          from `0.005` to `0.20`, with no off value; `20-architecture.md` section 7.2). A
+          per-profile value, when the profile carries one (the setting being the default), is allowed only inside `0.005` to `0.20`;
+          a value outside is refused at save, never clamped. A conditional entry, market or limit, has its
+          `trigger.price` judged against `ref`, and the limit `price` behind a trigger is judged
+          too, against its trigger price, with the same `b`. A price outside the band is refused
+          with `400 validation_failed`, `errors[]` `{field: price, rule: price_band}` (or `trigger.price`), before the
+          order is sized. A reduce-only order is never judged, so the band holds back no protective
+          order. With neither a mid nor a last price to judge against the request is
+          `503 exchange_unavailable` with `Retry-After`, as a market order with no reference price
+          is.
         * A reduce-only order carries no take-profit and no stop-loss: the exchange sets neither on
           one (`ExchangeCapabilities.supports_reduce_only_tpsl`, 24-internal-schemas.md section
           14.1). One that names either, or that would carry the profile's stop because it is not
@@ -16313,7 +16360,7 @@ components:
 
         | API value | Resolution | Stored as |
         |---|---|---|
-        | `pct_position` | `pct` % of the *current open position* qty on that symbol/account (scale-out, flatten-partial). Rejected with `validation_failed` if no position is open. | `fixed_qty` |
+        | `pct_position` | `pct` % of the *current open position* qty on that symbol/account (scale-out, flatten-partial). Rejected with `validation_failed` if no position is open. `placeOrder` refuses it (`sizing_mode_unsupported`) until the position read reaches the size step (an interim). | `fixed_qty` |
         | `profile` | Inherit the active `AccountProfile.profile.sizing` block verbatim. | whatever the profile's own mode resolves to |
 
         Contract test `enum_parity_sizing_mode` asserts (a) the DB enum equals this enum minus
