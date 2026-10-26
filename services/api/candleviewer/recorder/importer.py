@@ -272,7 +272,7 @@ class BulkImporter:
         recorded: RecordedWindows,
         backlog_rows: Callable[[], int],
         disk_usage: DiskUsage | None,
-        room: DiskRoom | None = None,
+        room: DiskRoom | None,
         clock: Callable[[], datetime] = _utc_now,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         batch_rows: int = BATCH_ROWS,

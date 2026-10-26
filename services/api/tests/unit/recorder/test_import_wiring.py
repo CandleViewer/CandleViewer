@@ -5,6 +5,8 @@ within that budget: its ladder and its headroom `min(cap - used, free)` (fake me
 from __future__ import annotations
 
 import inspect
+import shutil
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -19,6 +21,7 @@ from candleviewer.import_wiring import build_import_runner
 from candleviewer.recorder.budget import BudgetConfig, DiskBudget
 from candleviewer.recorder.coverage import CoverageService
 from candleviewer.recorder.importer import (
+    BulkImporter,
     DiskUsage,
     ImportDiskBudgetExceeded,
     ImportDiskPressure,
@@ -111,10 +114,11 @@ def test_build_import_runner_requires_backlog_provider() -> None:
 
 def test_build_import_runner_requires_the_running_disk_budget(tmp_path: Path) -> None:
     """A required keyword, and `None` composes no runner (the route answers 503): no budget is
-    never an import without the budget's checks."""
+    never an import without the budget's checks. The importer's `room` port is required too."""
     param = inspect.signature(build_import_runner).parameters["budget"]
     assert param.kind is inspect.Parameter.KEYWORD_ONLY
     assert param.default is inspect.Parameter.empty
+    assert inspect.signature(BulkImporter).parameters["room"].default is inspect.Parameter.empty
     svc = CoverageService(MemRecorderStore(), now_us=lambda: 0)
     run = build_import_runner(FakeArchive(), str(tmp_path), svc, lambda: 0, budget=None)
     assert run is None
@@ -247,13 +251,13 @@ async def test_composed_runner_imports_at_normal_and_warn(
     assert _dirs(tmp_path) == ["dt=2026-06-01", "dt=2026-06-02"]
 
 
-class _AutostopAfterOneDay(FakeArchive):
-    """One day at a time; before the second day is fetched, the recorder reaches 90 % of its cap
-    and the budget takes a sample (AUTOSTOP)."""
+class _OneDayAtATime(FakeArchive):
+    """One day at a time; `between()` runs before the second day is fetched, once the first day's
+    file has landed (the budget reaching AUTOSTOP, or the cold root removed)."""
 
-    def __init__(self, meter: _SmallVolume, budget: DiskBudget) -> None:
+    def __init__(self, between: Callable[[], Awaitable[None]]) -> None:
         super().__init__()
-        self.meter, self.budget = meter, budget
+        self.between = between
 
     @property
     def max_concurrency(self) -> int:
@@ -261,8 +265,7 @@ class _AutostopAfterOneDay(FakeArchive):
 
     async def fetch(self, file: ArchiveFile) -> bytes:
         if self.fetches:
-            self.meter.used = 900
-            await self.budget.sample_once()
+            await self.between()
         return await super().fetch(file)
 
 
@@ -272,11 +275,36 @@ async def test_composed_runner_stops_the_next_day_once_the_budget_reaches_autost
     meter = _SmallVolume()
     budget = _unsampled(meter)
     await budget.sample_once()
-    run = _compose(tmp_path, budget, _AutostopAfterOneDay(meter, budget))
+
+    async def autostop() -> None:  # the recorder reaches 90 % of its cap; the budget samples it
+        meter.used = 900
+        await budget.sample_once()
+
+    run = _compose(tmp_path, budget, _OneDayAtATime(autostop))
     with pytest.raises(ImportDiskPressure):
         await run("BTCUSDT", D1, D2, lambda _p: None)
     assert budget.level is DiskPressureLevel.AUTOSTOP
     assert _dirs(tmp_path) == ["dt=2026-06-01"]
+
+
+async def test_composed_runner_refuses_the_next_day_once_the_cold_root_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production volume meter on a roomy fake statvfs: the root removed between two days'
+    files refuses the next day before it is written; the root stays absent, nothing more lands."""
+    root, roomy = tmp_path / "cold", SimpleNamespace(total=1_000_000, used=0)
+    monkeypatch.setattr("candleviewer.import_wiring.shutil.disk_usage", lambda _p: roomy)
+
+    async def remove_root() -> None:
+        assert _dirs(root) == ["dt=2026-06-01"]
+        shutil.rmtree(root)
+
+    root.mkdir()
+    src, before = _OneDayAtATime(remove_root), _refusals("root_missing")
+    with pytest.raises(ImportRootMissing) as refused:
+        await _compose(root, await _budget(), src, meter=None)("BTCUSDT", D1, D2, lambda _p: None)
+    assert refused.value.code == "import_root_missing" and src.fetches == [D1, D2]
+    assert _refusals("root_missing") == before + 1 and not root.exists() and _untouched(tmp_path)
 
 
 @pytest.mark.parametrize(

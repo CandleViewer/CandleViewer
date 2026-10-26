@@ -123,6 +123,7 @@ def _importer(root: Path, src: FakeArchive, rec: Recorded | None = None) -> Bulk
         recorded=rec or Recorded(),
         backlog_rows=lambda: 0,
         disk_usage=None,
+        room=None,
         clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
         batch_rows=10,
     )
@@ -314,6 +315,7 @@ async def test_import_yields_while_live_backlog_nonzero(tmp_path: Path) -> None:
         recorded=Recorded(),
         backlog_rows=lambda: backlog.pop(0) if len(backlog) > 1 else 0,
         disk_usage=None,
+        room=None,
         sleep=fake_sleep,
     )
     d = date(2026, 6, 1)
@@ -362,6 +364,7 @@ def _with_disk(root: Path, usage: tuple[int, int]) -> BulkImporter:
         recorded=Recorded(),
         backlog_rows=lambda: 0,
         disk_usage=lambda: usage,
+        room=None,
     )
 
 
@@ -405,6 +408,7 @@ async def test_import_yield_is_metriced(tmp_path: Path) -> None:
         recorded=Recorded(),
         backlog_rows=lambda: backlog.pop(0) if backlog else 0,
         disk_usage=None,
+        room=None,
         sleep=fake_sleep,
     ).run(ImportRequest(SYM, date(2026, 6, 1), date(2026, 6, 1)))
     assert import_yield_seconds_total._value.get() == before + 0.25
