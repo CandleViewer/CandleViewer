@@ -1467,13 +1467,15 @@ EXIT_GATED = re.compile(
     # → disabled", "Cancel · inert"), in a parenthesis after the exit's verb ("`Esc` closes it
     # (greyed out)") and after a "while" / "once" / "when" / "until" / "unless" / "if"
     # ("Cancel closes the dialog while disabled"), never across the word "confirm"
-    rf"|(?: *\([^)]*\))? *(?:[:—–·→/]|\s-\s) *[\"“*`]*(?:[\w-]+ +){{0,2}}{GATE_WORD}"
+    rf"|(?: *\([^)]*\))? *(?:->|[:—–·→/]|\s-\s) *[\"“*`]*(?:[\w-]+ +){{0,2}}{GATE_WORD}"
     rf"|(?: +(?!confirm\b)[\w'-]+){{1,4}} *\([^)]*?{GATE_WORD}[^)]*\)"
     rf"|(?: +(?!confirm\b)[\w'-]+){{0,5}}? +(?:while|once|when|whenever|until|unless|if) +"
     rf"{GATE_WORD})"
     rf"|\b{GATED_ADJ}(?:,? +(?:and +|or +)?[\w-]+){{0,2}}?,? +{EXIT_AFTER_GATE}"
-    # r7: an exit named after its state across a colon or a dash ("Disabled: Cancel")
-    rf"|\b{GATED_ADJ}\**\s*[:—–][\s\"“*]*{EXIT_AFTER_GATE}",
+    # r7: an exit named after its state across a colon or a dash ("Disabled: Cancel"); r7b: and
+    # lower-case "back" or "close" there before a stop ("inert: back"); the ASCII arrow "->" above
+    rf"|\b{GATED_ADJ}\**\s*[:—–][\s\"“*]*(?:{EXIT_AFTER_GATE}"
+    r"|(?:back|close)\b(?=[\"”*]*\s*(?:$|[.;)\]|])))",
     re.IGNORECASE,
 )
 EXIT_CONTROL = re.compile(r"^(?:\[?(?:Cancel|Close|Back)\b|`?Esc`?)", re.IGNORECASE)
@@ -2719,10 +2721,10 @@ def confirm_look_gate(spec: str, handoff: str, out: Out) -> None:
 # state verb, condition, parenthesis or separator with a state, a parenthesis of cites only, or
 # "first", "last", "alone" or "throughout" before one of these) and unless the word right before
 # it (r7: or before a colon or a dash ahead of it, "Disabled: Cancel") is one of EXIT_BEFORE's
-# function words. r7: a colon, a dash, an arrow, a middle dot or a slash after an exit no longer
-# ends its clause - what follows must be EXIT_FOLLOW (another exit, a next control by its label,
-# "the primary", "the confirm", "focus return", a cite), so "`Esc`: disabled", "Cancel → disabled"
-# and "Cancel · inert" pair. A sentence (or a semicolon, dash or "which" part) that opens on "it",
+# function words. r7: a colon, a dash, an arrow (r7b: "->" and " - " too), a middle dot or a slash
+# after an exit no longer ends its clause - what follows must be EXIT_FOLLOW (another exit, a next
+# control by its label, "the primary", "the confirm", "focus return", a cite), so "`Esc`:
+# disabled", "Cancel → disabled" and "Cancel · inert" pair. A sentence (or a semicolon, dash or "which" part) that opens on "it",
 # "this", "which" (r7: "that", "both") after a part that names an exit is read as that exit, and
 # lower-case "cancel" before a separator or a closing verb is an exit. Every clause with a pairing
 # must equal its EXIT_STATE_PINS entry (section, row and column or "prose", exact text); the only
@@ -2744,7 +2746,7 @@ EXIT_ACT = (
 EXIT_SUBJECT = re.compile(
     r"(?<!\bto )(?<![\w-])(cancel)(?: +(?=(?i:is|are|stays|remains|becomes|was|gets|goes|turns"
     r"|looks|appears|seems|does|has|reads|stops|keeps|can|cannot|won't|no longer)\b)"
-    rf"| +(?={EXIT_ACT})|(?=\s*(?:[:—–·→]|\s/\s)))"
+    rf"| +(?={EXIT_ACT})|(?=\s*(?:[:—–·→]|->|\s/\s)|\s+-\s))"
 )
 EXIT_STATE_VERB = re.compile(
     r"\b(?:and|but|yet|or|then|while|though)\s+(?:is|are|stays|remains|becomes|was|gets|goes"
@@ -2755,7 +2757,7 @@ EXIT_CITE = r"(?:`[\w.-]+:\d+(?:-\d+)?`|§[\d.]+|D\d+|CMP-\d+)"
 # r7: a colon, a dash, an arrow, a middle dot or a slash no longer ends the exit's clause: what
 # follows it must itself be a non-state (EXIT_FOLLOW: the clause's end, another exit, a next
 # control by its label, "the primary", "the confirm", "focus return" or a cite)
-EXIT_SEP = re.compile(r"\s*(?:[:—–·→/]|\s-\s)\s*")
+EXIT_SEP = re.compile(r"\s*(?:->|[:—–·→/]|\s-\s)\s*")
 EXIT_END = re.compile(r"\s*(?:$|[.;)\]\"”|])")
 EXIT_LABEL = (
     r"(?:Verify|Save|Register|Confirm|Next|Run|Change|Skip|Continue|Copy|Details|Actions|Add"
@@ -2783,7 +2785,7 @@ EXIT_COND = re.compile(
     r"\b(?:while|whilst|once|when|whenever|until|unless|if|though|although|except)\b",
     re.IGNORECASE,
 )
-EXIT_TAIL_SEP = re.compile(r":(?!\d)|[—–·→]|\s/(?:\s|$)|\s-\s")
+EXIT_TAIL_SEP = re.compile(r":(?!\d)|->|[—–·→]|\s/(?:\s|$)|\s-\s")
 EXIT_PAREN = re.compile(r"\(([^)]*)\)?")
 EXIT_PAREN_OK = re.compile(rf"(?:{EXIT_CITE}|PROPOSED|RULED)")
 EXIT_BEFORE = frozenset(
@@ -2830,9 +2832,11 @@ EXIT_PRONOUN = re.compile(
 )
 EXIT_PART = re.compile(r"(?<=[.!?;])\s+|\s[—·]\s|,\s+(?=which\b)")
 # r7: lower-case "cancel" right after a separator and before a stop ("disabled: cancel") is an
-# exit too; "Flatten first — cancel {m} orders" is the verb
+# exit too; "Flatten first — cancel {m} orders" is the verb. r7b: so are lower-case "back", "close"
+# and "esc" there ("inert: back"), and the ASCII dash and arrow are separators ("cancel -> inert")
 EXIT_AFTER_SEP = re.compile(
-    r"(?:[:—–·→]|\s/)\s*[\"“*]*(cancel)\b(?=[\"”*]*\s*(?:$|[.;)\]|]|[:—–·→]|\s/))"
+    r"(?:[:—–·→]|->|\s/|\s-\s)\s*[\"“*]*(cancel|back|close(?: card)?|esc)\b"
+    r"(?=[\"”*]*\s*(?:$|[.;)\]|]|[:—–·→]|->|\s/|\s-\s))"
 )
 
 
@@ -5435,6 +5439,11 @@ EXIT_SEP_FORMS: tuple[tuple[str, frozenset[str]], ...] = (
     ("Cancel closes the dialog once enabled", frozenset({"exit-state"})),
     ("`Esc` closes it. That is disabled while it reads.", _STATE_K9),
     ("`Esc` closes it. Both are disabled while it reads.", _STATE_K9),
+    # r7b (round 7's MINOR): the ASCII dash and arrow after an exit, and lower-case "back" named
+    # after its state
+    ("Cancel - dormant", frozenset({"exit-state"})),
+    ("Cancel -> inert", _STATE_K9),
+    ("Inert: back", _STATE_K9),
 )
 ROW11_EDIT = "SCR-126 edit"
 H_TABLE2 = "no roving tabindex (D22)"
