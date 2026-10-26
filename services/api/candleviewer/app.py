@@ -2399,6 +2399,10 @@ def create_app(
         profiles=None if profiles is None else profiles.effective,
         persistence=persistence,
         feed=machine_feed,
+        # #913 L1d: the lane binds its own signing, over the store M2 builds there and its own
+        # audit writer, and in dev with the account fixture its own transport, each on its loop
+        lane_signing=bundle.lane_signing,
+        lane_transport=None if account_fixture is None else account_fixture.lane_rest_transport,
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its

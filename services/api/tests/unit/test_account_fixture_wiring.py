@@ -192,8 +192,9 @@ async def test_each_lane_transport_is_new_never_the_adapters_and_refuses_every_r
 ) -> None:
     """#913 L1d (L3b's follow-up 4): the order lane's REST transport, built on its loop by the
     root, as no transport is shared across loops: a new one at each call, never the adapter's
-    (`lane_trading_port` refuses that one), and refusing every request, armed or not: whether it
-    opens with the adapter's door (#4585) is L1d-1's."""
+    (`lane_trading_port` refuses that one), and refusing every request, armed or not, as L1d-1
+    keeps it: the door's pair is built once a process (#4585), its request log not safe from a
+    second loop's thread (20 Sec.6.2)."""
     fixture = build_account_fixture(_dev(tmp_path))
     assert fixture is not None
     first, second = fixture.lane_rest_transport(), fixture.lane_rest_transport()

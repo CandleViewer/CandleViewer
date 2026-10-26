@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import psycopg
@@ -60,7 +60,7 @@ from tests.integration.oms.test_submission_pipeline_pg import (
 )
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import REGISTRY, STOP, Profiles, ReadOnly
-from tests.unit.oms.test_oms_runtime import Flag, Port, Venue, Writer
+from tests.unit.oms.test_oms_runtime import Binder, Flag, Port, Venue, Writer
 
 pytestmark = pytest.mark.integration
 
@@ -104,7 +104,7 @@ async def rel(pg_dsn: str) -> AsyncIterator[SqlAlchemyRelationalRepository]:
 class _Venue(Venue):
     """The first process's venue, which the second's runtime reaches again."""
 
-    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
+    def lane_trading_port(self, env: str, **_built: Any) -> Port:
         return self.ports[0]
 
 
@@ -171,7 +171,7 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         settings,
         venue=_Venue(ports=[rig.demo]),
         ingestion=SimpleNamespace(
-            clock=health, tickers=None, instruments=None, clock_offset_ms=lambda: None
+            clock=health, tickers=None, instruments=None, clock_offset_snapshot_ms=lambda: None
         ),
         read_only=ReadOnly(),
         metrics=metrics,
@@ -182,6 +182,7 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         profiles=Profiles(),
         persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
+        lane_signing=cast(Any, Binder()),
         stores=lambda: replace(  # the lane's own writer is the test's (#913 L2)
             pg_stores(settings, metrics),
             accounts=InMemoryTradingAccountReads(row),

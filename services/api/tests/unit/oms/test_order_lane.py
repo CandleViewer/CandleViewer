@@ -729,7 +729,7 @@ async def test_a_start_cancelled_again_while_the_compose_closes_still_stops_its_
         await asyncio.Event().wait()
 
     monkeypatch.setattr(Sink, "start", hangs)
-    monkeypatch.setattr(Port, "aclose", hangs)  # the compose's unwind, held on this loop
+    monkeypatch.setattr(Port, "aclose", hangs)  # the compose's unwind, held on the lane
     monkeypatch.setattr(OrderLane, "stop", _logged(OrderLane.stop, "lane.stop", world.log))
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 10 * BOUND_S)  # no share runs out
     start = asyncio.ensure_future(world.runtime(lane=OrderLane).start())
@@ -774,18 +774,20 @@ async def test_a_closer_the_dying_lane_refuses_leaves_the_closers_after_it_to_ru
 ) -> None:
     """SEC-S3L1CD-01: the lane dies as the stop calls the sink's close there, once the machines and
     the commands have closed. That closer is refused, `LaneStopped`, logged, and the ones after it
-    still run: the lane's audit writer's is refused in turn (#913 L2), the trading port closes on
-    this loop, the pool's, the heartbeat's and the environment lock's are refused too, and the stop
-    ends, not cancelled."""
+    still run, each refused in turn, as each closes on the lane: the trading port and its loop
+    signing since #913 L1d, the lane's audit writer (#913 L2), the pool, the heartbeat and the
+    environment's lock (SEC-S3N-01); the stop ends, not cancelled."""
     _dying_at(monkeypatch, "Sink.stop")
     world = World()
     with capture_logs() as logs:
         async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)):
             pass
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
-    refused = ["sink", "audit", "pool", "heartbeat", "environment_lock"]
+    refused = [
+        "sink", "trading_port", "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
+    ]  # fmt: skip
     assert steps == [(step, "LaneStopped") for step in refused]
-    assert world.venue.ports[0].closed and not b01.ports_wired()
+    assert not world.venue.ports[0].closed and not b01.ports_wired()
     assert world.log == [*STARTED, "heartbeat.end"]  # the death's cleanup ended the heartbeat
     assert [e["error"] for e in logs if e["event"] == "oms_lane_died"] == ["SystemExit"]
 

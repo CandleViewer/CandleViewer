@@ -141,10 +141,6 @@ class Venue:
     def port(self, env: str) -> Port:
         return Port(environment=cast(Environment, env))
 
-    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
-        self.ports.append(self.port(env))
-        return self.ports[-1]
-
     def lane_trading_port(
         self, env: str, *, credentials: Any, transport: Any = None, clock_offset_ms: Any = None
     ) -> Port:
@@ -517,7 +513,8 @@ class World:
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
-            "fencing": self.fencing, "watch": self.watch,
+            "fencing": self.fencing, "watch": self.watch, "lane_signing": self.binder,
+            "lane_transport": self.lane_transport,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
 
@@ -1562,7 +1559,7 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 def test_the_fake_backend_composes_no_oms_runtime() -> None:
     """20 Sec.6.2: no runtime, so `placeOrder` answers `501 not_implemented` there."""
     names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled")
-    unused = dict.fromkeys((*names, "profiles", "persistence", "feed"))
+    unused = dict.fromkeys((*names, "profiles", "persistence", "feed", "lane_signing"))
     assert build_oms_runtime(cast(Any, None), Settings(), **cast(Any, unused)) is None
 
 
@@ -1870,10 +1867,11 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 12 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
-    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
-    # which costs a sixth of what is left, the lane's audit writer (#913 L2), the trading port,
-    # the pool, the lane's heartbeat and the environment's lock (SEC-S3N-01)
+    # 14 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the cancel-all folds, the
+    # commands, then the hung sink, which costs a seventh of what is left, the trading port, its
+    # loop signing (#913 L1d), the lane's audit writer (#913 L2), the pool, the lane's heartbeat and
+    # the environment's lock (SEC-S3N-01)
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:

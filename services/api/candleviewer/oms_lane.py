@@ -46,8 +46,8 @@ LANE_START_S: Final = 5.0
 #: How long the stop waits for the lane's thread once its loop is told to stop, out of the OMS's
 #: stop reserve (`OmsRuntime.stop`, inside the module's 15 s grace, 20 Sec.6.2).
 LANE_JOIN_S: Final = 1.0
-#: The bound on an awaited hop to the serving loop: B1's command bound, which every venue call's
-#: own bounds are inside, so the hop never cuts one short (`oms_wiring.ServedPort`).
+#: The bound on an awaited hop to the serving loop: B1's command bound, which every hopped call's
+#: own bounds are inside, so the hop never cuts one short (the venue calls never hop, #913 L1d).
 HOP_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT
 #: Each step of the lane thread's own cleanup once its loop has stopped: its five end inside
 #: `LANE_JOIN_S`, so a cleanup that runs long ends before the join gives up.

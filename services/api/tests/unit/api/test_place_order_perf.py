@@ -65,10 +65,11 @@ class _Listed(dict[str, Any]):
 @dataclass
 class _Figured(Venue):
     """The venue whose ports answer the size step's figures (24 Sec.9.3.6), as the route world's:
-    the account's wallet and fee rate; no position, open order or closed P&L, the fake's own."""
+    the account's wallet and fee rate; no position, open order or closed P&L, the fake's own. Each
+    is a port `Venue.port` builds, so the lane's own (`lane_trading_port`, #913 L1d-1) has them."""
 
-    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
-        port = super().trading_port(env, clock_offset_ms=clock_offset_ms)
+    def port(self, env: str) -> Port:
+        port = super().port(env)
         cash, none = Decimal(100000), Decimal(0)
         port.set_wallet(Wallet(
             account_id=cr.ACCOUNT, equity=cash, wallet_balance=cash, available_to_withdraw=None,
