@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import AsyncIterator
-from dataclasses import replace
 from decimal import Decimal
 from typing import Any
 from unittest.mock import Mock
@@ -24,7 +23,15 @@ from candleviewer.oms.ports import RequestRecord, StopOffset
 from candleviewer.oms.submit import READ_RETRY_AFTER_S, OrderTrigger
 from candleviewer.statechart.bindings import b01_order as b01
 from tests.unit.oms import command_rig as cr
-from tests.unit.oms.submit_rig import SYMBOL, SubmitRig, build_rig, context, entry, flatten
+from tests.unit.oms.submit_rig import (
+    SYMBOL,
+    SubmitRig,
+    build_rig,
+    context,
+    entry,
+    flatten,
+    profile,
+)
 
 
 @pytest.fixture
@@ -88,9 +95,10 @@ async def test_band_limit_outside_is_refused_400_and_writes_nothing(
     assert (denied.outcome, denied.detail["step"]) == ("denied", "classify")
 
 
-@pytest.mark.parametrize(("price", "stop"), [("63000", "58000"), ("57000", "56000")])
+@pytest.mark.parametrize(("price", "stop"), [("63000", "59900"), ("57000", "56000")])
 async def test_band_limit_on_the_edge_is_admitted(rig: SubmitRig, price: str, stop: str) -> None:
-    assert (await rig.submit(entry(price=Decimal(price), stop_loss=_stop(stop)))).status == 202
+    request = entry(price=Decimal(price), stop_loss=_stop(stop), take_profit=None)
+    assert (await rig.submit(request)).status == 202
     assert _sent_with_stop(rig).price == Decimal(price)
 
 
@@ -149,7 +157,7 @@ async def test_band_reference_is_mid_else_last_else_503(
 async def test_band_judges_a_trigger_against_the_market_and_its_limit_against_the_trigger(
     rig: SubmitRig, order: dict[str, Any], named: list[str] | None
 ) -> None:
-    kw: dict[str, Any] = {"trigger": _trigger(order["trigger"]), "stop_loss": _stop("40000")}
+    kw: dict[str, Any] = {"trigger": _trigger(order["trigger"]), "stop_loss": _stop("57000")}
     kw |= {"price": None if order["price"] is None else Decimal(order["price"])}
     kw |= {"order_type": order.get("order_type", "limit")}
     if named is not None:
@@ -176,25 +184,30 @@ async def test_band_leaves_a_price_it_cannot_judge_to_the_later_checks(
 
 
 async def test_band_market_order_is_not_judged(rig: SubmitRig) -> None:
-    outcome = await rig.submit(entry(order_type="market", price=None, stop_loss=None))
-    assert outcome.status == 202
-    assert (rig.prices.read, rig.prices.asked) == ([], [SYMBOL])
+    """A market entry is never judged; its one market read is the size step's (3a, then 3c)."""
+    rig.prices.price = Decimal("90000")  # no band around any limit: the order has none
+    request = entry(order_type="market", price=None, stop_loss=None, take_profit=None)
+    assert (await rig.submit(request)).status == 202
+    assert (rig.prices.read, rig.prices.asked) == ([SYMBOL], [])
 
 
 async def test_band_is_judged_before_the_sizer(
     rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    ports = rig.pipeline._ports
-    spy = Mock(wraps=ports.sizer)
-    monkeypatch.setattr(rig.pipeline, "_ports", replace(ports, sizer=spy))
+    sizer = rig.pipeline._sizer
+    spy = Mock(wraps=sizer.size)
+    monkeypatch.setattr(sizer, "size", spy)
     await _refused(rig, entry(price=Decimal("70000")))
-    spy.size.assert_not_called()
+    spy.assert_not_called()
+    assert rig.figures.reads == []
     assert (await rig.submit()).status == 202
-    spy.size.assert_called_once()
+    spy.assert_called_once()
 
 
 async def test_band_setting_is_the_pipelines_band(rig: SubmitRig) -> None:
-    request = entry(price=Decimal("65000"), take_profit=_stop("66000"))
+    held = profile(sl_offset_value="0.10", leverage="5", max_leverage_cap="5")  # a stop below mid
+    rig.profiles.held[(cr.ACCOUNT, None)] = held
+    request = entry(price=Decimal("65000"), stop_loss=_stop("59000"), take_profit=_stop("66000"))
     assert _banded(await _refused(rig, request)) == ["price"]
     assert (await rig.make(price_band=Decimal("0.10")).submit(request, context())).status == 202
 

@@ -205,6 +205,7 @@ from .ports import (
     AuditSeverity,
     CredentialRejections,
     KeyedRecord,
+    OrderFigures,
     OrderHandovers,
     PositionKey,
     StopRequestGate,
@@ -693,6 +694,7 @@ class OmsCommandPort:
         port_timeout_s: float = PORT_TIMEOUT_S,
         live_resend_max_age_s: float = LIVE_RESEND_MAX_AGE_S,
         max_watches: int = MAX_WATCHES,
+        figures: OrderFigures | None = None,
     ) -> None:
         if max_watches < 1:
             raise ValueError("max_watches holds at least one registration")
@@ -727,6 +729,7 @@ class OmsCommandPort:
         self._port_timeout_s = port_timeout_s
         self._live_resend_max_age_us = round(live_resend_max_age_s * 1_000_000)
         self._max_watches = max_watches
+        self._figures = figures  # an accepted amend drops the account's (24 Sec.9.3.6)
         self._watches: OrderedDict[UUID, PlaceWatch] = OrderedDict()
         self._exits: OrderedDict[tuple[UUID, ExitKind], ExitWatch] = OrderedDict()
         self._resync: asyncio.Task[None] | None = None
@@ -1407,6 +1410,8 @@ class OmsCommandPort:
                 recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by, actor=actor
             )
         if ack.ok:
+            if self._figures is not None:  # the amend moved the account's room
+                self._figures.invalidate(account.account_id)
             kept = order_id_kept(ack.exchange_order_id)
             bound = {} if kept is None else {"exchange_order_id": kept}
             return {"ok": True, **bound, **_record(ack)}

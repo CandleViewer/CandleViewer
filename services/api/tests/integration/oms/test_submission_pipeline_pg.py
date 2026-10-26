@@ -71,6 +71,7 @@ from candleviewer.oms.ports import (
     KeyedRecord,
     OrderEffect,
     RequestRecord,
+    SizingRequest,
     StopOffset,
     SubmissionPorts,
     SubmitActor,
@@ -119,6 +120,7 @@ from tests.unit.oms.submit_rig import (
     STOP,
     SYMBOL,
     TAKE_PROFIT,
+    Figures,
     Instruments,
     Prices,
     ReadOnly,
@@ -209,8 +211,9 @@ def _uid(account: uuid.UUID) -> str:
 
 def _trading_account(dsn: str) -> AccountId:
     """A demo account whose default profile (`trg_ea_default_profile`) is made to trade the two
-    symbols (D11): `fixed_qty`, its caps set (`ap_trading_caps`), its stop offset the default
-    10 ticks. The edit moves the profile to version 2, which the leg then records."""
+    symbols (D11): `fixed_qty`, its caps set (`ap_trading_caps`), its stop 5 % from entry, so a
+    request's own stop may narrow it (#913 S4-S ruling Q2). The edit moves the profile to version
+    2, which the leg then records."""
     account = uuid.uuid4()
     _sql(
         dsn,
@@ -223,7 +226,8 @@ def _trading_account(dsn: str) -> AccountId:
         "UPDATE account_profiles SET trading_enabled = true, sizing_mode = 'fixed_qty', "
         "size_fixed_qty = 0.01, risk_pct_equity = NULL, leverage = 10, max_leverage_cap = 10, "
         "max_position_notional_usd = 20000, max_daily_loss_usd = 500, max_open_positions = 1, "
-        "max_concurrent_orders = 5, allowed_symbols = ARRAY['BTCUSDT', 'ETHUSDT'] "
+        "max_concurrent_orders = 5, allowed_symbols = ARRAY['BTCUSDT', 'ETHUSDT'], "
+        "sl_offset_value = 5, sl_offset_unit = 'percent' "
         "WHERE exchange_account_id = %s AND is_default",
         account,
     )
@@ -421,10 +425,10 @@ class Lookup:
 
 
 class NoProfileOffset(InterimStopResolver):
-    """The interim resolver for a profile that defines no SL offset: a stop the request does not
-    name resolves to none. The schema keeps an offset on every profile (`ap_sl_pos`), so the
-    Gherkin's profile is the resolver's answer, which the guard judges whatever the port is (R4,
-    C-2.6)."""
+    """The interim resolver answering no stop at all, as for a profile that defines no SL offset.
+    The schema keeps an offset on every profile (`ap_sl_pos`), and an entry's stop is its sizer's
+    (#913 S4-S), so the Gherkin's profile is this resolver's answer, which the guard judges
+    whatever the port is (R4, C-2.6)."""
 
     def resolve(
         self,
@@ -436,16 +440,7 @@ class NoProfileOffset(InterimStopResolver):
         instrument: Instrument,
         profile: AccountProfile | None,
     ) -> Px | None:
-        if stop is None:
-            return None
-        return super().resolve(
-            stop,
-            side=side,
-            reference_price=reference_price,
-            effect=effect,
-            instrument=instrument,
-            profile=profile,
-        )
+        return None
 
 
 class OneCandidate:
@@ -586,6 +581,7 @@ def _build(
         gate=gate,
         audit=audits,
         groups=TradeGroupRepository(SqlAlchemyTradeGroupStore(rel)),
+        figures=Figures(),
     )
     lookup, sleeps = Lookup(orders), Sleeps()
     make = partial(
@@ -687,11 +683,13 @@ async def _race(
 ) -> tuple[asyncio.Task[SubmitOutcome], asyncio.Task[SubmitOutcome]]:
     """The first request's persist holds its transaction open in its write-ahead hook; the second
     request's persist waits on the first's uncommitted row (`pg_stat_activity`); then the first
-    commits. Answers the two requests' tasks, still running."""
+    commits. Answers the two requests' tasks, still running. The second runs through another
+    pipeline over the same parts, as another worker's would: one pipeline sizes two entries on
+    one account in turn (#913 S4-S), so only two pipelines meet at the database's locks."""
     rig.audits.hold()
     task_a = asyncio.create_task(rig.submit(*first))
     await rig.audits.entered.wait()
-    task_b = asyncio.create_task(rig.submit(*second))
+    task_b = asyncio.create_task(rig.make().submit(*second))
     try:
         await _wait_until_blocked(dsn)
     finally:
@@ -758,6 +756,38 @@ async def test_happy_path_is_an_acceptance_not_a_fill(pg: Rig, pg_dsn: str) -> N
     ]
     assert names[-1] == ("orders.submit", "submitted", 1)
     assert {r.request_id for r, _ in pg.audits.written} == {_FIRST}
+
+
+async def test_a_risk_based_entry_is_sized_from_its_profile_and_recorded(
+    pg: Rig, pg_dsn: str
+) -> None:
+    """#913 S4-S (24 Sec.8.4 item 2): an entry asking for its profile's sizing, on a `risk_based`
+    default profile read from Postgres, is sized by the sizer: 30 USDT over the 5 % stop and both
+    taker fees, floored to the lot. The leg records that quantity, the stop it was measured from
+    and its risk with fees; the group the resolved mode; the create carries the same stop."""
+    _sql(
+        pg_dsn,
+        "UPDATE account_profiles SET sizing_mode = 'risk_based', size_fixed_qty = NULL, "
+        "risk_fixed_amount_usd = 30 WHERE exchange_account_id = %s AND is_default",
+        pg.account,
+    )
+    request = pg.entry(sizing=SizingRequest(mode="profile"), stop_loss=None, take_profit=None)
+    outcome = await pg.submit(request)
+    assert (outcome.status, outcome.lifecycle) == (202, "submitted")
+    [create] = pg.creates()
+    assert (create.qty, create.stop_loss) == (Decimal("0.009"), Decimal("57000.0"))
+    [(mode, value, qty, stop, risk)] = _sql(
+        pg_dsn,
+        "SELECT g.requested_qty_mode::text, g.requested_qty_value, l.target_qty, "
+        "l.resolved_sl_price, l.risk_usd FROM trade_groups g "
+        "JOIN trade_group_legs l ON l.trade_group_id = g.id WHERE g.id = %s",
+        outcome.trade_group_id,
+    )
+    assert (mode, value, qty, stop) == ("risk_based", None, create.qty, create.stop_loss)
+    # 1R (0.009 x 3000) and both taker fees (0.009 x (60000 + 60000) x 0.00055)
+    assert risk == Decimal("27.594")
+    [record] = [r for r, _ in pg.audits.written if r.action == "trade_group.submit"]
+    assert "risk_based: 30 USDT" in str(record.detail["sizing_explanation"])
 
 
 async def test_filters_are_enforced_before_any_exchange_call(pg: Rig, pg_dsn: str) -> None:

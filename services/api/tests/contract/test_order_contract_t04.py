@@ -1064,7 +1064,7 @@ def test_sizing_unavailable_is_a_retryable_503() -> None:
         "`503 sizing_unavailable` (dashboard)",
     )
     assert "E39-S01 serves real day figures" not in _INTERNAL_DOC
-    assert "Planned (wired by `oms.submit`'s size step) for a single order" in _ARCH
+    assert "Live: wired by `oms.submit`'s size step for a single order" in _ARCH
     assert "0.005-0.20, no off value (C-4.14)     |" in _ARCH
     pct = _SCHEMAS["SizingMode"]["description"]
     assert "`placeOrder` refuses it (`sizing_mode_unsupported`) until the position read" in pct

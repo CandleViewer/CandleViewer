@@ -53,6 +53,7 @@ from candleviewer.oms.errors import (
     RateBudgetExceeded,
     RiskRefused,
     SessionNotArmed,
+    SizingUnavailable,
     StopRequestInFlight,
     StopRequestPending,
     StopUnitUnsupported,
@@ -127,6 +128,7 @@ _EXPECTED: list[tuple[OmsError, int, str, bool, bool]] = [
     (StoreUnavailable(), 503, "store_unavailable", False, False),
     (OmsNotReady(), 503, "oms_not_ready", True, False),
     (ExchangeUnavailable(retry_after_s=5), 503, "exchange_unavailable", True, False),
+    (SizingUnavailable(retry_after_s=1), 503, "sizing_unavailable", True, False),
     (AuditNotDurable("the audit did not land"), 503, "audit_unavailable", False, False),
     (OrderEntryRefused(_GATE), 403, "trading_disabled", False, False),
 ]
@@ -189,6 +191,7 @@ def test_exchange_rejected_cannot_carry_the_exchanges_text() -> None:
         StopRequestPending,
         ExchangeUnavailable,
         OmsNotReady,
+        SizingUnavailable,
     ],
 )
 @pytest.mark.parametrize("seconds", [0, -1])
@@ -251,6 +254,7 @@ _DETAILS: dict[type[OrderRefused], str] = {
     IdempotencyInFlight: "A request with this Idempotency-Key is still being processed.",
     StopRequestPending: "Send the entry again once the position's stop request is answered.",
     ExchangeUnavailable: "The exchange did not answer, so the order was not sent.",
+    SizingUnavailable: "The order cannot be sized yet, so it was not sent.",
     OmsNotReady: "Order entry is not open yet.",
 }
 

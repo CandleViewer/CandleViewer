@@ -37,14 +37,14 @@ def _ticks(*readings: float) -> Callable[[], float]:
     return lambda: next(it)
 
 
-def test_sizer_metrics_catalogue_entries_are_planned_and_capped_by_their_closed_sets() -> None:
+def test_sizer_metrics_catalogue_entries_are_live_and_capped_by_their_closed_sets() -> None:
     spec = {s.name: s for s in CATALOGUE}
     got = {n: (spec[n].kind, spec[n].labels, spec[n].status, spec[n].owner_epic) for n in _NAMES}
     assert got == {
-        sm.DURATION: ("histogram", (), "planned", "E28"),
-        sm.OUTCOMES: ("counter", ("outcome", "reason"), "planned", "E28"),
-        sm.CLAMPED: ("counter", ("cap",), "planned", "E28"),
-        sm.FALLBACK: ("counter", (), "planned", "E28"),
+        sm.DURATION: ("histogram", (), "live", "E28"),
+        sm.OUTCOMES: ("counter", ("outcome", "reason"), "live", "E28"),
+        sm.CLAMPED: ("counter", ("cap",), "live", "E28"),
+        sm.FALLBACK: ("counter", (), "live", "E28"),
     }
     assert spec[sm.OUTCOMES].max_series == len(sm.OUTCOME_REASONS) == len(set(sm.OUTCOME_REASONS))
     assert spec[sm.CLAMPED].max_series == len(sm.CAPS) == len(set(sm.CAPS))

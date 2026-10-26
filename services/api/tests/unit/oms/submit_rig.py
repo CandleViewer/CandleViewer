@@ -21,10 +21,12 @@ from uuid import UUID
 from prometheus_client import generate_latest
 
 from candleviewer.accounts.errors import AccountNotFoundError
+from candleviewer.accounts.override_comparator import AccountFigures
 from candleviewer.accounts.profiles import AccountProfile
 from candleviewer.accounts.trade_group_repository import TradeGroupRepository
 from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Px, Symbol
+from candleviewer.exchange.base.models import AccountRef
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.commands import SUBMIT_TIMEOUT_S
 from candleviewer.oms.fakes import InMemoryOrderStore, InMemorySubmissionStore
@@ -33,12 +35,14 @@ from candleviewer.oms.order_link_allocator import OrderLinkIdAllocator, OrderLin
 from candleviewer.oms.order_machine import OrderMachinePorts, OrderMachines
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
+    FiguresReading,
     MarketReading,
     SizedOrder,
     SizingRequest,
     StopOffset,
     SubmissionPorts,
     SubmitActor,
+    SymbolRates,
 )
 from candleviewer.oms.repository import (
     ExecutionRepository,
@@ -103,10 +107,23 @@ def instrument(**over: object) -> Instrument:
 
 
 def profile(account_id: AccountId = cr.ACCOUNT, **over: Any) -> AccountProfile:
-    """The `fixed_qty` fixture profile as the account's default, trading BTCUSDT."""
+    """The `fixed_qty` fixture profile as the account's default, trading BTCUSDT, its stop 5 %
+    from entry and its orders resting until cancelled, so `entry()`'s request narrows it."""
     raw = json.loads((_PROFILES / "fixed_qty.json").read_text(encoding="utf-8"))
-    raw |= {"account_id": str(account_id), "is_default": True}
+    raw |= {"account_id": str(account_id), "is_default": True, "sl_offset_value": "0.05"}
+    raw |= {"time_in_force_default": "GTC"}
     return AccountProfile.model_validate(raw | over)
+
+
+def figures(**over: Any) -> AccountFigures:
+    """An account's known figures: 100000 USDT of equity and margin, no loss or risk yet, the
+    venue's taker rate and a lowest-tier maintenance rate (the counts are the risk gate's)."""
+    known: dict[str, Any] = {
+        "equity": "100000", "available_margin": "100000", "committed_risk": "0",
+        "realised_loss_today": "0", "taker_fee_rate": "0.00055",
+        "maintenance_margin_rate": "0.005",
+    }  # fmt: skip
+    return AccountFigures.model_validate(dict.fromkeys(AccountFigures.model_fields) | known | over)
 
 
 def entry(**over: Any) -> OrderRequest:
@@ -177,6 +194,43 @@ class Prices:
         if self.refuse is not None:
             raise self.refuse
         return self.price
+
+
+@dataclass
+class Figures:
+    """`OrderFigures` answering `known` (its rates per symbol, its account figures without them);
+    `refuse` raises. `reads` lists the accounts read, `invalidated` the accounts dropped."""
+
+    known: AccountFigures = field(default_factory=figures)
+    refuse: BaseException | None = None
+    reads: list[AccountId] = field(default_factory=list)
+    invalidated: list[AccountId] = field(default_factory=list)
+
+    async def read(
+        self, account: AccountRef, symbols: Any, *, fallback_sl_offset_pct: Decimal | None
+    ) -> FiguresReading:
+        self.reads.append(account.account_id)
+        await asyncio.sleep(0)
+        if self.refuse is not None:
+            raise self.refuse
+        rates = SymbolRates(self.known.maintenance_margin_rate, self.known.taker_fee_rate)
+        bare = self.known.model_copy(
+            update={"maintenance_margin_rate": None, "taker_fee_rate": None}
+        )
+        return FiguresReading(bare, dict.fromkeys(symbols, rates))
+
+    def invalidate(self, account_id: AccountId) -> None:
+        self.invalidated.append(account_id)
+
+
+@dataclass
+class TierAsks:
+    """`TierRequests` that lists each symbol asked for, in order."""
+
+    asked: list[Symbol] = field(default_factory=list)
+
+    def request_tiers(self, symbol: Symbol) -> None:
+        self.asked.append(symbol)
 
 
 @dataclass
@@ -318,6 +372,7 @@ class SubmitRig:
     instruments: Instruments
     prices: Prices
     profiles: Profiles
+    figures: Figures
     groups: Groups
     read_only: ReadOnly
     sleeps: Sleeps
@@ -328,6 +383,8 @@ class SubmitRig:
     submissions: InMemorySubmissionStore
     #: Another pipeline over the same parts, with other keywords.
     make: Callable[..., OrderSubmission]
+    #: The symbols the size step asked the catalogue's tiers for.
+    tiers: TierAsks = field(default_factory=TierAsks)
 
     @property
     def store(self) -> InMemoryOrderStore:
@@ -409,8 +466,8 @@ def build_rig(
     ports = SubmissionPorts.interim(now=now)
     recording = Risk(risk if risk is not None else ports.risk_gate)
     ports = replace(ports, risk_gate=recording)
-    instruments, prices, profiles = Instruments(), Prices(), Profiles()
-    groups = Groups(store)
+    instruments, prices, profiles, held = Instruments(), Prices(), Profiles(), Figures()
+    groups, tiers = Groups(store), TierAsks()
     read_only, sleeps = ReadOnly(), Sleeps()
     lookup = FlakyLookup(store, lies=lies)
     deps = SubmissionDeps(
@@ -422,6 +479,8 @@ def build_rig(
         gate=port.gate,  # the command port's: the runtime has one gate
         audit=port.audits,
         groups=TradeGroupRepository(cast(TradeGroupStore, groups)),
+        figures=held,
+        tier_requests=tiers,
     )
     make = partial(
         OrderSubmission,
@@ -442,8 +501,8 @@ def build_rig(
     )
     pipeline = make(**pipeline_kwargs)
     return SubmitRig(
-        pipeline, machines, port, instruments, prices, profiles, groups, read_only, sleeps,
-        recording, lookup, metrics, pager, submissions, make,
+        pipeline, machines, port, instruments, prices, profiles, held, groups, read_only, sleeps,
+        recording, lookup, metrics, pager, submissions, make, tiers,
     )  # fmt: skip
 
 

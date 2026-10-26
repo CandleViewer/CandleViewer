@@ -186,7 +186,7 @@ class DayRiskFigures(Interim):
                 process_environment=self._environment,
                 account_environment=account.environment,
             )
-            return FiguresReading(UNKNOWN_FIGURES, dict.fromkeys(symbols, SymbolRates()))
+            return FiguresReading(UNKNOWN_FIGURES, {})  # no symbol entry: no tiers to request
         key, port = account.account_id, self._port_for(account.environment)
         deadline = asyncio.get_running_loop().time() + FIGURES_BUDGET_S
         unique = tuple(dict.fromkeys(symbols))

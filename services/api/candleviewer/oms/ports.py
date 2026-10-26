@@ -1,15 +1,15 @@
 """The ports the submission pipeline consumes, and their interim implementations (E29-T04, #913).
 
 The pipeline (24-internal-schemas.md Sec.8.4) consumes interfaces whose owners have not landed:
-the sizer and the stop resolver (E28-T03, #907), the risk gate (E39-S01, #954) and the arm record
-(E30-S04, #1088). Ruling R4 on #913 approves an interim implementation of each, failing closed on
-live:
+the stop resolver (E28-T03, #907), the risk gate (E39-S01, #954) and the arm record (E30-S04,
+#1088). Ruling R4 on #913 approves an interim implementation of each, failing closed on live. An
+entry is sized, and given its stop, by its profile's sizer (`oms.sizing`, #913 S4-S); a reduce-only
+order by `RequestQtySizer`, the request's `fixed_qty` floored to the lot step unless `round_to_lot`
+is false (the validator then judges the step), any other mode `sizing_mode_unsupported`.
 
-- `FixedQtySizer` serves `fixed_qty` sizing only, floored to the lot step unless `round_to_lot` is
-  false (the validator then judges the step); any other mode is `validation_failed` /
-  `sizing_mode_unsupported`.
-- `InterimStopResolver` serves `price`, `ticks` and `percent` stops and, for an entry without one,
-  the profile's offset; `atr` and `r_multiple` are `validation_failed` / `stop_unit_unsupported`.
+- `InterimStopResolver` serves take-profits and a reduce-only order's stop (ruling Q6) in
+  `price`, `ticks` and `percent` and, for a reduce-only order not shown to reduce, the profile's
+  offset; `atr` and `r_multiple` are `validation_failed` / `stop_unit_unsupported`.
   A request's `percent` is the percent a client writes (`"0.4"` is 0.4 %), the profile's a
   fraction (24 Sec.9.2). The stop lands on a tick, rounded away from the entry, never closer
   (24 Sec.9.3.1). Its take-profit (S2-Q6) serves the request's `price`, `ticks` and `percent` on
@@ -121,13 +121,14 @@ SizingMode = Literal[
     "fixed_qty", "fixed_notional", "pct_equity", "risk_based", "pct_position", "profile"
 ]
 OrderType = Literal["market", "limit"]
-PortName = Literal["sizer", "stop_resolver", "risk_gate", "arm_records"]
+PortName = Literal["stop_resolver", "risk_gate", "arm_records"]
 PORT_NAMES: Final[tuple[PortName, ...]] = get_args(PortName)
 #: The interim ports the OMS runtime announces beside the `SubmissionPorts` slots (#913 slice 3):
 #: the B18 kill switch until E39-S03 (ruling Q5), B1's `machine_events` sink while no statechart
-#: persistence bundle serves it (20 Sec.6.2), and the order path's figures (`OrderFigures`) until
-#: E39-T01 (#913 S4-S ruling Q1). Their binders announce them (`announce_interim_port`).
-RuntimePortName = Literal["kill_switch", "machine_event_sink", "risk_figures"]
+#: persistence bundle serves it (20 Sec.6.2), the order path's figures (`OrderFigures`) until
+#: E39-T01 (#913 S4-S ruling Q1), and an `atr` stop's fallback until the E13 kernel port reaches
+#: `oms` (ruling Q6, `ATR_FALLBACK`). Their binders announce them (`announce_interim_port`).
+RuntimePortName = Literal["kill_switch", "machine_event_sink", "risk_figures", "atr"]
 #: `oms_interim_ports{port}`'s closed label set, one series each.
 INTERIM_PORT_LABELS: Final[tuple[PortName | RuntimePortName, ...]] = (
     *PORT_NAMES,
@@ -138,7 +139,7 @@ INTERIM_PORTS_METRIC: Final = "oms_interim_ports"
 _UNEVALUATED: Final[frozenset[Environment]] = frozenset({"demo"})
 #: SR-043: the environment whose order mutations need an arm token.
 _ARMED: Final[frozenset[Environment]] = frozenset({"live"})
-_ONLY_FIXED_QTY: Final = "Only fixed_qty sizing is available yet."
+_ONLY_FIXED_QTY: Final = "A reduce-only order is sized by fixed_qty only."
 
 
 def _log() -> Any:
@@ -166,11 +167,16 @@ class StopOffset:
 
 @dataclass(frozen=True, slots=True)
 class SizingRequest:
-    """22 `Sizing`: the members the interim sizer reads."""
+    """22 `Sizing`, as the client wrote it: `pct` and `risk_per_trade_pct` are percents."""
 
     mode: SizingMode
     qty: Qty | None = None
     round_to_lot: bool = True
+    notional_usd: Decimal | None = None
+    pct: Decimal | None = None
+    risk_per_trade_usd: Decimal | None = None
+    risk_per_trade_pct: Decimal | None = None
+    max_notional_usd: Decimal | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -252,12 +258,6 @@ class ArmToken(ComparableSecret[str]):
 
     def __hash__(self) -> int:
         return hash(ArmToken)
-
-
-class Sizer(Protocol):
-    """E28-T03 (#907): the order's quantity, sized and rounded, or an `OrderRefused`."""
-
-    def size(self, sizing: SizingRequest, instrument: Instrument) -> Qty: ...
 
 
 class StopResolver(Protocol):
@@ -494,8 +494,9 @@ class RequestRecord:
     """One record an order request writes about itself (`submit.OrderSubmission`, C-2.9): its
     intent with its rows (`orders.submit`, `trade_group.submit`), a refusal (`denied`, its problem
     code as `reason`) or its outcome, naming the requesting principal. `detail` holds ids, state
-    names and codes, never a price, a size, the key or a secret (C-12.6); `request_id` is the
-    request's correlation id (`X-Correlation-Id`, #3990), None for a job."""
+    names, codes and, on `trade_group.submit`, the sizing explanation with its figures
+    (SR-E28-13), never a credential (C-12.6); `request_id` is the request's correlation id
+    (`X-Correlation-Id`, #3990), None for a job."""
 
     action: str
     account_id: UUID
@@ -514,7 +515,7 @@ class KeyedRecord:
     """One audit record the order path writes under an id it knows ahead (21 Sec.3.3.11 "Audit"):
     `SubmitAudit.record_id(action, name)`'s, so a row carries it (`audit_record_id`) before the
     record lands, and a repeat of the write stores no second row. `detail` holds ids, state names
-    and reasons, never a price, a size or a secret (C-12.6); `actor_user_id` is None for the
+    and reasons, never a credential (C-12.6); `actor_user_id` is None for the
     system (`system:oms`). `request_id` is the correlation id of the HTTP request the record is
     written for (`X-Correlation-Id`, #3990), None for a job, a restart's resume or a fill-driven
     attach (21 Sec.3.10.1). `actor` is the requesting principal of a record a request writes (an
@@ -771,10 +772,10 @@ class Interim:
     serves: ClassVar[str]
 
 
-class FixedQtySizer(Interim):
-    port: ClassVar[PortName] = "sizer"
-    replaced_by: ClassVar[str] = "E28-T03 (#907)"
-    serves: ClassVar[str] = "fixed_qty sizing only; every other mode is sizing_mode_unsupported"
+class RequestQtySizer:
+    """A reduce-only order's size (24 Sec.8.4 item 2, step 3c): the request's `fixed_qty` `qty`,
+    floored to the lot step; any other mode is `sizing_mode_unsupported`. An entry is sized by its
+    profile (`oms.sizing`), never here."""
 
     def size(self, sizing: SizingRequest, instrument: Instrument) -> Qty:
         if sizing.mode != "fixed_qty":
@@ -791,10 +792,13 @@ class FixedQtySizer(Interim):
 
 
 class InterimStopResolver(Interim):
+    """Take-profits in every order and a reduce-only order's stop (#913 S4-S ruling Q6): an
+    entry's stop is its sizer's (`oms.sizing`)."""
+
     port: ClassVar[PortName] = "stop_resolver"
     replaced_by: ClassVar[str] = "E28-T03 (#907)"
     serves: ClassVar[str] = (
-        "price, ticks and percent stops and the profile's offset; atr and r_multiple are "
+        "take-profits and reduce-only stops in price, ticks and percent; atr and r_multiple are "
         "stop_unit_unsupported"
     )
 
@@ -947,17 +951,29 @@ class NoDayFigures(Interim):
         *,
         fallback_sl_offset_pct: Decimal | None,
     ) -> FiguresReading:
-        return FiguresReading(UNKNOWN_FIGURES, dict.fromkeys(symbols, SymbolRates()))
+        return FiguresReading(UNKNOWN_FIGURES, {})  # no symbol entry: no tiers to request
 
     def invalidate(self, account_id: AccountId) -> None:
         return None
+
+
+class AtrFallback(Interim):
+    """#913 S4-S ruling Q6: the size step has no ATR reading (`SizingMarket.atr` None), so an `atr`
+    stop uses the profile's `fallback_sl_offset_pct`, recorded as `stop_fallback` (SR-E28-12); a
+    marker the runtime announces, as `oms_interim_ports{port="atr"}`."""
+
+    port: ClassVar[RuntimePortName] = "atr"
+    replaced_by: ClassVar[str] = "the E13 kernel port in oms (#461, E13-S04)"
+    serves: ClassVar[str] = "no ATR reading: an atr stop is the profile's fallback_sl_offset_pct"
+
+
+ATR_FALLBACK: Final = AtrFallback()
 
 
 @dataclass(frozen=True, slots=True)
 class SubmissionPorts:
     """The ports the composition root wires into the pipeline, one per `PORT_NAMES` slot."""
 
-    sizer: Sizer
     stop_resolver: StopResolver
     risk_gate: RiskGate
     arm_records: ArmRecords
@@ -965,7 +981,7 @@ class SubmissionPorts:
     @classmethod
     def interim(cls, *, now: Callable[[], datetime]) -> SubmissionPorts:
         """Every slot filled with its R4 interim port."""
-        return cls(FixedQtySizer(), InterimStopResolver(), InterimRiskGate(now=now), NoArmRecords())
+        return cls(InterimStopResolver(), InterimRiskGate(now=now), NoArmRecords())
 
 
 def announce_interim_ports(ports: SubmissionPorts, *, metrics: Metrics) -> tuple[PortName, ...]:

@@ -55,7 +55,6 @@ from candleviewer.oms.errors import (
     ExchangeUnavailable,
     IdempotencyInFlight,
     IdempotencyKeyReuse,
-    LotSizeViolation,
     OmsError,
     OrderEntryRefused,
     OrderInvalid,
@@ -500,12 +499,12 @@ async def test_an_unnamed_reduce_only_order_with_no_default_profile_goes_through
     ("request_", "field", "rule"),
     [
         (
-            entry(sizing=SizingRequest(mode="fixed_notional")),
+            entry(sizing=SizingRequest(mode="pct_position", pct=Decimal(50))),
             "sizing.mode",
             "sizing_mode_unsupported",
         ),
         (
-            entry(stop_loss=StopOffset(unit="atr", value=Decimal(2))),
+            entry(stop_loss=StopOffset(unit="r_multiple", value=Decimal(2))),
             "stop_loss",
             "stop_unit_unsupported",
         ),
@@ -531,7 +530,7 @@ async def test_an_unnamed_reduce_only_order_with_no_default_profile_goes_through
         ),
         (entry(intent="take_profit"), "intent", "intent_mismatch"),
     ],
-    ids=["sizing", "atr_stop", "r_multiple_tp", "atr_tp", "stop_side", "tp_side", "intent"],
+    ids=["sizing", "r_multiple_stop", "r_multiple_tp", "atr_tp", "stop_side", "tp_side", "intent"],
 )
 async def test_the_classify_step_refuses_with_the_rule_that_failed(
     rig: SubmitRig, request_: Any, field: str, rule: str
@@ -560,19 +559,23 @@ async def test_a_stop_or_take_profit_that_is_no_price_above_zero_is_never_record
 async def test_an_entry_without_a_stop_takes_the_profiles_offset(rig: SubmitRig) -> None:
     """C-2.6: no field waives the stop; the profile's 1 % offset applies, rounded away from the
     entry, and the create carries it."""
+    rig.profiles.held[(cr.ACCOUNT, None)] = profile(sl_offset_value="0.01")
     outcome = await rig.submit(entry(stop_loss=None, take_profit=None))
     [call] = rig.port.demo.calls
     assert outcome.status == 202 and _create(call).stop_loss == Decimal("59400.0")
     assert _row(rig, outcome).stop_loss == Decimal("59400.0")
 
 
-async def test_an_entry_with_neither_a_stop_nor_a_profile_offset_is_refused(rig: SubmitRig) -> None:
+async def test_submit_an_atr_profile_stop_with_no_reading_uses_its_fallback(rig: SubmitRig) -> None:
+    """#913 S4-S ruling Q6: no ATR reaches `oms`, so the profile's `fallback_sl_offset_pct` (2 %)
+    sets the stop, recorded as `stop_fallback` in the explanation and counted."""
     rig.profiles.held[(cr.ACCOUNT, None)] = profile(sl_offset_unit="atr")
-    refused = await _refused(rig, entry(stop_loss=None))
-    assert [(e.field, e.rule) for e in getattr(refused, "errors", ())] == [
-        ("stop_loss", "stop_unit_unsupported")
-    ]
-    _nothing_done(rig)
+    outcome = await rig.submit(entry(stop_loss=None, take_profit=None))
+    [call] = rig.port.demo.calls
+    assert outcome.status == 202 and _create(call).stop_loss == Decimal("58800.0")
+    [record] = rig.records("trade_group.submit")
+    assert "(ATR fallback)" in str(record.detail["sizing_explanation"])
+    assert rig.count("cv_sizer_stop_fallback_total") == 1
 
 
 @pytest.mark.parametrize("failure", ["raises", "hangs"])
@@ -643,8 +646,8 @@ async def test_a_symbol_the_profile_does_not_allow_is_refused_403(rig: SubmitRig
 async def test_the_risk_gate_sees_the_sized_rounded_order_and_refuses_live(rig: SubmitRig) -> None:
     """SR-E29-04 and R4: the gate judges the order as sized and floored to the lot step; the
     interim gate refuses every live order before anything is recorded."""
-    await rig.submit(entry(sizing=SizingRequest(mode="fixed_qty", qty=Decimal("0.0109"))))
-    assert [order.qty for order in rig.risk.seen] == [Decimal("0.010")]
+    await rig.submit(entry(sizing=SizingRequest(mode="fixed_qty", qty=Decimal("0.0059"))))
+    assert [order.qty for order in rig.risk.seen] == [Decimal("0.005")]
     rig.profiles.held[(cr.LIVE_ACCOUNT, None)] = profile(cr.LIVE_ACCOUNT)
     before = rig.written()
     refused = await _refused(rig, entry(account_id=cr.LIVE_ACCOUNT), context(client_ref=uuid4()))
@@ -1343,6 +1346,7 @@ async def test_a_reduce_only_order_that_reduces_has_no_group_and_takes_the_criti
 
 _SL = StopOffset(unit="price", value=Decimal(61000))
 _TP = StopOffset(unit="price", value=Decimal(59000))
+_SELL_SL = StopOffset(unit="price", value=Decimal(61500))
 
 
 @pytest.mark.parametrize(
@@ -1483,11 +1487,10 @@ def _conditional(direction: Any, by: Any, short: str, code: int) -> Any:
         pytest.param(
             _Kind(
                 entry(order_type="market", price=None, stop_loss=None),
-                stop=Decimal("60390.0"),  # the profile's 1 % below the market's 61000
+                stop=Decimal("57950.0"),  # the profile's 5 % below the market's 61000
                 sent={"order_type": "market", "price": None},
                 row={"order_type": "Market", "price": None},
                 group={"entry_type": "Market", "entry_price": None},
-                asked=(SYMBOL,),
             ),
             id="market",
         ),
@@ -1517,8 +1520,8 @@ def _conditional(direction: Any, by: Any, short: str, code: int) -> Any:
         ),
         pytest.param(
             _Kind(
-                entry(side="sell", position_idx=2, stop_loss=_SL, take_profit=_TP),
-                stop=Decimal(61000),
+                entry(side="sell", position_idx=2, stop_loss=_SELL_SL, take_profit=_TP),
+                stop=_SELL_SL.value,  # past the market's 61000: a marketable sell's stop
                 sent={"side": "sell", "position_idx": 2},
                 row={"side": "Sell", "position_idx": 2},
                 position_mode="hedge",
@@ -1822,9 +1825,11 @@ async def test_an_account_that_resolves_to_another_is_a_fault_with_nothing_sent(
 
 
 async def test_a_quantity_far_past_its_ceiling_is_refused_400(rig: SubmitRig) -> None:
+    """An entry's quantity no profile holds is refused before any leg is sized."""
     qty = Decimal(10**40)
     refused = await _refused(rig, entry(sizing=SizingRequest(mode="fixed_qty", qty=qty)))
-    assert isinstance(refused, LotSizeViolation)
+    assert isinstance(refused, OrderInvalid)
+    assert [(e.field, e.rule) for e in refused.errors] == [("sizing", "profile_overlay")]
     _nothing_done(rig)
 
 
@@ -1834,8 +1839,8 @@ async def test_a_quantity_no_step_can_round_is_refused_400(
     def unroundable(*_args: Any) -> Any:
         raise InvalidOperation
 
-    monkeypatch.setattr(rig.pipeline._ports.sizer, "size", unroundable)
-    refused = await _refused(rig)
+    monkeypatch.setattr(rig.pipeline._request_qty, "size", unroundable)
+    refused = await _refused(rig, flatten())
     assert type(refused) is OrderInvalid and refused.detail == "The quantity cannot be sized."
     _nothing_done(rig)
 

@@ -19,10 +19,10 @@ import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import httpx
@@ -33,12 +33,13 @@ from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.orders import make_orders_router
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.exchange.base.models import FeeRate, RiskLimitTier, Wallet
 from candleviewer.oms_wiring import GroupStores, OmsAudit, OmsRuntime, OmsStores
 from candleviewer.storage.repositories.trading_accounts import TradingAccountRow
 from tests.unit.api.test_orders_route import BODY
 from tests.unit.oms import command_rig as cr
-from tests.unit.oms.submit_rig import SESSION, SYMBOL, USER, Groups, instrument
-from tests.unit.oms.test_oms_runtime import World, started
+from tests.unit.oms.submit_rig import SESSION, SYMBOL, USER, Groups, Profiles, instrument, profile
+from tests.unit.oms.test_oms_runtime import Port, Venue, World, started
 from tests.unit.oms.test_submit_perf import BUDGET_NS, REQUESTS, ROUNDS, _p95
 
 pytestmark = pytest.mark.perf
@@ -47,6 +48,37 @@ pytestmark = pytest.mark.perf
 RAW = json.dumps(BODY | {"exchange_account_id": str(cr.ACCOUNT)}).encode()
 #: A bound on the startup sweep over the in-memory stores, not a time the test waits.
 READY_BOUND_S = 10.0
+
+
+class _Listed(dict[str, Any]):
+    """The catalogue's snapshot: its instruments, and each one's lowest risk-limit tier, which
+    the size step reads its maintenance-margin rate from (as the route world's)."""
+
+    def risk_limit_tiers(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        tier = RiskLimitTier(
+            tier_id=1, risk_limit_value=Decimal(2_000_000), initial_margin_rate=Decimal("0.01"),
+            maintenance_margin_rate=Decimal("0.005"), max_leverage=Decimal(100),
+        )  # fmt: skip
+        return (tier,) if symbol in self else None
+
+
+@dataclass
+class _Figured(Venue):
+    """The venue whose ports answer the size step's figures (24 Sec.9.3.6), as the route world's:
+    the account's wallet and fee rate; no position, open order or closed P&L, the fake's own."""
+
+    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
+        port = super().trading_port(env, clock_offset_ms=clock_offset_ms)
+        cash, none = Decimal(100000), Decimal(0)
+        port.set_wallet(Wallet(
+            account_id=cr.ACCOUNT, equity=cash, wallet_balance=cash, available_to_withdraw=None,
+            available_margin=cash, used_margin=none, unrealised_pnl=none, cum_realised_pnl=none,
+            account_im_rate=none, account_mm_rate=none, updated_at=0,
+        ))  # fmt: skip
+        fee = FeeRate(symbol=SYMBOL, maker=Decimal("0.0002"), taker=Decimal("0.00055"),
+                      fetched_at=0)  # fmt: skip
+        port.set_fee_rate(cr.ACCOUNT, fee)
+        return port
 
 
 class Owner:
@@ -62,9 +94,11 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
     """`POST /orders` over a ready runtime that trades `cr.ACCOUNT` on demo: the instrument
     catalogue composed, the account and its key read, both flag views read."""
     key = UUID(cr.KEYS["demo"])
-    world = World(accounts=[TradingAccountRow(cr.ACCOUNT, "demo", "1000001", False, key)])
+    world = World(
+        venue=_Figured(), accounts=[TradingAccountRow(cr.ACCOUNT, "demo", "1000001", False, key)]
+    )
     world.store.submissions.seed_account(cr.ref())  # its environment, as Postgres holds it
-    listed = {SYMBOL: instrument()}  # the catalogue's snapshot, built once as the refresh does
+    listed = _Listed({SYMBOL: instrument()})  # the catalogue's snapshot, built once as refreshed
     world.ingestion.instruments = SimpleNamespace(snapshot=lambda: listed)
     # A fresh quote whose mid is the bodies' price, inside the band the limit entry is checked in.
     quote = SimpleNamespace(
@@ -82,7 +116,11 @@ async def serving() -> AsyncIterator[tuple[httpx.AsyncClient, OmsRuntime]]:
     def stores() -> OmsStores:  # the leg's compare-and-set on the store's own groups
         return replace(world.stores(), groups=cast(GroupStores, Groups(world.store)))
 
-    runtime = world.runtime(stores=stores)
+    # Every timed entry rests on the fake venue and counts in the next one's committed risk, so
+    # the profile's day cap holds all of them (the position cap does not bind): the measure
+    # is the path, not a cap.
+    roomy = profile(max_daily_loss="1000000")
+    runtime = world.runtime(stores=stores, profiles=Profiles(held={(cr.ACCOUNT, None): roomy}))
     app = FastAPI()
     records = OmsAudit(world.writer, environment="demo")
     app.include_router(

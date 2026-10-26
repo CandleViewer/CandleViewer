@@ -15,10 +15,17 @@ or 502, once the order is recorded and sent, or raises the refusal the route ren
    account's, a deleted or a missing one alike, is 404 `not_found`; with none named and no
    default, an entry is refused at step 4, D11); a read that fails or does not answer within
    `store_timeout_s` is 503 `store_unavailable`;
-3. the size (`Sizer`), the effect on the exchange-truth position (SR-E29-01, read for a
-   reduce-only order only, within `position_timeout_s`), the reference price (the order's own
-   price, else the market's, 24 Sec.9.3 step 2), the native stop and the intent
-   (`NativeStopGuard`, C-2.6), the take-profit (S2-Q6), then the `SizedOrder`. A stop or a
+3. the size step (24 Sec.8.4 item 2, #913 S4-S): 3a the market read and the price band, 3b the
+   reference price (24 Sec.9.3 step 2), 3c the size: an entry by its effective profile's sizer
+   (`oms.sizing`, which answers each outcome but `ok` as 22 maps it, `figure_unknown` 503
+   `sizing_unavailable`, and refuses whole a request's qty or stop that goes past the
+   profile), a reduce-only order by its request's qty (`RequestQtySizer`); 3d the effect on the
+   exchange-truth position (SR-E29-01, read for a reduce-only order only, within
+   `position_timeout_s`), the native stop and the intent (`NativeStopGuard`, C-2.6, over the
+   sizer's own stop for an entry), the take-profit (S2-Q6), then the `SizedOrder`. Two entries on
+   one account are sized in turn: each holds the account's turn (`ENTRY_TURNS`) through its
+   answer, and once its order is recorded the account's figures are dropped
+   (`OrderFigures.invalidate`), so the next one is sized against the room this one took. A stop or a
    take-profit that is no finite price above zero is refused here, before anything is recorded,
    whatever the command port and the exchange port check later (#2877 ruling 2). A reduce-only
    order carries neither where the route's venue sets none on one
@@ -103,7 +110,7 @@ from candleviewer.accounts.errors import (
     TradeGroupStaleError,
 )
 from candleviewer.accounts.profiles import AccountProfile
-from candleviewer.accounts.profiles import SizingMode as QtyMode
+from candleviewer.accounts.sizer_metrics import SizerMetrics
 from candleviewer.accounts.trade_group_repository import TradeGroupRepository
 from candleviewer.accounts.trade_groups import (
     GroupUpdate,
@@ -174,6 +181,7 @@ from .errors import (
     ProfileNotFound,
     RateBudgetExceeded,
     RiskRefused,
+    SizingUnavailable,
     StopRequestInFlight,
     StopRequestPending,
     StopUnitUnsupported,
@@ -194,14 +202,15 @@ from .ports import (
     KeyedRecord,
     MarketReading,
     OrderEffect,
+    OrderFigures,
     OrderType,
     PositionKey,
     Profiles,
     ReferencePrices,
     RequestObject,
+    RequestQtySizer,
     RequestRecord,
     SizedOrder,
-    SizingMode,
     SizingRequest,
     StopOffset,
     StopRequestGate,
@@ -213,6 +222,7 @@ from .ports import (
     TradingSwitches,
 )
 from .routing import RoutedPositions, TradingRouter, Transport
+from .sizing import SIZING_RETRY_AFTER_S, EntryIntent, EntrySize, EntrySizer
 from .validator import Validator
 
 __all__ = [
@@ -295,15 +305,11 @@ _DIRECTIONS: Final[Mapping[str, Literal[1, 2]]] = MappingProxyType({"rise": 1, "
 _GROUP_TRIGGERS: Final[Mapping[TriggerBy, Literal["last", "mark", "index"]]] = MappingProxyType(
     {"LastPrice": "last", "MarkPrice": "mark", "IndexPrice": "index"}
 )
-#: A group's `requested_qty_mode` (`tg_qty_mode`) for each sizing mode the sizer may serve.
-_QTY_MODES: Final[Mapping[SizingMode, QtyMode]] = MappingProxyType(
-    {
-        "fixed_qty": "fixed_qty",
-        "fixed_notional": "fixed_notional",
-        "pct_equity": "pct_equity",
-        "risk_based": "risk_based",
-    }
-)
+#: The striped turns of the size step (#913 S4-S): two entries on one account whose size steps
+#: overlap are judged one after the other, each holding its account's turn from the size step
+#: through its send's answer and the figures' `invalidate`. A fixed set: two accounts may share a
+#: turn, which only orders them.
+ENTRY_TURNS: Final = 64
 
 
 def _log() -> Any:
@@ -462,10 +468,10 @@ class SubmissionDeps:
     """The pipeline's collaborators beside its four R4 ports (`SubmissionPorts`), each bound by
     slice 3's wiring: the account a request is signed for, the instruments, the market's
     reference prices, the effective profiles, the synchronous switches, the stop-request gate,
-    the audit writer and the trade-group facade the leg's and the group's status go through
-    (S2-Q4, a system surface no route reaches, C-12.4). `tier_requests` is the catalogue's tier
-    bridge (S4-S-d), which the size step calls on a `figure_unknown` caused by missing tiers
-    (S4-S-b2a); nothing calls it yet."""
+    the audit writer, the trade-group facade the leg's and the group's status go through
+    (S2-Q4, a system surface no route reaches, C-12.4) and the account's figures the size step
+    reads (24 Sec.9.3.6). `tier_requests` is the catalogue's tier bridge (S4-S-d), which the size
+    step calls on a `figure_unknown` caused by missing tiers (S4-S-b2a), never awaiting it."""
 
     accounts: TradingAccounts
     instruments: Instruments
@@ -475,6 +481,7 @@ class SubmissionDeps:
     gate: StopRequestGate
     audit: SubmitAudit
     groups: TradeGroupRepository
+    figures: OrderFigures
     tier_requests: TierRequests = NO_TIER_REQUESTS
 
 
@@ -502,6 +509,7 @@ class _Trace:
     environment: Environment | None = None
     order: NewOrder | None = None
     persisted: bool = False
+    size: EntrySize | None = None
 
 
 #: A decided anchor's status as an answer's (`AnchorStatus`).
@@ -536,6 +544,14 @@ def _invalid(errors: Sequence[FieldError]) -> OrderInvalid:
     the count."""
     detail = errors[0].message if len(errors) == 1 else f"{len(errors)} rules failed."
     return OrderInvalid(detail, errors=errors)
+
+
+def _entry_intent(request: OrderRequest) -> EntryIntent:
+    """What the size step reads of an entry's request (`oms.sizing`)."""
+    return EntryIntent(
+        symbol=request.symbol, side=request.side, order_type=request.order_type,
+        price=request.price, sizing=request.sizing, stop_loss=request.stop_loss,
+    )  # fmt: skip
 
 
 def _price_errors(price: Px, instrument: Instrument) -> list[FieldError]:
@@ -670,6 +686,12 @@ class OrderSubmission:
             )
         self._stop_retries = tuple(_delay(wait) for wait in stop_retries)
         self._guard = NativeStopGuard(ports.stop_resolver)
+        self._sizer = EntrySizer(
+            deps.figures, SizerMetrics.register(metrics), tier_requests=deps.tier_requests
+        )
+        self._request_qty = RequestQtySizer()
+        self._turns = tuple(asyncio.Lock() for _ in range(ENTRY_TURNS))
+        self._turn_wait_s = stuck_after_s
         self._positions = RoutedPositions(router, deps.accounts)
         specs = {spec.name: spec for spec in CATALOGUE}
 
@@ -715,9 +737,45 @@ class OrderSubmission:
         venue = self._router.port_for(account.environment).capabilities
         instrument = await self._instrument(request.symbol)
         profile = await self._profile(request)
-        trace.step = "classify"
         bare = request.reduce_only and not venue.supports_reduce_only_tpsl
-        sized = await self._sized(request, account, instrument, profile, bare=bare)
+        turn = None if request.reduce_only else await self._turn(account)
+        try:
+            return await self._placed(trace, account, transport, instrument, profile, bare=bare)
+        finally:
+            try:
+                if trace.persisted:  # sent, or may be: the next entry reads the venue again
+                    self._sizer.invalidate(account)
+            finally:  # the turn is freed even when the drop raises
+                if turn is not None:
+                    turn.release()
+
+    async def _turn(self, account: AccountRef) -> asyncio.Lock:
+        """The account's turn of the size step (`ENTRY_TURNS`), held by the caller until its
+        answer; one not had within the anchor service's `stuck_after_s` is 503
+        `sizing_unavailable`, nothing recorded or sent."""
+        turn = self._turns[hash(account.account_id) % len(self._turns)]
+        try:
+            async with asyncio.timeout(self._turn_wait_s):
+                await turn.acquire()
+        except TimeoutError:
+            _log().warning("oms_submit_turn_unheld", account_id=str(account.account_id))
+            raise SizingUnavailable(retry_after_s=SIZING_RETRY_AFTER_S) from None
+        return turn
+
+    async def _placed(
+        self,
+        trace: _Trace,
+        account: AccountRef,
+        transport: Transport,
+        instrument: Instrument,
+        profile: AccountProfile | None,
+        *,
+        bare: bool,
+    ) -> SubmitOutcome:
+        """Steps 3 to 11, once the order's account, instrument and profile are resolved."""
+        request = trace.request
+        trace.step = "classify"
+        sized = await self._sized(trace, account, instrument, profile, bare=bare)
         trace.step = "validate"
         self._validator.check_order(sized, instrument=instrument, profile=profile)
         trace.step = "risk"
@@ -783,16 +841,20 @@ class OrderSubmission:
 
     async def _sized(
         self,
-        request: OrderRequest,
+        trace: _Trace,
         account: AccountRef,
         instrument: Instrument,
         profile: AccountProfile | None,
         *,
         bare: bool,
     ) -> SizedOrder:
-        """Step 3: the order sized, classified, priced and protected (SR-E29-04, C-2.6). A `bare`
-        order (reduce-only, on a venue that sets no take-profit or stop-loss on one) that names
-        either is refused first, before any read: it could only meet a late rejection."""
+        """Step 3 (24 Sec.8.4 item 2): 3a the market read and the band, 3b the reference, 3c the
+        size, 3d the effect, the native stop and the intent (`NativeStopGuard`, C-2.6), then the
+        take-profit (S2-Q6), then the `SizedOrder`. An entry is sized by its profile, whose stop it
+        carries (`oms.sizing`); a reduce-only order by its request's qty (`RequestQtySizer`). A
+        `bare` order (reduce-only, on a venue that sets no take-profit or stop-loss on one) that
+        names either is refused first, before any read: it could only meet a late rejection."""
+        request = trace.request
         if bare:
             refused = _reduce_only_errors(
                 stop_loss=request.stop_loss, take_profit=request.take_profit
@@ -800,11 +862,28 @@ class OrderSubmission:
             if refused:
                 raise _invalid(refused)
         reading = await self._banded(request)  # the one market read of step 3a, shared below
-        qty = self._size(request, instrument)
-        effect = await self._effect(request, qty)
-        reference = await self._reference(request, instrument, reading)
+        if request.reduce_only:
+            qty = self._size(request, instrument)
+            effect = await self._effect(request, qty)
+            reference = await self._reference(request, instrument, reading)
+            stop_offset = request.stop_loss
+        else:
+            if request.price is not None:
+                errors = _price_errors(request.price, instrument)
+                if errors:
+                    raise OrderInvalid(errors=errors)
+            if reading is None:
+                reading, _ = await self._market_reading(request.symbol)
+            intent = _entry_intent(request)
+            size = await self._sizer.size(
+                intent, account=account, instrument=instrument, profile=profile,
+                mid=reading.mid, last=reading.last,
+            )  # fmt: skip
+            trace.size, qty, reference = size, size.qty, size.reference
+            effect = await self._effect(request, qty)
+            stop_offset = StopOffset(unit="price", value=size.stop)  # the sizer's one stop
         stop, take_profit = self._protection(
-            request, effect, reference, instrument, profile, bare=bare
+            request, effect, reference, instrument, profile, bare=bare, stop=stop_offset
         )
         return SizedOrder(
             account_id=request.account_id,
@@ -869,7 +948,7 @@ class OrderSubmission:
 
     def _size(self, request: OrderRequest, instrument: Instrument) -> Qty:
         try:
-            return self._ports.sizer.size(request.sizing, instrument)
+            return self._request_qty.size(request.sizing, instrument)
         except ArithmeticError:  # a quantity no step can round (`decimal.DivisionImpossible`)
             raise OrderInvalid("The quantity cannot be sized.") from None
 
@@ -935,16 +1014,17 @@ class OrderSubmission:
         profile: AccountProfile | None,
         *,
         bare: bool,
+        stop: StopOffset | None,
     ) -> tuple[Px | None, Px | None]:
         """The stop (`NativeStopGuard`: an entry's is mandatory, C-2.6), the intent, then the
         take-profit (S2-Q6): `errors[]` lists every rule that fails, the stop's first. A `bare`
         order names neither side (`_sized`), so a side resolved here is the profile's: one not
         shown to reduce is an entry, whose stop it cannot carry, so it is refused all the same."""
         errors: list[FieldError] = []
-        stop: Px | None = None
+        price: Px | None = None
         try:
-            stop = self._guard.admit(
-                stop=request.stop_loss,
+            price = self._guard.admit(
+                stop=stop,
                 side=request.side,
                 reference_price=reference,
                 effect=effect,
@@ -972,10 +1052,10 @@ class OrderSubmission:
                 )
             )
         if bare:
-            errors.extend(_reduce_only_errors(stop_loss=stop, take_profit=take_profit))
+            errors.extend(_reduce_only_errors(stop_loss=price, take_profit=take_profit))
         if errors:
             raise _invalid(errors)
-        return stop, take_profit
+        return price, take_profit
 
     # --- Steps 8 and 9: the id and the first persist ------------------------------------------
 
@@ -1053,11 +1133,10 @@ class OrderSubmission:
             return FirstPersist(anchor=anchor, write_ahead=hook)
         if profile is None or order.trade_group_leg_id is None:  # the check refused it already
             raise ValueError("an entry is recorded with its profile and its leg")
-        request = trace.request
+        request, size = trace.request, trace.size
         trigger = request.trigger
-        mode = _QTY_MODES.get(request.sizing.mode)
-        if mode is None:  # the sizer serves none of the others
-            raise ValueError("the sizing mode has no requested_qty_mode")
+        if size is None:  # the size step sized every entry
+            raise ValueError("an entry is recorded with its size")
         try:
             draft = TradeGroupDraft(
                 group_id=group_id,
@@ -1076,8 +1155,8 @@ class OrderSubmission:
                 rule_id=None,
                 rule_run_id=None,
                 definition_id=None,
-                requested_qty_mode=mode,
-                requested_qty_value=request.sizing.qty,
+                requested_qty_mode=size.mode,
+                requested_qty_value=size.value,
                 entry_type="conditional" if trigger is not None else request.order_type,
                 entry_price=request.price,
                 trigger_price=None if trigger is None else trigger.price,
@@ -1095,7 +1174,7 @@ class OrderSubmission:
                 resolved_leverage=profile.leverage,
                 resolved_sl_price=sized.stop_loss,
                 resolved_tp_price=sized.take_profit,
-                risk_usd=None,
+                risk_usd=size.risk_usd,
                 rejection_code=None,
                 rejection_message=None,
             )
@@ -1320,6 +1399,8 @@ class OrderSubmission:
             grouped: dict[str, str | None] = {"order_id": str(row.id), "legs": legs}
             grouped |= {"order_link_id": row.order_link_id}
             grouped |= {"symbol": row.symbol, "side": row.side, "environment": trace.environment}
+            if trace.size is not None:  # SR-E28-13: how the leg was sized, its figures included
+                grouped["sizing_explanation"] = trace.size.leg.render()
             records.append(
                 self._request_record(
                     trace,

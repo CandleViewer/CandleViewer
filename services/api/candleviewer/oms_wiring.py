@@ -102,6 +102,7 @@ from candleviewer.oms.order_machine import (
 )
 from candleviewer.oms.order_steps import OrderStepWriter
 from candleviewer.oms.ports import (
+    ATR_FALLBACK,
     NO_TIER_REQUESTS,
     ArmRecords,
     ClockHealth,
@@ -729,8 +730,9 @@ class OmsAudit:
     `emit_keyed`, under the id `record_id` names ahead (`keyed_record_id`), a `RequestRecord` and
     an `OrderAuditRecord` through `emit`. A record names its actor and role (`user:<role>`, with
     its session and address), or `system:oms` where none is given, its object, its account and
-    detail as `after_state` (ids, state names and codes, C-12.6), its correlation id and the
-    process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
+    detail as `after_state` (ids, state names, codes and, on `trade_group.submit`, the sizing
+    explanation with its figures (SR-E28-13), never a credential, C-12.6), its correlation id and
+    the process's environment. `write` returns once the record is durable, else raises (C-2.9)."""
 
     def __init__(self, writer: AuditWriterPort, *, environment: Environment) -> None:
         self._writer, self._environment = writer, environment
@@ -2004,6 +2006,7 @@ class OmsRuntime:
         bounds = OmsBounds.from_settings(settings)
         ports = SubmissionPorts.interim(now=self._now)
         announce_interim_ports(ports, metrics=metrics)
+        announce_interim_port("atr", ATR_FALLBACK, metrics=metrics)  # ruling Q6, until E13's port
         # one bridge for both: the gate refuses at once a credential the rejections report
         standings = ServedStandings(self._standings, serving)
         switches = TradingSwitchesBinding(
@@ -2053,7 +2056,7 @@ class OmsRuntime:
             audit = OmsAudit(writer, environment=env)
             notices = OrderNoticesRouter(self._pager)
             accounts = TradingAccountsBinding(stores.accounts, environment=env)
-            # S4-S-b3: built and announced; S4-S-b2 hands it to the size step (24 Sec.9.3.6)
+            # the size step's figures (24 Sec.9.3.6): on live, none, so every entry is refused
             figures = NoDayFigures() if env not in _NOT_LIVE else DayRiskFigures(
                 env, port_for=router.port_for, tiers=_tiers(ingestion.instruments),
                 now=self._now, monotonic=self._monotonic,
@@ -2077,7 +2080,7 @@ class OmsRuntime:
                 router=router, accounts=command_accounts, orders=orders, stops=stops,
                 handovers=NoHandoverStore(), credentials=rejections, clock_halt=halt,
                 switches=switches, audit=audit, submit_audit=audit, gate=gate, notices=notices,
-                now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s,
+                now_us=self._now_us, submit_timeout_s=bounds.submit_timeout_s, figures=figures,
             )  # fmt: skip
             steps = OrderStepWriter(
                 orders,
@@ -2141,6 +2144,7 @@ class OmsRuntime:
                 gate=gate,
                 audit=audit,
                 groups=TradeGroupRepository(stores.groups),
+                figures=figures,
                 tier_requests=tiers,
             )
             submission = OrderSubmission(

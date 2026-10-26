@@ -88,7 +88,7 @@ from tests.unit.oms.order_rig import ACCOUNT, GATES, Pager, order_of
 from tests.unit.oms.submit_rig import REGISTRY, Profiles, ReadOnly
 
 T0 = datetime(2026, 10, 23, 12, 0, tzinfo=UTC)
-INTERIMS = ("sizer", "stop_resolver", "risk_gate", "arm_records", "kill_switch")
+INTERIMS = ("stop_resolver", "risk_gate", "arm_records", "atr", "kill_switch")
 
 
 class Port(FakeTradingPort):
@@ -398,6 +398,10 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             cancel_all = parts.cancel_all  # S4-E: over that exit service and the order store
             assert cancel_all._exits is parts.exits
             assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
+            # S4-S-b2: the size step and an accepted amend drop the one figures port's cache
+            figures = parts.submission._deps.figures
+            assert isinstance(figures, DayRiskFigures)
+            assert parts.submission._commands._figures is figures
             assert world.log == ["audit.start", "sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
