@@ -110,6 +110,10 @@ def render_py(entries: list[dict[str, Any]]) -> str:
             surf = f'("{e["surface"][0]}",)'
         scope = json.dumps(e["scope"])
         ra = json.dumps(e["rest_analogue"])
+        # json.dumps is not a Python-literal emitter for non-BMP text (surrogate pairs), so titles
+        # must be ASCII, where its output is a valid Python string literal.
+        if not str(e["title"]).isascii():
+            raise ValueError(f"error title for {e['code']!r} must be ASCII")
         cc = "None" if e["close_code"] is None else str(e["close_code"])
         rt = "True" if e["retryable"] else "False"
         out.append(
