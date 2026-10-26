@@ -10,12 +10,20 @@ symbol, so it is dropped only when **every** symbol in it was archived and
 verified (row count AND content checksum on read-back, plus manifest SHA-256).
 Any failure -> the partition stays hot, `archive.verification_failed` is
 raised by the archiver, the symbol is retried with bounded exponential backoff
-and its watermark is not advanced. Days are processed newest-first so an
-interrupted run leaves the oldest data hot. The drop is audited (write-ahead)
-before it is issued. A drop QuestDB cannot be confirmed to have applied
-(`StoragePartitionDropNotApplied`) is never reported dropped: the outcome is audited
-(`rolloff.drop_unconfirmed`), the day is retained (it caps the watermark) and the stream
-stops for this pass; the next nightly run retries it.
+and its watermark is not advanced. The drop is audited (write-ahead) before it is issued.
+
+Watermark invariant (#2347): the watermark never trails a drop. Days roll oldest-first, and
+each day's symbols get their watermark advanced past the day BEFORE the final hot/cold re-check
+and its `drop_day`, so `CoverageService` never attributes a dropped day to QuestDB, and a row
+landing during the advance fails the re-check and keeps the day hot (re-archived next run).
+A day that fails stops the stream for this pass (`rolloff_stream_stopped` names it), so the
+watermark stays a contiguous prefix and no newer day is dropped above a day still hot; a day
+kept hot only by another symbol's window blocks the newer days of its own symbols. A crash or
+a DROP QuestDB cannot confirm (`StoragePartitionDropNotApplied`) after the advance leaves the
+day in BOTH tiers, never in neither: the cold copy verified first, so coverage reads it from
+Parquet, and the next run re-archives (idempotent), re-advances (a no-op `max`) and re-drops
+it. An unconfirmed drop is never reported dropped: the outcome is audited
+(`rolloff.drop_unconfirmed`), the day is retained and the stream stops for this pass.
 """
 
 from __future__ import annotations
@@ -254,7 +262,8 @@ class RollOffJob:
         now_us = self._now_us()
         # Coarse prefilter with the shortest plausible window (1 day); every
         # day is then re-checked against each present symbol's own window.
-        return sorted(await self._hot.closed_days(stream, now_us - US_PER_DAY), reverse=True)
+        # Oldest first: the watermark advances day by day as a contiguous prefix (#2347).
+        return sorted(await self._hot.closed_days(stream, now_us - US_PER_DAY))
 
     async def _window_ok(self, symbols: Sequence[str], stream: StreamKind, day_end: int) -> bool:
         now_us = self._now_us()
@@ -310,8 +319,8 @@ class RollOffJob:
             logger().warning("rolloff_stream_unlisted", stream=stream.value, partitions=aged)
 
     async def _roll_stream(self, stream: StreamKind, report: RollOffReport) -> None:
-        dropped: dict[str, list[int]] = {}
-        retained: dict[str, list[int]] = {}
+        #: Symbols holding a day this pass keeps hot: a newer day of theirs may not drop (#2347).
+        waiting: set[str] = set()
         days = await self._eligible_days(stream)
         if not days:
             await self._unlisted(stream)
@@ -321,15 +330,17 @@ class RollOffJob:
             symbols = sorted(before)
             if not symbols:  # nothing verified -> never drop (review #2213 E)
                 continue
-            if not await self._window_ok(symbols, stream, day.end_us):
+            if not waiting.isdisjoint(symbols) or not await self._window_ok(
+                symbols, stream, day.end_us
+            ):
+                waiting.update(symbols)  # stays hot: its symbols' newer days wait behind it
                 continue
             outcomes = [await self._archive_with_retry(s, stream, day) for s in symbols]
             failed = [o for o in outcomes if not o.verified]
             if failed:
-                for o in failed:
-                    retained.setdefault(o.symbol, []).append(day_start)
                 report.retained.append((stream, day_start, failed[0].reason))
-                continue
+                self._stopped(stream, day_start, failed[0].reason or "unknown")
+                break  # a contiguous prefix: no newer day drops above a day still hot
             rows = sum(o.rows for o in outcomes)
             detail: dict[str, str | int] = {
                 "tier": "hot",
@@ -339,9 +350,12 @@ class RollOffJob:
                 "range_end_us": day.end_us,
                 "rows": rows,
             }
-            # Write-ahead audit (C-2.9) BEFORE the final re-check, so only the drop's
-            # partition listing and its DROP sit between the last snapshot and the drop.
+            # Write-ahead audit (C-2.9), then the watermark (#2347), both BEFORE the final
+            # re-check, so only the drop's partition listing and its DROP follow the last
+            # snapshot. The day is labelled cold before it can leave QuestDB, so the watermark
+            # never trails the drop; dying after this leaves the day in both tiers.
             await self._audit.write("retention.purge", detail)
+            await self._advance(stream, symbols, day.end_us)
             after = await self._hot.snapshot(stream, day)
             exported = {o.symbol: o.rows for o in outcomes}
             counts = {sym: v[0] for sym, v in after.items()}
@@ -349,33 +363,40 @@ class RollOffJob:
                 reason = "count_changed" if counts != exported else "values_changed"
                 # The purge record is append-only and stands; record the abort.
                 await self._audit.write("rolloff.drop_aborted", detail | {"reason": reason})
-                await self._late_rows(stream, day, symbols, report, retained)
-                continue
+                # The watermark already covers the day, whose cold copy lacks the late rows:
+                # safe, they stay hot, and the next run re-archives the day (`advance` is a max).
+                await self._late_rows(stream, day, report)
+                self._stopped(stream, day_start, "late_rows")
+                break
             try:
                 await self._hot.drop_day(stream, day_start)
             except StoragePartitionDropNotApplied as exc:
-                await self._drop_unconfirmed(stream, day, symbols, detail, exc, report, retained)
-                break  # the older days wait for the next pass; `_advance` still runs below
+                await self._drop_unconfirmed(stream, day, detail, exc, report)
+                self._stopped(stream, day_start, f"drop_not_applied_{exc.reason}")
+                break  # the newer days wait for the next pass
             for o in outcomes:
                 recorder_rolloff_bytes_total.labels(stream=stream.value).inc(o.bytes)
-                dropped.setdefault(o.symbol, []).append(day_start)
             report.dropped.append((stream, day_start))
             await asyncio.sleep(0)  # yield between partitions (live ingestion first)
-        await self._advance(stream, dropped, retained)
+
+    @staticmethod
+    def _stopped(stream: StreamKind, day_start_us: int, reason: str) -> None:
+        """Name the day that ends the pass: every newer day of the stream stays hot behind it."""
+        logger().warning(
+            "rolloff_stream_stopped", stream=stream.value, day_start_us=day_start_us, reason=reason
+        )
 
     async def _drop_unconfirmed(
         self,
         stream: StreamKind,
         day: TimeRange,
-        symbols: Sequence[str],
         detail: dict[str, str | int],
         exc: StoragePartitionDropNotApplied,
         report: RollOffReport,
-        retained: dict[str, list[int]],
     ) -> None:
         """The drop could not be confirmed applied, or, for `missing` and a listing that cannot be
-        read, was never issued: the day may still be hot, so it is never reported dropped and it
-        caps the watermark (`retained`)."""
+        read, was never issued: the day may still be hot, so it is never reported dropped. Its
+        watermark already moved over it, which is safe: its cold copy verified first."""
         # The purge record is append-only and stands; record the outcome against the same day.
         await self._audit.write("rolloff.drop_unconfirmed", detail | {"reason": exc.reason})
         reason = f"drop_not_applied_{exc.reason}"
@@ -389,39 +410,20 @@ class RollOffJob:
             "reason": exc.reason,
         }
         await self._events.emit(severity, "rolloff.drop_unconfirmed", event)
-        for symbol in symbols:
-            retained.setdefault(symbol, []).append(day.start_us)
         report.retained.append((stream, day.start_us, reason))
 
-    async def _late_rows(
-        self,
-        stream: StreamKind,
-        day: TimeRange,
-        symbols: Sequence[str],
-        report: RollOffReport,
-        retained: dict[str, list[int]],
-    ) -> None:
+    async def _late_rows(self, stream: StreamKind, day: TimeRange, report: RollOffReport) -> None:
         recorder_rolloff_failures_total.labels(reason="late_rows").inc()
         detail: dict[str, str | int] = {"stream": stream.value, "range_start_us": day.start_us}
         detail["reason"] = "late_rows"
         await self._events.emit("CRITICAL", "archive.verification_failed", detail)
-        for symbol in symbols:
-            retained.setdefault(symbol, []).append(day.start_us)
-        retained.setdefault("", []).append(day.start_us)
         report.retained.append((stream, day.start_us, "archive_verification_failed"))
 
-    async def _advance(
-        self, stream: StreamKind, dropped: dict[str, list[int]], retained: dict[str, list[int]]
-    ) -> None:
-        """Advance each symbol's watermark only over a contiguous dropped prefix:
-        never past the start of any day of this stream still hot after a failure."""
+    async def _advance(self, stream: StreamKind, symbols: Sequence[str], through_us: int) -> None:
+        """Move each symbol's watermark to `through_us` (a monotone max in the store)."""
         now_us = self._now_us()
-        ceiling = min((d for days in retained.values() for d in days), default=None)
-        for symbol, days in dropped.items():
-            ends = [d + US_PER_DAY for d in days if ceiling is None or d + US_PER_DAY <= ceiling]
-            if not ends:
-                continue
-            mark = await self._marks.advance(symbol, stream, max(ends), now_us=now_us)
+        for symbol in symbols:
+            mark = await self._marks.advance(symbol, stream, through_us, now_us=now_us)
             lag = (now_us - mark.archived_through_us) / US_PER_DAY
             recorder_watermark_lag_days.labels(stream=stream.value).set(lag)
 

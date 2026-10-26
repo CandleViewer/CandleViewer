@@ -9,7 +9,10 @@ Nightly, per stream, closed QuestDB days older than every present symbol's hot w
 (`retention_policies.retain_days`; pinned = never) are exported via the existing cold exporter, then
 re-read: row count **and** a canonical content SHA-256 must equal the hot source, and the manifest
 SHA-256 must re-verify. Only when **every** symbol in that day verifies is the day audited
-(`retention.purge`) and dropped. Days are processed newest-first. Watermarks live at
+(`retention.purge`) and dropped. Days are processed oldest-first. Each day's watermark advances
+before the final hot re-check and its drop, so only the drop's own listing and DROP follow the last
+snapshot. A failing day stops the stream, and `rolloff_stream_stopped` names it (#2347). Watermarks
+live at
 `<CV_PARQUET_ROOT>/_manifests/_watermarks/<stream>/symbol=<SYM>.json` and only move forward.
 
 A day is its `yyyy-MM-dd` partition, or, for a `PARTITION BY HOUR` table (`orderbook_deltas`), its
@@ -27,14 +30,21 @@ fails, the run goes on with the next stream and counts
    (chaos 10). Free space / restore the datastore; the next nightly run retries. Nothing was dropped.
 3. `archive_verification_failed`: a quarantined file exists (below). The hot partition is intact.
 4. A day that keeps failing pins the watermark below it for the whole stream by design; it never
-   skips ahead over data that is still hot.
-5. `rolloff_skipped_locked`: another instance holds the advisory lock; check for a hung run.
-6. `system_event code=rolloff.drop_unconfirmed` (WARNING for `timeout` and `missing`, CRITICAL
+   skips ahead over data that is still hot. `rolloff_stream_stopped` (stream, `day_start_us`,
+   `reason`) names the day; every newer day of the stream stays hot behind it. A late row that fails
+   the final re-check (`rolloff.drop_aborted`) leaves that day under the watermark with its rows
+   still hot: nothing is lost, and the next run re-archives the day and drops it.
+5. A pinned or longer-window symbol keeps its days hot, and with them the other symbols of those
+   days. Those symbols' newer days stay hot behind them by design, and their watermarks stop
+   there. This is bounded by the difference between the windows: once the longer window passes,
+   the day rolls off. A pinned symbol keeps them hot for as long as it appears in their days.
+6. `rolloff_skipped_locked`: another instance holds the advisory lock; check for a hung run.
+7. `system_event code=rolloff.drop_unconfirmed` (WARNING for `timeout` and `missing`, CRITICAL
    otherwise) with `recorder_rolloff_failures_total{reason="drop_not_applied_<reason>"}`: the DROP
    was issued but QuestDB never confirmed it within `apply_timeout_s`, or, when the day's partition
    listing came back without names or without a live partition, it was never issued. Nothing was
-   lost — the cold copy verified before the DROP, the day stays `retained` and the watermark did not
-   move. `reason=suspended`:
+   lost — the cold copy verified before the DROP and the watermark already covers the day, so it is
+   in both tiers (read from Parquet) until the next run re-drops it. `reason=suspended`:
    the WAL is suspended; inspect `wal_tables()` and run `ALTER TABLE <table> RESUME WAL;` after
    fixing the cause — the next nightly run re-issues the drop. `reason=timeout`: QuestDB is slow or
    unreachable; the next run retries. `reason=unexpected_shape`: `table_partitions()` returned rows
@@ -42,7 +52,7 @@ fails, the run goes on with the next stream and counts
    (WARNING): the day had no live partition left when the drop came, so no DROP was issued; it
    left QuestDB another way after this run verified its archive (a concurrent drop or retention).
    Check `table_partitions()` and the retention log.
-7. `rolloff_run_failed` with `error=StorageSchemaDrift` (`STORAGE_SCHEMA_DRIFT`,
+8. `rolloff_run_failed` with `error=StorageSchemaDrift` (`STORAGE_SCHEMA_DRIFT`,
    `recorder_rolloff_failures_total{reason="run_failed"}`): a hot table's columns differ from its
    dataset's registered set (`<CV_PARQUET_ROOT>/_manifests/schema-registry.json`) in a way the
    exporter does not accept. The run stops at the first export that drifts: that day is not
