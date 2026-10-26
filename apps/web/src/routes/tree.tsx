@@ -2,9 +2,9 @@
  * Route tree builder (E10-T01). Declares every route ID R-001..R-903 from
  * `docs/plan/12-sitemap.md` §2 plus the documented redirects.
  *
- * Guard composition order is fixed: `requireAuth` -> `requireRole` ->
- * `requireStepUp`, implemented by `guardRoute` reading `RouteAccess` from
- * the manifest. Real screens (owned by later epics) render `StubRoute`;
+ * Guard composition order is fixed: `requireAuth` -> `requireRole`,
+ * implemented by `guardRoute` reading `RouteAccess` from the manifest. Step-up
+ * is answered per action when the server challenges (#2725), never at route entry. Real screens (owned by later epics) render `StubRoute`;
  * routes this ticket owns (login/logout/403/404/settings-hub redirect)
  * render minimal placeholders.
  */
