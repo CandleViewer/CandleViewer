@@ -8684,10 +8684,9 @@ SEC_PIN_TXT = r"""
   The subtle fills are never the carrier: "BLOCKED — fund right found", the octagon, the bold and
   the border are.
 @ prose
-  - **The not-checked fill in light:** against the pass fill under tritanopia 7.88 <!--
-  audit:cvd.fill-unknown-pass.light.tritanopia=7.88 -->, against the critical fill under
-  protanopia 3.15 <!-- audit:cvd.fill-unknown-critical.light.protanopia=3.15 -->; the dash and
-  "Withdrawal: not checked" carry it, and it never reads as a pass (AD-2).
+  - **The not-checked fill in light:** against the critical fill under protanopia 3.15 <!--
+  audit:cvd.fill-unknown-critical.light.protanopia=3.15 -->; the dash and "Withdrawal: not
+  checked" carry it, and it never reads as a pass (AD-2).
 @ prose
   601 luma per token** (`int(0.299 r + 0.587 g + 0.114 b)`; reported):
 @ head 1
