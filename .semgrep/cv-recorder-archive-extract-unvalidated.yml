@@ -1,0 +1,74 @@
+rules:
+  - id: cv-recorder-archive-extract-unvalidated
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Archive extraction that trusts member names (tarfile/zipfile extract, extractall,
+      shutil.unpack_archive). A member named `../../x`, an absolute path or a symlink writes
+      outside the data root. Stream members with `.open()` / `.read()` and build every target
+      path from validated components (symbol, ISO date) through DatasetRegistry; a tar extract
+      needs `filter="data"` at the least.
+    metadata:
+      rule-id: cv-recorder-archive-extract-unvalidated
+      ticket: E16-X02
+      sr: SR-097
+    patterns:
+      - pattern-either:
+          - pattern: tarfile.open(...).extractall(...)
+          - pattern: tarfile.open(...).extract(...)
+          - pattern: tarfile.TarFile(...).extractall(...)
+          - pattern: tarfile.TarFile(...).extract(...)
+          - pattern: tarfile.TarFile.open(...).extractall(...)
+          - pattern: tarfile.TarFile.open(...).extract(...)
+          - pattern: zipfile.ZipFile(...).extractall(...)
+          - pattern: zipfile.ZipFile(...).extract(...)
+          - pattern: shutil.unpack_archive(...)
+          - patterns:
+              - pattern-inside: |
+                  with tarfile.open(...) as $T:
+                    ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  with zipfile.ZipFile(...) as $Z:
+                    ...
+              - pattern: $Z.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  with tarfile.TarFile.open(...) as $T:
+                    ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  $T = tarfile.TarFile.open(...)
+                  ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          # A handle passed in with its type annotated.
+          - patterns:
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+              - metavariable-type:
+                  metavariable: $T
+                  types: [tarfile.TarFile, zipfile.ZipFile]
+          - patterns:
+              - pattern-inside: |
+                  $T = tarfile.open(...)
+                  ...
+              - pattern: $T.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+          - patterns:
+              - pattern-inside: |
+                  $Z = zipfile.ZipFile(...)
+                  ...
+              - pattern: $Z.$M(...)
+              - metavariable-regex: { metavariable: $M, regex: "^extract(all)?$" }
+      - pattern-not: $X.extractall(..., filter="data", ...)
+      - pattern-not: $X.extract(..., filter="data", ...)
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+        - "**/cv-recorder-archive-extract-unvalidated*"

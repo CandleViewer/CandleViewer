@@ -143,6 +143,7 @@ def write_parquet_batches(
     rows_per_group: int = DEFAULT_ROWS_PER_GROUP,
 ) -> int:
     """Synchronous convenience wrapper over `AtomicParquetWriter`."""
+    # nosemgrep: cv-recorder-fs-write-unvalidated-path reason=atomic-write-primitive owner=@CandleViewer/security review=2027-03-25  # noqa: E501 - semgrep marker format is fixed
     writer = AtomicParquetWriter(dest, schema, profile=profile, rows_per_group=rows_per_group)
     try:
         for batch in batches:

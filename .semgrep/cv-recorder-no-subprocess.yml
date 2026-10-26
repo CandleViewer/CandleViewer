@@ -1,0 +1,44 @@
+rules:
+  - id: cv-recorder-no-subprocess
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Process spawn or shell-out in the recorder, cold-storage or recorder-composition code. The
+      recorder has no legitimate child process and disk measurement uses no shell-out (SR-096); a
+      spawned `rm`, `du` or `df` with a built argument is a command-injection and path-traversal
+      surface. Use the standard library (shutil.disk_usage, pathlib) instead.
+    metadata:
+      rule-id: cv-recorder-no-subprocess
+      ticket: E16-X02
+      sr: SR-096
+    pattern-either:
+      - pattern: import subprocess
+      - pattern: from subprocess import $X
+      - pattern: subprocess.$F(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: os.posix_spawn(...)
+      - pattern: os.posix_spawnp(...)
+      - patterns:
+          - pattern: os.$F(...)
+          - metavariable-regex: { metavariable: $F, regex: "^(exec|spawn)[a-z]*$" }
+      - pattern: asyncio.create_subprocess_exec(...)
+      - pattern: asyncio.create_subprocess_shell(...)
+      - pattern: asyncio.subprocess.create_subprocess_exec(...)
+      - pattern: asyncio.subprocess.create_subprocess_shell(...)
+      - pattern: pty.spawn(...)
+    paths:
+      include:
+        - "services/api/candleviewer/recorder/**"
+        - "services/api/candleviewer/storage/cold/**"
+        - "services/api/candleviewer/storage/retention/**"
+        - "services/api/candleviewer/storage/questdb/**"
+        - "services/api/candleviewer/budget_wiring.py"
+        - "services/api/candleviewer/import_wiring.py"
+        - "services/api/candleviewer/retention_wiring.py"
+        - "services/api/candleviewer/rolloff_wiring.py"
+        - "services/api/candleviewer/recorder_wiring.py"
+        - "services/api/candleviewer/exchange/bybit/archive.py"
+        - "services/api/candleviewer/api/recorder_*.py"
+        - "services/api/candleviewer/api/recording_*.py"
+        - "**/cv-recorder-no-subprocess*"

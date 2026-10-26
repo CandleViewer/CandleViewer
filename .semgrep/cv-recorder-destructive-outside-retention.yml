@@ -1,0 +1,40 @@
+rules:
+  - id: cv-recorder-destructive-outside-retention
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Directory- or partition-level destruction (`DROP PARTITION`, `DETACH PARTITION`,
+      `DROP TABLE`, `TRUNCATE TABLE`, in any letter case;
+      shutil.rmtree, os.rmdir/removedirs) outside the audited retention sites. Recorded data is
+      deleted only in storage/cold/retention_ops.py (the reaper's cold delete) and
+      storage/cold/rolloff_ops.py (the hot drop after a verified export), each behind
+      RetentionManager's write-ahead `data.deleted` record (C-2.9, SR-099).
+    metadata:
+      rule-id: cv-recorder-destructive-outside-retention
+      ticket: E16-X02
+      sr: SR-099
+    pattern-either:
+      - pattern: shutil.rmtree(...)
+      - pattern: os.rmdir(...)
+      - pattern: os.removedirs(...)
+      - pattern: $P.rmdir()
+      # SQL text in code, not in a comment or a docstring line: the line is not a comment and
+      # holds no triple quote; matched in any letter case. A bare `TRUNCATE` (no `TABLE`) is not
+      # matched: the word is common in prose and QuestDB spells the statement `TRUNCATE TABLE`.
+      # Accepted blind spots: a multi-line docstring body naming the statement, SQL written
+      # inside a one-line triple-quoted string, and a statement split across lines or string
+      # fragments; `# nosemgrep: <rule-id>` with a reason is the escape.
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\b(DROP|DETACH)\s+PARTITION\b'
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bDROP\s+TABLE\b'
+      - pattern-regex: '(?mi)^(?!\s*#)(?!.*(\"\"\"|\x27\x27\x27))[^#\r\n]*\bTRUNCATE\s+TABLE\b'
+    paths:
+      include:
+        - "services/api/candleviewer/**"
+        - "**/cv-recorder-destructive-outside-retention*"
+      exclude:
+        - "services/api/candleviewer/storage/cold/retention_ops.py"
+        - "services/api/candleviewer/storage/cold/rolloff_ops.py"
+        - "services/api/candleviewer/observability/support_bundle.py" # its own temp work dir
+        - "services/api/candleviewer/migrations/**" # Alembic downgrades and append-only triggers
+        - "services/api/candleviewer/storage/questdb/runner.py" # schema bootstrap docstring
+        - "services/api/candleviewer/storage/guarded_privileges.py" # privilege names, not SQL
