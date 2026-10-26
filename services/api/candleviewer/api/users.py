@@ -1154,12 +1154,10 @@ def make_user_admin_router(
         session: uuid.UUID,
     ) -> JSONResponse:
         """SR-029: the whole cascade, exactly as `DELETE /users/{userId}` runs it (AC7 included),
-        and nothing else: another field it would change is refused before anything is. UL3-T1:
+        and nothing else: the route refused another field it would change before the step-up
+        (#2304). UL3-T1:
         an `If-Match` is judged again in the cascade's own transaction, on the user read under
         its lock, so a change committed since `shown` was read is 412 with nothing done."""
-        if changed := _changes(shown, body):
-            detail = f"a disable changes nothing else; send {', '.join(changed)} on its own"
-            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
         if store is None or user_disable is None:
             return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no disable service wired")
 
@@ -1225,6 +1223,9 @@ def make_user_admin_router(
             return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
         if (refusal := _status_refusal(shown["status"], body.status)) is not None:
             return _registered(ErrorCode.VALIDATION_FAILED, 400, refusal)
+        if body.status == "disabled" and (changed := _changes(shown, body)):  # SR-029
+            detail = f"a disable changes nothing else; send {', '.join(changed)} on its own"
+            return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
         # #2304: the step-up after the lookup and the preconditions, restating the patch.
         restated = update_user_text(user_id, body.model_dump(include=body.model_fields_set))
         if isinstance(session := await _elevated(auth, request, restated), JSONResponse):

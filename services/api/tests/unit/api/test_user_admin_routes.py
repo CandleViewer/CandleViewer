@@ -544,6 +544,21 @@ def test_patch_without_step_up_is_challenged_and_changes_nothing(
     assert env.log == ["read", "step_up"] and env.step_up.pending == [(str(_SESSION), "users")]
 
 
+def test_disable_that_changes_another_field_is_the_400_never_a_challenge(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """#2304: a disable that would change another field is refused before the step-up, so an
+    Owner holding no elevation hears of it, is not challenged and nothing is recorded by B16."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)), elevated=False)
+    r = env.patch(M, {"status": "disabled", "display_name": "renamed"})
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert (r.status_code, r.json()["code"]) == (400, "validation_failed")
+    assert r.json()["detail"].startswith("a disable changes nothing else")
+    assert "challenge_id" not in r.json()
+    assert "step_up" not in env.log and env.step_up.pending == []
+    assert not [c for c in b16_audit.calls if c["action"] == "auth.step_up_required"]
+
+
 @pytest.mark.parametrize(
     ("target", "body", "headers", "status"),
     [

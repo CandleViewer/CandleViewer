@@ -256,12 +256,12 @@ def test_challenge_restates_the_validated_disable(
 
 
 @pytest.mark.parametrize(
-    "query",
-    ["?bogus=1", _BAD_ACK],
+    ("query", "status"),
+    [("?bogus=1", 422), (_BAD_ACK, 400)],
     ids=["undeclared", "bad-value"],
 )
 def test_guarded_refusals_before_the_step_up_issue_no_challenge(
-    query: str, spec: dict[str, Any]
+    query: str, status: int, spec: dict[str, Any]
 ) -> None:
     """#2304: behind the deployed path guard an un-elevated Manager is refused 403 `forbidden`,
     and an un-elevated Owner's invalid query is refused, neither challenged."""
@@ -271,7 +271,8 @@ def test_guarded_refusals_before_the_step_up_issue_no_challenge(
     assert manager.delete(_PATH.format(TARGET)).json()["code"] == "forbidden"
     owner = _client(w, _principal("owner", spec), auth=auth, guarded=True)
     r = owner.delete(_PATH.format(TARGET) + query)
-    assert r.status_code in (400, 422) and "challenge_id" not in r.json()
+    assert r.status_code == status and r.json()["code"] == "validation_failed"
+    assert "challenge_id" not in r.json()
     assert auth.pending == [] and "step_up" not in w.log and _untouched(w)
 
 

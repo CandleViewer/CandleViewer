@@ -14,7 +14,14 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.api.step_up_challenge import account_reference, quote_label, typed_target
+from candleviewer.api._generated.openapi_models import UpdateUserRequest
+from candleviewer.api.step_up_challenge import (
+    UPDATE_USER_RENDERED,
+    account_reference,
+    quote_label,
+    typed_target,
+    update_user_text,
+)
 from tests.contract.test_step_up_challenge_contract import (
     _SPEC,
     _account_reference,
@@ -81,3 +88,29 @@ def test_typed_target_is_a_unique_printable_label_else_the_identifier(
     label: str, others: list[str], target: str
 ) -> None:
     assert typed_target(label, "acc-7", others) == target
+
+
+_SENTINEL = "SENTINEL-free-text-7731"
+
+
+def test_update_user_text_renders_only_the_allow_listed_values() -> None:
+    """#2304: every `UpdateUserRequest` field outside the allow-list is named, never valued,
+    so free text (and any field the contract adds later) cannot reach the restatement."""
+    assert UPDATE_USER_RENDERED <= set(UpdateUserRequest.model_fields)
+    for field in set(UpdateUserRequest.model_fields) - UPDATE_USER_RENDERED:
+        text = update_user_text("u1", {field: _SENTINEL}).action_summary
+        assert _SENTINEL not in text and field.replace("_", " ") in text, field
+    unknown = update_user_text("u1", {"some_new_field": _SENTINEL}).action_summary
+    assert unknown == "Update user u1: some new field"
+
+
+def test_update_user_text_renders_allow_listed_values_bare() -> None:
+    change: dict[str, object] = {
+        "roles": ["viewer", "manager"],
+        "status": "disabled",
+        "mfa_required": True,
+        "display_name": _SENTINEL,
+    }
+    assert update_user_text("u1", change).action_summary == (
+        "Update user u1: display name; mfa_required true; roles manager, viewer; status disabled"
+    )

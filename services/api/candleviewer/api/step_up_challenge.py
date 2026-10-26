@@ -100,14 +100,20 @@ def disable_user_text(user_id: object, *, purge: bool) -> ChallengeText:
     return ChallengeText(f"Disable user {user_id}{tail}")
 
 
+#: `updateUser` fields whose value `update_user_text` restates: validated enums and a boolean.
+#: Every other field (free text such as `display_name`, or one added later) is named only.
+UPDATE_USER_RENDERED: frozenset[str] = frozenset({"status", "roles", "mfa_required"})
+
+
 def update_user_text(user_id: object, change: dict[str, object]) -> ChallengeText:
-    """`updateUser`: each field the patch sets, an enum or boolean value bare, `display_name`
-    named without its value (free text)."""
+    """`updateUser`: each field the patch sets, in name order. Only `UPDATE_USER_RENDERED`
+    fields show their value (bare); any other is named without it, so free text never reaches
+    the restatement."""
     parts = []
     for field in sorted(change):
         value = change[field]
-        if field == "display_name":
-            parts.append("display name")
+        if field not in UPDATE_USER_RENDERED:
+            parts.append(field.replace("_", " "))
         elif isinstance(value, bool):
             parts.append(f"{field} {'true' if value else 'false'}")
         elif isinstance(value, list | tuple | frozenset | set):
@@ -222,6 +228,7 @@ def request_fingerprint(method: str, target: bytes, body: object | None) -> str:
 
 
 __all__ = [
+    "UPDATE_USER_RENDERED",
     "ChallengeText",
     "account_access_text",
     "account_reference",
