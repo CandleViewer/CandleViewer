@@ -15,10 +15,14 @@ Backpressure ladder (never silent):
 2. bounded on-disk WAL (`recorder/wal.py`, shared `wal_max_bytes`, default 1 GiB), used when
    the queue is full or the sink failed. While spilling, records are buffered and appended once
    per pump: one write and one fsync per batch.
-3. drop. Each (symbol, stream) gets one widening gap window, persisted as a `recording_gaps` row
-   (`cause='backpressure_drop'`), plus one `critical` event per episode. An episode ends when the
-   lane drains. Gap windows and counter deltas are kept until a live session accepts them, and
-   any still unpersisted at `stop()` raise a critical event.
+3. drop. Each (symbol, stream) gets a widening gap window, persisted as a `recording_gaps` row
+   (`cause='backpressure_drop'`), plus one `critical` event per episode. The first row of that key
+   newer than the window to reach QuestDB or the WAL (a live flush, a WAL append or a replay)
+   seals it, and the next drop opens a new one (#2475). With per-key `exch_ts` order no gap
+   spans written data; a late row inside an open window is best-effort (it never seals, so no
+   dropped row loses its gap). An episode ends when the lane drains. Gap windows and counter
+   deltas are kept until a live session accepts them, and any still unpersisted at `stop()`
+   raise a critical event.
 
 Replay (on startup, on `recover()`, and every `replay_retry_s` while spilling) streams the WAL:
 an external sort into bounded runs, then a k-way merge in `exch_ts` order with duplicate keys
@@ -507,7 +511,12 @@ class StreamWriter:
         #: E16-T07 gate windows, kept apart from the WAL-drop ones: the first row the gate
         #: admits again seals its window, so no gap ever spans written data (C-2.14).
         self._gate_gaps: dict[tuple[str, Stream], list[int]] = {}
+        #: Closed windows (gate or WAL drop), not yet persisted.
         self._sealed: list[tuple[str, Stream, int, int]] = []
+        #: The window whose insert is in flight, and its sealed copy if it was sealed meanwhile.
+        self._inflight: list[int] | None = None
+        self._inflight_copy: tuple[str, Stream, int, int] | None = None
+        self._gap_lock = asyncio.Lock()
         self._gate_failing = False
         #: Last observed delta update_id per symbol (seq jumps are E16-T04's to convert).
         self._last_update_id: dict[str, int] = {}
@@ -613,7 +622,7 @@ class StreamWriter:
             return
         sealed = self._gate_gaps.pop(key, None)
         if sealed is not None:  # the gate admits this key again: its window ends here
-            self._sealed.append((symbol, stream, sealed[0], sealed[1]))
+            self._close(symbol, stream, sealed)
         ts = records[0].exch_ts
         b = self._bounds.get(symbol)
         if b is None:
@@ -681,6 +690,7 @@ class StreamWriter:
         for symbol, size in per_symbol.items():
             self._ctr(symbol).bytes_written += size
             recorder_bytes_written_total.labels(symbol=symbol, stream=lane.stream).inc(size)
+        self._seal_written(lane.stream, records)
 
     async def _flush(self, lane: _Lane) -> None:
         async with lane.flush_lock:
@@ -727,6 +737,8 @@ class StreamWriter:
             except OSError as exc:
                 logger().error("recorder_wal_write_failed", stream=lane.stream, error=str(exc))
                 written = 0
+            # Sealed before the refused suffix is dropped, so the suffix opens a new window.
+            self._seal_written(lane.stream, records[:written])
         if written < len(records):
             await self._drop(lane, records[written:])
         self._publish_gauges()
@@ -740,6 +752,24 @@ class StreamWriter:
             self._gaps[(symbol, stream)] = [lo, hi]
         else:
             window[0], window[1] = min(window[0], lo), max(window[1], hi)
+
+    def _seal_written(self, stream: Stream, records: Sequence[WalRecord]) -> None:
+        """Rows that reached QuestDB or the WAL end their keys' drop windows (#2475), but only
+        a row newer than the window: an older (replayed) or late row leaves it open."""
+        newest: dict[str, int] = {}
+        for r in records:
+            newest[r.symbol] = max(newest.get(r.symbol, r.exch_ts), r.exch_ts)
+        for symbol, ts in newest.items():
+            window = self._gaps.get((symbol, stream))
+            if window is not None and ts > window[1]:
+                del self._gaps[(symbol, stream)]
+                self._close(symbol, stream, window)
+
+    def _close(self, symbol: str, stream: Stream, window: list[int]) -> None:
+        entry = (symbol, stream, window[0], window[1])
+        self._sealed.append(entry)
+        if window is self._inflight:
+            self._inflight_copy = entry
 
     async def _drop(self, lane: _Lane, records: list[WalRecord]) -> None:
         new_episodes: set[str] = set()
@@ -831,7 +861,7 @@ class StreamWriter:
             await self._corrupt(lane, verified.corrupt_bytes, verified.corrupt_windows)
             await self.flush_gaps()
             keys = {(sym, lane.stream) for sym in verified.corrupt_windows}
-            if not keys & self._gaps.keys():
+            if not keys & self._unpersisted_keys():
                 # Every window is a persisted row: only now may the durable marker go.
                 async with lane.wal_lock:
                     await asyncio.to_thread(lane.wal.ack_damaged)
@@ -889,20 +919,34 @@ class StreamWriter:
     # -- periodic: gaps + counters (kept until a live session accepts them) --------------------
 
     async def flush_gaps(self) -> None:
-        sealed, self._sealed = self._sealed, []
-        for symbol, stream, first, last in sealed:  # sealed gate windows: written as they are
-            if not await self._record_gap(symbol, stream, first, last):
-                self._sealed.append((symbol, stream, first, last))
-        for windows in (self._gaps, self._gate_gaps):
-            for (symbol, stream), (first, last) in list(windows.items()):
-                if not await self._record_gap(symbol, stream, first, last):
-                    continue
-                window = windows.get((symbol, stream))
-                if window == [first, last]:
-                    del windows[(symbol, stream)]
-                elif window is not None:
-                    # Widened while the insert was in flight: keep only the part not yet written.
-                    window[0] = max(window[0], last)
+        """Serialised: `tick` and a replay may both call it."""
+        async with self._gap_lock:
+            for entry in list(self._sealed):  # sealed windows: written as they are
+                if await self._record_gap(*entry):
+                    self._sealed.remove(entry)
+            for windows in (self._gaps, self._gate_gaps):
+                for key, window in list(windows.items()):
+                    first, last = window
+                    self._inflight, self._inflight_copy = window, None
+                    try:
+                        ok = await self._record_gap(key[0], key[1], first, last)
+                    finally:
+                        copy, self._inflight, self._inflight_copy = self._inflight_copy, None, None
+                    if not ok:
+                        continue
+                    if windows.get(key) is window:  # still open (maybe widened meanwhile)
+                        rest = _unpersisted(window, first, last)
+                        if rest is None:
+                            del windows[key]
+                        else:
+                            window[:] = rest
+                    elif copy is not None:  # sealed while in flight: trim that copy only
+                        at = next(n for n, e in enumerate(self._sealed) if e is copy)
+                        rest = _unpersisted(copy[2:], first, last)
+                        if rest is None:
+                            del self._sealed[at]
+                        else:
+                            self._sealed[at] = (key[0], key[1], *rest)
 
     async def _record_gap(self, symbol: str, stream: Stream, first: int, last: int) -> bool:
         gap_start = _EPOCH + timedelta(microseconds=first)
@@ -1029,17 +1073,18 @@ class StreamWriter:
             await self._drain_spill_buf(lane)
         self._next_counters_at = 0.0
         await self.tick()
-        for (symbol, stream), (first, last) in sorted(self._gaps.items()):
-            logger().critical(
-                "recorder_gap_unpersisted", symbol=symbol, stream=stream, start=first, end=last
-            )
-            await self._critical(
-                "recorder_gap_unpersisted",
-                symbol,
-                stream,
-                f"{GAP_CAUSE} gap {first}..{last} (us) for {stream}/{symbol} "
-                "has no live recording session to attach to",
-            )
+        for (symbol, stream), windows in sorted(self.pending_gaps().items()):
+            for first, last in windows:
+                logger().critical(
+                    "recorder_gap_unpersisted", symbol=symbol, stream=stream, start=first, end=last
+                )
+                await self._critical(
+                    "recorder_gap_unpersisted",
+                    symbol,
+                    stream,
+                    f"{GAP_CAUSE} gap {first}..{last} (us) for {stream}/{symbol} "
+                    "has no live recording session to attach to",
+                )
 
     # -- observability -------------------------------------------------------------------------
 
@@ -1066,12 +1111,30 @@ class StreamWriter:
         self._bounds.clear()
         return out
 
-    def pending_gaps(self) -> dict[tuple[str, Stream], tuple[int, int]]:
-        return {k: (v[0], v[1]) for k, v in self._gaps.items()}
+    def pending_gaps(self) -> dict[tuple[str, Stream], list[tuple[int, int]]]:
+        """Unpersisted windows per key: the sealed ones in order, then the open WAL-drop one."""
+        out: dict[tuple[str, Stream], list[tuple[int, int]]] = {}
+        for symbol, stream, first, last in self._sealed:
+            out.setdefault((symbol, stream), []).append((first, last))
+        for key, (first, last) in self._gaps.items():
+            out.setdefault(key, []).append((first, last))
+        return out
+
+    def _unpersisted_keys(self) -> set[tuple[str, Stream]]:
+        return {(symbol, stream) for symbol, stream, _, _ in self._sealed} | self._gaps.keys()
 
     def _publish_gauges(self) -> None:
         recorder_write_backlog_rows.set(self.backlog_rows)
         recorder_spill_bytes.set(self._budget.used)
+
+
+def _unpersisted(window: Sequence[int], first: int, last: int) -> tuple[int, int] | None:
+    """What of `window` the persisted `[first, last]` may leave out: may over-cover, never under
+    (a window widened below `first` is kept whole)."""
+    lo, hi = window[0], window[1]
+    if first <= lo and hi <= last:
+        return None
+    return (lo, hi) if lo < first else (max(lo, last), hi)
 
 
 def _take(it: Iterator[tuple[int, WalRecord]], n: int) -> list[tuple[int, WalRecord]]:
