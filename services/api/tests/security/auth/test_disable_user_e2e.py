@@ -49,6 +49,7 @@ from candleviewer.storage.repositories import user_lifecycle_sqlalchemy as lifec
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.storage.repositories.users_sqlalchemy import (
     SqlAlchemyUserAdminStore,
     SqlAlchemyUserRepository,
@@ -351,6 +352,16 @@ def rule_disarmed(w: SimpleNamespace, owner: uuid.UUID, m: uuid.UUID) -> None:
     assert revoked == {str(w.a.session_id), str(w.b.session_id)}
 
 
+def _target_status(rows: _Rows) -> Callable[..., Awaitable[str | None]]:
+    """`SqlAlchemyUserRoleStore.get_status` over `rows`."""
+
+    async def get_status(_self: object, user_id: uuid.UUID) -> str | None:
+        status = rows.status(user_id)
+        return None if status is None else status.value
+
+    return get_status
+
+
 @contextmanager
 def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
     """A new `w` over `_Rows`, and the deployed app with only its SQL edges on those rows."""
@@ -364,6 +375,8 @@ def _world() -> Iterator[tuple[SimpleNamespace, Any, TestClient]]:
         users = _Users(w.repo)  # #2295: the `users` read the enrolment-only guard classifies with
         mp.setattr(SqlAlchemyUserAdminStore, "get_user", _admin_read(w.repo))  # #2649's `User`
         mp.setattr(SqlAlchemyUserRepository, "find_by_id", _delegate(users, "find_by_id"))
+        # #2304 slice 3b: `deleteUser` reads its target's status before the step-up.
+        mp.setattr(SqlAlchemyUserRoleStore, "get_status", _target_status(w.repo))
         relational = "candleviewer.user_cascade_wiring.SqlAlchemyRelationalRepository"
         mp.setattr(relational, lambda *_: w.repo)  # the S3 store's unit of work
         mp.setattr(appmod, "PostgresRuleStore", lambda _relational: w.rules)

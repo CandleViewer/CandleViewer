@@ -276,6 +276,33 @@ def test_guarded_refusals_before_the_step_up_issue_no_challenge(
     assert auth.pending == [] and "step_up" not in w.log and _untouched(w)
 
 
+class _Statuses:
+    """`UserRoleStore.get_status` over one known user (`TARGET`); any other id is missing."""
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return "active" if user_id == TARGET else None
+
+
+def test_a_missing_target_is_the_404_before_the_step_up_never_a_challenge(
+    spec: dict[str, Any],
+) -> None:
+    """#2304 slice 3b, from 3a's review: the target is looked up before the gate, so an
+    un-elevated Owner naming a missing user gets the 404, never a challenge naming it."""
+    w = _World()
+    auth = _Auth(w.log, elevated=False)
+    owner = _client(w, _principal("owner", spec), auth=auth, guarded=True, store=_Statuses())
+    r = owner.delete(_PATH.format(uuid.UUID(int=0xDEAD)))
+    assert (r.status_code, r.json()["code"], "challenge_id" in r.json()) == (
+        404,
+        "not_found",
+        False,
+    )
+    assert auth.pending == [] and "step_up" not in w.log and _untouched(w)
+    _conforms(spec, r)
+    known = owner.delete(_PATH.format(TARGET))  # the known user is still challenged
+    assert known.json()["code"] == "step_up_required"
+
+
 @pytest.mark.parametrize(
     ("role", "grants"),
     [("manager", ()), ("manager", _HELD), ("viewer", ())],

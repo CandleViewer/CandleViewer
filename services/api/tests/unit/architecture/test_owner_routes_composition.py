@@ -425,32 +425,112 @@ def test_deployed_app_refuses_an_unelevated_user_admin_write_rbac_refuses_withou
     assert "rbac.denied" in actions and "auth.step_up_required" not in actions
 
 
+@pytest.mark.parametrize("actor", ["manager_with_grant", "viewer"])
 @pytest.mark.parametrize(
-    ("method", "path", "body", "summary"),
+    ("path", "body"),
     [
-        ("DELETE", "/users/{}", None, "Disable user {}"),
-        ("PUT", "/users/{}/roles", {"roles": ["viewer"]}, "Set the roles of user {} to viewer"),
-        (
-            "PUT",
-            "/users/{}/account-access",
-            {"grants": []},
-            "Replace the account access of user {} with 0 grants",
-        ),
+        (f"/exchange-accounts/{rbac.GRANTED}/keys", {"api_key": "k" * 18, "api_secret": "s" * 36}),
+        ("/admin/keys/kek-rewrap", {"environment": "demo", "to_version": 2}),
+        ("/admin/keys/audit-signing/rotate", {"reason": "scheduled"}),
+        ("/admin/audit/export", {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z"}),
     ],
-    ids=["deleteUser", "setUserRoles", "setUserAccountAccess"],
+    ids=["createApiKey", "rewrapKek", "rotateAuditSigningKey", "exportAuditLog"],
 )
-def test_deployed_app_challenges_an_unelevated_owner_restating_the_request(
-    deployed: SimpleNamespace, method: str, path: str, body: Any, summary: str
+def test_deployed_app_refuses_an_unelevated_key_or_audit_write_without_a_challenge(
+    deployed: SimpleNamespace, actor: str, path: str, body: Any
 ) -> None:
-    """#2304 slice 3a: an Owner the handler admits is challenged once its request is validated,
-    the challenge restating it; the handler wrote no `rbac.denied`."""
+    """#2304 slice 3b: the key, KEK and audit writes are handler-gated, so a Manager or a Viewer
+    holding no live elevation gets the audited 403, never a challenge."""
+    audited = len(deployed.audit.records)
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    step_up.elevated = False
+    try:
+        headers = {**_headers(deployed.client, actor), "Idempotency-Key": str(uuid.uuid4())}
+        resp = deployed.client.post(path, json=body, headers=headers)
+    finally:
+        step_up.elevated = True
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden"), resp.text
+    assert "challenge_id" not in resp.json()
+    actions = [r["action"] for r in deployed.audit.records[audited:]]
+    assert "auth.step_up_required" not in actions
+    assert {"rbac.denied", "admin.audit_denied"} & set(actions)
+
+
+_LIVE_SESSION = uuid.UUID(int=0x5E55)
+_WINDOW = {"from": "2026-10-01T00:00:00Z", "to": "2026-10-02T00:00:00Z", "compress": False}
+#: Each handler-gated `users` write (#2304 slice 3a, all six) and key, KEK and audit write (slice
+#: 3b) on the deployed app: the request an un-elevated Owner sends, its class and its restatement.
+_CHALLENGED: dict[str, tuple[str, str, Any, str, str]] = {
+    "deleteUser": ("DELETE", "/users/{}", None, "users", "Disable user {}"),
+    "setUserRoles": (
+        "PUT", "/users/{}/roles", {"roles": ["viewer"]}, "users",
+        "Set the roles of user {} to viewer",
+    ),
+    "setUserAccountAccess": (
+        "PUT", "/users/{}/account-access", {"grants": []}, "users",
+        "Replace the account access of user {} with 0 grants",
+    ),
+    "updateUser": (
+        "PATCH", "/users/{}", {"display_name": "SENTINEL-free-text"}, "users",
+        "Update user {}: display name",
+    ),
+    "revokeUserSession": (
+        "DELETE", f"/users/{{}}/sessions/{_LIVE_SESSION}", None, "users",
+        f"Revoke session {_LIVE_SESSION} of user {{}}",
+    ),
+    "resetUserMfa": (
+        "POST", "/users/{}/mfa/reset", None, "users",
+        "Reset the authenticator and end every session of user {}",
+    ),
+    "rewrapKek": (
+        "POST", "/admin/keys/kek-rewrap", {"environment": "demo", "to_version": 2}, "keys",
+        "Re-wrap the demo API keys under credential key version 2",
+    ),
+    "rotateAuditSigningKey": (
+        "POST", "/admin/keys/audit-signing/rotate", {"reason": "scheduled"}, "keys",
+        "Rotate the audit export signing key (scheduled)",
+    ),
+    "exportAuditLog": (
+        "POST", "/admin/audit/export", _WINDOW, "audit",
+        "Export the audit log from 2026-10-01T00:00:00+00:00 to 2026-10-02T00:00:00+00:00",
+    ),
+}  # fmt: skip
+
+
+@pytest.mark.parametrize("operation", list(_CHALLENGED))
+def test_deployed_app_challenges_an_unelevated_owner_restating_the_request(
+    deployed: SimpleNamespace, operation: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2304 slices 3a and 3b: an Owner the handler admits is challenged once its request is
+    validated and its target found, the challenge restating it, never a free-text value; the
+    handler wrote no `rbac.denied`."""
+    method, path, body, action_class, summary = _CHALLENGED[operation]
+    sessions = deployed.client.app.state.app_context.auth._sessions
+
+    async def live(user_id: str, session_id: str) -> Any:  # the viewer's one live session
+        return (
+            SimpleNamespace(id=uuid.UUID(session_id)) if session_id == str(_LIVE_SESSION) else None
+        )
+
+    monkeypatch.setattr(sessions, "find_live_session", live, raising=False)
     audited, target = len(deployed.audit.records), rbac.user_id_of("viewer")
-    resp = _unelevated(deployed, "owner", method, path.format(target), body)
+    row: dict[str, Any] = {"id": str(target), "username": "viewer", "email": "v@example.com"}
+    row |= {"display_name": None, "roles": ["viewer"], "status": "active", "mfa_enabled": True}
+    row |= {"mfa_required": True, "last_login_at": None, "created_at": "2026-10-19T00:00:00+00:00"}
+    monkeypatch.setitem(deployed.admin.users, target, row | {"updated_at": row["created_at"]})
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    step_up.elevated = False
+    try:  # `_unelevated` with an `Idempotency-Key`, which the rotation validates before its gate
+        headers = {**_headers(deployed.client, "owner"), "Idempotency-Key": str(uuid.uuid4())}
+        resp = deployed.client.request(method, path.format(target), json=body, headers=headers)
+    finally:
+        step_up.elevated = True
     assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
     assert (resp.json()["action_class"], resp.json()["action_summary"]) == (
-        "users",
+        action_class,
         summary.format(target),
     )
+    assert "SENTINEL" not in resp.text and resp.json()["target"] is None
     assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
 
 

@@ -312,6 +312,38 @@ async def test_a_request_the_stored_state_refuses_signs_nothing(
     assert w.audit()[0]["reason"] == code
 
 
+@pytest.mark.parametrize(
+    ("state", "request_", "code"),
+    [
+        ({"account": None}, {}, "not_found"),
+        ({"account": account_row("live")}, {}, "not_found"),
+        ({}, {"expected_uid": "999"}, "validation_failed"),
+    ],
+    ids=["missing", "other_env", "expected_uid"],
+)
+async def test_admit_refuses_as_run_does_recording_one_denial_and_signing_nothing(
+    state: dict[str, Any], request_: dict[str, Any], code: str
+) -> None:
+    """#2304 slice 3b: the route reads the account before its step-up through `admit`, which
+    checks and records what `run` would, so a refusal there is never challenged nor unrecorded."""
+    w = World()
+    for name, value in state.items():
+        setattr(w, name, value)
+    fields: dict[str, Any] = {"api_key": Secret(MARK_ID), "api_secret": Secret(MARK_SECRET)}
+    actor = Importer(OWNER, "owner", "198.51.100.4", UUID(int=8))
+    with pytest.raises(AccountsError):
+        await w.flow.admit(KeyImportRequest(ACCT, **{**fields, **request_}), actor)
+    assert (w.kinds(), w.audit()[0]["reason"]) == ([("audit", "denied")], code)
+
+
+async def test_admit_of_an_importable_account_names_it_and_records_nothing() -> None:
+    w = World()
+    actor = Importer(OWNER, "owner", "198.51.100.4", UUID(int=8))
+    request = KeyImportRequest(ACCT, Secret(MARK_ID), Secret(MARK_SECRET))
+    account = await w.flow.admit(request, actor)
+    assert (account.id, w.events) == (ACCT, [])
+
+
 async def test_a_second_import_for_the_account_while_one_runs_is_a_conflict() -> None:
     w = World()
     w.gate.clear()

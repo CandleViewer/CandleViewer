@@ -34,6 +34,7 @@ from candleviewer.storage.repositories.account_access_sqlalchemy import SqlAlche
 from candleviewer.storage.repositories.identity_sqlalchemy import SqlAlchemyIdentityProvider
 from candleviewer.storage.repositories.scope_sqlalchemy import SqlAlchemyScopeSource
 from candleviewer.storage.repositories.sessions_sqlalchemy import SqlAlchemySessionRepository
+from candleviewer.storage.repositories.user_roles_sqlalchemy import SqlAlchemyUserRoleStore
 from candleviewer.ws.lifecycle import ConnectRateLimiter
 from candleviewer.ws_wiring import MachineRevocationAudit, loop_call_later
 from tests.contract.rbac import rbac_harness as rbac
@@ -117,6 +118,8 @@ def deployed() -> Iterator[SimpleNamespace]:
         mp.setattr(
             SqlAlchemyAccountAccessStore, "replace_grants", _delegate(grants, "replace_grants")
         )
+        # #2304 slice 3b: the account-access write reads its target's status before the step-up.
+        mp.setattr(SqlAlchemyUserRoleStore, "get_status", _delegate(rbac.UserStore(), "get_status"))
         app = appmod.create_app(real)  # nothing injected: the deployed composition
         # One app serves every parametrised socket below, so one actor connects far more than 20
         # times a minute. The per-user connect rate (#2558) is not under test here; settings cap

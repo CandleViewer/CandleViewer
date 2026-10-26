@@ -7,7 +7,7 @@
   its routes. Only the Owner holds `admin:*`, so the role matrix alone cannot tell `admin:read`
   from `admin:write`.
 - The cells cover every executed admin and users row, the served `not_executable` rows are each
-  in `PATH_GATED_ONLY` or `NO_CELL`, and the handler-gated cells reach their gate.
+  in `GATE_ONLY` or `NO_CELL`, and the handler-gated cells reach their gate.
 - Shown in memory: the suite fails against an unguarded admin route, against an admin route whose
   audit entry is missing, and against an `admin_router` guard whose permission drifts from the
   contract. Each change to the module-scoped world is undone, so the tests hold in any order.
@@ -122,13 +122,13 @@ def test_the_cells_cover_every_served_admin_route(world: AdminWorld) -> None:
     assert executed == {op.key for op in cells.OPS}
     parked = served - executed
     assert all(rows[k]["state"] == "not_executable" for k in parked), sorted(parked)
-    assert parked == set(cells.PATH_GATED_ONLY) | set(cells.NO_CELL), (
-        "a served not_executable row needs PATH_GATED_ONLY cells or a NO_CELL reason: "
-        f"{sorted(parked ^ (set(cells.PATH_GATED_ONLY) | set(cells.NO_CELL)))}"
+    assert parked == set(cells.GATE_ONLY) | set(cells.NO_CELL), (
+        "a served not_executable row needs GATE_ONLY cells or a NO_CELL reason: "
+        f"{sorted(parked ^ (set(cells.GATE_ONLY) | set(cells.NO_CELL)))}"
     )
-    assert not set(cells.PATH_GATED_ONLY) & set(cells.NO_CELL)
-    for op in cells.GATE_ONLY_OPS:  # their none and stale cells rest on the path guard alone
-        assert op.gate is not None and op.gate.where == "path", op.key
+    assert not set(cells.GATE_ONLY) & set(cells.NO_CELL)
+    for op in cells.GATE_ONLY_OPS:  # their none and stale cells rest on their gate alone
+        assert op.gate is not None, op.key
 
 
 def test_a_fresh_cell_kept_out_of_the_cells_is_that_one_cell_of_an_executed_row() -> None:
@@ -150,7 +150,8 @@ def test_every_handler_gated_cell_has_its_class_and_its_request() -> None:
         classes = {c for m, p, c in HANDLER_GATED_ROUTES if f"{m} {p}" == key}
         assert len(classes) == 1 or key in cells.GATE_CLASS, f"{key}: name its cell's class"
         assert op.gate is not None and op.gate.action_class in classes, key
-    assert set(cells.GATE_REQUESTS) <= set(gated), "a gate request for a route that is not gated"
+    gate_only = {op.key for op in cells.GATE_ONLY_OPS}
+    assert set(cells.GATE_REQUESTS) <= set(gated) | gate_only, "a gate request for no gated route"
     assert set(cells.BEFORE_GATE) <= set(gated), "a BEFORE_GATE row for a route that is not gated"
 
 

@@ -2078,7 +2078,7 @@ def _refs_of(tree: ast.Module, name: str) -> list[str]:
 
 
 def test_repo_register_key_tag_entry_still_keys_a_random_mac_over_the_api_key() -> None:
-    """The exchange_keys.py:280 entry is a false positive only while the HMAC key is a per-process
+    """The exchange_keys.py:294 entry is a false positive only while the HMAC key is a per-process
     random key and the tag feeds only the request's fingerprint: pin both (re-triage otherwise)."""
     path = _PRODUCT / "api/exchange_keys.py"
     keys = ast.parse(path.read_text(encoding="utf-8"))
@@ -2098,7 +2098,7 @@ def test_repo_register_key_tag_entry_still_keys_a_random_mac_over_the_api_key() 
     assert uses(keys, "mac_key") == ["Store", "Load"]  # minted once, read only by the tag
     assert uses(keys, "tag") == ["Store", "Load"]  # read only by the fingerprint
     assert uses(route, "shown") == ["Store", "Load"]  # the fingerprint feeds only the digest
-    assert path.read_text(encoding="utf-8").splitlines()[279].strip() == _KEY_TAG  # line 280, whole
+    assert path.read_text(encoding="utf-8").splitlines()[293].strip() == _KEY_TAG  # line 294, whole
 
 
 def test_repo_register_mfa_token_hash_entries_still_hash_a_random_token() -> None:

@@ -37,6 +37,9 @@ _SESSIONS_OWN = {
         " subject itself"
     ),
     ("api/step_up.py", "make_read_only_guard.guard"): "the session's read-only state",
+    ("api/step_up.py", "request_elevation.demand"): (
+        "the session's own step-up elevation, for a handler-gated route (#2304 slice 3b)"
+    ),
     ("api/step_up.py", "make_step_up_router._session"): (
         "the session's step-up state; the owner check compares the subject (`_owner`)"
     ),

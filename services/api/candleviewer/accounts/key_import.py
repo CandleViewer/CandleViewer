@@ -199,35 +199,56 @@ class KeyImport:
         try:
             return await self._run(request, actor, passed)
         except BaseException as exc:
-            result = exc.result if isinstance(exc, KeyImportFailed) else None
-            if isinstance(exc, AccountsError):
-                code = problem_code(exc)
-                after: dict[str, object] = {"code": code} if result is None else _codes(result)
-            else:  # a defect, M2's store-time refusal or a cancellation: its class, never its text
-                code = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
-                after = {"code": code, "error": type(exc).__name__}
-            reason = code if result is None else result.failures[0].rule.value
-            outcome = "denied" if code in _DENIED and not passed else "failure"
-            lost: KeyImportFailed | None = None
-            try:  # a closing record names the key the pass's record named
-                await self._audit_row(actor, request.account_id, outcome, reason, after | passed)
-            except KeyImportFailed as unwritten:
-                lost = unwritten
-            if result is not None:  # tried even when the import's record is lost
-                await self._violation(actor, request.account_id, result)
-            if lost is not None and isinstance(exc, AccountsError):
-                raise lost from None  # a refusal whose record is lost is `audit_unavailable`
+            await self._closed(exc, request, actor, passed)
             raise
 
-    async def _run(
-        self, request: KeyImportRequest, actor: Importer, passed: dict[str, object]
-    ) -> KeyImported:
-        scope = OwnerScope(actor.user_id)
+    async def admit(self, request: KeyImportRequest, actor: Importer) -> ExchangeAccount:
+        """The account `run` would import into, read and checked as step 1 checks it, for a route
+        that names it before its step-up (#2304): a refusal is recorded as `run` records it, then
+        raised. Nothing is signed, held or kept; `run` reads the account again."""
+        try:
+            return await self._account(OwnerScope(actor.user_id), request)
+        except BaseException as exc:
+            await self._closed(exc, request, actor, {})
+            raise
+
+    async def _closed(
+        self, exc: BaseException, request: KeyImportRequest, actor: Importer,
+        passed: dict[str, object],
+    ) -> None:  # fmt: skip
+        """`run`'s record of `exc`; `audit_unavailable` for a refusal whose record is lost."""
+        result = exc.result if isinstance(exc, KeyImportFailed) else None
+        if isinstance(exc, AccountsError):
+            code = problem_code(exc)
+            after: dict[str, object] = {"code": code} if result is None else _codes(result)
+        else:  # a defect, M2's store-time refusal or a cancellation: its class, never its text
+            code = "cancelled" if isinstance(exc, asyncio.CancelledError) else "error"
+            after = {"code": code, "error": type(exc).__name__}
+        reason = code if result is None else result.failures[0].rule.value
+        outcome = "denied" if code in _DENIED and not passed else "failure"
+        lost: KeyImportFailed | None = None
+        try:  # a closing record names the key the pass's record named
+            await self._audit_row(actor, request.account_id, outcome, reason, after | passed)
+        except KeyImportFailed as unwritten:
+            lost = unwritten
+        if result is not None:  # tried even when the import's record is lost
+            await self._violation(actor, request.account_id, result)
+        if lost is not None and isinstance(exc, AccountsError):
+            raise lost from None  # a refusal whose record is lost is `audit_unavailable`
+
+    async def _account(self, scope: OwnerScope, request: KeyImportRequest) -> ExchangeAccount:
         account = await self._io(self._accounts.get_account(scope, request.account_id))
         if account.env.value != self._env:  # never signed for on this environment's host
             raise AccountNotFoundError("account")
         if request.expected_uid not in (None, account.exchange_uid):
             raise KeyImportFailed(INVALID, "expected_uid is not the account's UID.", errors=(_UID,))
+        return account
+
+    async def _run(
+        self, request: KeyImportRequest, actor: Importer, passed: dict[str, object]
+    ) -> KeyImported:
+        scope = OwnerScope(actor.user_id)
+        account = await self._account(scope, request)
         if account.id in self._busy:
             raise KeyImportFailed(CONFLICT, "The account has an import running.", transient=True)
         self._busy.add(account.id)

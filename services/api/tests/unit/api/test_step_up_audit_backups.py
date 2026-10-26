@@ -28,21 +28,21 @@ from tests.unit.api.test_step_up_guard_create_app import _world
 _EXPORT = {"from": "2026-09-01T00:00:00Z", "to": "2026-09-30T00:00:00Z"}
 
 
-async def test_audit_export_on_create_app_needs_step_up_then_reaches_the_handler(
+async def test_audit_export_on_create_app_is_gated_by_its_handler_not_the_path_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """#2304 slice 3b: the export's step-up is its handler's, after RBAC and validation. This
+    app wires no audit resolver, so the handler fails closed with `501` before its gate, elevated
+    or not, and never challenges; `test_audit_export_route.py` and the deployed composition
+    reach the gate."""
     w = await _world(monkeypatch, with_user_repository=True)
     owner = await _login(w, "owner", frozenset({Permission.AUDIT_EXPORT}))
-    denied = w.client.post("/admin/audit/export", headers=_h(owner), json=_EXPORT)
-    assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
-    assert denied.json()["action_class"] == "audit"
-    ok = w.elevate(owner)  # `{code}` only: the server elevates the class it challenged
-    assert ok.status_code == 200 and ok.json()["action_class"] == "audit"
-    assert ok.json()["single_use"] is False
-    for _ in range(2):  # the grace window covers a second export
-        r = w.client.post("/admin/audit/export", headers=_h(owner), json=_EXPORT)
-        # The guard let it through: whatever the handler answers, it is not a step-up refusal.
-        assert r.status_code != 403 and r.json().get("code") != "step_up_required"
+    unelevated = w.client.post("/admin/audit/export", headers=_h(owner), json=_EXPORT)
+    assert (unelevated.status_code, unelevated.json()["code"]) == (501, "not_implemented")
+    ok = w.elevate(owner, action_class="audit")
+    assert ok.status_code == 200 and ok.json()["single_use"] is False
+    elevated = w.client.post("/admin/audit/export", headers=_h(owner), json=_EXPORT)
+    assert (elevated.status_code, elevated.json()["code"]) == (501, "not_implemented")
 
 
 def _restore_route(w: _World) -> list[str]:

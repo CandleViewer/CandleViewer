@@ -23,10 +23,13 @@ import math
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import get_args
 
 from starlette.requests import Request
 
 from candleviewer.accounts.models import ExchangeEnv
+from candleviewer.api._generated import openapi_models as api
 
 _ENVIRONMENTS = frozenset(env.value for env in ExchangeEnv)
 _EXCHANGE_UID = re.compile(r"[0-9]{1,20}")
@@ -126,6 +129,49 @@ def update_user_text(user_id: object, change: dict[str, object]) -> ChallengeTex
 def revoke_session_text(user_id: object, session_id: object) -> ChallengeText:
     """`revokeUserSession`: one live session of the user."""
     return ChallengeText(f"Revoke session {session_id} of user {user_id}")
+
+
+# -- The key, KEK and audit routes' templates (#2304 slice 3b) -----------------------------------
+# Each route validates its request, then RBAC, then its target's lookup, and only then composes
+# one of these. An account is named by `account_reference`; enums and instants are bare. Key
+# material, a key's label and `expected_uid` are never arguments, so they cannot be restated.
+
+#: The only values these templates restate, read from the generated contract models, so a value
+#: the contract adds or drops changes them with it (22 `KekRewrapRequest.environment`,
+#: `RotateAuditSigningKeyRequest.reason`).
+_KEK_ENVIRONMENTS = frozenset(get_args(api.KekRewrapRequest.model_fields["environment"].annotation))
+_SIGNING_REASONS = frozenset(
+    get_args(api.RotateAuditSigningKeyRequest.model_fields["reason"].annotation)
+)
+
+
+def import_key_text(account: str, *, read_only: bool) -> ChallengeText:
+    """`createApiKey`: the kind of key and the account (`account_reference`) it is stored for."""
+    kind = "read-only" if read_only else "trading"
+    return ChallengeText(f"Import a {kind} API key for account {account}")
+
+
+def kek_rewrap_text(environment: str, to_version: int) -> ChallengeText:
+    """`rewrapKek`: the environment whose stored keys move, and the KEK version they move to."""
+    if environment not in _KEK_ENVIRONMENTS:
+        raise ValueError("a re-wrap names a contract environment")
+    return ChallengeText(
+        f"Re-wrap the {environment} API keys under credential key version {int(to_version)}"
+    )
+
+
+def rotate_signing_key_text(reason: str) -> ChallengeText:
+    """`rotateAuditSigningKey`: the rotation and its contract reason."""
+    if reason not in _SIGNING_REASONS:
+        raise ValueError("a rotation names a contract reason")
+    return ChallengeText(f"Rotate the audit export signing key ({reason})")
+
+
+def export_audit_text(from_ts: datetime, to_ts: datetime, *, compress: bool) -> ChallengeText:
+    """`exportAuditLog`: the window, both bounds in UTC, and whether the file is compressed."""
+    span = f"{from_ts.astimezone(UTC).isoformat()} to {to_ts.astimezone(UTC).isoformat()}"
+    tail = ", compressed" if compress else ""
+    return ChallengeText(f"Export the audit log from {span}{tail}")
 
 
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
@@ -234,11 +280,15 @@ __all__ = [
     "account_reference",
     "canonical_json",
     "disable_user_text",
+    "export_audit_text",
+    "import_key_text",
+    "kek_rewrap_text",
     "mfa_reset_text",
     "quote_label",
     "raw_request_target",
     "request_fingerprint",
     "revoke_session_text",
+    "rotate_signing_key_text",
     "set_roles_text",
     "typed_target",
     "update_user_text",

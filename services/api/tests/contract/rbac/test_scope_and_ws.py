@@ -505,6 +505,15 @@ def test_administrative_mutations_are_owner_only(
     assert _job_ids(world) == jobs_before, "a refused call must not start a job"
 
 
+#: Handler-gated mutations whose handler answers before its gate on this backend, with that
+#: answer: never a challenge, and nothing changes. Each names the test that reaches its gate.
+_BEFORE_THE_GATE = {
+    # #2304 slice 3b: the account is read before the step-up, through the import flow, which the
+    # fake backend lacks; `test_create_api_key_provider.py` reaches the gate.
+    ("POST", "/exchange-accounts/{uid}/keys"): (503, "store_unavailable"),
+}
+
+
 @pytest.mark.parametrize(("method", "path", "body"), _ADMIN_MUTATIONS)
 def test_administrative_mutations_require_step_up_even_for_the_owner(
     world: World, method: str, path: str, body: Any
@@ -515,8 +524,8 @@ def test_administrative_mutations_require_step_up_even_for_the_owner(
     resp = world.client.request(
         method, url, json=body, headers=_admin_headers("owner", method, path)
     )
-    assert resp.status_code == 403
-    assert resp.json().get("code") == "step_up_required"
+    want = _BEFORE_THE_GATE.get((method, path), (403, "step_up_required"))
+    assert (resp.status_code, resp.json().get("code")) == want
     assert world.users.roles == world.users.initial_roles
     assert world.purge_backend.calls == [] and _job_ids(world) == jobs_before
 
@@ -925,6 +934,10 @@ def test_a_step_up_gated_account_route_refuses_without_it_and_takes_no_other_cla
     want = scope_expected(key, "owner", "granted")
     world.step_up.elevated = False
     refused = scope_request(world, key, req, "owner", GRANTED)
+    method, path = key.split(" ", 1)
+    if (method, path.replace("{accountId}", "{uid}")) in _BEFORE_THE_GATE:
+        assert observed(refused) == want, f"{key}: answered before its gate, never challenged"
+        return
     assert observed(refused) == "403 step_up_required" and refused.json()["action_class"] == cls
     world.step_up.elevated = True
     for other in sorted(ACTION_CLASSES - {cls}):

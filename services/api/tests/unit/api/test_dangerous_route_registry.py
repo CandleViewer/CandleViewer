@@ -534,12 +534,9 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
         ("POST", "/users", "users"),
         ("POST", "/users/u/invite", "users"),
         ("DELETE", "/users/u/invite", "users"),
-        ("POST", "/exchange-accounts/a/keys", "keys"),
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
         ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
-        ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
-        ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
         ("PUT", "/recording/retention-policies", "recorder"),  # setRetentionPolicies (04 row 9)
         ("PUT", "/recording/symbols/s/pin", "recorder"),  # pinRecordedSymbol (04 row 9)
         ("POST", "/exchange-accounts/a/profiles", "risk_caps"),  # createAccountProfile (#906)
@@ -566,13 +563,27 @@ _USERS_HANDLER_GATED = [
 ]
 
 
-@pytest.mark.parametrize(("method", "path"), _USERS_HANDLER_GATED)
-def test_users_writes_are_handler_gated_not_path_gated(method: str, path: str) -> None:
+#: #2304 slice 3b: the key, KEK and audit writes, gated by their handlers likewise.
+_KEYS_AUDIT_HANDLER_GATED = [
+    ("POST", "/exchange-accounts/{accountId}/keys", "keys"),  # createApiKey (04 row 41)
+    ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
+    ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
+    ("POST", "/admin/audit/export", "audit"),  # exportAuditLog (SR-025, 04 row 50)
+]
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "action_class"),
+    [(m, p, "users") for m, p in _USERS_HANDLER_GATED] + _KEYS_AUDIT_HANDLER_GATED,
+)
+def test_moved_writes_are_handler_gated_not_path_gated(
+    method: str, path: str, action_class: str
+) -> None:
     """A path row would challenge before the handler's RBAC, validation and lookup, so a refused
-    caller could get a challenge restating nothing (#2304): no path row, one `users` handler row,
-    and the route is served."""
+    caller could get a challenge restating nothing (#2304): no path row, one handler row of the
+    route's class, and the route is served."""
     assert dangerous_action_class(method, _concrete(path)) is None
-    assert _registered_classes(method, path) == {"users"}
+    assert _registered_classes(method, path) == {action_class}
     assert (method, path) in served_operations(create_app()) - _PENDING_HANDLER_GATES
 
 

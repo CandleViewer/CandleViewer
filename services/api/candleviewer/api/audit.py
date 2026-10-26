@@ -81,6 +81,7 @@ from candleviewer.api.audit_verify import (
 from candleviewer.api.idempotency import IdempotencyKeyReuse, request_fingerprint
 from candleviewer.api.recorder_admin import JobConflict
 from candleviewer.api.step_up import StepUpAuth, require_session_elevation
+from candleviewer.api.step_up_challenge import export_audit_text
 from candleviewer.audit.access import (
     AuditAccessDenied,
     AuditPrincipal,
@@ -853,8 +854,10 @@ def make_audit_router(
     async def export_audit_log(request: Request) -> JSONResponse:
         """`exportAuditLog` (#889 S10, ADR-0039) in 22's **Order of the checks**: `401` and `403
         forbidden` before any body is read; validation (`422`, the `Idempotency-Key` too); the
-        idempotency lookup (the stored `202` with `Idempotency-Replayed: true`, or `409
-        idempotency_key_reuse`); `503 signing_unavailable`, recorded under the budget; the hourly
+        `audit` step-up (`HANDLER_GATED_ROUTES`, #2304 slice 3b: its challenge restates the
+        validated window; no step-up service is `503`); the idempotency lookup (the stored `202`
+        with `Idempotency-Replayed: true`, or `409 idempotency_key_reuse`); `503
+        signing_unavailable`, recorded under the budget; the hourly
         `429` and single-flight's `409 conflict`, both counted; then the write-ahead
         `admin.audit_export` (`503 store_unavailable` when it cannot be written) and the `202`.
         The single-flight hold is taken before that record, so no rotation and no other export
@@ -868,6 +871,16 @@ def make_audit_router(
         if isinstance(checked, JSONResponse):
             return checked
         raw, body, key = checked
+        if step_up is None:  # a wiring fault: the export stays gated (C-2.21)
+            return _problem(
+                503, "Service unavailable", "step-up not wired", code="service_unavailable"
+            )
+        restated = export_audit_text(body.from_ts, body.to_ts, compress=body.compress)
+        challenge = await require_session_elevation(
+            step_up, principal.session_id, "audit", restated
+        )
+        if challenge is not None:
+            return challenge
         actor, digest = _budget_actor(principal), request_fingerprint("POST", _EXPORT_PATH, raw)
         if exports is None:  # unwired: no job store and no signer
             return await _export_down(service, principal, "signing_unavailable")

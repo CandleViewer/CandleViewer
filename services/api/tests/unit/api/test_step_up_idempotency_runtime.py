@@ -46,6 +46,7 @@ from candleviewer.api.step_up import (
     HANDLER_GATED_ROUTES,
     dangerous_action_class,
     make_read_only_guard,
+    request_elevation,
 )
 from candleviewer.app import create_app
 from candleviewer.auth.errors import SessionIdleLocked
@@ -247,6 +248,9 @@ async def _import_key(w: _World, locks: _Locks, stack: AsyncExitStack, gate: str
         make_exchange_keys_router(
             KeyImports(rig.flow, lambda: asyncio.sleep(0)), rig, KeyResolver(),
             egress_ip=EGRESS, rotation=KeyRotationPolicy(), replays=cache,
+            # Handler-gated since #2304 slice 3b: the router demands `keys` itself, through the
+            # harness's real step-up service, as `create_app()` wires it.
+            elevation=request_elevation(w.auth, "keys"),
         )
     )  # fmt: skip
     client = await stack.enter_async_context(_client(_gated(w, app, locks)))

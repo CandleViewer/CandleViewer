@@ -9,16 +9,27 @@ printable ASCII and unique among the caller's visible objects. The oracle is the
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta, timezone
+from typing import get_args
 
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from candleviewer.api._generated.openapi_models import UpdateUserRequest
+from candleviewer.api._generated.openapi_models import (
+    KekRewrapRequest,
+    RotateAuditSigningKeyRequest,
+    UpdateUserRequest,
+)
 from candleviewer.api.step_up_challenge import (
     UPDATE_USER_RENDERED,
     account_reference,
+    export_audit_text,
+    import_key_text,
+    kek_rewrap_text,
     quote_label,
+    rotate_signing_key_text,
     typed_target,
     update_user_text,
 )
@@ -114,3 +125,52 @@ def test_update_user_text_renders_allow_listed_values_bare() -> None:
     assert update_user_text("u1", change).action_summary == (
         "Update user u1: display name; mfa_required true; roles manager, viewer; status disabled"
     )
+
+
+def test_key_kek_and_audit_texts_restate_validated_values_only() -> None:
+    """#2304 slice 3b: an account by its reference, enums and instants bare; the pasted key pair,
+    a key label and `expected_uid` are never arguments, so they cannot reach the text."""
+    account = account_reference("Main", "demo", "1001234")
+    assert import_key_text(account, read_only=True).action_summary == (
+        "Import a read-only API key for account 'Main' (demo, UID 1001234)"
+    )
+    assert import_key_text(account, read_only=False).action_summary == (
+        "Import a trading API key for account 'Main' (demo, UID 1001234)"
+    )
+    assert kek_rewrap_text("live", 3).action_summary == (
+        "Re-wrap the live API keys under credential key version 3"
+    )
+    assert rotate_signing_key_text("compromise").action_summary == (
+        "Rotate the audit export signing key (compromise)"
+    )
+    start = datetime(2026, 10, 1, 2, tzinfo=timezone(timedelta(hours=2)))
+    text = export_audit_text(start, datetime(2026, 10, 2, tzinfo=UTC), compress=False)
+    assert text.action_summary == (
+        "Export the audit log from 2026-10-01T00:00:00+00:00 to 2026-10-02T00:00:00+00:00"
+    )
+    assert export_audit_text(start, start, compress=True).action_summary.endswith(", compressed")
+    assert {t.target for t in (text, kek_rewrap_text("demo", 2))} == {None}
+
+
+def test_enum_texts_restate_every_value_of_their_generated_literal() -> None:
+    """#2304 slice 3b (review): the allow-lists are the generated contract Literals, so every
+    contract value renders and nothing else does."""
+    environments = get_args(KekRewrapRequest.model_fields["environment"].annotation)
+    reasons = get_args(RotateAuditSigningKeyRequest.model_fields["reason"].annotation)
+    assert environments and reasons
+    assert all(isinstance(v, str) for v in environments + reasons)  # a bare Literal, never `| None`
+    for environment in environments:
+        assert f" {environment} " in kek_rewrap_text(environment, 2).action_summary
+    for reason in reasons:
+        assert rotate_signing_key_text(reason).action_summary.endswith(f"({reason})")
+
+
+@pytest.mark.parametrize(
+    "build",
+    [lambda: kek_rewrap_text(_SENTINEL, 2), lambda: rotate_signing_key_text(_SENTINEL)],
+    ids=["kek-environment", "signing-reason"],
+)
+def test_enum_texts_refuse_a_value_outside_their_enum(build: Callable[[], object]) -> None:
+    """Fail closed: a value the contract's enum lacks is a defect, never restated."""
+    with pytest.raises(ValueError):
+        build()

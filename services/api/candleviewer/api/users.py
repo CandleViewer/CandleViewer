@@ -16,21 +16,23 @@ the contract's `x-error-codes`. `account_access=None` fails closed with 501.
 
 `PUT /users/{userId}/account-access` (S9c): `users:write` and SR-055 refused as the GET refuses;
 then `acknowledge_unknown_positions` (`true` or `false`, once, as the DELETE reads it), the closed
-body (at most 64 KiB and 256 grants, SR-040), the step-up and `AccountAccessService.replace`,
-whose store refusals map to the design's codes. It answers with the set the store read under its
-locks; unwired, 501 (sessions wired without a step-up service, 503).
+body (at most 64 KiB and 256 grants, SR-040), the target's lookup (404, #2304 slice 3b), the step-up
+and `AccountAccessService.replace`, whose store refusals map to the design's codes. It answers with
+the set the store read under its locks; unwired, 501 (sessions wired without a step-up service,
+503).
 
 Every step-up here is the handler's (`HANDLER_GATED_ROUTES`, #2304 slice 3a): it comes after
 RBAC, the self-target, the query and body and the target's lookup, so a caller any of them
 refuses gets that refusal, never a challenge, and a challenge restates the validated request
 (`api.step_up_challenge`).
 
-`DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
-written before the last: `users:write`, then a self-target (both refusals audited before any
-lookup: U25, SR-055), the query (an undeclared key is 422, S7), the step-up `users` (SR-025),
-then the change; with `purge=true` the purge's schedule follows it (E42-T10, `_schedule_purge`).
-`user_disable=None` fails closed with 501; while no purge reaper runs (none wired, or stopped),
-`purge=true` fails closed with 503 `purge_unavailable`, before the step-up and any change.
+`DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing written before
+the last: `users:write`, then a self-target (both refusals audited before any lookup: U25, SR-055),
+the query (an undeclared key is 422, S7), the target's lookup (404, #2304 slice 3b), the step-up
+`users` (SR-025), then the change; with `purge=true` the purge's schedule follows it (E42-T10,
+`_schedule_purge`). `user_disable=None` fails closed with 501; while no purge reaper runs (none
+wired, or stopped), `purge=true` fails closed with 503 `purge_unavailable`, before the step-up and
+any change.
 
 E42-T09 (#2649), `make_user_admin_router`: `GET /users/{userId}` answers the `User` and an
 `ETag` over the whole representation, roles included (never `password_hash`). `PATCH` runs, nothing
@@ -420,6 +422,21 @@ async def _session_of(auth: _AuthLike | None, request: Request) -> uuid.UUID | N
     return None if found is None else found.id
 
 
+async def _target_missing(store: UserRoleStore | None, user_id: uuid.UUID) -> JSONResponse | None:
+    """#2304 slice 3b: the target's lookup before the step-up, so a missing or deleted user is
+    the 404, never a challenge naming it. None when found, or with no store wired: the handler's
+    own lookup after the gate answers then, as before."""
+    if store is None:
+        return None
+    try:
+        status = await store.get_status(user_id)
+    except Exception as exc:  # a store outage is a 503; anything else is a defect
+        if not is_storage_outage(exc):
+            raise
+        return _registered(ErrorCode.STORE_UNAVAILABLE, 503, "the user store is unavailable")
+    return _registered(ErrorCode.NOT_FOUND, 404, "user not found") if status is None else None
+
+
 async def _elevated(
     auth: _AuthLike | None, request: Request, text: ChallengeText
 ) -> JSONResponse | uuid.UUID:
@@ -786,6 +803,8 @@ def make_users_router(
             return _registered(
                 ErrorCode.VALIDATION_FAILED, 400, "the request does not match its schema"
             )
+        if (missing := await _target_missing(store, user_id)) is not None:
+            return missing
         restated = account_access_text(user_id, len(body.grants))  # after the body (#2304)
         if isinstance(session := await _elevated(auth, request, restated), JSONResponse):
             return session
@@ -841,6 +860,8 @@ def make_users_router(
         if purge and (user_purge is None or not user_purge.running):  # E42-T10, UL4-D1
             detail = "no purge reaper is running; nothing was changed"
             return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
+        if (missing := await _target_missing(store, user_id)) is not None:
+            return missing
         restated = disable_user_text(user_id, purge=purge)  # after the query (#2304)
         if isinstance(gate := await _elevated(auth, request, restated), JSONResponse):
             return gate

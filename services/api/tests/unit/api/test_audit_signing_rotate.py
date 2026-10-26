@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -26,6 +27,7 @@ from candleviewer.api.audit_signing_keys import (
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
+from candleviewer.auth.step_up import GRACE_WINDOW
 from candleviewer.secrets import SecretsService
 from candleviewer.secrets.store import (
     InMemoryAuthKeyStore,
@@ -83,11 +85,50 @@ async def rot(monkeypatch: pytest.MonkeyPatch) -> _Rot:
 
 
 async def elevated(rot: _Rot, role: str = "owner", perms: frozenset[Permission] = OWNER) -> str:
-    """A session of `role` stepped up for class `keys`: this route's challenge, answered."""
+    """A session of `role` stepped up for class `keys`, a grace class, by name: since #2304
+    slice 3b a caller RBAC refuses is never challenged, so it has no challenge to answer."""
     token = await _login(rot.w, role, perms)
-    assert rot.post(token).json()["code"] == "step_up_required"
-    assert rot.w.elevate(token).json()["action_class"] == "keys"
+    assert rot.w.elevate(token, action_class="keys").json()["action_class"] == "keys"
     return token
+
+
+async def test_an_owner_without_step_up_is_challenged_restating_the_rotation(rot: _Rot) -> None:
+    """#2304 slice 3b: the handler's challenge, after the body and RBAC, restates the reason;
+    nothing rotates, no `rbac.denied`, and the challenge is no-store as every answer here."""
+    r = rot.post(await _login(rot.w, "owner", OWNER), body={"reason": "compromise"})
+    assert (r.status_code, r.json()["code"], r.json()["action_class"]) == (
+        403, "step_up_required", "keys"
+    )  # fmt: skip
+    summary = "Rotate the audit export signing key (compromise)"
+    assert (r.json()["action_summary"], len(rot.keys.rows), _unstored(r)) == (summary, 1, True)
+    assert rot.w.audit.of("rbac.denied") == [] and rot.w.audit.of("auth.step_up_required")
+
+
+@pytest.mark.parametrize(
+    ("role", "perms"), [("manager", frozenset()), ("viewer", frozenset()), ("manager", OWNER)]
+)
+async def test_anyone_but_the_owner_without_step_up_is_forbidden_never_challenged(
+    rot: _Rot, role: str, perms: frozenset[Permission]
+) -> None:
+    r = rot.post(await _login(rot.w, role, perms))
+    assert (r.status_code, r.json()["code"], "challenge_id" in r.json()) == (
+        403, "forbidden", False
+    )  # fmt: skip
+    assert rot.w.audit.of("auth.step_up_required") == [] and len(rot.w.audit.of("rbac.denied")) == 1
+
+
+@pytest.mark.parametrize(
+    ("body", "key"),
+    [({"reason": "weekly"}, None), ({"reason": "scheduled", "seed": "SENTINEL"}, None),
+     ({"reason": "scheduled"}, _NO_KEY)],
+    ids=["unknown-reason", "other-member", "no-idempotency-key"],
+)  # fmt: skip
+async def test_an_invalid_request_from_an_unelevated_owner_is_the_422_never_a_challenge(
+    rot: _Rot, body: dict[str, Any], key: object
+) -> None:
+    r = rot.post(await _login(rot.w, "owner", OWNER), key, body)
+    assert (r.status_code, r.json()["code"], len(rot.keys.rows)) == (422, "validation_failed", 1)
+    assert rot.w.audit.of("auth.step_up_required") == [] and "SENTINEL" not in r.text
 
 
 async def test_an_owner_with_step_up_and_csrf_rotates_and_gets_public_keys_only(rot: _Rot) -> None:
@@ -133,6 +174,24 @@ async def test_a_repeat_after_a_restart_replays_its_200_and_another_body_is_reus
     assert _unstored(repeat, reused)
 
 
+async def test_a_replay_needs_a_live_window_and_never_outlives_it(rot: _Rot) -> None:
+    """#2304 slice 3b (review): the step-up comes before M2's replay of the stored `200`, so the
+    same key and body re-sent once the `keys` window has ended on the fake clock get the
+    challenge, never the stored keys; after a new step-up they get the replay."""
+    token, ref = await elevated(rot), uuid.uuid4()
+    first = rot.post(token, ref)
+    assert first.status_code == 200
+    rot.w.clock.now += GRACE_WINDOW + timedelta(seconds=1)
+    resent = rot.post(token, ref)
+    assert (resent.status_code, resent.json()["code"]) == (403, "step_up_required")
+    assert "idempotency-replayed" not in resent.headers and _unstored(resent)
+    assert first.json()["active"]["key_id"] not in resent.text
+    assert rot.w.elevate(token, action_class="keys").status_code == 200
+    again = rot.post(token, ref)
+    assert (again.status_code, again.headers["idempotency-replayed"]) == (200, "true")
+    assert again.json() == first.json() and len(rot.keys.rows) == 2
+
+
 async def test_another_owners_key_is_one_never_seen(rot: _Rot) -> None:
     """Cross-user (C-12.4, SR-E29-07): the first Owner's key from another Owner rotates afresh,
     and never reads the first Owner's answer back."""
@@ -146,10 +205,10 @@ async def test_another_owners_key_is_one_never_seen(rot: _Rot) -> None:
 @pytest.mark.parametrize(
     ("role", "perms"), [("manager", frozenset()), ("viewer", frozenset()), ("manager", OWNER)]
 )
-async def test_anyone_but_the_owner_is_challenged_then_forbidden_and_nothing_rotates(
+async def test_anyone_but_the_owner_is_forbidden_and_nothing_rotates(
     rot: _Rot, role: str, perms: frozenset[Permission]
 ) -> None:
-    """The step-up gate precedes RBAC; `keys:manage` without the Owner role is refused too. Each
+    """Elevated or not, `keys:manage` without the Owner role is refused too. Each
     denial names the caller's session, as every `rbac.denied` does since #4174 (security Medium,
     code C4-1), and the 403 is no-store."""
     token = await elevated(rot, role, perms)
@@ -270,6 +329,28 @@ def test_a_caller_the_route_cannot_resolve_is_refused_before_anything_runs(
     assert (r.status_code, r.json()["code"], _unstored(r)) == (status, code, True)
 
 
+async def _granted(_request: Any, _text: Any) -> None:
+    """A `RequestElevation` whose session holds the `keys` elevation."""
+    return None
+
+
+def test_a_route_wired_without_its_step_up_fails_closed_and_rotates_nothing() -> None:
+    """#2304 slice 3b: no `elevation` is a wiring fault, 503, never "no step-up needed"."""
+    owner = PrincipalSnapshot(uuid.uuid4(), frozenset({"owner"}), OWNER)
+
+    class _Never:
+        async def rotate_audit_signing_key(self, *_: Any, **__: Any) -> Any:
+            raise AssertionError("rotated without a step-up")
+
+    app = FastAPI()
+    who = SimpleNamespace(resolve=lambda _: owner)
+    app.include_router(make_audit_signing_router(_Never(), cast(Any, None), who,
+                                                 budget=AuditRecordBudget()))  # fmt: skip
+    sent = {"Idempotency-Key": str(uuid.uuid4())}
+    r = TestClient(app).post(PATH, headers=sent, json={"reason": "scheduled"})
+    assert (r.status_code, r.json()["code"], _unstored(r)) == (503, "service_unavailable", True)
+
+
 @pytest.mark.parametrize("store", ["down", "hung"])
 async def test_a_429_whose_username_cannot_be_read_is_counted_under_the_id(
     store: str, monkeypatch: pytest.MonkeyPatch
@@ -296,7 +377,8 @@ async def test_a_429_whose_username_cannot_be_read_is_counted_under_the_id(
     app, budget = FastAPI(), AuditRecordBudget()
     who = SimpleNamespace(resolve=lambda _: owner)
     app.include_router(make_audit_signing_router(
-        _Capped(), cast(Any, None), who, budget=budget, auth=cast(Any, _Down())
+        _Capped(), cast(Any, None), who, budget=budget, auth=cast(Any, _Down()),
+        elevation=_granted,
     ))  # fmt: skip
     sent = {"Idempotency-Key": str(uuid.uuid4())}
     r = TestClient(app).post(PATH, headers=sent, json={"reason": "scheduled"})
