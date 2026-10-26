@@ -257,6 +257,53 @@ def test_problem_challenge_field_states_its_rule(
     assert rule in _problem_text(spec, field)
 
 
+def test_problem_declares_attempts_remaining(spec: dict[str, Any]) -> None:
+    """#2304 (additive, C-6.3): how many step-up attempts the session has left."""
+    prop = spec["components"]["schemas"]["Problem"]["properties"]["attempts_remaining"]
+    assert {key: prop[key] for key in ("type", "minimum", "maximum")} == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2,
+    }
+    assert _flat(prop["description"]).startswith("`mfa_invalid` from `POST /auth/step-up` only:")
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "how many more step-up attempts this session has before a failure downgrades it to "
+        "read-only",
+        "2 after its first consecutive failure and 1 after its second",
+        "the next failure is the third and answers `403 session_read_only` instead",
+        "It counts this session's own consecutive step-up failures only",
+        "never another session's, never the account's sign-in lockout counter",
+        "A successful step-up starts the count again",
+        "additive (C-6.3)",
+    ],
+)
+def test_problem_attempts_remaining_states_its_rule(spec: dict[str, Any], rule: str) -> None:
+    assert rule in _problem_text(spec, "attempts_remaining")
+
+
+def test_step_up_invalid_example_carries_attempts_remaining(spec: dict[str, Any]) -> None:
+    unauthorized = spec["components"]["responses"]["Unauthorized"]
+    body = unauthorized["content"]["application/problem+json"]["examples"]["stepUpInvalid"]
+    _validator(spec, _ref(_PROBLEM)).validate(body["value"])
+    assert (body["value"]["code"], body["value"]["attempts_remaining"]) == ("mfa_invalid", 2)
+    entry = {e["code"]: e for e in spec["x-error-codes"]}["mfa_invalid"]
+    assert (body["value"]["status"], body["value"]["title"]) == (entry["status"], entry["title"])
+
+
+@pytest.mark.parametrize("attempts", [0, 3, "2"])
+def test_problem_rejects_attempts_remaining_outside_its_range(
+    spec: dict[str, Any], attempts: object
+) -> None:
+    unauthorized = spec["components"]["responses"]["Unauthorized"]
+    value = unauthorized["content"]["application/problem+json"]["examples"]["stepUpInvalid"]
+    with pytest.raises(ValidationError):
+        _validator(spec, _ref(_PROBLEM)).validate(value["value"] | {"attempts_remaining": attempts})
+
+
 def test_kill_switch_release_challenge_restates_what_would_execute(spec: dict[str, Any]) -> None:
     """AC "Challenge restates what will execute" (POST /trading/kill-switch, release, global)."""
     body = _forbidden_example(spec, "stepUpRequired")
@@ -576,6 +623,8 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
         "classes included (`400` with rule `challenge_required` without it), so a newer `403` "
         "cannot change the class the password and code elevate",
         "`action_class` alone elevates only a grace class, and only while no challenge is live",
+        "That `401` carries `attempts_remaining`, the attempts this session has left before the "
+        "read-only downgrade (see `Problem`)",
     ],
 )
 def test_step_up_description_states_the_challenge_rule(spec: dict[str, Any], rule: str) -> None:

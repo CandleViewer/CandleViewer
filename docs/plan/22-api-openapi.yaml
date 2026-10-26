@@ -12113,7 +12113,8 @@ paths:
         code. A missing or empty `password`, or one longer than 512 characters (the cap of
         `LoginRequest.password`, so no longer password exists), is `422`, decided before any
         factor is checked and counting no failure; any wrong factor is the same `401 mfa_invalid`
-        and never reveals which one failed.
+        and never reveals which one failed. That `401` carries `attempts_remaining`, the attempts
+        this session has left before the read-only downgrade (see `Problem`).
 
         **Challenges (#2304).** Every `403 step_up_required` is a challenge for the one request it
         refused. Its problem body carries `challenge_id`, `challenge_expires_at` (5 minutes after
@@ -15272,6 +15273,18 @@ components:
                   code: session_idle_locked,
                   idle_locked_at: "2026-09-14T10:46:02Z",
                 }
+            stepUpInvalid:
+              summary: A wrong password or code at `POST /auth/step-up`, with the attempts left (#2304)
+              value:
+                {
+                  type: "https://candleviewer.local/errors/mfa_invalid",
+                  title: "MFA code rejected",
+                  status: 401,
+                  detail: "Invalid password or code.",
+                  instance: "urn:cv:req:0193f2bb-1117",
+                  code: mfa_invalid,
+                  attempts_remaining: 2,
+                }
     Forbidden:
       description: "Authenticated but not permitted. On state-changing operations this status may also carry `code: csrf_token_invalid` (SR-041; see `CsrfTokenInvalid`). An enrolment-only session gets `code: mfa_enrollment_required` from every operation outside its allow-list (see the Enrolment-only session section of `info.description`). A session that holds a view-as context gets `code: view_as_read_only` from every state-changing operation outside the viewer's own ones, and `code: view_as_expired` from every operation outside them once the server has ended the context (see the View-as session section of `info.description`). Both honour the C-2.6 carve-out below: while viewing, the writes it names and engaging the kill switch on an account set are not refused (see the View-as session section), and leaving view-as is one call that nothing refuses. `detail` never echoes token or cookie values. On a dangerous operation it may carry `code: step_up_required`: that body is a step-up challenge for the refused request (`challenge_id`, `challenge_expires_at`, `action_class`, `action_summary`, `target` and, when its class has one, `reason`; see `POST /auth/step-up`, #2304). On an order submit or amend it may also be the order-entry gate's refusal: `code: trading_disabled` with a `reason` member (`TradingDisabledProblem`, #837 Q5). `reason` appears on gate refusals only: the B18 kill switch (FREEZE) and the live-not-enabled refusal are separate synchronous checks ahead of the gate, and they return `trading_disabled` without a `reason`. Like the gate, they run after authentication, RBAC and account-scope resolution, and the C-2.6 carve-out binds every synchronous refusal, not just the gate: attaching a missing native SL, tightening a stop or re-arming a protective trigger is never refused. A `trading_disabled` body without `reason` is this response's plain `Problem`, never a `TradingDisabledProblem` (whose `reason` is required), so a client tells the gate's refusal by that member. On `placeOrder` and `amendOrder` the three come after the idempotency lookup (see the order of the checks under Idempotency in `info.description`), so the exact repeat of an accepted request gets its stored outcome instead. On `placeOrder`, and on an `amendOrder` that increases exposure (#913 slice 4 ruling Q10), the `trading.oms_enabled` flag, while off, also refuses with `trading_disabled` and no `reason`, after the lookup and ahead of the three (#913 slice 3 ruling Q3), an admission that opens or increases exposure only: an order whose body says `reduce_only` passes it (21-database-schema.md section 10.7). On a live account's order mutation that `ArmToken` names (one that opens or increases exposure, `reversePosition`, or a leverage change) it may be `code: session_not_armed` (SR-043; see the `X-Arm-Token` parameter, `ArmToken`), decided after account scope like the gate, a synchronous refusal the carve-out binds too; `ArmToken` lists the carve-out's full set (24-internal-schemas.md section 8.10). `placeOrder`, `createTradeGroup`, `previewTradeGroup`, `cancelAllOrders`, `closeAllPositions`, `createTradeGroupDefinition` and `updateTradeGroupDefinition` refuse an exchange account named in their body that is outside the caller's grants, and one that does not exist, alike with `code: account_scope_denied` (see `AccountScopeDenied`). `createApiKey` and `testApiKey` answer `code: kek_unavailable` while the credential key (KEK) is unavailable (ADR-0009 Amendment 1). On `createTradeGroup`, `previewTradeGroup` and `amendTradeGroup` it may be `code: risk_limit_breached`: a request whose submitted values would take a leg past its bound profile's caps and risk budget is refused whole, never clamped, with one `errors[]` entry per offending leg (`field`, `rule`, `limit`, and the requested value in `message`; example `tradeGroupWidening`, ADR-0040 (proposed, #4461) Decision 1)."
       content:
@@ -16469,6 +16482,19 @@ components:
             such line. Optional, additive (C-6.3). A `trading_disabled` body's `reason` is
             another member, `TradingDisabledProblem.reason` (the order-entry gate's refusal
             reason); each belongs to its own `code`.
+        attempts_remaining:
+          type: integer
+          minimum: 1
+          maximum: 2
+          description: >
+            `mfa_invalid` from `POST /auth/step-up` only: how many more step-up attempts this
+            session has before a failure downgrades it to read-only, 2 after its first
+            consecutive failure and 1 after its second; the next failure is the third and answers
+            `403 session_read_only` instead, without this member. It counts this session's own
+            consecutive step-up failures only, the count stored on its session row: never
+            another session's, never the account's sign-in lockout counter, so it reveals
+            nothing beyond what this session has itself been told. A successful step-up starts
+            the count again. Optional, additive (C-6.3).
     PageMeta:
       type: object
       required: [has_more, count]
