@@ -73,7 +73,6 @@ from candleviewer.oms.ports import (
     ExecutionHandovers,
     FiguresReading,
     Finding,
-    FixedQtySizer,
     ForeignOrderLockout,
     Interim,
     InterimRiskGate,
@@ -93,6 +92,7 @@ from candleviewer.oms.ports import (
     ProtectionReadings,
     RateReading,
     ReconciliationRequests,
+    RequestQtySizer,
     ResyncReason,
     SizedOrder,
     SizingRequest,
@@ -285,42 +285,43 @@ def test_sized_order_refuses_an_effect_that_names_no_order_effect(effect: object
         _order("demo", effect=effect)
 
 
-# --- FixedQtySizer (R4: fixed_qty only) ----------------------------------------------------------
+# --- RequestQtySizer (a reduce-only order: fixed_qty only) ----------------------------------------
 
 
-def test_fixed_qty_sizer_floors_the_quantity_to_the_lot_step() -> None:
-    sized = FixedQtySizer().size(SizingRequest(mode="fixed_qty", qty=Decimal("0.0019")), INSTRUMENT)
+def test_request_qty_sizer_floors_the_quantity_to_the_lot_step() -> None:
+    sizing = SizingRequest(mode="fixed_qty", qty=Decimal("0.0019"))
+    sized = RequestQtySizer().size(sizing, INSTRUMENT)
     assert sized == Decimal("0.001")
 
 
-def test_fixed_qty_sizer_without_round_to_lot_keeps_the_quantity_for_the_validator() -> None:
+def test_request_qty_sizer_without_round_to_lot_keeps_the_quantity_for_the_validator() -> None:
     sizing = SizingRequest(mode="fixed_qty", qty=Decimal("0.0019"), round_to_lot=False)
-    assert FixedQtySizer().size(sizing, INSTRUMENT) == Decimal("0.0019")
+    assert RequestQtySizer().size(sizing, INSTRUMENT) == Decimal("0.0019")
 
 
-def test_fixed_qty_sizer_needs_a_quantity() -> None:
+def test_request_qty_sizer_needs_a_quantity() -> None:
     with pytest.raises(OrderInvalid) as refused:
-        FixedQtySizer().size(SizingRequest(mode="fixed_qty"), INSTRUMENT)
+        RequestQtySizer().size(SizingRequest(mode="fixed_qty"), INSTRUMENT)
     assert refused.value.errors == (
         FieldError("sizing.qty", "required", "fixed_qty sizing needs a qty."),
     )
 
 
 @pytest.mark.parametrize("qty", ["NaN", "Infinity", "-Infinity"])
-def test_fixed_qty_sizer_refuses_a_quantity_that_is_not_finite(qty: str) -> None:
+def test_request_qty_sizer_refuses_a_quantity_that_is_not_finite(qty: str) -> None:
     with pytest.raises(OrderInvalid) as refused:
-        FixedQtySizer().size(SizingRequest(mode="fixed_qty", qty=Decimal(qty)), INSTRUMENT)
+        RequestQtySizer().size(SizingRequest(mode="fixed_qty", qty=Decimal(qty)), INSTRUMENT)
     assert refused.value.detail == "The quantity must be a finite number."
 
 
 @pytest.mark.parametrize(
     "mode", ["fixed_notional", "pct_equity", "risk_based", "pct_position", "profile"]
 )
-def test_fixed_qty_sizer_refuses_every_other_sizing_mode(mode: Any) -> None:
-    """R4 as 22 `placeOrder` words it: `validation_failed` / `sizing_mode_unsupported`."""
+def test_request_qty_sizer_refuses_every_other_sizing_mode(mode: Any) -> None:
+    """22 `placeOrder`: a reduce-only order's other modes are `sizing_mode_unsupported`."""
     with pytest.raises(OrderInvalid) as refused:
-        FixedQtySizer().size(SizingRequest(mode=mode, qty=Decimal("1")), INSTRUMENT)
-    only = "Only fixed_qty sizing is available yet."
+        RequestQtySizer().size(SizingRequest(mode=mode, qty=Decimal("1")), INSTRUMENT)
+    only = "A reduce-only order is sized by fixed_qty only."
     assert refused.value.errors == (FieldError("sizing.mode", "sizing_mode_unsupported", only),)
     assert refused.value.detail == only
 
@@ -567,7 +568,7 @@ def test_announce_logs_each_interim_port_once_and_counts_it() -> None:
         ("oms_interim_port", "warning", name) for name in PORT_NAMES
     ]
     assert all(log["replaced_by"] and log["serves"] for log in logs)
-    assert [_gauge(metrics, name) for name in PORT_NAMES] == [1.0] * 4
+    assert [_gauge(metrics, name) for name in PORT_NAMES] == [1.0] * 3
 
 
 def test_announce_counts_a_real_port_as_zero_and_logs_nothing_for_it() -> None:
@@ -579,7 +580,7 @@ def test_announce_counts_a_real_port_as_zero_and_logs_nothing_for_it() -> None:
     metrics = Metrics("live")
     with capture_logs() as logs:
         announced = announce_interim_ports(ports, metrics=metrics)
-    assert announced == ("sizer", "stop_resolver", "arm_records")
+    assert announced == ("stop_resolver", "arm_records")
     assert [log["port"] for log in logs] == list(announced)
     assert _gauge(metrics, "risk_gate") == 0.0
     assert _gauge(metrics, "arm_records") == 1.0
@@ -605,7 +606,10 @@ def test_announce_one_port_refuses_a_label_outside_the_closed_set_before_any_ser
 def test_announce_registers_the_gauge_from_its_catalogue_entry() -> None:
     [spec] = [s for s in CATALOGUE if s.name == INTERIM_PORTS_METRIC]
     assert (spec.kind, spec.labels, spec.max_series) == ("gauge", ("port",), 7)
-    assert INTERIM_PORT_LABELS == (*PORT_NAMES, "kill_switch", "machine_event_sink", "risk_figures")
+    assert INTERIM_PORT_LABELS == (
+        *PORT_NAMES, "kill_switch", "machine_event_sink", "risk_figures", "atr"
+    )  # fmt: skip
+    assert "sizer" not in INTERIM_PORT_LABELS  # S4-S-b2 retired it: an entry's sizer is real
     assert (spec.status, spec.owner_epic) == ("planned", "E29")
     metrics = Metrics("demo")
     announce_interim_ports(SubmissionPorts.interim(now=lambda: NOW), metrics=metrics)

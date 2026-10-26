@@ -796,8 +796,10 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         buckets=PROFILE_SAVE_BUCKETS,
         max_series=1,
     ),
-    # --- Leg sizer (E28-T03 #907; planned until E28-T05 #909 / E34-S01 #999 wire it) -----------
-    # `accounts.sizer_metrics.SizerMetrics` records them from a `LegSizing`; `size_leg` stays pure.
+    # --- Leg sizer (E28-T03 #907): wired by `oms.submit`'s size step for a single order (E29-T04
+    # #913 S4-S), and by E28-T05 #909 / E34-S01 #999 for a trade group's legs, which register
+    # them as their owners do: live, so every process exports them from boot. `accounts.
+    # sizer_metrics.SizerMetrics` records them from a `LegSizing`; `size_leg` stays pure.
     _s(
         "cv_sizer_duration_seconds",
         "histogram",
@@ -805,7 +807,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "One leg's size_leg call, whatever its outcome (budget: p95 <= 1 ms per leg).",
         "dashboard only (06-performance budget #4, fan-out sub-clause)",
-        _P,
+        _L,
         "E28",
         buckets=SIZER_BUCKETS,
         max_series=1,
@@ -817,7 +819,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("outcome", "reason"),
         "Legs sized, by outcome (ok, skip, fail) and its closed reason (none for ok).",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=12,
     ),
@@ -828,7 +830,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         ("cap",),
         "Caps of 24 section 9.3.2 that lowered a leg's quantity, one per cap that fired.",
         "dashboard only",
-        _P,
+        _L,
         "E28",
         max_series=7,
     ),
@@ -839,7 +841,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         (),
         "Legs whose ATR stop fell back to fallback_sl_offset_pct (no warm reading of the period).",
         "dashboard only (a persistent rate = the ATR feed is not reaching the sizer)",
-        _P,
+        _L,
         "E28",
         max_series=1,
     ),
@@ -2756,10 +2758,11 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "ports",
         ("port",),
         "Order-path ports served by an interim implementation (#913 ruling R4; slice 3), set once "
-        "at startup: 1 per interim port (sizer, stop_resolver, risk_gate, arm_records, "
-        "kill_switch, machine_event_sink, risk_figures), 0 per real one. The interim risk gate "
-        "and arm records refuse every live order, and risk_figures at 1 on live refuses every "
-        "live entry once the size step reads it (S4-S-b2); the interim kill switch admits.",
+        "at startup: 1 per interim port (stop_resolver, risk_gate, arm_records, kill_switch, "
+        "machine_event_sink, risk_figures, atr), 0 per real one. The interim risk gate and arm "
+        "records refuse every live order, and risk_figures at 1 on live refuses every live "
+        "entry (503 sizing_unavailable); atr: an atr stop is the profile's fallback offset; "
+        "the interim kill switch admits.",
         "> 0 on env=live (dashboard)",
         _P,
         "E29",
@@ -2776,7 +2779,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "store_unavailable, audit_unavailable or internal_error > 0 for 5 min (page)",
         _P,
         "E29",
-        max_series=21,
+        max_series=22,
     ),
     _s(
         "oms_exit_refused_total",

@@ -457,6 +457,18 @@ class ExchangeUnavailable(OrderRefused):
         self.retry_after_s = _positive_delay(retry_after_s)
 
 
+class SizingUnavailable(OrderRefused):
+    """`sizing_unavailable` (#913 S4-S ruling Q5): a figure the size step needs (the day's loss,
+    the committed risk, the fee rate, the margin) cannot be read yet (`figure_unknown`), so nothing
+    was recorded or sent; never a venue outage. `retry_after_s` is the answer's `Retry-After`."""
+
+    default_detail = "The order cannot be sized yet, so it was not sent."
+
+    def __init__(self, *, retry_after_s: int) -> None:
+        super().__init__()
+        self.retry_after_s = _positive_delay(retry_after_s)
+
+
 class EnvironmentMismatch(OmsError):
     """C-2.11: an order built for one environment met a route to another, a demo account's order
     and a live client among them. Never sent; an invariant broken, so it pages."""
@@ -518,6 +530,7 @@ PROBLEMS: Final[Mapping[type[OmsError], Problem]] = MappingProxyType(
         StoreUnavailable: Problem(503, "store_unavailable"),
         OmsNotReady: Problem(503, "oms_not_ready", retry_after=True),
         ExchangeUnavailable: Problem(503, "exchange_unavailable", retry_after=True),
+        SizingUnavailable: Problem(503, "sizing_unavailable", retry_after=True),
         AuditNotDurable: Problem(503, "audit_unavailable"),
     }
 )

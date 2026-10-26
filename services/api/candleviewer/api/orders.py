@@ -256,7 +256,13 @@ def _order_request(body: dict[str, object], account_id: AccountId) -> OrderReque
     sizing, trigger = read.sizing, read.trigger
     return OrderRequest(
         account_id=account_id, symbol=read.symbol, side=read.side, order_type=read.order_type,
-        sizing=SizingRequest(sizing.mode, _decimal(sizing.qty), sizing.round_to_lot),
+        sizing=SizingRequest(
+            sizing.mode, _decimal(sizing.qty), sizing.round_to_lot,
+            notional_usd=_decimal(sizing.notional_usd), pct=_decimal(sizing.pct),
+            risk_per_trade_usd=_decimal(sizing.risk_per_trade_usd),
+            risk_per_trade_pct=_decimal(sizing.risk_per_trade_pct),
+            max_notional_usd=_decimal(sizing.max_notional_usd),
+        ),
         intent=read.intent, price=_decimal(read.price), time_in_force=read.time_in_force or "GTC",
         reduce_only=read.reduce_only, close_on_trigger=read.close_on_trigger,
         position_idx=read.position_idx or 0,

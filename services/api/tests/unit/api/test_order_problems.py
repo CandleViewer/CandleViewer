@@ -47,6 +47,7 @@ from candleviewer.oms.errors import (
     RateBudgetExceeded,
     RiskRefused,
     SessionNotArmed,
+    SizingUnavailable,
     StopRequestPending,
     StoreUnavailable,
     TickSizeViolation,
@@ -94,6 +95,7 @@ _ROWS: dict[type[OmsError], OmsError] = {
     StoreUnavailable: StoreUnavailable(),
     OmsNotReady: OmsNotReady(),
     ExchangeUnavailable: ExchangeUnavailable(retry_after_s=3),
+    SizingUnavailable: SizingUnavailable(retry_after_s=1),
     AuditNotDurable: AuditNotDurable("the order's write-ahead audit did not land"),
 }
 #: The `Retry-After` each error above holds, for the rows that carry one.
@@ -104,6 +106,7 @@ _DELAYS: dict[type[OmsError], int] = {
     ClockDriftBlocked: 5,
     OmsNotReady: 5,
     ExchangeUnavailable: 3,
+    SizingUnavailable: 1,
 }
 _PAGING = [cls for cls, problem in PROBLEMS.items() if problem.pages]
 

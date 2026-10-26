@@ -41,7 +41,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.fakes import LandedThenAmbiguous
-from candleviewer.exchange.base.models import PlaceOrderRequest
+from candleviewer.exchange.base.models import FeeRate, PlaceOrderRequest, RiskLimitTier, Wallet
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.fakes import FakeClockHealth
 from candleviewer.oms.ports import Profiles
@@ -71,6 +71,8 @@ pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # C6's database for this module
 
 _NOTHING = (0, 0, 0, 0, 0)  # `_held`: no order, anchor, group, leg or recorded stop
+#: The venue reads of the size step's figures (`DayRiskFigures`), the only calls before a filter.
+_FIGURE_READS = {"wallet", "closed_pnl", "positions", "open_orders", "fee_rate"}
 
 
 async def _pipe(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -136,6 +138,17 @@ class World:
     def __post_init__(self) -> None:
         self.port = Port(environment="demo", now_us=self.clock.us)
         self.body = BODY | {"exchange_account_id": str(self.account)}
+        # The size step's figures (24 Sec.9.3.6): the venue's wallet and fee rate; no position,
+        # no open order and no closed P&L today, the fake's own empty answers.
+        cash, none = Decimal(100000), Decimal(0)
+        self.port.set_wallet(Wallet(
+            account_id=self.account, equity=cash, wallet_balance=cash, available_to_withdraw=None,
+            available_margin=cash, used_margin=none, unrealised_pnl=none, cum_realised_pnl=none,
+            account_im_rate=none, account_mm_rate=none, updated_at=self.clock.us(),
+        ))  # fmt: skip
+        fee = FeeRate(symbol=sr.SYMBOL, maker=Decimal("0.0002"), taker=Decimal("0.00055"),
+                      fetched_at=self.clock.us())  # fmt: skip
+        self.port.set_fee_rate(self.account, fee)
 
     async def backoff(self, seconds: float) -> None:
         """The runtime's sleep: a retry of its startup sweep waits here until the test ends."""
@@ -164,6 +177,18 @@ def world(pg_dsn: str, tmp_path: Path) -> Iterator[World]:
             "WHERE exchange_account_id = %s", account)  # fmt: skip
 
 
+class _Listed(dict[str, Any]):
+    """The catalogue's snapshot: its instruments, and each one's lowest risk-limit tier, which
+    the size step reads its maintenance-margin rate from."""
+
+    def risk_limit_tiers(self, symbol: str) -> tuple[RiskLimitTier, ...] | None:
+        tier = RiskLimitTier(
+            tier_id=1, risk_limit_value=Decimal(2_000_000), initial_margin_rate=Decimal("0.01"),
+            maintenance_margin_rate=Decimal("0.005"), max_leverage=Decimal(100),
+        )  # fmt: skip
+        return (tier,) if symbol in self else None
+
+
 def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> OmsRuntime:
     """A process's runtime over the database at `dsn`, as E4's: the clock guard measured, the
     flag views read, the account and its key read in memory, and the catalogue composed."""
@@ -177,7 +202,7 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
         flag.read()
     health = FakeClockHealth(cr.Monotonic())
     health.measure()
-    listed = {sr.SYMBOL: sr.instrument()}
+    listed = _Listed({sr.SYMBOL: sr.instrument()})
     catalogue = SimpleNamespace(snapshot=lambda: listed)
     # A fresh quote whose mid is the test bodies' price, inside the band the entry is checked in.
     quote = SimpleNamespace(
@@ -297,13 +322,15 @@ async def test_happy_path_is_an_acceptance_not_a_fill(
 
 async def test_filters_are_enforced_before_any_exchange_call(world: World) -> None:
     """Gherkin "Filters are enforced before any exchange call": a price that is no multiple of the
-    tick (0.1) is refused 400 `tick_size_violation`; no request reaches the venue and nothing is
-    recorded, the refusal audited before it is answered (C-2.9)."""
+    tick (0.1) is refused 400 `tick_size_violation`; no order request reaches the venue, only the
+    size step's reads before it (24 Sec.8.4 item 2, step 3c), and nothing is recorded, the refusal
+    audited before it is answered (C-2.9)."""
     async with _serving(world) as client:
         calls = len(world.port.calls)
         answer = await _post(client, world.body | {"price": "60000.05"})
     assert (answer.status_code, answer.json()["code"]) == (400, "tick_size_violation")
-    assert (world.port.calls[calls:], world.held()) == ([], _NOTHING)
+    asked = {call.method for call in world.port.calls[calls:]}
+    assert asked == _FIGURE_READS and world.held() == _NOTHING
     assert ("orders.submit", "tick_size_violation") in world.writer.actions
 
 

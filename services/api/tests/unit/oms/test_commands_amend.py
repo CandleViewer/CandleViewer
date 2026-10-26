@@ -561,3 +561,26 @@ async def test_another_gate_refusal_of_the_account_still_raises(
     monkeypatch.setattr(rig.accounts, "trading_account", lambda *_a, **_k: _raises(gate))
     with pytest.raises(OrderEntryRefused):
         await rig.port.amend(_amend(order, stop_loss="58500"))
+
+
+class _Figures:
+    """The size step's `OrderFigures`, recording each account whose figures are dropped."""
+
+    def __init__(self) -> None:
+        self.invalidated: list[Any] = []
+
+    def invalidate(self, account_id: Any) -> None:
+        self.invalidated.append(account_id)
+
+
+async def test_an_accepted_amend_drops_the_accounts_figures_and_a_refused_one_none() -> None:
+    """24 Sec.9.3.6 (#913 S4-S): an accepted amend moved the account's room, so the next entry
+    is sized against the venue's figures, never the kept ones."""
+    held = _Figures()
+    rig = cr.build_rig(figures=held)
+    order = await _live(rig)
+    rig.demo.script("amend_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "hidden"))
+    assert (await rig.port.amend(_amend(order, price="60500")))["ok"] is False
+    assert held.invalidated == []
+    assert (await rig.port.amend(_amend(order, price="60600")))["ok"] is True
+    assert held.invalidated == [cr.ACCOUNT]
