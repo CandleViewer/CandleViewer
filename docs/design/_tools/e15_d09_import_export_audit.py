@@ -129,7 +129,7 @@ RULING = "6396085915"
 # The BQ comment the ruling answers (the questions table's heading names both).
 BQ_COMMENT = "6396029607"
 # The merged inputs the header pins: E15-D01, E15-D02 text and boards, E15-D03, E15-D04,
-# E15-D06, E09-D09 and E15-D08, which is named only and never cited by line.
+# E15-D06, E09-D09, and E15-D08 and E15-D05, each named only and never cited by line.
 MERGE_SHAS = (
     "ed8a22246263ace73f39e4434e6d5f57b1a857bd",
     "1044c4f602eff6ae1a2cf42201ab398f6c4234d1",
@@ -139,6 +139,7 @@ MERGE_SHAS = (
     "baccf724a1fa3ad66f9333e440a7f5e8668b6eff",
     "c4989493461ec6b6d22b9254633452a6362b750e",
     "fb1b48041ae0a12638beacae6a61854833c5cc4d",
+    "013562636a339ab32c80d257b9d1f8cef8e64422",
 )
 # E05-D02 slice 4's commit, which the header names beside the merges.
 SLICE4 = "04a8caa9513e90debcf7cbc41a9ca585496eba01"
@@ -2958,6 +2959,7 @@ SHA_COUNTS = {
     "baccf724a1fa3ad66f9333e440a7f5e8668b6eff": 1,
     "c4989493461ec6b6d22b9254633452a6362b750e": 2,
     "fb1b48041ae0a12638beacae6a61854833c5cc4d": 12,
+    "013562636a339ab32c80d257b9d1f8cef8e64422": 4,
     "fabb267f4cd59ded896af813949ddac89691a1d1": 1,
     "04a8caa9513e90debcf7cbc41a9ca585496eba01": 1,
 }
@@ -5029,11 +5031,11 @@ KNOWN_KEYS = set(CITE_KEYS.split("|"))
 
 
 def cite_key_problem(spec: str) -> str | None:
-    """A4: a line cite to a document the tool does not pin (E15-D08 is named only)."""
+    """A4: a line cite to a document the tool does not pin (E15-D08 and E15-D05 are named only)."""
     for m in re.finditer(r"`([A-Za-z][A-Za-z0-9]*):(\d+)(?:–\d+)?`", spec):
         if m.group(1) not in KNOWN_KEYS:
             return m.group(0)
-    pending = re.search(r"\bD08:\d+", spec)
+    pending = re.search(r"\bD0[58]:\d+", spec)
     return pending.group(0) if pending else None
 
 
@@ -5936,7 +5938,7 @@ def text_pin_rows(table: str) -> list[DocBlock] | None:
             body[-1] += " " + line[3:]
         elif line.startswith("  ") and head:
             try:
-                body.append(json.loads(line[2:]) if head[2] == "fence" else line[2:])
+                body.append(json.loads(line[2:]) if head[1] == "fence" else line[2:])
             except json.JSONDecodeError:
                 return None
         else:
@@ -6035,6 +6037,48 @@ def text_pin_problems(want: list[DocBlock], have: list[DocBlock]) -> list[str]:
             msg = f"E15-D09.md {w.where}: a pinned block is deleted {w.text[:50]!r}"
             bad.append((10**9 + i, msg))
     return [m for _n, m in sorted(bad, key=lambda x: x[0])]
+
+
+# The spec holds no fenced block, so the self-test probes the fence path on a small document of
+# its own: pinned and parsed back it holds, and each verbatim change inside the fence FAILs once.
+FENCE_PROBE = (
+    "# 1. Probe\n\nA sketch follows.\n\n```text\n  [ Import… ]   [ Cancel ]\n"
+    "| not | a table |\n```\n\nAfter it.\n"
+)
+FENCE_PROBE_CUTS = (
+    ("a run of spaces inside a line", "]   [ Cancel", "] [ Cancel", "changed from"),
+    ("a line's indent", "\n  [ Import", "\n[ Import", "changed from"),
+    (
+        "a doubled space in a `|` line",
+        "| not | a table |\n",
+        "| not |  a table |\n",
+        "changed from",
+    ),
+    ("a line removed", "| not | a table |\n", "", "a line removed"),
+    ("a line added", "| not | a table |\n", "| not | a table |\n  Esc\n", "a line added"),
+)
+
+
+def fence_pin_probe() -> list[str]:
+    """The fence path of the whole-text pin on FENCE_PROBE: one `fence` block, verbatim (its
+    indent and inner spaces kept, a `|` line never a table), round-trips through the pin with no
+    FAIL, and each FENCE_PROBE_CUTS change FAILs once, by location, with its kind."""
+    pins = text_pin_rows(render_text_pins(FENCE_PROBE))
+    if not pins:
+        return ["self-test fence probe: its pin does not parse"]
+    have = doc_blocks(FENCE_PROBE)
+    fences = [b for b in have if b.kind == "fence"]
+    if len(fences) != 1 or "\n  [ Import… ]   [ Cancel ]\n" not in fences[0].text:
+        return [f"self-test fence probe: not one verbatim fence block: {fences[:1]}"]
+    bad = [
+        f"self-test fence probe: unchanged FAILs {p[:60]!r}" for p in text_pin_problems(pins, have)
+    ]
+    for name, old, new, says in FENCE_PROBE_CUTS:
+        cut = FENCE_PROBE.replace(old, new, 1)
+        got = text_pin_problems(pins, doc_blocks(cut))
+        if cut == FENCE_PROBE or len(got) != 1 or says not in got[0] or "§1#1 ¶2" not in got[0]:
+            bad.append(f"self-test fence probe {name}: expected one {says!r} at §1#1 ¶2, got {got}")
+    return bad
 
 
 def text_pin_gate(spec: str, table: str) -> list[str]:
@@ -8567,6 +8611,7 @@ def self_test(spec: str, ctx: Ctx) -> tuple[list[str], dict[str, int]]:
             bad.append(f"self-test {name}: the whole-text pin's NOTE lacks {note!r}")
         elif says and not note and says not in new[0]:
             bad.append(f"self-test {name}: the FAIL does not say {says!r}: {new[0][:80]!r}")
+    bad += fence_pin_probe()
     again, _ = gates(spec, ctx)
     if sorted(again) != sorted(base):
         bad.append("self-test: the restored spec does not reproduce the base result")
@@ -9737,6 +9782,9 @@ STATUS_PIN_TXT = r"""
 @ prose
   E15-D08 (#4503, Export… in SCR-025's Share section) merged at
   `fb1b48041ae0a12638beacae6a61854833c5cc4d`: named only, never cited by line
+@ prose
+  E15-D05 (#4507, the SCR-011 rail) merged at `013562636a339ab32c80d257b9d1f8cef8e64422`:
+  named only, never cited by line
 @ prose
   Merged upstream: E15-D01 (`D01:39`)
 @ prose
@@ -12065,8 +12113,8 @@ STATUS_PIN_TXT = r"""
   D09-A12 to D09-A19 are §11's (`14`)
 @ prose
   the three below go to E15 specs: D09-A20 to merged E15-D03, D09-A21 to merged E15-D08
-  (`fb1b4804`) and D09-A22 to merged E15-D03 and to E15-D05, which has not merged, so a row
-  to an unmerged spec carries its words and no old text.
+  (`fb1b4804`) and D09-A22 to merged E15-D03 and to merged E15-D05 (`01356263`), named only
+  and never cited by line.
 @ row Id · col 1
   Id
 @ row Id · col 2
@@ -12101,7 +12149,7 @@ STATUS_PIN_TXT = r"""
 @ row D09-A22 · col 3
   E15-D03, at its next revision
 @ row D09-A22 · col 3
-  E15-D05, the rail's owner (not merged, by name)
+  E15-D05, the rail's owner (merged, `01356263`)
 @ prose
   **Q
 @ prose
@@ -12244,7 +12292,7 @@ STATUS_PIN_TXT = r"""
 @ row E15-D05 (SCR-011 rail) · col 2
   D09-A22: Import… in the rail's workspace menu
 @ row E15-D05 (SCR-011 rail) · col 3
-  not merged, by name
+  merged (`01356263`)
 @ row E15-X01 (STRIDE) · col 1
   E15-X01 (STRIDE)
 @ row E15-X01 (STRIDE) · col 2
@@ -12417,7 +12465,9 @@ RULED_PIN_TXT = r"""
    `baccf724a1fa3ad66f9333e440a7f5e8668b6eff`); E05-D02 slice 4
    (`04a8caa9513e90debcf7cbc41a9ca585496eba01`). E15-D08 (#4503, Export… in SCR-025's Share
    section) merged at `fb1b48041ae0a12638beacae6a61854833c5cc4d`: named only, never cited by line;
-   if it changes, this spec's export entry follows it.
+   if it changes, this spec's export entry follows it. E15-D05 (#4507, the SCR-011 rail) merged at
+   `013562636a339ab32c80d257b9d1f8cef8e64422`: named only, never cited by line; D09-A22 hands it
+   the rail's Import….
 @ ¶5 ‖ paragraph ‖ 1
   **Inputs pinned.** Base `origin/main` `fabb267f4cd59ded896af813949ddac89691a1d1`; every
    `file:line` cite in this file is at it and the tool re-checks each (a moved line is a WARN; a
@@ -16236,8 +16286,8 @@ RULED_PIN_TXT = r"""
 @ ¶6 ‖ paragraph ‖ 1
   **A — amendments to other specs.** D09-A1 to D09-A11 are §10's (`15` and `tools/contrast/`) and
    D09-A12 to D09-A19 are §11's (`14`); the three below go to E15 specs: D09-A20 to merged E15-D03,
-   D09-A21 to merged E15-D08 (`fb1b4804`) and D09-A22 to merged E15-D03 and to E15-D05, which has
-   not merged, so a row to an unmerged spec carries its words and no old text.
+   D09-A21 to merged E15-D08 (`fb1b4804`) and D09-A22 to merged E15-D03 and to merged E15-D05
+   (`01356263`), named only and never cited by line.
 @ ¶7 ‖ table ‖ 1
   | Id | Amendment | Owner |
   | --- | --- | --- |
@@ -16251,8 +16301,8 @@ RULED_PIN_TXT = r"""
    never makes the sharing claim | E15-D08 (merged, `fb1b4804`) |
   | D09-A22 | Import… as an item of the rail's workspace menu (SCR-011), beside Export…, opening
    the same empty dialog (§3.2; BQ-9 RULED): E15-D03's R-5 (`D03:564`) gains the rail's row, and
-   the rail's menu gains the item | E15-D03, at its next revision; E15-D05, the rail's owner (not
-   merged, by name) |
+   the rail's menu gains the item | E15-D03, at its next revision; E15-D05, the rail's owner
+   (merged, `01356263`) |
 @ ¶8 ‖ paragraph ‖ 1
   **Q — open questions; the default built is named.**
 @ ¶9 ‖ table ‖ 1
@@ -16295,7 +16345,7 @@ RULED_PIN_TXT = r"""
    D09-A21; if E15-D08 changes the entry, §2.2 follows it | merged (`fb1b4804`) |
   | E15-D03 (SCR-020 chrome) | D09-A20, D09-A22; Import… in "+" and Export… in `[⋯]` keep their
    keys (§6) | merged |
-  | E15-D05 (SCR-011 rail) | D09-A22: Import… in the rail's workspace menu | not merged, by name |
+  | E15-D05 (SCR-011 rail) | D09-A22: Import… in the rail's workspace menu | merged (`01356263`) |
   | E15-X01 (STRIDE) | D09-G10 with the export under view-as, D09-G11, D09-G12; the four hazards
    of §1.2 as its starting list | — |
   | E15-D14, E15-D15, E15-D16 | the motion of both dialogs (out of scope here); §7's keyboard
