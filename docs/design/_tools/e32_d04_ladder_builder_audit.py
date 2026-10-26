@@ -81,6 +81,7 @@ UPSTREAM = DESIGN / "E32" / "E32-D02.md"
 # E32-D03 / E32-D05 are read at their merge commits (#4421, #4417), not at `main`: their boards
 # PRs (#4453, #4440) moved the cited lines, and the spec cites the text "at those merge commits".
 SIBLING_PINS = {
+    "E32-D02": "27bd8e885cf07d9ed47fdbf23880c65fdf60d5a8",  # its merge commit; G-rows cited by line
     "E32-D03": "edca4c31ade27fcf2ed22f1f7ab2164cb4b28829",
     "E32-D05": "e8f8558aaf9f931d960bfc987c6d92306ee29045",
 }
@@ -328,6 +329,7 @@ CITED_TABLE = """
 E32-D02 | 285 | Account stale (`oms.account_stale`
 E32-D02 | 369 | `ladder.cancel.confirm` · `ladder.cancelled`
 E32-D02 | 466 | stale refuses order entry, never a tighten
+E32-D02 | 810 | | G-20 |
 E32-D02 | 811 | so the server cannot preview a DCA ladder
 E32-D02 | 835 | SCR-065 7, 14 (DCA, risk cap)
 E30-D04 | 219 | `frozen.reason` "Trading frozen by the owner — new orders off." (PROPOSED
