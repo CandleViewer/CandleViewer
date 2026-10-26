@@ -1,6 +1,6 @@
 # CandleViewer Constitution
 
-> **Status:** Ratified 2026-09-14 · **Version:** 1.1.0 · **Owner:** @basiltt
+> **Status:** Ratified 2026-09-14 · **Version:** 1.1.1 · **Owner:** @basiltt
 > **Applies to:** every human contributor and every AI coding agent working in this repository.
 > **Authority:** This document outranks any other document, README, comment, habit, skill, agent prompt or
 > tool default in this repository. Where another document conflicts with the Constitution, the Constitution
@@ -854,7 +854,7 @@ and rotates a key; environment switch demo→live requires explicit confirmation
 renders the engine. E2E must not be used to test business logic reachable at a lower level.
 
 **C-13.5 Fixtures from recorded Bybit data; no live-exchange calls in CI.**
-- Fixtures live in `tests/fixtures/bybit/` as recorded WS/REST captures (trades, book snapshot+deltas at
+- Fixtures live in `packages/fixtures/bybit/` as recorded WS/REST captures (trades, book snapshot+deltas at
   50/200/500 depth, tickers, liquidations, private order/execution/position/wallet frames, error responses
   including `10002`, `10018`, rejects), with a documented capture date and a regeneration script.
 - **CI has no network egress to exchanges.** A test that opens a socket to `bybit.com` fails by policy and
@@ -1134,6 +1134,7 @@ A PR that copies any of these lists into a second file is rejected; replace the 
 |---|---|---|---|
 | 1.0.0 | 2026-09-14 | Initial ratification | @basiltt |
 | 1.1.0 | 2026-09-25 | C-10.1: agent-delivery review mode — two independent agent reviews + delegated merge of code PRs; design PRs and §16/C-16.2/C-15.9 stay owner-only. Owner decision (chat, 2026-09-25: "I authorise you to do full git operations"). Original text: "2 approving reviews, ≥1 CODEOWNER, approvals come from humans". | @basiltt |
+| 1.1.1 | merge of #4603 | C-13.5: the recorded Bybit fixtures live in `packages/fixtures/bybit/`, where the corpus has been since E08-T05; the docs and agent rules that named the old path were corrected by #4016 (#1849 items 2–4). Patch: a clarification (C-16.1 step 5); no rule changes (issue #1849). Original text: "Fixtures live in `tests/fixtures/bybit/`". | @basiltt |
 
 ---
 
