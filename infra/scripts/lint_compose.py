@@ -71,8 +71,19 @@ which ``docs/ops/runbooks/demo-host.md`` applies after the base and VPS files:
    alone as the api mounts it, and exactly the environment the CLI reads:
    ``CV_ENVIRONMENT``, ``CV_PG_DSN``, the KEK trio and ``CV_AUDIT_WAL_PATH``.
 
+Rule 7 applies to the account fixture overlay, ``docker-compose.account-fixture.yml``
+(#2893 S14, ADR-0036), which a developer layers over the base and dev files, opt-in:
+
+7. It touches only ``api`` and the top-level ``volumes``. The api builds ``target: builder``
+   alone and names no ``image``, so no documented path puts ``cvdev`` into a release image; its
+   working directory is ``/build``; it mounts ``cvdev`` and ``packages/fixtures`` read-only there
+   and the state volume ``cv-account-fixture``, the one volume the file declares, at
+   ``CV_ACCOUNT_FIXTURE_DIR``. Its environment is exactly ``CV_ENVIRONMENT=demo``,
+   ``CV_FEED=synthetic``, ``CV_ACCOUNT_FIXTURE`` (a scenario token, or the operator's variable
+   defaulting to one) and that absolute directory: no ``CV_BYBIT_API_*``, no ``CV_TEST_CLOCK``.
+
 Run as a script (``python infra/scripts/lint_compose.py``, which checks the base
-file, both overlays and rule 5 over every compose file; ``python
+file, the three overlays and rule 5 over every compose file; ``python
 infra/scripts/lint_compose.py <file>`` applies an overlay's own rule when the file
 has its name) or imported by ``infra/scripts/tests/test_lint_compose.py``.
 """
@@ -106,6 +117,27 @@ _DEPLOY_REFUSED = {  # any other key outside _DEPLOY_API_KEYS: "is not set by th
 
 COMPOSE_DIR = Path(__file__).parent.parent / "compose"
 DEMO_HOST_OVERLAY = COMPOSE_DIR / "docker-compose.demo-host.yml"
+ACCOUNT_FIXTURE_OVERLAY = COMPOSE_DIR / "docker-compose.account-fixture.yml"
+#: Rule 7: the fixture's state directory, its volume, and the api's whole shape there.
+FIXTURE_DIR = "/var/lib/candleviewer/account-fixture"
+FIXTURE_VOLUME = "cv-account-fixture"
+_FIXTURE_API_KEYS = frozenset({"build", "working_dir", "environment", "volumes"})
+_FIXTURE_BUILD = {"target": "builder"}
+_FIXTURE_WORKDIR = "/build"  # infra/images/Dockerfile.api's builder WORKDIR: pack.PACK_ROOT's base
+_FIXTURE_VOLUMES = [
+    "../../services/api/cvdev:/build/cvdev:ro",
+    "../../packages/fixtures:/build/packages/fixtures:ro",
+    f"{FIXTURE_VOLUME}:{FIXTURE_DIR}",
+]
+_FIXTURE_SCENARIO = r"[a-z0-9_]{1,64}"
+_FIXTURE_ENV = {
+    "CV_ENVIRONMENT": re.compile("demo"),
+    "CV_FEED": re.compile("synthetic"),
+    "CV_ACCOUNT_FIXTURE": re.compile(
+        rf"{_FIXTURE_SCENARIO}|\$\{{CV_ACCOUNT_FIXTURE:-{_FIXTURE_SCENARIO}\}}"
+    ),
+    "CV_ACCOUNT_FIXTURE_DIR": re.compile(re.escape(FIXTURE_DIR)),
+}
 #: Rule 5: e27-kek.md §4's settings an environment may hold, and the shape of each value.
 _KEK_SETTINGS: dict[str, tuple[re.Pattern[str], str]] = {
     "CV_KEK_SOURCE": (re.compile(r"file|handle"), "file or handle"),
@@ -178,6 +210,7 @@ _API_MOUNTS: dict[str, dict[str, object]] = {
 _RULES_BY_NAME = {
     "docker-compose.deploy.yml": {"deploy_overlay": True},
     "docker-compose.demo-host.yml": {"demo_host_overlay": True},
+    "docker-compose.account-fixture.yml": {"account_fixture_overlay": True},
 }
 
 
@@ -640,15 +673,51 @@ def _owner_dsn_problems(services: dict[str, dict[str, Any]]) -> list[str]:
     return errors
 
 
+def check_account_fixture_overlay(compose: dict[str, Any]) -> list[str]:
+    """Rule 7: the api on the builder stage with the fixture armed on demo, nothing else. A message
+    names a key or a variable, never its value."""
+    compose = compose or {}
+    services = _services(compose)
+    where = "the account fixture overlay sets only"
+    errors = [f"top-level '{k}': {where} services and volumes" for k in compose
+              if k not in ("services", "volumes")]  # fmt: skip
+    errors += [f"service '{name}': {where} api" for name in services if name != "api"]
+    api = services.get("api") or {}
+    errors += [f"service 'api': {where} {sorted(_FIXTURE_API_KEYS)}, not {key}"
+               for key in sorted(set(api) - _FIXTURE_API_KEYS)]  # fmt: skip
+    if api.get("build") != _FIXTURE_BUILD:
+        errors.append("service 'api': build is not target: builder alone (never a release image)")
+    if api.get("working_dir") != _FIXTURE_WORKDIR:
+        errors.append(f"service 'api': working_dir is not {_FIXTURE_WORKDIR}")
+    env = _environment(api)
+    if set(env) != set(_FIXTURE_ENV):
+        names = sorted(set(env) ^ set(_FIXTURE_ENV))
+        errors.append(f"service 'api': environment must be exactly {sorted(_FIXTURE_ENV)}: {names}")
+    errors += [f"service 'api': {name} is off rule 7" for name, rule in _FIXTURE_ENV.items()
+               if name in env and not rule.fullmatch(env[name])]  # fmt: skip
+    if api.get("volumes") != _FIXTURE_VOLUMES:
+        errors.append(f"service 'api': volumes are not exactly {_FIXTURE_VOLUMES}")
+    if compose.get("volumes") != {FIXTURE_VOLUME: {}}:
+        errors.append(f"top-level volumes: only {FIXTURE_VOLUME}, with no option")
+    return errors
+
+
 def lint(
-    compose_path: Path, *, deploy_overlay: bool = False, demo_host_overlay: bool = False
+    compose_path: Path,
+    *,
+    deploy_overlay: bool = False,
+    demo_host_overlay: bool = False,
+    account_fixture_overlay: bool = False,
 ) -> list[str]:
-    """Rules 1-3 (rule 4 for the deploy overlay, rule 6 for the demo host's), then rule 5."""
+    """Rules 1-3 (rule 4 for the deploy overlay, 6 for the demo host's, 7 for the account
+    fixture's), then rule 5."""
     compose = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     if deploy_overlay:
         errors = check_deploy_overlay(compose)
     elif demo_host_overlay:
         errors = check_demo_host_overlay(compose)
+    elif account_fixture_overlay:
+        errors = check_account_fixture_overlay(compose)
     else:
         errors = check_port_bindings(compose)
         errors += check_image_digests(compose)
@@ -658,14 +727,15 @@ def lint(
 
 def main(argv: list[str] | None = None) -> int:
     """Lint `argv[0]` with rules 1-3 and 5, or with an overlay's own rule and 5 when it has the
-    overlay's file name (N1); with no argument, the base file and both overlays, and rule 5 over
-    every other compose file."""
+    overlay's file name (N1); with no argument, the base file and the three overlays, and rule 5
+    over every other compose file."""
     files: list[tuple[Path, dict[str, bool]]] = [(BASE_FILE, {})]
     if argv:
         files = [(Path(argv[0]), _RULES_BY_NAME.get(Path(argv[0]).name, {}))]
     else:
         files += [(DEPLOY_OVERLAY, {"deploy_overlay": True})]
         files += [(DEMO_HOST_OVERLAY, {"demo_host_overlay": True})]
+        files += [(ACCOUNT_FIXTURE_OVERLAY, {"account_fixture_overlay": True})]
     errors = [f"{p.name}: {e}" for p, kind in files for e in lint(p, **kind)]
     linted = {p.resolve() for p, _ in files}
     for path in [] if argv else sorted(COMPOSE_DIR.glob("docker-compose*.yml")):

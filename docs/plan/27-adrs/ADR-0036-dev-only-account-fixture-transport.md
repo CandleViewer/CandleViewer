@@ -110,6 +110,11 @@ invariant (C-4.14).
    `<CV_ACCOUNT_FIXTURE_DIR>/clock` for the stub's scenario and exchange time and the account clients'
    `wall_clock`, so signatures and the stub's server time agree after an advance. It never moves auth time:
    #2086 is unchanged, and plan §9.5's SCR-149 note (`e27-accounts-test-plan.md:626-627`) no longer applies.
+   _As built (2026-10-26, S10 and S14):_ signing stays on the real clock. The fixture clock
+   (`cvdev/account_fixture/control.py`, `FixtureClock` on `<CV_ACCOUNT_FIXTURE_DIR>/clock`) moves only the
+   stub's scenario time, its exchange (server) time and the request log's `ts`; it is injected into no
+   client, so no account client's `wall_clock` reads it, and the stub never judges a request's signing
+   timestamp or receive window.
 6. **Per-key selection.** A signed call answers as the scenario its key id names, unless the switch file
    overrides it (S10). `CV_ACCOUNT_FIXTURE` is the stack default for traffic with no key (a private-WS connect
    before auth, unsigned demo-host calls), so TC-115 (`e27-accounts-test-plan.md:229`, scenario row `:568`)
@@ -119,6 +124,14 @@ invariant (C-4.14).
    statelessly (S9) and seeded per key through the switch CLI (S10), the documented E27-Q02 path. Stateful
    fills and private-WS order and position pushes become the follow-up #3007, which waits on #2877's private
    topics (`README.md:297-300`).
+   _As built (2026-10-26, S10 and S14):_ switching is the in-process control surface
+   (`cvdev/account_fixture/control.py`: `FixtureClock.set` / `advance`, `KeyStates.switch`), the documented
+   file format in `CV_ACCOUNT_FIXTURE_DIR` (`clock`, signed decimal seconds; `keys/<key id>.json`,
+   `{"scenario", "overlays", "started"}`, written to a temporary file and renamed), and the S14 command line
+   over the same calls (`python -m cvdev.account_fixture.cli clock set|advance`, `switch <key id> [--to S]
+   [--overlay O ...]`, default target the stored scenario's `switch_to`), run in the api container of the
+   fixture compose override (`infra/compose/docker-compose.account-fixture.yml`). The CLI refuses unless the
+   fixture is armed in a non-live environment. A switch restarts the key's scenario time at the switch.
 8. **Scope 10 is verified (S15, ruling 8).** main-orchestrator checked the pack's codes against the official
    v5 error table and posted it on #2893 (issuecomment-6225935988): `10002`, `10004`, `10005`, `110017`,
    `110024` and `110028` hold; `110044` is "Available margin is insufficient", so the pack's
