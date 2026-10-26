@@ -812,6 +812,8 @@ x-error-codes:
 # error slug the product can emit. 23-ws-protocol.md §10.2 is generated/asserted from
 # the union of `x-error-codes` (entries with `ws` in `surface`) and this block.
 # `close_code` is the RFC 6455 close code used when `close: true`.
+# `frame_malformed`'s `close_code` is legacy metadata: a malformed frame never closes by itself —
+# each is a strike, the third closes with `bye bad_client` and `4400`.
 # -----------------------------------------------------------------------------
 x-error-codes-ws:
   - code: protocol_violation
