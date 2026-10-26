@@ -194,13 +194,14 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
         ingestion=SimpleNamespace(
             clock=health, tickers=tickers, instruments=catalogue, clock_offset_ms=lambda: None
         ),
-        read_only=sr.ReadOnly(), metrics=metrics, audit=world.writer,
+        read_only=sr.ReadOnly(), metrics=metrics,
         gate=SimpleNamespace(refusal=lambda _account: None),
         standings=SimpleNamespace(read_once=True, credential_rejected=lambda *_args: None),
         oms_enabled=flags[0], live_enabled=flags[1], profiles=profiles, persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
-        stores=lambda: replace(
-            pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row)
+        stores=lambda: replace(  # the lane's own writer is the world's (#913 L2)
+            pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
+            audit=lambda _alarm: world.writer,
         ),
         pager=world.pager, now=world.clock, sleep=world.backoff, registry=sr.REGISTRY,
     )  # fmt: skip

@@ -32,6 +32,7 @@ from candleviewer.audit.machine_events import (
     MachineEventUnavailable,
     MachineEventWalSink,
     SinkMetrics,
+    frames_left,
 )
 from candleviewer.audit.metrics import export_audit_lane_metrics
 from candleviewer.audit.models import AuditEmission, AuditOutcome, ExchangeEnv, Severity
@@ -40,7 +41,10 @@ from candleviewer.audit.repository import AuditRepository
 from candleviewer.audit.service import AuditService, LaneKeyLoader, LaneNotWired
 from candleviewer.audit.verify_job import AuditVerifyJob
 from candleviewer.audit.verify_runner import VerifyRunner
-from candleviewer.audit.writer import keyed_record_id  # the OMS's keyed audit ids (#913, C-3.3)
+from candleviewer.audit.writer import (
+    AuditWriter,
+    keyed_record_id,  # the OMS's keyed audit ids (#913, C-3.3)
+)
 from candleviewer.observability.context import current_request_uuid
 from candleviewer.observability.metrics import Metrics
 from candleviewer.secrets import (
@@ -152,6 +156,7 @@ __all__ = [
     "audit_writer_sink",
     "build_audit_service",
     "build_audit_verify_job",
+    "build_lane_audit_writer",
     "build_machine_event_sink",
     "build_secrets_service",
     "export_audit_lane_metrics",
@@ -161,6 +166,7 @@ __all__ = [
     "secrets_audit_sink",
     "secrets_bundle",
     "system_event_redactor",
+    "unclaimed_machine_events",
 ]
 AuditHandle = AuditService
 #: The scheduled verify run's port (#2111), so `app` can type an injected runner.
@@ -397,17 +403,47 @@ def build_audit_verify_job(
 
 
 def build_machine_event_sink(
-    settings: Settings, store: MachineEventStore, *, metrics: SinkMetrics | None = None
+    settings: Settings,
+    store: MachineEventStore,
+    *,
+    metrics: SinkMetrics | None = None,
+    wal_path: str | None = None,
 ) -> MachineEventSinkHandle:
     """The WAL-backed `machine_events` sink (E50-T63) over the composition root's events store
-    adapter, its WAL at `settings.machine_event_wal_path` (beside the audit WAL unless set). No
-    I/O: `start()` locks and opens the WAL."""
+    adapter, its WAL at `wal_path`, else `settings.machine_event_wal_path` (beside the audit WAL
+    unless set). No I/O: `start()` locks and opens the WAL."""
     return MachineEventWalSink(
         store,
-        settings.machine_event_wal_path,
+        settings.machine_event_wal_path if wal_path is None else wal_path,
         max_bytes=settings.machine_event_wal_max_bytes,
         metrics=metrics,
     )
+
+
+def unclaimed_machine_events(settings: Settings) -> int:
+    """The bytes of frames `CV_MACHINE_EVENT_WAL_PATH` holds that Postgres has not taken, for the
+    OMS runtime, which holds no sink of that file without a persistence bundle (#913 L2,
+    SEC-S3L2-03) and may not import M19 (C-3.3): read under the file's lock, 0 with no file,
+    `MachineEventSinkUnavailable` while another process holds it. Opens the WAL: run it off the
+    loop."""
+    return frames_left(settings.machine_event_wal_path, settings.machine_event_wal_max_bytes)
+
+
+def build_lane_audit_writer(
+    repository: AuditRepository,
+    wal_path: str,
+    *,
+    on_alarm: Callable[[str], Awaitable[None]],
+) -> AuditWriter:
+    """The order lane's own `AuditWriter` (#913 slice 3 L2, 29 CV-C13), which the OMS runtime
+    builds on the lane's loop over the OMS pool's audit repository, for the composition root,
+    which may not import M19 (C-3.3). Its WAL at `wal_path` is its own, never the serving loop's:
+    exclusive, it is locked before it is opened and until the end of the writer's stop (D6). Its
+    records join the one `audit_log` chain, whose inserts the chain lock serialises (ruling
+    Q12). Its fail-closed alarm (a refused append, its flusher's death) is `on_alarm`, the
+    runtime's page (ruling 4), always given. Opens and scans its WAL, so the lane calls it, as
+    `AuditService.start` builds the serving loop's on that loop."""
+    return AuditWriter(repository, wal_path, on_alarm=on_alarm, exclusive=True)
 
 
 def system_event_redactor() -> Callable[[dict[str, Any] | None], dict[str, Any] | None]:

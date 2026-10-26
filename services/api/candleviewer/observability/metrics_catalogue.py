@@ -1839,16 +1839,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E50",
         max_series=16,
     ),
+    # CR-S3L2-04 (#913 L2): `where` is the closed `statechart_wiring.SINK_LOOPS` {serving_loop,
+    # order_lane}, where the sink runs, one series each, so max_series=2; no identifier.
     _s(
         "cv_machine_event_wal_pending",
         "gauge",
         "rows",
-        (),
-        "Machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63).",
+        ("where",),
+        "Machine-event rows the WAL accepted that Postgres does not hold yet (E50-T63), by where "
+        "the sink runs: the persistence bundle's on the serving loop, or the order lane's own.",
         "> 0 for 60 s; a full WAL pages itself through machine_events.append_failed",
         _P,
         "E50",
-        max_series=1,
+        max_series=2,
     ),
     # 23 section 6.4: the WS machine-state registry (`ws/machines.py`); `entity_kind` is the
     # closed set of 13 kinds (`ws/topics.MACHINE_KINDS`).

@@ -159,7 +159,7 @@
 ["cv_machine_chain_trips_total", "counter", ["kind"], "planned", "E50"]
 ["cv_machine_deferred_depth", "gauge", ["kind"], "planned", "E50"]
 ["cv_machine_dropped_receipts_total", "counter", ["kind"], "planned", "E50"]
-["cv_machine_event_wal_pending", "gauge", [], "planned", "E50"]
+["cv_machine_event_wal_pending", "gauge", ["where"], "planned", "E50"]
 ["cv_machine_live_count", "gauge", ["kind"], "planned", "E50"]
 ["cv_machine_persist_ops_total", "counter", ["operation", "outcome"], "planned", "E50"]
 ["cv_machine_quarantined_total", "counter", ["kind"], "planned", "E50"]

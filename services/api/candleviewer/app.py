@@ -567,6 +567,14 @@ class AppContext:
     mesh_system_topic_publisher: SystemTopicPublisher
 
 
+def oms_runtime_of(state: State) -> OmsRuntime | None:
+    """The process's OMS runtime off the app's state (`app.state.oms_runtime`), typed (#913 L2; the
+    orchestrator's carry of 2026-10-25 14:32Z): the order routes, `/readyz` and the lifespan read
+    it through this, so the type checker holds it to each one's protocol, never Starlette's untyped
+    attribute; None on the fake backend, which composes none (20 Sec.6.2)."""
+    return cast("OmsRuntime | None", getattr(state, "oms_runtime", None))
+
+
 def _oms_state(runtime: OmsRuntime | None) -> str | None:
     """`/readyz`'s `oms` check: the runtime's state while it runs, else no check."""
     return runtime.state if runtime is not None and runtime.started else None
@@ -1617,7 +1625,7 @@ def create_app(
             # #3874: the real tiers' probes; the fake backend's tiers are not checked
             storage_health=ctx.storage.tier_health if resolved.storage_backend == "real" else None,
             # #913 slice 3E: the OMS runtime's state while it runs (real backend only)
-            oms_state=lambda: _oms_state(getattr(app.state, "oms_runtime", None)),
+            oms_state=lambda: _oms_state(oms_runtime_of(app.state)),
         )
     )
     # E04-T04: cached component health. Unbuilt modules register `not_deployed`
@@ -2355,13 +2363,13 @@ def create_app(
         account_health.order_entry_check
     )
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
-    # and the persistence bundle's sink when there is one; the lifespan starts it after the
-    # account health runtime and stops it right after the gateway. None on the fake backend.
+    # and the persistence bundle's latch when there is one; its audit writer and sink are its order
+    # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it
+    # right after the gateway. None on the fake backend.
     app.state.oms_runtime = build_oms_runtime(
         ctx,
         resolved,
         metrics=metrics_facade,
-        audit=_LazyAuditEmitter(ctx.audit),
         gate=app.state.order_entry_gate,
         standings=account_health.standings,
         oms_enabled=feature_flags.oms_enabled,
@@ -2386,7 +2394,7 @@ def create_app(
     app.include_router(
         make_orders_router(
             order_principals,
-            lambda: app.state.oms_runtime,
+            lambda: oms_runtime_of(app.state),
             audit=_LazyAuditEmitter(ctx.audit),
             records=order_records,
             oms_enabled=feature_flags.oms_enabled,
@@ -2401,7 +2409,7 @@ def create_app(
     app.include_router(
         make_cancel_all_router(
             order_principals,
-            lambda: app.state.oms_runtime,
+            lambda: oms_runtime_of(app.state),
             audit=_LazyAuditEmitter(ctx.audit),
             records=order_records,
             metrics=metrics_facade,
@@ -2418,7 +2426,7 @@ def create_app(
     app.include_router(
         make_order_exits_router(
             order_principals,
-            lambda: app.state.oms_runtime,
+            lambda: oms_runtime_of(app.state),
             audit=_LazyAuditEmitter(ctx.audit),
             metrics=metrics_facade,
             auth=ctx.auth,

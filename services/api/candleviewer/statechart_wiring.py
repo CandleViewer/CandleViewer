@@ -44,7 +44,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, fields, replace
 from datetime import UTC, datetime
 from types import MappingProxyType
-from typing import Any, Final, Protocol
+from typing import Any, Final, Literal, Protocol
 
 import structlog
 
@@ -518,19 +518,25 @@ class PagerAdapter:
 #: `cv_machine_persist_ops_total`'s closed label sets: 4 x 4, the catalogue's cap of 16.
 PERSIST_OPERATIONS: Final = ("persist", "restore", "quarantine", "event_flush")
 PERSIST_OUTCOMES: Final = ("ok", "refused", "degraded", "error")
+#: Where a `machine_events` sink runs, `cv_machine_event_wal_pending`'s `where` (CR-S3L2-04): the
+#: persistence bundle's on the serving loop, and the order lane's own (#913 L2, 29 CV-C13).
+SINK_LOOPS: Final = ("serving_loop", "order_lane")
+type SinkLoop = Literal["serving_loop", "order_lane"]
 
 
 class PersistOps:
     """The two persistence families (catalogued `planned`, E50), registered on the app's one
     facade: `record(operation, outcome)` counts `cv_machine_persist_ops_total`, where a value
-    outside the closed sets makes no series; `pending(rows)` sets `cv_machine_event_wal_pending`."""
+    outside the closed sets makes no series; `pending(rows)` sets `cv_machine_event_wal_pending`,
+    labelled by `where` the sink runs (`SINK_LOOPS`): the persistence bundle's on the serving loop,
+    the order lane's own (`oms_wiring.pg_stores`, #913 L2), each its own series (CR-S3L2-04)."""
 
-    def __init__(self, metrics: Metrics) -> None:
+    def __init__(self, metrics: Metrics, *, where: SinkLoop = "serving_loop") -> None:
         specs = {spec.name: spec for spec in CATALOGUE}
         ops, wal = specs["cv_machine_persist_ops_total"], specs["cv_machine_event_wal_pending"]
         self._ops = metrics.counter(ops.name, ops.help, ops.labels, max_series=ops.max_series)
         gauge = metrics.gauge(wal.name, wal.help, wal.labels, max_series=wal.max_series)
-        self._pending = gauge.child()
+        self._pending = gauge.labels(where)
 
     def record(self, operation: str, outcome: str) -> None:
         if operation in PERSIST_OPERATIONS and outcome in PERSIST_OUTCOMES:

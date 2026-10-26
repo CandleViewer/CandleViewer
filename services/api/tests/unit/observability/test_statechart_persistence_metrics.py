@@ -6,7 +6,7 @@ name, with the bound stated here (`.semgrep/cv-obs-metric-label-allowlist.yml`).
 from __future__ import annotations
 
 from candleviewer.observability.metrics_catalogue import CATALOGUE
-from candleviewer.statechart_wiring import PERSIST_OPERATIONS, PERSIST_OUTCOMES
+from candleviewer.statechart_wiring import PERSIST_OPERATIONS, PERSIST_OUTCOMES, SINK_LOOPS
 
 SPECS = {spec.name: spec for spec in CATALOGUE}
 
@@ -25,13 +25,16 @@ def test_the_persist_ops_counter_is_catalogued_with_its_closed_label_sets() -> N
     assert "page" in spec.alert and "error" in spec.alert
 
 
-def test_the_wal_pending_gauge_is_catalogued_with_no_label() -> None:
+def test_the_wal_pending_gauge_is_catalogued_by_where_its_sink_runs() -> None:
+    """CR-S3L2-04 (#913 L2): the persistence bundle's sink on the serving loop and the order lane's
+    own each set their own series, `where` from the closed `SINK_LOOPS`."""
     spec = SPECS["cv_machine_event_wal_pending"]
     assert (spec.kind, spec.unit, spec.labels, spec.status, spec.owner_epic, spec.max_series) == (
         "gauge",
         "rows",
-        (),
+        ("where",),
         "planned",
         "E50",
-        1,
+        len(SINK_LOOPS),
     )
+    assert SINK_LOOPS == ("serving_loop", "order_lane")

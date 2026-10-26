@@ -286,6 +286,20 @@ def _open_wal(path: Path, max_bytes: int) -> AuditWal:
     return wal
 
 
+def frames_left(wal_path: str | Path, max_bytes: int) -> int:
+    """The bytes of frames the `machine_events` WAL at `wal_path` holds past its commit cursor,
+    which Postgres has not taken (#913 L2, SEC-S3L2-03), for a WAL no sink of this process holds:
+    0 with no file. Read under the WAL's lock and its open's scan, as `start()` reads them (a torn
+    tail cut, a corrupt frame `AuditWalCorrupt`); `MachineEventUnavailable` while another process
+    holds the file. Blocking: run it off the loop."""
+    path = Path(wal_path)
+    if not path.exists():
+        return 0
+    with _lock_wal(path):
+        wal = _open_wal(path, max_bytes)
+        return max(0, wal.acknowledged_end - wal.committed_offset())
+
+
 def _log_task_failure(task: asyncio.Task[None]) -> None:
     """The flusher's done-callback: anything it did not handle is logged by its type only."""
     if not task.cancelled() and task.exception() is not None:

@@ -572,9 +572,12 @@ $ echo $?
 the named volume `cv-audit-data`, mounted at `/var/lib/candleviewer/audit`,
 with `CV_AUDIT_WAL_PATH` fixed at `/var/lib/candleviewer/audit/audit.wal` in
 `infra/compose/docker-compose.yml`. It holds the audit WAL and its commit cursor (`audit.wal`,
-`audit.wal.committed`) and the break-glass journal and run lock (`breakglass/journal.wal`,
-`breakglass/instance.lock`), so a container restart keeps them and the CLI takes its lock where
-cv-api looks. The image creates the directory owned by uid 10001, mode `0700`, and Docker copies
+`audit.wal.committed`); the machine-event WAL (`machine_events.wal`, its cursor and its `.lock`);
+the OMS order lane's own audit WAL (`oms_lane.audit.wal`, its cursor and its `.lock`) and its own
+machine-event WAL (`oms_lane.machine_events.wal`, the same three; #913 L2, `20-architecture.md`
+§6.2); and the
+break-glass journal and run lock (`breakglass/journal.wal`, `breakglass/instance.lock`), so a
+container restart keeps them and the CLI takes its lock where cv-api looks. The image creates the directory owned by uid 10001, mode `0700`, and Docker copies
 that owner into an empty volume: run everything that touches it as the image's user.
 
 - **Backup.** Back it up with Postgres: in the same run, encrypted with the backup key (SR-091),

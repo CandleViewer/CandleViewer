@@ -11,11 +11,12 @@ import asyncio
 import inspect
 import re
 from collections import OrderedDict
-from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
@@ -28,7 +29,9 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.api.health import make_health_router
-from candleviewer.audit.writer import keyed_record_id
+from candleviewer.audit.machine_events import MachineEventUnavailable
+from candleviewer.audit.wal import AuditWal, lock_wal_file
+from candleviewer.audit.writer import AuditUnavailable, keyed_record_id
 from candleviewer.domain.order_link import ext_key
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.exchange.base.fakes import FakeTradingPort
@@ -50,7 +53,7 @@ from candleviewer.oms.fakes import FakeClockHealth, InMemoryOrderStore, InMemory
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import NoDayFigures, PositionKey, SubmitActor
 from candleviewer.oms.repository import RecordedStopRepository
-from candleviewer.oms_lane import HOP_TIMEOUT_S, LaneStopped
+from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LaneStopped
 from candleviewer.oms_wiring import (
     HYDRATE_CONCURRENCY,
     SWEEP_MAX_FAILURES,
@@ -63,11 +66,12 @@ from candleviewer.oms_wiring import (
     build_oms_runtime,
     pg_stores,
 )
+from candleviewer.settings import OMS_STOP_RESERVE_S, Settings
 from candleviewer.settings import Environment as Env
-from candleviewer.settings import Settings
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.persistence import ChainTripLatch, DegradedLatchError, MachineKey
 from candleviewer.statechart.plugins import InMemoryMachineEventSink
+from candleviewer.statechart_wiring import PersistOps
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder
@@ -146,11 +150,12 @@ class Flag:
 
 
 class Sink(InMemoryMachineEventSink):
-    """The standalone sink the stores build; its start and stop land in the world's log."""
+    """The lane's own sink the stores build (#913 L2), at `wal`; its start and stop land in the
+    world's log."""
 
-    def __init__(self, log: list[str], fail: Exception | None = None) -> None:
+    def __init__(self, log: list[str], fail: Exception | None = None, wal: str = "") -> None:
         super().__init__()
-        self.log, self.fail = log, fail
+        self.log, self.fail, self.wal = log, fail, wal
 
     async def start(self) -> None:
         self.log.append("sink.start")
@@ -163,12 +168,22 @@ class Sink(InMemoryMachineEventSink):
 
 @dataclass
 class Writer:
-    """The audit writer: each append, by its action and reason; a keyed one stored as the writer
-    stores it, under `keyed_record_id(action, name)`, so one whose id is already stored lands
-    nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587)."""
+    """The order lane's own audit writer the stores build (#913 L2): each append, by its action
+    and reason; a keyed one stored as the writer stores it, under `keyed_record_id(action, name)`,
+    so one whose id is already stored lands nothing (`ON CONFLICT (record_id) DO NOTHING`, #4587);
+    its start and stop land in `log`, the world's, and each stop's grace in `graces`."""
 
     actions: list[tuple[str, str | None]] = field(default_factory=list)
     stored: set[UUID] = field(default_factory=set)
+    log: list[str] = field(default_factory=list)
+    graces: list[float] = field(default_factory=list)
+
+    async def start(self) -> None:
+        self.log.append("audit.start")
+
+    async def stop(self, grace_s: float = 5.0) -> None:
+        self.log.append("audit.stop")
+        self.graces.append(grace_s)
 
     async def emit(self, action: str, **fields: Any) -> None:
         self.actions.append((action, fields.get("reason")))
@@ -254,9 +269,18 @@ class World:
     log: list[str] = field(default_factory=list)
     accounts: list[Any] = field(default_factory=list)
     sink_fails: Exception | None = None
+    audit_fails: Exception | None = None
+    #: The bytes the stores' probe finds in `CV_MACHINE_EVENT_WAL_PATH` that Postgres has not
+    #: taken, and how often it was asked (SEC-S3L2-03).
+    unclaimed: int = 0
+    probes: int = 0
     lanes: list[InlineLane] = field(default_factory=list)
+    sinks: list[Sink] = field(default_factory=list)
+    #: The alarm each build of the lane's writer was given (ruling 4).
+    alarms: list[Callable[[str], Awaitable[None]]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        self.writer.log = self.log
         self.health = FakeClockHealth(self.clock)
         self.health.measure()
         self.ingestion = SimpleNamespace(
@@ -269,11 +293,27 @@ class World:
         async def release() -> None:
             self.log.append("pool.release")
 
+        def audit(alarm: Callable[[str], Awaitable[None]] | None = None) -> Writer:
+            if alarm is not None:
+                self.alarms.append(alarm)
+            if self.audit_fails is not None:
+                raise self.audit_fails
+            return self.writer
+
+        def sink(wal: str) -> Sink:
+            self.sinks.append(Sink(self.log, self.sink_fails, wal))
+            return self.sinks[-1]
+
+        def unclaimed() -> int:
+            self.probes += 1
+            return self.unclaimed
+
         return OmsStores(
             orders=store, executions=store.executions, submissions=store.submissions,
             anchors=store.anchors, stops=store.stops, groups=cast(GroupStores, None),
-            accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store,
-            sink=lambda: Sink(self.log, self.sink_fails), release=release,
+            unclaimed=unclaimed,
+            accounts=InMemoryTradingAccountReads(*self.accounts), sweep=store, audit=audit,
+            sink=sink, release=release,
         )  # fmt: skip
 
     def runtime(
@@ -283,8 +323,8 @@ class World:
         feed = SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None))
         built: dict[str, Any] = {
             "venue": self.venue, "ingestion": self.ingestion, "read_only": ReadOnly(),
-            "metrics": self.metrics, "audit": self.writer,
-            "gate": SimpleNamespace(refusal=lambda _account: None), "standings": self.standings,
+            "metrics": self.metrics, "gate": SimpleNamespace(refusal=lambda _account: None),
+            "standings": self.standings,
             "live_enabled": self.flags[1], "profiles": Profiles(), "persistence": bundle,
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
@@ -358,12 +398,12 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
             cancel_all = parts.cancel_all  # S4-E: over that exit service and the order store
             assert cancel_all._exits is parts.exits
             assert cast(object, cancel_all._reads) is parts.route.orders  # the one repository
-            assert world.log == ["sink.start"]
+            assert world.log == ["audit.start", "sink.start"]
     warned = [e["port"] for e in logs if e["event"] == "oms_interim_port"]
     assert warned == [*INTERIMS, "machine_event_sink", "risk_figures"]  # one WARNING each
     runtime_ports = (*INTERIMS, "machine_event_sink", "risk_figures")
     assert [world.gauge(name) for name in runtime_ports] == [1.0] * 7
-    assert world.log == ["sink.start", "sink.stop", "pool.release"] and port.closed
+    assert world.log == [*STARTED, "sink.stop", "audit.stop", "pool.release"] and port.closed
     assert not b01.ports_wired()
 
 
@@ -386,28 +426,36 @@ async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serv
         assert names.index("cancel_all_folds") == names.index("machines") + 1
 
 
+#: What a composed runtime has started, in order (#913 L2): the lane's own writer, then its sink.
+STARTED = ["audit.start", "sink.start"]
+_SINK_WAL = Path(Settings().machine_event_wal_path)
+_BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
+
+
 @pytest.mark.parametrize(
-    ("environment", "live_on", "with_bundle", "sink"),
+    ("environment", "live_on", "with_bundle", "wal"),
     [
-        ("demo", True, False, "standalone"),
-        ("testnet", True, False, "standalone"),
-        ("live", False, False, "standalone"),
-        ("live", True, True, "bundle"),
+        ("demo", True, False, _BESIDE),
+        ("testnet", True, False, _BESIDE),
+        ("live", False, False, _BESIDE),
+        ("live", True, True, _BESIDE),
         ("live", True, False, None),
     ],
 )
-async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_the_setting_on(
-    environment: str, live_on: bool, with_bundle: bool, sink: str | None
+async def test_the_lane_has_its_own_sink_beside_a_bundles_and_none_on_live_with_the_setting_on(
+    environment: str, live_on: bool, with_bundle: bool, wal: str | None
 ) -> None:
-    """Rulings Q4 to Q6 (20 Sec.6.2): the bundle's sink and latch when there is one; else the WAL
-    sink it builds and owns, in demo and testnet whatever the setting says and in live while it is
-    off; a live process with it on and no bundle fails closed: no sink, no order served."""
+    """Rulings Q4 to Q6 and Q13 (20 Sec.6.2): the order lane builds and owns its `machine_events`
+    sink, in demo and testnet whatever the setting says and in live while it is off, at
+    `oms_lane.<name>` beside `CV_MACHINE_EVENT_WAL_PATH`, a bundle composed or not (SEC-S3L2-03),
+    taking only a bundle's latch; a live process with the setting on and no bundle fails closed:
+    no sink, no order served."""
     world = World()
     bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
     runtime = world.runtime(environment, live_on=live_on, bundle=bundle if with_bundle else None)
     with capture_logs() as logs:
         async with started(runtime):
-            if sink is None:
+            if wal is None:
                 assert failed_closed(logs) == ["NoMachineEventSink"] and not b01.ports_wired()
                 assert world.pager.calls == ["oms_runtime_failed_closed: sink"]  # CR-S3E1-02
                 assert failed_phases(logs) == ["sink"]
@@ -415,7 +463,7 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
                 with pytest.raises(OmsNotReady):
                     _ = runtime.submission
             else:
-                assert world.log == (["sink.start"] if sink == "standalone" else [])
+                assert world.log == STARTED and [sink.wal for sink in world.sinks] == [wal]
                 assert failed_closed(logs) == [] and b01.ports_wired()
                 # S4-S-b3: the day figures on demo and testnet, the refusing stand-in on live
                 [figures] = [e for e in logs if e.get("port") == "risk_figures"]
@@ -425,6 +473,244 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
     assert world.gauge("machine_event_sink") == (0.0 if with_bundle else 1.0)
 
 
+@pytest.mark.parametrize("bundled", [False, True])
+async def test_the_oms_records_through_the_lanes_own_writer_and_sink_never_the_serving_loops(
+    bundled: bool,
+) -> None:
+    """#913 L2 (29 CV-C13; rulings Q12, Q13): the sweep's records and the abandon's go to the
+    writer the stores build for the lane, the facade's audit itself, never a hop to the serving
+    loop's; B1's rows to the lane's own sink, the bundle's taking none."""
+    world = World()
+    await crashed(world)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    for flag in world.flags:
+        flag.read()
+    async with started(world.runtime(bundle=bundle if bundled else None)) as runtime:
+        await runtime.wait_ready()
+        assert runtime._composed().audit._writer is world.writer
+    swept = ("sl.modified", "unplaced_entry_swept")
+    assert {swept, ("orders.cancel", "kill_no_cancel_unsubmitted")} <= set(world.writer.actions)
+    [sink] = world.sinks
+    assert sink.rows and bundle.sink.rows == []
+
+
+@pytest.mark.parametrize(
+    ("fails", "phase", "log"),
+    [
+        ("build", "audit", ["pool.release"]),
+        ("start", "audit_start", ["audit.stop", "pool.release"]),
+    ],
+)
+async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed(
+    fails: str, phase: str, log: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D6 (#913 L2): a writer whose WAL another writer holds is refused at its build, and one that
+    cannot start is stopped again (its lock dropped): either way the runtime fails closed, paged,
+    with the port and the pool closed, and no sink started."""
+    world = World(audit_fails=OSError("the WAL is locked") if fails == "build" else None)
+
+    async def refused(self: Writer) -> None:
+        raise OSError("the WAL is corrupt")
+
+    if fails == "start":
+        monkeypatch.setattr(Writer, "start", refused)
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == (["OSError"], [phase])
+            assert world.log == log and world.venue.ports[0].closed and not b01.ports_wired()
+            assert world.pager.calls == [f"oms_runtime_failed_closed: {phase}"]
+            with pytest.raises(OmsNotReady):
+                _ = runtime.submission
+
+
+def test_the_lanes_wal_files_are_its_own_beside_the_serving_loops() -> None:
+    """D6: `oms_lane.<name>` in the serving loop's directory, never its file, however it is
+    named; the sink's at that one path, a bundle composed or not (SEC-S3L2-03)."""
+    settings = Settings(audit_wal_path="/v/audit/audit.wal", machine_event_wal_path="/v/me.wal")
+    assert oms_wiring.lane_audit_wal(settings) == "/v/audit/oms_lane.audit.wal"
+    assert oms_wiring.lane_sink_wal(settings) == "/v/oms_lane.me.wal"
+    named = Settings(audit_wal_path="/v/oms_lane.audit.wal")
+    assert oms_wiring.lane_audit_wal(named) != named.audit_wal_path
+
+
+async def test_frames_no_sink_holds_fail_the_start_closed_critical_and_paged() -> None:
+    """SEC-S3L2-03 (the Fable lens at 864fa082; 20 Sec.6.2; CR-S3L2X-06, one behaviour): without a
+    bundle no sink of the process holds `CV_MACHINE_EVENT_WAL_PATH`, so frames there that Postgres
+    has not taken, which a run before #913 L2 or a bundle's run left, refuse the start: logged
+    CRITICAL with their size, failed closed by its phase and paged, `degraded`, never adopted or
+    skipped."""
+    world = World(unclaimed=1024)
+    with capture_logs() as logs:
+        async with started(world.runtime()) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == (
+                ["UnclaimedMachineEvents"], ["sink_wal"]
+            )  # fmt: skip
+            left = [e for e in logs if e["event"] == "oms_machine_event_wal_unclaimed"]
+            assert [(e["log_level"], e["pending_bytes"]) for e in left] == [("critical", 1024)]
+            assert world.pager.calls == ["oms_runtime_failed_closed: sink_wal"]
+            assert runtime.state == "degraded"
+
+
+async def test_frames_no_sink_holds_refuse_the_start_before_the_lanes_sink_or_the_facade() -> None:
+    """SEC-S3L2-03 (CR-S3L2X-06, one behaviour): the probe runs once, before the lane's sink or the
+    facade exists, so the refused start built neither, and it closes its port and its pool."""
+    world = World(unclaimed=1024)
+    async with started(world.runtime()):
+        assert world.probes == 1 and world.sinks == [] and not b01.ports_wired()
+        assert world.log == ["pool.release"] and world.venue.ports[0].closed
+
+
+async def test_with_a_bundle_the_file_its_sink_holds_is_never_probed() -> None:
+    """SEC-S3L2-03 (CR-S3L2X-06, one behaviour): with a bundle, whose sink holds and drains
+    `CV_MACHINE_EVENT_WAL_PATH`, the file is not asked, and the start goes on."""
+    world = World(unclaimed=1024)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    async with started(world.runtime(bundle=bundle)) as runtime:
+        assert world.probes == 0 and world.log == STARTED and runtime.state != "degraded"
+
+
+async def test_pg_stores_probe_the_frames_postgres_has_not_taken_under_the_files_lock(
+    tmp_path: Path,
+) -> None:
+    """SEC-S3L2-03: the stores' probe reads `CV_MACHINE_EVENT_WAL_PATH` under its lock, never the
+    lane's own file: none when there is no file or its cursor is at its end, the bytes past the
+    cursor otherwise, and another holder of its lock is the sink's refusal, not a guess."""
+    wal = tmp_path / "machine_events.wal"
+    stores = pg_stores(Settings(machine_event_wal_path=str(wal)), Metrics("demo"))
+    assert await asyncio.to_thread(stores.unclaimed) == 0 and not wal.exists()
+    left = AuditWal(wal)
+    end = left.append({"machine_kind": "order", "entity_id": "a"})
+    assert await asyncio.to_thread(stores.unclaimed) == end
+    left.mark_committed(end)
+    assert await asyncio.to_thread(stores.unclaimed) == 0
+    left.append({"machine_kind": "order", "entity_id": "b"})
+    held = lock_wal_file(wal)
+    try:
+        with pytest.raises(MachineEventUnavailable):
+            await asyncio.to_thread(stores.unclaimed)
+    finally:
+        held.close()
+    assert not (tmp_path / "oms_lane.machine_events.wal").exists()
+    await stores.release()
+
+
+async def test_the_stop_gives_the_lanes_writer_its_own_grace() -> None:
+    """CR-S3L2-05: the stop gives the lane's writer `LANE_AUDIT_STOP_S` to empty its WAL into
+    Postgres, inside its share of the reserve, never the writer's own default."""
+    world = World()
+    async with started(world.runtime()):
+        pass
+    assert world.writer.graces == [oms_wiring.LANE_AUDIT_STOP_S]
+
+
+async def test_the_lane_writers_alarm_pages_the_first_of_each_window_per_cause() -> None:
+    """Ruling 4 (the orchestrator's of 2026-10-25 12:22Z; CR-S3L2-08): the lane writer's fail-closed
+    alarm, a refused append or its flusher's death, pages through the runtime's pager, so an
+    `audit_unavailable` refusal is never a silent outage; the first of each `LANE_AUDIT_PAGE_S`
+    window per cause on the runtime's clock, never once a refused record."""
+    world, window = World(), oms_wiring.LANE_AUDIT_PAGE_S
+    full, died = "audit WAL unavailable: AuditWalFull", "audit flusher died: OSError"
+    async with started(world.runtime()):
+        [alarm] = world.alarms
+        for _ in range(3):  # a burst of refused records: one page
+            await alarm(full)
+        world.clock.s += window - 0.001
+        await alarm(full)  # still its window
+        await alarm(died)  # another cause pages at once
+        world.clock.s += 0.001
+        await alarm(full)  # its next window
+    paged = [f"oms_lane_audit_alarm: {cause}" for cause in (full, died, full)]
+    assert (world.pager.calls, world.pager.severities) == (paged, ["page"] * 3)
+
+
+async def test_a_clock_stepped_back_behind_the_lane_writers_last_page_ends_its_window() -> None:
+    """Ruling 4 (CR-S3L2X-04): the runtime's clock stepped back behind the last page reads as the
+    window's end, so the next alarm of the cause pages, never a window held open for as long as
+    the clock was stepped back."""
+    world = World()
+    full = "audit WAL unavailable: AuditWalFull"
+    async with started(world.runtime()):
+        [alarm] = world.alarms
+        await alarm(full)
+        world.clock.s -= 1.0  # stepped back: inside the window, read forward
+        await alarm(full)
+    assert world.pager.calls == [f"oms_lane_audit_alarm: {full}"] * 2
+
+
+async def test_pg_stores_build_the_lanes_writer_with_the_alarm_it_is_given(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling 4: the writer `pg_stores` builds for the lane, on its own WAL, fires the alarm the
+    runtime gives it when an append is refused, its WAL unwritable: the record is refused and the
+    alarm names the error's class alone."""
+    stores = pg_stores(Settings(audit_wal_path=str(tmp_path / "audit.wal")), Metrics("demo"))
+    alarms = list[str]()
+
+    async def alarm(cause: str) -> None:
+        alarms.append(cause)
+
+    def unwritable(_record: Any) -> int:
+        raise OSError("the disk is gone")
+
+    writer: Any = stores.audit(alarm)
+    await writer.start()
+    monkeypatch.setattr(writer._wal, "append", unwritable)
+    try:
+        with pytest.raises(AuditUnavailable):
+            await writer.emit("auth.logout", actor_label="system:test")
+    finally:
+        await writer.stop(1)
+        await stores.release()
+    assert alarms == ["audit WAL unavailable: OSError"]
+    assert (tmp_path / "oms_lane.audit.wal").exists()
+
+
+@pytest.mark.parametrize("ends", ["failed", "cancelled"])
+async def test_the_composes_own_unwind_keeps_within_the_reserve_less_the_join(
+    ends: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ruling 6 (SEC-S3L1CG-01, carried from L1c): a composition that fails, or that a cancelled
+    start cuts short, closes what it built within `OMS_STOP_RESERVE_S` less the lane's join, the
+    bound the cancelled start's wait gives it, so every closer's share fits that wait."""
+    reserves, closed, began = list[float](), oms_wiring._closed, asyncio.Event()
+
+    async def timed(closers: Any, deadline: float) -> None:
+        reserves.append(deadline - asyncio.get_running_loop().time())
+        await closed(closers, deadline)
+
+    async def hangs(self: Sink) -> None:
+        began.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(oms_wiring, "_closed", timed)
+    world = World(sink_fails=RuntimeError("the WAL is locked") if ends == "failed" else None)
+    if ends == "failed":
+        async with started(world.runtime()):
+            pass
+    else:
+        monkeypatch.setattr(Sink, "start", hangs)
+        start = asyncio.ensure_future(world.runtime().start())
+        await asyncio.wait_for(began.wait(), 10)  # a bound on the test, never a time it expects
+        start.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start
+    reserve = OMS_STOP_RESERVE_S - LANE_JOIN_S
+    assert reserves and all(reserve - 1 < share <= reserve for share in reserves)
+
+
+def test_the_lanes_sink_counts_its_pending_rows_apart_from_the_bundles(tmp_path: Path) -> None:
+    """CR-S3L2-04: `cv_machine_event_wal_pending` is labelled by where its sink runs, so the order
+    lane's own sink (`pg_stores`) and a persistence bundle's, on the serving loop, each set a
+    series of their own, never one they overwrite in turn."""
+    metrics = Metrics("demo")
+    lane: Any = pg_stores(Settings(), metrics).sink(str(tmp_path / "machine_events.wal"))
+    lane._metrics.pending(4)
+    PersistOps(metrics).pending(2)  # the bundle's
+    text = generate_latest(metrics.registry).decode()
+    assert 'cv_machine_event_wal_pending{env="demo",where="order_lane"} 4.0' in text
+    assert 'cv_machine_event_wal_pending{env="demo",where="serving_loop"} 2.0' in text
+
+
 async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_closed() -> None:
     """The sink's start refuses (another process holds its WAL): the facade is unwired again and
     the port and the pool closed; the runtime serves no order."""
@@ -432,7 +718,8 @@ async def test_a_composition_that_fails_late_closes_what_it_built_and_fails_clos
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
             assert failed_closed(logs) == ["RuntimeError"] and not b01.ports_wired()
-            assert world.log == ["sink.start", "pool.release"] and world.venue.ports[0].closed
+            assert world.log == [*STARTED, "audit.stop", "pool.release"]
+            assert world.venue.ports[0].closed
             assert world.pager.calls == ["oms_runtime_failed_closed: sink_start"]
             assert failed_phases(logs) == ["sink_start"]
             assert world.pager.severities == ["page"] and world.lanes[0].stopped
@@ -528,7 +815,7 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 
 def test_the_fake_backend_composes_no_oms_runtime() -> None:
     """20 Sec.6.2: no runtime, so `placeOrder` answers `501 not_implemented` there."""
-    names = ("metrics", "audit", "gate", "standings", "oms_enabled", "live_enabled")
+    names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled")
     unused = dict.fromkeys((*names, "profiles", "persistence", "feed"))
     assert build_oms_runtime(cast(Any, None), Settings(), **cast(Any, unused)) is None
 
@@ -820,9 +1107,10 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 9 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's wait,
-    # the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink, which
-    # costs a third of what is left, the trading port and the pool
+    # 10 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
+    # which costs a quarter of what is left, the lane's audit writer (#913 L2), the trading port
+    # and the pool
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -844,7 +1132,8 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
             pass
     steps = [(e["step"], e["error"]) for e in logs if e["event"] == "oms_stop_step_failed"]
     assert steps == [("commands", "RuntimeError"), ("sink", "TimeoutError")]
-    assert world.venue.ports[0].closed and world.log == ["sink.start", "pool.release"]
+    assert world.venue.ports[0].closed
+    assert world.log == [*STARTED, "audit.stop", "pool.release"]
     assert not b01.ports_wired()  # the facade, first in line, closed too
 
 

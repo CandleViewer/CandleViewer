@@ -1,7 +1,7 @@
-"""#913 slice 3 L1b (E29-T04, 29 CV-C13): the nine `Served*` bridges, each on a real order lane
-whose serving loop is this test's (CR-S3L1B-02), and the `OnLane*` bridges' parameters against
-their services'. A stalled serving loop is one blocked on an event; each wait is a bound on the
-test, never a time it expects."""
+"""#913 slice 3 L1b (E29-T04, 29 CV-C13): the seven `Served*` bridges, each on a real order lane
+whose serving loop is this test's (CR-S3L1B-02); L2 gave the lane its own audit writer and sink,
+so neither crosses any more. A stalled serving loop is one blocked on an event; each wait is a
+bound on the test, never a time it expects."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import asyncio
 import inspect
 import threading
 from collections.abc import Callable, Sequence
-from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
@@ -18,29 +17,21 @@ from structlog.testing import capture_logs
 
 from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
-from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.exchange.base.models import AccountRef, Position
 from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability.metrics import Metrics
-from candleviewer.oms.cancel_all import CancelAll
 from candleviewer.oms.errors import OmsNotReady
-from candleviewer.oms.exits import OrderExits
 from candleviewer.oms_lane import Serving
 from candleviewer.oms_wiring import (
-    OnLaneCancelAll,
-    OnLaneExits,
-    ServedAudit,
     ServedClock,
     ServedDemand,
     ServedFeed,
     ServedGate,
     ServedPort,
     ServedProfiles,
-    ServedSink,
     ServedStandings,
 )
-from candleviewer.statechart.plugins.audit import CvAuditPlugin
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms.test_oms_runtime import Port
 from tests.unit.oms.test_order_lane import BOUND_S, running
@@ -48,13 +39,6 @@ from tests.unit.oms.test_order_lane import BOUND_S, running
 OTHER = UUID(int=2)
 #: What the serving loop's side of each bridge was called for, and on which thread.
 Calls = list[tuple[str, threading.Thread]]
-#: The sink bridge's page for an append the serving loop did not begin: its class alone.
-DROPPED = {
-    "event": "oms_sink_append_dropped",
-    "cv_page": True,
-    "error": "TimeoutError",
-    "log_level": "critical",
-}
 
 
 class Spy:
@@ -71,7 +55,7 @@ class Spy:
         async def run(*args: Any, **kwargs: Any) -> None:
             noted()
 
-        awaited = name in ("get_effective_profile", "resync_after_signature_failure", "emit")
+        awaited = name in ("get_effective_profile", "resync_after_signature_failure")
         return run if awaited else noted
 
 
@@ -79,13 +63,13 @@ def _serving() -> Serving:
     return Serving(asyncio.get_running_loop(), Metrics("demo"))
 
 
-async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unrun() -> None:
-    """C-2.21, fail closed: this loop is blocked, so neither blocking hop begins here within its
-    bound. The gate is `OmsNotReady`, logged, so nothing is sent; the sink's append raises; neither
-    runs once this loop turns again."""
+async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_unrun() -> None:
+    """C-2.21, fail closed: this loop is blocked, so the blocking hop does not begin here within
+    its bound. The gate is `OmsNotReady`, logged, so nothing is sent, and it does not run once
+    this loop turns again."""
     calls, done, serving = Calls(), threading.Event(), _serving()
     spy: Any = Spy(calls)
-    gate, sink = ServedGate(spy, serving, ServedStandings(spy, serving)), ServedSink(spy, serving)
+    gate = ServedGate(spy, serving, ServedStandings(spy, serving))
 
     async def hops() -> list[str]:
         failed = []
@@ -93,10 +77,6 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
             gate.refusal(cr.ACCOUNT)
         except OmsNotReady:
             failed.append("gate")
-        try:
-            sink.append(spy)
-        except TimeoutError:
-            failed.append("sink")
         done.set()
         return failed
 
@@ -104,84 +84,10 @@ async def test_a_stalled_serving_loop_leaves_the_gate_not_ready_and_the_sink_unr
         async with running() as lane:
             answered = lane.call(hops())
             assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
-            assert await answered == ["gate", "sink"]
+            assert await answered == ["gate"]
             await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
     unanswered = [e["account_id"] for e in logs if e["event"] == "oms_gate_unanswered"]
     assert unanswered == [str(cr.ACCOUNT)] and calls == []
-
-
-async def test_an_unbegun_append_pages_once_in_its_window_and_still_reaches_the_plugin() -> None:
-    """SEC-S3L1CE-01 (24 Sec.17.6, M19): a write-ahead row the stalled serving loop does not begin
-    within 1 s never runs, a hole no chain check sees. The bridge pages it, by its class alone and
-    once in its window, and still raises it to the audit plugin, which counts each; the plugin's
-    hook contains it, so the machine's step runs on, as it will until L2."""
-    calls, done, serving = Calls(), threading.Event(), _serving()
-    spy: Any = Spy(calls)
-    plugin = CvAuditPlugin(
-        machine_kind="order",
-        entity_id=str(OTHER),
-        env="demo",
-        sink=ServedSink(spy, serving, monotonic=lambda: 0.0),  # both appends in one window
-        write_ahead=True,
-    )
-
-    async def steps() -> None:
-        try:
-            for _ in range(2):  # two steps, each with its write-ahead row
-                plugin.on_event_received(None, SimpleNamespace(type="SUBMIT", data={"qty": "1"}))
-                plugin.on_action_execute(None, "send_create")  # contained: never raises
-        finally:
-            done.set()
-
-    with capture_logs() as logs:
-        async with running() as lane:
-            answered = lane.call(steps())
-            assert done.wait(BOUND_S)  # this loop blocks meanwhile: the stall
-            await answered
-            await lane.call(asyncio.sleep(0))  # this loop has turned meanwhile
-    assert [e for e in logs if e.get("cv_page")] == [DROPPED]
-    failed = [e["error"] for e in logs if e["event"] == "statechart_audit_sink_failed"]
-    assert failed == ["TimeoutError"] * 2
-    assert (plugin.sink_failures, plugin.hook_errors, calls) == (2, 2, [])
-
-
-def test_the_drop_pages_each_windows_first_and_a_begun_refusal_is_the_sinks_to_page() -> None:
-    """SEC-S3L1CE-01: the bridge pages the first unbegun append of each window, M19's own
-    (`APPEND_FAILURE_COOLDOWN_S`, in which the sink pages its own failed appends), on the injected
-    clock. A refusal the serving loop's sink answered is raised as it is and paged by the sink
-    (`audit/machine_events.py`), never here."""
-
-    class Hop:
-        """The serving loop's blocking hop, begun or not as the test sets it, never waiting."""
-
-        begun = False
-
-        def block(self, fn: Callable[[], None]) -> None:
-            if not self.begun:
-                raise TimeoutError
-            fn()
-
-    class Refusing:
-        def append(self, row: Any) -> None:
-            raise ValueError("the sink refused the row")
-
-    now, hop = [0.0], Hop()
-    served: Any = hop
-    row: Any = SimpleNamespace()  # never read: the refusing sink raises at once
-    sink = ServedSink(Refusing(), served, monotonic=lambda: now[0])
-    window = APPEND_FAILURE_COOLDOWN_S
-    with capture_logs() as logs:
-        for at, begun, error in (
-            (0.0, False, TimeoutError),
-            (window - 0.001, False, TimeoutError),
-            (window - 0.001, True, ValueError),
-            (window, False, TimeoutError),
-        ):
-            now[0], hop.begun = at, begun
-            with pytest.raises(error):
-                sink.append(row)
-    assert [e for e in logs if e.get("cv_page")] == [DROPPED, DROPPED]
-    assert oms_wiring.SINK_PAGE_COOLDOWN_S == window
 
 
 async def test_a_rejected_credentials_notice_lands_before_a_later_gate_read_from_the_lane() -> None:
@@ -280,7 +186,7 @@ async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a
     assert hops - set(vars(served)) == {"subscribe_private"}
 
 
-async def test_the_feed_demand_profiles_clock_and_audit_land_on_the_serving_loop() -> None:
+async def test_the_feed_demand_profiles_and_clock_land_on_the_serving_loop() -> None:
     """The notices land in order, before the awaited hops after them; the clock's health is read in
     place, on the lane."""
     calls, serving = Calls(), _serving()
@@ -293,7 +199,6 @@ async def test_the_feed_demand_profiles_clock_and_audit_land_on_the_serving_loop
         clock = ServedClock(spy, serving)
         clock.assert_healthy()
         await clock.resync_after_signature_failure(reason="signature")
-        await ServedAudit(spy, serving).emit("orders.submit")
         return threading.current_thread()
 
     async with running() as lane:
@@ -301,31 +206,5 @@ async def test_the_feed_demand_profiles_clock_and_audit_land_on_the_serving_loop
     here = threading.current_thread()
     assert calls == [
         ("publish", here), ("asked", here), ("get_effective_profile", here),
-        ("assert_healthy", on), ("resync_after_signature_failure", here), ("emit", here),
+        ("assert_healthy", on), ("resync_after_signature_failure", here),
     ]  # fmt: skip
-
-
-@pytest.mark.parametrize(
-    ("bridge", "service"),
-    [(OnLaneExits, OrderExits), (OnLaneCancelAll, CancelAll)],
-    ids=["exits", "cancel_all"],
-)
-def test_each_lane_bridge_takes_exactly_its_services_parameters(
-    bridge: type, service: type
-) -> None:
-    """A bridge re-declares each coroutine it hops to the lane, so a parameter the service has and
-    the bridge does not take is a TypeError in the route that passes it, or a value the service
-    never sees (`deny`'s `step`, #913): each public coroutine of a bridge takes exactly its
-    service's same-named parameters, by name, kind and default."""
-    hops = {
-        name: method
-        for name, method in inspect.getmembers(bridge, inspect.iscoroutinefunction)
-        if not name.startswith("_")
-    }
-    assert hops  # the bridge was read, not an emptied scan
-    for name, hop in hops.items():
-        own = inspect.signature(getattr(service, name)).parameters.values()
-        lane = inspect.signature(hop).parameters.values()
-        assert [(p.name, p.kind, p.default) for p in lane] == [
-            (p.name, p.kind, p.default) for p in own
-        ], name
