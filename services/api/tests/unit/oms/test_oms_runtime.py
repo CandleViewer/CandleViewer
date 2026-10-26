@@ -38,6 +38,7 @@ from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import CancelAllRequest
 from candleviewer.oms.cancel_all_coalescer import CancelAllCoalescer
 from candleviewer.oms.commands import OmsCommandPort
+from candleviewer.oms.day_figures import DayRiskFigures
 from candleviewer.oms.errors import (
     AccountScopeDenied,
     OmsNotReady,
@@ -416,9 +417,10 @@ async def test_the_sink_is_the_bundles_else_a_standalone_one_never_on_live_with_
             else:
                 assert world.log == (["sink.start"] if sink == "standalone" else [])
                 assert failed_closed(logs) == [] and b01.ports_wired()
-                # S4-S-b3: the refusing stand-in on every environment until the day figures land
+                # S4-S-b3: the day figures on demo and testnet, the refusing stand-in on live
                 [figures] = [e for e in logs if e.get("port") == "risk_figures"]
-                assert figures["serves"] == NoDayFigures.serves
+                served = NoDayFigures if environment == "live" else DayRiskFigures
+                assert figures["serves"] == served.serves
                 assert world.gauge("risk_figures") == 1.0
     assert world.gauge("machine_event_sink") == (0.0 if with_bundle else 1.0)
 
