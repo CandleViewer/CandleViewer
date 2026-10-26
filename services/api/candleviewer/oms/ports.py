@@ -341,11 +341,28 @@ class Instruments(Protocol):
     async def instrument(self, symbol: Symbol) -> Instrument | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class MarketReading:
+    """The market read of 24 Sec.8.4 step 3a: the mid of the best bid and ask and the last price,
+    kept apart, each None when the market shows none (a stale symbol shows neither)."""
+
+    mid: Px | None
+    last: Px | None
+
+    @property
+    def reference(self) -> Px | None:
+        """The mid, else the last price (#913 S4-S ruling Q3), else None."""
+        return self.mid if self.mid is not None else self.last
+
+
 class ReferencePrices(Protocol):
     """The market's reference price a market order is measured from (24 Sec.9.3 step 2: the mid,
-    else the last price), or None when the market shows none; slice 3 binds the ticker."""
+    else the last price), or None when it shows none; `market` is the read itself, mid and last
+    apart, under the same staleness and demand; slice 3 binds the ticker."""
 
     async def reference_price(self, symbol: Symbol) -> Px | None: ...
+
+    async def market(self, symbol: Symbol) -> MarketReading: ...
 
 
 class Profiles(Protocol):

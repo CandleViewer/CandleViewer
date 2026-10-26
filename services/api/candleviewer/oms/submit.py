@@ -89,6 +89,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
+from decimal import Context, Decimal, localcontext
 from types import MappingProxyType
 from typing import Any, Final, Literal
 from uuid import UUID, uuid4, uuid5
@@ -127,6 +128,7 @@ from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.models import AccountRef, OrderLane
 from candleviewer.observability.metrics import BoundedMetric, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.settings import OMS_PRICE_BAND_DEFAULT, OMS_PRICE_BAND_MAX, OMS_PRICE_BAND_MIN
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.config import CV_PERSIST_TIMEOUT
 from candleviewer.statechart.plugins import LogPager, Pager
@@ -157,6 +159,7 @@ from .commands import SUBMIT_TIMEOUT_S, OmsCommandPort, PlaceWatch
 from .errors import (
     INTERNAL_ERROR,
     PROBLEMS,
+    RULE_PRICE_BAND,
     RULE_REDUCE_ONLY_TPSL,
     AnchorTaken,
     AuditNotDurable,
@@ -188,6 +191,7 @@ from .ports import (
     AuditSeverity,
     Instruments,
     KeyedRecord,
+    MarketReading,
     OrderEffect,
     OrderType,
     PositionKey,
@@ -540,6 +544,26 @@ def _price_errors(price: Px, instrument: Instrument) -> list[FieldError]:
     return []
 
 
+_EXACT: Final = Context(prec=100)  # as `accounts/sizer.py`: the edge products are not rounded
+
+
+def _judged(price: Px) -> bool:
+    """A price the band can judge or judge against: finite and above zero."""
+    return price.is_finite() and price > 0
+
+
+def _within(price: Px, reference: Px, band: Decimal) -> bool:
+    """`price` within `reference x (1 -/+ band)`, edges included; one no step can judge passes."""
+    if not _judged(price):
+        return True
+    with localcontext(_EXACT):
+        return reference * (1 - band) <= price <= reference * (1 + band)
+
+
+def _band_message(name: str, band: Decimal, of: str) -> str:
+    return f"The {name} must lie within {(band * 100).normalize():f}% of {of}."
+
+
 def _retry_after(answer: Mapping[str, Any] | None) -> int:
     """A refused rate token's `Retry-After`, as the command port answered it (a whole number of
     seconds, at least 1), else 1."""
@@ -590,7 +614,15 @@ class OrderSubmission:
         place_wait_s: float = PLACE_WAIT_S,
         result_wait_s: float = RESULT_WAIT_S,
         stop_retries: Sequence[float] = STOP_RETRIES_S,
+        price_band: Decimal = OMS_PRICE_BAND_DEFAULT,
     ) -> None:
+        if (  # no off value (C-4.14); a float or a NaN is no band
+            not isinstance(price_band, Decimal)
+            or not price_band.is_finite()
+            or not OMS_PRICE_BAND_MIN <= price_band <= OMS_PRICE_BAND_MAX
+        ):
+            raise ValueError("price_band must lie within CV_OMS_PRICE_BAND_PCT's bounds")
+        self._price_band = price_band
         self._ports = ports
         self._deps = deps
         self._machines = machines
@@ -762,9 +794,10 @@ class OrderSubmission:
             )
             if refused:
                 raise _invalid(refused)
+        reading = await self._banded(request)  # the one market read of step 3a, shared below
         qty = self._size(request, instrument)
         effect = await self._effect(request, qty)
-        reference = await self._reference(request, instrument)
+        reference = await self._reference(request, instrument, reading)
         stop, take_profit = self._protection(
             request, effect, reference, instrument, profile, bare=bare
         )
@@ -784,6 +817,50 @@ class OrderSubmission:
             stop_loss=stop,
             take_profit=take_profit,
         )
+
+    async def _banded(self, request: OrderRequest) -> MarketReading | None:
+        """Step 3a (24 Sec.8.4; 22 `placeOrder`), before sizing: a limit or conditional entry, not
+        reduce-only, is judged against the band around mid, else last (Q3): a trigger against it,
+        a limit behind a trigger against that trigger (Q4); a price no step can judge is left to
+        the later checks. A per-profile band waits for its column (Q3). Returns the market read
+        made, None when nothing was judged and nothing read."""
+        trigger = None if request.trigger is None else request.trigger.price
+        limit = request.price if request.order_type == "limit" else None
+        if request.reduce_only or (limit is None and trigger is None):
+            return None
+        reading, reference = await self._market_reading(request.symbol)
+        band, errors = self._price_band, list[FieldError]()
+        if trigger is not None and not _within(trigger, reference, band):
+            message = _band_message("trigger price", band, "the market price")
+            errors.append(FieldError("trigger.price", RULE_PRICE_BAND, message))
+        if trigger is None:
+            anchor, of = reference, "the market price"
+        else:
+            anchor, of = trigger, "its trigger price"
+        if limit is not None and _judged(anchor) and not _within(limit, anchor, band):
+            errors.append(FieldError("price", RULE_PRICE_BAND, _band_message("price", band, of)))
+        if errors:
+            raise _invalid(errors)
+        return reading
+
+    async def _market_reading(self, symbol: Symbol) -> tuple[MarketReading, Px]:
+        """The market read (a price at zero or below taken as none) and its reference, the mid else
+        the last price; with neither, or a read that fails or does not answer in time, 503
+        `exchange_unavailable` (the binding has taken the ticker demand, so the retry finds one)."""
+        try:
+            async with asyncio.timeout(self._position_timeout_s):
+                reading = await self._deps.prices.market(symbol)
+        except Exception as exc:
+            _log().warning("oms_submit_price_unread", symbol=symbol, failure=type(exc).__name__)
+            raise ExchangeUnavailable(retry_after_s=READ_RETRY_AFTER_S) from None
+        mid, last = (
+            p if p is not None and _judged(p) else None for p in (reading.mid, reading.last)
+        )
+        reference = mid if mid is not None else last
+        if reference is None:
+            _log().warning("oms_submit_price_unread", symbol=symbol, failure="no_price")
+            raise ExchangeUnavailable(retry_after_s=READ_RETRY_AFTER_S)
+        return MarketReading(mid=mid, last=last), reference
 
     def _size(self, request: OrderRequest, instrument: Instrument) -> Qty:
         try:
@@ -817,15 +894,20 @@ class OrderSubmission:
             )
             raise ExchangeUnavailable(retry_after_s=READ_RETRY_AFTER_S) from None
 
-    async def _reference(self, request: OrderRequest, instrument: Instrument) -> Px:
-        """24 Sec.9.3 step 2: the order's own price, else the market's reference; a market whose
-        price cannot be read is no answer (Q-B: 503 `exchange_unavailable`)."""
+    async def _reference(
+        self, request: OrderRequest, instrument: Instrument, reading: MarketReading | None
+    ) -> Px:
+        """24 Sec.9.3 step 2: the order's own price, else the market's reference: the band step's
+        read when it made one (24 Sec.8.4 step 3b), else a read of its own; a market whose price
+        cannot be read is no answer (Q-B: 503 `exchange_unavailable`)."""
         own = request.price
         if own is not None:
             errors = _price_errors(own, instrument)
             if errors:
                 raise OrderInvalid(errors=errors)
             return own
+        if reading is not None and reading.reference is not None:
+            return reading.reference
         try:
             async with asyncio.timeout(self._position_timeout_s):
                 market = await self._deps.prices.reference_price(request.symbol)

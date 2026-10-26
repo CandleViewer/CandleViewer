@@ -7,6 +7,7 @@ pydantic `ValidationError` naming the allowed values.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -161,6 +162,7 @@ def test_settings_oms_runtime_defaults_are_the_20_7_2_rows() -> None:
         30.0,
     )
     assert (s.oms_drain_s, s.trading_live_enabled) == (10.0, False)
+    assert s.oms_price_band_pct == Decimal("0.05")
 
 
 _OMS_ACCEPTED = [
@@ -177,6 +179,8 @@ _OMS_ACCEPTED = [
     ({"CV_OMS_DRAIN_S": "1"}, "oms_drain_s", 1.0),
     ({"CV_OMS_DRAIN_S": "10"}, "oms_drain_s", 10.0),
     ({"CV_TRADING_LIVE_ENABLED": "true"}, "trading_live_enabled", True),
+    ({"CV_OMS_PRICE_BAND_PCT": "0.005"}, "oms_price_band_pct", Decimal("0.005")),
+    ({"CV_OMS_PRICE_BAND_PCT": "0.20"}, "oms_price_band_pct", Decimal("0.20")),
 ]
 
 
@@ -205,6 +209,10 @@ def test_settings_oms_runtime_bounds_take_each_value_in_range(
         ({"CV_OMS_STARTUP_WAIT_S": "45.5"}, "oms_startup_wait_s"),  # past the 60 s smoke window
         ({"CV_OMS_DRAIN_S": "0.5"}, "oms_drain_s"),
         ({"CV_OMS_DRAIN_S": "10.5"}, "oms_drain_s"),  # leaves under 5 s of the module's grace
+        ({"CV_OMS_PRICE_BAND_PCT": "0.0049"}, "oms_price_band_pct"),
+        ({"CV_OMS_PRICE_BAND_PCT": "0.21"}, "oms_price_band_pct"),
+        ({"CV_OMS_PRICE_BAND_PCT": "0"}, "oms_price_band_pct"),  # no off value (C-4.14)
+        ({"CV_OMS_PRICE_BAND_PCT": "nan"}, "oms_price_band_pct"),
     ],
 )
 def test_settings_oms_runtime_bounds_refuse_each_value_out_of_range(

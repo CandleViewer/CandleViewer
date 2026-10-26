@@ -179,10 +179,20 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
     health.measure()
     listed = {sr.SYMBOL: sr.instrument()}
     catalogue = SimpleNamespace(snapshot=lambda: listed)
+    # A fresh quote whose mid is the test bodies' price, inside the band the entry is checked in.
+    quote = SimpleNamespace(
+        bid1_price=Decimal("59999"), ask1_price=Decimal("60001"), last_price=Decimal("60000")
+    )
+    tickers = SimpleNamespace(
+        latest=lambda _symbol: quote,
+        is_stale=lambda _symbol: False,
+        acquire=lambda _consumer, _symbol: None,
+        release=lambda _consumer, _symbol: None,
+    )
     return OmsRuntime(
         settings, venue=_Venue(ports=[world.port]),
         ingestion=SimpleNamespace(
-            clock=health, tickers=None, instruments=catalogue, clock_offset_ms=lambda: None
+            clock=health, tickers=tickers, instruments=catalogue, clock_offset_ms=lambda: None
         ),
         read_only=sr.ReadOnly(), metrics=metrics, audit=world.writer,
         gate=SimpleNamespace(refusal=lambda _account: None),
