@@ -531,31 +531,40 @@ def test_the_lanes_wal_files_are_its_own_beside_the_serving_loops() -> None:
     assert oms_wiring.lane_audit_wal(named) != named.audit_wal_path
 
 
-@pytest.mark.parametrize("bundled", [False, True])
-async def test_frames_no_sink_holds_refuse_the_start_closed_and_paged_without_a_bundle(
-    bundled: bool,
-) -> None:
-    """SEC-S3L2-03 (the Fable lens at 864fa082; 20 Sec.6.2): without a bundle no sink of the
-    process holds `CV_MACHINE_EVENT_WAL_PATH`, so frames there that Postgres has not taken, which
-    a run before #913 L2 or a bundle's run left, refuse the start: logged CRITICAL with their
-    size, failed closed and paged, before the lane's sink or the facade exists, never adopted or
-    skipped. With a bundle, whose sink holds and drains that file, it is not asked."""
+async def test_frames_no_sink_holds_fail_the_start_closed_critical_and_paged() -> None:
+    """SEC-S3L2-03 (the Fable lens at 864fa082; 20 Sec.6.2; CR-S3L2X-06, one behaviour): without a
+    bundle no sink of the process holds `CV_MACHINE_EVENT_WAL_PATH`, so frames there that Postgres
+    has not taken, which a run before #913 L2 or a bundle's run left, refuse the start: logged
+    CRITICAL with their size, failed closed by its phase and paged, `degraded`, never adopted or
+    skipped."""
     world = World(unclaimed=1024)
-    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
     with capture_logs() as logs:
-        async with started(world.runtime(bundle=bundle if bundled else None)) as runtime:
-            if bundled:
-                assert world.probes == 0 and world.log == STARTED and runtime.state != "degraded"
-                return
+        async with started(world.runtime()) as runtime:
             assert (failed_closed(logs), failed_phases(logs)) == (
                 ["UnclaimedMachineEvents"], ["sink_wal"]
             )  # fmt: skip
             left = [e for e in logs if e["event"] == "oms_machine_event_wal_unclaimed"]
             assert [(e["log_level"], e["pending_bytes"]) for e in left] == [("critical", 1024)]
             assert world.pager.calls == ["oms_runtime_failed_closed: sink_wal"]
-            assert world.probes == 1 and world.sinks == [] and not b01.ports_wired()
-            assert world.log == ["pool.release"] and world.venue.ports[0].closed
             assert runtime.state == "degraded"
+
+
+async def test_frames_no_sink_holds_refuse_the_start_before_the_lanes_sink_or_the_facade() -> None:
+    """SEC-S3L2-03 (CR-S3L2X-06, one behaviour): the probe runs once, before the lane's sink or the
+    facade exists, so the refused start built neither, and it closes its port and its pool."""
+    world = World(unclaimed=1024)
+    async with started(world.runtime()):
+        assert world.probes == 1 and world.sinks == [] and not b01.ports_wired()
+        assert world.log == ["pool.release"] and world.venue.ports[0].closed
+
+
+async def test_with_a_bundle_the_file_its_sink_holds_is_never_probed() -> None:
+    """SEC-S3L2-03 (CR-S3L2X-06, one behaviour): with a bundle, whose sink holds and drains
+    `CV_MACHINE_EVENT_WAL_PATH`, the file is not asked, and the start goes on."""
+    world = World(unclaimed=1024)
+    bundle = SimpleNamespace(sink=InMemoryMachineEventSink(), latch=ChainTripLatch())
+    async with started(world.runtime(bundle=bundle)) as runtime:
+        assert world.probes == 0 and world.log == STARTED and runtime.state != "degraded"
 
 
 async def test_pg_stores_probe_the_frames_postgres_has_not_taken_under_the_files_lock(
@@ -610,6 +619,20 @@ async def test_the_lane_writers_alarm_pages_the_first_of_each_window_per_cause()
         await alarm(full)  # its next window
     paged = [f"oms_lane_audit_alarm: {cause}" for cause in (full, died, full)]
     assert (world.pager.calls, world.pager.severities) == (paged, ["page"] * 3)
+
+
+async def test_a_clock_stepped_back_behind_the_lane_writers_last_page_ends_its_window() -> None:
+    """Ruling 4 (CR-S3L2X-04): the runtime's clock stepped back behind the last page reads as the
+    window's end, so the next alarm of the cause pages, never a window held open for as long as
+    the clock was stepped back."""
+    world = World()
+    full = "audit WAL unavailable: AuditWalFull"
+    async with started(world.runtime()):
+        [alarm] = world.alarms
+        await alarm(full)
+        world.clock.s -= 1.0  # stepped back: inside the window, read forward
+        await alarm(full)
+    assert world.pager.calls == [f"oms_lane_audit_alarm: {full}"] * 2
 
 
 async def test_pg_stores_build_the_lanes_writer_with_the_alarm_it_is_given(
