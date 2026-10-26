@@ -8,7 +8,7 @@ fact (C-13.5), and E29-K01 records the venue's own TP/SL, status and trail rows.
 from __future__ import annotations
 
 from dataclasses import fields
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any, get_args
 from uuid import UUID
@@ -164,6 +164,43 @@ def test_pair_fill_of_a_stop_order_matching_a_record_goes_to_that_record() -> No
     """Derived: the fill's order, read by its exchange order id, is the record's stop."""
     recorded = _record()
     assert pg.pair(FILL, _none(order=READ, stops=(recorded,))) == pg.ToRecordedStop(recorded, READ)
+
+
+CREATED = datetime.fromtimestamp(READ.created_at / 1_000_000, UTC)  # the venue created `READ`
+
+
+@pytest.mark.parametrize("push", [READ, FILL], ids=["order", "fill"])
+@pytest.mark.parametrize(
+    "recorded", [CREATED, CREATED + pg.ATTACH_SKEW], ids=["before", "within_skew"]
+)
+def test_pair_entrys_attach_first_binds_its_stop_created_at_the_entrys_fill(
+    push: Push, recorded: datetime
+) -> None:
+    """The S7b ruling, legitimate case: an entry's attached stop arrives as a new order once the
+    entry fills, after its record is written ahead, so the venue created it after the record (or
+    within `ATTACH_SKEW` of the two clocks): its first push, or its fill's read, binds it."""
+    attach = _record(source="entry_attach", order_id=UUID(int=9), created_at=recorded)
+    read = {} if push is READ else {"order": READ}
+    assert pg.pair(push, _none(stops=(attach,), **read)) == pg.ToRecordedStop(attach, READ)
+
+
+@pytest.mark.parametrize("push", [READ, FILL], ids=["order", "fill"])
+def test_pair_entrys_attach_never_first_binds_an_order_changed_in_place_to_match_it(
+    push: Push,
+) -> None:
+    """The S7b ruling, forbidden case: an order the venue held more than `ATTACH_SKEW` before the
+    entry's attach was recorded can match it only by an in-place change, so it is never that
+    attach's stop (as no successor is): an older record of another source it matches binds it,
+    and with none it has no intent."""
+    late = CREATED + pg.ATTACH_SKEW + timedelta(microseconds=1)
+    attach = _record(id=UUID(int=2), source="entry_attach", order_id=UUID(int=9), created_at=late)
+    older = _record(source="trading_stop", created_at=late - timedelta(hours=1))
+    read = {} if push is READ else {"order": READ}
+    assert pg.pair(push, _none(stops=(attach, older), **read)) == pg.ToRecordedStop(older, READ)
+    none = pg.pair(push, _none(stops=(attach,), **read))
+    assert isinstance(none, pg.NoIntent)
+    assert none.finding == ("order" if push is READ else "execution")
+    assert pg.first_bindable(READ, (attach, older)) == (older,)
 
 
 def test_matching_record_misses_on_each_field_it_matches() -> None:

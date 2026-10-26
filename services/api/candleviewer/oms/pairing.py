@@ -7,10 +7,11 @@ push's normalised order link id names, whose reorder buffer holds it until its o
 named row already bound to the push's own order, its bind having landed since step 1's read, is
 that push's row, as in step 1); (3) for an order the stream or a fill's order read shows as a TP/SL
 claim, the latest live record of its position whose side it matches (Sec.8.8 rule 6, [O-4], failing
-closed); (4) no OMS intent. A read that failed or that the hand-over bound cut short decides
-nothing, and so does a completed read of a fill's order that found none. A row pairs through the
-bound id alone: an order link id only names a row to wait on, and a fill is never matched on its own
-symbol, side or direction. A read that answers another account's row, or a step-1 row bound to
+closed; an entry's attach only for an order the venue created after it, `first_bindable`); (4) no
+OMS intent. A read that failed or that the hand-over bound cut short decides nothing, and so does a
+completed read of a fill's order that found none. A row pairs through the bound id alone: an order
+link id only names a row to wait on, and a fill is never matched on its own symbol, side or
+direction. A read that answers another account's row, or a step-1 row bound to
 another exchange order id, is a store or adapter defect: refused, never paired (C-12.4).
 
 Known residual (the orchestrator's Q3 ruling): `Order` carries no trail, so a trailing order and a
@@ -22,6 +23,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from types import MappingProxyType
 from typing import Final, Literal
@@ -129,6 +131,12 @@ STOP_SIDES: Final[Mapping[str, tuple[StopKind, TpslMode]]] = MappingProxyType({
 _CLAIMS: Final = frozenset(STOP_SIDES) | {"trailing_stop"}
 _CLOSING: Final = MappingProxyType({"Buy": "sell", "Sell": "buy"})  # record side -> order side
 _REFUSED: Final = "a read answered a row that is not the push's: nothing is paired"
+#: How far the venue's clock may sit from the OMS's for a request to be accepted at all: Bybit's
+#: `recv_window` (5000 ms, 24 Sec.14.3). An entry is sent after its attach is recorded, so its
+#: stop's order is created at the venue after the record, give or take this.
+ATTACH_SKEW: Final = timedelta(milliseconds=5000)
+_EPOCH: Final = datetime(1970, 1, 1, tzinfo=UTC)
+_US: Final = timedelta(microseconds=1)
 
 
 def pair(push: Order | Execution, reads: Reads) -> Pairing:
@@ -160,7 +168,7 @@ def pair(push: Order | Execution, reads: Reads) -> Pairing:
     if is_stop_claim(order):
         if isinstance(reads.stops, NoAnswer):
             return _ask(reads.stops, NeedStops(order.symbol, order.position_idx))
-        record = matching_record(order, _of_key(push, order, reads.stops))
+        record = matching_record(order, first_bindable(order, _of_key(push, order, reads.stops)))
         if record is not None:
             return ToRecordedStop(record, order)
     if isinstance(push, Order):
@@ -185,6 +193,20 @@ def matching_record(order: Order, records: Sequence[RecordedStopRow]) -> Recorde
     in Partial mode at its size. The caller passes the records of the order's own position."""
     found = [r for r in records if _matches(order, r)]
     return max(found, key=lambda r: (r.created_at, r.id), default=None)
+
+
+def first_bindable(order: Order, records: Sequence[RecordedStopRow]) -> tuple[RecordedStopRow, ...]:
+    """The records step 3 may first-bind `order` to (24 Sec.8.3 rule 7): an entry's attach
+    (`entry_attach`) only when the venue created the order no earlier than the record, less
+    `ATTACH_SKEW`. An entry's attached stop arrives as a new order at the entry's fill, after its
+    record is written (write-ahead), so an order the venue held before then can match that record
+    only by an in-place change, which never makes it the entry's attach (as no successor is, the
+    S7b ruling). Every other source's records are kept."""
+    return tuple(r for r in records if r.source != "entry_attach" or _created_after(order, r))
+
+
+def _created_after(order: Order, r: RecordedStopRow) -> bool:
+    return order.created_at >= (r.created_at - ATTACH_SKEW - _EPOCH) // _US
 
 
 def _matches(order: Order, r: RecordedStopRow) -> bool:

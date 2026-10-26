@@ -250,6 +250,45 @@ async def test_an_older_push_neither_drops_nor_replaces_newer_pending_terms(
     assert sent(rig)[-1] == ("TERMS_CHANGED", "92000", "0.5")
 
 
+@pytest.mark.parametrize("status", ["Cancelled", "Deactivated"], ids=["cancelled", "deactivated"])
+async def test_an_older_end_push_discards_the_pending_terms(status: str) -> None:
+    """The S7a Fable delta's Low: an older push that ends the row (an event in `ENDS`) discards
+    the pending slot, counted `terms_ended`, so no later flush sends terms into the ended row (B1
+    could only record them as an anomaly). The stop has ended at the venue: no protective terms
+    are lost. Its end still goes to the facade, whose watermark judges it."""
+    rig = stop_rig()
+    base = push_time_ms(order(), ts_event=0)
+    await rig.run(moved(triggerPrice="93000"))
+    await rig.run(moved(triggerPrice="92000", updatedTime=str(base + 20)))  # waits
+    await rig.run(moved(updatedTime=str(base + 10), orderStatus=status))
+    assert sent(rig)[1:] == [("REMOTE_CANCELLED", None, None)]
+    assert "terms_ended" in rig.counts and "terms_older" not in rig.counts
+    assert rig._shared is not None and len(rig._shared._pending) == 0
+    rig.now += stop_terms.TERMS_MIN_INTERVAL_S
+    await flush(rig)
+    assert sent(rig)[1:] == [("REMOTE_CANCELLED", None, None)]
+
+
+def test_pending_terms_cap_evicts_the_offering_accounts_oldest_first() -> None:
+    """The S7a Fable look's 3: the cap evicts the offering account's oldest other slot, so its
+    consumer task sends another account's terms only when the account has no other slot; an
+    evicted slot is answered to be sent, never dropped."""
+    pending: PendingTerms[str] = PendingTerms(cap=2)
+    b1, a1, a2 = (ACCOUNT_B, UUID(int=1)), (ACCOUNT_A, UUID(int=2)), (ACCOUNT_A, UUID(int=3))
+    for key in (b1, a1, a2):
+        pending.sent(key, 0.0)
+    assert pending.offer(b1, "b1", 0.1) == (None, None)  # the global oldest
+    assert pending.offer(a1, "a1", 0.2) == (None, None)
+    assert pending.offer(a2, "a2", 0.3) == (None, "a1")  # A's own oldest, not B's
+    assert pending.peek(b1) == "b1" and pending.peek(a1) is None and len(pending) == 2
+    lone: PendingTerms[str] = PendingTerms(cap=1)
+    for key in (b1, a1):
+        lone.sent(key, 0.0)
+    assert lone.offer(b1, "b1", 0.1) == (None, None)
+    assert lone.offer(a1, "a1", 0.2) == (None, "b1")  # A has no other slot: the global oldest
+    assert lone.peek(a1) == "a1" and not lone._slots.get(ACCOUNT_B) and len(lone) == 1
+
+
 def test_older_than_judges_only_a_stamped_pending_payload() -> None:
     shown = order()
     stamp = push_time_ms(shown, ts_event=0)
@@ -394,14 +433,17 @@ async def test_fill_over_terms_that_reduced_the_row_reads_the_order_first() -> N
 
 
 @pytest.mark.parametrize(
-    "case", ["read_failed", "no_order", "no_larger", "other_order", "terms_refused"]
+    "case",
+    ["read_failed", "no_order", "no_larger", "other_order", "other_account", "terms_refused"],
 )
 async def test_fill_over_quantity_with_a_failed_read_is_delivered_and_counted(case: str) -> None:
-    """A read that fails, or shows no larger quantity (or another order), or terms B1 does not
-    take: the fill is delivered anyway, never dropped or held, and counted."""
+    """A read that fails, or shows no larger quantity (or another order, or another account's:
+    the S7a Fable look's 4), or terms B1 does not take: the fill is delivered anyway, never
+    dropped or held, and counted."""
     shown: Any = {
         "no_order": None, "no_larger": order(qty="0.5"),
         "other_order": order(qty="0.7").model_copy(update={"exchange_order_id": "x-other"}),
+        "other_account": order(qty="0.7").model_copy(update={"account_id": ACCOUNT_B}),
     }.get(case, order(qty="0.7"))  # fmt: skip
     rig = stop_rig(shown=shown)
     if case == "read_failed":

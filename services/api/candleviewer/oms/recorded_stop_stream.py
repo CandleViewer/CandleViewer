@@ -59,7 +59,8 @@ Two guards keep a push from moving a binding it should not (the security lens): 
 the venue's `updated_at`, than the newest one the check met for the order is stale and decides
 nothing (the facade ignores such a step and answers as for one it took, so the stream cannot learn
 it there), and an entry's attach (`entry_attach`) is never a successor, as its stop arrives as a
-new order at the entry's fill, never as an in-place change of a bound one.
+new order at the entry's fill, never as an in-place change of a bound one (the first bind, in
+`pairing.first_bindable`, takes one only for an order the venue created after it).
 
 Known residual (the orchestrator's Q3 ruling): `Order` carries no trail, so a fired native trail
 the OMS recorded never reaches here; it reads as no OMS intent until E29-K01 (`oms.pairing`).

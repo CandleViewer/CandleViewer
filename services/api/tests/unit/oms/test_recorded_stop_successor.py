@@ -627,3 +627,22 @@ async def test_a_failing_successor_seam_is_logged_and_counted_and_decides_nothin
     assert rig.counts == ["successor_undecided"]
     [line] = [e for e in logs if e["event"] == "stream_successor_failed"]
     assert line["kind"] in {"RuntimeError", "TimeoutError"}
+
+
+def test_the_stale_check_keeps_no_unstamped_push_and_forgets_the_oldest_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A push with no venue time is never stale and moves nothing; past `STAMPED_ORDERS` the
+    oldest order's time is forgotten (C-2.18), so its next push is judged afresh."""
+    monkeypatch.setattr(rss, "STAMPED_ORDERS", 1)
+    check, ids = _successor(Scripted(), Ports()), {"exchange_order_id": XID}
+    stamped = stop_order()
+    assert stamped.updated_at is not None
+    assert not check._stale(ACCOUNT_A, stamped.model_copy(update={"updated_at": None}), ids)
+    assert not check._stamps
+    assert not check._stale(ACCOUNT_A, stamped, ids)
+    other = stamped.model_copy(update={"exchange_order_id": "x-other"})
+    assert not check._stale(ACCOUNT_A, other, ids)
+    assert list(check._stamps) == [(ACCOUNT_A, "x-other")]
+    older = stamped.model_copy(update={"updated_at": stamped.updated_at - 1})
+    assert not check._stale(ACCOUNT_A, older, ids)  # forgotten: judged afresh

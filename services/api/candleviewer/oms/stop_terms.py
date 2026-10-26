@@ -16,9 +16,9 @@ order (`take`), and at the account's next row or `heartbeat` status once the row
 passed (`next_due`, one at a time, at most `MAX_FLUSH_TERMS` a flush), so a row's terms pushes never
 send more than one a second and no timer runs. The slots are kept by account, so finding one
 account's due slots never walks another's (C-2.20). At most `MAX_PENDING_TERMS` slots wait: a slot
-the cap evicts is answered to be sent, never dropped. A slot a later push names only some terms of
-keeps the terms that push does not name (`carried`). The terms are the row's record of what the
-exchange holds; the exchange holds the stop (C-2.6).
+the cap evicts (the offering account's oldest first) is answered to be sent, never dropped. A slot
+a later push names only some terms of keeps the terms that push does not name (`carried`). The
+terms are the row's record of what the exchange holds; the exchange holds the stop (C-2.6).
 """
 
 from __future__ import annotations
@@ -130,7 +130,9 @@ class PendingTerms[T]:
     def offer(self, key: TermsKey, slot: T, now: float) -> tuple[T | None, T | None]:
         """`(send now, evicted)`. `slot` is sent at once when its row sent no terms within the
         interval, and it replaces the row's pending slot; else it waits as that slot, the latest
-        winning, and a slot the cap evicts (the oldest waiting) is answered to be sent."""
+        winning, and a slot the cap evicts is answered to be sent: the offering account's oldest
+        other slot, the global oldest only when that account has none, so an account's consumer
+        task sends another account's terms only then (the S7a Fable look's 3)."""
         if not self._recent(key, now):
             self.take(key)
             return slot, None
@@ -141,7 +143,8 @@ class PendingTerms[T]:
         self._waiting.move_to_end(key)
         if len(self._waiting) <= self._cap:
             return None, None
-        return None, self._pop(self._waiting.popitem(last=False)[0])
+        victim = (key[0], next(iter(rows))) if len(rows) > 1 else next(iter(self._waiting))
+        return None, self.take(victim)
 
     def peek(self, key: TermsKey) -> T | None:
         """The row's pending slot, left waiting."""

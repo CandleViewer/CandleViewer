@@ -88,12 +88,14 @@ type Outcome = Literal[
     "not_loaded", "no_intent", "exchange_placed", "undecided", "pairing_refused",
     "lockout_failed", "handover_unavailable", "stop_materialised", "stop_found", "stop_undecided",
     "after_bind_failed", "unmapped", "stop_qty_refused", "stop_no_position", "terms",
-    "terms_coalesced", "terms_before_fill_unread", "terms_older", "successor_bound",
+    "terms_coalesced", "terms_before_fill_unread", "terms_older", "terms_ended", "successor_bound",
     "successor_undecided",
 ]  # fmt: skip
 type Decision = ToRow | WaitOnRow | ToRecordedStop | NoIntent | Undecided
 type Event = Literal["EXEC", "TRIGGERED", "EXPIRE", "REMOTE_CANCELLED"]
 type Sent = Event | Literal["TERMS_CHANGED"]  # what `PushTarget` is sent
+#: The events that end a row (B1's own ends): an older push carrying one discards pending terms.
+ENDS: Final[frozenset[Event]] = frozenset({"REMOTE_CANCELLED", "EXPIRE"})
 
 
 def _log() -> Any:
@@ -347,7 +349,7 @@ class StreamPushes:
             if isinstance(r.push, Execution):
                 await self._before_fill(ctx, row, r.push)
             else:
-                await self._terms_step(ctx, row, r.push, at_once=r.event is not None)
+                await self._terms_step(ctx, row, r.push, r.event)
         if r.event is not None:  # else a status no event follows
             link = row.order_link_id
             payload = (
@@ -370,18 +372,27 @@ class StreamPushes:
             _log().error("stream_successor_failed", kind=type(exc).__name__, **self._ids(ctx))
             self._counts.count("successor_undecided")
 
-    async def _terms_step(self, ctx: _Ctx, row: OrderRow, order: Order, *, at_once: bool) -> None:
+    async def _terms_step(
+        self, ctx: _Ctx, row: OrderRow, order: Order, follows: Event | None
+    ) -> None:
         """An order push to a recorded stop's row: its changed terms, at once before the push's
-        own event (an end or a trigger), else coalesced (`oms.stop_terms`). The latest terms win
-        by the venue's time: a push older than the pending slot's terms sends no terms and leaves
-        the slot as it is (its own event, if any, is still delivered and the facade's watermark
-        judges it), a push showing the row's terms drops a pending slot, and one naming only some
-        terms keeps the slot's others (`carried`)."""
+        own event (`follows`: an end or a trigger), else coalesced (`oms.stop_terms`). The latest
+        terms win by the venue's time: a push older than the pending slot's terms sends no terms
+        and leaves the slot as it is (its own event, if any, is still delivered and the facade's
+        watermark judges it), unless that event ends the row: then the slot is discarded, counted
+        `terms_ended`, since the stop has ended at the venue and a later flush into the ended row
+        could only be recorded as an anomaly (the S7a Fable delta's Low). A push showing the row's
+        terms drops a pending slot, and one naming only some terms keeps the slot's others
+        (`carried`)."""
         key: TermsKey = (ctx.account_id, row.id)
         waiting = self._pending.peek(key)
         if waiting is not None and older_than(order, ctx.ts_event, waiting.payload):
-            self._counts.count("terms_older")
+            ended = follows in ENDS
+            if ended:
+                self._pending.take(key)
+            self._counts.count("terms_ended" if ended else "terms_older")
             return
+        at_once = follows is not None
         kept = carried(None if waiting is None else waiting.payload, order, row)
         changed = differs(order, row, kept)
         payload = terms_payload(order, row, ctx.ts_event, kept) if changed else None
@@ -417,7 +428,12 @@ class StreamPushes:
             return
         a, xid = ctx.account_id, fill.exchange_order_id
         order = await self._read(partial(self._fills.order_of, a, xid, fill.symbol), ctx.deadline)
-        if isinstance(order, Order) and order.exchange_order_id == xid and order.qty > loaded:
+        if (
+            isinstance(order, Order)
+            and order.account_id == a  # the account's own order (the S7a Fable look's 4)
+            and order.exchange_order_id == xid
+            and order.qty > loaded
+        ):
             if not differs(order, row, terms=terms):  # the terms just sent are the order's
                 return
             payload = terms_payload(order, row, ctx.ts_event)
