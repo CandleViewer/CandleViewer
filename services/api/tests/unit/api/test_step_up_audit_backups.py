@@ -141,7 +141,8 @@ def test_backups_never_has_a_grace_window_while_audit_does() -> None:
 #: lands. `flags` (E42-T03's, contract in #2592) landed with #3083, ahead of the flag write
 #: path (#964). `accounts`, the no-grace class of an account's disable or delete and of a
 #: revoke's `flatten_first` (E27-S04, #898), which that ticket's route slices land.
-_CONTRACT_AHEAD: frozenset[str] = frozenset({"sl_loosen", "accounts"})
+#: `recorder_purge`, the no-grace class of a purge of recorded data (E16-T06, #490).
+_CONTRACT_AHEAD: frozenset[str] = frozenset({"sl_loosen", "accounts", "recorder_purge"})
 
 
 def test_contract_step_up_classes_match_the_service() -> None:
