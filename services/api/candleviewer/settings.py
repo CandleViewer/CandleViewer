@@ -111,6 +111,18 @@ AUTH_LOGIN_FAILURE_FLOOR_MIN_MS: Final = 250
 #: a mistyped password included, for minutes.
 AUTH_LOGIN_FAILURE_FLOOR_MAX_MS: Final = 5000
 
+#: #4663: `CV_AUTH_LOGIN_VERIFY_CONCURRENCY`. Sign-in verification (the identifier lookup and the
+#: password hash) runs for at most this many attempts at a time; an attempt beyond that is refused
+#: at once with a retry-after instead of queueing. The default keeps every admitted attempt's hash
+#: on a worker of its own: the hash runs on the default thread pool, which has at least five
+#: workers on any host (`min(32, cpus + 4)`), so four admitted hashes never queue for a worker.
+AUTH_LOGIN_VERIFY_CONCURRENCY: Final = 4
+#: The lowest accepted value. Zero is refused: no setting refuses every sign-in.
+AUTH_LOGIN_VERIFY_CONCURRENCY_MIN: Final = 1
+#: The highest accepted value: the default thread pool's largest size, so no setting admits more
+#: hashes at a time than the pool can ever run.
+AUTH_LOGIN_VERIFY_CONCURRENCY_MAX: Final = 32
+
 
 class Environment(StrEnum):
     """The three structural exchange environments (P9, `20-architecture.md` Sec.7.1).
@@ -438,6 +450,13 @@ class Settings(BaseSettings):
         default=AUTH_LOGIN_FAILURE_FLOOR_MS,
         ge=AUTH_LOGIN_FAILURE_FLOOR_MIN_MS,
         le=AUTH_LOGIN_FAILURE_FLOOR_MAX_MS,
+    )
+    # #4663: how many sign-in verifications run at a time (`AUTH_LOGIN_VERIFY_CONCURRENCY`). A field
+    # check, so a value outside 1-32 refuses startup without echoing another setting (#2728).
+    auth_login_verify_concurrency: int = Field(
+        default=AUTH_LOGIN_VERIFY_CONCURRENCY,
+        ge=AUTH_LOGIN_VERIFY_CONCURRENCY_MIN,
+        le=AUTH_LOGIN_VERIFY_CONCURRENCY_MAX,
     )
     # #3085: how often the view-as sweeper ends what no request ends (an expiry, a session's end,
     # an eligibility lost with no request coming) and writes a pending end's record late. HTTP

@@ -20,6 +20,7 @@ from candleviewer.auth.csrf import CsrfCodec
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.settings import AUTH_LOGIN_VERIFY_CONCURRENCY_MAX
 from tests.unit.api._fakes import WriterLane
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
@@ -61,6 +62,8 @@ async def _client() -> tuple[httpx.AsyncClient, _Audit, FakeUserRepository]:
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
         failure_floor=timedelta(0),
+        # #4663: every attempt of a burst is admitted, so the lockout is what is tested here.
+        verify_concurrency=AUTH_LOGIN_VERIFY_CONCURRENCY_MAX,
     )
     audit = _Audit()
     app = FastAPI()

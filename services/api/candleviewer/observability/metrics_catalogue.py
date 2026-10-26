@@ -3631,6 +3631,18 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "auth_login_verify_refused_total",
+        "counter",
+        "attempts",
+        (),
+        "Sign-in attempts refused with a retry-after because sign-in verification was at "
+        "capacity (#4663, LoginService).",
+        "AuthLoginVerifyRefused (any in 10m, ticket)",
+        _L,
+        "E09",
+        exported=True,
+    ),
+    _s(
         "auth_stepup_failures_total",
         "counter",
         "failures",

@@ -799,6 +799,8 @@ def build_auth_service(
         break_glass_events=SqlAlchemyBreakGlassEvents(relational),
         # #4648: the minimum time a failed sign-in takes, held to 250-5000 ms by `Settings`.
         login_failure_floor=timedelta(milliseconds=settings.auth_login_failure_floor_ms),
+        # #4663: sign-in verifications at a time, held to 1-32 by `Settings`.
+        login_verify_concurrency=settings.auth_login_verify_concurrency,
     )
 
 

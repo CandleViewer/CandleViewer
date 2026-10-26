@@ -146,6 +146,14 @@ auth_login_failure_floor_missed_total = Counter(
     "auth_login_failure_floor_missed_total",
     "Failed sign-ins that took longer than the minimum failed sign-in time, so were not held.",
 )
+#: #4663: one per sign-in attempt refused at once, with a retry-after, because sign-in
+#: verification was already running for as many attempts as it admits at a time
+#: (`CV_AUTH_LOGIN_VERIFY_CONCURRENCY`). No label. Any increase means some sign-ins, correct
+#: passwords included, were turned away; `AuthLoginVerifyRefused` tickets it.
+auth_login_verify_refused_total = Counter(
+    "auth_login_verify_refused_total",
+    "Sign-in attempts refused with a retry-after because sign-in verification was at capacity.",
+)
 auth_stepup_failures_total = Counter(
     "auth_stepup_failures_total",
     "Failed step-up re-authentications (wrong password or code, or a locked account).",
@@ -409,6 +417,7 @@ AUTH_EXPORTED_NAMES: frozenset[str] = frozenset(
         "auth_enrolments_total",
         "auth_lockouts_total",
         "auth_login_failure_floor_missed_total",  # #4648
+        "auth_login_verify_refused_total",  # #4663
         "auth_stepup_failures_total",
         "authz_denied_total",
         "auth_totp_clock_skew_total",

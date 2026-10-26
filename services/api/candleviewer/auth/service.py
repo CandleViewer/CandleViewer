@@ -23,7 +23,11 @@ from candleviewer.auth.envelope import LOCAL_KEY_REF, TotpEncryptor
 from candleviewer.auth.errors import AuthServiceUnavailable
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.invite_service import InviteService
-from candleviewer.auth.login_service import LOGIN_FAILURE_FLOOR, LoginService
+from candleviewer.auth.login_service import (
+    LOGIN_FAILURE_FLOOR,
+    LOGIN_VERIFY_CONCURRENCY,
+    LoginService,
+)
 from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import SessionRecord, UserRecord
 from candleviewer.auth.session_chart import SessionChart
@@ -84,10 +88,13 @@ class AuthService:
         system_events: SystemEventWriter | None = None,
         break_glass_events: BreakGlassEvents | None = None,
         login_failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
+        login_verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
     ) -> None:
         self._started = False
         #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`).
         self._login_failure_floor = login_failure_floor
+        #: #4663: sign-in verifications at a time (`CV_AUTH_LOGIN_VERIFY_CONCURRENCY`).
+        self._login_verify_concurrency = login_verify_concurrency
         #: Where a TOTP clock-skew event goes (#2146); `None` still counts the metric.
         self._system_events = system_events
         self._invite_repository = invite_repository
@@ -252,6 +259,7 @@ class AuthService:
                 mfa_repository=self._mfa_repository,
                 clock=self._clock,
                 failure_floor=self._login_failure_floor,
+                verify_concurrency=self._login_verify_concurrency,
             )
         if self._session_repository is not None:
             self._sessions = SessionService(

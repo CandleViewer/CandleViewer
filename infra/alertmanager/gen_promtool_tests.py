@@ -110,6 +110,14 @@ SPEC: dict[str, tuple[str, str, str, str, dict[str, str]]] = {
         "15m",
         {"env": "live"},
     ),
+    # #4663: one sign-in attempt refused because verification was at capacity is enough.
+    "AuthLoginVerifyRefused": (
+        'auth_login_verify_refused_total{env="live"}',
+        "0+0x10 1+0x10",
+        "0+0x20",
+        "15m",
+        {"env": "live"},
+    ),
     # #2496 (SR-022): a single accepted recovery code is enough.
     "AuthRecoveryCodeUsed": (
         'auth_recovery_codes_used_total{env="live"}',

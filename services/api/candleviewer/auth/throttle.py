@@ -7,6 +7,9 @@ The per-user side of throttling is `users.failed_login_count`/`locked_until`
 (ticket "Scope / Deliverables"). In-process only (single-process deployment,
 `20-architecture.md` C4) — a restart clears it, which is acceptable because
 the per-account lockout persists across restarts regardless.
+
+`VerifyAdmission` (#4663) bounds how many sign-in verifications run at a time; an attempt
+beyond that is refused at once instead of queueing.
 """
 
 from __future__ import annotations
@@ -72,3 +75,37 @@ class PerIpLoginThrottle:
             bucket.popleft()
         if not bucket:
             del self._attempts[source_ip]  # an emptied window frees its slot (#2238)
+
+
+class VerifyAdmission:
+    """#4663: at most `limit` sign-in verifications at a time, admitted without waiting.
+
+    `try_enter` either takes a place and returns `True`, or returns `False` at once when every
+    place is taken; it never waits for one to free. Each admitted attempt calls `leave` exactly
+    once. The event loop is single-threaded and neither method awaits, so the count needs no lock.
+    """
+
+    def __init__(self, limit: int) -> None:
+        if limit < 1:
+            raise ValueError("the sign-in verification limit must be at least 1")
+        self._limit = limit
+        self._in_flight = 0
+
+    @property
+    def limit(self) -> int:
+        return self._limit
+
+    @property
+    def in_flight(self) -> int:
+        return self._in_flight
+
+    def try_enter(self) -> bool:
+        if self._in_flight >= self._limit:
+            return False
+        self._in_flight += 1
+        return True
+
+    def leave(self) -> None:
+        if self._in_flight <= 0:
+            raise RuntimeError("leave() without a matching try_enter()")
+        self._in_flight -= 1
