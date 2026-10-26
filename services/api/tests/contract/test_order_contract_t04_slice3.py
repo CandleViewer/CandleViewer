@@ -257,10 +257,14 @@ def test_20_starts_the_oms_after_account_health_and_sweeps_before_ready() -> Non
     assert "for each account of the process environment, never for every account" in steps[1]
     assert "include the disabled and soft-deleted ones" in steps[1]
     assert "at most `MAX_MACHINES`; past that it pages and `ready` is refused" in steps[2]
+    assert "nothing serves it until they land" not in _RUNTIME  # #913 S4-G1: as built
     assert not _missing(
         _RUNTIME,
-        "Status: this text, down to the startup self-check, is the contract of #913 slice 3 "
-        "(sub-slices B to H); nothing serves it until they land.",
+        "Status: this text, down to the startup self-check, is as built by #913 slice 3 "
+        "(sub-slices B to H): `create_app()` builds the runtime on the real backend "
+        "(`build_oms_runtime`, `oms_wiring.py`; its order lane is `oms_lane.py`), and "
+        "`placeOrder` and slice 4's exit routes (`cancelOrder`, `amendOrder`, "
+        "`cancelAllOrders`) are served over it.",
         "The lifespan starts the runtime after the account health runtime, then E29-T05's",
         "`placeOrder` answers `503 oms_not_ready` with `Retry-After`",
         "must fit a deploy's 60 s `/readyz` smoke window",

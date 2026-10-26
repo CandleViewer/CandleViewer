@@ -24,6 +24,7 @@ from candleviewer.oms.recovery import FINALS
 from candleviewer.oms_wiring import ORDER_ALERTS
 from candleviewer.statechart.bindings.b01_order import NATIVE_STOP_REQUIRED
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
 _COMPONENTS: dict[str, Any] = _SPEC["components"]
@@ -1113,4 +1114,76 @@ def test_cancel_all_answers_501_only_from_a_deployment_that_composes_no_oms() ->
     assert (
         "`501 not_implemented` from a deployment that composes no OMS (the fake backend), "
         "nothing read, recorded or sent;" in _CANCEL_ALL
+    )
+
+
+def test_04_says_the_e29_order_path_is_mounted() -> None:
+    """#913 S4-G1, the drift table: 04's E29 paragraph is as built, the order routes mounted by
+    slice 3 (`placeOrder`) and slice 4 (the exit routes)."""
+    security = (OPENAPI_SPEC_PATH.parent / "04-security-program.md").read_text(encoding="utf-8")
+    e29 = _between(security, "**E29 OMS core and order placement**", "### 5.3 ")
+    assert (
+        "re-derives O1-O11 above for the E29 order path, mounted since #913 slices 3 and 4, live "
+        "WS trade included" in e29
+    )
+    assert "not yet mounted" not in e29
+
+
+def test_the_oms_stores_statement_cap_is_a_setting_that_defaults_to_their_constant() -> None:
+    """CG14 (#913 S4-G1; the orchestrator's S4-G ruling 4): `CV_OMS_STATEMENT_TIMEOUT_MS`, #845's
+    setting, defaults to the stores' 2000 ms constant. S4-G1 writes 20's row and the 21 and 24
+    lines that name it; S4-G2 the code, from which on the stores read it."""
+    [row] = [
+        line for line in _ARCH.splitlines() if line.startswith("| `CV_OMS_STATEMENT_TIMEOUT_MS`")
+    ]
+    cells = [cell.strip() for cell in row.strip().strip("|").split("|")]
+    assert len(cells) == 5
+    name, kind, default, scope, notes = cells
+    assert (name, kind, default, scope) == (
+        "`CV_OMS_STATEMENT_TIMEOUT_MS`", "int", f"`{OMS_STATEMENT_TIMEOUT_MS}`", "process",
+    )  # fmt: skip
+    assert not _missing(
+        notes,
+        "the OMS stores' per-statement cap, lock waits included (`statement_timeout`",
+        "so a blocked order write fails within it and order entry is refused",
+        "1500-5000: above `CV_PERSIST_TIMEOUT` (1 s), as S7 has it, and at most the default "
+        "submit bound",
+        "read from #913 S4-G2 on; until then the stores' constant `OMS_STATEMENT_TIMEOUT_MS`",
+    )
+    assert (
+        "caps its statements, lock waits included, at `CV_OMS_STATEMENT_TIMEOUT_MS` "
+        "(`statement_timeout`; 2 s, the E29-T01 default, a setting from #913 S4-G2 on)"
+    ) in _words(_SCHEMA_DOC)
+    assert (
+        "the order store's statement cap (`CV_OMS_STATEMENT_TIMEOUT_MS`, 2 s by default, #845)"
+    ) in _words(_INTERNAL_DOC)
+
+
+def test_the_change_log_records_the_order_routes_contract_as_built() -> None:
+    """#913 S4-G1: 19 is the contract change log, so this slice's changes to 22 and 8.2 have an
+    entry of their own, as each #913 slice's has; its number is the next free one when it lands
+    (S4-S's 19.40 came first)."""
+    title = re.compile(
+        r"^### 19\.\d+ 2026-10-26 — 22, §8\.2: the order routes' contract as built "
+        r"\(E29-T04, #913\)$",
+        re.MULTILINE,
+    )
+    heads = title.findall(_INTERNAL_DOC)
+    assert len(heads) == 1, f"one §19 entry for S4-G1, found {len(heads)}"
+    after = _INTERNAL_DOC.split(heads[0], 1)[1]
+    entry = _words(after.split("\n### ", 1)[0])
+    assert not _missing(
+        entry,
+        '`placeOrder`: the `202` drops "until then the `202` carries none"',
+        "read once the step the body renders has returned, so it may name a later step",
+        "declares the `401` its route answers with no verified session",
+        "its own `503 store_unavailable` carries neither `Retry-After` nor `retry_after_seconds`",
+        "a `503 store_unavailable` from a check ahead of it is that check's own",
+        '"Enrolment-only session" check\'s carries `Retry-After: 5`, the "Idle lock" and '
+        '"View-as session" checks\' none',
+        "`amendOrder`: its `If-Match` is a parameter of its own, `OrderIfMatch`",
+        "`cancelAllOrders`: `501 not_implemented` is answered by a deployment that composes no OMS",
+        "the order store's statement cap is the `CV_OMS_STATEMENT_TIMEOUT_MS` setting",
+        "2 s by default and 1.5 to 5 s",
+        "No table or column changes.",
     )
