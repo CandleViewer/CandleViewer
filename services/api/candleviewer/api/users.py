@@ -15,31 +15,30 @@ for an existing and a missing id (threat U25), audited naming the target. Its pr
 the contract's `x-error-codes`. `account_access=None` fails closed with 501.
 
 `PUT /users/{userId}/account-access` (S9c): `users:write` and SR-055 refused as the GET refuses;
-then the step-up, `acknowledge_unknown_positions` (`true` or `false`, once, as the DELETE reads
-it), the closed body (at most 64 KiB and 256 grants, SR-040) and `AccountAccessService.replace`,
+then `acknowledge_unknown_positions` (`true` or `false`, once, as the DELETE reads it), the closed
+body (at most 64 KiB and 256 grants, SR-040), the step-up and `AccountAccessService.replace`,
 whose store refusals map to the design's codes. It answers with the set the store read under its
-locks; unwired, 501 (sessions wired without a step-up service, 503). A caller RBAC refuses is
-refused, not challenged, inside the handler only: in the deployed app the path-gated
-`DANGEROUS_ROUTES` guard (`make_read_only_guard`) challenges every un-elevated session first, a
-forbidden Manager or Viewer included and with no `rbac.denied`, so this order is the second line:
-it alone decides an elevated caller.
+locks; unwired, 501 (sessions wired without a step-up service, 503).
+
+Every step-up here is the handler's (`HANDLER_GATED_ROUTES`, #2304 slice 3a): it comes after
+RBAC, the self-target, the query and body and the target's lookup, so a caller any of them
+refuses gets that refusal, never a challenge, and a challenge restates the validated request
+(`api.step_up_challenge`).
 
 `DELETE /users/{userId}` (E42-T04 S6, #965; `deleteUser`, the disable) runs, nothing read or
 written before the last: `users:write`, then a self-target (both refusals audited before any
-lookup: U25, SR-055), the step-up `users` (SR-025), the query (an undeclared key is 422, S7),
+lookup: U25, SR-055), the query (an undeclared key is 422, S7), the step-up `users` (SR-025),
 then the change; with `purge=true` the purge's schedule follows it (E42-T10, `_schedule_purge`).
 `user_disable=None` fails closed with 501; while no purge reaper runs (none wired, or stopped),
-`purge=true` fails closed with 503 `purge_unavailable`, before anything changes. In the deployed
-app the path-gated `DANGEROUS_ROUTES` guard
-(`make_read_only_guard`) answers an un-elevated caller first, so this order is the second line: it
-alone decides an elevated caller.
+`purge=true` fails closed with 503 `purge_unavailable`, before the step-up and any change.
 
 E42-T09 (#2649), `make_user_admin_router`: `GET /users/{userId}` answers the `User` and an
 `ETag` over the whole representation, roles included (never `password_hash`). `PATCH` runs, nothing
 read before the change but its own query and body: `users:write` (an audited 403 before any
 lookup, U25), an undeclared query key (422, SR-026, as the DELETE), the body (O3 and R6 refusals
-are 400), a self-target of `roles` or `status` (an audited 403, SR-055), the step-up `users`
-(SR-025), then the user read and its `If-Match` (412), judged again under the change's own lock.
+are 400), a self-target of `roles` or `status` (an audited 403, SR-055), the user read and its
+`If-Match` (412), then the step-up `users` (SR-025); the version is judged again under the change's
+own lock.
 A disable is `UserDisableService`'s whole cascade with `acknowledge_unknown_positions` as the
 DELETE reads it, and changes nothing else; every other change is one transaction of the user admin
 store under the owner lock (R7), written ahead as `users.enable`, `users.update`, `roles.grant`
@@ -50,10 +49,10 @@ run every change is refused (O6), an enable included: 409 `conflict`, recorded a
 is, nothing changed. `GET /users/{userId}/sessions` lists
 the user's live sessions as `listMySessions` does (no token material);
 `DELETE /users/{userId}/sessions/{sessionId}` addresses only a live session of that user (404
-otherwise, IDOR), writes the acting Owner's `users.session_revoked`, then records B16 REVOKE, whose
-action writes the one `auth.session_revoked` (R5), both ahead of the change, then revokes the row,
-which closes its sockets 4401; a session that ended in between is 404. No runtime flag gates the
-lock, the step-up or the audit (C-4.14).
+otherwise, IDOR, before the step-up), writes the acting Owner's `users.session_revoked`, then
+records B16 REVOKE, whose action writes the one `auth.session_revoked` (R5), both ahead of the
+change, then revokes the row, which closes its sockets 4401; a session that ended in between is
+404. No runtime flag gates the lock, the step-up or the audit (C-4.14).
 """
 
 from __future__ import annotations
@@ -96,6 +95,14 @@ from candleviewer.api.step_up import (
     _unauthenticated,
     require_elevation_for,
     require_session_elevation,
+)
+from candleviewer.api.step_up_challenge import (
+    ChallengeText,
+    account_access_text,
+    disable_user_text,
+    revoke_session_text,
+    set_roles_text,
+    update_user_text,
 )
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.audit.errors import AuditError
@@ -413,11 +420,14 @@ async def _session_of(auth: _AuthLike | None, request: Request) -> uuid.UUID | N
     return None if found is None else found.id
 
 
-async def _elevated(auth: _AuthLike | None, request: Request) -> JSONResponse | uuid.UUID:
-    """SR-025, for a handler that has already decided RBAC and the self-target: the id of the
-    session holding a live `users` elevation, which the change's audit records name (C-2.9), else
-    the answer. No session service is 501 (the fake backend: nothing authenticates); sessions
-    without a step-up service are a wiring fault, 503 as `require_session_elevation` answers it."""
+async def _elevated(
+    auth: _AuthLike | None, request: Request, text: ChallengeText
+) -> JSONResponse | uuid.UUID:
+    """SR-025, for a handler that has already decided RBAC, the self-target, its query and body
+    and the target's lookup (#2304): the id of the session holding a live `users` elevation, which
+    the change's audit records name (C-2.9), else the answer, a challenge restating `text`. No
+    session service is 501 (the fake backend: nothing authenticates); sessions without a step-up
+    service are a wiring fault, 503 as `require_session_elevation` answers it."""
     if auth is None or not auth.sessions_is_active:
         return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no session service wired")
     try:  # no bearer is an unknown token: the same refusal
@@ -426,7 +436,7 @@ async def _elevated(auth: _AuthLike | None, request: Request) -> JSONResponse | 
         )
     except AuthError:
         return _unauthenticated()
-    gate = await require_session_elevation(auth, record.id, "users")  # 503: no step-up wired
+    gate = await require_session_elevation(auth, record.id, "users", text)  # 503: not wired
     return record.id if gate is None else gate
 
 
@@ -589,20 +599,6 @@ def make_users_router(
                 **who,
             )
             return _forbidden("self_target")
-        # SR-025: step-up after authn + RBAC, before any mutation. Fail closed
-        # when the step-up service is not wired. Denial is audited by B16.
-        if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
-            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
-        token = _bearer(request)
-        if token is None:
-            return _unauthenticated()
-        try:
-            record = await auth.sessions.authenticate_access_token(token)
-        except AuthError:
-            return _unauthenticated()
-        gate = await require_elevation_for(auth, str(record.id), "users")
-        if gate is not None:
-            return gate
         try:
             body = await request.json()
         except ValueError:
@@ -619,6 +615,22 @@ def make_users_router(
         current = await store.get_roles(user_id)
         if current is None:
             return _registered(ErrorCode.NOT_FOUND, 404, "user not found")
+        # SR-025: step-up after authn, RBAC, the body and the lookup, before any mutation, so a
+        # caller they refuse is never challenged (#2304). Fail closed when the step-up service
+        # is not wired. Denial is audited by B16.
+        if auth is None or not auth.step_up_is_active or not auth.sessions_is_active:
+            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        token = _bearer(request)
+        if token is None:
+            return _unauthenticated()
+        try:
+            record = await auth.sessions.authenticate_access_token(token)
+        except AuthError:
+            return _unauthenticated()
+        restated = set_roles_text(user_id, new_roles)
+        gate = await require_elevation_for(auth, str(record.id), "users", text=restated)
+        if gate is not None:
+            return gate
 
         async def write_ahead(before: frozenset[str]) -> None:
             """C-2.9: written inside the store's transaction, before commit, with the
@@ -761,8 +773,6 @@ def make_users_router(
         except (AuditError, RuntimeError) as exc:  # RuntimeError: audit not started (F6)
             _log().warning("account access refusal not audited", error=type(exc).__name__)
             return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, "the refusal could not be audited")
-        if isinstance(session := await _elevated(auth, request), JSONResponse):
-            return session
         if (acknowledged := _flag(request, "acknowledge_unknown_positions")) is None:
             detail = "acknowledge_unknown_positions is true or false, given once"
             return _registered(ErrorCode.VALIDATION_FAILED, 400, detail)
@@ -776,6 +786,9 @@ def make_users_router(
             return _registered(
                 ErrorCode.VALIDATION_FAILED, 400, "the request does not match its schema"
             )
+        restated = account_access_text(user_id, len(body.grants))  # after the body (#2304)
+        if isinstance(session := await _elevated(auth, request, restated), JSONResponse):
+            return session
         try:
             change = await access_service.replace(
                 user_id,
@@ -817,8 +830,6 @@ def make_users_router(
             )
         except UserLifecycleError as exc:
             return _lifecycle_problem(exc)
-        if isinstance(gate := await _elevated(auth, request), JSONResponse):
-            return gate
         refusal = undeclared_query_refusal(request, DELETE_USER_QUERY, self_service=False)
         if refusal is not None:  # the names, before any value is read
             return refusal
@@ -830,6 +841,9 @@ def make_users_router(
         if purge and (user_purge is None or not user_purge.running):  # E42-T10, UL4-D1
             detail = "no purge reaper is running; nothing was changed"
             return _registered(ErrorCode.PURGE_UNAVAILABLE, 503, detail)
+        restated = disable_user_text(user_id, purge=purge)  # after the query (#2304)
+        if isinstance(gate := await _elevated(auth, request, restated), JSONResponse):
+            return gate
         try:
             await user_disable.disable(
                 user_id,
@@ -1202,8 +1216,6 @@ def make_user_admin_router(
             except (AuditError, RuntimeError):
                 return _registered(ErrorCode.AUDIT_UNAVAILABLE, 503, _NOT_AUDITED)
             return _forbidden("self_target")
-        if isinstance(session := await _elevated(auth, request), JSONResponse):
-            return session
         if store is None:
             return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
         if isinstance(shown := await _read(store, user_id), JSONResponse):
@@ -1213,6 +1225,10 @@ def make_user_admin_router(
             return _registered(ErrorCode.VERSION_CONFLICT, 412, _STALE)
         if (refusal := _status_refusal(shown["status"], body.status)) is not None:
             return _registered(ErrorCode.VALIDATION_FAILED, 400, refusal)
+        # #2304: the step-up after the lookup and the preconditions, restating the patch.
+        restated = update_user_text(user_id, body.model_dump(include=body.model_fields_set))
+        if isinstance(session := await _elevated(auth, request, restated), JSONResponse):
+            return session
         if body.status == "disabled":
             return await disable(
                 user_id,
@@ -1324,15 +1340,16 @@ def make_user_admin_router(
         principal = await caller(request, user_id, Permission.USERS_WRITE)
         if isinstance(principal, JSONResponse):
             return principal
-        if isinstance(elevated := await _elevated(auth, request), JSONResponse):
-            return elevated
-        if store is None or auth is None:
+        if store is None or auth is None or not auth.sessions_is_active:
             return _registered(ErrorCode.NOT_IMPLEMENTED, 501, "no user store wired")
         if isinstance(found := await _read(store, user_id), JSONResponse):
             return found
         record = await auth.sessions.find_live_session(str(user_id), str(session_id))
         if record is None:  # unknown, ended or another user's (IDOR): one 404, nothing changed
             return _registered(ErrorCode.NOT_FOUND, 404, _NO_SESSION)
+        restated = revoke_session_text(user_id, session_id)  # after the lookups (#2304)
+        if isinstance(elevated := await _elevated(auth, request, restated), JSONResponse):
+            return elevated
         who = _who(request)
         try:  # the acting Owner's record first: unwritable, nothing is recorded or revoked
             await _audit_owner_revoke(emitter, principal, elevated, user_id, record.id, who)

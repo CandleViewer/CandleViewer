@@ -354,74 +354,95 @@ def test_the_access_service_exists_only_on_the_real_backend(deployed: SimpleName
     assert appmod.create_app(Settings()).state.account_access_service is None
 
 
-def test_deployed_app_demands_a_live_step_up_before_the_grant_change(
-    deployed: SimpleNamespace,
-) -> None:
-    """F3 (#2648 S9c): without a live step-up the path guard refuses first, so the handler never
-    runs; with one, a manager gets the handler's audited 403 (the matrix cells above)."""
-    step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/u/account-access"
-    audited, step_up.elevated = len(deployed.audit.records), False
-    try:
-        for actor in ("owner", "manager_with_grant"):
-            headers = _headers(deployed.client, actor)
-            r = deployed.client.put(path, json={"grants": []}, headers=headers)
-            assert r.status_code == 403 and r.json()["code"] == "step_up_required", r.text
-    finally:
-        step_up.elevated = True
-    assert deployed.audit.records[audited:] == []  # no `rbac.denied`: the handler never ran
-
-
-@pytest.mark.parametrize(
-    ("actor", "target"),
-    [
-        *(("manager_with_grant", "viewer"), ("manager_without_grant", "viewer")),
-        *(("viewer", "manager_with_grant"), ("owner", "owner")),
-    ],
-    ids=["manager-with-grant", "manager-without-grant", "viewer", "owner-self-target"],
-)
-def test_deployed_app_challenges_an_unelevated_disable_before_the_handler(
-    deployed: SimpleNamespace, actor: str, target: str
-) -> None:
-    """#965 S7 (the S6 review's Low 4): without a live `users` elevation the path guard answers
-    `DELETE /users/{userId}` with the step-up challenge before the handler runs, for a Manager, a
-    Viewer and an Owner's self-target alike, so none of them meets the handler's audited 403 (the
-    elevated matrix cells above): no `rbac.denied` is written. The deployed B16 records the
-    challenge as `auth.step_up_required` without the target; the harness's step-up records none."""
-    step_up, path = deployed.client.app.state.app_context.auth._step_up, "/users/{}"
-    audited, step_up.elevated = len(deployed.audit.records), False
+def _unelevated(deployed: SimpleNamespace, actor: str, method: str, url: str, body: Any) -> Any:
+    """One request from `actor` holding no live elevation, through the deployed app's guard."""
+    step_up = deployed.client.app.state.app_context.auth._step_up
+    step_up.elevated = False
     try:
         headers = _headers(deployed.client, actor)
-        resp = deployed.client.delete(path.format(rbac.user_id_of(target)), headers=headers)
+        return deployed.client.request(method, url, json=body, headers=headers)
     finally:
         step_up.elevated = True
-    assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
-    assert resp.json()["action_class"] == "users"
-    assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
 
 
-@pytest.mark.parametrize("actor", ["manager_with_grant", "viewer", "owner"])
+_REFUSED_ACTORS = [
+    *(("manager_with_grant", "viewer"), ("manager_without_grant", "viewer")),
+    *(("viewer", "manager_with_grant"), ("owner", "owner")),
+]
+_REFUSED_IDS = ["manager-with-grant", "manager-without-grant", "viewer", "owner-self-target"]
+
+
+@pytest.mark.parametrize(("actor", "target"), _REFUSED_ACTORS, ids=_REFUSED_IDS)
+@pytest.mark.parametrize(
+    ("method", "path", "body"),
+    [
+        ("PUT", "/users/{}/account-access", {"grants": []}),
+        ("DELETE", "/users/{}", None),
+        ("PUT", "/users/{}/roles", {"roles": ["viewer"]}),
+    ],
+    ids=["setUserAccountAccess", "deleteUser", "setUserRoles"],
+)
+def test_deployed_app_refuses_an_unelevated_caller_rbac_refuses_without_a_challenge(
+    deployed: SimpleNamespace, actor: str, target: str, method: str, path: str, body: Any
+) -> None:
+    """#2304 slice 3a (F3, #965 S7, threat U35): the step-up is the handler's, after RBAC and the
+    self-target, so a Manager, a Viewer and an Owner's self-target holding no live elevation get
+    the handler's audited 403 `forbidden`, never a challenge naming the target."""
+    audited = len(deployed.audit.records)
+    url = path.format(rbac.user_id_of(target))
+    resp = _unelevated(deployed, actor, method, url, body)
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden"), resp.text
+    assert "challenge_id" not in resp.json()
+    actions = [r["action"] for r in deployed.audit.records[audited:]]
+    assert "rbac.denied" in actions and "auth.step_up_required" not in actions
+
+
+@pytest.mark.parametrize("actor", ["manager_with_grant", "viewer"])
 @pytest.mark.parametrize(
     ("method", "path", "body"),
     [("PATCH", "/users/{}", {"display_name": "x"}), ("DELETE", "/users/{}/sessions/{}", None)],
     ids=["updateUser", "revokeUserSession"],
 )
-def test_deployed_app_challenges_an_unelevated_user_admin_write_before_the_handler(
+def test_deployed_app_refuses_an_unelevated_user_admin_write_rbac_refuses_without_a_challenge(
     deployed: SimpleNamespace, actor: str, method: str, path: str, body: Any
 ) -> None:
-    """#2649: `updateUser` and `revokeUserSession` are path-gated (`DANGEROUS_ROUTES`, `users`):
-    without a live elevation the guard answers the step-up challenge before the handler runs, for
-    a Manager, a Viewer and an Owner alike, so no `rbac.denied` is written and nothing is read."""
-    step_up = deployed.client.app.state.app_context.auth._step_up
-    audited, step_up.elevated = len(deployed.audit.records), False
-    target = rbac.user_id_of("viewer")
-    try:
-        headers = _headers(deployed.client, actor)
-        url = path.format(target, uuid.UUID(int=0x5E55))
-        resp = deployed.client.request(method, url, json=body, headers=headers)
-    finally:
-        step_up.elevated = True
+    """#2304 slice 3a (#2649): `updateUser` and `revokeUserSession` are handler-gated, so a
+    Manager or a Viewer holding no live elevation gets the audited 403, never a challenge."""
+    audited = len(deployed.audit.records)
+    url = path.format(rbac.user_id_of("viewer"), uuid.UUID(int=0x5E55))
+    resp = _unelevated(deployed, actor, method, url, body)
+    assert (resp.status_code, resp.json()["code"]) == (403, "forbidden"), resp.text
+    assert "challenge_id" not in resp.json()
+    actions = [r["action"] for r in deployed.audit.records[audited:]]
+    assert "rbac.denied" in actions and "auth.step_up_required" not in actions
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "body", "summary"),
+    [
+        ("DELETE", "/users/{}", None, "Disable user {}"),
+        ("PUT", "/users/{}/roles", {"roles": ["viewer"]}, "Set the roles of user {} to viewer"),
+        (
+            "PUT",
+            "/users/{}/account-access",
+            {"grants": []},
+            "Replace the account access of user {} with 0 grants",
+        ),
+    ],
+    ids=["deleteUser", "setUserRoles", "setUserAccountAccess"],
+)
+def test_deployed_app_challenges_an_unelevated_owner_restating_the_request(
+    deployed: SimpleNamespace, method: str, path: str, body: Any, summary: str
+) -> None:
+    """#2304 slice 3a: an Owner the handler admits is challenged once its request is validated,
+    the challenge restating it; the handler wrote no `rbac.denied`."""
+    audited, target = len(deployed.audit.records), rbac.user_id_of("viewer")
+    resp = _unelevated(deployed, "owner", method, path.format(target), body)
     assert (resp.status_code, resp.json()["code"]) == (403, "step_up_required"), resp.text
-    assert resp.json()["action_class"] == "users"
+    assert (resp.json()["action_class"], resp.json()["action_summary"]) == (
+        "users",
+        summary.format(target),
+    )
     assert not [r for r in deployed.audit.records[audited:] if r["action"] == "rbac.denied"]
 
 

@@ -66,6 +66,9 @@ class _Auth:
         """A refusal's read of its session (#4174): it authorises nothing."""
         return SimpleNamespace(id=SESSION, user_id=CALLER)
 
+    async def assert_writable(self, session_id: str) -> None:
+        """The path guard's read-only check (`make_read_only_guard`): never read-only here."""
+
     async def require_elevation(self, session_id: str, action_class: str) -> None:
         self.log.append("step_up")
         if not self.elevated:
@@ -204,10 +207,10 @@ _ORDER = [  # role, target, elevated, query, status, code, log, challenges issue
     ("owner", CALLER, False, "", 403, "forbidden", _DENIED, 0),
     ("owner", TARGET, False, "", 403, "step_up_required", _STEP, 1),
     ("owner", TARGET, False, "?purge=true", 403, "step_up_required", _STEP, 1),
-    ("owner", TARGET, True, "?purge=yes", 400, "validation_failed", _STEP, 0),
-    ("owner", TARGET, True, _BAD_ACK, 400, "validation_failed", _STEP, 0),
-    ("owner", TARGET, False, "?bogus=1", 403, "step_up_required", _STEP, 1),
-    ("owner", TARGET, True, "?purge=true&bogus=1", 422, "validation_failed", _STEP, 0),
+    ("owner", TARGET, False, "?purge=yes", 400, "validation_failed", (), 0),
+    ("owner", TARGET, False, _BAD_ACK, 400, "validation_failed", (), 0),
+    ("owner", TARGET, False, "?bogus=1", 422, "validation_failed", (), 0),
+    ("owner", TARGET, True, "?purge=true&bogus=1", 422, "validation_failed", (), 0),
 ]
 
 
@@ -216,12 +219,13 @@ _ORDER = [  # role, target, elevated, query, status, code, log, challenges issue
     _ORDER,
     ids=[
         *("role", "role-then-query", "self", "step-up", "step-up-then-query", "purge", "ack"),
-        *("step-up-then-names", "names-then-values"),
+        *("names-before-step-up", "names-then-values"),
     ],
 )
 def test_guard_order_before_change(case: tuple[Any, ...], spec: dict[str, Any]) -> None:
-    """UL1-S1, SR-025: `users:write`, a self-target (audited), the step-up, the query, then the
-    change. No refusal reads or writes a row, and only the step-up's issues a challenge."""
+    """UL1-S1, SR-025: `users:write`, a self-target (audited), the query, the step-up, then the
+    change (#2304: a request the query refuses is never challenged). No refusal reads or writes a
+    row, and only the step-up's issues a challenge."""
     role, target, elevated, query, status, code, log, challenges = case
     w = _World()
     auth = _Auth(w.log, elevated=elevated)
@@ -230,6 +234,45 @@ def test_guard_order_before_change(case: tuple[Any, ...], spec: dict[str, Any]) 
     _conforms(spec, r)
     assert tuple(w.log) == log and _untouched(w)
     assert auth.pending == [(str(SESSION), "users")] * challenges
+
+
+@pytest.mark.parametrize(
+    ("query", "summary"),
+    [("", "Disable user {}"), (_PURGE, "Disable user {} and schedule its purge")],
+    ids=["disable", "purge"],
+)
+def test_challenge_restates_the_validated_disable(
+    query: str, summary: str, spec: dict[str, Any]
+) -> None:
+    """#2304: behind the deployed path guard, the handler's challenge restates the request."""
+    w = _World()
+    auth = _Auth(w.log, elevated=False)
+    r = _client(w, _principal("owner", spec), auth=auth, guarded=True).delete(
+        _PATH.format(TARGET) + query
+    )
+    assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary.format(TARGET), None)
+    _conforms(spec, r)
+
+
+@pytest.mark.parametrize(
+    "query",
+    ["?bogus=1", _BAD_ACK],
+    ids=["undeclared", "bad-value"],
+)
+def test_guarded_refusals_before_the_step_up_issue_no_challenge(
+    query: str, spec: dict[str, Any]
+) -> None:
+    """#2304: behind the deployed path guard an un-elevated Manager is refused 403 `forbidden`,
+    and an un-elevated Owner's invalid query is refused, neither challenged."""
+    w = _World()
+    auth = _Auth(w.log, elevated=False)
+    manager = _client(w, _principal("manager", spec), auth=auth, guarded=True)
+    assert manager.delete(_PATH.format(TARGET)).json()["code"] == "forbidden"
+    owner = _client(w, _principal("owner", spec), auth=auth, guarded=True)
+    r = owner.delete(_PATH.format(TARGET) + query)
+    assert r.status_code in (400, 422) and "challenge_id" not in r.json()
+    assert auth.pending == [] and "step_up" not in w.log and _untouched(w)
 
 
 @pytest.mark.parametrize(
@@ -389,14 +432,14 @@ def test_purge_takes_true_or_false_once(value: str, status: int, spec: dict[str,
 )
 def test_undeclared_query_key_422(query: str, spec: dict[str, Any]) -> None:
     """SR-026 on this owner route (S7; the S6 security review's Low 8): a key `deleteUser` does
-    not declare is a 422 for any value, decided on the names after the step-up and before a value
-    is read, so nothing is disabled; a target-user key is one more undeclared key (the path names
-    the target)."""
+    not declare is a 422 for any value, decided on the names before the step-up (#2304) and before
+    a value is read, so nothing is disabled; a target-user key is one more undeclared key (the path
+    names the target)."""
     w = _World()
     r = _client(w, _principal("owner", spec)).delete(_PATH.format(TARGET) + query)
     assert (r.status_code, r.json()["code"]) == (422, "validation_failed")
     _conforms(spec, r)
-    assert w.log == ["step_up"] and _untouched(w)
+    assert w.log == [] and _untouched(w)
     assert {e["rule"] for e in r.json()["errors"]} == {"undeclared_parameter"}
     assert r.json()["detail"].endswith("takes only the query parameters its operation declares.")
 
@@ -588,8 +631,8 @@ def test_purge_twice_204_one_users_delete(spec: dict[str, Any]) -> None:
 def test_purge_503_without_reaper(wired: bool, spec: dict[str, Any]) -> None:
     """Ruling 2, UL4-D1: a purge nothing would run is never accepted. With no reaper wired (the
     fake backend) or one not running, `?purge=true` answers `503 purge_unavailable` after the
-    guards and before the disable: no record, no purge, no half of the call. Without `purge` the
-    disable is served as before."""
+    guards, before the step-up and the disable: no record, no purge, no half of the call. Without
+    `purge` the disable is served as before."""
     w = _World()
     door = _purging(w, running=(False,))[0] if wired else None
     client = _client(w, _principal("owner", spec), user_purge=door)
@@ -598,7 +641,7 @@ def test_purge_503_without_reaper(wired: bool, spec: dict[str, Any]) -> None:
     _conforms(spec, r)
     assert r.json()["detail"] == "no purge reaper is running; nothing was changed"
     assert r.headers["Retry-After"] == str(r.json()["retry_after_seconds"])
-    assert w.log == ["step_up"] and _untouched(w)
+    assert w.log == [] and _untouched(w)
     assert client.delete(_PATH.format(TARGET)).status_code == 204
 
 

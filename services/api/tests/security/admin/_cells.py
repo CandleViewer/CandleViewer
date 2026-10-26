@@ -188,6 +188,32 @@ BEFORE_GATE: dict[str, tuple[int, str]] = {
         "#889 S9: the cell's job id names no job, so the requester check's `404` comes first; "
         "`test_audit_export_download.py` and `test_job_poll.py` reach the gate",
     ),
+    # #2304 slice 3a: the `users` writes gate after their own validation and lookup.
+    "PUT /users/{userId}/roles": (
+        400,
+        "#2304: the matrix's empty body is refused before the gate; "
+        "`test_step_up_challenge_router.py` and `test_owner_routes_composition.py` reach it",
+    ),
+    "PUT /users/{userId}/account-access": (
+        400,
+        "#2304: the matrix's empty body is refused before the gate; "
+        "`test_users_account_access_put.py` and `test_owner_routes_composition.py` reach it",
+    ),
+    "POST /users/{userId}/mfa/reset": (
+        404,
+        "#2304: the cell's user id names no user, so the lookup's `404` comes first; "
+        "`test_step_up_challenge_router.py` reaches the gate",
+    ),
+    "PATCH /users/{userId}": (
+        501,
+        "#2304: the CI app wires no user store, read before the gate; "
+        "`test_user_admin_routes.py` reaches it",
+    ),
+    "DELETE /users/{userId}/sessions/{sessionId}": (
+        501,
+        "#2304: the CI app wires no user store, read before the gate; "
+        "`test_user_admin_routes.py` reaches it",
+    ),
 }
 #: Served `not_executable` rows whose path guard answers before RBAC and before any body is read,
 #: so their none and stale cells need no valid body. A live window passes the guard, so the fresh

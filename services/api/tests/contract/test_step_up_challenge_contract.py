@@ -619,21 +619,11 @@ def test_step_up_description_states_the_holding_rule(spec: dict[str, Any], rule:
     assert rule in _flat(_step_up(spec)["description"])
 
 
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="#2304 route slice: the path-gated middleware challenges before the route validates "
-    "its request, so the 403 restates nothing (`action_summary`, `target`); remove this marker "
-    "when the route slice moves the gate behind validation and composes them",
-)
 async def test_step_up_required_route_body_carries_the_challenge(spec: dict[str, Any]) -> None:
-    """Provider side (C-6.2): a dangerous route's real `403 step_up_required` body.
-
-    A body that is not a `step_up_required` problem conforming to `Problem` raises
-    `ValidationError`, a real failure; only the missing challenge fields are expected to fail.
-    """
+    """Provider side (C-6.2): a dangerous route's real `403 step_up_required` body, the owner
+    TOTP reset's, whose handler gates after its own checks and restates the request (#2304)."""
     client, *_ = await _build()
-    body = client.put(f"/users/{uuid.uuid4()}/roles", headers=_H).json()
+    body = client.post(f"/users/{uuid.uuid4()}/mfa/reset", headers=_H).json()
     _validator(spec, _STEP_UP_REQUIRED_BODY).validate(body)
     assert set(_CHALLENGE_FIELDS) <= set(body)
 

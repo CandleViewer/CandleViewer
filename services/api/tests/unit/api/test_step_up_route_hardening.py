@@ -56,7 +56,7 @@ async def test_step_up_password_is_capped_like_login_before_any_factor(
     """`LoginRequest.password` is at most 512 characters. A longer one is refused by the schema:
     it never reaches the Argon2id check and counts no strike."""
     w = await _world()
-    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live grace challenge
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live grace challenge
     r = w.step_up(password="p" * length)
     assert r.status_code == status
     assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == strikes
@@ -70,7 +70,7 @@ async def test_step_up_400_names_declared_fields_only_and_quotes_no_value() -> N
     """A member the schema does not declare is reported as `body`, never by the name the client
     sent; a malformed value is never quoted."""
     w = await _world()
-    w.client.put(f"/users/{uuid.uuid4()}/roles", headers=w.h())  # a live grace challenge
+    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live grace challenge
     sent: dict[str, Any] = {"hunter2-looking-member": 1, "code": "12ab56"}
     r = w.step_up(**sent)
     assert r.status_code == 400

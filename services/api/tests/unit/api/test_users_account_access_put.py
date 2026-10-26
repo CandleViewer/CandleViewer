@@ -19,6 +19,7 @@ from prometheus_client import REGISTRY
 from sqlalchemy.exc import DBAPIError
 
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.step_up import make_read_only_guard
 from candleviewer.api.users import make_users_router
 from candleviewer.auth.scopes import AccountGrant
 from candleviewer.observability.context import bind_context
@@ -75,7 +76,9 @@ class _World(svc._World):
         held: Any = (),
         wired: bool = True,
         request_id: str | None = None,
+        guarded: bool = False,
     ) -> TestClient:
+        """`guarded` mounts the deployed app's path guard (`make_read_only_guard`) in front."""
         auth: Any = SimpleNamespace(step_up_is_active=wired, sessions_is_active=True)
         auth.step_up, auth.sessions = self.step_up, rbac._Sessions()
         res = g._Resolver(None if role is None else g._principal(role, _SPEC, held))
@@ -90,6 +93,8 @@ class _World(svc._World):
         )
         app = FastAPI()
         app.include_router(users)
+        if guarded:
+            app.middleware("http")(make_read_only_guard(auth))
         if request_id is not None:
             app.add_middleware(_Bound, request_id=request_id)
         token = {"Authorization": f"Bearer {rbac.token_of('owner')}"}
@@ -152,11 +157,10 @@ def test_records_name_the_request(bound: str, recorded: uuid.UUID | None) -> Non
 def test_self_target_403() -> None:
     """F7, SR-055: refused before any lookup or step-up, audited once naming the target. No
     elevation is live, so a handler that asked for one first would answer `step_up_required`.
-    Inside the handler only: the deployed app's path guard challenges an un-elevated session
-    before the handler runs (test_owner_routes_composition.py)."""
+    Behind the deployed app's path guard too (#2304: the step-up is the handler's)."""
     w = _World()
     w.step_up.elevated = False
-    r = w.put(_body((_A, "trade")), target=CALLER)
+    r = w.put(_body((_A, "trade")), target=CALLER, guarded=True)
     assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "self_target"}
     (record,) = w.emitter.calls
     assert (record["action"], record["reason"]) == ("rbac.denied", "self_target")
@@ -197,14 +201,11 @@ def test_forbidden_manager_viewer_audited(role: str, held: Any, target: uuid.UUI
 )
 def test_forbidden_caller_without_a_step_up_is_refused_not_challenged(role: str, held: Any) -> None:
     """RBAC decides before the step-up (SR-025 comes after RBAC and SR-055): a Manager or Viewer
-    holding no live elevation gets the audited 403 `forbidden`, not a challenge. That holds inside
-    the handler only. In the deployed app the path guard (`DANGEROUS_ROUTES`,
-    `make_read_only_guard`) challenges every un-elevated session before RBAC, these callers
-    included, and writes no `rbac.denied` (test_owner_routes_composition.py): the handler's order
-    is the second line, and it alone decides an elevated caller."""
+    holding no live elevation gets the audited 403 `forbidden`, not a challenge, behind the
+    deployed app's path guard too: the step-up is the handler's (#2304), never the guard's."""
     w = _World()
     w.step_up.elevated = False
-    r = w.put(_body((_A, "trade")), role=role, held=held)
+    r = w.put(_body((_A, "trade")), role=role, held=held, guarded=True)
     assert r.status_code == 403 and r.json() == _FORBIDDEN | {"reason": "missing_permission"}
     (record,) = w.emitter.calls
     assert (record["action"], record["object_id"]) == ("rbac.denied", str(TARGET))
@@ -438,13 +439,32 @@ def test_malformed_acknowledgement_from_a_refused_caller_is_the_audited_403(
     assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
 
 
-def test_malformed_acknowledgement_from_an_unelevated_owner_is_challenged_not_400() -> None:
-    """SR-025: the flag is read after the step-up, so an allowed caller holding no live elevation
-    is challenged (403 `step_up_required`) and hears of the flag once the step-up is answered."""
+@pytest.mark.parametrize(
+    ("body", "ack"),
+    [(_body((_A, "trade")), _BAD_ACK), (_body((_A, "admin")), None)],
+    ids=["malformed-acknowledgement", "body-the-schema-refuses"],
+)
+def test_invalid_request_from_an_unelevated_owner_is_the_400_never_a_challenge(
+    body: Any, ack: str | None
+) -> None:
+    """#2304: the flag and the body are validated before the step-up, behind the deployed path
+    guard too, so an Owner holding no live elevation hears of them and is not challenged."""
     w = _World()
     w.step_up.elevated = False
-    r = w.put(_body((_A, "trade")), ack=_BAD_ACK)
+    r = w.put(body, ack=ack, guarded=True)
+    assert r.status_code == 400 and r.json()["code"] == "validation_failed"
+    assert "challenge_id" not in r.json()
+    assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
+
+
+def test_challenge_restates_the_validated_replacement() -> None:
+    """#2304: behind the deployed path guard, the handler's challenge restates the request."""
+    w = _World()
+    w.step_up.elevated = False
+    r = w.put(_body((_A, "trade"), (_B, "read")), guarded=True)
     assert r.status_code == 403 and r.json()["code"] == "step_up_required"
+    summary = f"Replace the account access of user {TARGET} with 2 grants"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
     assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
 
 

@@ -533,13 +533,42 @@ def test_if_match_spellings(b16_audit: RecordingAuditSink, spec: Any, header: st
 def test_patch_without_step_up_is_challenged_and_changes_nothing(
     b16_audit: RecordingAuditSink, spec: Any
 ) -> None:
-    """SR-025 (UL-AC16): an owner without a live `users` elevation is challenged; nothing is
-    read or changed. The deployed path guard challenges first (the composition tests)."""
+    """SR-025 (UL-AC16): an owner without a live `users` elevation is challenged after the user
+    is read (#2304), the challenge restating the patch; nothing is changed."""
     env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)), elevated=False)
-    r = env.patch(M, {"display_name": "x"})
+    r = env.patch(M, {"display_name": "x", "roles": ["viewer", "manager"]})
     _conforms(spec, "/users/{userId}", "patch", r)
     assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
-    assert env.log == ["step_up"] and env.step_up.pending == [(str(_SESSION), "users")]
+    summary = f"Update user {M}: display name; roles manager, viewer"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
+    assert env.log == ["read", "step_up"] and env.step_up.pending == [(str(_SESSION), "users")]
+
+
+@pytest.mark.parametrize(
+    ("target", "body", "headers", "status"),
+    [
+        (MISSING, {"display_name": "x"}, {}, 404),
+        (M, {"display_name": "x"}, {"If-Match": '"stale"'}, 412),
+        (M, {"status": "locked"}, {}, 400),
+        (M, {"bogus": 1}, {}, 400),
+    ],
+    ids=["missing-user", "stale-if-match", "status-refused", "body-the-schema-refuses"],
+)
+def test_patch_refused_before_the_step_up_is_never_a_challenge(
+    b16_audit: RecordingAuditSink,
+    spec: Any,
+    target: uuid.UUID,
+    body: Any,
+    headers: dict[str, str],
+    status: int,
+) -> None:
+    """#2304: the body, the lookup and the preconditions come before the step-up, so an Owner
+    holding no elevation hears of them and is not challenged."""
+    env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)), elevated=False)
+    r = env.patch(target, body, headers=headers)
+    _conforms(spec, "/users/{userId}", "patch", r)
+    assert r.status_code == status and "challenge_id" not in r.json()
+    assert "step_up" not in env.log and env.step_up.pending == []
 
 
 def test_step_up_and_audit_503(b16_audit: RecordingAuditSink, spec: Any) -> None:
@@ -664,7 +693,7 @@ def test_an_empty_patch_changes_nothing_and_takes_no_lock(
     env = _Env(b16_audit, _principal("owner", spec), _user(M, ("manager",)))
     r = env.patch(M, {})
     assert r.status_code == 200 and r.headers["etag"] == user_etag(r.json())
-    assert env.log == ["step_up", "read"] and env.emitter.calls == []
+    assert env.log == ["read", "step_up"] and env.emitter.calls == []
 
 
 def test_a_patch_that_changes_nothing_writes_no_record(
@@ -1278,7 +1307,22 @@ def test_revoke_without_step_up_is_challenged(b16_audit: RecordingAuditSink, spe
     env, first, _, _ = _with_sessions(b16_audit, spec, elevated=False)
     r = env.client.delete(f"/users/{M}/sessions/{first.id}")
     assert (r.status_code, r.json()["code"]) == (403, "step_up_required")
+    summary = f"Revoke session {first.id} of user {M}"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
     assert env.rows.sessions[str(first.id)].revoked_at is None and b16_audit.calls == []
+
+
+def test_revoke_of_another_users_session_is_404_never_a_challenge(
+    b16_audit: RecordingAuditSink, spec: Any
+) -> None:
+    """IDOR (#2304): an Owner holding no elevation who names another user's, an unknown or a
+    missing user's session gets the 404, never a challenge naming it."""
+    env, first, _, foreign = _with_sessions(b16_audit, spec, elevated=False)
+    for path in (f"/users/{M}/sessions/{foreign.id}", f"/users/{MISSING}/sessions/{first.id}"):
+        r = env.client.delete(path)
+        assert (r.status_code, r.json()["code"]) == (404, "not_found")
+        assert "challenge_id" not in r.json()
+    assert env.step_up.pending == [] and b16_audit.calls == []
 
 
 def test_the_list_marks_the_callers_own_session_current(
