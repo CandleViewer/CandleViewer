@@ -530,6 +530,22 @@ def _caller(profile: str) -> dict[str, Any]:
     return workflow
 
 
+def _zap_jobs(profile: str) -> list[dict[str, Any]]:
+    """The caller's jobs that call a workflow; the drawings nightly also runs a pytest job."""
+    return [job for job in _caller(profile)["jobs"].values() if "uses" in job]
+
+
+def test_the_drawings_nightly_runs_every_abuse_pack_and_nothing_else_beside_the_scan() -> None:
+    """E14-X02 (#474): the drawings abuse packs run nightly by glob, so a new pack is picked up."""
+    jobs = _caller("drawings")["jobs"]
+    assert set(jobs) == {"zap-drawings", "abuse-packs"}
+    run = jobs["abuse-packs"]["steps"][-1]["run"]
+    pack = "tests/drawings/test_drawings_abuse_*.py"
+    assert run == f"uv run pytest {pack} --no-cov -p no:cacheprovider"
+    packs = sorted((ROOT / "services/api/tests/drawings").glob("test_drawings_abuse_*.py"))
+    assert len(packs) >= 3  # part A (XSS, IDOR), part B (exhaustion), part C (backend)
+
+
 @pytest.mark.parametrize("profile", sorted(CALLERS))
 def test_each_nightly_runs_on_its_schedule_or_by_hand_never_on_a_pull_request(
     profile: str,
@@ -547,7 +563,7 @@ def test_each_nightly_only_reads_the_repository(profile: str) -> None:
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
 def test_each_nightly_calls_the_low_privilege_workflow_with_its_own_files(profile: str) -> None:
-    jobs = _caller(profile)["jobs"]
+    jobs = {name: job for name, job in _caller(profile)["jobs"].items() if "uses" in job}
     assert set(jobs) == set(_jobs(profile))
     for name, files in _jobs(profile).items():
         assert jobs[name]["uses"] == "./.github/workflows/_dast-low-priv.yml"
@@ -560,7 +576,7 @@ def test_the_fixture_a_nightly_seeds_is_the_one_its_plan_aims_at() -> None:
     examples at them: two names for one file, or the scan aims at a row the seed never made."""
     seeded = {}
     for profile in CALLERS:
-        for job in _caller(profile)["jobs"].values():
+        for job in _zap_jobs(profile):
             if "fixture" in job["with"]:
                 seeded[profile] = ROOT / job["with"]["fixture"]
     assert seeded == plans.SEEDS

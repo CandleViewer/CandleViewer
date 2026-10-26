@@ -251,6 +251,9 @@ Today the shipped telemetry is `cv_drawings_batch_ops`, `cv_drawings_conflicts_t
 tool (all users): per-user counts, 413/422 rejection counters and a denied counter on the drawings routes do **not**
 exist (`rbac.denied` audit records are the only denial signal). SR-E14-11 is therefore open, not a mitigation.
 
+E14-X02's findings and the SR-E14-01..11 coverage table, with each uncovered row's gating ticket, are in
+`qa/security/e14-abuse-cases.md` (#474).
+
 ## 7. Residual risks, owners and review
 
 | ID | Residual | Rating | Owner / ticket | Review date |

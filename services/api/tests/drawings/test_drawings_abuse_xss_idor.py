@@ -4,13 +4,13 @@ Pins threat-model rows DR13 (version vs ownership order), DR20/DR21 (IDOR), DR28
 DR25 (no echo) and DR39 (idempotency key across users), plus the stored half of the XSS
 tabletop: hostile text is stored as inert JSON, only `_STRIP` characters are removed, nothing is
 HTML-decoded or encoded. DR22 is not pinned here.
-Rendering sinks (SR-E14-01..03: DOM, aria-label, SDF text) are unbuilt: residual RR6.
+Rendering sinks (SR-E14-01..03: DOM, aria-label, SDF text) are unbuilt: residual RR6, #4602.
 Router-level only (in-memory repository): none of these cases has a Postgres leg (only the
 existing batch pack in `tests/contract/drawings` does); hostile corpus through real JSONB is open.
 Router-level cases run without the app's middleware: the JSON content type is their only inertness
 signal. The deployed app adds `nosniff` to every answer (`NoSniff`, #3990; the E14-X03 finding).
-Tripwire: `layout_id` is unknown today (no layouts table, every non-null value is refused); when
-E15 makes layouts real (#402, RR2, SR-E14-09) add a same-owner foreign-layout case here."""
+Layouts are real since E15 (#402): the foreign-layout cases are in `test_drawings_layouts.py`,
+listed with these in part C's abuse table (`test_drawings_abuse_backend.py`)."""
 
 from __future__ import annotations
 
