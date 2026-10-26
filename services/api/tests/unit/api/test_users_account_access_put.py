@@ -457,6 +457,42 @@ def test_invalid_request_from_an_unelevated_owner_is_the_400_never_a_challenge(
     assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
 
 
+class _Statuses:
+    """`UserRoleStore.get_status` over one known user (`TARGET`); any other id is missing."""
+
+    async def get_status(self, user_id: uuid.UUID) -> str | None:
+        return "active" if user_id == TARGET else None
+
+
+def test_a_missing_target_is_the_404_before_the_step_up_never_a_challenge() -> None:
+    """#2304 slice 3b, from 3a's review: the target is read before the gate, so an un-elevated
+    Owner naming a missing (or deleted) user gets the 404, never a challenge naming it."""
+    w = _World()
+    w.step_up.elevated = False
+    auth: Any = SimpleNamespace(step_up_is_active=True, sessions_is_active=True)
+    auth.step_up, auth.sessions = w.step_up, rbac._Sessions()
+    res = g._Resolver(g._principal("owner", _SPEC, ()))
+    app = FastAPI()
+    statuses: Any = _Statuses()  # `get_status` alone: the only read the PUT makes of the store
+    app.include_router(make_users_router(
+        statuses, w.emitter, res, g._Notifier(), auth=auth, account_access=w.store,
+        access_service=w.service,
+    ))  # fmt: skip
+    app.middleware("http")(make_read_only_guard(auth))
+    client = TestClient(
+        app, client=_PEER, headers={"Authorization": f"Bearer {rbac.token_of('owner')}"}
+    )
+    r = client.put(g._PATH.format(uuid.UUID(int=0xDEAD)), json=_body((_A, "read")))
+    assert (r.status_code, r.json()["code"], "challenge_id" in r.json()) == (
+        404,
+        "not_found",
+        False,
+    )
+    assert w.rel.log == [] and w.positions.asked == [] and w.unchanged()
+    known = client.put(g._PATH.format(TARGET), json=_body((_A, "read")))
+    assert known.json()["code"] == "step_up_required"  # a known user is still challenged
+
+
 def test_challenge_restates_the_validated_replacement() -> None:
     """#2304: behind the deployed path guard, the handler's challenge restates the request."""
     w = _World()

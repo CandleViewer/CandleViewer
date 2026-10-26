@@ -64,10 +64,10 @@ def deploy(monkeypatch: pytest.MonkeyPatch, svc: SecretsService) -> tuple[_World
 
 
 async def elevated(w: _World, role: str, perms: frozenset[Permission]) -> str:
-    """A session of `role` stepped up for class `keys`: a refused call's challenge, answered."""
+    """A session of `role` stepped up for class `keys`, a grace class, by name: since #2304
+    slice 3b a caller RBAC refuses is never challenged, so it has no challenge to answer."""
     token = await _login(w, role, perms)
-    assert w.client.post(PATH, headers=_h(token), json=BODY).json()["code"] == "step_up_required"
-    assert w.elevate(token).json()["action_class"] == "keys"
+    assert w.elevate(token, action_class="keys").json()["action_class"] == "keys"
     return token
 
 
@@ -147,32 +147,51 @@ def test_a_caller_the_route_cannot_resolve_is_refused_before_anything_runs(
     assert (r.status_code, r.json()["code"]) == (status, code)
 
 
-async def test_an_owner_without_step_up_is_challenged_for_class_keys(kek: _Kek) -> None:
-    r = kek.post(await _login(kek.w, "owner", OWNER))
+async def test_an_owner_without_step_up_is_challenged_restating_the_rewrap(kek: _Kek) -> None:
+    """#2304 slice 3b: the handler's challenge, after the body and RBAC, restates the request;
+    nothing ran and nothing latched."""
+    r = kek.post(await _login(kek.w, "owner", OWNER), {"environment": "demo", "to_version": 2})
     assert (r.status_code, r.json()["code"], r.json()["action_class"]) == (
         403,
         "step_up_required",
         "keys",
     )
+    summary = "Re-wrap the demo API keys under credential key version 2"
+    assert (r.json()["action_summary"], r.json()["target"]) == (summary, None)
     assert (kek.runs(), kek.ctx.oms_read_only_gate.is_read_only) == ([], False)
+    assert kek.w.audit.of("auth.step_up_required") and not kek.w.audit.of("rbac.denied")
 
 
 @pytest.mark.parametrize("role", ["manager", "viewer"])
-async def test_a_manager_or_viewer_is_challenged_then_forbidden_and_nothing_runs(
+async def test_a_manager_or_viewer_without_step_up_is_forbidden_never_challenged(
     kek: _Kek, role: str
 ) -> None:
-    """The step-up gate precedes RBAC (`test_invites_create_app_e2e.py`): no `rbac.denied` until
-    the session is elevated, then exactly one, naming the caller's address and request id."""
-    token = await _login(kek.w, role, frozenset())
-    first = kek.post(token)
-    assert (first.json()["code"], kek.w.audit.of("rbac.denied")) == ("step_up_required", [])
-    assert kek.w.elevate(token).status_code == 200
-    second = kek.post(token)
-    assert (second.status_code, second.json()["code"]) == (403, "forbidden")
+    """#2304 slice 3b: RBAC precedes the handler's step-up, so an un-elevated Manager or Viewer
+    gets the audited 403 at once, naming the caller's address and request id, and no challenge."""
+    r = kek.post(await _login(kek.w, role, frozenset()))
+    assert (r.status_code, r.json()["code"], "challenge_id" in r.json()) == (
+        403,
+        "forbidden",
+        False,
+    )
     [denial] = kek.w.audit.of("rbac.denied")
-    rid = uuid.UUID(second.headers["x-correlation-id"])
+    rid = uuid.UUID(r.headers["x-correlation-id"])
     assert (denial["actor_ip"], denial["request_id"]) == ("127.0.0.1", rid)
+    assert kek.w.audit.of("auth.step_up_required") == []
     assert (kek.runs(), kek.ctx.oms_read_only_gate.is_read_only) == ([], False)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [{"environment": "demo", "to_version": 1}, {**BODY, "kek": "SENTINEL-material"}, {}],
+    ids=["version_1", "other_member", "empty"],
+)
+async def test_an_invalid_body_from_an_unelevated_owner_is_the_422_never_a_challenge(
+    kek: _Kek, body: dict[str, Any]
+) -> None:
+    r = kek.post(await _login(kek.w, "owner", OWNER), body)
+    assert (r.status_code, r.json()["code"], kek.runs()) == (422, "validation_failed", [])
+    assert kek.w.audit.of("auth.step_up_required") == [] and "SENTINEL" not in r.text
 
 
 @pytest.mark.parametrize("perms", [frozenset(), OWNER], ids=["no_keys_manage", "not_the_owner"])
@@ -196,14 +215,10 @@ async def test_a_denial_that_cannot_be_recorded_answers_audit_unavailable(
 async def test_a_denial_after_a_stop_unwired_the_writer_answers_audit_unavailable(
     kek: _Kek, perms: frozenset[Permission]
 ) -> None:
-    """`AuditService.writer` raises `RuntimeError` once unwired: unrecordable, so a `503`."""
-    token, emit = await elevated(kek.w, "viewer", perms), kek.w.audit.emit
-
-    async def then_unwired(action: str, **kw: Any) -> None:  # B16's `grace_used`, then a stop()
-        await emit(action, **kw)
-        kek.ctx.audit._writer = None  # as `AuditService.stop()` leaves it
-
-    kek.ctx.audit._writer = SimpleNamespace(emit=then_unwired)
+    """`AuditService.writer` raises `RuntimeError` once unwired: unrecordable, so a `503`. The
+    denial is the request's first record since #2304 slice 3b (RBAC before the step-up)."""
+    token = await elevated(kek.w, "viewer", perms)
+    kek.ctx.audit._writer = None  # as `AuditService.stop()` leaves it
     r = kek.post(token)
     assert (r.status_code, r.json()["code"], kek.runs()) == (503, "audit_unavailable", [])
 

@@ -1,11 +1,12 @@
 """`POST /admin/keys/kek-rewrap` (`rewrapKek`, #2266): the re-wrap step of a KEK rotation
 (`docs/plan/spikes/e27-kek.md` section 5, run as `docs/ops/runbooks/kek-custody.md` says).
 
-Owner only. `CsrfMiddleware` and the step-up middleware (`DANGEROUS_ROUTES`, class `keys`) answer
-before this handler runs. It then resolves the caller (none wired: 501; no verified session: 401),
-checks the body, read up to 1 KiB, against `KekRewrapRequest` (422), and checks `keys:manage` with
-`auth.scopes.enforce`, then the Owner role (403), each denial audited as `rbac.denied` (C-2.9).
-The run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal,
+Owner only. `CsrfMiddleware` answers before this handler runs. It then resolves the caller (none
+wired: 501; no verified session: 401), checks the body, read up to 1 KiB, against
+`KekRewrapRequest` (422), and checks `keys:manage` with `auth.scopes.enforce`, then the Owner role
+(403), each denial audited as `rbac.denied` (C-2.9). Only then does it demand the `keys` step-up
+(`HANDLER_GATED_ROUTES`, #2304 slice 3b; unwired: 503), its challenge restating the environment
+and the version. The run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal,
 latches order entry and re-wraps. This module imports `admin` only, never `secrets` (C-3.2). The
 answer holds counts only, no key id and no KCV; `Idempotency-Key` is never read
 (`x-idempotency: ignored`: a repeat resumes the run).
@@ -26,6 +27,8 @@ from candleviewer.admin.models import KekRewrapResult
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import kek_rewrap_text
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -101,9 +104,11 @@ def make_admin_kek_router(
     principal_resolver: SnapshotResolver | None,
     *,
     auth: SessionsLike | None = None,
+    elevation: RequestElevation | None = None,
 ) -> APIRouter:
     """`principal_resolver=None` (no identity provider: the fake backend) fails closed with 501.
-    A refusal's `rbac.denied` names the caller's session, read through `auth` (#4174)."""
+    A refusal's `rbac.denied` names the caller's session, read through `auth` (#4174);
+    `elevation` demands the `keys` step-up (None: 503, nothing runs)."""
     router = APIRouter(tags=["admin"])
 
     @router.post("/admin/keys/kek-rewrap")
@@ -139,6 +144,9 @@ def make_admin_kek_router(
             return _problem("forbidden")
         except (AuditError, RuntimeError):  # RuntimeError: no writer wired (as after `stop()`)
             return _problem("audit_unavailable")  # a denial that cannot be recorded (C-2.9)
+        restated = kek_rewrap_text(body.environment, body.to_version)  # after RBAC (#2304)
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            return refused
         try:
             result = await admin.rewrap_kek(
                 body.environment, body.to_version, str(principal.user_id)

@@ -175,6 +175,7 @@ from candleviewer.api.step_up import (
     SpentGrant,
     make_read_only_guard,
     make_step_up_router,
+    request_elevation,
     require_bound_elevation,
     require_session_elevation,
     step_up_port,
@@ -1994,11 +1995,16 @@ def create_app(
             user_disable=user_disable,
         )
     )
-    # #2266 D2: `rewrapKek`, the KEK re-wrap entry point. Owner only; step-up `keys` is path-gated
-    # in `DANGEROUS_ROUTES`; M2 runs it behind `AdminService` (counts only).
+    # #2266 D2: `rewrapKek`, the KEK re-wrap entry point. Owner only; the handler demands step-up
+    # `keys` after RBAC (#2304 slice 3b); M2 runs it behind `AdminService` (counts only).
+    keys_elevation = request_elevation(ctx.auth, "keys")
     app.include_router(
         make_admin_kek_router(
-            ctx.admin, _LazyAuditEmitter(ctx.audit), owner_resolver, auth=ctx.auth
+            ctx.admin,
+            _LazyAuditEmitter(ctx.audit),
+            owner_resolver,
+            auth=ctx.auth,
+            elevation=keys_elevation,
         )
     )
     # QA #1596: real session-backed resolver; without an identity provider
@@ -2066,14 +2072,15 @@ def create_app(
         admin_jobs, resolved.data_dir, ttl_s=resolved.audit_export_ttl_s, signing=export_signing
     )
     app.state.audit_exports = audit_exports
-    # #889 S7: `rotateAuditSigningKey`. Owner only; step-up `keys` is path-gated in
-    # `DANGEROUS_ROUTES`; M2 rotates behind `AdminService`, never while an export job is queued or
+    # #889 S7: `rotateAuditSigningKey`. Owner only; the handler demands step-up `keys` after RBAC
+    # (#2304 slice 3b); M2 rotates behind `AdminService`, never while an export job is queued or
     # running in this job store, and a `429` is counted under the audit budget. A refusal's
     # `rbac.denied` names the caller's session through `ctx.auth` (#4174).
     emitter = _LazyAuditEmitter(ctx.audit)
     rotations = make_audit_signing_router(
-        ctx.admin, emitter, owner_resolver, budget=audit_budget, jobs=admin_jobs, auth=ctx.auth
-    )
+        ctx.admin, emitter, owner_resolver, budget=audit_budget, jobs=admin_jobs, auth=ctx.auth,
+        elevation=keys_elevation,
+    )  # fmt: skip
     app.include_router(rotations)
     app.include_router(
         make_audit_router(
@@ -2275,6 +2282,7 @@ def create_app(
             # #836 slice 2b6: `testApiKey`, its verdict enforced by the self-check (decision 11).
             tests=wire_key_test(ctx, selfcheck, key_imports),
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
+            elevation=keys_elevation,  # after RBAC and the account's read (#2304 slice 3b)
         )
     )
     # #906 D1a (E28-T02): the profile store, the order path's effective-profile cache over it and

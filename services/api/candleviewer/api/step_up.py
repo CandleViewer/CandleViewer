@@ -434,6 +434,45 @@ async def require_session_elevation(
     )
 
 
+#: A handler-gated grace route's step-up (#2304 slice 3b), for a handler whose principal names
+#: no session: None when the request's session holds a live elevation of the route's class, else
+#: the answer (a challenge restating the `ChallengeText`, 401, or 503 when unwired).
+RequestElevation = Callable[[Request, ChallengeText], Awaitable[JSONResponse | None]]
+
+
+def request_elevation(auth: _AuthLike, action_class: str) -> RequestElevation:
+    """The `RequestElevation` of `action_class` over `auth`: the session behind the bearer token,
+    authenticated as the path guard authenticates it, then `require_session_elevation`. A
+    no-grace class binds its grant to the request, so it is refused here (use
+    `require_bound_elevation`)."""
+    if action_class in NO_GRACE_ACTION_CLASSES:
+        raise ValueError(f"{action_class} is bound to its request: use require_bound_elevation")
+
+    async def demand(request: Request, text: ChallengeText) -> JSONResponse | None:
+        if not auth.sessions_is_active:
+            return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+        token = _bearer(request)
+        if token is None:
+            return _unauthenticated()
+        try:
+            record = await auth.sessions.authenticate_access_token(token)
+        except AuthError:
+            return _unauthenticated()
+        return await require_session_elevation(auth, record.id, action_class, text)
+
+    return demand
+
+
+async def demand_elevation(
+    elevation: RequestElevation | None, request: Request, text: ChallengeText
+) -> JSONResponse | None:
+    """`elevation(request, text)`. None wired is a wiring fault, 503, never "no step-up needed"
+    (C-2.21): the route stays gated."""
+    if elevation is None:
+        return _problem(503, "service_unavailable", "Service unavailable", "step-up not wired")
+    return await elevation(request, text)
+
+
 class StepUpRefused(Exception):
     def __init__(self, response: JSONResponse) -> None:
         super().__init__("step-up refused")
@@ -516,15 +555,11 @@ DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/users$"), "users"),  # invite
     ("POST", re.compile(r"^/users/[^/]+/invite$"), "users"),  # reissue mints a new token
     ("DELETE", re.compile(r"^/users/[^/]+/invite$"), "users"),  # revoke
-    ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys$"), "keys"),
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/rotate$"), "keys"),
     ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+$"), "keys"),
     # reveal-scope has no contract path yet (E27); pre-registered under the keys prefix.
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
-    ("POST", re.compile(r"^/admin/keys/kek-rewrap$"), "keys"),  # rewrapKek (#2266, 04 row 41a)
-    # rotateAuditSigningKey (#889 S7, ADR-0039 decision 5): a grace class, as `rewrapKek`'s.
-    ("POST", re.compile(r"^/admin/keys/audit-signing/rotate$"), "keys"),
     ("POST", re.compile(r"^/risk/lockouts/[^/]+/override$"), "risk_caps"),
     # #2751 (SR-025, 04 §7.2.2 rows 50, 52). The `users` rows of rows 38, 40 and 40a moved to
     # `HANDLER_GATED_ROUTES` (#2304 slice 3a).
@@ -617,6 +652,12 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("DELETE", "/users/{userId}", "users"),  # deleteUser
     ("DELETE", "/users/{userId}/sessions/{sessionId}", "users"),  # revokeUserSession
     ("PUT", "/users/{userId}/account-access", "users"),  # setUserAccountAccess
+    # #2304 slice 3b, likewise: each handler decides RBAC, its body and its target's lookup, then
+    # demands the class through `request_elevation`, with the restatement of
+    # `api.step_up_challenge`. Key material is never restated.
+    ("POST", "/exchange-accounts/{accountId}/keys", "keys"),  # createApiKey (04 row 41)
+    ("POST", "/admin/keys/kek-rewrap", "keys"),  # rewrapKek (#2266, 04 row 41a)
+    ("POST", "/admin/keys/audit-signing/rotate", "keys"),  # rotateAuditSigningKey (#889 S7)
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
@@ -976,12 +1017,15 @@ def make_step_up_router(
 
 
 __all__ = [
+    "RequestElevation",
     "SpentGrant",
     "StepUpAuth",
     "StepUpEmitter",
     "StepUpRefused",
+    "demand_elevation",
     "make_read_only_guard",
     "make_step_up_router",
+    "request_elevation",
     "require_bound_elevation",
     "require_elevation_for",
     "require_session_elevation",

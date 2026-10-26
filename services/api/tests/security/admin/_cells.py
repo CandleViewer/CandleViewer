@@ -16,9 +16,9 @@ and no fourth list:
    `OWN_GUARD`, with the record its own guard writes. A route in neither fails
    `test_every_admin_route_is_classified`.
 
-The executed rows are the cells. Of the three served `not_executable` rows, `PATH_GATED_ONLY` gives
-`rewrapKek` and `rotateAuditSigningKey` their none and stale cells, which their path guard answers
-before any body is read, and `NO_CELL` says why `PUT /admin/log-level` has none.
+The executed rows are the cells. Of the three served `not_executable` rows, `GATE_ONLY` gives
+`rewrapKek` and `rotateAuditSigningKey` their none and stale cells, which reach their handler's
+gate with a valid request (`GATE_REQUESTS`), and `NO_CELL` says why `PUT /admin/log-level` has none.
 
 The rules the cells hold:
 
@@ -172,6 +172,13 @@ GATE_REQUESTS: dict[str, dict[str, Any]] = {
             "reason": "E42-X03 RBAC cell",
         },
     },
+    # #2304 slice 3b: these validate their request before RBAC and the gate (22), so a cell sends
+    # a valid one; the matrix's empty body would be a 422 for every caller.
+    "POST /admin/keys/kek-rewrap": {"json": {"environment": "demo", "to_version": 2}},
+    "POST /admin/keys/audit-signing/rotate": {
+        "json": {"reason": "scheduled"},
+        "headers": {"Idempotency-Key": "00000000-0000-4000-8000-0000000023b0"},
+    },
 }
 #: The class a handler-gated cell demands, where its route has several (`setFeatureFlag`).
 GATE_CLASS: dict[str, str] = {"PUT /admin/feature-flags/{flagKey}": "flags"}
@@ -199,6 +206,11 @@ BEFORE_GATE: dict[str, tuple[int, str]] = {
         "#2304: the matrix's empty body is refused before the gate; "
         "`test_users_account_access_put.py` and `test_owner_routes_composition.py` reach it",
     ),
+    "DELETE /users/{userId}": (
+        404,
+        "#2304 slice 3b: the cell's user id names no user, so the lookup's `404` comes first; "
+        "`test_users_delete.py` and `test_owner_routes_composition.py` reach the gate",
+    ),
     "POST /users/{userId}/mfa/reset": (
         404,
         "#2304: the cell's user id names no user, so the lookup's `404` comes first; "
@@ -215,20 +227,18 @@ BEFORE_GATE: dict[str, tuple[int, str]] = {
         "`test_user_admin_routes.py` reaches it",
     ),
 }
-#: Served `not_executable` rows whose path guard answers before RBAC and before any body is read,
-#: so their none and stale cells need no valid body. A live window passes the guard, so the fresh
+#: Served `not_executable` rows whose none and stale cells reach their handler's gate with the
+#: valid request of `GATE_REQUESTS` (#2304 slice 3b). A live window passes the gate, so the fresh
 #: state has no cell; why, as the matrix row reads it.
-PATH_GATED_ONLY: dict[str, str] = {
+GATE_ONLY: dict[str, str] = {
     "POST /admin/keys/kek-rewrap": (
-        "past the `keys` guard the body is validated before RBAC, so the matrix's empty body is a "
-        "422 for every actor; a valid one reaches the CI app's missing credential store (403 "
+        "past the `keys` gate a valid body reaches the CI app's missing credential store (403 "
         "`kek_unavailable` for the Owner). Every actor is asserted in `test_admin_kek.py` "
         "(#2266 D2)"
     ),
     "POST /admin/keys/audit-signing/rotate": (
-        "as `rewrapKek`: past the `keys` guard the body and `Idempotency-Key` are validated before "
-        "RBAC, so the matrix's empty body is a 422 for every actor, and a valid one reaches the CI "
-        "app's missing credential store (403 `kek_unavailable`). Every actor is asserted in "
+        "as `rewrapKek`: past the `keys` gate a valid request reaches the CI app's missing "
+        "credential store (403 `kek_unavailable`). Every actor is asserted in "
         "`test_audit_signing_rotate.py` (#889 S7)"
     ),
 }
@@ -305,8 +315,8 @@ _ROWS = matrix_rows()
 OPS: tuple[Op, ...] = tuple(
     _op(k, r) for k, r in sorted(_ROWS.items()) if is_admin(k) and r["state"] == "executed"
 )
-#: The `PATH_GATED_ONLY` rows: cells in the none and stale states only.
-GATE_ONLY_OPS: tuple[Op, ...] = tuple(_op(k, _ROWS[k]) for k in sorted(PATH_GATED_ONLY))
+#: The `GATE_ONLY` rows: cells in the none and stale states only.
+GATE_ONLY_OPS: tuple[Op, ...] = tuple(_op(k, _ROWS[k]) for k in sorted(GATE_ONLY))
 ALL_OPS: tuple[Op, ...] = OPS + GATE_ONLY_OPS
 #: The grace classes the cells' routes demand: a "fresh" or "stale" world opens a window for each.
 GRACE_CLASSES: tuple[str, ...] = tuple(

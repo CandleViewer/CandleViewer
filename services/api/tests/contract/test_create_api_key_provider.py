@@ -10,6 +10,7 @@ import json
 import os
 import time
 import traceback
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
@@ -18,14 +19,18 @@ import httpx
 import pytest
 import respx
 from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from candleviewer.accounts.key_age import KeyRotationPolicy
 from candleviewer.api.error_redaction import install_error_redaction
 from candleviewer.api.exchange_keys import make_exchange_keys_router
 from candleviewer.api.idempotency import IdempotencyCache
+from candleviewer.api.step_up import required_problem
+from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.step_up import CHALLENGE_WINDOW, StepUpChallenge
 from candleviewer.exchange.bybit.key_info import KEY_INFO_PATH, PROBE_PATH
 from candleviewer.key_import_wiring import KeyImports
 from candleviewer.secrets import CredentialUnavailable, KekUnavailable
@@ -72,6 +77,23 @@ class SessionAuth:
 SESSION = UUID(int=4174)
 
 
+async def granted(_request: Request, _text: ChallengeText) -> None:
+    """A `RequestElevation` whose session holds the `keys` elevation."""
+    return None
+
+
+class Unelevated:
+    """A `RequestElevation` whose session holds none: the challenge, restating `text`."""
+
+    def __init__(self) -> None:
+        self.texts: list[ChallengeText] = []
+
+    async def __call__(self, _request: Request, text: ChallengeText) -> JSONResponse:
+        self.texts.append(text)
+        expires = datetime.now(UTC) + CHALLENGE_WINDOW
+        return required_problem(StepUpChallenge(UUID(int=7), "keys", expires), text)
+
+
 class Route:
     """The router over `world`'s flow (`None`: the fake backend), with `world` as audit sink."""
 
@@ -83,6 +105,7 @@ class Route:
         raises: bool = False,
         resolved: bool = True,
         auth: Any = None,
+        elevation: Any = granted,
     ) -> None:
         self.world, self.replays, app = world, IdempotencyCache(), FastAPI()
         self.imports: Any = KeyImports(world.flow, lambda: asyncio.sleep(0)) if wired else None
@@ -91,6 +114,7 @@ class Route:
             make_exchange_keys_router(
                 self.imports, world, Resolver() if resolved else None, egress_ip=EGRESS,
                 rotation=KeyRotationPolicy(), replays=self.replays, auth=auth,
+                elevation=elevation,
             )
         )  # fmt: skip
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=raises)
@@ -251,6 +275,58 @@ async def test_a_refusal_that_cannot_be_audited_is_a_503_that_imports_nothing(
     assert (body["code"], route.world.sent, route.world.m2.rows) == ("audit_unavailable", [], {})
 
 
+async def test_an_unelevated_owner_is_challenged_restating_the_account_never_the_key() -> None:
+    """#2304 slice 3b: after RBAC, the body and the account's read, the challenge names the
+    account by label, environment and UID and the key's kind; no key material, no key label.
+    Nothing is signed or kept, so the re-send once elevated is a first submission."""
+    route = Route((await booted()).world, elevation=Unelevated())
+    refused = answer(await route.post(label="SENTINEL-label"), 403, "Problem")
+    summary = "Import a trading API key for account 'fx' (demo, UID 1000001)"
+    assert (refused["code"], refused["action_class"], refused["action_summary"]) == (
+        "step_up_required", "keys", summary
+    )  # fmt: skip
+    assert "SENTINEL" not in json.dumps(refused) and route.world.sent == []
+    assert (
+        route.world.audit() == [] and route.replays.get(str(OWNER), f"createApiKey:{_ONCE}") is None
+    )
+    route = Route(route.world)  # the same session, elevated: a first submission
+    answer(await route.post(label="SENTINEL-label"), 201, _CREATED)
+
+
+@pytest.mark.parametrize("who", ["manager", "viewer"])
+async def test_an_unelevated_forbidden_role_is_the_audited_403_never_a_challenge(who: str) -> None:
+    route, gate = await booted(), Unelevated()
+    route = Route(route.world, elevation=gate)
+    body = answer(await route.post(who), 403, "Problem")
+    assert (body["code"], "challenge_id" in body, gate.texts) == ("forbidden", False, [])
+
+
+async def test_an_unelevated_owners_missing_account_is_the_404_never_a_challenge() -> None:
+    """The account is read before the step-up and its refusal recorded, as the import's is."""
+    route, gate = await booted(), Unelevated()
+    route = Route(route.world, elevation=gate)
+    body = answer(await route.post(path=_ELSEWHERE), 404, "Problem")
+    assert (body["code"], gate.texts, route.world.sent) == ("not_found", [], [])
+    assert [r["reason"] for r in route.world.audit()] == ["not_found"]
+    uid = answer(await route.post(once=_TWO, expected_uid="2000002"), 422, _REJECTED)
+    assert (uid["errors"][0]["rule"], gate.texts) == ("expected_uid_mismatch", [])
+    assert len(route.replays) == 0  # refused before the step-up: no key bound (22)
+
+
+async def test_an_unelevated_owners_invalid_body_is_the_422_never_a_challenge() -> None:
+    route, gate = await booted(), Unelevated()
+    route = Route(route.world, elevation=gate)
+    answer(await route.post(api_secret=_SHORT), 422, "KeyRejectedProblem")
+    assert gate.texts == [] and route.world.sent == []
+
+
+async def test_a_route_wired_without_its_step_up_fails_closed_and_signs_nothing() -> None:
+    route = await booted()
+    route = Route(route.world, elevation=None)
+    body = answer(await route.post(), 503, "Problem")
+    assert (body["code"], route.world.sent) == ("service_unavailable", [])
+
+
 async def test_with_no_principal_resolver_every_call_is_a_501() -> None:
     route = Route(World(), resolved=False)
     assert answer(await route.post(), 501, "Problem")["code"] == "not_implemented"
@@ -401,17 +477,22 @@ async def test_a_conflict_with_an_import_still_running_is_never_kept_for_replay(
     )  # fmt: skip
 
 
-@pytest.mark.parametrize(
-    ("state", "status"),
-    [({"account": None}, 404), ({"keys": [key_row(OTHER, "active")]}, 409)],
-    ids=["not_found", "conflict"],
-)
-async def test_a_missing_account_or_a_conflict_with_stored_state_is_replayed(
-    state: dict[str, Any], status: int
-) -> None:
+async def test_a_conflict_with_stored_state_is_replayed() -> None:
     world = World()
-    vars(world).update(state)
+    world.keys = [key_row(OTHER, "active")]
     route = Route(world)
     first, again = await route.post(), await route.post()
-    assert (first.status_code, again.status_code, again.content) == (status, status, first.content)
+    assert (first.status_code, again.status_code, again.content) == (409, 409, first.content)
     assert again.headers["idempotency-replayed"] == "true"
+
+
+async def test_a_missing_account_is_refused_before_the_step_up_and_never_replayed() -> None:
+    """#2304 slice 3b: the account is read before the step-up, and a request refused before it
+    binds no key (22, Binding point), so its re-send is judged afresh, and recorded again."""
+    world = World()
+    world.account = None
+    route = Route(world)
+    first, again = await route.post(), await route.post()
+    assert (first.status_code, again.status_code, again.content) == (404, 404, first.content)
+    assert "idempotency-replayed" not in again.headers
+    assert [r["reason"] for r in world.audit()] == ["not_found", "not_found"]

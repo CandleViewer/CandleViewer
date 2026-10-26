@@ -1,16 +1,19 @@
 """The key routes (E27-T03, #836; #897 and #898 extend them): `createApiKey`, `testApiKey`.
 
-The path-gated `DANGEROUS_ROUTES` guard asks for the `keys` step-up first (SR-025), FastAPI checks
-the closed body (the shared `422`, no value echoed); then the session (401), `keys:manage` (C-12.4,
-`rbac.denied` audited: 403), the required `Idempotency-Key` (400) and the import, which audits.
-The key binds only after those admission checks (#2304). Its fingerprint holds the path, the label,
+FastAPI checks the closed body (the shared `422`, no value echoed); then the session (401),
+`keys:manage` (C-12.4, `rbac.denied` audited: 403), the required `Idempotency-Key` (400), its
+replay, the account the import names (`KeyImport.admit`: `404`, or `422` for another UID, recorded
+as the import's are), and only then the `keys` step-up (SR-025; `HANDLER_GATED_ROUTES`, #2304 slice
+3b), whose challenge names the account and the key's kind, never key material or the key's label.
+Then the import, which audits. The key binds only after those admission checks (22, Binding point),
+so a refusal before the step-up is never kept. Its fingerprint holds the path, the label,
 `read_only`, `expected_uid` and `api_key` as an HMAC under a per-process key, never `api_secret`
-(SR-E27-20). A `201`, `404`, `409` or `422` is kept for replay; a `403`, `502` or `503` never is,
-nor a `409` that clears by itself (an import of the account still running, as E42-T05's), so its
-re-send is a first submission. The fake backend has no import flow: `503 store_unavailable`. An
-import runs to its end in a task of its own (`key_import_wiring.KeyImports`, which the lifespan
-drains), its answer kept as above, so a cancelled request never stops it between M2's store and
-the promotion. No frame here holds the pasted key in clear.
+(SR-E27-20). The import's `201`, `404`, `409` or `422` is kept for replay; a `403`, `502` or `503`
+never is, nor a `409` that clears by itself (an import of the account still running, as E42-T05's),
+so its re-send is a first submission. The fake backend has no import flow: `503 store_unavailable`.
+An import runs to its end in a task of its own (`key_import_wiring.KeyImports`, which the lifespan
+drains), its answer kept as above, so a cancelled request never stops it between M2's store and the
+promotion. No frame here holds the pasted key in clear.
 
 `testApiKey` (slice 2b6) takes no step-up (04 §7.2.2 row 44) and no idempotency key: the session,
 then `keys:read` on the account (`granted_accounts`, a refusal audited as `rbac.denied` and always
@@ -55,6 +58,8 @@ from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import account_reference, import_key_text
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission, Scope
@@ -225,9 +230,11 @@ def make_exchange_keys_router(
     imports: _Imports | None, audit: _Emitter, resolver: SnapshotResolver | None, *,
     egress_ip: str | None, rotation: KeyRotationPolicy, replays: IdempotencyCache | None = None,
     tests: KeyTest | None = None, auth: SessionsLike | None = None,
+    elevation: RequestElevation | None = None,
 ) -> APIRouter:  # fmt: skip
     """The key routes. `resolver=None` (no identity wired): 501 for every call. A refusal's
-    `rbac.denied` names the caller's session, read through `auth` (#4174)."""
+    `rbac.denied` names the caller's session, read through `auth` (#4174); `elevation` demands
+    the import's `keys` step-up (None: 503, nothing imported)."""
     router, running = APIRouter(tags=["exchange-accounts"]), set[tuple[str, str]]()
     replays, mac_key = replays if replays is not None else IdempotencyCache(), os.urandom(32)
 
@@ -235,15 +242,20 @@ def make_exchange_keys_router(
         flow: KeyImport, wanted: KeyImportRequest, actor: Importer, held: tuple[str, str], fp: str
     ) -> Response:
         """The import and its answer, kept for replay as the contract says (module docstring)."""
-        kept = True
         try:
             out = JSONResponse(_created(await flow.run(wanted, actor), egress_ip, rotation), 201)
         except AccountsError as exc:
-            out = _refused(exc, egress_ip)
-            kept = not (isinstance(exc, KeyImportFailed) and exc.transient)
+            return keep(held, fp, _refused(exc, egress_ip), exc)
         finally:
             running.discard(held)
-        if kept and out.status_code in _REPLAYED:
+        return keep(held, fp, out, None)
+
+    def keep(
+        held: tuple[str, str], fp: str, out: JSONResponse, exc: AccountsError | None
+    ) -> JSONResponse:
+        """`out`, kept for replay unless it is transient or of a status never kept."""
+        transient = isinstance(exc, KeyImportFailed) and exc.transient
+        if not transient and out.status_code in _REPLAYED:
             replays.put(*held, StoredResponse(fp, out.status_code, bytes(out.body), None))
         return out
 
@@ -296,6 +308,14 @@ def make_exchange_keys_router(
             read_only=bool(body.read_only),
             expected_uid=body.expected_uid,
         )
+        try:  # the account, read and refused as the import would, before the step-up (#2304)
+            account = await imports.flow.admit(wanted, actor)
+        except AccountsError as exc:  # before the step-up: never kept (22, Binding point)
+            return _refused(exc, egress_ip)
+        named = account_reference(account.label, account.env.value, account.exchange_uid)
+        restated = import_key_text(named, read_only=wanted.read_only)
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            return refused
         running.add((owner, once))
         work = imports.run(answer(imports.flow, wanted, actor, (owner, once), digest))
         return await asyncio.shield(work)

@@ -128,6 +128,37 @@ def revoke_session_text(user_id: object, session_id: object) -> ChallengeText:
     return ChallengeText(f"Revoke session {session_id} of user {user_id}")
 
 
+# -- The key and KEK routes' templates (#2304 slice 3b) -----------------------------------
+# Each route validates its request, then RBAC, then its target's lookup, and only then composes
+# one of these. An account is named by `account_reference`; enums are bare. Key
+# material, a key's label and `expected_uid` are never arguments, so they cannot be restated.
+
+#: `RotateAuditSigningKeyRequest.reason` (22): the only values `rotate_signing_key_text` restates.
+_SIGNING_REASONS = frozenset({"scheduled", "compromise", "unrecoverable"})
+
+
+def import_key_text(account: str, *, read_only: bool) -> ChallengeText:
+    """`createApiKey`: the kind of key and the account (`account_reference`) it is stored for."""
+    kind = "read-only" if read_only else "trading"
+    return ChallengeText(f"Import a {kind} API key for account {account}")
+
+
+def kek_rewrap_text(environment: str, to_version: int) -> ChallengeText:
+    """`rewrapKek`: the environment whose stored keys move, and the KEK version they move to."""
+    if environment not in _ENVIRONMENTS:
+        raise ValueError("a re-wrap names a registered environment")
+    return ChallengeText(
+        f"Re-wrap the {environment} API keys under credential key version {int(to_version)}"
+    )
+
+
+def rotate_signing_key_text(reason: str) -> ChallengeText:
+    """`rotateAuditSigningKey`: the rotation and its contract reason."""
+    if reason not in _SIGNING_REASONS:
+        raise ValueError("a rotation names a contract reason")
+    return ChallengeText(f"Rotate the audit export signing key ({reason})")
+
+
 #: ECMAScript Number.prototype.toString uses plain digits for exponents -6 < n <= 21.
 _ES_PLAIN_LOW, _ES_PLAIN_HIGH = -6, 21
 #: An IEEE-754 double holds every integer up to 2**53 exactly; beyond it a JSON integer is not
@@ -234,11 +265,14 @@ __all__ = [
     "account_reference",
     "canonical_json",
     "disable_user_text",
+    "import_key_text",
+    "kek_rewrap_text",
     "mfa_reset_text",
     "quote_label",
     "raw_request_target",
     "request_fingerprint",
     "revoke_session_text",
+    "rotate_signing_key_text",
     "set_roles_text",
     "typed_target",
     "update_user_text",

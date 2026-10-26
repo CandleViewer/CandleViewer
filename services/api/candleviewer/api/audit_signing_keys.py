@@ -4,12 +4,13 @@ an M2 record's public members, the constant `alg`, the raw public key in base64 
 `verified` mark, validated against the contract's model, so nothing else (a seed, a wrap, a
 request fingerprint) can be served.
 
-The rotation is the Owner's. `CsrfMiddleware` and the step-up middleware (`DANGEROUS_ROUTES`,
-class `keys`, a grace class) answer before the handler, which resolves the caller (none wired:
-`501`; no verified session: `401`), checks the body, read up to 1 KiB, against
+The rotation is the Owner's. `CsrfMiddleware` answers before the handler, which resolves the
+caller (none wired: `501`; no verified session: `401`), checks the body, read up to 1 KiB, against
 `RotateAuditSigningKeyRequest`, and the `Idempotency-Key` as a UUID, missing or malformed (`422`,
 naming no value), then `keys:manage` and the Owner (`403`, audited as `rbac.denied`, which names
-the caller's session as every refusal's does since #4174). `AdminService` has M2 run the rest in
+the caller's session as every refusal's does since #4174), and only then demands the `keys`
+step-up (a grace class; `HANDLER_GATED_ROUTES`, #2304 slice 3b), its challenge restating the
+reason. `AdminService` has M2 run the rest in
 22's order: the stored `200` at any age (`Idempotency-Replayed: true`), `409
 idempotency_key_reuse` or `idempotency_in_flight`; `403 kek_unavailable`; `429 rate_limited`,
 counted under the audit budget as `queryAuditLog`'s, labelled with the Owner's username as its
@@ -41,6 +42,8 @@ from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import request_fingerprint
 from candleviewer.api.recorder_admin import AUDIT_EXPORT, AdminJobStore, JobConflict
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
+from candleviewer.api.step_up import RequestElevation, demand_elevation
+from candleviewer.api.step_up_challenge import rotate_signing_key_text
 from candleviewer.api.users import SnapshotResolver
 from candleviewer.audit.errors import AuditError
 from candleviewer.audit.models import AuditOutcome, Severity
@@ -160,11 +163,13 @@ def make_audit_signing_router(
     budget: AuditRecordBudget,
     jobs: AdminJobStore | None = None,
     auth: _Auth | None = None,
+    elevation: RequestElevation | None = None,
 ) -> APIRouter:
     """`principal_resolver=None` (no identity provider: the fake backend) fails closed with 501.
     `budget` counts a `429`; `jobs` holds the `audit_export` jobs a rotation waits for. A
     refusal's `rbac.denied` names the caller's session, read through `auth` (#4174), which also
-    gives the Owner's username for a `429`'s count."""
+    gives the Owner's username for a `429`'s count. `elevation` demands the `keys` step-up
+    (None: 503, nothing rotates)."""
     router = APIRouter(tags=["admin"])
 
     async def label(user: uuid.UUID) -> str:
@@ -216,6 +221,10 @@ def make_audit_signing_router(
             return _problem("forbidden")
         except (AuditError, RuntimeError):  # RuntimeError: no writer wired (as after `stop()`)
             return _problem("audit_unavailable")  # a denial that cannot be recorded (C-2.9)
+        restated = rotate_signing_key_text(reason)  # after RBAC (#2304)
+        if (refused := await demand_elevation(elevation, request, restated)) is not None:
+            refused.headers.update(_NO_STORE)  # a challenge is an answer of this router too
+            return refused
         user, digest = principal.user_id, request_fingerprint("POST", PATH, raw)
         try:
             made, replayed = await admin.rotate_audit_signing_key(

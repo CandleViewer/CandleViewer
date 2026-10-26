@@ -9,6 +9,7 @@ printable ASCII and unique among the caller's visible objects. The oracle is the
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 import pytest
 from hypothesis import given
@@ -18,7 +19,10 @@ from candleviewer.api._generated.openapi_models import UpdateUserRequest
 from candleviewer.api.step_up_challenge import (
     UPDATE_USER_RENDERED,
     account_reference,
+    import_key_text,
+    kek_rewrap_text,
     quote_label,
+    rotate_signing_key_text,
     typed_target,
     update_user_text,
 )
@@ -114,3 +118,33 @@ def test_update_user_text_renders_allow_listed_values_bare() -> None:
     assert update_user_text("u1", change).action_summary == (
         "Update user u1: display name; mfa_required true; roles manager, viewer; status disabled"
     )
+
+
+def test_key_and_kek_texts_restate_validated_values_only() -> None:
+    """#2304 slice 3b: an account by its reference, enums bare; the pasted key pair,
+    a key label and `expected_uid` are never arguments, so they cannot reach the text."""
+    account = account_reference("Main", "demo", "1001234")
+    assert import_key_text(account, read_only=True).action_summary == (
+        "Import a read-only API key for account 'Main' (demo, UID 1001234)"
+    )
+    assert import_key_text(account, read_only=False).action_summary == (
+        "Import a trading API key for account 'Main' (demo, UID 1001234)"
+    )
+    assert kek_rewrap_text("live", 3).action_summary == (
+        "Re-wrap the live API keys under credential key version 3"
+    )
+    assert rotate_signing_key_text("compromise").action_summary == (
+        "Rotate the audit export signing key (compromise)"
+    )
+    assert kek_rewrap_text("demo", 2).target is None
+
+
+@pytest.mark.parametrize(
+    "build",
+    [lambda: kek_rewrap_text(_SENTINEL, 2), lambda: rotate_signing_key_text(_SENTINEL)],
+    ids=["kek-environment", "signing-reason"],
+)
+def test_enum_texts_refuse_a_value_outside_their_enum(build: Callable[[], object]) -> None:
+    """Fail closed: a value the contract's enum lacks is a defect, never restated."""
+    with pytest.raises(ValueError):
+        build()
