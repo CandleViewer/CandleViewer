@@ -89,17 +89,36 @@ export const AutoHideCountdown: Story = {
 
 /**
  * Expiring, then the re-mask: with the 3 s floor the last 2 s arrive after one second, "API secret will
- * hide in 2 seconds" is spoken once, and at 3 s the mask returns with focus kept on the toggle.
+ * hide in 2 seconds" is spoken once, and at 3 s the mask returns with focus kept on the toggle. The
+ * `expiring` state and CMP-035's announcement are two timers that land within a tick of each other, in
+ * either order: the play records every status text from before the press and waits for both together.
  */
 export const Expiring: Story = {
   args: { autoHideMs: 3000 },
   play: async ({ canvasElement, args }) => {
-    await reveal(canvasElement);
-    await waitFor(() => expect(stateOf(canvasElement)).toBe("expiring"), { timeout: 2500 });
-    await expect(within(canvasElement).getByRole("status")).toHaveTextContent(
-      "API secret will hide in 2 seconds",
-    );
-    await waitFor(() => expect(stateOf(canvasElement)).toBe("masked"), { timeout: 3500 });
+    const warning = "API secret will hide in 2 seconds";
+    const spoken: string[] = [];
+    const observer = new MutationObserver(() => {
+      for (const status of within(canvasElement).queryAllByRole("status")) {
+        const text = status.textContent ?? "";
+        if (text !== "" && spoken.at(-1) !== text) spoken.push(text);
+      }
+    });
+    observer.observe(canvasElement, { childList: true, characterData: true, subtree: true });
+    try {
+      await reveal(canvasElement);
+      await waitFor(
+        () => {
+          expect(stateOf(canvasElement)).toBe("expiring");
+          expect(spoken).toEqual([warning]);
+        },
+        { timeout: 2500 },
+      );
+      await waitFor(() => expect(stateOf(canvasElement)).toBe("masked"), { timeout: 3500 });
+    } finally {
+      observer.disconnect();
+    }
+    await expect(spoken).toEqual([warning]);
     await expect(toggle(canvasElement, "Show")).toHaveFocus();
     await expect(args.onToggleReveal).toHaveBeenLastCalledWith(false);
     await expect(document.body.innerHTML).not.toContain(VALUE);

@@ -94,6 +94,12 @@ const expectMasked = (host: HTMLElement): void => {
   expectValueAbsent();
 };
 
+/** A spy on every console method, so a test can prove nothing at all was logged. */
+const spyOnConsole = (): ReturnType<typeof vi.spyOn>[] =>
+  Object.keys(console)
+    .filter((key) => typeof (console as unknown as Record<string, unknown>)[key] === "function")
+    .map((key) => vi.spyOn(console, key as "log"));
+
 /** Every text node of the document holding the value. */
 const textNodesWithValue = (): Text[] => {
   const found: Text[] = [];
@@ -443,30 +449,31 @@ describe("MaskedValue (CMP-034)", () => {
   });
 
   it("maskAllValues() from inside an effect: no warning, masked after a microtask", async () => {
-    const methods = Object.keys(console).filter(
-      (key) => typeof (console as unknown as Record<string, unknown>)[key] === "function",
-    ) as (keyof Console)[];
-    const spies = methods.map((m) => vi.spyOn(console, m as "log"));
-    function Router({ route }: { route: string }): JSX.Element {
+    let navigate: (route: string) => void = () => undefined;
+    function Router(): JSX.Element {
+      const [route, setRoute] = useState("/keys");
+      navigate = setRoute;
       useEffect(() => {
         if (route === "/next") maskAllValues();
       }, [route]);
       return <MaskedValue value={VALUE} label={LABEL} />;
     }
-    const r = createRoot(document.body.appendChild(document.createElement("div")));
-    await act(async () => r.render(<Router route="/keys" />));
-    const host = document.body.lastElementChild as HTMLElement;
+    // mount() hands back this test's own container (a portalled echo may sit after it in <body>) and
+    // unmounts it after the test, pass or fail.
+    const host = await mount(<Router />);
     await press(toggle(host));
-    await act(async () => {
-      r.render(<Router route="/next" />);
-    });
-    await act(async () => {
-      await Promise.resolve();
-    });
-    expectMasked(host);
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
-    spies.forEach((spy) => spy.mockRestore());
-    await act(async () => r.unmount());
+    expect(stateOf(host)).toBe("revealed");
+    const spies = spyOnConsole();
+    try {
+      await act(async () => navigate("/next"));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expectMasked(host);
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
   });
 
   it("maskAllValues() lands after the caller returns, not before", async () => {
@@ -532,6 +539,33 @@ describe("MaskedValue (CMP-034)", () => {
     expect(states()).toEqual(["masked", "masked"]);
     expectValueAbsent();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("slice 8 echo: the toggle and Copy echo their names only, never the value", async () => {
+    const host = await render({ copyable: true });
+    const echoes = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('[role="tooltip"]'),
+    ];
+    const shownEcho = (): string[] =>
+      echoes()
+        .filter((el) => !el.hidden)
+        .map((el) => el.textContent ?? "");
+    await act(async () => toggle(host).focus());
+    expect(shownEcho()).toEqual(["Show API secret"]);
+    expectValueAbsent();
+    await press(toggle(host));
+    expect(shownEcho()).toEqual(["Hide API secret"]);
+    await act(async () => copyButton(host).focus());
+    expect(shownEcho()).toEqual(["Copy API secret"]);
+    for (const el of echoes()) {
+      expect(el).toHaveAttribute("aria-hidden", "true");
+      expect(el.textContent).not.toContain(VALUE);
+      for (const attr of el.attributes) expect(attr.value).not.toContain(VALUE);
+    }
+    await advance(MASKED_VALUE_AUTO_HIDE_MS);
+    expect(toggle(host)).toHaveFocus();
+    expect(shownEcho()).toEqual(["Show API secret"]);
+    expectMasked(host);
   });
 
   it("S7: unmounting while revealed drops the value, its timers, listeners and registry slot", async () => {
@@ -630,21 +664,25 @@ describe("MaskedValue (CMP-034)", () => {
   });
 
   it("S5: nothing is logged over the whole lifecycle, a refused copy included", async () => {
-    const methods = Object.keys(console).filter(
-      (key) => typeof (console as unknown as Record<string, unknown>)[key] === "function",
-    ) as (keyof Console)[];
-    const spies = methods.map((m) => vi.spyOn(console, m as "log"));
-    const host = await render({ copyable: true });
-    await press(toggle(host));
-    await press(copyButton(host));
-    writeText.mockRejectedValue(new Error(VALUE));
-    await advance(2000);
-    await press(copyButton(host));
-    await advance(MASKED_VALUE_AUTO_HIDE_MS);
-    await press(toggle(host));
-    await fire(window, "blur");
-    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
-    expect(spies.length).toBeGreaterThan(5);
-    spies.forEach((spy) => spy.mockRestore());
+    const spies = spyOnConsole();
+    try {
+      const host = await render({ copyable: true });
+      await press(toggle(host));
+      await press(copyButton(host));
+      writeText.mockRejectedValue(new Error(VALUE));
+      await advance(2000);
+      await press(copyButton(host));
+      await advance(MASKED_VALUE_AUTO_HIDE_MS);
+      await press(toggle(host));
+      // Keyboard focus on each control: the slice 8 name echo shows and hides inside act.
+      await act(async () => toggle(host).focus());
+      await act(async () => copyButton(host).focus());
+      await fire(window, "blur");
+      await act(async () => toggle(host).blur());
+      for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+      expect(spies.length).toBeGreaterThan(5);
+    } finally {
+      spies.forEach((spy) => spy.mockRestore());
+    }
   });
 });
