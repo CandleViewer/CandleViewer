@@ -12,7 +12,7 @@ import re
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 import yaml
@@ -597,20 +597,32 @@ def test_the_preview_is_rate_limited_per_user_and_never_idempotency_keyed() -> N
         "figures are not cached is `blocked` with `figure_unknown`.",
     ):
         assert sentence in text, sentence
+    rule_2 = _words(_INTERNAL_DOC.split("### 9.4 ", 1)[1].split("### 9.5 ", 1)[0])  # its rule 2
+    assert "never refreshes: it reads caches only, within the order path's figures TTL" in rule_2
 
 
 def test_a_preview_leg_states_its_status_and_a_closed_reason() -> None:
     """SCR-061 (a row's state in text; an excluded row always states its reason), AC 6, #904's
     C-37: each leg's `status`, and a code for every outcome of the sizer, the request's own skip,
     the risk gate's interim and each readiness reason a targeted member can have (a ticket never
-    targets a disabled member). The code's enums are read, never a copied list (C-16.5)."""
+    targets a disabled member). The code's enums are read, never a copied list (C-16.5), and so
+    is the take-profit bound. The codes are open-ended for readers, read by the closed `status`."""
     preview = _SCHEMAS["TradeGroupPreview"]
+    assert "is the preview's own, not `TradeGroupLeg.status`" in _words(preview["description"])
     leg = preview["properties"]["legs"]["items"]
     assert leg["required"] == ["exchange_account_id", "would_submit", "status"]
     status = leg["properties"]["status"]
     assert status["enum"] == ["ready", "warn", "skipped", "blocked"]
     assert "`would_submit` is true exactly for `ready` and `warn`" in _words(status["description"])
-    assert leg["properties"]["warnings"]["items"]["enum"] == ["stop_fallback"]
+    assert "Open-ended" not in status["description"]
+    warnings = leg["properties"]["warnings"]
+    assert warnings["items"]["enum"] == ["stop_fallback"]
+    assert (
+        "`stop_fallback`: its stop uses the profile's `fallback_sl_offset_pct`, as no ATR reading "
+        "served (SR-E28-12)." in _words(warnings["description"])
+    )
+    ladder = _SCHEMAS["AccountProfileInput"]["properties"]["take_profit_ladder"]
+    assert leg["properties"]["take_profits"]["maxItems"] == ladder["maxItems"]
     rung = leg["properties"]["take_profits"]["items"]
     assert (rung["required"], rung["properties"]) == (
         ["price", "qty"],
@@ -618,7 +630,19 @@ def test_a_preview_leg_states_its_status_and_a_closed_reason() -> None:
     )
     fee = preview["properties"]["totals"]["properties"]["total_estimated_fee_usd"]
     assert fee["$ref"] == "#/components/schemas/Decimal"
-    codes = set(leg["properties"]["rejection"]["properties"]["code"]["enum"])
+    summed = "The `resolved.estimated_fee_usd` of the legs that would be submitted, summed"
+    assert summed in _words(fee["description"])
+    code = leg["properties"]["rejection"]["properties"]["code"]
+    for sentence in (
+        "`skipped` and the sizer's skips (24-internal-schemas.md section 9.3.4) mark a `skipped` "
+        "leg, and every other code a `blocked` one, a member's readiness reason "
+        "(`TradeGroupReadiness`) included.",
+        "**Open-ended for readers:** clients must tolerate values they do not know, so adding a "
+        "code is an additive change (C-6.3); a code a client does not know is read by the leg's "
+        "`status`.",
+    ):
+        assert sentence in _words(code["description"]), sentence
+    codes = set(code["enum"])
     sizer = {reason.value for reason in (*SkipReason, *FailReason)}
     readiness = set(_READINESS_REASONS) - {"member_disabled"}
     assert sizer | readiness | {"skipped", RiskRefusal.RISK_STATE_UNAVAILABLE.value} <= codes
@@ -640,7 +664,8 @@ def test_a_preview_leg_states_its_status_and_a_closed_reason() -> None:
 def test_definition_readiness_is_read_only_and_outside_the_etag() -> None:
     """AC 4 ("2 of 3 ready", each member's reason): derived on each read and never stored, so no
     write body and no `ETag` carries it, and a member's health never fails an `If-Match`. Closed,
-    as the definition is (SR-E28-21)."""
+    as the definition is (SR-E28-21), by its property sets too, here and in the generated models,
+    so no text member reaches a reader; its reasons are open-ended for readers, read by `ready`."""
     readiness = _SCHEMAS["TradeGroupDefinition"]["properties"]["readiness"]
     assert readiness["readOnly"] is True and readiness["$ref"].endswith("/TradeGroupReadiness")
     described = readiness["description"]
@@ -657,7 +682,22 @@ def test_definition_readiness_is_read_only_and_outside_the_etag() -> None:
         ["exchange_account_id", "ready", "reason"],
     )
     assert schema["additionalProperties"] is False and member["additionalProperties"] is False
-    assert member["properties"]["reason"]["enum"] == [*_READINESS_REASONS, None]
+    fields = {"ready", "total", "members"}, {"exchange_account_id", "ready", "reason"}
+    assert (set(schema["properties"]), set(member["properties"])) == fields
+    (model,) = get_args(rest.TradeGroupReadiness.model_fields["members"].annotation)
+    assert (set(rest.TradeGroupReadiness.model_fields), set(model.model_fields)) == fields
+    derived = "derived on each read from the state the server holds, with no exchange call"
+    assert derived in _words(schema["description"])
+    assert schema["properties"]["total"]["description"] == "The enabled members."
+    ceiling = _SCHEMAS["TradeGroupDefinitionInput"]["properties"]["members"]["maxItems"]
+    assert schema["properties"]["members"]["maxItems"] == ceiling
+    reason = member["properties"]["reason"]
+    assert reason["enum"] == [*_READINESS_REASONS, None]
+    assert (
+        "**Open-ended for readers:** clients must tolerate values they do not know, so adding a "
+        "reason is an additive change (C-6.3); a reason a client does not know is read by "
+        "`ready: false`." in _words(reason["description"])
+    )
     ready, b_failing = {"ready": True, "reason": None}, {"ready": False, "reason": "key_invalid"}
     members: list[dict[str, Any]] = [dict(ready), b_failing, dict(ready)]  # E28-B's check failed
     for n, item in enumerate(members):
@@ -677,6 +717,11 @@ def test_no_common_symbol_is_refused_with_scr_062s_sentence() -> None:
         "Members whose bound profiles share no allowed symbol are refused with "
         f'`400 validation_failed`, `rule: no_common_symbol`, and `detail` "{sentence}"' in create
     )
+    assert (
+        "The allowed symbols are each member's bound profile's `allowed_symbols` (every listed "
+        "symbol under `all_symbols`) less its `blocked_symbols`, among the listed USDT linear "
+        "perpetuals." in create
+    )
     assert "A member with no bound profile allows none, and disabled members count." in create
     update = _words(_OPS["updateTradeGroupDefinition"]["description"])
     assert update.startswith("Under `createTradeGroupDefinition`'s rules")
@@ -685,13 +730,14 @@ def test_no_common_symbol_is_refused_with_scr_062s_sentence() -> None:
 @pytest.mark.parametrize("operation", ["previewTradeGroup", "createTradeGroup"])
 def test_a_leg_outside_the_servers_environment_refuses_the_whole_request(operation: str) -> None:
     """SR-E28-16, C-2.11: the process environment is checked again at the preview and the send,
-    one `errors[]` entry per offending leg, as a definition's members are."""
+    one `errors[]` entry per offending leg, as a definition's members are, in the words and the
+    place of the out-of-scope profile's `404`."""
     text = _words(_OPS[operation]["description"])
     assert (
         "A leg whose account is outside this server's environment, or legs in two environments, "
         "refuse the whole request with `400 validation_failed`, one `errors[]` entry per such "
-        "leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the account-scope "
-        "check." in text
+        "leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided at validation, after the "
+        "account-scope check and before any leg is sized." in text
     )
     assert _OPS[operation]["responses"]["400"] == _ref("responses", "BadRequest")
     assert _CODES["validation_failed"]["status"] == 400
@@ -737,6 +783,23 @@ def test_the_definition_and_preview_audit_names_wait_for_their_slices() -> None:
     assert "`trade_group.created` (not registered yet, E34)" in vocabulary
 
 
+@pytest.mark.parametrize("operation", ["listTradeGroups", "getTradeGroup"])
+def test_a_group_read_serves_only_whole_groups_and_private_fields_to_owner_and_creator(
+    operation: str,
+) -> None:
+    """SR-E28-21 on the REST reads, as on the topic: a group with a leg outside the caller's
+    grants does not exist for the caller, and only the Owner and its creator read its creator,
+    its note and its idempotency reference."""
+    text = _words(_OPS[operation]["description"])
+    for sentence in (
+        "A group is served only when every leg's account is in the caller's grants; any other is "
+        "left out of the list and is `404` on a read, as if it did not exist (SR-E28-21).",
+        "`created_by`, `note` and `client_group_ref` are served only to the Owner and the group's "
+        "creator.",
+    ):
+        assert sentence in text, sentence
+
+
 def test_trade_groups_frames_cover_every_leg_or_none() -> None:
     """SR-E28-21, AC 9 (23 section 15.5): a frame carries a group only when the subscription's
     effective accounts hold every leg's, never in part and never with its `client_group_ref`."""
@@ -747,9 +810,11 @@ def test_trade_groups_frames_cover_every_leg_or_none() -> None:
         "leg's account (SR-E28-21).",
         "It is never sent in part: a group the caller may not see whole is never sent, as if it "
         "did not exist.",
-        "`client_group_ref` is not sent on this topic (SR-E28-21); `getTradeGroup` serves it to "
-        "the Owner and the creator.",
-        "a value outside `TradeGroupStatus` matches nothing",
+        "`client_group_ref` stays declared in the `v: 1` schema and is never populated on this "
+        "topic (SR-E28-21); `listTradeGroups` and `getTradeGroup` serve it only to the Owner and "
+        "the group's creator.",
+        "The `status` option keeps a frame whose group status, before or after the change, is one "
+        "it lists; a value outside `TradeGroupStatus` matches nothing.",
         "The snapshot holds the active groups (`submitting`, `partially_open`, `open`, `closing`) "
         "with every leg.",
         "A delta holds `id`, `status`, `updated_at_ms`, `totals` and the changed legs only.",

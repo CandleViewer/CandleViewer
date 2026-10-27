@@ -3862,9 +3862,10 @@ in a list cut to the connection's grants (an `account_notice`, a kill switch, §
 
 **Who receives a group (E28-T05).** A group reaches a subscription only when its effective
 `exchange_account_ids` hold every leg's account (SR-E28-21). It is never sent in part: a group the
-caller may not see whole is never sent, as if it did not exist. `client_group_ref` is not sent on
-this topic (SR-E28-21); `getTradeGroup` serves it to the Owner and the creator. The `status` option
-keeps a frame whose group status, before or after the change, is one it lists; a value outside
+caller may not see whole is never sent, as if it did not exist. `client_group_ref` stays declared in
+the `v: 1` schema and is never populated on this topic (SR-E28-21); `listTradeGroups` and
+`getTradeGroup` serve it only to the Owner and the group's creator. The `status` option keeps a
+frame whose group status, before or after the change, is one it lists; a value outside
 `TradeGroupStatus` matches nothing.
 
 **Snapshot and deltas (E28-T05).** The snapshot holds the active groups (`submitting`,

@@ -6632,8 +6632,11 @@ paths:
       operationId: listTradeGroups
       summary: List trade groups (multi-account fan-outs)
       description: >
-        A malformed, foreign or expired `cursor` is `400 invalid_cursor`, and `from` after `to` is
-        `400 invalid_time_range`.
+        A group is served only when every leg's account is in the caller's grants; any other is
+        left out of the list and is `404` on a read, as if it did not exist (SR-E28-21).
+        `created_by`, `note` and `client_group_ref` are served only to the Owner and the group's
+        creator. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, and `from` after
+        `to` is `400 invalid_time_range`.
       parameters:
         - $ref: "#/components/parameters/Cursor"
         - $ref: "#/components/parameters/Limit"
@@ -6741,8 +6744,8 @@ paths:
 
         **Environment.** A leg whose account is outside this server's environment, or legs in two
         environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry
-        per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the
-        account-scope check.
+        per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided at validation,
+        after the account-scope check and before any leg is sized.
 
         **Idempotency.** The group keeps the request's `Idempotency-Key` as its `client_group_ref`
         with the request's fingerprint, unique per creator (24-internal-schemas.md section 8.3
@@ -6921,6 +6924,11 @@ paths:
       tags: [trading]
       operationId: getTradeGroup
       summary: Get a trade group with all legs and resolved parameters
+      description: >
+        A group is served only when every leg's account is in the caller's grants; any other is
+        left out of the list and is `404` on a read, as if it did not exist (SR-E28-21).
+        `created_by`, `note` and `client_group_ref` are served only to the Owner and the group's
+        creator.
       x-rbac: { permissions: [orders:read], scope: granted_accounts }
       responses:
         "200":
@@ -13197,9 +13205,10 @@ paths:
         figures are not cached is `blocked` with `figure_unknown`. A leg whose account is outside
         this server's environment, or legs in two environments, refuse the whole request with
         `400 validation_failed`, one `errors[]` entry per such leg, `rule: environment_mismatch`
-        (SR-E28-16, C-2.11), decided after the account-scope check. While the
-        `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no
-        `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
+        (SR-E28-16, C-2.11), decided at validation, after the account-scope check and before any
+        leg is sized. While the `trading.trade_groups` flag is off this operation answers
+        `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled`
+        is off.
       x-rbac: { permissions: [orders:write], scope: granted_accounts }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -19135,7 +19144,10 @@ components:
                   ]
                 description: >
                   Null when the member is ready, else why it is not; `member_disabled` is a member
-                  the definition disables, which `total` does not count.
+                  the definition disables, which `total` does not count. **Open-ended for
+                  readers:** clients must tolerate values they do not know, so adding a reason is
+                  an additive change (C-6.3); a reason a client does not know is read by
+                  `ready: false`.
     TradeGroupLegInput:
       type: object
       additionalProperties: false
@@ -22042,9 +22054,10 @@ components:
       type: object
       required: [legs, totals]
       description: >
-        What `POST /trade-groups` would do, without doing it. Mirrors the resolved leg shape
-        used in `TradeGroup.legs` so the ticket renders the preview and the result with one
-        component.
+        What `POST /trade-groups` would do, without doing it. Each leg carries the `resolved`
+        parameters a `TradeGroupLeg` carries, so the ticket renders the preview and the result
+        with one component. A preview leg's `status` (`ready`, `warn`, `skipped`, `blocked`) is
+        the preview's own, not `TradeGroupLeg.status`.
       properties:
         legs:
           type: array
@@ -22128,6 +22141,10 @@ components:
                       - `account_unhealthy`: its account fails the health check.
                       - `trading_disabled`: order entry is closed for its account.
                       - `risk_state_unavailable`: the risk gate has no state to judge it by.
+
+                      **Open-ended for readers:** clients must tolerate values they do not know,
+                      so adding a code is an additive change (C-6.3); a code a client does not
+                      know is read by the leg's `status`.
                   message: { type: string }
         totals:
           type: object
