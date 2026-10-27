@@ -21,20 +21,23 @@ tokens the spec binds, resolved or MISSING; (5) the spec's structure counts.
 The check (the default run, and ``--check SPEC [--pr-body FILE]``) exits 1 on any FAIL:
 - markers: every ``<!-- audit:NAME=VALUE -->`` equals the derived value; unknown or missing = FAIL;
 - numbers: every quoted number in a registered context (counts, bands, ratios, the AC6 and AC2
-  sizes, the minimums, the refusal sentences) equals the tool's; every section 3.1 row is
-  re-derived from its size (smaller side, 25 %, band, centre, zones); every ``W x H`` size and
-  every two-decimal ratio of the spec and the handoff is a value the tool derives;
+  sizes, the minimums, the refusal sentences) equals the tool's, and every site of a two-site
+  context must be found; every section 3.1 row is re-derived from its size (smaller side, 25 %,
+  band, centre, zones) and every section 12 cell from its carrier and theme; each placed refusal
+  sentence is the tool's for its drop; every other ``W x H`` size and two-decimal ratio of the
+  spec and the handoff is a value the tool derives;
 - frames (A2, keyed on frame ids): every frame row of sections 3-9 draws its own carriers (the lit
   zone, the ghost, the hatch where a drop is refused, the stage-one target mark), names its ``Esc``
   exit where it is a drag or move-mode frame, and carries its one polite string; every frame row and
   every section-0 board row is scanned for chords neither in ``keymap.json`` nor PROPOSED in their
-  clause; every parity row has a keyboard path; every key-table row leads with existing (in the
-  keymap) or PROPOSED / RULED / CARRIED and calls no key shipped; the move-mode bar is
-  ``aria-atomic="false"``;
-- T2 (A1), per frame: the text a ``move-to-submenu`` or ``dirty-save-view-as`` id owns carries the
-  CMP-019 lock, its key and ``aria-disabled``; the text any other frame id owns on the lines of
-  sections 0 and 3-9 (or no frame id) carries no lock, CMP-079 or ``aria-disabled``, a shared
-  line included; no frame clause gates ``Esc``; the one T2 statement is present;
+  clause; ``Ctrl+Z`` is only ever ``chart.undo`` there; every parity row has a keyboard path;
+  every key-table row leads with existing (in the keymap) or PROPOSED / RULED / CARRIED and calls
+  no key shipped; the move-mode bar is ``aria-atomic="false"``;
+- T2 (A1), per frame: the text a ``move-to-submenu`` or ``dirty-save-view-as`` id owns (its
+  parenthesis, else its sentence) carries the CMP-019 lock, its key and ``aria-disabled``; the
+  text any other frame id owns on the lines of sections 0 and 3-9 (or no frame id) carries no
+  lock, CMP-079 or ``aria-disabled``, a shared line included; no frame clause gates ``Esc``; the
+  one T2 statement is present;
 - exits (A3), hygiene (no local path, no design-tool host), and with ``--pr-body`` no closing
   keyword.
 
@@ -993,7 +996,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         "mover's side",
         (
             r"leaves both (\d+) wide, under the DOM's (\d+) and the Tape's (\d+)"
-            r"|at (\d+) px; on the right side the Tape's (\d+) breaks"
+            r"|at (\d+) px; on either side the Tape's (\d+) breaks"
         ),
         ("small_dom_side_w", "min_w_dom", "min_w_tape", "small_dom_side_w", "min_w_tape"),
     ),
@@ -1101,24 +1104,75 @@ def check_markers(text: str, m: dict[str, Any]) -> list[str]:
     return out
 
 
+def alternatives(pattern: str) -> list[str]:
+    """m-12: the top-level alternatives of a context's pattern, one per site."""
+    out: list[str] = []
+    depth, start, i, in_class = 0, 0, 0, False
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "\\":
+            i += 2
+            continue
+        if in_class:
+            in_class = c != "]"
+        elif c == "[":
+            in_class = True
+        elif c == "(":
+            depth += 1
+        elif c == ")":
+            depth -= 1
+        elif c == "|" and depth == 0:
+            out.append(pattern[start:i])
+            start = i + 1
+        i += 1
+    out.append(pattern[start:])
+    return out
+
+
+def line_of(text: str, pos: int) -> str:
+    end = text.find("\n", pos)
+    return text[text.rfind("\n", 0, pos) + 1 : end if end >= 0 else len(text)]
+
+
+def refusal_sites(d: dict[str, Any]) -> tuple[tuple[str, str, str], ...]:
+    """m-13: (label, pattern with the sentence as group 1, the tool's sentence) per refusal site."""
+    side = d["geometry"]["small_chooser"]["dom:left"]["text"].replace("Can't dock", "Can't drop")
+    drop = frame_polite(d)["move-invalid"]
+    return (
+        ("§3.2 DOM beside the small Tape", r'are refused \("([^"]+)" at \d+ px', side),
+        ("K4 bar second line", r'its second line reads "([^"]+)"', drop),
+        ("move-target-minimum bar second line", r'the bar\'s second line "([^"]+)" as K4', side),
+        ("AN-4", r'\| AN-4 [^"]*"([^"]+)"', drop),
+    )
+
+
 def check_numbers(spec: str, handoff: str, d: dict[str, Any]) -> list[str]:
     out: list[str] = []
     m = d["markers"]
     prose = "\n".join(r for r in spec.split("\n") if not r.startswith("<!--"))
     covered: set[tuple[int, int]] = set()
     for label, pattern, names in CONTEXTS:
-        hits = list(re.finditer(pattern, prose))
-        if not hits:
-            out.append(f"FAIL number context vanished: {label}")
-        for hit in hits:
-            for i, name in enumerate(names, start=1):
-                if hit.group(i) is None:
-                    continue
-                covered.add(hit.span(i))
-                if number_of(hit.group(i)) != str(m[name]):
-                    out.append(f"FAIL {label}: the spec says {hit.group(i)}, the tool {m[name]}")
+        sites = alternatives(pattern)
+        first = 0
+        for k, site in enumerate(sites, start=1):
+            group_names = names[first : first + re.compile(site).groups]
+            first += len(group_names)
+            hits = list(re.finditer(site, prose))
+            if not hits:
+                where = f" (site {k} of {len(sites)})" if len(sites) > 1 else ""
+                out.append(f"FAIL number context vanished: {label}{where}")
+            for hit in hits:
+                for i, name in enumerate(group_names, start=1):
+                    if hit.group(i) is None:
+                        continue
+                    covered.add(hit.span(i))
+                    if number_of(hit.group(i)) != str(m[name]):
+                        out.append(
+                            f"FAIL {label}: the spec says {hit.group(i)}, the tool {m[name]}"
+                        )
     dims = allowed_dims(d)
     ratios = allowed_ratios(d)
+    matrix = {"| " + "|".join(r) for r in contrast_table(spec)}
     for label, text in (("spec", prose), ("handoff", handoff)):
         for hit in DIM.finditer(text):
             if label == "spec" and hit.span(1) in covered:
@@ -1128,13 +1182,58 @@ def check_numbers(spec: str, handoff: str, d: dict[str, Any]) -> list[str]:
         for hit in RATIO.finditer(text):
             if label == "spec" and hit.span(1) in covered:
                 continue
+            if label == "spec" and norm_row(line_of(text, hit.start())) in matrix:
+                continue  # the §12 matrix is checked cell by cell (check_contrast_table)
             if hit.group(1) not in ratios:
                 out.append(f"FAIL {label}: ratio {hit.group(1)} is not a ratio the tool derives")
     out += check_band_table(spec)
+    out += check_contrast_table(spec, d)
     texts = refusal_texts(d)
     for hit in REFUSAL_SENTENCE.finditer(prose):
         if "…" not in hit.group(0) and "{" not in hit.group(0) and hit.group(0) not in texts:
             out.append(f"FAIL refusal sentence not the tool's: {hit.group(0)!r}")
+    for label, pattern, want in refusal_sites(d):
+        hits = list(re.finditer(pattern, prose))
+        if not hits:
+            out.append(f"FAIL number context vanished: the {label} refusal")
+        for hit in hits:
+            # a sentence that is no tool sentence already failed above; this catches a swap
+            if hit.group(1) in texts and hit.group(1) != want:
+                out.append(f"FAIL {label}: the spec says {hit.group(1)!r}, the tool {want!r}")
+    return out
+
+
+def norm_row(row: str) -> str:
+    return "| " + "|".join(c.strip() for c in row.strip().strip("|").split("|"))
+
+
+def contrast_table(spec: str) -> list[list[str]]:
+    return table_after(section(spec, "## 12. ", "## 13. "), "Carrier (tone A · tone B)")
+
+
+def check_contrast_table(spec: str, d: dict[str, Any]) -> list[str]:
+    """m-13: each §12 cell equals its own carrier's and theme's figures, so a swap fails."""
+    out: list[str] = []
+    rows = contrast_table(spec)
+    tool = d["contrast"]["rows"]
+    if len(rows) != len(CARRIERS):
+        out.append(f"FAIL §12 matrix has {len(rows)} rows, the tool {len(CARRIERS)}")
+        return out
+    for i, row in enumerate(rows):
+        for j, theme in enumerate(THEMES, start=1):
+            r = next(t for t in tool if t["theme"] == theme and t["element"] == CARRIERS[i][0])
+            if "over" in r:
+                o = r["over"]
+                want = (
+                    f"{r['a_vs_b']:.2f} ({r['a_vs_b_grey']:.2f}) · "
+                    f"{o['darkest']['best']:.2f} ({o['darkest']['grey']:.2f}) · "
+                    f"{o['lightest']['best']:.2f} ({o['lightest']['grey']:.2f})"
+                )
+            else:
+                want = f"{r['ratio']:.2f} ({r['grey']:.2f})"
+            have = row[j] if j < len(row) else ""
+            if have != want:
+                out.append(f"FAIL §12 row {i + 1} {theme}: the spec says {have}, the tool {want}")
     return out
 
 
@@ -1231,6 +1330,8 @@ T2_RULE = (
 )
 LOCKISH = re.compile(r"CMP-019|lock glyph|`lock`|aria-disabled|CMP-079")
 FRAME_ID = re.compile(r"`SCR-021/([a-z0-9-]+)`")
+SEGMENT_END = re.compile(r"\.(?= +[A-Z*`\"“(])")  # m-11: the end of a sentence
+CTRL_Z = "`Ctrl+Z`"  # n-7: only ever `chart.undo` in a clause that names it (D04-D-12)
 # A3: a clause naming `Esc` with a gating word must say "never" (P8 "`Esc` is gated" is a FAIL).
 ESC_GATED = re.compile(r"\bEsc\b[^;|.]*\b(?:gated|locked|disabled|blocked|T2)\b")
 CHORD = re.compile(r"`((?:(?:Ctrl|Alt|Shift|Meta)\+)+[^`\s]+|F\d{1,2})`")
@@ -1341,6 +1442,10 @@ def check_frames(spec: str, d: dict[str, Any]) -> list[str]:
     return out
 
 
+def frame_body(spec: str) -> str:
+    return section(spec, "## 3. ", "## 10. ")
+
+
 def frame_lines(spec: str) -> list[tuple[str, str]]:
     """(where, line) for every line of section 0 and sections 3-9 that names a frame."""
     out: list[tuple[str, str]] = []
@@ -1362,13 +1467,17 @@ def frame_segments(line: str) -> list[tuple[str, int, int]]:
     """(frame id, start, end): the text each frame id on a line owns (M-5, per frame, not per line).
 
     A frame owns the parenthesis that directly follows its id, else the text up to the next frame
-    id or the line's end; text outside every segment (a board's lead-in, its trailing cells) is
-    owned by no frame, so a lock there fails like a lock on any non-T2 frame.
+    id, the end of its sentence (m-11) or the line's end; text outside every
+    segment (a board's lead-in, its trailing cells, a sentence appended after it) is owned by no
+    frame, so a lock there fails like a lock on any non-T2 frame.
     """
     hits = list(FRAME_ID.finditer(line))
     out: list[tuple[str, int, int]] = []
     for i, hit in enumerate(hits):
         end = hits[i + 1].start() if i + 1 < len(hits) else len(line)
+        stop = SEGMENT_END.search(line, hit.end(), end)
+        if stop:
+            end = stop.start() + 1
         j = hit.end()
         while j < end and line[j] == " ":
             j += 1
@@ -1410,6 +1519,13 @@ def check_t2_and_chords(spec: str, bindings: set[str]) -> list[str]:
                 break
         for token in chord_unmarked(line, bindings):
             out.append(f"FAIL {where}: chord `{token}` is not in keymap.json and not PROPOSED")
+    for where, body in (("§0", section(spec, "## 0. ", "## 1. ")), ("§3-§9", frame_body(spec))):
+        for line in body.split("\n"):
+            if line.startswith("#"):
+                continue
+            for clause in re.split(r"; |\. | \| ", line):
+                if CTRL_Z in clause and "`chart.undo`" not in clause:
+                    out.append(f"FAIL {where}: `Ctrl+Z` drawn as something other than chart.undo")
     rule = next((r for r in spec.split("\n") if r.startswith("**The rule, once.**")), "")
     for needle in T2_RULE:
         if needle not in rule:
@@ -1468,8 +1584,8 @@ def evaluate(spec: str, handoff: str) -> tuple[list[str], dict[str, Any]]:
         problems.append(f"FAIL contrast: {d['contrast']['failed']} gated row(s) under the bar")
     if d["markers"]["tokens_missing"]:
         problems.append("FAIL tokens: a bound token does not resolve")
-    if "PENDING" not in section(spec, "## 0. ", "## 1. "):
-        problems.append("FAIL section 0 does not read PENDING")
+    if "Boards as drawn" not in section(spec, "## 0. ", "## 1. "):
+        problems.append("FAIL section 0 does not list the boards as drawn")
     return problems, d
 
 
@@ -1500,8 +1616,11 @@ def check(spec_path: Path, pr_body: Path | None) -> int:
 
 
 # ------------------------------------------------------------------ self-test -------------------
-# The text review's frame-level and number mutations (round 1), plus one per remaining gate:
-# (name, old, new); each must raise exactly one new FAIL, and no two the same FAIL.
+# The text review's frame-level and number mutations (round 1), then the folds' and the boards
+# PR's (name, old, new); each must raise exactly one new FAIL, and no two the same FAIL. Gates with
+# no mutation here (n-6): section 0's PENDING (every PROPOSED-PENDING stamp carries the word),
+# ``--pr-body`` (not part of ``evaluate``), and the contrast / token verdicts (read from the token
+# files, not the spec); each fires under ``--check``.
 MUTATIONS: tuple[tuple[str, str, str], ...] = (
     ("K3 move-step-panel announcement dropped", 'polite: "Chart, BTCUSDT 1m."', "silent"),
     ("K1 announcement dropped", 'polite: "Panel options."', "silent"),
@@ -1517,7 +1636,8 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "P7 `SCR-021/invalid-min-size` (a CMP-019 lock glyph; the Tape's",
     ),
     ("F11 to F12 in an existing key row", "| `F11`  ", "| `F12`  "),
-    ("K5 row deleted", "| K5 `dropped` |", "| K5 `dropped` | dropped |"),
+    # n-6: a cell inserted in the K5 row (a real deletion fails three ways: rows, polite, Esc)
+    ("a cell inserted in the K5 row", "| K5 `dropped` |", "| K5 `dropped` | dropped |"),
     ("K3 move-step-side announcement dropped", 'polite: "Below Chart."', "silent"),
     (
         "P2 lit outline removed",
@@ -1609,7 +1729,7 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "it is greyed, never",
     ),
     ("the A3 sentence gated", "`Esc` is never gated or locked", "`Esc` is sometimes gated"),
-    # the text delta (fold 2): M-5, m-9, m-10, m-7 and m-8, one each
+    # the text delta (fold 2): M-5, m-9, m-10, m-7 (two) and m-8: six mutations for five fixes
     (
         "a lock drawn on move-no-panel, on board 05's T2 line",
         '`SCR-021/move-no-panel` ("No panel further that way.")',
@@ -1624,6 +1744,52 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
     ("§3.1 band column 108 to 110", "| 108  | **108** ", "| 108  | **110** "),
     ("the Tape's 232 to 230 in §3.2", "the Tape's 232 breaks", "the Tape's 230 breaks"),
     ("D04-D-8 loses aria-atomic", 'carries `aria-atomic="false"`', "carries the role"),
+    # the boards PR (carries of the text-first approval): m-11, m-12 (two sites), m-13 (two),
+    # n-7, and n-6's gates that had none
+    (
+        "m-11 a lock in a sentence appended after §9's T2 inset",
+        "the one notice (§11).\n",
+        "the one notice (§11). The toast's Undo is `aria-disabled` under view-as.\n",
+    ),
+    (
+        "m-12 §8's chart height reworded (D04-D-5's other site still found)",
+        "height under 120 px (168 for a chart)",
+        "height under 120 px (or 170 for a chart)",
+    ),
+    (
+        "m-12 D04-D-3's widths reworded (§3.2's site still found)",
+        "leaves both 226 wide, under",
+        "leaves both of them 228 wide, under",
+    ),
+    (
+        "m-13 §12: the dark cell takes the light value",
+        "| 8.81 (8.77)  ",
+        "| 8.98 (8.77)  ",
+    ),
+    (
+        "m-13 §3.2: the refusal swapped for another tool sentence",
+        '("Can\'t drop here: DOM would be narrower than its 380 px minimum." at',
+        '("Can\'t drop here: Positions would be narrower than its 300 px minimum." at',
+    ),
+    ("n-7 Ctrl+Z drawn as layout undo in P10", "After Undo:", "After `Ctrl+Z`:"),
+    ("n-6 a size the tool does not derive", "the 454\u00d7318 ghost", "the 454\u00d7319 ghost"),
+    (
+        "n-6 a number context vanishes",
+        "refuses one more split (depth 7)",
+        "refuses another split (depth 7)",
+    ),
+    (
+        "n-6 an unknown marker",
+        "<!-- audit:halo=1 -->",
+        "<!-- audit:halo=1 --> <!-- audit:nope=1 -->",
+    ),
+    ("n-6 a marker missing", " <!-- audit:halo=1 -->", ""),
+    ("n-6 a marker twice", "<!-- audit:halo=1 -->", "<!-- audit:halo=1 --> <!-- audit:halo=1 -->"),
+    (
+        "n-6 a second polite string in P10",
+        'polite: "Move undone."',
+        'polite: "Move undone."; polite: "Layout restored."',
+    ),
 )
 
 
