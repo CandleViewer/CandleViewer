@@ -79,7 +79,9 @@ export const Open: Story = {
     );
     await expect(ring.outlineStyle).toBe("solid");
     await expect(parseFloat(ring.outlineWidth)).toBe(2);
-    await expect(parseFloat(ring.outlineOffset)).toBe(-2);
+    // Drawn 2px inside: the outer edge sits 2px in from the row edge, so the offset is -(gap + width)
+    // (#264 ruling, 27 Oct 14:55Z).
+    await expect(parseFloat(ring.outlineOffset)).toBe(-2 * parseFloat(ring.outlineWidth));
   },
 };
 
