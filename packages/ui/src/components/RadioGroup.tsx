@@ -56,6 +56,8 @@ function RadioRow({
   const gated = !disabled && (reason.gated || groupReasonId !== undefined);
   // Only the tab stop carries the group's reason; the option's own reason is always its description.
   const describedBy = cx(roving.tabIndex === 0 ? groupReasonId : undefined, reason.ariaDescribedBy);
+  // One lock per gated group, after the tab-stop row (the checked one); an option's own reason always shows its lock.
+  const showLock = gated && (reason.gated || roving.tabIndex === 0);
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // The whole row is the target. A refused row takes focus (to show its reason) and changes nothing.
     if (disabled || gated) return;
@@ -86,7 +88,7 @@ function RadioRow({
       <span id={labelId} className="cv-radio__label">
         {option.label}
       </span>
-      {gated ? (
+      {showLock ? (
         <span className="cv-radio__mark cv-radio__lock" aria-hidden="true">
           <Icon name="lock" />
         </span>

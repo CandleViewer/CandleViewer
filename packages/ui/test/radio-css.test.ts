@@ -59,14 +59,15 @@ function winner(css: Block[], x: string, y: string, prop: string): string {
 }
 
 const RING = ".cv-radio__ring";
-const DIS = `.cv-radio[data-disabled] .cv-radio__mark ${RING}`;
-const GATED = `.cv-radio[data-gated] .cv-radio__mark ${RING}`;
-const CHECKED = `.cv-radio[data-checked] ${RING}`;
-const HOVER = `.cv-radio:hover:not([data-disabled], [data-gated]) ${RING}`;
+const PLATE = `${RING}::before`;
+const DIS = `.cv-radio[data-disabled] .cv-radio__mark ${PLATE}`;
+const GATED = `.cv-radio[data-gated] .cv-radio__mark ${PLATE}`;
+const CHECKED = `.cv-radio[data-checked] ${PLATE}`;
+const HOVER = `.cv-radio:hover:not([data-disabled], [data-gated]) ${PLATE}`;
 
 describe("radio.css contract", () => {
   it("the specificity helper counts ids, classes, attributes, pseudo-classes and :not()", () => {
-    expect(specificity(HOVER)).toEqual([0, 4, 0]);
+    expect(specificity(HOVER)).toEqual([0, 4, 1]);
     expect(specificity(`${RING}::after`)).toEqual([0, 1, 1]);
     expect(specificity("#a.b[c]:d")).toEqual([1, 3, 0]);
   });
@@ -81,11 +82,33 @@ describe("radio.css contract", () => {
   it("colours come from tokens, never a literal", () => {
     expect(normal).not.toMatch(/#[0-9a-f]{3,8}\b/i);
     expect(decl(NORMAL, CHECKED, "background")).toBe("var(--color-action-primary-default)");
-    expect(decl(NORMAL, RING, "border")).toContain("var(--color-text-tertiary)");
+    expect(decl(NORMAL, PLATE, "border")).toContain("var(--color-text-tertiary)");
     expect(decl(NORMAL, `${RING}::after`, "background")).toBe("var(--color-text-on-action)");
+    expect(decl(NORMAL, PLATE, "background")).toBe("var(--color-surface-raised)");
   });
 
-  it("the gated ring dims but the label does not; plain disabled dims the whole row", () => {
+  it("labels use type.ui.body; the dot is 8px (icon minus two inset.xs); rows do not stretch", () => {
+    expect(decl(NORMAL, ".cv-radio", "font")).toContain("--type-ui-body-font-size");
+    expect(normal).not.toContain("--type-ui-label");
+    expect(decl(NORMAL, `${RING}::after`, "width")).toBe(
+      "calc(var(--size-icon) - 2 * var(--space-inset-xs))",
+    );
+    expect(decl(NORMAL, ".cv-radio-group", "align-items")).toBe("flex-start");
+  });
+
+  it("gated: the dot stays at full opacity in text.primary; only the plate dims, never the ring itself", () => {
+    const dot = ".cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::after";
+    expect(decl(NORMAL, dot, "background")).toBe("var(--color-text-primary)");
+    expect(decl(NORMAL, dot, "opacity")).toBeUndefined();
+    expect(decl(NORMAL, ".cv-radio[data-gated] .cv-radio__mark .cv-radio__ring", "opacity")).toBe(
+      undefined,
+    );
+    expect(decl(NORMAL, RING, "opacity")).toBeUndefined();
+    expect(decl(NORMAL, ".cv-radio[data-gated]", "opacity")).toBeUndefined();
+    expect(decl(NORMAL, `.cv-radio[data-checked] ${RING}::after`, "opacity")).toBeUndefined();
+  });
+
+  it("the gated plate dims but the label does not; plain disabled dims the whole row", () => {
     expect(decl(NORMAL, GATED, "opacity")).toBe("var(--opacity-disabled)");
     expect(decl(NORMAL, ".cv-radio[data-gated]", "opacity")).toBeUndefined();
     expect(decl(NORMAL, ".cv-radio[data-disabled]", "opacity")).toBe("var(--opacity-disabled)");
@@ -127,13 +150,13 @@ describe("radio.css contract", () => {
     for (const prop of ["border-color", "background"]) {
       expect(winner(FORCED, DIS, CHECKED, prop)).toBe(DIS);
       expect(winner(FORCED, GATED, CHECKED, prop)).toBe(GATED);
-      expect(winner(FORCED, DIS, `.cv-radio ${RING}`, prop)).toBe(DIS);
-      expect(winner(FORCED, GATED, `.cv-radio ${RING}`, prop)).toBe(GATED);
+      expect(winner(FORCED, DIS, `.cv-radio ${PLATE}`, prop)).toBe(DIS);
+      expect(winner(FORCED, GATED, `.cv-radio ${PLATE}`, prop)).toBe(GATED);
     }
     // The dot: checked is HighlightText, disabled GrayText and gated CanvasText must still win.
-    const dot = (s: string): string => `${s}::after`;
-    expect(winner(FORCED, dot(DIS), dot(`.cv-radio ${RING}`), "background")).toBe(dot(DIS));
-    expect(winner(FORCED, dot(GATED), dot(`.cv-radio ${RING}`), "background")).toBe(dot(GATED));
+    const dot = (s: string): string => s.replace("::before", "::after");
+    expect(winner(FORCED, dot(DIS), `.cv-radio ${RING}::after`, "background")).toBe(dot(DIS));
+    expect(winner(FORCED, dot(GATED), `.cv-radio ${RING}::after`, "background")).toBe(dot(GATED));
     // Disabled label is GrayText, and the gated ring undoes the normal-mode opacity.
     expect(decl(FORCED, ".cv-radio[data-disabled]", "color")).toBe("GrayText");
     expect(decl(FORCED, GATED, "opacity")).toBe("1");
@@ -148,6 +171,6 @@ describe("radio.css contract", () => {
     // Normal checked (0,3,0) is overridden by the forced checked twin (0,3,0, later); the base ring forced
     // rule (0,2,0) is out-specified by the normal checked rule, which is why the forced checked rule exists.
     expect(winner(FORCED, CHECKED, CHECKED, "background")).toBe(CHECKED);
-    expect(cmp(specificity(CHECKED), specificity(`.cv-radio ${RING}`))).toBeGreaterThan(0);
+    expect(cmp(specificity(CHECKED), specificity(`.cv-radio ${PLATE}`))).toBeGreaterThan(0);
   });
 });

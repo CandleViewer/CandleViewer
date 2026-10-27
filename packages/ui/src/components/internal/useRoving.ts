@@ -19,7 +19,8 @@ export interface UseRovingOptions {
 }
 
 export interface RovingItemProps {
-  readonly tabIndex: 0 | -1;
+  /** Absent on a plain-disabled item: it is not focusable at all, so a click cannot focus it. */
+  readonly tabIndex: 0 | -1 | undefined;
   readonly ref: (node: HTMLElement | null) => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   readonly onFocus: (event: FocusEvent<HTMLElement>) => void;
@@ -42,7 +43,7 @@ const KEY_STEP: Readonly<Record<string, 1 | -1>> = {
 /**
  * Roving tabindex for the APG radio pattern (CMP-006 RadioGroup, CMP-003 SegmentedControl).
  * Arrows move focus and select, wrapping; Home/End jump; Space selects; Tab leaves the group.
- * Orientation does not matter: Up/Left go back and Down/Right go forward in both.
+ * Alt/Ctrl/Meta chords are ignored; Shift+arrow acts as the plain arrow. Orientation does not matter: Up/Left go back and Down/Right go forward in both.
  */
 export function useRoving({ items, checked, onSelect, gated = false }: UseRovingOptions): Roving {
   const nodes = useRef(new Map<string, HTMLElement>());
@@ -51,9 +52,14 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
   const [focused, setFocused] = useState<string>();
 
   const reachable = useMemo(() => items.filter((item) => item.disabled !== true), [items]);
+  const disabledValues = useMemo(
+    () => new Set(items.filter((item) => item.disabled === true).map((item) => item.value)),
+    [items],
+  );
   const focusedOk = focused !== undefined && reachable.some((item) => item.value === focused);
   const checkedOk = checked !== undefined && reachable.some((item) => item.value === checked);
-  const tabStop = focusedOk ? focused : checkedOk ? checked : reachable[0]?.value;
+  // A refused (gated) group keeps the tab stop on the checked item, wherever a pointer click put focus.
+  const tabStop = focusedOk && !gated ? focused : checkedOk ? checked : reachable[0]?.value;
 
   const land = useCallback(
     (value: string): void => {
@@ -67,6 +73,8 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
   const onKeyDown = useCallback(
     (value: string) =>
       (event: KeyboardEvent<HTMLElement>): void => {
+        // Alt, Ctrl and Meta chords belong to the browser and the host (back/forward, shortcuts): not ours.
+        if (event.altKey || event.ctrlKey || event.metaKey) return;
         const at = reachable.findIndex((item) => item.value === value);
         // A plain-disabled item that took focus by pointer answers no key at all.
         if (at < 0) return;
@@ -97,7 +105,7 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
 
   const itemProps = useCallback(
     (value: string): RovingItemProps => ({
-      tabIndex: value === tabStop ? 0 : -1,
+      tabIndex: disabledValues.has(value) ? undefined : value === tabStop ? 0 : -1,
       ref: (node) => {
         if (node === null) nodes.current.delete(value);
         else nodes.current.set(value, node);
@@ -110,7 +118,7 @@ export function useRoving({ items, checked, onSelect, gated = false }: UseRoving
         if (!group?.contains(event.relatedTarget)) setFocused(undefined);
       },
     }),
-    [tabStop, onKeyDown],
+    [tabStop, onKeyDown, disabledValues],
   );
 
   return { tabStop, itemProps };

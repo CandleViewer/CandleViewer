@@ -165,11 +165,27 @@ describe("RadioGroup (CMP-006)", () => {
     await userEvent.click(radio(host, "Bravo"));
     expect(checkedOf(host)).toEqual(["Charlie"]);
     expect(radio(host, "Bravo").getAttribute("aria-disabled")).toBe("true");
-    expect(radio(host, "Bravo").tabIndex).toBe(-1);
-    // A pointer-focused disabled row answers no key.
-    radio(host, "Bravo").focus();
-    await userEvent.keyboard("{End} {ArrowUp}");
-    expect(checkedOf(host)).toEqual(["Charlie"]);
+    // A plain-disabled row has no tabindex at all: a click cannot focus it and no key reaches it.
+    expect(radio(host, "Bravo").hasAttribute("tabindex")).toBe(false);
+    expect(radio(host, "Bravo")).not.toHaveFocus();
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("clicking a plain-disabled row does not focus it, and no key on it does anything", async () => {
+    const onChange = fn();
+    const options = [OPTIONS[0]!, { ...OPTIONS[1]!, disabled: true }, OPTIONS[2]!];
+    const host = await mount(<Host value="a" options={options} onChange={onChange} />);
+    const bravo = radio(host, "Bravo");
+    await userEvent.click(bravo);
+    expect(bravo).not.toHaveFocus();
+    expect(document.activeElement).toBe(document.body);
+    for (const key of ["ArrowDown", "ArrowUp", "Home", "End", " ", "Enter"]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      bravo.dispatchEvent(event);
+      expect(event.defaultPrevented, key).toBe(false);
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(checkedOf(host)).toEqual(["Alpha"]);
   });
 
   it("an option with a reason is reached by the arrows, never checked, and describes itself", async () => {
@@ -229,10 +245,12 @@ describe("RadioGroup (CMP-006)", () => {
     );
     expect(within(host).getByRole("radiogroup").getAttribute("aria-disabled")).toBe("true");
     for (const r of within(host).getAllByRole("radio")) {
-      expect(r.tabIndex).toBe(-1);
+      expect(r.hasAttribute("tabindex")).toBe(false);
       expect(r.getAttribute("aria-disabled")).toBe("true");
     }
     await userEvent.tab();
+    await userEvent.click(radio(host, "Bravo"));
+    expect(host.contains(document.activeElement)).toBe(false);
     expect(host.contains(document.activeElement)).toBe(false);
     await userEvent.click(radio(host, "Bravo"));
     expect(onChange).not.toHaveBeenCalled();
@@ -277,6 +295,7 @@ describe("RadioGroup (CMP-006)", () => {
     expect(checkedOf(host)).toEqual(["Bravo"]);
     expect(host.querySelectorAll("[data-checked]")).toHaveLength(1);
     expect(host.querySelectorAll("[data-gated]")).toHaveLength(3);
+    expect(host.querySelectorAll("svg")).toHaveLength(1);
   });
 
   it("a gated group with nothing checked keeps the first radio as the tab stop with the reason", async () => {
@@ -300,11 +319,89 @@ describe("RadioGroup (CMP-006)", () => {
   it("a group with only plain-disabled radios has no tab stop", async () => {
     const options = OPTIONS.map((o) => ({ ...o, disabled: true }));
     const host = await mount(<RadioGroup aria-label="Rule" options={options} />);
+    for (const r of within(host).getAllByRole("radio"))
+      expect(r.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("arrows and Home/End call preventDefault, even when the group refuses them", async () => {
+    const host = await mount(<Host value="a" />);
+    radio(host, "Alpha").focus();
+    for (const key of ["ArrowDown", "ArrowUp", "ArrowLeft", "ArrowRight", "Home", "End", " "]) {
+      const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+      radio(host, "Alpha").dispatchEvent(event);
+      expect(event.defaultPrevented, key).toBe(true);
+    }
+    const other = await mount(
+      <RadioGroup aria-label="Gated" options={OPTIONS} disabledReason={REASON} />,
+    );
+    const gated = within(other).getAllByRole("radio")[0]!;
+    const event = new KeyboardEvent("keydown", {
+      key: "ArrowDown",
+      bubbles: true,
+      cancelable: true,
+    });
+    gated.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it("Alt, Ctrl and Meta chords are ignored: no move, no check, no preventDefault; Shift acts as plain", async () => {
+    const onChange = fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    radio(host, "Alpha").focus();
+    for (const mod of ["altKey", "ctrlKey", "metaKey"] as const) {
+      for (const key of ["ArrowDown", "ArrowRight", "Home", "End", " "]) {
+        const event = new KeyboardEvent("keydown", {
+          key,
+          [mod]: true,
+          bubbles: true,
+          cancelable: true,
+        });
+        radio(host, "Alpha").dispatchEvent(event);
+        expect(event.defaultPrevented, `${mod}+${key}`).toBe(false);
+      }
+    }
+    expect(onChange).not.toHaveBeenCalled();
+    expect(radio(host, "Alpha")).toHaveFocus();
+    await userEvent.keyboard("{Shift>}{ArrowDown}{/Shift}");
+    expect(checkedOf(host)).toEqual(["Bravo"]);
+  });
+
+  it("Home and End reach a locked first or last option without checking it", async () => {
+    const onChange = fn();
+    const options = [
+      { ...OPTIONS[0]!, disabledReason: REASON },
+      OPTIONS[1]!,
+      { ...OPTIONS[2]!, disabledReason: REASON },
+    ];
+    const host = await mount(<Host value="b" options={options} onChange={onChange} />);
+    radio(host, "Bravo").focus();
+    await userEvent.keyboard("{Home}");
+    expect(radio(host, "Alpha")).toHaveFocus();
+    await userEvent.keyboard("{End}");
+    expect(radio(host, "Charlie")).toHaveFocus();
+    expect(checkedOf(host)).toEqual(["Bravo"]);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("a click on a refused row in a gated group does not move the tab stop off the checked radio", async () => {
+    const host = await mount(
+      <RadioGroup aria-label="Rule" options={OPTIONS} value="b" disabledReason={REASON} />,
+    );
+    await userEvent.click(radio(host, "Charlie"));
+    expect(radio(host, "Charlie")).toHaveFocus();
     expect(
       within(host)
         .getAllByRole("radio")
         .map((r) => r.tabIndex),
-    ).toEqual([-1, -1, -1]);
+    ).toEqual([-1, 0, -1]);
+  });
+
+  it("a gated group draws one lock, after the checked option", async () => {
+    const host = await mount(
+      <RadioGroup aria-label="Rule" options={OPTIONS} value="b" disabledReason={REASON} />,
+    );
+    expect(host.querySelectorAll("svg")).toHaveLength(1);
+    expect(radio(host, "Bravo").querySelector("svg")).not.toBeNull();
   });
 
   it("a one-radio group stays checked when its arrow wraps onto itself", async () => {

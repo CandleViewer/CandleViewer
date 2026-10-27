@@ -3,6 +3,7 @@
 .cv-radio-group {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--space-stack-sm);
 }
 
@@ -18,8 +19,8 @@
   gap: var(--space-field-gap);
   min-height: var(--size-control-height);
   color: var(--color-text-primary);
-  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
-    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
   cursor: pointer;
   outline: none;
 }
@@ -47,9 +48,18 @@
   box-sizing: border-box;
   width: var(--size-icon);
   height: var(--size-icon);
+  border-radius: 50%;
+}
+
+/* The plate carries the ring's fill and outline, so a gated group can dim it without dimming the dot above. */
+.cv-radio__ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
   border: calc(var(--border-hairline) * 1px) solid var(--color-text-tertiary);
   border-radius: 50%;
-  background: transparent;
+  background: var(--color-surface-raised);
 }
 
 /* The dot (a shape, never colour alone) marks the checked ring. */
@@ -58,14 +68,14 @@
   position: absolute;
   inset: 0;
   margin: auto;
-  width: calc(var(--size-icon) * 0.375);
-  height: calc(var(--size-icon) * 0.375);
+  width: calc(var(--size-icon) - 2 * var(--space-inset-xs));
+  height: calc(var(--size-icon) - 2 * var(--space-inset-xs));
   border-radius: 50%;
   background: var(--color-text-on-action);
   display: none;
 }
 
-.cv-radio[data-checked] .cv-radio__ring {
+.cv-radio[data-checked] .cv-radio__ring::before {
   border-color: var(--color-action-primary-default);
   background: var(--color-action-primary-default);
 }
@@ -75,7 +85,7 @@
 }
 
 /* Hover swaps tokens instantly (no transition); the checked fill stays, only the outline steps up. */
-.cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring {
+.cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring::before {
   border-color: var(--color-text-secondary);
 }
 
@@ -91,13 +101,17 @@
   cursor: not-allowed;
 }
 
-/* Disabled with a reason (T2): only the ring dims, the label and the lock stay at full strength. */
+/* Disabled with a reason (T2): only the plate dims; the label, the lock and the checked dot stay at full strength. */
 .cv-radio[data-gated] {
   cursor: not-allowed;
 }
 
-.cv-radio[data-gated] .cv-radio__mark .cv-radio__ring {
+.cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::before {
   opacity: var(--opacity-disabled);
+}
+
+.cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::after {
+  background: var(--color-text-primary);
 }
 
 @media (forced-colors: active) {
@@ -106,7 +120,7 @@
     forced-color-adjust: none;
   }
 
-  .cv-radio .cv-radio__ring {
+  .cv-radio .cv-radio__ring::before {
     border-color: CanvasText;
     background: Canvas;
   }
@@ -119,12 +133,12 @@
     color: CanvasText;
   }
 
-  .cv-radio[data-checked] .cv-radio__ring {
+  .cv-radio[data-checked] .cv-radio__ring::before {
     border-color: Highlight;
     background: Highlight;
   }
 
-  .cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring {
+  .cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring::before {
     border-color: Highlight;
   }
 
@@ -138,7 +152,7 @@
     opacity: 1;
   }
 
-  .cv-radio[data-disabled] .cv-radio__mark .cv-radio__ring {
+  .cv-radio[data-disabled] .cv-radio__mark .cv-radio__ring::before {
     border-color: GrayText;
     background: Canvas;
   }
@@ -148,7 +162,7 @@
   }
 
   /* Gated: the ring border greys and loses the Highlight fill; the dot, label and lock stay CanvasText. */
-  .cv-radio[data-gated] .cv-radio__mark .cv-radio__ring {
+  .cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::before {
     border-color: GrayText;
     background: Canvas;
     opacity: 1;
