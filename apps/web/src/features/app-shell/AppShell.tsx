@@ -20,6 +20,11 @@ export interface AppShellProps {
   readonly connection?: ReactNode;
   /** CMP-072 (S2): renders the header row around the connection slot; absent, the bare slot. */
   readonly topBar?: (connection: JSX.Element) => ReactNode;
+  /**
+   * The CMP-211 Safety cluster (`ShellPanicSlot`), last in the header: the TopBar's right
+   * (E10-D02 ruling 1). No wrapper node, so an empty slot adds nothing to the DOM or the Tab order.
+   */
+  readonly panic?: ReactNode;
   readonly banner?: ReactNode;
   readonly canvasOverlay?: ReactNode;
   /** The route outlet. */
@@ -47,12 +52,13 @@ const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
 const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
 
 export function AppShell(props: AppShellProps): JSX.Element {
-  const { mainId, mainRef, nav, connection, banner, canvasOverlay, children } = props;
+  const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, children } = props;
   return (
     <div style={FRAME}>
       <SkipLink targetId={mainId} />
       <header style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
+        {panic}
       </header>
       <nav aria-label="Primary" style={{ ...CHROME, gridArea: "nav" }}>
         {nav}

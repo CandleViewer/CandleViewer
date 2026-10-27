@@ -4,7 +4,12 @@ import { ShellAnnouncer } from "./announcer";
 import { AppShell } from "./AppShell";
 import { NavRail } from "./NavRail";
 import { InShellProvider } from "./ScreenRoot";
-import { ShellBannerSlot, ShellCanvasOverlaySlot, ShellConnectionSlot } from "./slots";
+import {
+  ShellBannerSlot,
+  ShellCanvasOverlaySlot,
+  ShellConnectionSlot,
+  ShellPanicSlot,
+} from "./slots";
 import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
 
@@ -26,6 +31,7 @@ export function ShellLayout(): JSX.Element {
         nav={<NavRail />}
         connection={<ShellConnectionSlot />}
         topBar={(connection) => <TopBarSlot connection={connection} />}
+        panic={<ShellPanicSlot />}
         banner={<ShellBannerSlot />}
         canvasOverlay={<ShellCanvasOverlaySlot />}
       >
