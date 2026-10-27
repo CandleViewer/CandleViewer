@@ -201,8 +201,35 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 const isSystemUpdate = (v: unknown): v is F.SystemUpdate =>
   isRecord(v) && typeof v["kind"] === "string";
 
+/**
+ * E10-S04 (#306): the sink, plus the stamp the CMP-077 region reads ("Last data 00:12 ago", T4).
+ * The time of the last topic frame is kept here, never posted per frame; it rides as `lost` on the
+ * event that takes an `up` link down, once per episode (the attempts that follow find it down).
+ */
+function stampedSink(sink: EngineSink, wall: () => number): EngineSink {
+  let up = false;
+  let lastDataMs: number | null = null;
+  return {
+    changed: () => sink.changed?.(),
+    error: (code, message) => sink.error?.(code, message),
+    event(event) {
+      if (event.type === "auth_ok") up = true;
+      if (event.type !== "connecting" && event.type !== "reconnecting" && event.type !== "offline")
+        return sink.event(event);
+      const lost = up ? { sinceMs: wall(), lastDataMs } : undefined;
+      up = false;
+      sink.event(lost === undefined ? event : { ...event, lost });
+    },
+    deliver(ch, rs, frame) {
+      if (frame.kind !== "reset") lastDataMs = wall();
+      sink.deliver(ch, rs, frame);
+    },
+  };
+}
+
 export function createWsEngine(options: EngineOptions): WsEngine {
-  const { sink } = options;
+  const wall = options.wallClock ?? (() => Date.now());
+  const sink = stampedSink(options.sink, wall);
   const timers: Timers = { ...platformTimers, ...options.timers };
   const streams = new Map<string, Stream>();
   const ledger = new Map<string, Request>();
@@ -222,7 +249,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
     tokens: options.tokens,
     client: options.client,
     timers,
-    wall: options.wallClock ?? (() => Date.now()),
+    wall,
     random: options.random ?? Math.random,
     reachability: options.reachability ?? new ReachabilityTracker(),
     emit: (event) => sink.event(event),
