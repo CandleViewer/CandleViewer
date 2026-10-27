@@ -6,7 +6,7 @@
  * SCR-153 / CMP-092 rows: `docs/design/E17/E17-D02.md` §8 "The drawn issues" (the routing table
  * is §6; the severities are its first-match partition, M-3). Where the design has no string for a
  * row, the row takes the merged spec's nearest string and is marked PROPOSED beside it (coordinator
- * ruling on #306, 2026-10-27); every row below is verbatim, so none is PROPOSED.
+ * ruling on #306, 2026-10-27); every DEGRADED_COPY row is verbatim, so none is PROPOSED.
  */
 
 export type DegradedSeverity = "info" | "warning" | "blocking";
@@ -62,3 +62,31 @@ export const DEGRADED_COPY = {
 } as const satisfies Readonly<Record<string, DegradedCopy>>;
 
 export type DegradedIssueId = keyof typeof DEGRADED_COPY;
+
+/** SCR-156 / CMP-091: `docs/design/E10/E10-D03.md` §9.4 and board 10 unless marked PROPOSED. */
+export const CRASH_COPY = {
+  panel: {
+    heading: "This panel stopped working",
+    body: "The surviving workspace is unaffected. Copy diagnostics and report it, or reload the panel.",
+    reload: "Reload panel",
+    /** PROPOSED: `docs/design/E04/E04-D01.md` §3's "This panel keeps crashing — reload disabled." */
+    repeatedHeading: "This panel keeps crashing — reload disabled.",
+  },
+  route: {
+    heading: "Something went wrong",
+    /** PROPOSED: board 10's sentence without "or start in safe mode without saved layouts" (no safe mode yet). */
+    body: "Reload the page or the app.",
+    reload: "Reload page",
+    /** PROPOSED: the panel row's E04-D01 string, for a page. */
+    repeatedHeading: "This page keeps crashing — reload disabled.",
+  },
+  /** PROPOSED: E04-D01 §3 asks for the reason in plain text; D03 §9.4 gives the threshold. */
+  repeatedReason: "It crashed three times in two minutes. Reload the app to start again.",
+  reloadApp: "Reload app",
+  copyDiagnostics: "Copy diagnostics",
+  /** Board 10's "error id" label. */
+  errorId: "error id",
+  /** PROPOSED (both): no drawn string for the copy result. */
+  copied: "Diagnostics copied.",
+  copyFailed: "Couldn't copy the diagnostics.",
+} as const;
