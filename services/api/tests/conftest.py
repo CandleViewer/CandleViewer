@@ -204,15 +204,19 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     than the suite's per-test default (#4777, tests/_suite_timeout.py)."""
     from tests._e08_regression_pack import tag_pack as tag_e08_pack
     from tests._e09_regression_pack import tag_pack as tag_e09_pack
-    from tests._suite_timeout import timeout_override
+    from tests._suite_timeout import suite_default_s, timeout_override
 
     tag_e09_pack(items)
     tag_e08_pack(items)
+    # With pytest-timeout off (`-p no:timeout`) its `timeout` mark isn't registered: add none.
+    if not items or not items[0].config.pluginmanager.hasplugin("timeout"):
+        return
+    default_s = suite_default_s(items[0].config)
     for item in items:
         override = timeout_override(
             frozenset(mark.name for mark in item.iter_markers()),
             is_hypothesis=getattr(getattr(item, "obj", None), "is_hypothesis_test", False),
-            default_s=float(item.config.getini("timeout")),
+            default_s=default_s,
         )
         if override is not None:
             item.add_marker(override)

@@ -7,10 +7,12 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
-from tests._suite_timeout import timeout_override
+from tests._suite_timeout import suite_default_s, timeout_override
 
 _HUNG_THEN_HEALTHY = """\
 import asyncio
@@ -92,3 +94,49 @@ def test_timeout_override_bounds_only_the_tests_that_need_it(
     else:
         assert override is not None
         assert (override.mark.args, dict(override.mark.kwargs)) == expected
+
+
+def test_timeout_override_leaves_a_hypothesis_test_alone_without_a_default() -> None:
+    assert timeout_override(frozenset(), is_hypothesis=True, default_s=None) is None
+
+
+class _FakeConfig:
+    """Just what suite_default_s reads from a pytest config."""
+
+    def __init__(self, *, plugin: bool, option: str | None, ini: str) -> None:
+        self.pluginmanager = SimpleNamespace(hasplugin=lambda name: plugin and name == "timeout")
+        self._option = option
+        self._ini = ini
+
+    def getoption(self, name: str, default: object = None) -> object:
+        return self._option if name == "timeout" else default
+
+    def getini(self, name: str) -> str:
+        return self._ini
+
+
+@pytest.mark.parametrize(
+    ("plugin", "option", "env", "ini", "expected"),
+    [
+        (False, None, None, "120", None),
+        (True, "45", "30", "120", 45.0),
+        (True, None, "30", "120", 30.0),
+        (True, None, None, "120", 120.0),
+        (True, None, None, "0", None),
+        (True, None, None, "", None),
+    ],
+)
+def test_suite_default_s_resolves_the_option_then_the_env_then_the_ini(
+    monkeypatch: pytest.MonkeyPatch,
+    plugin: bool,
+    option: str | None,
+    env: str | None,
+    ini: str,
+    expected: float | None,
+) -> None:
+    if env is None:
+        monkeypatch.delenv("PYTEST_TIMEOUT", raising=False)
+    else:
+        monkeypatch.setenv("PYTEST_TIMEOUT", env)
+    config = cast(pytest.Config, _FakeConfig(plugin=plugin, option=option, ini=ini))
+    assert suite_default_s(config) == expected
