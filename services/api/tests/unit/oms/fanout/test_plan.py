@@ -196,8 +196,9 @@ def test_a_widening_refuses_the_whole_group_naming_every_offending_leg() -> None
     [({"fixed_qty": "0.005", "fallback_sl_offset_pct": "0.03"}, None),
      ({"fixed_qty": "0.5", "max_position_notional": "100000", "max_daily_loss": "5000"},
       ("max_position_notional", "R1", "above_limit")),
-     ({"trading_enabled": False}, ("trading_enabled", "never", "profile_disabled"))],
-    ids=["narrower", "past_the_bound_caps", "not_trading"],
+     ({"trading_enabled": False}, ("trading_enabled", "never", "profile_disabled")),
+     ({"slippage_tolerance_bps": 50}, ("slippage_tolerance_bps", "R7", "above_limit"))],
+    ids=["narrower", "past_the_bound_caps", "not_trading", "past_the_bound_slippage"],
 )  # fmt: skip
 def test_an_alternate_profile_only_narrows(alternate: dict[str, Any], refused: Any) -> None:
     """ADR-0040: _A_ narrows _B_, its `never` fields held at _B_'s; past _B_'s caps it refuses."""
@@ -281,6 +282,21 @@ def test_a_term_asked_alone_past_the_profile_refuses_the_whole_request(
     """Against a profile resting `IOC` in one-way mode, each asked alone (D6)."""
     held = {A: profile(A, time_in_force_default="IOC")}
     assert _refused(_plan(_request(LegRequest(A), **terms), held)[0]) == [(0, [named])]
+
+
+def test_an_account_state_cap_blocks_its_leg_whatever_the_request_asked() -> None:
+    """R1C-04, 22 `previewTradeGroup`: with the `*_after` counts known (#881), 5 positions after
+    against R7's cap of 1 mark the leg `blocked: cap_breached`, asked a narrower leverage or not;
+    a further stop still refuses the whole request, for the stop and the take-profit it moves."""
+    known: dict[UUID, Any] = {A: figures(open_positions_after=5)}
+    for terms in ({}, {"leverage": D(5)}):
+        plan, _, _ = _plan(_request(LegRequest(A), **terms), {A: profile(A)}, known=known)
+        assert _rows(plan) == [("blocked", "cap_breached", D("0.01"))]
+    further = LegTerms(stop_loss=ports.StopOffset(unit="price", value=D(56000)))
+    plan, _, _ = _plan(_request(LegRequest(A, further)), {A: profile(A)}, known=known)
+    asked = [("sl_offset_value", "R4", "further_than_bound"),
+             ("tp_offset_value", "narrow_only", "further_than_bound")]  # fmt: skip
+    assert _refused(plan) == [(0, asked)]
 
 
 def test_a_leg_with_no_native_stop_is_blocked(monkeypatch: pytest.MonkeyPatch) -> None:

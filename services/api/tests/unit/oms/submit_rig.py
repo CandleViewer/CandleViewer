@@ -219,6 +219,11 @@ class Figures:
         )
         return FiguresReading(bare, dict.fromkeys(symbols, rates))
 
+    def peek(
+        self, account: AccountRef, symbols: Any, *, fallback_sl_offset_pct: Decimal | None
+    ) -> FiguresReading | None:
+        return None  # the order path reads; the preview's `peek` is `DayRiskFigures`'s
+
     def invalidate(self, account_id: AccountId) -> None:
         self.invalidated.append(account_id)
 

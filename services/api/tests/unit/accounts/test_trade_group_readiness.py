@@ -94,7 +94,10 @@ def test_an_unknown_standing_is_not_ready(answer: object) -> None:
         result = readiness(_core3(True), _Source({A: answer}), "demo")
     assert (result.ready, result.total) == (0, 1)
     assert result.members == (MemberReadiness(A, False, "trading_disabled"),)
-    assert [(e["log_level"], e["account_id"]) for e in logs] == [("error", str(A))]
+    error = "RuntimeError" if isinstance(answer, Exception) else "UnknownReason"  # never the answer
+    assert [(e["log_level"], e["account_id"], e["error"]) for e in logs] == [
+        ("error", str(A), error)
+    ]
     assert "invalid key" not in repr(logs)  # the error's class at most, never its text
 
 
@@ -103,8 +106,8 @@ def test_a_members_reason_is_the_sources_and_fails_closed_as_the_read_does() -> 
     assert member_reason(_Source({A: "key_invalid"}), member, "demo") == "key_invalid"
     assert member_reason(_Source(), member, "demo") is None
     with capture_logs() as logs:
-        assert member_reason(_Source({A: RuntimeError("x")}), member, "demo") == "trading_disabled"
-    assert [(e["log_level"], e["error"]) for e in logs] == [("error", "RuntimeError")]
+        assert member_reason(_Source({A: TypeError("x")}), member, "demo") == "trading_disabled"
+    assert [(e["log_level"], e["error"]) for e in logs] == [("error", "TypeError")]
 
 
 def test_readiness_is_pure_and_awaits_nothing() -> None:

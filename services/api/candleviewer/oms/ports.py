@@ -64,7 +64,7 @@ keyed records, which an entry's stop requests carry with their actor.
 `OrderFigures` (#913 S4-S ruling Q1, 24 Sec.9.3.6) answers what `size_leg` needs that the request
 does not carry (`FiguresReading`). Until E39-T01 (#881) announced interims serve it: `NoDayFigures`
 answers every figure None, so every entry it serves fails `figure_unknown`; S4-S-b2 hands it to
-the size step.
+the size step. Its `peek` (E28-T05 #909) is the trade-group preview's: what is kept, never a read.
 
 The vocabulary the ports speak lives here too: `OrderEffect` (SR-E29-01), `StopOffset` (22
 `Offset`), `SizingRequest` (22 `Sizing`), `ArmToken`, the session's arm token held masked (C-12.6)
@@ -447,7 +447,10 @@ class OrderFigures(Protocol):
     """The order path's figures (24 Sec.9.3.6, #913 S4-S ruling Q1), served by an interim until
     E39-T01 (#881). `account` is the one `TradingAccounts` resolved. A figure that cannot be
     read is None, never an invented value. `invalidate` is called on every accepted send or
-    amend on the account, so the next entry is not sized against room a previous one took."""
+    amend on the account, so the next entry is not sized against room a previous one took.
+    `peek` answers what `read` would from what is kept, or None when nothing fresh is: it is
+    synchronous and never reads the venue (SR-E28-22, F-09), so the preview, which may run on
+    every keystroke, costs no exchange call; a leg it cannot answer is `figure_unknown`."""
 
     async def read(
         self,
@@ -456,6 +459,14 @@ class OrderFigures(Protocol):
         *,
         fallback_sl_offset_pct: Decimal | None,
     ) -> FiguresReading: ...
+
+    def peek(
+        self,
+        account: AccountRef,
+        symbols: Sequence[Symbol],
+        *,
+        fallback_sl_offset_pct: Decimal | None,
+    ) -> FiguresReading | None: ...
 
     def invalidate(self, account_id: AccountId) -> None: ...
 
@@ -978,6 +989,15 @@ class NoDayFigures(Interim):
         fallback_sl_offset_pct: Decimal | None,
     ) -> FiguresReading:
         return FiguresReading(UNKNOWN_FIGURES, {})  # no symbol entry: no tiers to request
+
+    def peek(
+        self,
+        account: AccountRef,
+        symbols: Sequence[Symbol],
+        *,
+        fallback_sl_offset_pct: Decimal | None,
+    ) -> FiguresReading | None:
+        return None  # nothing is kept
 
     def invalidate(self, account_id: AccountId) -> None:
         return None

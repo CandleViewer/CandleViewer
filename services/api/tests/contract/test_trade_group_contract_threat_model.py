@@ -777,15 +777,15 @@ def test_the_trade_groups_flag_refuses_the_writes_and_the_preview_and_no_read() 
 
 
 def test_the_definition_and_preview_audit_names_wait_for_their_slices() -> None:
-    """24 section 15.5 (plan GEN item 8): S2c registered the definition writes' names, which 21
-    section 3.10.1 lists; the preview's waits, not registered yet, until S3b registers it, which
-    flips both halves; the fired group's `trade_group.created` stays E34's."""
+    """24 section 15.5 (plan GEN item 8): S2c registered the definition writes' names and S3b the
+    preview's, `trade_group.previewed`; 21 section 3.10.1 lists all four with the actions that must
+    be audited, and none waits any more; the fired group's `trade_group.created` stays E34's."""
     vocabulary = _words(_INTERNAL_DOC.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
     must_audit = _SCHEMA_DOC.split("Actions that MUST be audited", 1)[1].split("\n\n", 1)[0]
-    for name in (f"trade_group_definition.{verb}" for verb in ("created", "updated", "deleted")):
+    definitions = (f"trade_group_definition.{verb}" for verb in ("created", "updated", "deleted"))
+    for name in (*definitions, "trade_group.previewed"):
         assert f"`{name}`," in vocabulary and f"`{name}`," in must_audit and name in AUDIT_ACTIONS
-    assert "`trade_group.previewed` (not registered yet, E28-T05)" in vocabulary
-    assert "trade_group.previewed" not in AUDIT_ACTIONS
+    assert "(not registered yet, E28-T05)" not in vocabulary
     assert "`trade_group.created` (not registered yet, E34)" in vocabulary
 
 

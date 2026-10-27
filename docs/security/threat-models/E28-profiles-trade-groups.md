@@ -584,7 +584,7 @@ Every record is hash-chained (SR-063), redacted before hashing (SR-069) and carr
 | `profile.save_refused{reason}` (native stop; a cap, `cap_unbounded` or limit; a refused step-up is B16's `auth.step_up_required`)      | A refused save of the risk policy (a removed cap too, PF-T02; never a shape error)   | PF-S02, PF-T02, PF-T09 | yes (#4087)                                    | E28-T02          |
 | `profile.template_applied`, `symbol_permission.changed`, `.bulk_changed`, `.change_refused`                                            | Templates and the matrix                                                             | PF-T02                 | no                                             | E28-S02          |
 | `tradegroup.created`, `.updated`, `.deleted`, `.granted` with the before/after membership                                              | A definition change                                                                  | PF-E02, PF-T16         | as `trade_group_definition.*` (#909)           | E28-T05          |
-| `tradegroup.preview`                                                                                                                   | Who previewed what                                                                   | PF-R05                 | no                                             | E28-T05          |
+| `tradegroup.preview`                                                                                                                   | Who previewed what                                                                   | PF-R05                 | as `trade_group.previewed` (#909)              | E28-T05          |
 | `tradegroup.row_overridden{field, from, to}`, plus a row for every refused widening                                                    | An override                                                                          | PF-R03, PF-T03         | no                                             | E28-S05          |
 | `order.refused_by_profile{gate, observed, limit}`                                                                                      | A guard refusal                                                                      | PF-T06, PF-T07         | no                                             | E28-T04          |
 | Expansion parent and one child per leg with its outcome (programme names `tradegroup.created`, `tradegroup.leg.result`)                | A fan-out                                                                            | PF-R02                 | only `trade_group.submit`                      | E34-S02          |
@@ -809,6 +809,10 @@ E28-T05 (#909) registers §8.1's `tradegroup.created`, `.updated` and `.deleted`
 members before and after and their `membership_change` (the account ids `added`, `removed` and `toggled`). §8.1's
 `.granted` maps to no action: 22 has no operation that grants a definition, and a ticket checks each leg's account
 against the caller's grants at its use.
+
+E28-T05 (#909) registers §8.1's `tradegroup.preview` as `trade_group.previewed`, 24 §15.5's name (`audit/actions.py`;
+21 §3.10.1 lists it): one row per answered preview, `200` or `403`, with the request's ids, symbol and side and its
+legs' outcome counts, never a figure.
 
 ### Review log
 
