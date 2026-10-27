@@ -24,3 +24,10 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+export { ForbiddenState } from "./ForbiddenState.js";
+export type { ForbiddenStateProps } from "./ForbiddenState.js";
+
+export { NotFoundState } from "./NotFoundState.js";
+export type { NotFoundStateProps, TryRoute } from "./NotFoundState.js";
+
+export type { LinkSlotProps, RenderLink } from "./internal/linkSlot.js";

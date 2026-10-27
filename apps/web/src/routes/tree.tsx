@@ -10,7 +10,7 @@
  */
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
 import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
-import { guardRoute } from "./guards";
+import { guardRoute, guardUnknownRoute } from "./guards";
 import { RouteErrorElement } from "./RouteErrorElement";
 import { StubRoute } from "./StubRoute";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
@@ -96,25 +96,31 @@ function buildRoutes(): RouteObject[] {
       id: "shell",
       element: <ShellLayout />,
       errorElement: <RouteErrorElement />,
-      children: ROUTE_MANIFEST.filter((e) => !isPublic(e)).map(toRoute),
+      children: [
+        ...ROUTE_MANIFEST.filter((e) => !isPublic(e)).map(toRoute),
+        // The catch-all sits in the shell, beside `/admin/**`: same guard outcome, same element,
+        // same landmarks and focus for an unknown route and a hidden one (E09-D09 §6).
+        {
+          path: "*",
+          errorElement: <RouteErrorElement />,
+          loader: ({ request }) => guardUnknownRoute(request.url),
+        },
+      ],
     },
     ...ROUTE_MANIFEST.filter(isPublic).map(toRoute),
   ];
 
   // Documented redirects (`12-sitemap.md` §8: fresh install / unauthenticated root).
-  routes.push(
-    {
-      path: "/",
-      loader: () => {
-        const claims = getMeClaims();
-        if (claims.role === null && !claims.authenticated) {
-          return redirect("/login");
-        }
-        return redirect("/terminal");
-      },
+  routes.push({
+    path: "/",
+    loader: () => {
+      const claims = getMeClaims();
+      if (claims.role === null && !claims.authenticated) {
+        return redirect("/login");
+      }
+      return redirect("/terminal");
     },
-    { path: "*", element: <NotFoundState /> },
-  );
+  });
 
   return routes;
 }
