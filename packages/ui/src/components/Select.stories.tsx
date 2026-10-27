@@ -80,9 +80,11 @@ export const Open: Story = {
     );
     const id = box.getAttribute("aria-activedescendant");
     await expect(id).not.toBeNull();
-    // The ring (2px focus ring, drawn 2px inside) marks the active option; its 3:1 is held in test/contrast.
+    // The ring (2px focus ring, drawn 2px inside) marks the active option's row; its 3:1 is held in test/contrast.
     const ring = getComputedStyle(
-      canvasElement.ownerDocument.getElementById(id as string) as Element,
+      canvasElement.ownerDocument
+        .getElementById(id as string)
+        ?.closest(".cv-select__row") as Element,
     );
     await expect(ring.outlineStyle).toBe("solid");
     await expect(parseFloat(ring.outlineWidth)).toBe(2);
@@ -190,7 +192,7 @@ export const UnavailableOption: Story = {
     await userEvent.tab();
     await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
     const box = trigger(canvasElement);
-    const fok = within(canvasElement).getByRole("option", { name: /^FOK/ });
+    const fok = within(canvasElement).getByRole("option", { name: "FOK" });
     await expect(fok).toHaveAccessibleDescription("Market orders are always IOC on Bybit");
     await expect(box).toHaveAttribute("aria-activedescendant", fok.id);
     await userEvent.keyboard("{Enter}");
@@ -201,7 +203,7 @@ export const UnavailableOption: Story = {
     await userEvent.keyboard("{ArrowDown}{ArrowDown}");
     await expect(box).toHaveAttribute(
       "aria-activedescendant",
-      within(canvasElement).getByRole("option", { name: /^sub_002/ }).id,
+      within(canvasElement).getByRole("option", { name: "sub_002" }).id,
     );
   },
 };

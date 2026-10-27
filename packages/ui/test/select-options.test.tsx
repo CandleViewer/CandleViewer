@@ -34,6 +34,9 @@ function Host(props: Partial<SelectProps>): JSX.Element {
 }
 
 const box = (host: HTMLElement): HTMLElement => within(host).getByRole("combobox");
+/** The presentational row that carries the look (data-kind, data-active) and the pointer handlers. */
+const rowOf = (option: HTMLElement): HTMLElement =>
+  option.closest<HTMLElement>(".cv-select__row") as HTMLElement;
 const options = (host: HTMLElement): HTMLElement[] => within(host).queryAllByRole("option");
 const activeLabel = (host: HTMLElement): string | undefined => {
   const id = box(host).getAttribute("aria-activedescendant");
@@ -87,15 +90,21 @@ describe("Select unavailable and T2 options", () => {
       expect(option).toHaveAttribute("aria-disabled", "true");
       expect(option).toHaveAccessibleDescription(reason);
     }
-    // The name is the option's content, so the reason line (visible text) is part of it (axe label-in-name).
-    expect(charlie).toHaveAccessibleName("Charlie Not on Bybit linear.");
-    expect(delta).toHaveAccessibleName("Delta Owner only.");
-    expect(charlie).toHaveAttribute("data-kind", "unavailable");
-    expect(delta).toHaveAttribute("data-kind", "locked");
+    // Ruling (d): the name is the label alone; the reason is a hidden sibling that only describes the option.
+    expect(charlie).toHaveAccessibleName("Charlie");
+    expect(delta).toHaveAccessibleName("Delta");
+    expect(rowOf(charlie)).toHaveAttribute("data-kind", "unavailable");
+    expect(rowOf(delta)).toHaveAttribute("data-kind", "locked");
     // The lock shows on the T2 option only.
     expect(delta.querySelector(".cv-select__optlock")).not.toBeNull();
     expect(charlie.querySelector(".cv-select__optlock")).toBeNull();
-    expect(bravo.querySelector(".cv-select__reason")).toBeNull();
+    expect(rowOf(bravo).querySelector(".cv-select__reason")).toBeNull();
+    // The reason is outside the option and hidden from the tree, so the option owns no extra text.
+    expect(charlie).not.toHaveTextContent("Not on Bybit");
+    expect(rowOf(charlie).querySelector(".cv-select__reason")).toHaveAttribute(
+      "aria-hidden",
+      "true",
+    );
   });
 
   it("are never chosen by Enter, Space or Tab; Enter re-shows the reason and the list stays open", async () => {
@@ -174,6 +183,42 @@ describe("Select unavailable and T2 options", () => {
     expect(box(host)).toHaveAttribute("aria-expanded", "true");
   });
 
+  it("the listbox owns only presentational rows, each holding one option; the reason is not in the option", async () => {
+    const host = await mount(<Host value="a" />);
+    key(host, "Enter");
+    const list = within(host).getByRole("listbox");
+    for (const row of Array.from(list.children)) {
+      expect(row).toHaveAttribute("role", "presentation");
+      expect(row.querySelectorAll('[role="option"]')).toHaveLength(1);
+    }
+    // name = label, description = reason, for every reason kind
+    const [, , charlie, delta] = options(host) as [
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+      HTMLElement,
+    ];
+    expect(charlie).toHaveAccessibleName("Charlie");
+    expect(charlie).toHaveAccessibleDescription("Not on Bybit linear.");
+    expect(delta).toHaveAccessibleName("Delta");
+    expect(delta).toHaveAccessibleDescription("Owner only.");
+  });
+
+  it("a press or a move on the reason line acts as one on its option (the wrapper owns the pointer)", async () => {
+    const onChange = fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    key(host, "Enter");
+    const delta = options(host)[3] as HTMLElement;
+    const reasonLine = rowOf(delta).querySelector(".cv-select__reason") as HTMLElement;
+    await userEvent.hover(reasonLine);
+    expect(activeLabel(host)).toBe("Delta");
+    expect(within(host).getByRole("status")).toHaveTextContent("");
+    await userEvent.click(reasonLine);
+    expect(within(host).getByRole("status")).toHaveTextContent("Owner only.");
+    expect(onChange).not.toHaveBeenCalled();
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+  });
+
   it("are never chosen by a pointer click, which re-shows the reason; a plain disabled click says nothing", async () => {
     const onChange = fn();
     const host = await mount(<Host value="a" onChange={onChange} />);
@@ -206,10 +251,10 @@ describe("Select unavailable and T2 options", () => {
     );
     key(host, "Enter");
     const [, b, c, d] = options(host) as [HTMLElement, HTMLElement, HTMLElement, HTMLElement];
-    expect(b).toHaveAttribute("data-kind", "unavailable");
-    expect(c).toHaveAttribute("data-kind", "locked");
+    expect(rowOf(b)).toHaveAttribute("data-kind", "unavailable");
+    expect(rowOf(c)).toHaveAttribute("data-kind", "locked");
     expect(c).toHaveAccessibleDescription("Why C");
-    expect(d).toHaveAttribute("data-kind", "disabled");
+    expect(rowOf(d)).toHaveAttribute("data-kind", "disabled");
     expect(d).not.toHaveAttribute("aria-describedby");
   });
 
