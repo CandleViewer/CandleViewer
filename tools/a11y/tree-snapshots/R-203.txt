@@ -2,7 +2,29 @@
   - /url: "#cv-main"
 - banner:
   - 'button "Connection: Reconnecting"': Reconnecting
-- navigation "Primary"
+- navigation "Primary":
+  - list:
+    - listitem:
+      - link "Terminal":
+        - /url: /terminal
+    - listitem:
+      - link "Rules":
+        - /url: /rules
+    - listitem:
+      - link "Journal":
+        - /url: /journal
+    - listitem:
+      - link "Replay":
+        - /url: /replay
+    - listitem:
+      - link "Alerts":
+        - /url: /alerts
+    - listitem:
+      - link "Settings":
+        - /url: /settings
+    - listitem:
+      - link "Admin":
+        - /url: /admin
 - main:
   - heading "Appearance" [level=1]
   - group "Chart palette":
