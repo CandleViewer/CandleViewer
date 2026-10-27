@@ -2,6 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { json, stubSession } from "./support/api";
 import { AXE_GATE_TAGS } from "./a11y/tags";
+import { RAIL } from "./support/rail";
 
 // E10-S01 (#304) S9: the shell chrome end to end. Sign in, then three routes through the nav rail:
 // `aria-current` moves with the route, the environment badge is announced on each change, the skip
@@ -10,18 +11,11 @@ import { AXE_GATE_TAGS } from "./a11y/tags";
 
 type Role = "owner" | "manager" | "viewer";
 
-/** The rail's items per role, in rail order (`navItems.ts`, filtered by the route manifest). */
-const RAIL: Readonly<Record<Role, readonly string[]>> = {
-  owner: ["Terminal", "Rules", "Journal", "Replay", "Alerts", "Settings", "Admin"],
-  manager: ["Terminal", "Rules", "Journal", "Replay", "Alerts", "Settings"],
-  viewer: ["Terminal", "Journal", "Replay", "Alerts", "Settings"],
-};
-
-/** Three rail items every role has, with the path each lands on (Settings opens its profile tab). */
+/** Three rail items every role has, with the path each lands on (Settings opens its default tab). */
 const ROUTES = [
   ["Journal", /\/journal$/u],
   ["Replay", /\/replay$/u],
-  ["Settings", /\/settings\/profile$/u],
+  ["Settings", /\/settings(\/|$)/u],
 ] as const;
 
 const rail = (page: Page) => page.getByRole("navigation", { name: "Primary" });
@@ -49,7 +43,11 @@ for (const role of ["owner", "manager", "viewer"] as const) {
   test(`E10-S01 ${role}: sign in, then three routes through the rail`, async ({ page }) => {
     await signIn(page, role);
 
-    // Keyboard entry: the skip link is the first Tab stop and moves focus to the one `main`.
+    // Keyboard entry on a freshly loaded route, not after a route change: reload, then nothing
+    // holds focus until the first Tab, which lands on the skip link; it moves focus to `main`.
+    await page.reload();
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
     await page.keyboard.press("Tab");
     const skip = page.getByRole("link", { name: "Skip to main content" });
     await expect(skip).toBeFocused();
@@ -65,8 +63,10 @@ for (const role of ["owner", "manager", "viewer"] as const) {
       "page",
     );
 
-    let seq = (await polite(page))?.seq ?? 0;
     for (const [label, path] of ROUTES) {
+      // The baseline is read once the previous step's assertions held, so an earlier announcement
+      // (the sign-in redirect's, the last step's) can never satisfy this step's check.
+      const before = (await polite(page))?.seq ?? 0;
       await rail(page).getByRole("link", { name: label, exact: true }).click();
       await expect(page).toHaveURL(path);
       await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
@@ -75,10 +75,8 @@ for (const role of ["owner", "manager", "viewer"] as const) {
       await expect(current).toHaveText(label);
       await expect(page.getByRole("main")).toHaveCount(1);
       // The environment badge is announced once per route change, and stays visible in the top bar.
-      await expect.poll(async () => (await polite(page))?.seq ?? 0).toBeGreaterThan(seq);
-      const said = await polite(page);
-      expect(said?.text).toBe("Trading environment: Demo");
-      seq = said?.seq ?? seq;
+      await expect.poll(async () => (await polite(page))?.seq ?? 0).toBeGreaterThan(before);
+      expect((await polite(page))?.text).toBe("Trading environment: Demo");
       await expect(
         page.getByRole("banner").getByRole("img", { name: "Trading environment: Demo" }),
       ).toBeVisible();
@@ -104,14 +102,15 @@ for (const [name, appearance] of THEMES)
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
       await expect(page.locator("html")).toHaveAttribute("data-theme", name);
       await expect(page.getByRole("img", { name: "Trading environment: Demo" })).toBeVisible();
-      // The chrome only: the routed screens are judged by the a11y gate's own collectors.
-      const res = await new AxeBuilder({ page })
-        .include("header")
-        .include('nav[aria-label="Primary"]')
-        .include("aside")
-        .include("footer")
-        .withTags([...AXE_GATE_TAGS])
-        .analyze();
+      // The chrome only: the routed screens are judged by the a11y gate's own collectors. Each
+      // target must exist, so an include that matches nothing cannot pass silently.
+      const CHROME = ["header", 'nav[aria-label="Primary"]', "aside", "footer"] as const;
+      let axe = new AxeBuilder({ page }).withTags([...AXE_GATE_TAGS]);
+      for (const target of CHROME) {
+        await expect(page.locator(target), target).toHaveCount(1);
+        axe = axe.include(target);
+      }
+      const res = await axe.analyze();
       const blocking = res.violations.filter(
         (v) => v.impact === "serious" || v.impact === "critical",
       );

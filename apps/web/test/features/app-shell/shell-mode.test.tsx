@@ -4,6 +4,7 @@ import { act, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { RAIL } from "../../../e2e/support/rail";
 import { clearAnnouncements } from "../../../src/features/app-shell/announcer";
 import {
   deriveShellMode,
@@ -326,6 +327,11 @@ describe("the shell matrix: every reachable state × role (S9)", () => {
       const bar = screen.getByRole("banner");
       expect(within(bar).getByRole("img", { name: "Trading environment: Live" })).toBeVisible();
       const nav = screen.getByRole("navigation", { name: "Primary" });
+      expect(
+        within(nav)
+          .getAllByRole("link")
+          .map((a) => a.textContent),
+      ).toEqual([...RAIL[role]]);
       expect(within(nav).queryByRole("link", { name: "Admin" }) !== null).toBe(role === "owner");
       expect(screen.getAllByRole("main")).toHaveLength(1);
       const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
