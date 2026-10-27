@@ -4,9 +4,10 @@
 // (GET /auth/session, budget #13), stepup_burst (POST /auth/step-up answering a real challenge,
 // SCR-006) and mfa_verify (POST /auth/mfa/verify, SCR-002). About 10 minutes.
 //
-// Target: a throwaway TESTNET stack only (C-2.11, C-13.5): setup() refuses to run unless
-// GET /auth/_perf/argon2-params answers, which the API mounts only with CV_AUTH_PERF_ENABLED on a
-// testnet with no exchange key (#2097). The CI lane is perf-ingestion-nightly.yml, dispatched with
+// Target: a throwaway TESTNET stack only (C-2.11, C-13.5): before sending any credential,
+// setup() refuses to run unless GET /auth/_perf/argon2-params exists (401 unauthenticated, not
+// 404), which the API mounts only with CV_AUTH_PERF_ENABLED on a testnet with no exchange key
+// (#2097). The CI lane is perf-ingestion-nightly.yml, dispatched with
 // profile=auth (job auth-k6). By hand, against such a stack:
 //   1. seed N Owners (N >= 10, one per VU), each with a fresh TOTP method:
 //        CV_ENVIRONMENT=testnet CV_SEED_USERNAME=perf-1 CV_SEED_PASSWORD=... \
@@ -150,7 +151,7 @@ function login(user) {
   let r = http.post(`${BASE}/auth/login`, body, params);
   for (let i = 1; i < LOGIN_TRIES && r.status === 429; i += 1) {
     loginBusy.add(1);
-    sleep(Number(r.headers["Retry-After"]) || 1);
+    sleep(Math.min(Number(r.headers["Retry-After"]) || 1, 10));
     r = http.post(`${BASE}/auth/login`, body, params);
   }
   return r;
@@ -173,6 +174,15 @@ function signIn(user, last) {
 }
 
 export function setup() {
+  // Before any credential leaves: the perf route answers 401 unauthenticated only where it is
+  // mounted (a keyless testnet with CV_AUTH_PERF_ENABLED); anywhere else it is a 404.
+  const probe = http.get(`${BASE}/auth/_perf/argon2-params`);
+  if (probe.status !== 401) {
+    throw new Error(
+      `GET /auth/_perf/argon2-params answered HTTP ${probe.status} unauthenticated: not a perf ` +
+        "stack, so no credential is sent",
+    );
+  }
   const sessions = [];
   const steps = [];
   for (const user of USERS) {

@@ -191,8 +191,8 @@ def test_schedule_weekly_cron_sits_beside_the_nightly_one() -> None:
 
 
 def test_ingestion_soak_on_the_weekly_cron_is_skipped() -> None:
-    soak = _doc()["jobs"]["ingestion-soak"]  # nightly and on a dispatch, as before
-    assert soak["if"] == f"github.event.schedule != '{WEEKLY}'"
+    soak = _doc()["jobs"]["ingestion-soak"]  # nightly and on a dispatch, but not profile=auth
+    assert soak["if"] == f"github.event.schedule != '{WEEKLY}' && inputs.profile != 'auth'"
 
 
 def test_perf_pack_full_weekly_cron_runs_rest_k6(tmp_path: Path) -> None:
