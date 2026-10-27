@@ -29,6 +29,9 @@ export type { ButtonProps } from "./Button.js";
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
 
+export { NumericStepperInput } from "./NumericStepperInput.js";
+export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
+
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
@@ -69,6 +72,9 @@ export type { SkeletonChartProps } from "./SkeletonChart.js";
 export { SkipLink, SKIP_LINK_COPY } from "./SkipLink.js";
 export type { SkipLinkProps, SkipLinkTarget } from "./SkipLink.js";
 
+export { Select } from "./Select.js";
+export type { SelectOption, SelectProps } from "./Select.js";
+
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
 
@@ -80,9 +86,3 @@ export type { TextInputProps } from "./TextInput.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
-
-export { NumericStepperInput } from "./NumericStepperInput.js";
-export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
-
-export { Select } from "./Select.js";
-export type { SelectOption, SelectProps } from "./Select.js";

@@ -30,6 +30,20 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.              |
 | Esc (reason echo)            | Dismisses the reason tooltip once CMP-016 lands; until then the description is always available. |
 
+### NumericStepperInput (CMP-008, APG Spin Button)
+
+| Keys                                                 | Action                                                                                                      |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                      | Moves focus to or from the field. The `[-]` `[+]` buttons are not tab stops.                                |
+| Up / Down                                            | Value +/- `step`; stops at `max` / `min`, never wraps.                                                      |
+| Shift+Up / Shift+Down                                | Value +/- 10 x `step`.                                                                                      |
+| Page Up / Page Down                                  | Value +/- `largeStep` (default 10 x `step`).                                                                |
+| Home / End                                           | `min` / `max`, when set.                                                                                    |
+| Ctrl, Alt or Meta with any of these                  | Not handled: the browser or the host keeps it.                                                              |
+| Typing                                               | Edits the text; parsed, rounded and range-checked on blur or Enter, never clamped (out of range = invalid). |
+| Enter                                                | Commits the typed text; the form's implicit submission is the host's (not with a reason).                   |
+| Up, Down, Page, Home, End, Enter, or typing (reason) | Changes nothing; the first of a focus visit announces the reason once. Home/End only if a bound is set.     |
+
 ### Toggle (CMP-004, APG Switch)
 
 | Keys                         | Action                                                                                        |
@@ -73,6 +87,24 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Any key (disabled group)                              | The group is out of the Tab order and no segment takes focus, by keyboard or pointer.                                        |
 
 Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), as for the Slider. Option values must be unique, and a computed option list needs a cast to the 2 to 6 tuple type, which defeats the compile-time bound.
+
+### Select (CMP-009, select-only combobox)
+
+| Keys                                   | Action                                                                                                                                                                                                                 |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                        | Moves focus to or from the trigger; focus never enters the list. Plain disabled is skipped.                                                                                                                            |
+| Enter, Space, ↓, ↑ (closed)            | Opens the list on the chosen option, else the first enabled one. Nothing is submitted or scrolled.                                                                                                                     |
+| Home / End (closed)                    | Opens on the first / last enabled option.                                                                                                                                                                              |
+| ↓ / ↑, Home / End (open)               | Moves the active option; a disabled option is skipped, no wrap. `aria-activedescendant` follows.                                                                                                                       |
+| Page Up / Page Down (open)             | Moves up to ten enabled options; the page never scrolls.                                                                                                                                                               |
+| A printable key                        | Type-ahead (closed or open): the next label that starts with the typed string, case-insensitive. Shift+printable is typed.                                                                                             |
+| Enter, Space (open)                    | Chooses the active option, closes; focus stays on the trigger. A Space right after a typed letter continues the string only while the longer string still matches; otherwise it chooses. Space never scrolls the page. |
+| Enter, Space, Alt+↑ on a reason option | An unavailable or locked option is reachable but never chosen; its reason is announced on every press, not on arrival.                                                                                                 |
+| Tab (open)                             | Chooses the active option, closes and moves focus on. Never chooses, or announces, an unavailable or locked option.                                                                                                    |
+| Esc (open)                             | Closes with the value unchanged, focus stays; the next Esc bubbles to the host.                                                                                                                                        |
+| Alt+↓ (closed) / Alt+↑ (open)          | Alt+↓ opens without moving the active option; Alt+↑ chooses the active option and closes.                                                                                                                              |
+| Other Ctrl, Alt, Meta and Shift chords | Ignored; Shift plus a printable is typed, any other Shift chord is the host's.                                                                                                                                         |
+| Any key above (with a reason)          | The list never opens; the first one of a focus visit announces the reason once. Tab and Esc are free.                                                                                                                  |
 
 ### Slider (CMP-010, APG Slider)
 
@@ -182,35 +214,3 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Tab (first) | The first Tab on a page focuses the first skip link and shows it.                                                     |
 | Tab         | To the next skip link, then into the TopBar; each link hides again when it loses focus.                               |
 | Enter       | Moves focus to the target, which takes `tabindex="-1"` until blur and shows the ring; the next Tab continues from it. |
-
-### NumericStepperInput (CMP-008, APG Spin Button)
-
-| Keys                                                 | Action                                                                                                      |
-| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                      | Moves focus to or from the field. The `[-]` `[+]` buttons are not tab stops.                                |
-| Up / Down                                            | Value +/- `step`; stops at `max` / `min`, never wraps.                                                      |
-| Shift+Up / Shift+Down                                | Value +/- 10 x `step`.                                                                                      |
-| Page Up / Page Down                                  | Value +/- `largeStep` (default 10 x `step`).                                                                |
-| Home / End                                           | `min` / `max`, when set.                                                                                    |
-| Ctrl, Alt or Meta with any of these                  | Not handled: the browser or the host keeps it.                                                              |
-| Typing                                               | Edits the text; parsed, rounded and range-checked on blur or Enter, never clamped (out of range = invalid). |
-| Enter                                                | Commits the typed text; the form's implicit submission is the host's (not with a reason).                   |
-| Up, Down, Page, Home, End, Enter, or typing (reason) | Changes nothing; the first of a focus visit announces the reason once. Home/End only if a bound is set.     |
-
-### Select (CMP-009, select-only combobox)
-
-| Keys                                   | Action                                                                                                                                                                                                                 |
-| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                        | Moves focus to or from the trigger; focus never enters the list. Plain disabled is skipped.                                                                                                                            |
-| Enter, Space, ↓, ↑ (closed)            | Opens the list on the chosen option, else the first enabled one. Nothing is submitted or scrolled.                                                                                                                     |
-| Home / End (closed)                    | Opens on the first / last enabled option.                                                                                                                                                                              |
-| ↓ / ↑, Home / End (open)               | Moves the active option; a disabled option is skipped, no wrap. `aria-activedescendant` follows.                                                                                                                       |
-| Page Up / Page Down (open)             | Moves up to ten enabled options; the page never scrolls.                                                                                                                                                               |
-| A printable key                        | Type-ahead (closed or open): the next label that starts with the typed string, case-insensitive. Shift+printable is typed.                                                                                             |
-| Enter, Space (open)                    | Chooses the active option, closes; focus stays on the trigger. A Space right after a typed letter continues the string only while the longer string still matches; otherwise it chooses. Space never scrolls the page. |
-| Enter, Space, Alt+↑ on a reason option | An unavailable or locked option is reachable but never chosen; its reason is announced on every press, not on arrival.                                                                                                 |
-| Tab (open)                             | Chooses the active option, closes and moves focus on. Never chooses, or announces, an unavailable or locked option.                                                                                                    |
-| Esc (open)                             | Closes with the value unchanged, focus stays; the next Esc bubbles to the host.                                                                                                                                        |
-| Alt+↓ (closed) / Alt+↑ (open)          | Alt+↓ opens without moving the active option; Alt+↑ chooses the active option and closes.                                                                                                                              |
-| Other Ctrl, Alt, Meta and Shift chords | Ignored; Shift plus a printable is typed, any other Shift chord is the host's.                                                                                                                                         |
-| Any key above (with a reason)          | The list never opens; the first one of a focus visit announces the reason once. Tab and Esc are free.                                                                                                                  |
