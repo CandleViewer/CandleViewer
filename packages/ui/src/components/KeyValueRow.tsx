@@ -4,8 +4,10 @@ import { cx } from "./internal/cx.js";
 export interface KeyValueRowProps {
   label: ReactNode;
   /**
-   * A number is a CMP-020 NumericText (the host picks its format and size); any other value is text.
-   * `null`, `undefined` or `""` is unavailable: a "—" read as `missingLabel`, never an empty cell or 0.
+   * Pass a CMP-020 NumericText for a number (the host picks its format and size); a raw number renders
+   * as plain text. The value is wrapped in one inline span, so mixed inline content keeps its flow.
+   * `null`, `undefined`, `""` and booleans are unavailable: a "—" read as `missingLabel`, never an
+   * empty cell or 0.
    */
   value: ReactNode;
   /** The value one step up: `type.num.md` for a base-size number, `type.ui.body-strong` for text. */
@@ -57,7 +59,7 @@ export function KeyValueRow({
             <span className="cv-visually-hidden">{missingLabel}</span>
           </>
         ) : (
-          value
+          <span className="cv-kv__content">{value}</span>
         )}
         {freshness === undefined ? null : <span className="cv-kv__freshness">{freshness}</span>}
       </dd>

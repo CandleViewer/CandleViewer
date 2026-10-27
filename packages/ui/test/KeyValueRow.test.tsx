@@ -54,6 +54,25 @@ describe("KeyValueRow (CMP-036)", () => {
     expect(host.querySelector(".cv-visually-hidden")).toHaveTextContent("disconnected");
   });
 
+  it("wraps mixed inline content in one span and treats booleans as missing", async () => {
+    const host = await inList(
+      <KeyValueRow
+        label="Venue"
+        value={
+          <>
+            Bybit <b>linear</b> perp
+          </>
+        }
+      />,
+    );
+    const dd = within(host).getByRole("definition");
+    expect(dd.children).toHaveLength(1);
+    expect(dd.firstElementChild).toHaveClass("cv-kv__content");
+    expect(dd).toHaveTextContent("Bybit linear perp");
+    const flag = await inList(<KeyValueRow label="Flag" value={false} />);
+    expect(flag.querySelector(".cv-kv__value")).toHaveAttribute("data-missing", "");
+  });
+
   it("puts the freshness slot inside the definition, after the value", async () => {
     const host = await inList(
       <KeyValueRow label="Mark" value="61,000" freshness={<span>stale</span>} />,

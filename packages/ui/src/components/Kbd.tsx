@@ -41,8 +41,13 @@ export function kbdExpansion(
   keys: readonly string[],
   names: Readonly<Record<string, string>> = {},
 ): string {
-  const table = { ...DEFAULT_NAMES, ...names };
-  const say = (key: string): string => table[key] ?? key;
+  // Own keys only: "constructor" or "toString" must never resolve to an inherited member.
+  const say = (key: string): string =>
+    Object.hasOwn(names, key)
+      ? (names[key] ?? key)
+      : Object.hasOwn(DEFAULT_NAMES, key)
+        ? (DEFAULT_NAMES[key] ?? key)
+        : key;
   return keys
     .map(parse)
     .map((p) =>

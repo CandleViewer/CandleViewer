@@ -34,6 +34,11 @@
     var(--type-ui-body-line-height) var(--type-ui-body-font-family);
 }
 
+/* One flex item for the whole value, so mixed inline content (text, a link, a number) keeps its flow. */
+.cv-kv__content {
+  min-width: 0;
+}
+
 .cv-kv[data-layout="stacked"] {
   flex-direction: column;
   align-items: stretch;

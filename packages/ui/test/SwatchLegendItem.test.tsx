@@ -41,6 +41,11 @@ describe("SwatchLegendItem (CMP-037)", () => {
     expect(host.querySelector(".cv-legend-item__value")).toHaveTextContent(/^43%$/);
   });
 
+  it.each(["", "  "])("treats a blank glyph (%j) as absent", async (glyph) => {
+    const host = await inList(<SwatchLegendItem color="red" glyph={glyph} label="Zero" />);
+    expect(host.querySelector(".cv-legend-item__glyph")).toBeNull();
+  });
+
   it("omits the value and the glyph when not given", async () => {
     const host = await inList(<SwatchLegendItem color="var(--color-heatmap-zero)" label="Zero" />);
     expect(host.querySelector(".cv-legend-item__value")).toBeNull();
@@ -54,10 +59,12 @@ describe("SwatchLegendItem (CMP-037)", () => {
     expect(host.querySelector(".cv-legend-item__glyph")).toHaveAttribute("aria-hidden", "true");
     expect(within(host).getByRole("listitem")).toHaveTextContent(/^▲Buy$/);
     // @ts-expect-error a buy / sell swatch encodes direction: the glyph is required
-    const buy = <SwatchLegendItem color="var(--color-sell-default)" label="Sell" />;
+    const buy = <SwatchLegendItem color="var(--color-buy-default)" label="x" />;
+    // @ts-expect-error so is the sell side
+    const sell = <SwatchLegendItem color="var(--color-sell-default)" label="Sell" />;
     // @ts-expect-error so is an up / down candle swatch
     const up = <SwatchLegendItem color="var(--color-candle-up)" label="Up" />;
-    expect([buy, up]).toHaveLength(2);
+    expect([buy, sell, up]).toHaveLength(3);
   });
 });
 

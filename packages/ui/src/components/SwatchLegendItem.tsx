@@ -1,7 +1,11 @@
 import type { CSSProperties, JSX } from "react";
 import { NumericText, Text, type NumericFormat } from "./Typography.js";
 
-/** A swatch colour that encodes direction (buy / sell, up / down): the glyph is then required (§5 E16). */
+/**
+ * A swatch colour that encodes direction (buy / sell, up / down): the glyph is then required (§5 E16).
+ * The type check covers literal directional token references only; a colour held in a `string`
+ * variable is not checked, so its caller must pass the glyph.
+ */
 export type DirectionalSwatchColor =
   | `var(--color-${"buy" | "sell"}-${string})`
   | `var(--color-cvd-${"buy" | "sell"})`
@@ -19,7 +23,10 @@ interface SwatchLegendItemBase<C extends string> {
   precision?: number;
 }
 
-/** `glyph` (`aria-hidden`, e.g. "▲") is the non-colour channel, required for a directional colour. */
+/**
+ * `glyph` (`aria-hidden`, e.g. "▲") is the non-colour channel, required for a literal directional colour
+ * token; an empty or blank glyph renders as absent.
+ */
 export type SwatchLegendItemProps<C extends string = string> = SwatchLegendItemBase<C> &
   (C extends DirectionalSwatchColor ? { glyph: string } : { glyph?: string });
 
@@ -30,6 +37,7 @@ export type SwatchLegendItemProps<C extends string = string> = SwatchLegendItemB
 export function SwatchLegendItem<C extends string>(props: SwatchLegendItemProps<C>): JSX.Element {
   const { color, label, value, format = "notional", precision, glyph } = props;
   const swatch = { "--cv-legend-swatch": color } as CSSProperties;
+  const shownGlyph = glyph?.trim() ? glyph : undefined;
   return (
     <li className="cv-legend-item" data-cmp="CMP-037">
       <span
@@ -38,9 +46,9 @@ export function SwatchLegendItem<C extends string>(props: SwatchLegendItemProps<
         data-testid="legend-swatch"
         style={swatch}
       />
-      {glyph === undefined ? null : (
+      {shownGlyph === undefined ? null : (
         <span aria-hidden="true" className="cv-legend-item__glyph">
-          {glyph}
+          {shownGlyph}
         </span>
       )}
       <Text variant="caption" tone="secondary" className="cv-legend-item__label">
