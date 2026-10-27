@@ -7,6 +7,7 @@ import "@candleviewer/ui/tokens.dark.css";
 import "@candleviewer/ui/tokens.light.css";
 import "@candleviewer/ui/tokens.high-contrast.css";
 import "@candleviewer/ui/theme.css";
+import "@candleviewer/ui/components.css";
 import { startShell } from "./shell/startShell";
 import { runBootstrap } from "./shell/bootstrap/bootstrap";
 import { getShellState } from "./shell/bootstrap/store";
