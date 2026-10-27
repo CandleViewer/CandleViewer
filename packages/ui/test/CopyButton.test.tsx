@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, type JSX } from "react";
+import { StrictMode, act, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { expect, fireEvent, fn, within } from "storybook/test";
@@ -344,5 +344,33 @@ describe("useCopy (ruling 9)", () => {
     expect(ok).toBe(false);
     expect(api?.status).toBe("failed");
     expect(api?.message).toBe("Copy failed");
+  });
+
+  it("survives StrictMode's double mount: the remount is live, so copy sets state and calls onCopied", async () => {
+    const onCopied = fn();
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    // StrictMode runs every effect's mount, cleanup and mount again: the unmount guard must re-arm.
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <Probe onCopied={onCopied} />
+        </StrictMode>,
+      ),
+    );
+    let ok: boolean | undefined;
+    await act(async () => {
+      ok = await api?.copy(VALUE);
+    });
+    expect(ok).toBe(true);
+    expect(api?.status).toBe("copied");
+    expect(host.textContent).toBe("Copied");
+    expect(onCopied).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await advance(COPY_RESET_MS);
+    expect(api?.status).toBe("idle");
+    await act(async () => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+    host.remove();
   });
 });

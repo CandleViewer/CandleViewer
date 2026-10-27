@@ -143,27 +143,31 @@ describe("Callout (CMP-028)", () => {
 
   it("actions with the same label render as separate buttons, with no duplicate-key warning", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const first = fn();
-    const second = fn();
-    const host = await mount(
-      <Callout
-        title="Two"
-        actions={[
-          { label: "Details", onClick: first },
-          { label: "Details", onClick: second },
-        ]}
-      />,
-    );
-    const buttons = within(host).getAllByRole("button", { name: "Details" });
-    expect(buttons).toHaveLength(2);
-    act(() => buttons[1]?.click());
-    expect(second).toHaveBeenCalledTimes(1);
-    expect(first).not.toHaveBeenCalled();
-    const keyWarnings = error.mock.calls.filter((args) =>
-      args.some((a) => typeof a === "string" && a.includes("same key")),
-    );
-    error.mockRestore();
-    expect(keyWarnings).toEqual([]);
+    // Restored even when an assertion throws, so a failure here never silences the next test's errors.
+    try {
+      const first = fn();
+      const second = fn();
+      const host = await mount(
+        <Callout
+          title="Two"
+          actions={[
+            { label: "Details", onClick: first },
+            { label: "Details", onClick: second },
+          ]}
+        />,
+      );
+      const buttons = within(host).getAllByRole("button", { name: "Details" });
+      expect(buttons).toHaveLength(2);
+      act(() => buttons[1]?.click());
+      expect(second).toHaveBeenCalledTimes(1);
+      expect(first).not.toHaveBeenCalled();
+      const keyWarnings = error.mock.calls.filter((args) =>
+        args.some((a) => typeof a === "string" && a.includes("same key")),
+      );
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      error.mockRestore();
+    }
   });
 
   it.each([

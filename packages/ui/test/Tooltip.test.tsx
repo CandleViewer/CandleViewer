@@ -194,6 +194,97 @@ describe("Tooltip (CMP-016)", () => {
     expect(shown()).toBe(false);
   });
 
+  it("content that arrives after an Esc dismissal does not show until focus moves", async () => {
+    let setContent: (next: string) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [content, set] = useState(TEXT);
+      setContent = set;
+      return (
+        <Tooltip content={content} mode="echo">
+          <Button>Save as</Button>
+        </Tooltip>
+      );
+    }
+    const host = await mount(<Host />);
+    const button = trigger(host);
+    await focus(button);
+    expect(shown()).toBe(true);
+    await press(button, "Escape");
+    expect(shown()).toBe(false);
+    await act(async () => setContent(""));
+    await act(async () => setContent("Only the owner can save layouts."));
+    expect(shown()).toBe(false);
+    expect(button).toHaveFocus();
+  });
+
+  /** A host whose trigger can go natively disabled and whose content can change. */
+  const gated = async (): Promise<{
+    button: HTMLButtonElement;
+    set: (next: { content?: string; disabled?: boolean }) => Promise<void>;
+  }> => {
+    let update: (next: { content?: string; disabled?: boolean }) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [state, setState] = useState({ content: "", disabled: false });
+      update = (next) => setState((s) => ({ ...s, ...next }));
+      return (
+        <Tooltip content={state.content} mode="echo">
+          <button type="button" disabled={state.disabled}>
+            Save as
+          </button>
+        </Tooltip>
+      );
+    }
+    const host = await mount(<Host />);
+    return {
+      button: trigger(host),
+      set: async (next) => {
+        await act(async () => update(next));
+      },
+    };
+  };
+
+  it("a hovered trigger that goes natively disabled keeps no stale hover for content that arrives", async () => {
+    const { button, set } = await gated();
+    await hover(button);
+    // Disabled controls fire no pointer leave: the remembered hover would otherwise show the new content.
+    await set({ disabled: true });
+    await set({ content: TEXT });
+    expect(shown()).toBe(false);
+    await advance(1000);
+    expect(shown()).toBe(false);
+  });
+
+  it("blur of a trigger that went natively disabled forgets the hover and hides", async () => {
+    const { button, set } = await gated();
+    await set({ content: TEXT });
+    await hover(button);
+    await advance(300);
+    await focus(button);
+    expect(shown()).toBe(true);
+    await set({ disabled: true });
+    await act(async () => {
+      fireEvent.focusOut(button);
+    });
+    expect(shown()).toBe(false);
+    // The stale hover is gone: re-enabling and new content do not reopen it with no pointer there.
+    await set({ disabled: false });
+    await set({ content: "Only the owner can save layouts." });
+    expect(shown()).toBe(false);
+  });
+
+  it("a cancelled pointer leaves like a pointer leave, after the 100 ms grace", async () => {
+    const host = await saveAs();
+    const button = trigger(host);
+    await hover(button);
+    await advance(300);
+    expect(shown()).toBe(true);
+    await act(async () => {
+      fireEvent.pointerCancel(button);
+    });
+    await advance(100);
+    expect(shown()).toBe(false);
+  });
+
   it("hover shows it after the 300 ms delay, not before", async () => {
     const host = await saveAs();
     await hover(trigger(host));
