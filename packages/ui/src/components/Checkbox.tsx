@@ -3,6 +3,7 @@ import { Icon } from "../icons/Icon.js";
 import { ChoiceRow } from "./internal/ChoiceRow.js";
 import { cx } from "./internal/cx.js";
 import { useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { useControllable } from "./internal/useControllable.js";
 
 export interface CheckboxProps extends Omit<
@@ -62,25 +63,27 @@ export function Checkbox({
       className="cv-checkbox"
       data-state={indeterminate ? "mixed" : checked ? "checked" : "unchecked"}
     >
-      <input
-        {...rest}
-        ref={ref}
-        id={controlId}
-        type="checkbox"
-        className="cv-checkbox__input"
-        checked={checked}
-        aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
-        aria-disabled={reason.ariaDisabled}
-        disabled={reason.disabled}
-        onChange={(e) => {
-          e.currentTarget.indeterminate = indeterminate;
-          // Controlled by `checked`: React restores the box after a no-op change, so a gated box keeps its value.
-          if (reason.gated) return;
-          const next = indeterminate ? true : !checked;
-          setChecked(next);
-          onChange?.(next);
-        }}
-      />
+      <ReasonEcho text={reason.reason}>
+        <input
+          {...rest}
+          ref={ref}
+          id={controlId}
+          type="checkbox"
+          className="cv-checkbox__input"
+          checked={checked}
+          aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
+          aria-disabled={reason.ariaDisabled}
+          disabled={reason.disabled}
+          onChange={(e) => {
+            e.currentTarget.indeterminate = indeterminate;
+            // Controlled by `checked`: React restores the box after a no-op change, so a gated box keeps its value.
+            if (reason.gated) return;
+            const next = indeterminate ? true : !checked;
+            setChecked(next);
+            onChange?.(next);
+          }}
+        />
+      </ReasonEcho>
       <span className="cv-checkbox__plate" aria-hidden="true" />
       {checked || indeterminate ? (
         <span className="cv-checkbox__glyph">

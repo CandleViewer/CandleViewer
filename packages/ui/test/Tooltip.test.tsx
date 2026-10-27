@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, fireEvent, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
-import { Button, IconButton, Tooltip, type TooltipProps } from "../src/components/index.js";
+import { Button, Tooltip, type TooltipProps } from "../src/components/index.js";
 import { mount } from "./theme/mount.js";
 
 const TEXT = "Saves the layout under a new name.";
@@ -100,7 +100,7 @@ describe("Tooltip (CMP-016)", () => {
   it("echo: aria-hidden and never in the description; the trigger keeps its own name", async () => {
     const host = await mount(
       <Tooltip content="Settings" mode="echo">
-        <IconButton icon="settings" label="Settings" />
+        <button type="button" aria-label="Settings" />
       </Tooltip>,
     );
     const button = trigger(host, "Settings");
@@ -113,9 +113,12 @@ describe("Tooltip (CMP-016)", () => {
   it("echo of a T2 reason: the description stays the always-rendered reason node, read once", async () => {
     const reason = "Only the owner can change account settings.";
     const host = await mount(
-      <Tooltip content={reason} mode="echo">
-        <IconButton icon="settings" label="Account settings" disabledReason={reason} />
-      </Tooltip>,
+      <>
+        <Tooltip content={reason} mode="echo">
+          <button type="button" aria-label="Account settings" aria-disabled aria-describedby="r" />
+        </Tooltip>
+        <span id="r">{reason}</span>
+      </>,
     );
     const button = trigger(host, "Account settings");
     expect(button).toHaveAttribute("aria-disabled", "true");
@@ -123,6 +126,46 @@ describe("Tooltip (CMP-016)", () => {
     expect(button.getAttribute("aria-describedby")?.split(" ")).not.toContain(tip().id);
     await focus(button);
     expect(shown()).toBe(true);
+  });
+
+  it("empty content renders no node, adds no description and never shows", async () => {
+    const host = await mount(
+      <Tooltip content="  ">
+        <Button>Save as</Button>
+      </Tooltip>,
+    );
+    const button = trigger(host);
+    expect(document.querySelector(".cv-tooltip")).toBeNull();
+    expect(button).not.toHaveAttribute("aria-describedby");
+    await hover(button);
+    await advance(300);
+    await focus(button);
+    expect(document.querySelector(".cv-tooltip")).toBeNull();
+  });
+
+  it("content emptied while shown: the node goes and Esc reaches the host again", async () => {
+    const onKey = vi.fn();
+    let setContent: (next: string) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [content, set] = useState(TEXT);
+      setContent = set;
+      return (
+        <Tooltip content={content} mode="echo">
+          <Button>Save as</Button>
+        </Tooltip>
+      );
+    }
+    const host = await mount(<Host />);
+    const button = trigger(host);
+    document.addEventListener("keydown", onKey);
+    await focus(button);
+    expect(shown()).toBe(true);
+    await act(async () => setContent(""));
+    expect(document.querySelector(".cv-tooltip")).toBeNull();
+    expect(button).toHaveFocus();
+    await press(button, "Escape");
+    expect(onKey).toHaveBeenCalledTimes(1);
+    document.removeEventListener("keydown", onKey);
   });
 
   it("hover shows it after the 300 ms delay, not before", async () => {

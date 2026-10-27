@@ -93,37 +93,42 @@ export const EscDismiss: Story = {
   },
 };
 
-/** Echo · name: a collapsed rail item's name over its icon; the name is the `aria-label`, read once. */
+/**
+ * Echo · name: an icon-only button's name over its icon (D10); the name is the `aria-label`, read once. CMP-002
+ * carries this echo itself, so the story renders the IconButton alone: wrapping it in a second Tooltip would show two.
+ */
 export const EchoName: Story = {
-  args: {
-    content: "Settings",
-    mode: "echo",
-    side: "right",
-    children: <IconButton icon="settings" label="Settings" variant="ghost" />,
-  },
+  render: () => (
+    <div style={stage}>
+      <IconButton icon="settings" label="Settings" variant="ghost" />
+    </div>
+  ),
   play: async ({ canvasElement }) => {
     const button = within(canvasElement).getByRole("button", { name: "Settings" });
     await showByKeyboard();
+    await expect(tooltip()).toHaveTextContent("Settings");
     await expect(tooltip()).toHaveAttribute("aria-hidden", "true");
     await expect(button).not.toHaveAttribute("aria-describedby");
   },
 };
 
 /**
- * Echo · reason: the T2 2b echo over a gated CMP-002. The reason node is always rendered and is the
- * description; the tooltip only repeats it. The `lock` badge is CMP-079 RbacGate's (`form="tooltip"`).
+ * Echo · reason: the T2 2b echo over a gated CMP-002 (the name, then the reason; D10). The reason node is always
+ * rendered and is the description; the tooltip only repeats it. The `lock` badge is CMP-079 RbacGate's
+ * (`form="tooltip"`). Every gateable atom carries this echo itself.
  */
 export const EchoReason: Story = {
-  args: {
-    content: REASON,
-    mode: "echo",
-    children: <IconButton icon="settings" label="Account settings" disabledReason={REASON} />,
-  },
+  render: () => (
+    <div style={stage}>
+      <IconButton icon="settings" label="Account settings" disabledReason={REASON} />
+    </div>
+  ),
   play: async ({ canvasElement }) => {
     const button = within(canvasElement).getByRole("button", { name: "Account settings" });
     await showByKeyboard();
     await expect(button).toHaveAttribute("aria-disabled", "true");
     await expect(button).toHaveAccessibleDescription(REASON);
+    await expect(tooltip()).toHaveTextContent(`Account settings · ${REASON}`);
     await expect(tooltip()).toHaveAttribute("aria-hidden", "true");
   },
 };

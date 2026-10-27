@@ -91,6 +91,15 @@ export const DisabledWithReason: Story = {
     await expect(button).toHaveAccessibleDescription(REASON);
     await userEvent.keyboard("{Enter} ");
     await expect(args.onClick).not.toHaveBeenCalled();
+    // The CMP-016 reason echo: shown on keyboard focus, aria-hidden, Esc hides it and focus stays.
+    const echo = document.body.querySelector<HTMLElement>(".cv-tooltip");
+    await expect(echo).not.toBeNull();
+    await waitFor(() => expect(echo?.hidden).toBe(false));
+    await expect(echo).toHaveTextContent(`Panel settings · ${REASON}`);
+    await expect(echo).toHaveAttribute("aria-hidden", "true");
+    await userEvent.keyboard("{Escape}");
+    await expect(echo?.hidden).toBe(true);
+    await expect(button).toHaveFocus();
   },
 };
 
