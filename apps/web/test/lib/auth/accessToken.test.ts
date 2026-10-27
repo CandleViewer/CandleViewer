@@ -1035,43 +1035,96 @@ describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
 });
 
 describe("the calls allowed while locked fall back to the cookie (#1640)", () => {
-  it("a logout whose bearer the server refuses, and no renewal cures, goes once more cookie-only and signs out", async () => {
-    holder.set(bundle(1));
+  // The server's real answers to a stale (rotated-away or never-issued) bearer:
+  // - the uniform 401 of `api/sessions.py` `_unauthorized()`, a problem with no `code`
+  //   (pinned by `services/api/tests/unit/api/idle_lock/test_unlock.py:243`);
+  // - `403 csrf_token_invalid` from `api/csrf.py` (`csrf_problem`, WRONG_SESSION) on logout and unlock,
+  //   before the route runs.
+  const uniform401 = (): Response =>
+    json(401, {
+      type: "about:blank",
+      title: "Unauthorized",
+      status: 401,
+      detail: "authentication required",
+    });
+  const wrongSession403 = (): Response =>
+    json(403, {
+      type: "https://candleviewer.local/errors/csrf_token_invalid",
+      title:
+        "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+      status: 403,
+      code: "csrf_token_invalid",
+      detail: "X-CSRF-Token is not bound to the current session.",
+    });
+  const bearers = (): (string | null)[] => transport.mock.calls.map(([init]) => authOf(init));
+  const locked = (): void => {
     fetchMock.mockImplementation(async () => refused("session_idle_locked")); // the renewal: locked
+  };
+
+  it.each([
+    ["/api/v1/auth/logout", wrongSession403, 204],
+    ["/api/v1/auth/unlock", wrongSession403, 200],
+    ["/api/v1/auth/session", uniform401, 200],
+    ["/api/v1/auth/unlock", uniform401, 200],
+  ])("%s with a stale bearer goes once more cookie-only", async (path, stale, ok) => {
+    holder.set(bundle(1));
+    locked();
     transport.mockImplementation(async (init: RequestInit) =>
-      authOf(init) === null ? noContent() : refused("unauthenticated"),
+      authOf(init) === null ? new Response(null, { status: ok }) : stale(),
+    );
+    const method = path.endsWith("session") ? "GET" : "POST";
+    expect((await holder.send(path, { method }, transport)).status).toBe(ok);
+    expect(bearers()).toEqual([bearer(1), null]);
+  });
+
+  it("a logout's cookie-only repeat signs out: the token is forgotten", async () => {
+    holder.set(bundle(1));
+    locked();
+    transport.mockResolvedValueOnce(wrongSession403()).mockResolvedValueOnce(noContent());
+    await holder.send("/api/v1/auth/logout", { method: "POST" }, transport);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
+  });
+
+  it.each([
+    ["/api/v1/auth/unlock", () => refused("unlock_invalid"), true, "a judged password"],
+    ["/api/v1/auth/unlock", () => refused("session_revoked"), true, "a revoked session"],
+    ["/api/v1/x", () => uniform401(), true, "a path off the allow-list"],
+    ["/api/v1/auth/logout", () => wrongSession403(), false, "no bearer sent"],
+  ])("%s refused (%s) is not repeated cookie-only: %s", async (path, refusal, held) => {
+    if (held) holder.set(bundle(1));
+    locked();
+    transport.mockImplementation(async () => refusal());
+    await holder.send(path, { method: "POST" }, transport);
+    expect(bearers().filter((b) => b === null)).toHaveLength(held ? 0 : 1);
+  });
+
+  it("a renewal that cures the refusal is not followed by a cookie-only repeat", async () => {
+    holder.set(bundle(1));
+    fetchMock.mockResolvedValueOnce(refreshed(2));
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === bearer(2) ? noContent() : wrongSession403(),
     );
     expect((await holder.send("/api/v1/auth/logout", { method: "POST" }, transport)).status).toBe(
       204,
     );
-    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), null]);
-    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" }); // the logout cleared it
+    expect(bearers()).toEqual([bearer(1), bearer(2)]);
   });
 
-  it("an unlock refused unauthenticated (no password judged) goes once more cookie-only", async () => {
+  it("after a refused bearer, cookie-identified calls go cookie-only (one throttle slot) until a new bundle", async () => {
     holder.set(bundle(1));
-    transport
-      .mockResolvedValueOnce(refused("unauthenticated"))
-      .mockResolvedValueOnce(json(200, {}));
-    expect((await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport)).status).toBe(
-      200,
+    locked();
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === null ? refused("unlock_invalid") : wrongSession403(),
     );
-    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), null]);
-    expect(fetchMock).not.toHaveBeenCalled(); // no renewal on the unlock path
-  });
-
-  it.each([
-    ["/api/v1/auth/unlock", "unlock_invalid", true],
-    ["/api/v1/x", "unauthenticated", true],
-    ["/api/v1/auth/logout", "unauthenticated", false],
-  ])("%s refused %s (bearer sent: %s) is not repeated cookie-only", async (path, code, held) => {
-    if (held) holder.set(bundle(1));
-    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
-    transport.mockResolvedValue(refused(code));
-    await holder.send(path, { method: "POST" }, transport);
-    expect(transport.mock.calls.filter(([init]) => authOf(init) === null)).toHaveLength(
-      held ? 0 : 1,
-    );
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    await holder.send("/api/v1/auth/session", { method: "GET" }, transport);
+    expect(bearers()).toEqual([bearer(1), null, null, null]);
+    await holder.send("/api/v1/x", {}, transport); // any other call keeps its bearer
+    expect(bearers().at(-1)).toBe(bearer(1));
+    holder.set(bundle(2)); // a new bundle: the bearer goes again
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    expect(bearers().at(-2)).toBe(bearer(2));
   });
 });
 
