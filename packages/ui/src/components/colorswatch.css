@@ -1,0 +1,90 @@
+/* CMP-031 ColorSwatch / ThemeChip. State lives in data-* attributes set by ColorSwatch.tsx; the fill is
+   the displayed colour, set per swatch as --cv-swatch-color; every other paint is a token. */
+
+/* B5 (Recommended): a space.inset.sm gap, so a focus ring always sits on clear surface. */
+.cv-swatch-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+/* A fixed size.control.height square (24 compact / 32 comfortable) that never grows with text. The
+   transparent hairline border is the edge forced colours paint. */
+.cv-swatch {
+  position: relative;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--cv-swatch-color);
+  color: var(--color-text-inverse);
+  vertical-align: middle;
+}
+
+/* The glyph rule (C12): text.inverse, or text.on-action where that is the one at 3:1 on the swatch. */
+.cv-swatch[data-glyph="on-action"] {
+  color: var(--color-text-on-action);
+}
+
+.cv-swatch[role="radio"] {
+  cursor: pointer;
+}
+
+/* Selection is the check glyph (never colour alone), at size.icon. */
+.cv-swatch__check {
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+/* The lock is a size.icon.sm corner badge inside the box, so the swatch never grows (D02 5.2 (e)). */
+.cv-swatch__badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+}
+
+/* Hover: a hairline color.text.secondary outline outside the swatch; the colour never changes. The
+   CMP-039 ring (focusring.css) owns the outline while focus is visible. */
+.cv-swatch[role="radio"]:hover:not([data-disabled], [data-gated], :focus-visible) {
+  outline: calc(var(--border-hairline) * 1px) solid var(--color-text-secondary);
+  outline-offset: 0;
+}
+
+/* Plain disabled: the whole swatch dims and leaves the Tab order. */
+.cv-swatch[data-disabled] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): the colour is the value, so it never dims; the badge carries the gate. */
+.cv-swatch[data-gated] {
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  /* The swatch keeps its true colour, glyphs included, edged in CanvasText. */
+  .cv-swatch {
+    border-color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-swatch[role="radio"]:hover:not([data-disabled], [data-gated], :focus-visible) {
+    border-color: Highlight;
+    outline: none;
+  }
+
+  /* Disabled (still dimmed by opacity) and gated (colour, check and badge unchanged): a GrayText edge. */
+  .cv-swatch[data-disabled],
+  .cv-swatch[data-gated] {
+    border-color: GrayText;
+  }
+}

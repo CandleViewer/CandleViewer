@@ -254,3 +254,23 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Keys | Action                                                                                                                                                                                   |
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | None | Not focusable; never moves focus. The digits are hidden and a twin reads the words on demand (`aria-live="off"`); a polite status speaks each threshold once. In a grid column, nothing. |
+
+### ColorSwatch / ThemeChip (CMP-031, APG Radio Group in the picker; a static `img` otherwise)
+
+| Keys                           | Action                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab                | Enters on the selected swatch (the first enabled one when none is selected) and leaves the picker; one tab stop.               |
+| Right / Down Arrow             | Moves focus to the next swatch and selects it; wraps from the last to the first.                                               |
+| Left / Up Arrow                | Moves focus to the previous swatch and selects it; wraps from the first to the last.                                           |
+| Home / End                     | Moves focus to the first / last swatch and selects it.                                                                         |
+| Space                          | Selects the focused swatch; nothing on a swatch with a reason.                                                                 |
+| Arrows (swatch with a reason)  | Focus lands on it and its reason is the description; it is never selected. A plain-disabled swatch is skipped.                 |
+| Any key (picker with a reason) | No action: focus stays on the selected swatch and the value never changes; every swatch carries the reason as its description. |
+| None (static `ColorSwatch`)    | Not focusable; read as the colour's name (`img`), or hidden when `decorative` beside text that names the colour.               |
+
+Each swatch is named by the colour's human name, never its hex value. Selection is the `check` glyph, never colour alone.
+
+Known token dependency (E05-D02 A5): there is no user-pickable palette yet, and in light
+`color.drawing.selected` (Amber) is 2.76:1 on `color.surface.overlay` and 3.00:1 on `color.surface.raised`,
+below WCAG 1.4.11 on a picker's own surface. Until the palette token pass lands, a light picker that offers
+it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
