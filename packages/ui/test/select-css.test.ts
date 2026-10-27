@@ -68,13 +68,42 @@ describe("select.css forced-colours cascade", () => {
     expect(prop(active, "color")).toBe("HighlightText");
     // The ring is a colour too: it takes the system pair, so it never fades into the Highlight fill.
     expect(prop(active, "outline-color")).toBe("HighlightText");
-    const off = twins('.cv-select__option[aria-disabled="true"]')[0] as Block;
+    const off = twins('.cv-select__option[data-kind="disabled"]')[0] as Block;
     expect(prop(off, "color")).toBe("GrayText");
     expect(prop(off, "opacity")).toBe("1");
     for (const list of [normal, forced]) {
-      expect(rule(list, '.cv-select__option[aria-disabled="true"]').index).toBeGreaterThan(
+      expect(rule(list, '.cv-select__option[data-kind="disabled"]').index).toBeGreaterThan(
         rule(list, ".cv-select__option[data-active]").index,
       );
+    }
+  });
+
+  it("unavailable and T2 options keep the reason at full opacity; every line stays legible on the active fill", () => {
+    const label = '.cv-select__option[data-kind="unavailable"] .cv-select__label';
+    expect(prop(rule(normal, label), "opacity")).toBe("var(--opacity-disabled)");
+    expect(prop(twins(label)[0] as Block, "color")).toBe("GrayText");
+    expect(prop(rule(normal, ".cv-select__reason"), "color")).toBe("var(--color-text-secondary)");
+    expect(prop(rule(normal, ".cv-select__reason"), "opacity")).toBeUndefined();
+    expect(prop(twins(".cv-select__reason")[0] as Block, "color")).toBe("CanvasText");
+    const locked = '.cv-select__option[data-kind="locked"] .cv-select__label';
+    expect(prop(twins(locked)[0] as Block, "color")).toBe("GrayText");
+    // The active twin is last and equal in weight, so it beats the kind twins on the Highlight fill.
+    const onFill = twins(".cv-select__option[data-active] .cv-select__reason")[0] as Block;
+    expect(prop(onFill, "color")).toBe("HighlightText");
+    for (const selector of [label, locked]) {
+      expect(onFill.index).toBeGreaterThan((twins(selector)[0] as Block).index);
+    }
+    expect(onFill.selectors).toContain(".cv-select__option[data-active] .cv-select__label");
+  });
+
+  it("only plain disabled dims the whole row: the unavailable and T2 rows keep the active fill and ring", () => {
+    expect(rule(normal, '.cv-select__option[data-kind="disabled"]').body).toContain("opacity");
+    for (const kind of ["unavailable", "locked"]) {
+      const row = normal.find((b) =>
+        b.selectors.includes(`.cv-select__option[data-kind="${kind}"]`),
+      );
+      expect(row?.body).not.toContain("opacity");
+      expect(row?.body).not.toMatch(/background|outline/);
     }
   });
 
@@ -126,9 +155,7 @@ describe("select.css popup", () => {
   });
 
   it("a long label wraps instead of widening the popup", () => {
-    expect(rule(normal, ".cv-select__option > span:last-child").body).toContain(
-      "overflow-wrap: anywhere",
-    );
+    expect(rule(normal, ".cv-select__body").body).toContain("overflow-wrap: anywhere");
   });
 
   it("is absolute under a relative anchor and clears the focus ring on both sides", () => {
