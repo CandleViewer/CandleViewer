@@ -213,7 +213,10 @@ describe("the icon generator's drift check (scripts/build-icons.mjs)", () => {
       source('<path d="M0 0h24" />', ROOT.replace("currentColor", "#fff")),
     ],
     ["a root fill", source('<path d="M0 0h24" />', ROOT.replace('fill="none"', 'fill="black"'))],
-    ["a root event handler", source('<path d="M0 0h24" />', ROOT.replace(">", ' onload="run()">'))],
+    [
+      "a root event handler",
+      source('<path d="M0 0h24" />', ROOT.replaceAll(">", ' onload="run()">')),
+    ],
     ["a document type", `<!DOCTYPE svg>\n${source('<path d="M0 0h24" />')}`],
     ["markup after the root", `${source('<path d="M0 0h24" />')}<svg />`],
     ["a comment inside the root", source('<!-- note -->\n<path d="M0 0h24" />')],
