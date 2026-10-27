@@ -158,8 +158,7 @@ export function Select({
       : openIndex(options, chosen, skipped);
   const shown = options[chosen]?.label ?? placeholder;
   const optionId = (index: number): string => `${listId}-${String(index)}`;
-  // Stable per option: the name and the description both point at these two nodes.
-  const labelId = (index: number): string => `${optionId(index)}-label`;
+  // Stable per option: the option's description points at its reason node.
   const reasonId = (index: number): string => `${optionId(index)}-reason`;
 
   const endTyping = (): void => {
@@ -396,17 +395,13 @@ export function Select({
             {options.map((option, index) => {
               const { kind, reason: why } = look(option);
               return (
-                // The trigger holds focus and drives the options; an option is a pointer target.
-                // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/interactive-supports-focus -- see above
+                // The row is a presentational pointer target; the option inside it is named by its label alone, and
+                // the reason (a hidden sibling) is its description. The trigger holds focus and drives the options.
                 <div
                   key={option.value}
-                  id={optionId(index)}
-                  role="option"
-                  className="cv-select__option"
-                  aria-selected={index === chosen}
-                  aria-describedby={why === undefined ? undefined : reasonId(index)}
+                  role="presentation"
+                  className="cv-select__row"
                   data-lines={why === undefined ? undefined : 2}
-                  aria-disabled={kind === undefined ? undefined : true}
                   data-kind={kind}
                   data-active={index === current ? "" : undefined}
                   onMouseMove={() => {
@@ -423,23 +418,28 @@ export function Select({
                   <span className="cv-select__check">
                     {index === chosen ? <Icon name="check" /> : null}
                   </span>
-                  <span className="cv-select__body">
-                    <span className="cv-select__line">
+                  <div className="cv-select__body">
+                    <div
+                      id={optionId(index)}
+                      role="option"
+                      className="cv-select__line"
+                      aria-selected={index === chosen}
+                      aria-describedby={why === undefined ? undefined : reasonId(index)}
+                      aria-disabled={kind === undefined ? undefined : true}
+                    >
                       {kind === "locked" ? (
                         <span className="cv-select__optlock">
                           <Icon name="lock" />
                         </span>
                       ) : null}
-                      <span id={labelId(index)} className="cv-select__label">
-                        {option.label}
-                      </span>
-                    </span>
+                      <span className="cv-select__label">{option.label}</span>
+                    </div>
                     {why === undefined ? null : (
-                      <span id={reasonId(index)} className="cv-select__reason">
+                      <div id={reasonId(index)} className="cv-select__reason" aria-hidden="true">
                         {why}
-                      </span>
+                      </div>
                     )}
-                  </span>
+                  </div>
                 </div>
               );
             })}

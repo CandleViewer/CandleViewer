@@ -159,7 +159,7 @@
   -webkit-line-clamp: 2;
 }
 
-.cv-select__option {
+.cv-select__row {
   box-sizing: border-box;
   display: flex;
   align-items: center;
@@ -175,7 +175,7 @@
  * i.e. its outer edge 2px in from the row edge (offset = -(2px gap + 2px width); #264 issuecomment-6445255406).
  * The ring is on the active descendant only, so it follows the pointer; there is no :hover rule.
  */
-.cv-select__option[data-active] {
+.cv-select__row[data-active] {
   background: var(--color-surface-hover);
   outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
   outline-offset: calc(var(--border-focus) * -2px);
@@ -183,12 +183,12 @@
 }
 
 /* A row with a reason line is two lines tall: block padding keeps the inset ring off the text. */
-.cv-select__option[data-lines] {
+.cv-select__row[data-lines] {
   padding-block: var(--space-inset-xs);
 }
 
 /* Plain disabled: dimmed, passed over by the arrows, never chosen. Later than active, so it wins. */
-.cv-select__option[data-kind="disabled"] {
+.cv-select__row[data-kind="disabled"] {
   opacity: var(--opacity-disabled);
   cursor: not-allowed;
 }
@@ -197,17 +197,17 @@
  * Unavailable (the validity look) and T2: reachable, never chosen. The reason line stays at full opacity; only the
  * label dims (unavailable) or turns tertiary with the lock (T2). The active row keeps its hover fill and ring.
  */
-.cv-select__option[data-kind="unavailable"],
-.cv-select__option[data-kind="locked"] {
+.cv-select__row[data-kind="unavailable"],
+.cv-select__row[data-kind="locked"] {
   cursor: not-allowed;
 }
 
-.cv-select__option[data-kind="unavailable"] .cv-select__label {
+.cv-select__row[data-kind="unavailable"] .cv-select__label {
   opacity: var(--opacity-disabled);
 }
 
-.cv-select__option[data-kind="locked"] .cv-select__label,
-.cv-select__option[data-kind="locked"] .cv-select__optlock {
+.cv-select__row[data-kind="locked"] .cv-select__label,
+.cv-select__row[data-kind="locked"] .cv-select__optlock {
   color: var(--color-text-tertiary);
 }
 
@@ -238,25 +238,25 @@
     forced-color-adjust: none;
   }
 
-  .cv-select__option[data-active] {
+  .cv-select__row[data-active] {
     background: Highlight;
     color: HighlightText;
     outline-color: HighlightText;
   }
 
-  .cv-select__option[data-kind="disabled"] {
+  .cv-select__row[data-kind="disabled"] {
     color: GrayText;
     opacity: 1;
   }
 
-  .cv-select__option[data-kind="unavailable"] .cv-select__label {
+  .cv-select__row[data-kind="unavailable"] .cv-select__label {
     color: GrayText;
     opacity: 1;
   }
 
   /* T2 is not greyed: its lock and label stay CanvasText (conventions 29), so it still reads apart from plain disabled. */
-  .cv-select__option[data-kind="locked"] .cv-select__label,
-  .cv-select__option[data-kind="locked"] .cv-select__optlock {
+  .cv-select__row[data-kind="locked"] .cv-select__label,
+  .cv-select__row[data-kind="locked"] .cv-select__optlock {
     color: CanvasText;
   }
 
@@ -265,9 +265,9 @@
   }
 
   /* After the kind twins, at equal weight: the Highlight fill needs HighlightText on every line, reason included. */
-  .cv-select__option[data-active] .cv-select__label,
-  .cv-select__option[data-active] .cv-select__optlock,
-  .cv-select__option[data-active] .cv-select__reason {
+  .cv-select__row[data-active] .cv-select__label,
+  .cv-select__row[data-active] .cv-select__optlock,
+  .cv-select__row[data-active] .cv-select__reason {
     color: HighlightText;
     opacity: 1;
   }

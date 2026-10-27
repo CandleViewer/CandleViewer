@@ -63,55 +63,50 @@ describe("select.css forced-colours cascade", () => {
   });
 
   it("the active option is Highlight on HighlightText; disabled is GrayText at full opacity, and wins", () => {
-    const active = twins(".cv-select__option[data-active]")[0] as Block;
+    const active = twins(".cv-select__row[data-active]")[0] as Block;
     expect(prop(active, "background")).toBe("Highlight");
     expect(prop(active, "color")).toBe("HighlightText");
     // The ring is a colour too: it takes the system pair, so it never fades into the Highlight fill.
     expect(prop(active, "outline-color")).toBe("HighlightText");
-    const off = twins('.cv-select__option[data-kind="disabled"]')[0] as Block;
+    const off = twins('.cv-select__row[data-kind="disabled"]')[0] as Block;
     expect(prop(off, "color")).toBe("GrayText");
     expect(prop(off, "opacity")).toBe("1");
     for (const list of [normal, forced]) {
-      expect(rule(list, '.cv-select__option[data-kind="disabled"]').index).toBeGreaterThan(
-        rule(list, ".cv-select__option[data-active]").index,
+      expect(rule(list, '.cv-select__row[data-kind="disabled"]').index).toBeGreaterThan(
+        rule(list, ".cv-select__row[data-active]").index,
       );
     }
   });
 
   it("unavailable and T2 options keep the reason at full opacity; every line stays legible on the active fill", () => {
-    const label = '.cv-select__option[data-kind="unavailable"] .cv-select__label';
+    const label = '.cv-select__row[data-kind="unavailable"] .cv-select__label';
     expect(prop(rule(normal, label), "opacity")).toBe("var(--opacity-disabled)");
     expect(prop(twins(label)[0] as Block, "color")).toBe("GrayText");
     expect(prop(rule(normal, ".cv-select__reason"), "color")).toBe("var(--color-text-secondary)");
     expect(prop(rule(normal, ".cv-select__reason"), "opacity")).toBeUndefined();
     expect(prop(twins(".cv-select__reason")[0] as Block, "color")).toBe("CanvasText");
-    const locked = '.cv-select__option[data-kind="locked"] .cv-select__label';
+    const locked = '.cv-select__row[data-kind="locked"] .cv-select__label';
     // T2 keeps its label and lock in CanvasText, never GrayText (conventions 29); plain disabled is the GrayText one.
     expect(prop(twins(locked)[0] as Block, "color")).toBe("CanvasText");
     expect(
-      prop(
-        twins('.cv-select__option[data-kind="locked"] .cv-select__optlock')[0] as Block,
-        "color",
-      ),
+      prop(twins('.cv-select__row[data-kind="locked"] .cv-select__optlock')[0] as Block, "color"),
     ).toBe("CanvasText");
-    expect(prop(twins('.cv-select__option[data-kind="disabled"]')[0] as Block, "color")).toBe(
+    expect(prop(twins('.cv-select__row[data-kind="disabled"]')[0] as Block, "color")).toBe(
       "GrayText",
     );
     // The active twin is last and equal in weight, so it beats the kind twins on the Highlight fill.
-    const onFill = twins(".cv-select__option[data-active] .cv-select__reason")[0] as Block;
+    const onFill = twins(".cv-select__row[data-active] .cv-select__reason")[0] as Block;
     expect(prop(onFill, "color")).toBe("HighlightText");
     for (const selector of [label, locked]) {
       expect(onFill.index).toBeGreaterThan((twins(selector)[0] as Block).index);
     }
-    expect(onFill.selectors).toContain(".cv-select__option[data-active] .cv-select__label");
+    expect(onFill.selectors).toContain(".cv-select__row[data-active] .cv-select__label");
   });
 
   it("only plain disabled dims the whole row: the unavailable and T2 rows keep the active fill and ring", () => {
-    expect(rule(normal, '.cv-select__option[data-kind="disabled"]').body).toContain("opacity");
+    expect(rule(normal, '.cv-select__row[data-kind="disabled"]').body).toContain("opacity");
     for (const kind of ["unavailable", "locked"]) {
-      const row = normal.find((b) =>
-        b.selectors.includes(`.cv-select__option[data-kind="${kind}"]`),
-      );
+      const row = normal.find((b) => b.selectors.includes(`.cv-select__row[data-kind="${kind}"]`));
       expect(row?.body).not.toContain("opacity");
       expect(row?.body).not.toMatch(/background|outline/);
     }
@@ -188,7 +183,7 @@ describe("select.css popup", () => {
   });
 
   it("the active option carries CMP-039's inset ring (H8): 2px focus ring drawn 2px inside, control radius", () => {
-    const active = rule(normal, ".cv-select__option[data-active]");
+    const active = rule(normal, ".cv-select__row[data-active]");
     expect(prop(active, "background")).toBe("var(--color-surface-hover)");
     expect(prop(active, "outline")).toBe(
       "calc(var(--border-focus) * 1px) solid var(--color-focus-ring)",
@@ -200,10 +195,10 @@ describe("select.css popup", () => {
   it("the ring is on the active option only: no other option state sets an outline", () => {
     const rings = normal.filter(
       (b) =>
-        b.selectors.some((x) => x.startsWith(".cv-select__option")) &&
+        b.selectors.some((x) => x.startsWith(".cv-select__row")) &&
         prop(b, "outline") !== undefined,
     );
-    expect(rings.map((b) => b.selectors)).toEqual([[".cv-select__option[data-active]"]]);
+    expect(rings.map((b) => b.selectors)).toEqual([[".cv-select__row[data-active]"]]);
   });
 
   it("no hover rule exists: the pointer moves the active option, so the highlight and aria agree", () => {
@@ -213,7 +208,7 @@ describe("select.css popup", () => {
 
 describe("select.css two-line options", () => {
   it("a reason row has block padding, so the inset ring clears the text", () => {
-    expect(prop(rule(normal, ".cv-select__option[data-lines]"), "padding-block")).toBe(
+    expect(prop(rule(normal, ".cv-select__row[data-lines]"), "padding-block")).toBe(
       "var(--space-inset-xs)",
     );
   });
@@ -223,5 +218,30 @@ describe("select.css two-line options", () => {
     const label = rule(normal, ".cv-select__label");
     expect(prop(label, "-webkit-line-clamp")).toBe("2");
     expect(prop(label, "overflow")).toBe("hidden");
+  });
+});
+
+describe("select.css presentational row (ruling d)", () => {
+  it("the look lives on the row: the ring is drawn on the whole row, 2px inside, and no selector targets the option element", () => {
+    expect(rule(normal, ".cv-select__row[data-active]")).toBeDefined();
+    expect(CSS).not.toContain(".cv-select__option");
+    expect(CSS).not.toContain('[role="option"]');
+  });
+
+  it("the row is the flex container that holds the check and the label/reason column", () => {
+    const row = rule(normal, ".cv-select__row");
+    expect(prop(row, "display")).toBe("flex");
+    expect(prop(row, "min-block-size")).toBe("var(--size-row-height)");
+  });
+
+  it("forced colours: the row's twins keep the cascade, and the active ring stays visible", () => {
+    const list = twins(".cv-select__row[data-active]");
+    const active = list[0] as Block;
+    expect(prop(active, "outline-color")).toBe("HighlightText");
+    expect(prop(active, "background")).toBe("Highlight");
+    const disabled = rule(forced, '.cv-select__row[data-kind="disabled"]');
+    expect(disabled.index).toBeLessThan(
+      rule(forced, ".cv-select__row[data-active] .cv-select__reason").index,
+    );
   });
 });

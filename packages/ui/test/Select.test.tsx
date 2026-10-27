@@ -34,6 +34,8 @@ function Host(props: Partial<SelectProps>): JSX.Element {
 
 const box = (host: HTMLElement): HTMLElement => within(host).getByRole("combobox");
 const list = (host: HTMLElement): HTMLElement | null => host.querySelector("[role=listbox]");
+const rowOf = (option: HTMLElement): HTMLElement =>
+  option.closest<HTMLElement>(".cv-select__row") as HTMLElement;
 const options = (host: HTMLElement): HTMLElement[] => within(host).queryAllByRole("option");
 const activeId = (host: HTMLElement): string | null =>
   box(host).getAttribute("aria-activedescendant");
@@ -106,7 +108,9 @@ describe("Select (CMP-009)", () => {
     expect(activeLabel(one)).toBe("Alpha");
     const two = await mount(<Host value="b" />);
     key(two, "Enter");
-    expect(options(two).filter((o) => o.hasAttribute("data-active"))[0]).toHaveTextContent("Alpha");
+    expect(
+      options(two).filter((o) => o.closest(".cv-select__row")?.hasAttribute("data-active"))[0],
+    ).toHaveTextContent("Alpha");
   });
 
   it("Home and End open on the first and last option; open they move there", async () => {
@@ -134,7 +138,9 @@ describe("Select (CMP-009)", () => {
     key(host, "ArrowUp");
     key(host, "ArrowUp");
     expect(activeLabel(host)).toBe("Alpha");
-    const marked = options(host).filter((o) => o.hasAttribute("data-active"));
+    const marked = options(host).filter((o) =>
+      o.closest(".cv-select__row")?.hasAttribute("data-active"),
+    );
     expect(marked).toHaveLength(1);
     expect(marked[0]?.id).toBe(activeId(host));
     expect(options(host).map((o) => o.getAttribute("aria-selected"))).toEqual([
@@ -308,8 +314,8 @@ describe("Select (CMP-009)", () => {
     key(host, "Enter");
     const chosen = within(host).getByRole("option", { name: "Charlie" });
     expect(chosen).toHaveAttribute("aria-selected", "true");
-    expect(chosen.querySelector("svg")).not.toBeNull();
-    expect(options(host)[0]?.querySelector("svg")).toBeNull();
+    expect(rowOf(chosen).querySelector("svg")).not.toBeNull();
+    expect(rowOf(options(host)[0] as HTMLElement).querySelector("svg")).toBeNull();
     expect(box(host).querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
   });
 
