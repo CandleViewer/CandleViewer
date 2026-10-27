@@ -51,6 +51,24 @@ vi.mock("electron", () => ({
 // Captures the shell's log lines in memory; the real logger appends to a file in userData.
 vi.mock("../src/main/logger", () => ({ logStartup: vi.fn(), logAuditEvent: vi.fn() }));
 
+// The real crash log, with its `append` observable, to see what the IPC handler passes it.
+const crashAppend = vi.hoisted(() => ({ calls: [] as unknown[][] }));
+vi.mock("../src/main/crashLog", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/main/crashLog")>();
+  return {
+    ...actual,
+    createCrashLog: (options: Parameters<typeof actual.createCrashLog>[0]) => {
+      const log = actual.createCrashLog(options);
+      return {
+        append: (...args: unknown[]) => {
+          crashAppend.calls.push(args);
+          return log.append(args[0]);
+        },
+      };
+    },
+  };
+});
+
 // The default load path is under test: no dev server.
 delete process.env["CV_DEV_SERVER_URL"];
 
@@ -527,6 +545,15 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
     expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
       ["crash-log-entry-refused", { reason: "schema" }],
     ]);
+  });
+
+  it("cv:crashLog:append hands the crash log the first argument only", async () => {
+    const from = invokeFrom("app://candleviewer/terminal", "main");
+    const entry = { timestampMs: 1, message: "m", x: 1 };
+    crashAppend.calls.length = 0;
+    const result = ipcListener("cv:crashLog:append")(from, entry, "extra", { more: 1 });
+    await expect(result).rejects.toThrow(CrashLogRefusedError);
+    expect(crashAppend.calls).toEqual([[entry]]);
   });
 
   it("cv:crashLog:append refuses a wrong sender before reading the entry", () => {

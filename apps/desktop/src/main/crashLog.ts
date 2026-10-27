@@ -1,21 +1,74 @@
 /**
  * The shell's local crash log (E10-S04, SR-111, E13): one JSON line per entry the renderer
  * appends through `cv:crashLog:append`, in a file under the app's userData `logs` directory. The
- * entry is re-validated here (never trusted from the preload), the file is capped at `maxBytes`
+ * entry is re-validated and scrubbed here (never trusted from the preload), the file is capped at `maxBytes`
  * with one rotated copy, and appends run one at a time through a bounded queue so a flooding
  * renderer is refused rather than queued without limit (C-2.18). Failures reject with a fixed
  * message; nothing here throws into the main process. The file is never transmitted anywhere.
  */
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
-import { parseCrashEntry } from "../shared/crashEntry.js";
+import { CRASH_ENTRY_LIMITS, parseCrashEntry, type CrashEntry } from "../shared/crashEntry.js";
 
 export const CRASH_LOG_FILE = "crash.log";
 export const CRASH_LOG_ROTATED_FILE = "crash.log.1";
 export const CRASH_LOG_MAX_BYTES = 1024 * 1024;
-/** One serialised line: above the schema's bounds plus JSON escaping, far below the file cap. */
-export const CRASH_LOG_MAX_LINE_BYTES = 64 * 1024;
+/**
+ * One serialised line: every schema-valid entry fits. Each character costs at most 6 bytes once
+ * JSON-escaped (`\uXXXX`), scrubbing grows text by under 3x, plus 1 KiB of keys and punctuation.
+ */
+export const CRASH_LOG_MAX_LINE_BYTES =
+  (CRASH_ENTRY_LIMITS.message +
+    CRASH_ENTRY_LIMITS.stack +
+    CRASH_ENTRY_LIMITS.contextKeys *
+      (CRASH_ENTRY_LIMITS.contextKey + CRASH_ENTRY_LIMITS.contextValue)) *
+    6 +
+  1024;
 export const CRASH_LOG_MAX_PENDING = 32;
+/** Audit lines per event and reason per window; the rest are counted into one summary line. */
+export const CRASH_LOG_AUDIT_BURST = 5;
+export const CRASH_LOG_AUDIT_WINDOW_MS = 60_000;
+
+const REDACTED = "[redacted]";
+/** A name whose value is a credential: `key` also covers apiKey / api_key / api-key. */
+const SENSITIVE_NAME = /(?:key|token|secret|password|passwd|cookie|signature|sign|authorization)$/i;
+// Every pattern starts only where no word character precedes it (a lookbehind, not `\b`) and its
+// classes are disjoint from what follows them, so each runs in linear time.
+const HEADER_TO_EOL = /(?<![\w-])(set-cookie|cookie|authorization)(\s*[:=]\s*)[^\r\n]*/gi;
+const AUTH_SCHEME = /(?<![\w-])(bearer|basic)\s+[\w.~+/=-]+/gi;
+const NAME_VALUE = /(?<![\w-])([A-Za-z][\w-]*)(\s*[:=]\s*)("?)([^\s"'&,;]+)/g;
+
+/**
+ * Defence in depth behind the renderer reporter's redaction (#306 slice 5): replaces credential
+ * headers, `Bearer`/`Basic` tokens and `name=value` / `name: value` pairs whose name is sensitive
+ * (URL query values included) with "[redacted]".
+ */
+export function scrubCrashText(text: string): string {
+  return text
+    .replace(HEADER_TO_EOL, `$1$2${REDACTED}`)
+    .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
+    .replace(NAME_VALUE, (match, name: string, sep: string, quote: string) =>
+      SENSITIVE_NAME.test(name) ? `${name}${sep}${quote}${REDACTED}` : match,
+    );
+}
+
+function scrubEntry(entry: CrashEntry): CrashEntry {
+  const context =
+    entry.context === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(entry.context).map(([name, value]) => [
+            name,
+            SENSITIVE_NAME.test(name) ? REDACTED : scrubCrashText(value),
+          ]),
+        );
+  return {
+    timestampMs: entry.timestampMs,
+    message: scrubCrashText(entry.message),
+    ...(entry.stack === undefined ? {} : { stack: scrubCrashText(entry.stack) }),
+    ...(context === undefined ? {} : { context }),
+  };
+}
 
 /** What the renderer sees for a refused entry: a fixed message, never the entry or a path. */
 export class CrashLogRefusedError extends Error {
@@ -39,6 +92,37 @@ export interface CrashLogOptions {
   readonly maxBytes?: number;
   /** Audit sink for refusals and write failures: a reason or an error code, never entry text. */
   readonly audit?: (event: string, detail: Record<string, unknown>) => void;
+  /** Main's clock (ms): stamps `receivedAt` and windows the audit rate limit. */
+  readonly now?: () => number;
+}
+
+type Audit = (event: string, detail: Record<string, string>) => void;
+
+/**
+ * At most CRASH_LOG_AUDIT_BURST lines per event and detail per window, so a flooding renderer
+ * cannot turn refusals into unbounded audit writes; the first audit after a window with
+ * suppressed lines first writes one `crash-log-audit-suppressed` line carrying the count.
+ */
+function rateLimitedAudit(audit: NonNullable<CrashLogOptions["audit"]>, now: () => number): Audit {
+  const windows = new Map<string, { start: number; written: number; suppressed: number }>();
+  return (event, detail) => {
+    const key = `${event}\u0000${JSON.stringify(detail)}`;
+    const at = now();
+    let window = windows.get(key);
+    if (window === undefined || at - window.start >= CRASH_LOG_AUDIT_WINDOW_MS) {
+      if (window !== undefined && window.suppressed > 0) {
+        audit("crash-log-audit-suppressed", { event, ...detail, suppressed: window.suppressed });
+      }
+      window = { start: at, written: 0, suppressed: 0 };
+      windows.set(key, window);
+    }
+    if (window.written < CRASH_LOG_AUDIT_BURST) {
+      window.written += 1;
+      audit(event, detail);
+    } else {
+      window.suppressed += 1;
+    }
+  };
 }
 
 export interface CrashLog {
@@ -59,7 +143,8 @@ async function sizeOf(file: string): Promise<number> {
 
 export function createCrashLog(options: CrashLogOptions): CrashLog {
   const maxBytes = options.maxBytes ?? CRASH_LOG_MAX_BYTES;
-  const audit = options.audit ?? (() => undefined);
+  const now = options.now ?? Date.now;
+  const audit = rateLimitedAudit(options.audit ?? (() => undefined), now);
   const file = path.join(options.dir, CRASH_LOG_FILE);
   const rotated = path.join(options.dir, CRASH_LOG_ROTATED_FILE);
   let tail: Promise<void> = Promise.resolve();
@@ -67,9 +152,11 @@ export function createCrashLog(options: CrashLogOptions): CrashLog {
 
   const write = async (line: string): Promise<void> => {
     // eslint-disable-next-line security/detect-non-literal-fs-filename -- app-controlled log dir, never renderer input
-    await mkdir(options.dir, { recursive: true });
+    await mkdir(options.dir, { recursive: true, mode: 0o700 });
     const bytes = Buffer.byteLength(line, "utf8");
     const size = await sizeOf(file);
+    // Rotation overwrites crash.log.1. If the append below then fails, crash.log is simply absent
+    // and the next call starts it afresh: nothing is left half-rotated.
     if (size > 0 && size + bytes > maxBytes) {
       // eslint-disable-next-line security/detect-non-literal-fs-filename -- fixed file names in the app-controlled log dir
       await rename(file, rotated);
@@ -85,7 +172,8 @@ export function createCrashLog(options: CrashLogOptions): CrashLog {
         audit("crash-log-entry-refused", { reason: "schema" });
         throw new CrashLogRefusedError();
       }
-      const line = `${JSON.stringify(entry)}\n`;
+      const receivedAt = new Date(now()).toISOString();
+      const line = `${JSON.stringify({ ...scrubEntry(entry), receivedAt })}\n`;
       if (Buffer.byteLength(line, "utf8") > Math.min(CRASH_LOG_MAX_LINE_BYTES, maxBytes)) {
         audit("crash-log-entry-refused", { reason: "too-large" });
         throw new CrashLogRefusedError();
