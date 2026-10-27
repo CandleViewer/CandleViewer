@@ -560,8 +560,8 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
     "rule",
     [
         "Required whenever the session has a live challenge, whatever its class, grace classes "
-        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups` "
-        "or `recorder_purge`; and `sl_loosen` and `accounts` once their routes are mounted), "
+        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
+        "`recorder_purge` or `accounts`; and `sl_loosen` once its routes are mounted), "
         "named by the live challenge or by `action_class`",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",

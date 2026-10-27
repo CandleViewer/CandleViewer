@@ -1726,7 +1726,7 @@ operations:
 # and an absent position `404 not_found` and keeps 403 for the capability (22 `PositionId`,
 # SR-E29-13). WS: `sub_ok <effective accounts>` or the refusal code. A non-owner's foreign and absent cells are equal (no
 # existence oracle; the runner also compares bodies and headers). `step_up`: the class
-# `DANGEROUS_ROUTES` or `HANDLER_GATED_ROUTES` registers, or null; a class not registered yet only
+# `DANGEROUS_ROUTES` or `HANDLER_GATED_ROUTES` registers (a list for a route that demands two), or null; a class not registered yet only
 # with `step_up_pending`, the known gap, which xfails while the route is not gated at all and
 # names its ticket. `pending` (`role.situation`): a per-cell xfail(strict=True) hook, unused
 # today. `delegated`: another ticket's matrix owns the cells (`E<nn>-<id> (#<issue>)`).
@@ -1747,22 +1747,12 @@ account_scope:
       viewer: {granted: admitted, foreign: 403 forbidden, absent: 403 forbidden}
   PATCH /exchange-accounts/{accountId}:
     step_up: accounts
-    step_up_pending: >-
-      E27-S04 (#898) gates it in its handler (HANDLER_GATED_ROUTES) with the no-grace class
-      `accounts` on each disable or re-enable, `enabled: false` (any `open_exposure`) or `true`;
-      a `position_mode` or `margin_mode` change is an `accounts` branch as well once E27-S05
-      serves it, until then the `422`, decided before the gate; only a label-only patch stays
-      ungated (F-11, SR-E27-02)
     cells:
       owner: {granted: admitted, foreign: admitted, absent: admitted}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   DELETE /exchange-accounts/{accountId}:
     step_up: accounts
-    step_up_pending: >-
-      E27-S04 (#898) gates it in its handler (HANDLER_GATED_ROUTES) with the no-grace class
-      `accounts`, bound to the one request (fingerprint, `open_exposure` included): a class a
-      rotation's `keys` step-up can never satisfy (F-11, SR-E27-02)
     cells:
       owner: {granted: admitted, foreign: admitted, absent: admitted}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
@@ -1797,7 +1787,7 @@ account_scope:
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   DELETE /exchange-accounts/{accountId}/keys/{keyId}:
-    step_up: keys
+    step_up: [keys, accounts]  # `accounts` for the `flatten_first` branch (E27-S04, #898)
     cells:
       owner: {granted: admitted, foreign: admitted, absent: admitted}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}

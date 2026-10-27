@@ -35,7 +35,6 @@ def _rooted(c: TestClient) -> TestClient:
     ("method", "path", "action_class"),
     [
         ("POST", "/exchange-accounts/a1/keys/k1/rotate", "keys"),
-        ("DELETE", "/exchange-accounts/a1/keys/k1", "keys"),
     ],
 )
 async def test_guard_under_root_path_demands_step_up_on_path_gated_route(

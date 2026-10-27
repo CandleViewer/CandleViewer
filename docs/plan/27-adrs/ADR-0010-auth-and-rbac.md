@@ -89,9 +89,10 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
 - **Step-up** (`auth/step_up.py`): action classes `keys`, `users`, `live_enablement`, `killswitch`,
   `risk_caps`, `recorder` (retention and pin changes, recorded-data purge: E16-T06, #2738), `flags`
   (a feature-flag write that releases no kill switch and enables no live trading, #3083), `audit`
-  (audit-log export) and `backups` (backup restore, #2751); a request needs
+  (audit-log export), `backups` (backup restore, #2751) and `accounts` (an exchange account's
+  disable, re-enable or delete, and a revoke's `flatten_first`, E27-S04, #898); a request needs
   password **and** TOTP code (D-2); a wrong password also counts toward login lockout; 5 min grace,
-  none for `live_enablement`, `killswitch` and `backups` (each action spends a fresh code; the spend
+  none for `live_enablement`, `killswitch`, `backups` and `accounts` (each action spends a fresh code; the spend
   is one conditional `UPDATE ... RETURNING` of the session row (`consume_single_use`, #2895), so
   concurrent requests cannot share one code: of two, one spends it and the other is refused
   `step_up_required` (#2798, proven on Postgres in #2919); the other step-up writes (challenge,

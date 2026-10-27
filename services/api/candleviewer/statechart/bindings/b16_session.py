@@ -302,7 +302,11 @@ READONLY_DOWNGRADE_US = 5 * 60 * 1_000_000
 #: Ticket "No-grace list": a fresh code is *always* required for these.
 #: `backups` (#2751): a restore, download-link issue or delete cannot be undone; nor can
 #: `recorder_purge`'s purge of recorded data (E16-T06).
-NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups", "recorder_purge"})
+#: `accounts` (E27-S04, #898): an account's disable, re-enable or delete, and a revoke's
+#: `flatten_first`; no-grace.
+NO_GRACE_ACTION_CLASSES = frozenset(
+    {"live_enablement", "killswitch", "backups", "recorder_purge", "accounts"}
+)
 #: `recorder` (04 §7.2.2 row 9): retention and pin changes (#2738); a grace class.
 #: `recorder_purge` (04 §7.2.2 row 9a, E16-T06): the irreversible recorded-data purge, no-grace.
 #: `audit` and `backups` (#2751, SR-025): the audit-log export, and a backup's restore,
@@ -320,6 +324,7 @@ ACTION_CLASSES = frozenset(
         "flags",
         "audit",
         "backups",
+        "accounts",
     }
 )
 

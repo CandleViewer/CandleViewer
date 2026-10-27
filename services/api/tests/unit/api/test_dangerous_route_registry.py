@@ -237,12 +237,16 @@ def _text(op: dict[str, Any]) -> str:
     return f"{op.get('summary', '')}\n{op.get('description', '')}"
 
 
-#: Backticked words that name a field, not a step-up class: `getMe`'s `accounts` list shares
-#: its name with the `accounts` class (E27-S04, #898).
-_FIELD_NOT_CLASS: dict[str, frozenset[str]] = {"getMe": frozenset({"accounts"})}
+#: Backticked words that name a field or a class the route does not demand, not a step-up class:
+#: `getMe`'s `accounts` list shares its name with the `accounts` class (E27-S04, #898), and
+#: `deleteExchangeAccount` names `keys` only to say that a `keys` grant never admits it.
+_FIELD_NOT_CLASS: dict[str, frozenset[str]] = {
+    "getMe": frozenset({"accounts"}),
+    "deleteExchangeAccount": frozenset({"keys"}),
+}
 #: Contract first (C-6.1): a class an operation's text names before its route slice registers
-#: it. E27-S04's revoke slice (#898) adds revoke's `accounts` row for `flatten_first`.
-_DOCUMENTED_AHEAD: dict[str, frozenset[str]] = {"revokeApiKey": frozenset({"accounts"})}
+#: it. None now: B3a (#898) registered every `accounts` row.
+_DOCUMENTED_AHEAD: dict[str, frozenset[str]] = {}
 
 
 def _documented_classes(op: dict[str, Any]) -> frozenset[str]:
@@ -532,7 +536,6 @@ def test_future_unregistered_dangerous_route_is_flagged(method: str, path: str) 
     ("method", "path", "action_class"),
     [
         ("POST", "/exchange-accounts/a/keys/k/rotate", "keys"),
-        ("DELETE", "/exchange-accounts/a/keys/k", "keys"),
         ("POST", "/risk/lockouts/a/override", "risk_caps"),
     ],
 )
@@ -598,7 +601,7 @@ def test_safe_reads_are_not_gated() -> None:
     assert dangerous_action_class("GET", "/users/u") is None
     assert dangerous_action_class("GET", "/admin/backups/b") is None
     assert dangerous_action_class("GET", "/exchange-accounts") is None  # listExchangeAccounts
-    assert len(DANGEROUS_ROUTES) >= 5  # the pre-registered rows (#2304 slice 3c)
+    assert len(DANGEROUS_ROUTES) >= 4  # the pre-registered rows (#2304 slice 3c)
 
 
 def test_invites_router_write_routes_are_gated() -> None:
@@ -717,6 +720,11 @@ def test_recording_writes_without_step_up_are_swept_and_allow_listed(path: str) 
 #: mounted with its handler test since #889 S9 (`test_audit_export_download.py`).
 _PENDING_HANDLER_GATES = {
     ("POST", "/admin/backups/{backupId}/restore"),
+    # E27-S04 (#898), B3a: registered with the class; each is mounted, with its handler test, by
+    # its slice (B3b2 the patch, B3c the delete, B3d the revoke), which drops it here.
+    ("PATCH", "/exchange-accounts/{accountId}"),
+    ("DELETE", "/exchange-accounts/{accountId}"),
+    ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}"),
 }
 
 
@@ -1002,23 +1010,25 @@ def test_no_other_method_or_path_of_the_profile_prefix_is_path_gated(
         ("/exchange-accounts/{accountId}/fee-rate", False),  # no other path under the prefix
         ("/exchange-accounts/{accountId}/profile", False),
         ("/exchange-accounts/{accountId}/profiles-archive", False),
-        ("/exchange-accounts/profiles", False),  # no account segment
+        ("/exchange-accounts/profiles", True),  # an account item whose id is `profiles` (#898)
         ("/accounts/{accountId}/profiles", False),
         ("/profiles", False),
         (_BINDING, True),
         (_BINDING + "/x", True),
         ("/exchange-accounts/{accountId}/default-profiles", False),
         ("/exchange-accounts/{accountId}/default", False),
-        ("/exchange-accounts/default-profile", False),
+        ("/exchange-accounts/default-profile", True),  # likewise an account item (#898)
         ("/exchange-accounts", True),  # createExchangeAccount's path alone (#895, SR-E27-02)
-        ("/exchange-accounts/{accountId}", False),
+        ("/exchange-accounts/{accountId}", True),  # patch and delete (E27-S04, #898)
+        ("/exchange-accounts/{accountId}/consequences", False),
     ],
 )
 def test_the_sweep_gains_the_profile_and_binding_prefixes_and_no_other_exchange_accounts_path(
     path: str, swept: bool
 ) -> None:
-    """The account's own routes are E27's: `/exchange-accounts` is swept (#895), `/{accountId}` is
-    left to E27-S04 (#898), which mounts its patch and delete."""
+    """The account's own routes are E27's: `/exchange-accounts` is swept (#895), and so is
+    the item path `/{accountId}` (E27-S04, #898: patch and delete);
+    fee-rate and consequences stay unswept."""
     assert bool(DANGEROUS_PATH_PATTERN.match(path)) is swept
 
 

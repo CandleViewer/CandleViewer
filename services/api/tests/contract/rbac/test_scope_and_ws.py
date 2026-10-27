@@ -925,7 +925,8 @@ def test_account_scope_step_up_rows_agree_with_the_registries(key: str) -> None:
     """SR-E27-02: the class the registries gate the operation with (none for a null row),
     mounted or not; a registered gap fails until its `step_up_pending` goes."""
     got, want = _gated_or_xfail(key), _SCOPE[key]["step_up"]
-    assert got == ({want} if want else set()), f"{key}: registered {got}, matrix says {want}"
+    expected = set(want) if isinstance(want, list) else ({want} if want else set())
+    assert got == expected, f"{key}: registered {got}, matrix says {want}"
     assert not _SCOPE[key].get("step_up_pending"), f"{key}: gated now, drop step_up_pending"
 
 

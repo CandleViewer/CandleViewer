@@ -371,14 +371,15 @@ async def test_reset_unknown_user_is_404_not_200() -> None:
     assert c.get(f"/users/{_MISSING}/mfa/reset-preview", headers=_H).status_code == 404
 
 
+#: revokeApiKey is handler-gated (`keys` and `accounts`, E27-S04 #898), not a path row: its
+#: slice (B3d) proves both classes with its handler.
 _KEY_ACTIONS = [
     ("POST", "/exchange-accounts/a1/keys/k1/rotate"),
-    ("DELETE", "/exchange-accounts/a1/keys/k1"),
     ("POST", "/exchange-accounts/a1/keys/k1/reveal-scope"),
 ]
 
 
-async def test_rotate_revoke_reveal_scope_need_step_up_then_share_grace_window() -> None:
+async def test_keys_actions_need_step_up_then_share_grace_window() -> None:
     """AC 1+2: each keys action is 403 without a fresh code; after one step-up
     a second keys action inside the window passes with no new code."""
     c, _em, seed, clock, _ = await _build()
