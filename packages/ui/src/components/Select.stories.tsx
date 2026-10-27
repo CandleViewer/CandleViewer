@@ -238,9 +238,23 @@ export const LongListUnavailable: Story = {
     await userEvent.keyboard("{End}");
     const list = within(canvasElement).getByRole("listbox");
     await expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
-    const last = within(canvasElement).getByRole("option", { name: /^Option 14/ });
-    const edge = list.getBoundingClientRect();
-    await expect(last.getBoundingClientRect().bottom).toBeLessThanOrEqual(edge.bottom + 1);
+    // The whole active row (label, reason and ring) is inside the listbox's visible box, not just its label line.
+    const rowOf = (name: RegExp): HTMLElement => {
+      const row = within(canvasElement)
+        .getByRole("option", { name })
+        .closest<HTMLElement>(".cv-select__row");
+      if (row === null) throw new Error("option has no row");
+      return row;
+    };
+    const inside = async (row: HTMLElement): Promise<void> => {
+      const edge = list.getBoundingClientRect();
+      const box = row.getBoundingClientRect();
+      await expect(box.bottom).toBeLessThanOrEqual(edge.bottom - list.clientTop + 0.5);
+      await expect(box.top).toBeGreaterThanOrEqual(edge.top + list.clientTop - 0.5);
+    };
+    await inside(rowOf(/^Option 14/));
+    await userEvent.keyboard("{Home}");
+    await inside(rowOf(/^Option 1$/));
   },
 };
 

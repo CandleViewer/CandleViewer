@@ -211,7 +211,11 @@ export function Select({
   // The active option stays in view in a long list.
   useEffect(() => {
     if (open && current >= 0 && scrollActive.current) {
-      document.getElementById(optionId(current))?.scrollIntoView({ block: "nearest" });
+      // The whole row (label, reason and ring), not the option line inside it.
+      document
+        .getElementById(optionId(current))
+        ?.closest(".cv-select__row")
+        ?.scrollIntoView({ block: "nearest" });
     }
     scrollActive.current = true;
     // `optionId` is derived from `listId`, which is stable.
@@ -222,11 +226,11 @@ export function Select({
     if (reason.gated || reason.disabled) return;
     const { key } = event;
     scrollActive.current = true;
-    // Alt+Down opens and Alt+Up chooses (APG); every other chord belongs to the host (Shift+Tab is focus movement).
+    // Alt+Down opens (a no-op when open) and Alt+Up chooses (APG); every other chord belongs to the host (Shift+Tab is focus movement).
     if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-      if (key === "ArrowDown" && !open) {
-        event.preventDefault();
-        openAt(openIndex(options, chosen, skipped)); // opens without moving the active option
+      if (key === "ArrowDown") {
+        event.preventDefault(); // open, a no-op that still keeps the page from scrolling
+        if (!open) openAt(openIndex(options, chosen, skipped)); // opens without moving the active option
       } else if (key === "ArrowUp" && open) {
         event.preventDefault();
         choose(current); // never a reason option: that re-shows its reason
