@@ -1110,7 +1110,7 @@ def structure(spec: str) -> dict[str, Any]:
         "ac_rows": sum(
             1 for ln in ac.split("\n") if ln.startswith(("| Sc. ", "| Box ", "| Note", "| DoD"))
         ),
-        "pending": "PENDING" in boards,
+        "drawn": "Boards as drawn" in boards,
     }
 
 
@@ -1404,8 +1404,8 @@ def evaluate(spec: str) -> tuple[list[str], list[str], int, int, dict[str, Any]]
     st = d["structure"]
     problems = check_markers(spec, d["markers"]) + check_rules(spec)
     problems += check_strings(spec, st) + check_frames(spec, st) + check_hygiene(spec, "spec")
-    if not st["pending"]:
-        problems.append("FAIL section 0 does not read PENDING")
+    if not st["drawn"]:
+        problems.append("FAIL section 0 does not list the boards as drawn")
     fails, warns, checked, unregistered = check_cites(spec)
     return problems + fails, warns, checked, unregistered, d
 
