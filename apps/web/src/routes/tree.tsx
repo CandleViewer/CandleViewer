@@ -68,6 +68,9 @@ function buildRoutes(): RouteObject[] {
       if (entry.id === "R-100") return redirect("/terminal/last");
       // R-200 `/settings` redirects to the profile tab (`12-sitemap.md` §2).
       if (entry.id === "R-200") return redirect("/settings/profile");
+      // R-005 `/locked` is an alias (#1640 ruling 4): the SCR-005 overlay host, mounted over every
+      // route, reads the session and opens the lock over the default route; no page of its own.
+      if (entry.id === "R-005") return redirect("/terminal");
       return null;
     },
   });

@@ -263,6 +263,28 @@ describe("startShell", () => {
     handle.stop();
   });
 
+  it("a reload into an idle-locked session: the refresh's lock marks the bootstrap locked and skips /me (#1640)", async () => {
+    refreshMock.mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ status: 401, code: "session_idle_locked" }), { status: 401 }),
+    );
+    const fetchImpl = vi.fn(async () => jsonResponse({}));
+    const handle = startShell({ wsUrl: WS_URL, fetchImpl, port: new FakePort() });
+    await handle.ready;
+    expect(getShellState().bootstrap).toEqual({ kind: "locked" });
+    expect(fetchImpl).not.toHaveBeenCalled(); // a cookie-only /me would answer unauthenticated
+    handle.stop();
+  });
+
+  it("a refresh that finds no session still runs the bootstrap (the route guard's turn)", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({}));
+    const handle = startShell({ wsUrl: WS_URL, fetchImpl, port: new FakePort() });
+    await handle.ready;
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(getShellState().bootstrap.kind).not.toBe("locked");
+    handle.stop();
+  });
+
   it("holds the first paint for REFRESH_WAIT_MS at most when another tab keeps the refresh lock", async () => {
     vi.useFakeTimers();
     const grants: (() => void)[] = [];

@@ -4,7 +4,7 @@
  * only activity signal besides unlock) and `POST /auth/unlock` (SCR-005, password only).
  */
 import type { generated } from "@candleviewer/protocol";
-import { accessToken } from "../../lib/auth/accessToken";
+import { accessToken, type SignOutReason } from "../../lib/auth/accessToken";
 import { apiFetch } from "../../lib/http/csrfFetch";
 
 type Ops = generated.rest.operations;
@@ -18,7 +18,7 @@ export type UnlockOutcome =
   /** `401 unlock_invalid` */
   | { readonly kind: "invalid" }
   /** `401 session_revoked` (fifth wrong password, absolute expiry) or `unauthenticated`: sign in again. */
-  | { readonly kind: "revoked" }
+  | { readonly kind: "revoked"; readonly reason?: "expired" | "unlock_attempts_exceeded" }
   /** `409 conflict`: the session is not locked; re-read it. */
   | { readonly kind: "not_locked" }
   | { readonly kind: "throttled" }
@@ -28,8 +28,12 @@ export interface SessionApi {
   read(): Promise<SessionClock | null>;
   extend(): Promise<SessionClock | null>;
   unlock(password: string): Promise<UnlockOutcome>;
-  /** Forgets the token in every tab and routes to SCR-001. */
-  endSession(): void;
+  /** SCR-005 "Sign out instead": `POST /auth/logout` (bearer, else the cookie); `true` once the session is gone. */
+  signOut(): Promise<boolean>;
+  /** Forgets the token in every tab and routes to SCR-001, with `reason` for its reason line. */
+  endSession(reason?: SignOutReason): void;
+  /** Calls `listener` when a refresh or a call finds the session idle-locked; returns the unsubscribe. */
+  onLocked(listener: () => void): () => void;
 }
 
 const BASE = "/api/v1/auth";
@@ -80,8 +84,11 @@ async function unlock(password: string): Promise<UnlockOutcome> {
       const problem: unknown = await res.json().catch(() => null);
       // a body cut off by the timeout is no answer, not a refusal: never sign out over a slow server
       if (problem === null && abort.signal.aborted) return { kind: "unreachable" };
-      const code = (problem as { code?: unknown } | null)?.code;
-      return code === "unlock_invalid" ? { kind: "invalid" } : { kind: "revoked" };
+      const { code, revoked_reason: why } = (problem ?? {}) as Record<string, unknown>;
+      if (code === "unlock_invalid") return { kind: "invalid" };
+      const known =
+        code === "session_revoked" && (why === "expired" || why === "unlock_attempts_exceeded");
+      return known ? { kind: "revoked", reason: why } : { kind: "revoked" };
     }
     const clock = res.ok ? await clockOf(Promise.resolve(res)) : null;
     if (clock === null) return { kind: "unreachable" };
@@ -95,9 +102,21 @@ async function unlock(password: string): Promise<UnlockOutcome> {
   }
 }
 
+/** A `401` means the session is already gone; any other refusal or no answer revoked nothing. */
+async function signOut(): Promise<boolean> {
+  try {
+    const res = await apiFetch(`${BASE}/logout`, { method: "POST" });
+    return res.ok || res.status === 401;
+  } catch {
+    return false;
+  }
+}
+
 export const sessionApi: SessionApi = {
   read: () => clockOf(apiFetch(`${BASE}/session`)),
   extend: () => clockOf(apiFetch(`${BASE}/session/extend`, { method: "POST" })),
   unlock,
-  endSession: () => accessToken.endSession(),
+  signOut,
+  endSession: (reason) => accessToken.endSession(reason),
+  onLocked: (listener) => accessToken.onLocked(listener),
 };

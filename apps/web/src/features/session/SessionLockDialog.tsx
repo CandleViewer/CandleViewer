@@ -5,6 +5,7 @@ import {
   hidden,
   primary,
   scrim,
+  secondary,
   title,
   useFocusReturn,
   useModalKeys,
@@ -27,6 +28,8 @@ export interface SessionLockDialogProps {
   readonly phase: LockPhase;
   readonly failure?: LockFailure | null;
   readonly onUnlock: (password: string) => void;
+  /** "Sign out instead": opens the confirm sub-dialog (E09-D06 `sign-out-instead`). */
+  readonly onSignOut?: () => void;
 }
 
 const field = {
@@ -47,6 +50,7 @@ export function SessionLockDialog({
   phase,
   failure = null,
   onUnlock,
+  onSignOut,
 }: SessionLockDialogProps): JSX.Element {
   const id = useId();
   const dialog = useRef<HTMLDivElement>(null);
@@ -131,6 +135,11 @@ export function SessionLockDialog({
             </p>
           )}
           <div style={actions}>
+            {onSignOut === undefined ? null : (
+              <button type="button" style={secondary} disabled={verifying} onClick={onSignOut}>
+                Sign out instead
+              </button>
+            )}
             <button type="submit" style={primary} disabled={verifying}>
               {verifying ? "Verifying..." : "Unlock"}
             </button>

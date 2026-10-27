@@ -979,6 +979,155 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
   });
 });
 
+describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
+  it("a refresh answered 401 session_idle_locked tells each listener once; the 5 s memo tells none", async () => {
+    const [a, b] = [vi.fn(), vi.fn()];
+    holder.onLocked(a);
+    holder.onLocked(b);
+    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
+    await expect(holder.refresh()).resolves.toBe("locked");
+    await expect(holder.refresh()).resolves.toBe("locked"); // the memo: no cookie, no report
+    expect([a.mock.calls.length, b.mock.calls.length]).toEqual([1, 1]);
+    expect(toSignIn).not.toHaveBeenCalled();
+  });
+
+  it("a call refused 401 session_idle_locked tells the listeners; any other refusal does not", async () => {
+    const listener = vi.fn();
+    holder.onLocked(listener);
+    holder.set(bundle(1));
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    expect((await holder.send("/api/v1/x", {}, transport)).status).toBe(401);
+    expect(listener).toHaveBeenCalledTimes(1);
+    for (const res of [refused("unlock_invalid"), json(403, { code: "forbidden" }), noContent()]) {
+      transport.mockResolvedValueOnce(res);
+      await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    }
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unsubscribed listener hears nothing, and one that throws fails neither the call nor the rest", async () => {
+    const gone = vi.fn();
+    const after = vi.fn();
+    holder.onLocked(() => {
+      throw new Error("listener");
+    });
+    holder.onLocked(after);
+    holder.onLocked(gone)();
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    await expect(holder.send("/api/v1/x", {}, transport)).resolves.toHaveProperty("status", 401);
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(gone).not.toHaveBeenCalled();
+  });
+
+  it("endSession carries its reason to sign-in, and the tab's holder puts it on the URL", () => {
+    holder.endSession("unlock_attempts");
+    expect(toSignIn).toHaveBeenCalledWith("unlock_attempts");
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/terminal/abc", search: "", assign });
+    accessToken.endSession("unlock_attempts");
+    accessToken.endSession();
+    expect(assign.mock.calls).toEqual([
+      ["/login?next=%2Fterminal%2Fabc&reason=unlock_attempts"],
+      ["/login?next=%2Fterminal%2Fabc"],
+    ]);
+  });
+});
+
+describe("the calls allowed while locked fall back to the cookie (#1640)", () => {
+  // The server's real answers to a stale (rotated-away or never-issued) bearer:
+  // - the uniform 401 of `api/sessions.py` `_unauthorized()`, a problem with no `code`
+  //   (pinned by `services/api/tests/unit/api/idle_lock/test_unlock.py:243`);
+  // - `403 csrf_token_invalid` from `api/csrf.py` (`csrf_problem`, WRONG_SESSION) on logout and unlock,
+  //   before the route runs.
+  const uniform401 = (): Response =>
+    json(401, {
+      type: "about:blank",
+      title: "Unauthorized",
+      status: 401,
+      detail: "authentication required",
+    });
+  const wrongSession403 = (): Response =>
+    json(403, {
+      type: "https://candleviewer.local/errors/csrf_token_invalid",
+      title:
+        "CSRF token missing, not matching the __Host-cv_csrf cookie, or not bound to this session",
+      status: 403,
+      code: "csrf_token_invalid",
+      detail: "X-CSRF-Token is not bound to the current session.",
+    });
+  const bearers = (): (string | null)[] => transport.mock.calls.map(([init]) => authOf(init));
+  const locked = (): void => {
+    fetchMock.mockImplementation(async () => refused("session_idle_locked")); // the renewal: locked
+  };
+
+  it.each([
+    ["/api/v1/auth/logout", wrongSession403, 204],
+    ["/api/v1/auth/unlock", wrongSession403, 200],
+    ["/api/v1/auth/session", uniform401, 200],
+    ["/api/v1/auth/unlock", uniform401, 200],
+  ])("%s with a stale bearer goes once more cookie-only", async (path, stale, ok) => {
+    holder.set(bundle(1));
+    locked();
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === null ? new Response(null, { status: ok }) : stale(),
+    );
+    const method = path.endsWith("session") ? "GET" : "POST";
+    expect((await holder.send(path, { method }, transport)).status).toBe(ok);
+    expect(bearers()).toEqual([bearer(1), null]);
+  });
+
+  it("a logout's cookie-only repeat signs out: the token is forgotten", async () => {
+    holder.set(bundle(1));
+    locked();
+    transport.mockResolvedValueOnce(wrongSession403()).mockResolvedValueOnce(noContent());
+    await holder.send("/api/v1/auth/logout", { method: "POST" }, transport);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" });
+  });
+
+  it.each([
+    ["/api/v1/auth/unlock", () => refused("unlock_invalid"), true, "a judged password"],
+    ["/api/v1/auth/unlock", () => refused("session_revoked"), true, "a revoked session"],
+    ["/api/v1/x", () => uniform401(), true, "a path off the allow-list"],
+    ["/api/v1/auth/logout", () => wrongSession403(), false, "no bearer sent"],
+  ])("%s refused (%s) is not repeated cookie-only: %s", async (path, refusal, held) => {
+    if (held) holder.set(bundle(1));
+    locked();
+    transport.mockImplementation(async () => refusal());
+    await holder.send(path, { method: "POST" }, transport);
+    expect(bearers().filter((b) => b === null)).toHaveLength(held ? 0 : 1);
+  });
+
+  it("a renewal that cures the refusal is not followed by a cookie-only repeat", async () => {
+    holder.set(bundle(1));
+    fetchMock.mockResolvedValueOnce(refreshed(2));
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === bearer(2) ? noContent() : wrongSession403(),
+    );
+    expect((await holder.send("/api/v1/auth/logout", { method: "POST" }, transport)).status).toBe(
+      204,
+    );
+    expect(bearers()).toEqual([bearer(1), bearer(2)]);
+  });
+
+  it("after a refused bearer, cookie-identified calls go cookie-only (one throttle slot) until a new bundle", async () => {
+    holder.set(bundle(1));
+    locked();
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === null ? refused("unlock_invalid") : wrongSession403(),
+    );
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    await holder.send("/api/v1/auth/session", { method: "GET" }, transport);
+    expect(bearers()).toEqual([bearer(1), null, null, null]);
+    await holder.send("/api/v1/x", {}, transport); // any other call keeps its bearer
+    expect(bearers().at(-1)).toBe(bearer(1));
+    holder.set(bundle(2)); // a new bundle: the bearer goes again
+    await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    expect(bearers().at(-2)).toBe(bearer(2));
+  });
+});
+
 describe("the test setup takes BroadcastChannel away for the token holder alone", () => {
   it("no other src module uses one, so none runs channel-less in its tests unnoticed (it would stub its own)", () => {
     const src = resolve(import.meta.dirname, "../../../src");

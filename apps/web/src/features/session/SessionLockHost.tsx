@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { SessionLockDialog, type LockFailure, type LockPhase } from "./SessionLockDialog";
+import { SessionExpiredCard, SignOutConfirm } from "./SessionLockEscapes";
 import { SessionTimeoutWarning } from "./SessionTimeoutWarning";
 import { sessionApi, type SessionApi, type SessionClock, type UnlockOutcome } from "./sessionApi";
 
@@ -22,18 +23,25 @@ const FAILURE_COPY: Partial<Record<UnlockOutcome["kind"], string>> = {
 type View =
   | { readonly kind: "none" }
   | { readonly kind: "warning"; readonly deadlineMs: number }
-  | { readonly kind: "locked"; readonly phase: LockPhase; readonly failure: LockFailure | null };
+  | { readonly kind: "locked"; readonly phase: LockPhase; readonly failure: LockFailure | null }
+  | { readonly kind: "signout"; readonly busy: boolean; readonly failed: boolean }
+  | { readonly kind: "expired" };
 
 interface Actions {
   extend(): void;
   dismiss(): void;
   unlock(password: string): void;
+  signOut(): void;
+  confirmSignOut(): void;
+  back(): void;
 }
 
 export interface SessionLockHostProps {
   readonly api?: SessionApi;
   /** Only a signed-in shell reads its session. */
   readonly enabled?: boolean;
+  /** Called when a read finds the session not locked: a reload into a locked session boots on. */
+  readonly onUnlocked?: () => void;
 }
 
 /**
@@ -45,11 +53,16 @@ export interface SessionLockHostProps {
 export function SessionLockHost({
   api = sessionApi,
   enabled = getMeClaims().authenticated,
+  onUnlocked,
 }: SessionLockHostProps): JSX.Element | null {
   const [view, setView] = useState<View>({ kind: "none" });
   const [idleMinutes, setIdleMinutes] = useState(15);
   const [now, setNow] = useState(() => Date.now());
   const actions = useRef<Actions | null>(null);
+  const unlocked = useRef(onUnlocked);
+  useEffect(() => {
+    unlocked.current = onUnlocked;
+  });
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -61,11 +74,27 @@ export function SessionLockHost({
     let failures = 0;
     let retryMs = RETRY_MS;
     let unlocking = false;
+    /** The session ended here (signed out, or past its lifetime): nothing more is read. */
+    let ended = false;
+    let reading = false;
     const at = (ms: number, task: () => void): void => {
       clearTimeout(timer);
       timer = setTimeout(task, Math.max(ms, MIN_DELAY_MS));
     };
-    const read = (): void => void api.read().then(apply);
+    const read = (): void => {
+      if (reading) return; // a burst of lock reports makes one read
+      reading = true;
+      void api
+        .read()
+        .then(apply, () => apply(null))
+        .finally(() => {
+          reading = false;
+        });
+    };
+    const finish = (): void => {
+      ended = true;
+      clearTimeout(timer);
+    };
     const retry = (): void => {
       at(retryMs, read);
       retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
@@ -80,7 +109,7 @@ export function SessionLockHost({
       setView({ kind: "locked", phase: "error", failure });
     };
     function apply(clock: SessionClock | null): void {
-      if (!live) return;
+      if (!live || ended) return;
       if (clock === null) return retry();
       const { session } = clock;
       setIdleMinutes(Math.round(session.idle_timeout_s / 60));
@@ -88,12 +117,13 @@ export function SessionLockHost({
         clearTimeout(timer);
         retryMs = RETRY_MS;
         setView((v) =>
-          v.kind === "locked" && v.phase !== "verifying"
+          v.kind === "signout" || (v.kind === "locked" && v.phase !== "verifying")
             ? v
             : { kind: "locked", phase: "locked", failure: null },
         );
         return;
       }
+      unlocked.current?.();
       const left = Date.parse(session.idle_deadline) - Date.parse(clock.server_time);
       // past its deadline but not locked yet (or no usable time): ask again later, not at once
       if (!(left > 0)) return retry();
@@ -112,8 +142,12 @@ export function SessionLockHost({
       if (!live) return;
       if (outcome.kind === "unlocked") return apply(outcome.clock);
       if (outcome.kind === "revoked") {
-        setView({ kind: "none" }); // the typed password goes with the dialog, before the route change
-        return api.endSession();
+        finish();
+        // the typed password goes with the dialog, before the route change
+        if (outcome.reason === "expired") return setView({ kind: "expired" });
+        setView({ kind: "none" });
+        const fiveStrikes = outcome.reason === "unlock_attempts_exceeded";
+        return api.endSession(fiveStrikes ? "unlock_attempts" : undefined);
       }
       if (outcome.kind !== "not_locked") return fail(outcome.kind);
       void api.read().then((clock) => (clock === null ? fail("unreachable") : apply(clock)));
@@ -133,10 +167,27 @@ export function SessionLockHost({
           settle(outcome);
         });
       },
+      signOut: () => setView({ kind: "signout", busy: false, failed: false }),
+      back: () => setView({ kind: "locked", phase: "locked", failure: null }),
+      confirmSignOut: () => {
+        setView({ kind: "signout", busy: true, failed: false });
+        void api.signOut().then((gone) => {
+          if (!live) return;
+          if (!gone) return setView({ kind: "signout", busy: false, failed: true });
+          finish();
+          setView({ kind: "none" });
+          api.endSession();
+        });
+      },
     };
+    // SCR-005 opens from events too: a refresh or a call that finds the session idle-locked
+    const off = api.onLocked(() => {
+      if (!unlocking) read();
+    });
     read();
     return () => {
       live = false;
+      off();
       clearTimeout(timer);
     };
   }, [enabled, api]);
@@ -164,8 +215,20 @@ export function SessionLockHost({
         phase={view.phase}
         failure={view.failure}
         onUnlock={(password) => actions.current?.unlock(password)}
+        onSignOut={() => actions.current?.signOut()}
       />
     );
   }
+  if (view.kind === "signout") {
+    return (
+      <SignOutConfirm
+        busy={view.busy}
+        failed={view.failed}
+        onConfirm={() => actions.current?.confirmSignOut()}
+        onBack={() => actions.current?.back()}
+      />
+    );
+  }
+  if (view.kind === "expired") return <SessionExpiredCard onSignIn={() => api.endSession()} />;
   return null;
 }

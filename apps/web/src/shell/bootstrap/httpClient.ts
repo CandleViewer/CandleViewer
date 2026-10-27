@@ -11,6 +11,8 @@ export class HttpError extends Error {
   constructor(
     readonly status: number,
     message: string,
+    /** The problem `code` of the body, if it had one (`session_idle_locked`: show SCR-005, #1640). */
+    readonly code?: string,
   ) {
     super(message);
     this.name = "HttpError";
@@ -58,7 +60,10 @@ export async function fetchJson<T>(path: string, options: FetchJsonOptions): Pro
       (init) => fetchImpl(path, init),
     );
     if (!response.ok) {
-      throw new HttpError(response.status, `${path} responded ${response.status}`);
+      const problem: unknown = await response.json().catch(() => null);
+      const code = (problem as { code?: unknown } | null)?.code;
+      const message = `${path} responded ${response.status}`;
+      throw new HttpError(response.status, message, typeof code === "string" ? code : undefined);
     }
     return (await response.json()) as T;
   } catch (error) {

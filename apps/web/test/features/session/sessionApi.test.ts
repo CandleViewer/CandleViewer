@@ -1,13 +1,16 @@
 /** #1640 review: `sessionApi` outcomes against a stubbed `apiFetch` (no network). */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { apiFetch, refresh, endSession } = vi.hoisted(() => ({
+const { apiFetch, refresh, endSession, onLocked } = vi.hoisted(() => ({
   apiFetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
   refresh: vi.fn(),
   endSession: vi.fn(),
+  onLocked: vi.fn(),
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
-vi.mock("../../../src/lib/auth/accessToken", () => ({ accessToken: { refresh, endSession } }));
+vi.mock("../../../src/lib/auth/accessToken", () => ({
+  accessToken: { refresh, endSession, onLocked },
+}));
 
 import { UNLOCK_TIMEOUT_MS, sessionApi } from "../../../src/features/session/sessionApi";
 
@@ -114,5 +117,46 @@ describe("sessionApi.read / extend", () => {
   it("endSession hands over to the token holder", () => {
     sessionApi.endSession();
     expect(endSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sessionApi: S2 (#1640)", () => {
+  it.each([
+    [{ code: "session_revoked", revoked_reason: "expired" }, "expired"],
+    [
+      { code: "session_revoked", revoked_reason: "unlock_attempts_exceeded" },
+      "unlock_attempts_exceeded",
+    ],
+    [{ code: "session_revoked", revoked_reason: "revoked" }, undefined],
+    [{ code: "unauthenticated", revoked_reason: "expired" }, undefined],
+  ])("a 401 %j is revoked with reason %s", async (body, reason) => {
+    apiFetch.mockResolvedValueOnce(reply(401, body));
+    expect(await sessionApi.unlock("pw")).toEqual(
+      reason === undefined ? { kind: "revoked" } : { kind: "revoked", reason },
+    );
+  });
+
+  it.each([
+    [204, true],
+    [401, true],
+    [503, false],
+    [403, false],
+  ])("signOut: a logout answered %i -> %s", async (status, gone) => {
+    apiFetch.mockResolvedValueOnce(new Response(null, { status }));
+    expect(await sessionApi.signOut()).toBe(gone);
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/auth/logout", { method: "POST" });
+  });
+
+  it("signOut: no answer revoked nothing", async () => {
+    apiFetch.mockRejectedValueOnce(new TypeError("offline"));
+    expect(await sessionApi.signOut()).toBe(false);
+  });
+
+  it("endSession and onLocked go to the tab's token holder", () => {
+    sessionApi.endSession("unlock_attempts");
+    expect(endSession).toHaveBeenCalledWith("unlock_attempts");
+    const listener = vi.fn();
+    sessionApi.onLocked(listener);
+    expect(onLocked).toHaveBeenCalledWith(listener);
   });
 });
