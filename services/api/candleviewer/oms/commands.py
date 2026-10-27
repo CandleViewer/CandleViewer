@@ -117,8 +117,9 @@ naming another order is a defect, raised. Else it answers as a create
 does (24 Sec.8.6), and anything raised once the call began is raised, never repeated (Q11: B1 lands
 the order in `unknown`), the venue's 110001 too, as `NotFoundError` with its code: the venue does
 not hold the order, which says nothing of how it ended, so reconciliation reads it. One deadline
-of its kind bounds all of it. An exit service's `expect_exit` gets the answer B1 got, None when
-the call raised but for the venue's 110001, which says why the order parks; a KILL's spends none.
+of its kind bounds all of it. An exit service's `expect_exit`, once the facade took its command
+(`take_exit`), gets the answer B1 got, None when the call raised but for the venue's 110001, which
+says why the order parks; a KILL's spends none.
 
 **amend** (the S4 rulings Q2 to Q4 and Q11; 24 Sec.8.8 rules 5 and 6, Sec.8.9). A TP/SL change
 meets Q3's scope and `stop_ratchet` before any record or send (refusals audited `orders.amend`
@@ -129,8 +130,10 @@ An account the port cannot sign for (refused, or with no active key) answers `AC
 audited, nothing sent (the 11:34Z ruling); a read that fails before the send, `STORE_UNAVAILABLE`.
 Its records name the request whose registration B1's call spent (`expect_exit`, `_spend`), each
 request's registration its own (#4643): each side's request and each void the principal with the
-role and the correlation id, the port's own refusals the correlation id (C-2.9, #3990). A call
-that finds no registration (one dropped past `max_watches`, or forgotten by an exit service that
+role and the correlation id, the port's own refusals the correlation id (C-2.9, #3990). B1's call
+spends only a registration whose command the facade took (`take_exit`, #4662), so a call that
+comes after its exit ended never names another request whose command waits at the facade. A call
+that finds none (a registration dropped past `max_watches`, or forgotten by an exit service that
 ended first, `oms.exits`) names no request.
 """
 
@@ -652,7 +655,8 @@ class ExitWatch:
     """An exit service's wait on one order's cancel or amend (`expect_exit`), as `PlaceWatch` is
     the pipeline's on a create: it answers what B1's own call was answered, or None when the call
     raised (Q11) or the registration was dropped or forgotten; the venue's 110001 answers
-    why the order parks (`_parked`), as S4-C reads it apart from a fault. A KILL's spends none.
+    why the order parks (`_parked`), as S4-C reads it apart from a fault. B1's call spends it once
+    the facade took its command (`OmsCommandPort.take_exit`); a KILL's spends none.
     `request_id` and `actor` name the request the exit is for (#3990)."""
 
     order_id: UUID
@@ -737,7 +741,9 @@ class OmsCommandPort:
         self._max_watches = max_watches
         self._figures = figures  # an accepted amend drops the account's (24 Sec.9.3.6)
         self._watches: OrderedDict[UUID, PlaceWatch] = OrderedDict()
-        self._exits: OrderedDict[ExitWatch, None] = OrderedDict()  # registration order (#4643)
+        #: Each exit's registration, in registration order (#4643): True once the facade took its
+        #: command (`take_exit`, #4662), which B1's call alone spends (`_spend`).
+        self._exits: OrderedDict[ExitWatch, bool] = OrderedDict()
         self._resync: asyncio.Task[None] | None = None
         self._closed = False
 
@@ -1199,20 +1205,27 @@ class OmsCommandPort:
     ) -> ExitWatch:
         """Register the exit an exit service is about to command (`CANCEL`, `AMEND`), answered as
         B1 was. Each is its request's own (#4643): a second of the order and kind never replaces
-        the first, as B1's call spends the oldest (`_spend`); past `max_watches` the oldest is
-        dropped, answered None (C-2.18)."""
+        the first. B1's call spends it only once the facade took its command (`take_exit`,
+        `_spend`); past `max_watches` the oldest is dropped, answered None (C-2.18)."""
         future = asyncio.get_running_loop().create_future()
         watch = ExitWatch(order_id, kind, future, request_id, actor)
-        self._exits[watch] = None
+        self._exits[watch] = False
         while len(self._exits) > self._max_watches:
             dropped, _ = self._exits.popitem(last=False)
             _log().error("oms_exit_watch_dropped", order_id=str(dropped.order_id))
             dropped.resolve(None)
         return watch
 
+    def take_exit(self, watch: ExitWatch) -> None:
+        """The facade took the registration's command (`OrderMachines.command`'s `on_taken`, under
+        the order's lock, before it is sent): from now on B1's call for its step may spend it
+        (#4662). A watch no longer held (spent, dropped or forgotten) is left as it is."""
+        if watch in self._exits:
+            self._exits[watch] = True
+
     def forget_exit(self, watch: ExitWatch) -> None:
         """Drop a registration B1 has not spent: its exit service forgets its own on every way out
-        but B1's call having taken it (`oms.exits`), its command refused, its step settled with
+        but B1's call having spent it (`oms.exits`), its command refused, its step settled with
         no call, or no call yet as it ends. Its watch answers None; another request's
         registration of the order stays, and a watch no longer held is left as it is."""
         if watch in self._exits:
@@ -1220,10 +1233,14 @@ class OmsCommandPort:
             watch.resolve(None)
 
     def _spend(self, order_id: UUID, kind: ExitKind) -> ExitWatch | None:
-        """B1's call takes the order's oldest registration of `kind` (#4643): the facade takes the
-        order's commands one at a time, in the order they were registered, and refuses a later
-        one while the first's step stands, whose refused request forgets its own."""
-        watch = next((w for w in self._exits if (w.order_id, w.kind) == (order_id, kind)), None)
+        """B1's call spends the order's oldest registration of `kind` whose command the facade
+        took (`take_exit`, #4662), never one whose command still waits at the facade or was
+        refused there. The facade takes the order's commands one at a time and refuses another
+        exit of the order while one's step stands, and B1 calls only while a step stands, so the
+        call finds its own step's registration, or none once that exit forgot it (#4643)."""
+        wanted = (order_id, kind)
+        taken = (w for w, took in self._exits.items() if took and (w.order_id, w.kind) == wanted)
+        watch = next(taken, None)
         if watch is not None:
             del self._exits[watch]
         return watch
