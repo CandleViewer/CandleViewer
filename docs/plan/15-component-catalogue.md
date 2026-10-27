@@ -730,6 +730,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.app`, `layout.shell.*`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe, landmark-structure test.
+- **As built (E10-S01, #304)**: in `apps/web` (`features/app-shell/AppShell.tsx`), props only, not yet in `packages/ui`; mounted by the pathless `ShellLayout` route around every non-public route. Props are slots, not `navItems` / `topChrome`: `mainId`, `nav`, `connection`, `topBar`, `panic`, `banner`, `canvasOverlay`, `rightRail` + `rightRailLabel`, `status`, `children`. Landmarks `banner`, `navigation` "Primary", one `main` (`tabIndex=-1`; screens render a `div`, never a second `main`), `complementary`, `contentinfo`; a full-width banner row sits under the top bar. On a route change focus moves to the first `h1` in `main`. Storybook: none yet (apps/web has no Storybook); covered by RTL, axe and the `shell-chrome` e2e.
 
 ### CMP-071 NavRail
 
@@ -739,6 +740,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.raised`, `size.navrail.width`.
 - **Storybook**: Default, WithBadges, Collapsed.
 - **Tests**: unit, visual, axe, keyboard.
+- **As built (E10-S01, #304)**: in `apps/web`. Seven items, not the ten of the ticket and sitemap §1.1 (Terminal, Rules, Journal, Replay, Alerts, Settings, Admin; Watchlist, Positions / Orders and Risk Dashboard PROPOSED, on the owner queue). Each item names a manifest route and is filtered before render through `evaluateAccess`, so every denied item, not only Admin, is absent from the DOM (a Viewer has no Rules). A `nav` of links with `aria-current="page"` plus a 3 px leading bar, fill and weight, not `role="tree"`; the arrows, `Home` and `End` also move focus. Fixed `Alt+1..7` per item (a role without an item leaves a gap). Collapsed 64 px / expanded 240 px: the width snaps, only the labels move by `transform` and opacity; a toggle under the items carries `aria-expanded`; the choice persists per device. Stand-ins: no nav glyphs (the label's initial when collapsed), a `title` instead of CMP-016, a plain badge span with no count source yet (the words join the accessible name, "Alerts, 2 new").
 
 ### CMP-072 TopBar
 
@@ -748,6 +750,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.raised`, `elevation.1`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
+- **As built (E10-S01, #304)**: in `apps/web`, one row in DOM and focus order: wordmark, CMP-075 badge, the Account / Symbol / Interval pickers as disabled-with-reason placeholders ("Not available in this build."), the CMP-084 search trigger (disabled with its reason until E10-S03 registers the palette), the CMP-076 chip, the user's name and role as text and a Sign out button (CMP-061 stand-in), then the CMP-211 slot. No workspace switcher or notification centre here: notifications are the CMP-209 launcher. The badge is announced politely on every route change through the shell's one announcer.
 
 ### CMP-073 WorkspaceSwitcher
 
@@ -775,6 +778,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: shares `color.env.*`.
 - **Storybook**: Demo, Live.
 - **Tests**: unit, visual, axe.
+- **As built (E10-S01, #304)**: also the TopBar's environment badge in place of CMP-074 (no switch flow): `role="img"` named "Trading environment: Live", word + glyph + weight + a 2 px env border. It takes no prop, class or style that could hide it. TESTNET and ENV UNKNOWN looks are PROPOSED; an unknown environment shows a dashed warning "ENV UNKNOWN", never a defaulted DEMO (the show-or-omit ruling is pending). The status bar repeats the environment in words.
 
 ### CMP-076 ConnectionStatus
 
@@ -787,6 +791,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Storybook**: Live, Delayed, Stale, StaleEscalated, StaleServer, UpstreamDown, Reconnecting, Offline, Compact, Comfortable, TooltipOpen, HighContrast, Greyscale.
 - **Tests**: unit (the selector and the precedence), visual, axe, announcement-throttling test (one announcement per Disconnected episode, never per reattempt or heartbeat), retry-state test (a shell-cause `offline` and a reattempt's `connecting` render `reconnecting`; "Offline — retry stopped" only for `fatal` / `bye.reconnect: false`), Stale-over-Delayed test (a stale, server-stale or upstream-down public topic under a `saturated` transport shows Stale, never "Reduced rate ×N" — E17-D01 D2), no-live-region-on-the-chip test.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the chip follows the title's ≤ 1 / s slots and latch, never the transport; `latencyMs` ≤ 1 Hz, never in a live region — PROPOSED).
+- **As built (E10-S01, #304)**: in `apps/web`, fed from the shell store, which has four connection kinds: the chip shows Live (with latency), Connecting… and Reconnecting (n); the store folds a fatal close into a retry, so Offline, Delayed and Stale have no source in the shell yet. A native `<button>` with no action: no details popover, no CMP-016 tooltip (the UTC time is in the name and a `title`), one compact density. It owns no live region.
 
 ### CMP-077 ReconnectOverlay
 
@@ -798,6 +803,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.status.{danger,warning,success}.{subtle,strong}`, `color.text.{primary,secondary,inverse,link,on-action}`, `color.action.primary.default`, `color.focus.ring`, `radius.control`, `border.thick`/`.focus`, `size.icon.md`, `space.inset.sm`, `type.ui.{body,body-strong}`, `elevation.chrome`, `motion.duration.{instant,fast}`, `motion.easing.accelerate`. Not this component's: `elevation.5` (= `elevation.scrim`, the per-panel scrim layer) and the requested `color.surface.scrim` alias (`color.surface.overlay` at `opacity.scrim`).
 - **Storybook**: Reconnecting, OfflineFatal, ReconnectingUnreachable, SessionEnded, Recovered, LongOutage, ReadOnlyShutdown, ReadOnlyKillSwitch, DetailsOwner, DetailsViewer, Keyboard, ReducedMotion.
 - **Tests**: unit, visual, axe, **no-trap test** (`Tab` leaves the region; SCR-063's controls stay reachable while Disconnected), one-alert-per-episode test, no-retry-on-`reconnect: false` test (the `session-ended` state renders `Sign in` and no `Retry now`), Details-split test (no Owner field renders in the Viewer instance).
+- **As built (E10-S04, #306; mounted by E10-S01, #304)**: in `apps/web`, as the non-modal connection region in the shell's banner slot (`ShellBanner`, above CMP-092's rows), never over the canvas or CMP-211. A `region` named "Connection" that owns no live region: its container writes the alert once per Disconnected episode through the shell announcer. Deferred: Retry now, Details (Owner / Viewer), recovered, unstable; the left border is 2 px and there is no 96 px minimum height (no tokens).
 
 ### CMP-078 StaleDataShade
 
@@ -874,6 +880,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: pill `color.action.primary.default` (hover `color.action.primary.hover`), `radius.control`, min-height `size.control.height`, padding `space.button.paddingX`; label `type.ui.label` + `color.text.on-action`; the `color.focus.ring` ring (E10-D03 A5; J19). (Replaces `color.action.primary`, read as `.default`.)
 - **Storybook**: Focused, Unfocused, Several (J19).
 - **Tests**: unit, visual, axe, keyboard-first-tab test.
+- **As built (E10-S01, #304)**: the shell first shipped a temporary single-target stand-in in `apps/web` ("Skip to main content" → the shell's `main`), the first Tab stop on every shell page, until the `packages/ui` component (E05-S04, #267) replaces it.
 
 ### CMP-086 SettingsNav / SettingsLayout
 
@@ -2485,6 +2492,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Data contract**: latency and recorder state from the `system.health` WS topic; rule count from `GET /rules?state=armed`.
 - **Storybook**: Healthy, HighLatency, RecorderStopped, RulesArmed.
 - **Tests**: unit, visual, axe, performance (no re-render storm at 1 Hz updates).
+- **As built (E10-S01, #304)**: in `apps/web`, inside the `contentinfo` landmark: the WS connection and latency chips (CMP-210), the latency value, a 1 Hz UTC clock, the bar-close slot, the environment in words and the build version. Only a polite `role="status"` named "System status" holding the latency state words is live, so a value or a tick is never announced. Each value is its own subscribed leaf (zero workspace re-renders over 60 s). Not yet (no source): recorder, armed-rule count, kill-switch access, clock offset.
 
 ### CMP-209 RightRail
 
@@ -2494,6 +2502,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: `color.surface.raised`, `elevation.1`, `motion.drawer`.
 - **Storybook**: Closed, NotificationsOpen, DetailOpen.
 - **Tests**: unit, visual, axe, interaction (Esc, focus return).
+- **As built (E10-S01, #304)**: in `apps/web`, mounted inside the `complementary` landmark named "Side panels" (PROPOSED): a launcher strip with one Notifications disclosure button (`aria-expanded`, `aria-controls`) and one 192 px panel holding only its heading until SCR-014 lands. The panel slides by `transform`; the reserved width opens at once and closes at the end of the slide. `Esc` closes it and returns focus to the launcher; nothing is trapped.
 
 ### CMP-210 HealthChips
 
@@ -2503,6 +2512,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tokens**: `color.status.*`, `radius.pill`.
 - **Storybook**: AllOk, Warning, Error, Mixed.
 - **Tests**: unit, visual, axe.
+- **As built (E10-S01, #304)**: two chips, in the CMP-208 status bar rather than the top bar: "Connection: <word>" and "WS latency: <state>", each glyph + word, never colour alone. They are status text: no admin link and no focus yet, and no ingestion-lag, recorder or rate-limit chip (no source). The value is outside the live region.
 
 ### CMP-211 PanicButtons
 
@@ -2515,6 +2525,7 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Data contract**: `POST /positions/close-all`, `POST /orders/cancel-all`, `POST /trading/kill-switch` (`SetKillSwitchRequest`; defaults `cancel_open_orders: true`, `flatten_positions: false` — decision D-2); every invocation is audited via CMP-093 AuditActionTrigger. Cancel-all cancels only orders that open or add exposure: position TP/SL and reduce-only stops are never cancelled (SR-E39-06, `docs/security/threat-models/E39-risk-killswitch.md`). The engaged state is read from the `system` WS frame `kind: "kill_switch"` (`23-ws-protocol.md` §15.9; a Manager or Viewer receives the role cut) and order entry is disabled on that frame alone.
 - **Storybook**: AccountScope, GroupScope, GlobalScope, KillSwitchArmed, KillSwitchEngaged, HoldInProgress, DiscretePressArmed, TypedConfirmError, DisabledViewer, DisabledManagerGlobal, Disconnected, ReducedMotion.
 - **Tests**: unit, visual, axe, interaction (the three confirm modes, keyboard hold and the discrete fallback, the Escape disarm, key-repeat never confirms), RBAC-disabled rendering (disabled-with-reason, never hidden).
+- **As built (E10-S01, #304)**: not built here. The shell reserves `ShellPanicSlot` last in the TopBar (`header`), per E10-D02 ruling 1, not the RightRail top. It renders nothing (no node, no Tab stop, no stand-in button) until E39-S05 mounts the organism, and `Ctrl+Shift+K` is reserved with no handler. So the Viewer's disabled-with-reason cluster arrives with E39-S05.
 
 ### CMP-212 ToastHost
 

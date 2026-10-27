@@ -301,6 +301,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Stories:** US-LAY-005, US-PAPER-002, US-SET-002, US-ADMIN-012.
 - **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the shell chrome in colour: tokens per region, slot and state, the six states × three roles at 1280×800 and 1920×1080 and the 2560×1440 strip, the environment signal in three themes and greyscale, the measured contrast; Penpot page `E10-D03 Shell chrome hi-fi`; the twelve board exports in `docs/design/E10/img/`; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] DEMO and LIVE chrome variants drawn side by side and distinguishable in greyscale [ ] connection indicator has 5 states with text (live/delayed/stale/reconnecting/offline; E17-D01 A4) [ ] role variants (owner/manager/viewer) drawn, admin entry absent for non-owners [ ] 1280x800 and 2560x1440 layouts [ ] skip-to-content link visible on focus
+- **As built (E10-S01, #304)**: the frame in the CMP-070 entry: one row of top bar (wordmark, badge, disabled pickers, search, connection chip, name and role, Sign out, the empty CMP-211 slot), the banner row (CMP-077, CMP-092), the rail, `main`, the right rail and the status bar (latency, UTC clock, bar-close slot, environment, version). No Rec, CPU or FPS (no source) and no panic buttons yet (E39-S05). Modes are derived from the shell store: normal, disconnected, degraded and read-only render; frozen and lockout have no client source until E39. No shell scrim covers the canvas in any mode.
 
 ### SCR-011 — Navigation rail (expanded) & workspace switcher
 
@@ -333,6 +334,7 @@ Step 1 Scan        Step 2 Confirm        Step 3 Recovery codes
 - **Design (wireframe → hi-fi):** [E15-D05.md](../design/E15/E15-D05.md) §10 (E15-D05; PROPOSED, owner approval pending: the expanded rail and CMP-073 in colour: markers, search above 20, rename-in-place, the context menu, the typed-delete entry, the T2 states; Penpot page `E15-D05 Presets and switcher`, boards pending).
 - **Hi-fi (E10-D03):** [E10-D03.md](../design/E10/E10-D03.md) (E10-D03; the rail in colour: item states, the markers, the collapsed tooltips, the > 20 search, the eight-item menu's T2 writes, the 125 % and 200 % reflow; Penpot page `E10-D03 Shell chrome hi-fi`; the twelve board exports in `docs/design/E10/img/`; owner approval pending).
 - **Design sign-off acceptance checklist:** [ ] collapsed (icon) and expanded (label) variants [ ] workspace switcher with >20 workspaces (scroll + search) [ ] active-route indication is not colour-only [ ] tooltips on collapsed icons reachable by keyboard focus
+- **As built (E10-S01, #304)**: the rail in the CMP-071 entry: a `nav` of seven links with `aria-current`, not a tree; the workspace list is E15's (no sub-items under Terminal yet); `Alt+1..7`.
 
 ### SCR-012 — Command palette
 
