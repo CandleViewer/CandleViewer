@@ -24,6 +24,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MfaMethodKind, SessionRecord, UserRecord, UserStatus
 from candleviewer.auth.service import AuthService
 from candleviewer.auth.session_service import (
+    DEFAULT_IDLE_TIMEOUT_S,
     ENROLMENT_ONLY_LIFETIME,
     SessionClass,
     SessionService,
@@ -313,3 +314,11 @@ def test_no_sequence_of_refreshes_extends_an_enrolment_only_session(steps: list[
             assert current.expires_at == deadline
 
     asyncio.run(run())
+
+
+def test_enrolment_only_lifetime_never_outlives_the_default_idle_timeout() -> None:
+    """#2300 fold (review Low #4): an enrolment-only session may neither extend nor unlock, so it
+    has no activity path. It is safe only because it expires before it could idle-lock (every
+    session is minted with the default timeout). Shortening that default below the enrolment
+    lifetime would strand a user mid-enrolment behind a lock nothing can lift."""
+    assert ENROLMENT_ONLY_LIFETIME <= timedelta(seconds=DEFAULT_IDLE_TIMEOUT_S)

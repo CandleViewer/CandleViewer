@@ -289,7 +289,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout` (anything else is
    `403 mfa_enrollment_required`; the WebSocket closes with `4403`). The user enrols a new TOTP, then
    confirms a code: that revokes their other methods and sessions, replaces their recovery codes
-   with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
+   with 10 new ones (shown once) and returns a full session. An enrolment-only session cannot extend
+   or unlock, so it has no activity path (#2300): enrolment must finish within the 15 minutes, which
+   end no later than the 15-minute default idle lock would. If the 15 minutes run out, they sign
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
    `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in
