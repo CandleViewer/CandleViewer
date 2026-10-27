@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type JSX } from "react";
+import { flushSync } from "react-dom";
 import { CopyButton } from "./CopyButton.js";
 import { Countdown } from "./Countdown.js";
 import { IconButton } from "./IconButton.js";
@@ -49,11 +50,15 @@ export interface MaskedValueProps {
   /** What it is, e.g. "API secret": names the group and the buttons ("Show API secret"). */
   label: string;
   /**
-   * The host's mask control. `false` masks at once (after a submit, on sign-out). `true` never reveals by
-   * itself: only a press of the toggle does (S1, S2), so a value is never revealed at mount.
+   * The host's veto. `false` masks at once (after a submit, on sign-out) and, while it stands, a press of
+   * the toggle does nothing and emits nothing. `true` (or absent) never reveals by itself: only a press of
+   * the toggle does (S1, S2), so a value is never revealed at mount.
    */
   revealed?: boolean;
-  /** Called with the new state on every change: a press, the auto-hide and every re-mask. Never the value. */
+  /**
+   * Called with the new state on every change: a press, the auto-hide and every re-mask; never for a press
+   * under `revealed={false}` and never for the host's own veto. It never receives the value.
+   */
   onToggleReveal?: (revealed: boolean) => void;
   /** Re-masks this long after the press: 10 s by default, clamped to [3 s, 30 s] (S3, G19). */
   autoHideMs?: number;
@@ -117,7 +122,12 @@ export function MaskedValue({
     const self = entry.current;
     if (active !== null && active !== self) active.mask();
     active = self;
-    const hideNow = (): void => self.mask();
+    // The browser and timer triggers commit the mask synchronously, before the event returns: a page
+    // snapshot (pagehide), a print (beforeprint) or a screen grab after blur never sees a pending reveal.
+    const hideNow = (): void => {
+      if (!live.current) return;
+      flushSync(() => self.mask());
+    };
     const onVisibility = (): void => {
       if (document.visibilityState === "hidden") hideNow();
     };
@@ -138,6 +148,8 @@ export function MaskedValue({
   }, [shownAt, hideMs]);
 
   const onPress = (): void => {
+    // Under a standing veto a press does nothing and tells the host nothing (S2).
+    if (revealed === false) return;
     if (shown) {
       mask(true);
       return;
@@ -185,6 +197,8 @@ export function MaskedValue({
           />
           {copyable ? (
             <CopyButton
+              // A new copy control per mask state: its status resets with the mask.
+              key={shown ? "revealed" : "masked"}
               value={shown ? value : ""}
               label={`Copy ${label}`}
               disabled={!shown}

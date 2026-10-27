@@ -363,15 +363,26 @@ and status.
 | Live region | status | none                            | CMP-035's one threshold sentence; never the value.                                                               |
 
 While masked the value is in no text node, attribute, `title`, `data-*`, accessible name or description; it reaches
-no log and no callback (`onToggleReveal` gets the new state only). `revealed={false}` masks at once; `true` never
-reveals by itself. `autoHideMs` defaults to 10 s and is clamped to 3–30 s (the G19 cap). The app calls
-`maskAllValues()` on a route change, the idle lock and sign-out (`packages/ui` imports no router); unmounting drops
-the value.
+no log and no callback (`onToggleReveal` gets the new state only). While revealed it is in exactly one text node.
+`revealed={false}` masks at once, and while it stands a press does nothing and emits nothing; `true` never reveals by
+itself. The window losing focus, a hidden tab, `pagehide`, `beforeprint` and the auto-hide commit the mask
+synchronously, before the event returns; print never lays the value out. `autoHideMs` defaults to 10 s and is
+clamped to 3–30 s (the G19 cap). The app calls `maskAllValues()` on a route change, the idle lock and sign-out
+(`packages/ui` imports no router); unmounting drops the value from component state. Server rendering is safe: the
+initial render is always masked, so the value never reaches server HTML.
 
-Known residuals (G19's defaults, ruling 12; E05-X02 signs off): `copyable` copies only while revealed, and there is
-no clipboard-clearing promise, so a copied secret can stay in the OS clipboard, its history and any cloud sync. A
-screen capture or screen share while revealed records the value. Browser developer tools (React DevTools) show the
-`value` prop at any time, masked or not.
+Known residuals (G19's defaults, ruling 12; E05-X02 signs off):
+
+- Clipboard: `copyable` copies only while revealed, and there is no clipboard-clearing promise, so a copied secret
+  can stay in the OS clipboard, its history and any cloud sync.
+- Screen capture or screen share while revealed records the value.
+- The accessibility tree exposes the revealed text to assistive technology and to any process that reads it.
+- DOM-reading browser extensions can read the revealed text; `translate="no"` stops the browser's own page
+  translation, not an extension's translator.
+- Manual selection, copy or drag of the revealed text bypasses `copyable`.
+- Memory: JavaScript strings cannot be zeroed, so "leaves component state" does not mean "leaves memory"; the value
+  stays in the heap until the host drops every reference and the collector runs.
+- Browser developer tools (React DevTools) show the `value` prop at any time, masked or not.
 
 ### Countdown (CMP-035, text with a threshold announcer)
 

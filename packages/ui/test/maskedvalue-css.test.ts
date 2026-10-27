@@ -44,9 +44,7 @@ describe("maskedvalue.css contract", () => {
   });
 
   it("S4: print never shows a revealed value", () => {
-    expect(normal).toMatch(
-      /@media print\s*\{\s*\.cv-masked-value__value\s*\{\s*visibility: hidden;/,
-    );
+    expect(normal).toMatch(/@media print\s*\{\s*\.cv-masked-value__value\s*\{\s*display: none;/);
   });
 
   it("forced colours: the box edge and every text in CanvasText", () => {
