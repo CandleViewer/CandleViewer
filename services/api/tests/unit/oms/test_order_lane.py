@@ -47,6 +47,7 @@ from tests.unit.oms.test_oms_runtime import (
     SENDING,
     STARTED,
     STOPPED,
+    STREAMED,
     Beats,
     Port,
     Sink,
@@ -790,6 +791,48 @@ async def test_a_closer_the_dying_lane_refuses_leaves_the_closers_after_it_to_ru
     assert not world.venue.ports[0].closed and not b01.ports_wired()
     assert world.log == [*STARTED, "heartbeat.end"]  # the death's cleanup ended the heartbeat
     assert [e["error"] for e in logs if e["event"] == "oms_lane_died"] == ["SystemExit"]
+
+
+async def test_a_dead_lane_leaves_the_private_streams_closer_to_close_its_streams_here(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R22's dead lane (#913 L1d-2b): the lane dies as the stop calls the sink's close there; the
+    `private_streams` closer after it still closes, on the serving loop, the stream the lane's
+    bridge holds, none of its state being the lane's, while each closer on the lane is refused."""
+    _dying_at(monkeypatch, "Sink.stop")
+    world = World()
+    with capture_logs() as logs:
+        async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+            [call] = world.venue.lane_calls
+            await runtime._composed().lane.call(call.private_streams.open(STREAMED))
+    failed = [e["step"] for e in logs if e["event"] == "oms_stop_step_failed"]
+    assert "trading_port" in failed and "private_streams" not in failed
+    [stream] = world.venue.streams
+    assert stream.closes == [threading.current_thread()]
+
+
+async def test_a_compose_failing_on_the_lane_closes_its_bridges_streams_on_the_serving_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R22's unwind (#913 L1d-2b): a compose that fails on the lane once its bridge holds a stream
+    runs its closers there, and the `private_streams` closer hops to the serving loop
+    (`Serving.call`), which closes the stream, none of the bridge's state being the lane's; the
+    start fails closed by its phase."""
+    world = World()
+
+    async def refused(self: Sink) -> None:
+        [call] = world.venue.lane_calls
+        await call.private_streams.open(STREAMED)  # on the lane: the bridge holds the stream
+        raise OSError("the sink cannot start")
+
+    monkeypatch.setattr(Sink, "start", refused)
+    monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 10 * BOUND_S)  # no share runs out
+    with capture_logs() as logs:
+        async with asyncio.timeout(BOUND_S), started(world.runtime(lane=OrderLane)) as runtime:
+            assert (failed_closed(logs), failed_phases(logs)) == (["OSError"], ["sink_start"])
+            assert runtime.state == "degraded"
+    [stream] = world.venue.streams
+    assert stream.closes == [threading.current_thread()]
 
 
 async def test_a_lane_dying_as_the_start_calls_the_compose_fails_the_start_closed_and_pages(
