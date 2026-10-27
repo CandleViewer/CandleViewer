@@ -20,3 +20,12 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Enter, Space                 | Activates (`onClick`).                                                              |
 | Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                           |
 | Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description. |
+
+### IconButton (CMP-002, APG Button; toggle button when `pressed` is set)
+
+| Keys                         | Action                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                            |
+| Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.        |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.              |
+| Esc (reason echo)            | Dismisses the reason tooltip once CMP-016 lands; until then the description is always available. |

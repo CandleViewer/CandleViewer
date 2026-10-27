@@ -1,0 +1,167 @@
+/* CMP-002 IconButton. A square size.control.height box at every size; the glyph scales, the box never does. */
+.cv-icon-button {
+  --cv-icon-button-bg: var(--color-action-secondary-default);
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--cv-icon-button-bg);
+  color: var(--color-text-primary);
+  cursor: pointer;
+}
+
+.cv-icon-button[data-variant="primary"] {
+  --cv-icon-button-bg: var(--color-action-primary-default);
+  color: var(--color-text-on-action);
+}
+
+.cv-icon-button[data-variant="danger"] {
+  --cv-icon-button-bg: var(--color-status-danger-default);
+  color: var(--color-text-on-action);
+}
+
+.cv-icon-button[data-variant="ghost"] {
+  --cv-icon-button-bg: transparent;
+  color: var(--color-text-secondary);
+}
+
+/* Hover and active swap tokens instantly. Danger has no hover or active token and stays as drawn (A2). */
+.cv-icon-button[data-variant="primary"]:hover:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-action-primary-hover);
+}
+
+.cv-icon-button[data-variant="primary"]:active:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-action-primary-active);
+}
+
+.cv-icon-button[data-variant="secondary"]:hover:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-action-secondary-hover);
+}
+
+.cv-icon-button[data-variant="secondary"]:active:not(:disabled, [aria-disabled]),
+.cv-icon-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-surface-selected);
+}
+
+/* Ghost glyph: text.secondary at rest, text.primary on hover and active (D02 a11y audit, CMP-001 ghost row). */
+.cv-icon-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled]) {
+  color: var(--color-text-primary);
+}
+
+.cv-icon-button[data-variant="ghost"]:hover:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Pressed (toggle): the selected role, fill plus a 2px inner outline, unchanged on hover (no hover token). */
+.cv-icon-button[aria-pressed="true"],
+.cv-icon-button[aria-pressed="true"][data-variant]:hover:not(:disabled, [aria-disabled]),
+.cv-icon-button[aria-pressed="true"][data-variant]:active:not(:disabled, [aria-disabled]) {
+  --cv-icon-button-bg: var(--color-action-selected);
+  box-shadow: inset 0 0 0 calc(var(--border-thick) * 1px) var(--color-border-selected);
+  color: var(--color-text-primary);
+}
+
+.cv-icon-button:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): only the fill dims, on a plate; the glyph stays text.primary at full strength.
+   The selector out-specifies the variant colour rules; the pressed outline stays on the button itself. */
+.cv-icon-button[data-gated],
+.cv-icon-button[data-gated][data-variant] {
+  /* The fill moves to the ::before plate below, so only it dims; the box itself stays transparent. */
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: not-allowed;
+}
+
+.cv-icon-button[data-gated]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--cv-icon-button-bg);
+  opacity: var(--opacity-disabled);
+}
+
+/* The lock is a corner badge inside the box, so a role change never reflows a toolbar. */
+.cv-icon-button__badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: inline-flex;
+  width: var(--size-icon-sm);
+  height: var(--size-icon-sm);
+  color: var(--color-text-secondary);
+}
+
+@media (forced-colors: active) {
+  .cv-icon-button,
+  .cv-icon-button[data-variant] {
+    border-color: ButtonText;
+    background: ButtonFace;
+    box-shadow: none;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  /* The ghost hover / active glyph colour out-specifies the rule above; keep it ButtonText here. */
+  .cv-icon-button[data-variant="ghost"]:hover:not(:disabled, [aria-disabled]),
+  .cv-icon-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled]) {
+    color: ButtonText;
+  }
+
+  .cv-icon-button:hover,
+  .cv-icon-button:active {
+    border-color: Highlight;
+  }
+
+  /* Pressed: the fill is lost in forced colours, so Highlight and HighlightText are set explicitly. */
+  .cv-icon-button[aria-pressed="true"],
+  .cv-icon-button[aria-pressed="true"][data-variant]:hover:not(:disabled, [aria-disabled]),
+  .cv-icon-button[aria-pressed="true"][data-variant]:active:not(:disabled, [aria-disabled]) {
+    box-shadow: none;
+    background: Highlight;
+    color: HighlightText;
+  }
+
+  .cv-icon-button:disabled,
+  .cv-icon-button[data-variant]:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-icon-button[data-gated],
+  .cv-icon-button[data-gated][data-variant] {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  /* Gated and pressed: a 2px ButtonText border replaces the GrayText border and the Highlight fill. */
+  .cv-icon-button[data-gated][aria-pressed="true"],
+  .cv-icon-button[data-gated][aria-pressed="true"][data-variant] {
+    border: 2px solid ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .cv-icon-button[data-gated]::before {
+    content: none;
+  }
+
+  .cv-icon-button__badge {
+    color: ButtonText;
+  }
+}
