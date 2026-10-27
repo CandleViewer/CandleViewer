@@ -83,12 +83,6 @@ raw `px` length — use a token from `build/ts/tokens.ts` instead
 (`eslint.config.mjs`'s `candleviewer/no-raw-design-values` rule; the token
 source files themselves are exempt).
 
-**Icon lint** (E05-T06, `16-design-system-brief.md` §5): `candleviewer/no-raw-svg` fails a raw
-`<svg>` in any file of the package outside `src/icons/`, the registry. On `src/**`, stories included,
-`candleviewer/icon-label-required`, `candleviewer/icon-only-control-label` and
-`candleviewer/icon-beside-text-hidden` (CMP-019's ids) enforce decorative vs meaningful. Tests are
-exempt from those three: they write unnamed cases on purpose to pin the types.
-
 ## Changing a token (contributing)
 
 Every token change, in either direction, follows the runbook in
@@ -184,7 +178,9 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
 ## Icons (E05-T06)
 
 `src/icons/` is the icon set of [`16-design-system-brief.md` §5](../../docs/plan/16-design-system-brief.md).
-Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, never by raw SVG.
+Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, never by raw SVG. The
+registry holds 61 glyphs, each listed in §5: the base set's 48, vendored from Lucide (ISC), and the
+13 trading glyphs CandleViewer draws from E05-D02 §7.12.
 
 - `registry.ts`: each icon's canonical name (the `IconName` union), group, glyph source and
   one-sentence meaning, sorted by name: the code twin of the Penpot icon page, compared by diff.
@@ -228,6 +224,14 @@ Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, nev
   bundle; a Lucide source without that line fails.
 - `IconSvg.tsx`: the grid every module draws its geometry in, which no prop changes: the
   24-unit `viewBox`, `currentColor`, no fill, and a non-scaling 1.5px stroke at every size.
+- Lint (`eslint.config.mjs`): `candleviewer/no-raw-svg` fails a raw `<svg>` in any file of the
+  package outside `src/icons/`, the registry. On `src/**`, stories included,
+  `candleviewer/icon-label-required`, `candleviewer/icon-only-control-label` and
+  `candleviewer/icon-beside-text-hidden` (CMP-019's ids) enforce decorative vs meaningful. Tests
+  are exempt from those three: they write unnamed cases on purpose to pin the types.
+- Cost: `Icon` imports every glyph by name, so an app pays for the whole registry, never per
+  screen. `test/icons/registry-cost.test.ts` bundles `src/icons/index.ts` with tsup as a production
+  build would (minified ESM, React external) and holds it to E05-T06's bound, 15 KB gzipped.
 
 To add an icon, put its SVG at `src/icons/source/<origin>/<name>.svg` (a Lucide glyph is copied
 verbatim from the registered `lucide-static` tarball, once its sha512 matches the register row),
