@@ -51,14 +51,19 @@ export function normaliseBinding(raw: string): string | null {
   return [...MODS.filter((m) => mods.has(m)), k].join("+");
 }
 
+/** A range binding's atoms (`Alt+1..9` → `Alt+1` … `Alt+9`); any other binding is its own atom. */
+export function bindingAtoms(binding: string): string[] {
+  const m = /^(.*?)(\d)\.\.(\d)$/.exec(binding);
+  if (!m) return [binding];
+  const out: string[] = [];
+  for (let d = Number(m[2]); d <= Number(m[3]); d++) out.push(`${m[1] ?? ""}${d}`);
+  return out;
+}
+
 const RESERVED = new Map<string, string>(
-  Object.entries(reservedRaw as Record<string, string>).flatMap(([raw, why]) => {
-    const m = /^(.*?)(\d)\.\.(\d)$/.exec(raw);
-    if (!m) return [[raw, why] as [string, string]];
-    const out: [string, string][] = [];
-    for (let d = Number(m[2]); d <= Number(m[3]); d++) out.push([`${m[1] ?? ""}${d}`, why]);
-    return out;
-  }),
+  Object.entries(reservedRaw as Record<string, string>).flatMap(([raw, why]) =>
+    bindingAtoms(raw).map((atom): [string, string] => [atom, why]),
+  ),
 );
 
 export function reservedBy(binding: string): string | undefined {
@@ -84,13 +89,17 @@ export function validateBinding(
   if (!binding) {
     return { kind: "invalid-binding", reason: `"${rawBinding}" is not a valid key binding` };
   }
-  const platform = RESERVED.get(binding);
+  // A range is checked per atom, and against the atoms of every range already bound.
+  const atoms = bindingAtoms(binding);
+  const hit = atoms.find((a) => RESERVED.has(a));
+  const platform = hit === undefined ? undefined : RESERVED.get(hit);
   if (platform && !(binding === cmd.defaultBinding && overridden(cmd))) {
-    return { kind: "reserved", platform, reason: `${binding} is reserved by ${platform}` };
+    return { kind: "reserved", platform, reason: `${hit ?? binding} is reserved by ${platform}` };
   }
   for (const [otherId, otherBinding] of current) {
     const other = byId.get(otherId);
-    if (otherId !== commandId && otherBinding === binding && other?.context === cmd.context) {
+    const overlaps = bindingAtoms(otherBinding).some((a) => atoms.includes(a));
+    if (otherId !== commandId && overlaps && other?.context === cmd.context) {
       return {
         kind: "conflict",
         with: otherId,

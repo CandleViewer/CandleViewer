@@ -6,8 +6,13 @@ import { Cheatsheet } from "./Cheatsheet";
 import { flushAuditOutbox, recordAudit } from "./audit";
 
 /** Command handlers registered by views; a command with no handler / failing predicate is inert. */
-const handlers = new Map<string, { run: () => void; isValid: () => boolean }>();
-export function registerCommand(id: string, run: () => void, isValid: () => boolean = () => true) {
+const handlers = new Map<string, { run: (digit?: number) => void; isValid: () => boolean }>();
+/** `run` gets the pressed digit of a range binding (`Alt+1..9` → 1..9); other bindings pass none. */
+export function registerCommand(
+  id: string,
+  run: (digit?: number) => void,
+  isValid: () => boolean = () => true,
+) {
   handlers.set(id, { run, isValid });
   return () => void handlers.delete(id);
 }
@@ -55,7 +60,7 @@ export function KeymapHost(): JSX.Element {
       bindings,
       now: () => Date.now(),
       isValid: (c: KeymapCommand) => handlers.get(c.id)?.isValid() ?? false,
-      execute: (c: KeymapCommand) => handlers.get(c.id)?.run(),
+      execute: (c: KeymapCommand, digit?: number) => handlers.get(c.id)?.run(digit),
       notify: (m) => {
         setToasts((t) => [...t, m]);
         window.setTimeout(() => setToasts((t) => t.slice(1)), 5000);

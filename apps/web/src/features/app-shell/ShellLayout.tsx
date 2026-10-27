@@ -2,6 +2,7 @@ import { useRef, type JSX } from "react";
 import { Outlet } from "react-router";
 import { ShellAnnouncer } from "./announcer";
 import { AppShell } from "./AppShell";
+import { NavRail } from "./NavRail";
 import { InShellProvider } from "./ScreenRoot";
 import { ShellBannerSlot, ShellCanvasOverlaySlot, ShellConnectionSlot } from "./slots";
 import { useRouteFocus } from "./useRouteFocus";
@@ -21,6 +22,7 @@ export function ShellLayout(): JSX.Element {
       <AppShell
         mainId={SHELL_MAIN_ID}
         mainRef={mainRef}
+        nav={<NavRail />}
         connection={<ShellConnectionSlot />}
         banner={<ShellBannerSlot />}
         canvasOverlay={<ShellCanvasOverlaySlot />}

@@ -8,13 +8,15 @@ import { SkipLink } from "./SkipLink";
  * DOM order is the focus order of E10-D02 :254 (SkipLink → TopBar → NavRail → banner slot →
  * WorkspaceCanvas → RightRail → StatusBar); the grid places the banner row full width under the
  * top bar (E10-D03 §2). Landmarks per D02 :255: `banner`, `navigation` "Primary", `main`,
- * `complementary`, `contentinfo`. The top bar, rail, right rail and status bar are empty
- * placeholders until slices S2–S6 fill them.
+ * `complementary`, `contentinfo`. The top bar, right rail and status bar are empty placeholders
+ * until slices S2–S6 fill them; `nav` takes the S5 rail.
  */
 export interface AppShellProps {
   /** id of the one `main`, the skip link's target. */
   readonly mainId: string;
   readonly mainRef?: Ref<HTMLElement>;
+  /** The CMP-071 rail, inside the `nav` "Primary" landmark. */
+  readonly nav?: ReactNode;
   readonly connection?: ReactNode;
   readonly banner?: ReactNode;
   readonly canvasOverlay?: ReactNode;
@@ -43,14 +45,16 @@ const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
 const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
 
 export function AppShell(props: AppShellProps): JSX.Element {
-  const { mainId, mainRef, connection, banner, canvasOverlay, children } = props;
+  const { mainId, mainRef, nav, connection, banner, canvasOverlay, children } = props;
   return (
     <div style={FRAME}>
       <SkipLink targetId={mainId} />
       <header style={{ ...CHROME, gridArea: "header" }}>
         <div data-shell-slot="connection">{connection}</div>
       </header>
-      <nav aria-label="Primary" style={{ ...CHROME, gridArea: "nav" }} />
+      <nav aria-label="Primary" style={{ ...CHROME, gridArea: "nav" }}>
+        {nav}
+      </nav>
       <div data-shell-slot="banner" style={{ gridArea: "banner" }}>
         {banner}
       </div>

@@ -52,6 +52,7 @@ PAGE = 100
 MODULES = ("secrets", "auth", "audit", "exchange", "oms", "risk", "admin")
 WEB_AUTH_PATHS = (
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
+    "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment
     "apps/web/src/features/stepUp/",  # the step-up dialog and challenge gate: answers the
     # server's challenge, holds and re-sends the refused request
