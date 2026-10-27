@@ -245,7 +245,8 @@ def test_the_owners_plan_is_its_purge_refusals_each_named_by_its_record(
     written_plans: Path,
 ) -> None:
     """E16-X02 (#494): the matrix allows the Owner the purge, so its refusal for want of a
-    `recorder` step-up is a fixed plan: each purge 403 with its own `retention.purge` record."""
+    `recorder_purge` step-up is a fixed plan: each purge 403 with its own `retention.purge`
+    record."""
     assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"]["owner"] == "allow"
     planned = json.loads((written_plans / "owner-requests.json").read_text(encoding="utf-8"))
     assert [(item["operation"], item["expected"], item["action"]) for item in planned] == [
@@ -260,8 +261,19 @@ def test_the_owners_plan_is_its_purge_refusals_each_named_by_its_record(
     plan = yaml.safe_load((written_plans / "owner-denials.yaml").read_text(encoding="utf-8"))
     session, requestor = plan["jobs"]
     assert session["type"] == "script" and requestor["name"] == "owner-denials"
-    for entry in requestor["requests"]:  # no key: an elevated Owner would get a 400, never a 202
-        assert not any(header.lower().startswith("idempotency-key") for header in entry["headers"])
+    # #4622 checks the key and the body before the step-up: each probe is a valid purge with its
+    # own key, so it reaches the 403 it is for; its `before` is the epoch, so it removes nothing
+    keys = [
+        header.split(": ", 1)[1]
+        for entry in requestor["requests"]
+        for header in entry["headers"]
+        if header.startswith("Idempotency-Key: ")
+    ]
+    assert len(keys) == len(planned) == len(set(keys)) == 2
+    assert all(uuid.UUID(key).version == 4 for key in keys) and not set(keys) & set(ids)
+    for body in bodies:  # what the handler's PurgeRequest requires, `before` included
+        assert set(body) <= {"symbol", "confirm_symbol", "reason", "before", "include_pinned"}
+        assert body["before"] == "1970-01-01T00:00:00Z" and len(body["reason"]) >= 3
 
 
 @pytest.mark.parametrize("role", sorted(plans.ROLES))

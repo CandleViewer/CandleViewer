@@ -1,20 +1,26 @@
 # E16-X02 (#494): the Owner's purge refusals for dast-admin-nightly.yml's phase A. Fixed, not
 # drawn from matrix.yaml (which allows the Owner): the synthetic Owner signs in with password and
-# TOTP and so holds no `recorder` step-up, and the purge handler refuses it after RBAC and the
-# owner-only check, before reading the body: 403 `step_up_required` and a `retention.purge` denied
-# record naming the request (security/zap/check_admin_denials.py). No request carries an
-# Idempotency-Key: were the Owner ever elevated, the purge would answer 400, never 202.
-# security/zap/admin_requests.py gives each request its own request id per run.
+# TOTP and so holds no `recorder_purge` step-up. Since #4622 the purge handler checks RBAC, the
+# owner-only rule, the Idempotency-Key and the body before its step-up check, so each probe is a
+# valid request (its own key, `before` required) and is refused there: 403 `step_up_required` and
+# a `retention.purge` denied record naming the request (security/zap/check_admin_denials.py). Its
+# `before` is the epoch: were the Owner ever elevated, the purge would remove nothing.
+# security/zap/admin_requests.py gives each request its own request id and key per run.
 requests:
-  - operation: POST /admin/recorder/purge
-    expected: 403
-    action: retention.purge
-    json: { symbol: BTCUSDT, confirm_symbol: BTCUSDT, reason: zap owner purge refusal probe }
   - operation: POST /admin/recorder/purge
     expected: 403
     action: retention.purge
     json:
       symbol: BTCUSDT
       confirm_symbol: BTCUSDT
+      before: "1970-01-01T00:00:00Z"
+      reason: zap owner purge refusal probe
+  - operation: POST /admin/recorder/purge
+    expected: 403
+    action: retention.purge
+    json:
+      symbol: BTCUSDT
+      confirm_symbol: BTCUSDT
+      before: "1970-01-01T00:00:00Z"
       reason: zap owner purge refusal probe, pinned
       include_pinned: true
