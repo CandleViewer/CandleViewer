@@ -1,4 +1,4 @@
-import { autoUpdate, computePosition, flip, offset, shift } from "@floating-ui/dom";
+import { autoUpdate, computePosition, flip, offset, shift, size } from "@floating-ui/dom";
 import { useEffect, type RefObject } from "react";
 
 /** The four sides an anchored surface can take (conventions 30); alignment is always centred. */
@@ -18,6 +18,12 @@ export interface AnchoredPositionOptions {
    * (conventions 30: `space.inset.xs`). Read from the floating element, so the theme owns the value.
    */
   readonly gapToken?: string;
+  /**
+   * Fit the surface to its anchor and the viewport (CMP-017): writes the anchor's width to
+   * `--cv-anchor-width` and the room left on the resolved side to `--cv-available-height`, so the
+   * surface's CSS can be at least as wide as its trigger and cap its height, then scroll.
+   */
+  readonly fit?: boolean;
 }
 
 const lengthOf = (element: HTMLElement, token: string): number => {
@@ -40,31 +46,58 @@ export function useAnchoredPosition({
   floating,
   side,
   gapToken = "--space-inset-xs",
+  fit = false,
 }: AnchoredPositionOptions): void {
   useEffect(() => {
     const anchor = reference.current;
     const surface = floating.current;
-    if (!open || anchor === null || surface === null) return undefined;
+    if (!open || surface === null) return undefined;
+    // No anchor to measure: never leave the surface invisible (a focused panel must be seen).
+    if (anchor === null) {
+      surface.dataset["positioned"] = "";
+      return undefined;
+    }
     let active = true;
     delete surface.dataset["positioned"];
     const update = (): void => {
       const gap = lengthOf(surface, gapToken);
+      const middleware = [offset(gap), flip({ padding: gap }), shift({ padding: gap })];
+      if (fit)
+        middleware.push(
+          size({
+            padding: gap,
+            apply: ({ rects, availableHeight }) => {
+              surface.style.setProperty("--cv-anchor-width", `${rects.reference.width}px`);
+              surface.style.setProperty(
+                "--cv-available-height",
+                `${Math.max(0, availableHeight)}px`,
+              );
+            },
+          }),
+        );
       void computePosition(anchor, surface, {
         strategy: "fixed",
         placement: side,
-        middleware: [offset(gap), flip({ padding: gap }), shift({ padding: gap })],
-      }).then(({ x, y, placement }) => {
-        if (!active) return;
-        surface.style.left = `${x}px`;
-        surface.style.top = `${y}px`;
-        surface.dataset["side"] = placement.split("-")[0] ?? side;
-        surface.dataset["positioned"] = "";
-      });
+        middleware,
+      })
+        .then(({ x, y, placement }) => {
+          if (!active) return;
+          surface.style.left = `${x}px`;
+          surface.style.top = `${y}px`;
+          surface.dataset["side"] = placement.split("-")[0] ?? side;
+          surface.dataset["positioned"] = "";
+        })
+        .catch(() => {
+          // A failed measurement shows the surface where it is rather than keeping it invisible.
+          if (active) surface.dataset["positioned"] = "";
+        });
     };
     const stop = autoUpdate(anchor, surface, update);
     return () => {
       active = false;
       stop();
+      surface.style.removeProperty("--cv-anchor-width");
+      surface.style.removeProperty("--cv-available-height");
     };
-  }, [open, reference, floating, side, gapToken]);
+  }, [open, reference, floating, side, gapToken, fit]);
 }

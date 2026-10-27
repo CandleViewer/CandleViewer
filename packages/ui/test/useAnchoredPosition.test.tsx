@@ -32,10 +32,24 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-function Harness({ open, side = "top" }: { open: boolean; side?: AnchoredSide }): JSX.Element {
+function Harness({
+  open,
+  side = "top",
+  fit,
+}: {
+  open: boolean;
+  side?: AnchoredSide;
+  fit?: boolean;
+}): JSX.Element {
   const anchor = useRef<HTMLButtonElement>(null);
   const surface = useRef<HTMLDivElement>(null);
-  useAnchoredPosition({ open, reference: anchor, floating: surface, side });
+  useAnchoredPosition({
+    open,
+    reference: anchor,
+    floating: surface,
+    side,
+    ...(fit ? { fit } : {}),
+  });
   return (
     <>
       <button ref={anchor} type="button">
@@ -119,5 +133,66 @@ describe("useAnchoredPosition", () => {
     expect(call(last).placement).toBe("bottom");
     expect(call(last).middleware[0]?.options).toBe(0);
     await act(async () => root.unmount());
+  });
+
+  it("fit (CMP-017): adds size after shift and writes the anchor width and the room left", async () => {
+    const host = await mount(<Harness open side="bottom" fit />);
+    const [, , options] = floating.computePosition.mock.calls[0] as [
+      Element,
+      Element,
+      { middleware: { name: string; options: { padding?: number; apply?: unknown } }[] },
+    ];
+    expect(options.middleware.map((m) => m.name)).toEqual(["offset", "flip", "shift", "size"]);
+    const sized = options.middleware[3]?.options;
+    expect(sized?.padding).toBe(4);
+    const apply = sized?.apply as (state: {
+      rects: { reference: { width: number } };
+      availableHeight: number;
+    }) => void;
+    apply({ rects: { reference: { width: 96 } }, availableHeight: 240 });
+    expect(surface(host).style.getPropertyValue("--cv-anchor-width")).toBe("96px");
+    expect(surface(host).style.getPropertyValue("--cv-available-height")).toBe("240px");
+    apply({ rects: { reference: { width: 96 } }, availableHeight: -8 });
+    expect(surface(host).style.getPropertyValue("--cv-available-height")).toBe("0px");
+  });
+
+  it("fit: the custom properties are removed on close", async () => {
+    const { createRoot } = await import("react-dom/client");
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    await act(async () => root.render(<Harness open fit />));
+    const [, , options] = floating.computePosition.mock.calls[0] as [
+      Element,
+      Element,
+      { middleware: { options: { apply?: unknown } }[] },
+    ];
+    const apply = options.middleware[3]?.options.apply as (state: {
+      rects: { reference: { width: number } };
+      availableHeight: number;
+    }) => void;
+    apply({ rects: { reference: { width: 96 } }, availableHeight: 240 });
+    await act(async () => root.render(<Harness open={false} fit />));
+    expect(surface(host).style.getPropertyValue("--cv-anchor-width")).toBe("");
+    expect(surface(host).style.getPropertyValue("--cv-available-height")).toBe("");
+    await act(async () => root.unmount());
+  });
+
+  it("a failed measurement still marks the surface placed, so it is never stuck invisible", async () => {
+    floating.computePosition.mockRejectedValue(new Error("no layout"));
+    const host = await mount(<Harness open />);
+    await act(async () => undefined);
+    expect(surface(host)).toHaveAttribute("data-positioned");
+  });
+
+  it("a missing anchor marks the surface placed and attaches nothing", async () => {
+    function NoAnchor(): JSX.Element {
+      const anchor = useRef<HTMLButtonElement>(null);
+      const node = useRef<HTMLDivElement>(null);
+      useAnchoredPosition({ open: true, reference: anchor, floating: node, side: "bottom" });
+      return <div ref={node} data-testid="surface" />;
+    }
+    const host = await mount(<NoAnchor />);
+    expect(surface(host)).toHaveAttribute("data-positioned");
+    expect(floating.autoUpdate).not.toHaveBeenCalled();
   });
 });

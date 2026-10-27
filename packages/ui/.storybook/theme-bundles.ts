@@ -15,6 +15,7 @@ import "../src/components/button.css";
 import "../src/components/iconbutton.css";
 import "../src/components/kbd.css";
 import "../src/components/keyvaluerow.css";
+import "../src/components/popover.css";
 import "../src/components/progress.css";
 import "../src/components/checkbox.css";
 import "../src/components/choice.css";

@@ -38,6 +38,15 @@ export type { KbdProps } from "./Kbd.js";
 export { KeyValueRow } from "./KeyValueRow.js";
 export type { KeyValueRowProps } from "./KeyValueRow.js";
 
+export { Popover } from "./Popover.js";
+export type {
+  PopoverAnchorProps,
+  PopoverBaseProps,
+  PopoverName,
+  PopoverPlacement,
+  PopoverProps,
+} from "./Popover.js";
+
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
