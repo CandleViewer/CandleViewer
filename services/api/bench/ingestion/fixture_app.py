@@ -321,9 +321,9 @@ async def build_app(
 async def build_first_read_app(cold_root: Path) -> FastAPI:
     """The first-read leg's server (#2523): a second app built as `build_app` builds one, so its
     reader is its own and holds nothing `klines_cold`'s reader has read. The drivers send the
-    plan's `FIRST_READ` route here, and its build ends with the freeze too. Lever 5 turns this
-    reader's page cache off here, with one argument."""
-    return await build_app(cold_root)
+    plan's `FIRST_READ` route here, and its build ends with the freeze too. Its page cache is
+    off (#2523 lever 5), so every read of it is a first read."""
+    return await build_app(cold_root, cold_page_cache_bytes=0)
 
 
 def iso(us: int) -> str:

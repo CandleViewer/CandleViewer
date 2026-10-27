@@ -58,6 +58,9 @@ async def test_the_first_read_app_is_a_second_build_frozen_as_the_app_is(
     first = await fixture_app.build_first_read_app(tmp_path)
 
     assert first is not app and len(readers) == 2 and readers[0] is not readers[1]
+    # #2523 lever 5: the app reads at the default page-cache bound, the first-read leg with none.
+    bounds = [r._pages.max_bytes for r in readers]
+    assert bounds == [fixture_app.COLD_PAGE_CACHE_BYTES, 0]
     assert is_frozen(app) and is_frozen(first)
     metrics_runtime.unfreeze_startup_heap()
     assert not is_frozen(app) and not is_frozen(first)
