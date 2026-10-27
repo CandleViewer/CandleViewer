@@ -100,13 +100,13 @@
   height: var(--size-icon);
 }
 
-/* The details scroll inside their box. */
+/* The details grow with their content and wrap (no inner scroll box: a scrolling region would need a
+   focus stop of its own, axe scrollable-region-focusable; the lines are short, first lines only). */
 .cv-crash__detail-text {
   box-sizing: border-box;
-  max-block-size: 16lh;
   margin: 0;
   padding: var(--space-inset-sm);
-  overflow: auto;
+  overflow-wrap: anywhere;
   border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
   border-radius: var(--radius-card);
   background: var(--color-surface-raised);
