@@ -38,8 +38,8 @@ describe("ColorConventionLegend", () => {
   });
   it("renders optional value on a swatch row", async () => {
     const { SwatchLegendItem } = await import("../src/components/index.js");
-    expect(renderToStaticMarkup(<SwatchLegendItem color="red" label="a" value="9" />)).toContain(
-      ">9<",
-    );
+    expect(
+      renderToStaticMarkup(<SwatchLegendItem color="red" label="a" value={9} precision={0} />),
+    ).toContain(">9<");
   });
 });
