@@ -163,7 +163,7 @@ async def test_a_users_refused_amend_lands_each_record_once_through_the_runtimes
     writer = Writer()
     rig = cr.build_rig(records=OmsAudit(writer, environment="demo"))
     order = await _live(rig)
-    rig.port.expect_exit(order.id, "amend", actor=_USER)
+    cr.taken(rig.port, order.id, "amend", actor=_USER)
     rig.demo.script("amend_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "refused"))
     venue = rig.demo.amend_order
 

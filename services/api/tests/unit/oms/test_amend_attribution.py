@@ -8,12 +8,12 @@ and each void of a refused one beside its principal and role, and the port's own
 (`orders.amend` denied), as a place's records name theirs (#3990; SEC-4609-01).
 
 A second request's exit of the same order, registered before B1's call for the first, is a
-registration of its own (SEC-4609-02). The facade takes the order's commands one at a time, in
-the order they were registered, and refuses a later one while the first's step stands, so B1's
-call spends the order's oldest registration of its kind; a request whose command the facade
-refused forgets its own registration and no other; and an exit whose step B1 settled without a
-call of the port leaves none behind. So neither request's rows or records name the other's
-principal, role or request, and no exit is answered another's call.
+registration of its own (SEC-4609-02). The facade takes the order's commands one at a time and
+refuses a later one while the first's step stands, and B1's call spends the order's oldest
+registration of its kind whose command the facade took (`take_exit`, #4662); a request whose
+command the facade refused forgets its own registration and no other; and an exit whose step B1
+settled without a call of the port leaves none behind. So neither request's rows or records name
+the other's principal, role or request, and no exit is answered another's call.
 
 B1's call spends a registration of its own order and kind only, never an older one of another
 order or of the other kind (CR-4650-01). An exit that ends any other way than by B1's call taking
@@ -106,7 +106,7 @@ async def test_a_users_amend_names_its_request_on_each_sides_request_and_void(
     """SEC-4609-01: each side's request record and, once the venue refused the amend or no rate
     token came, each void carries the request's correlation id beside its principal and role."""
     order = await _live(rig)
-    rig.port.expect_exit(order.id, "amend", request_id=_RID_A, actor=_A)
+    cr.taken(rig.port, order.id, "amend", request_id=_RID_A, actor=_A)
     if venue is not None:
         rig.demo.script("amend_order", venue)
     await rig.port.amend(cr.command("amend", order, _TIGHTER))
@@ -164,7 +164,7 @@ async def test_each_refusal_the_port_records_for_a_users_amend_names_its_request
     the stop cleared (Q3's scope), `native_stop_paired` a take-profit on an order that holds no
     stop, so the re-paired request would go bare (`_paired`, CR-4650-02)."""
     order = await _live(rig, **over)
-    rig.port.expect_exit(order.id, "amend", request_id=_RID_A, actor=_A)
+    cr.taken(rig.port, order.id, "amend", request_id=_RID_A, actor=_A)
     if fail is not None:
         fail(rig, monkeypatch)
     answer = await rig.port.amend(cr.command("amend", order, terms))
@@ -180,13 +180,13 @@ async def test_each_registration_of_one_order_is_spent_by_b1s_call_for_it_in_tur
     rig: Rig,
 ) -> None:
     """SEC-4609-02: a second request's registration of the order, made before B1's call for the
-    first, never replaces the first's. B1's calls come in the order the commands were registered,
+    first, never replaces the first's. B1's calls come in the order the facade took the commands,
     each spending its own: the first's, refused by the venue, requests and voids under the first
     request; the second's, sent once the first's rows are void, under the second. Each watch gets
     its own call's answer."""
     order = await _live(rig)
-    first = rig.port.expect_exit(order.id, "amend", request_id=_RID_A, actor=_A)
-    second = rig.port.expect_exit(order.id, "amend", request_id=_RID_B, actor=_B)
+    first = cr.taken(rig.port, order.id, "amend", request_id=_RID_A, actor=_A)
+    second = cr.taken(rig.port, order.id, "amend", request_id=_RID_B, actor=_B)
     rig.demo.script("amend_order", _REFUSED)
     refused = await rig.port.amend(cr.command("amend", order, _TIGHTER))
     taken = await rig.port.amend(cr.command("amend", order, _TIGHTER))
@@ -201,13 +201,14 @@ async def test_each_registration_of_one_order_is_spent_by_b1s_call_for_it_in_tur
 async def test_a_request_the_facade_refused_forgets_its_own_registration_and_no_other(
     rig: Rig, refused: str
 ) -> None:
-    """SEC-4609-02: the facade refused one request's command, and its exit forgot its
-    registration (`forget_exit`) before B1's call for the other's command, which spends the
-    other's, whichever was registered first; the forgotten watch answers None."""
+    """SEC-4609-02: the facade refused one request's command, never taken, and its exit forgot
+    its registration (`forget_exit`) before B1's call for the other's command, which the facade
+    took and B1's call spends, whichever was registered first; the forgotten watch answers None."""
     order = await _live(rig)
     first = rig.port.expect_exit(order.id, "amend", request_id=_RID_A, actor=_A)
     second = rig.port.expect_exit(order.id, "amend", request_id=_RID_B, actor=_B)
     gone, kept = (first, second) if refused == "first" else (second, first)
+    rig.port.take_exit(kept)
     rig.port.forget_exit(gone)
     answer = await rig.port.amend(cr.command("amend", order, _TIGHTER))
     assert answer["ok"] is True and gone.answered and kept.answered
@@ -220,11 +221,13 @@ async def test_two_requests_cancels_of_one_order_each_keep_their_own_registratio
     rig: Rig,
 ) -> None:
     """The cancel's registrations are kept apart alike: B1's call answers the first request's
-    watch, never a second request's registered before the call."""
+    watch, whose command the facade took, never a second request's registered before the call,
+    its command not taken (#4662)."""
     order = await _live(rig)
     first, second = (
         rig.port.expect_exit(order.id, "cancel", request_id=rid) for rid in (_RID_A, _RID_B)
     )
+    rig.port.take_exit(first)
     answer = await rig.port.cancel(cr.command("cancel", order))
     assert answer["ok"] is True and first.answered and not second.answered
     assert await first.answer() == answer
@@ -235,8 +238,8 @@ async def test_b1s_amend_never_takes_another_orders_older_registration(rig: Rig)
     amend registered earlier for another order stays unanswered when B1 calls this order's amend,
     whose records name this order's request; B1's call for the other order then spends it."""
     other, order = await _live(rig, seq=1), await _live(rig)
-    earlier = rig.port.expect_exit(other.id, _AMEND, request_id=_RID_A, actor=_A)
-    own = rig.port.expect_exit(order.id, _AMEND, request_id=_RID_B, actor=_B)
+    earlier = cr.taken(rig.port, other.id, _AMEND, request_id=_RID_A, actor=_A)
+    own = cr.taken(rig.port, order.id, _AMEND, request_id=_RID_B, actor=_B)
     answer = await rig.port.amend(cr.command(_AMEND, order, _TIGHTER))
     assert answer["ok"] is True and own.answered and not earlier.answered
     assert await own.answer() == answer
@@ -253,8 +256,8 @@ async def test_b1s_call_never_takes_its_orders_older_registration_of_the_other_k
     kind spends that kind's registration only, though the other kind's is older, which stays
     unanswered; an amend's records name its own request, never the cancel's."""
     order = await _live(rig)
-    older = rig.port.expect_exit(order.id, first, request_id=_RID_A, actor=_A)
-    own = rig.port.expect_exit(order.id, called, request_id=_RID_B, actor=_B)
+    older = cr.taken(rig.port, order.id, first, request_id=_RID_A, actor=_A)
+    own = cr.taken(rig.port, order.id, called, request_id=_RID_B, actor=_B)
     call = rig.port.amend if called == "amend" else rig.port.cancel
     answer = await call(cr.command(called, order, _TIGHTER if called == "amend" else None))
     assert answer["ok"] is True and own.answered and not older.answered

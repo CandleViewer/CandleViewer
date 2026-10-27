@@ -6,7 +6,7 @@ the wall clock. The amend's admission is `test_exits_amend.py`'s."""
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import Any, cast, get_args
@@ -351,10 +351,11 @@ async def test_two_cancels_of_one_order_under_two_keys_are_both_202_and_one_is_s
 @dataclass
 class Watches:
     """`ExitCommands`: each watch kept for the scripted facade to answer; `made` every one
-    registered, in order."""
+    registered, in order, and `taken` each the facade took the command of (`take_exit`)."""
 
     held: dict[tuple[UUID, str], oc.ExitWatch] = field(default_factory=dict)
     made: list[oc.ExitWatch] = field(default_factory=list)
+    taken: list[oc.ExitWatch] = field(default_factory=list)
 
     def expect_exit(self, order_id: UUID, kind: oc.ExitKind, **kw: Any) -> oc.ExitWatch:
         future = asyncio.get_running_loop().create_future()
@@ -367,6 +368,11 @@ class Watches:
         if self.held.get(key := (watch.order_id, watch.kind)) is watch:
             del self.held[key]
             watch.resolve(None)
+
+    def take_exit(self, watch: oc.ExitWatch) -> None:
+        """As the port's: a watch no longer held is left as it is."""
+        if self.held.get((watch.order_id, watch.kind)) is watch:
+            self.taken.append(watch)
 
 
 @dataclass
@@ -396,11 +402,19 @@ class Scripted:
         return 7
 
     async def command(
-        self, account_id: UUID, order_id: UUID, event: Any, *_a: Any, **_k: Any
+        self,
+        account_id: UUID,
+        order_id: UUID,
+        event: Any,
+        *_a: Any,
+        on_taken: Callable[[], None] | None = None,
+        **_k: Any,
     ) -> str:
         if self.refuse is not None:
             self.held = None if self.gone else self.moved or self.held
             raise self.refuse
+        if on_taken is not None:  # as the facade: once taken, before it is sent
+            on_taken()
         self.sent.append(event)
         self.held = "cancel_pending"
         return self.held

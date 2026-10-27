@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Mapping
 from typing import Any
@@ -537,8 +538,10 @@ async def test_a_cancel_through_the_port_lands_where_b1_says_and_answers_its_wat
     order = await _placed(rig, venue)
     prepare(venue, monkeypatch)
     watch = venue.port.expect_exit(order.id, "cancel")
-    seq = rig.facade.version(order.id)
-    await rig.facade.command(cr.ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq)
+    seq, taken = rig.facade.version(order.id), functools.partial(venue.port.take_exit, watch)
+    await rig.facade.command(
+        cr.ACCOUNT, order.id, "CANCEL", actor="user", expected_seq=seq, on_taken=taken
+    )
     await rig.quiet()
     row = await venue.orders.get(cr.ACCOUNT, order.id)
     assert row is not None and row.lifecycle_state == landed and watch.answered

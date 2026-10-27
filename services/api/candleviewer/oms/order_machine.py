@@ -761,6 +761,7 @@ class OrderMachines:
         *,
         actor: Actor,
         expected_seq: int | None = None,
+        on_taken: Callable[[], None] | None = None,
     ) -> str:
         """A command to the order, from a route, a rule, an algo or E29-T06's reconciler. Refused
         with `IllegalTransition` unless it is one of `COMMAND_EVENTS` with no `type` in its
@@ -773,7 +774,19 @@ class OrderMachines:
         A command that waited while a resync rebuilt the order's machine is taken by the rebuilt
         one. With `expected_seq` (an exit route's `If-Match`, slice 4's ruling Q5), a command the
         gates above admit is refused with `VersionConflict` when the order's `version` has moved
-        on, checked under the order's lock, with nothing sent or written."""
+        on, checked under the order's lock, with nothing sent or written.
+
+        `on_taken`, when given, is called once the facade's own gates admitted the command, the
+        version included, and before the send: under the order's lock, so whatever it marks is
+        in place before any call B1 makes for the step (an exit's registration,
+        `OmsCommandPort.take_exit`, #4662). It is never called for a command those gates refuse
+        or whose order no machine here holds, and once for one that waited out a resync, by the
+        attempt that sends. A send the gateway then refuses, or a step B1 rolls back, raises
+        after it was called, and an exit forgets its registration on every raise (`oms.exits`);
+        B1 may also leave the step's outcome unknown or defer it (S10). It is called
+        synchronously under the lock, so it must be quick and never await or re-enter the
+        facade. One that raises propagates before the send: nothing is sent, and the order's
+        lock and `busy` are released."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -783,6 +796,8 @@ class OrderMachines:
             async with self._holding(o):
                 if o.interp is not None:
                     self._admit(o, event, actor, expected_seq)
+                    if on_taken is not None:
+                        on_taken()
                     try:
                         await self._send_order(o, event, payload)
                     finally:

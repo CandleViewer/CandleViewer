@@ -382,6 +382,7 @@ class ExitMachines(Protocol):
         *,
         actor: Actor,
         expected_seq: int | None = None,
+        on_taken: Callable[[], None] | None = None,
     ) -> str: ...
 
     async def settled(
@@ -391,7 +392,8 @@ class ExitMachines(Protocol):
 
 class ExitCommands(Protocol):
     """`commands.OmsCommandPort`'s exit watch. `forget_exit` leaves a watch it no longer holds
-    (spent, dropped or forgotten) as it is, so `_commanded` may forget its own twice."""
+    (spent, dropped or forgotten) as it is, so `_commanded` may forget its own twice; `take_exit`
+    alike, so a watch is never held again once let go."""
 
     def expect_exit(
         self,
@@ -403,6 +405,8 @@ class ExitCommands(Protocol):
     ) -> ExitWatch: ...
 
     def forget_exit(self, watch: ExitWatch) -> None: ...
+
+    def take_exit(self, watch: ExitWatch) -> None: ...
 
 
 class ExitOrders(Protocol):
@@ -709,23 +713,28 @@ class OrderExits:
         that `expected_seq` is the client's own `If-Match`, not the version the exit read, which
         decides what a version the facade finds moved on answers (`_taken_not`).
 
-        The watch is this request's own registration (#4643). It is forgotten on every way out
-        but B1's call having taken it: the command refused, the step settled with no call, a
-        settle that timed out or raised, or a cancellation (`aclose`), which goes on as it was.
-        So no stale registration is left for a later request's call to spend and name: a missing
-        principal beats a stale one. The residual: a call of B1's that comes after the exit
-        forgot its registration (the invoke a rebuilt machine resumes after `OrderStepUnknown`,
-        SR-E29-15, or one that had not begun within the settle's bound) finds none of this
-        request's, so its records name no request. While another request's exit of the order is
-        registered and still waits on the facade, that call takes the other's registration
-        instead: its records name that request, and that exit gets its answer."""
+        The watch is this request's own registration (#4643). B1's call spends it only once the
+        facade took the command: the facade marks it so (`on_taken`, `take_exit`, #4662) under
+        the order's lock, once every gate admitted the command and before it is sent. It is
+        forgotten on every way out but B1's call having spent it: the command refused, the step
+        settled with no call, a settle that timed out or raised, or a cancellation (`aclose`),
+        which goes on as it was. So no stale registration is left for a later request's call to
+        spend and name: a missing principal beats a stale one. A call of B1's that comes after
+        the exit forgot its registration (the invoke a rebuilt machine resumes after
+        `OrderStepUnknown`, SR-E29-15, one that had not begun within the settle's bound, or one
+        still to come at `aclose`) finds none of this request's, and never another request's,
+        whose command the facade has not taken: it refuses an exit of the order while this
+        one's step stands, and B1 calls only while a step stands. Its records name no request.
+        An `AMEND` B1 defers is #4711's."""
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
+        taken = functools.partial(self._d.commands.take_exit, watch)
         try:
             state: str | None = await self._d.machines.command(
-                account, row.id, event, payload, actor="user", expected_seq=expected_seq
-            )
+                account, row.id, event, payload, actor="user", expected_seq=expected_seq,
+                on_taken=taken,
+            )  # fmt: skip
         except OrderStepUnknown:  # rebuilt from its events: as it stands, never re-sent
             self._d.commands.forget_exit(watch)
             state = None
@@ -748,7 +757,7 @@ class OrderExits:
                 raise
         answered = watch.answered
         answer = await watch.answer() if answered else None
-        if not answered:  # held unless a call of B1's took it, which this leaves alone (#4643)
+        if not answered:  # held unless a call of B1's spent it, which this leaves alone (#4643)
             self._d.commands.forget_exit(watch)
         held = self._d.machines.state(row.id)
         state = state if state is not None else (None if held is None else held[0])
