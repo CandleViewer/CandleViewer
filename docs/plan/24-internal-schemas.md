@@ -4403,9 +4403,19 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
       closes every stream on the key before it returns, and returns their accounts: it tombstones
       the key (bounded), closes each socket within 1 s, queues `closed` with `key_revoked` or
       `key_rotated`, and hands B13's stop to a task the adapter owns; a stream on that key is
-      refused afterwards (`AuthError`). E27-S04 (#898) calls it on revoke, force-disable,
+      refused afterwards (`AuthError`). The whole call is bounded at 2 s (the socket bound of 1 s
+      plus 1 s). A close that overruns it answers no success: the call raises
+      `PrivateStreamCloseOverran` (an `exchange/base` type, a `TimeoutError` with fixed text,
+      carrying the accounts still closing) and never returns as a completed close, so the caller treats the revoke or
+      rotation step as not done and retries; the close itself keeps running (the registry owns its
+      tasks) and a retry is idempotent, the tombstone standing. E27-S04 (#898) calls it on revoke, force-disable,
       mark-compromised and account-disable, and with `key_rotated` at the start of a rotation's
-      overlap, after which the consumer resubscribes with the new key (AC-35). M2 is the backstop: a
+      overlap, after which the consumer resubscribes with the new key (AC-35). On a rotation the
+      account's active key is switched to the new key before the `key_rotated` close, so the
+      consumer's resubscribe after that close signs with the new key; a resubscribe on the retired
+      key would be refused with `AuthError`. (The retired key stays signable for in-flight requests
+      through the overlap, `rotating`; the switch is about which key a new stream picks.)
+      M2 is the backstop: a
       destroyed key's next `auth` borrow is refused (`key_unusable`).
     - **Connection budget (C-12.7, OM-D07; G-8b ruling 5).** The adapter holds one
       `ConnectionBudget` (`exchange.base`): 480 opens in any 300 s, of which public opens take at

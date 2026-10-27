@@ -2277,8 +2277,13 @@ export interface paths {
      * Read what revoking, disabling or deleting an account would affect
      * @description The up-front read of `AccountConsequenceSummary` that SCR-129 renders before its confirm
      *     control (SR-E27-07): one server-side aggregate, so no partial picture is shown. It has
-     *     no side effects: it changes nothing, spends nothing and, on success, writes no audit
-     *     record (a `403` is still recorded as `rbac.denied`). It holds
+     *     no side effects on the account: it changes nothing, spends nothing and, on success,
+     *     writes no audit record of its own (a `403` is still recorded as `rbac.denied`). "No
+     *     audit record" means none of the route's own: the read signs its exchange calls with the
+     *     account's signable keys, so M2 writes its write-ahead `security.credential_borrowed`
+     *     record for each signed call and touches `api_keys.last_used_at` (best-effort, at most once
+     *     a minute per key). Those are the credential
+     *     layer's records (C-2.9); the read neither adds nor suppresses them. It holds
      *     the permission and scope of the disable it precedes (`updateExchangeAccount`); the Owner
      *     holds both. A foreign account and an absent one get the same `404 not_found`, byte for
      *     byte, so the answer is no existence oracle. The exposure is read as
@@ -2503,7 +2508,9 @@ export interface paths {
      *     ends each of its `orders`, `positions` and `wallet` subscriptions with a `revoked` frame,
      *     reason `key_revoked` (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
      *     because a `rotating` key still signs and streams, so the account is not keyless while one
-     *     remains.
+     *     remains. The route answers success only after the close of the key's private streams has
+     *     completed within its 2 s bound; an overrun is no success (`PrivateStreamCloseOverran`,
+     *     `24-internal-schemas.md` section 14.2 rule 13) and the revoke is retried.
      *
      *     When no other signable key remains and the account holds open positions, working orders
      *     or running emulated algos, the request must carry an `open_exposure` choice (SR-E27-07).
@@ -2551,7 +2558,9 @@ export interface paths {
      *     of the rotation row (SR-E27-10; US-ACCT-004's 15-minute drain window), and no request
      *     can change it. A suspected compromise never rotates: it takes the revoke path
      *     (`revokeApiKey`), which ends the old key at once. Private WS connections are
-     *     re-authenticated with the new key at the start of the overlap. The rotation is recorded
+     *     re-authenticated with the new key at the start of the overlap. The new key becomes the
+     *     account's active key before the old key's streams are closed with `key_rotated`
+     *     (`24-internal-schemas.md` section 14.2 rule 13). The rotation is recorded
      *     in `api_key_rotations`.
      */
     post: operations["rotateApiKey"];
@@ -4934,6 +4943,9 @@ export interface paths {
      *     armed rule returns it to `simulate`; it acts again only after `setRuleMode` arms it, with
      *     the live step-up where the scope includes `live`. Every save is held to the action budget
      *     and the stop rule of `createRule`, also a save that matches an existing version.
+     *     `If-Match` carries the rule version the client edited (a decimal version number,
+     *     optionally quoted); without it, and without `expected_version` in the body, the answer
+     *     is `400`.
      */
     put: operations["updateRule"];
     post?: never;
@@ -8276,7 +8288,7 @@ export interface components {
       };
     };
     /**
-     * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429; in `KeyTestResult.websocket` it is also the deployment's own budget of private WS connections opened for tests being spent (SR-E27-05), when no connection is opened at all. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error. No exchange error text, header, URL or request fragment is echoed.
+     * @description Closed vocabulary for a failed probe (SR-E27-08), named after the internal exchange-error taxonomy (`24-internal-schemas.md` §8.6). `auth_error`: key or signature refused (`10003`, `10004`) or the private WS refused `auth`. `permission_denied`: `10005`. `ip_not_allowed`: `10010` or HTTP 403. `clock_drift`: `10002`. `rate_limited`: `10006`, `10018`, `10429` or HTTP 429; in `KeyTestResult.websocket` it is also the deployment's own budget of private WS connections opened for tests being spent (SR-E27-05), when no connection is opened at all. `service_unavailable`: `10016`, `10019` or HTTP 5xx. `transport_error`: the connection failed or was reset. `timeout`, which refines §8.6's `TRANSPORT_ERROR`: no answer before the probe deadline. `exchange_unknown`: any other non-zero exchange refusal code (the code itself is in `ret_code`). The probe has its own translation table, owned and tested by E27-T03 (#836); it does not reuse the adapter's general mapping of exchange refusal codes (`map_ret_code`), which folds `10005` and `10010` into an auth error. `vault_refused`: the vault (M2) refused to sign with the key (a key version it cannot serve, the withdrawal re-check, a key revoked meanwhile, an audit write that could not complete); nothing was sent for the refused call. It is a result of the exposure read (`getAccountConsequences`, `updateExchangeAccount`, `revokeApiKey`, `deleteExchangeAccount`). No exchange error text, header, URL or request fragment is echoed.
      * @enum {string}
      */
     KeyProbeError:
@@ -8288,7 +8300,8 @@ export interface components {
       | "service_unavailable"
       | "transport_error"
       | "timeout"
-      | "exchange_unknown";
+      | "exchange_unknown"
+      | "vault_refused";
     /** @description The `422` problem of a key operation (`createApiKey`; `rotateApiKey` can reuse it): the problem body plus, when the verification pipeline refused the key, the `verification` it reached. Exactly then `errors` names a rule of the pipeline (`key_*`), `verification` is required and `verification.passed` is false, and otherwise it is not allowed. A request that fails its schema is the same problem with the validation types in `errors` and no `verification`. The fields of a check that did not run are left out of `verification`, and no exchange text is echoed (SR-E27-08). */
     KeyRejectedProblem: components["schemas"]["Problem"] & {
       /** @constant */
@@ -11588,7 +11601,7 @@ export interface components {
     IdempotencyKey: string;
     /** @description Client-generated UUIDv4. REQUIRED on this operation, and never part of an exchange id: the server generates every `orderLinkId` itself, from no client-supplied string (24-internal-schemas.md section 8.3 rule 1). Recorded only after authentication, CSRF, session state and authorisation (and, on an order submit or amend, the `trading_disabled` checks) all pass (Idempotency, "Binding point", #2304): a refused request binds nothing, so its identical re-send with the same key is a first submission. */
     IdempotencyKeyRequired: string;
-    /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+    /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
     IfMatch: string;
     /** @description ETag of the version the client last read. A replace or delete of a risk-caps resource needs the current `ETag`: last-write-wins is refused by contract, so a request without this header is `428 precondition_required`, and one with a stale value is `412 version_conflict`. The value is one `ETag` of this resource: `*`, a list of tags, an unparseable value or another resource's tag (another profile's, a profile's sent to the default binding, or another account's binding tag) is `412 version_conflict`, never a match. */
     IfMatchRequired: string;
@@ -11624,6 +11637,12 @@ export interface components {
      *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
      *     parameter such a request is `409 open_exposure` with the consequence summary, and
      *     nothing changes. Ignored when the account holds no exposure.
+     *
+     *     **The read.** The exposure is read with signed exchange calls, so each signable key's
+     *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
+     *     and touches `api_keys.last_used_at` (best-effort, at most once a minute per key),
+     *     whichever operation asked. Those are the credential
+     *     layer's records (C-2.9), not the operation's own.
      *
      *     **Unknown exposure.** The exposure is read from the exchange for each request with the
      *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
@@ -11685,7 +11704,14 @@ export interface components {
      *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
      *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
      *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
-     *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+     *     fail both ways give the `503`. `vault_refused`, where the vault refused to sign and
+     *     nothing was sent for the refused call, also gives `503 exchange_unavailable` with
+     *     `Retry-After`, and counts with the `503` group when keys answer differently: the vault
+     *     refused to sign; nothing was sent; retry. A key that is no longer eligible (revoked
+     *     meanwhile, or refused by the C-2.8 re-check) is dropped from the probe set by the
+     *     key registry (its key status), so convergence comes from the account's key list and never from the probe
+     *     result. It has no `dead` branch. A refusal caused by an audit write that could not
+     *     complete clears on its own, so the `Retry-After` is honest. Neither answer echoes exchange text: `Problem.exchange`
      *     holds `ret_code` only
      *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
      *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
@@ -13362,7 +13388,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14164,7 +14190,7 @@ export interface operations {
       content: {
         "application/json": {
           /**
-           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; declared ahead of the service (C-6.1), which E27-S04 (#898) lands. `recorder_purge` gates purging recorded data (`purgeRecordedData`), one fresh code per purge; declared ahead of the service (C-6.1), which E16-T06 (#490) lands.
+           * @description Optional cross-check. The server elevates the class its last `403 step_up_required` challenged on this session; a different value is `400`. Without a pending challenge it is required. `audit` gates the audit-log export (`exportAuditLog`) and the download of its file (`downloadAuditExport`); `backups` gates a backup restore or a download-link issue or delete (`restoreBackup`, `issueBackupDownload`, `deleteBackup`), one fresh code per action. `sl_loosen` gates the owner's loosening of a position's stop (`setPositionTpSl`, 24-internal-schemas.md section 8.8 rule 5), one fresh code per loosening; declared ahead of the service (C-6.1), which E29-T07 extends. `accounts` gates disabling, re-enabling or deleting an exchange account (`updateExchangeAccount` with `enabled` `false` or `true`, and a mode change once E27-S05 serves it; `deleteExchangeAccount`) and a revoke's `flatten_first` branch (`revokeApiKey`), one fresh code per action; the class and its routes are E27-S04's (#898), which lands them in slices (C-6.1). `recorder_purge` gates purging recorded data (`purgeRecordedData`), one fresh code per purge: a no-grace, request-bound class (the grant binds the exact method, path and body).
            * @enum {string}
            */
           action_class?:
@@ -14390,7 +14416,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14630,7 +14656,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -14924,6 +14950,12 @@ export interface operations {
          *     parameter such a request is `409 open_exposure` with the consequence summary, and
          *     nothing changes. Ignored when the account holds no exposure.
          *
+         *     **The read.** The exposure is read with signed exchange calls, so each signable key's
+         *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
+         *     and touches `api_keys.last_used_at` (best-effort, at most once a minute per key),
+         *     whichever operation asked. Those are the credential
+         *     layer's records (C-2.9), not the operation's own.
+         *
          *     **Unknown exposure.** The exposure is read from the exchange for each request with the
          *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
          *     whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
@@ -14984,7 +15016,14 @@ export interface operations {
          *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
          *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
          *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
-         *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+         *     fail both ways give the `503`. `vault_refused`, where the vault refused to sign and
+         *     nothing was sent for the refused call, also gives `503 exchange_unavailable` with
+         *     `Retry-After`, and counts with the `503` group when keys answer differently: the vault
+         *     refused to sign; nothing was sent; retry. A key that is no longer eligible (revoked
+         *     meanwhile, or refused by the C-2.8 re-check) is dropped from the probe set by the
+         *     key registry (its key status), so convergence comes from the account's key list and never from the probe
+         *     result. It has no `dead` branch. A refusal caused by an audit write that could not
+         *     complete clears on its own, so the `Retry-After` is honest. Neither answer echoes exchange text: `Problem.exchange`
          *     holds `ret_code` only
          *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
          *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
@@ -15006,7 +15045,7 @@ export interface operations {
         open_exposure?: components["parameters"]["OpenExposure"];
       };
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -15308,6 +15347,12 @@ export interface operations {
          *     parameter such a request is `409 open_exposure` with the consequence summary, and
          *     nothing changes. Ignored when the account holds no exposure.
          *
+         *     **The read.** The exposure is read with signed exchange calls, so each signable key's
+         *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
+         *     and touches `api_keys.last_used_at` (best-effort, at most once a minute per key),
+         *     whichever operation asked. Those are the credential
+         *     layer's records (C-2.9), not the operation's own.
+         *
          *     **Unknown exposure.** The exposure is read from the exchange for each request with the
          *     account's signable keys, `active` and `rotating` (`21-database-schema.md` §3.2.3a),
          *     whatever the exchange last said about them; a `pending`, `expired`, `invalid` or
@@ -15368,7 +15413,14 @@ export interface operations {
          *     only). `clock_drift`, `rate_limited`, `service_unavailable` and `exchange_unknown`, where
          *     it answered with an error, give `502 exchange_error`. These are `KeyProbeError` values:
          *     `clock_drift` here is a probe's `10002`, not order entry's `503 clock_drift`. Keys that
-         *     fail both ways give the `503`. Neither answer echoes exchange text: `Problem.exchange`
+         *     fail both ways give the `503`. `vault_refused`, where the vault refused to sign and
+         *     nothing was sent for the refused call, also gives `503 exchange_unavailable` with
+         *     `Retry-After`, and counts with the `503` group when keys answer differently: the vault
+         *     refused to sign; nothing was sent; retry. A key that is no longer eligible (revoked
+         *     meanwhile, or refused by the C-2.8 re-check) is dropped from the probe set by the
+         *     key registry (its key status), so convergence comes from the account's key list and never from the probe
+         *     result. It has no `dead` branch. A refusal caused by an audit write that could not
+         *     complete clears on its own, so the `Retry-After` is honest. Neither answer echoes exchange text: `Problem.exchange`
          *     holds `ret_code` only
          *     (omitted when the exchange sent none), never `ret_msg`, `endpoint`, `request_id` or any
          *     other exchange text, header, URL or request fragment (SR-E27-08). A failed read has no
@@ -19072,7 +19124,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -19902,7 +19954,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -20166,7 +20218,7 @@ export interface operations {
       header: {
         /** @description Client-generated UUIDv4. Replays return the original response with `Idempotency-Replayed: true`, except that `createBackup` and `restoreBackup` do not store a refusal to start under the key, and the profile writes and `setAccountDefaultProfile` store only a `2xx` (the exceptions under Idempotency in `info.description`). */
         "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -20755,7 +20807,7 @@ export interface operations {
         acknowledge_unknown_positions?: components["parameters"]["AcknowledgeUnknownPositions"];
       };
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -21395,7 +21447,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify
@@ -21638,7 +21690,7 @@ export interface operations {
     parameters: {
       query?: never;
       header: {
-        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins. */
+        /** @description ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`. */
         "If-Match"?: components["parameters"]["IfMatch"];
         /**
          * @description SR-041 double-submit token. Must equal the `__Host-cv_csrf` cookie, and its MAC must verify

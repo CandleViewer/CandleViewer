@@ -64,11 +64,12 @@ _UNSIGNED: Final = {
     "kek_unavailable": "kek_unavailable",
     "credential_unavailable": EXCHANGE,
 }
-#: `KeyProbeError` (SR-E27-08), closed: a REST half without a verdict shows one of these.
+#: `KeyProbeError` (SR-E27-08), closed: a REST half without a verdict shows one of these
+#: (`vault_refused` is the exposure read's; no key test raises it today).
 PROBE_ERRORS: Final = frozenset(
     {
         "auth_error", "permission_denied", "ip_not_allowed", "clock_drift", "rate_limited",
-        "service_unavailable", "transport_error", "timeout", "exchange_unknown",
+        "service_unavailable", "transport_error", "timeout", "exchange_unknown", "vault_refused",
     }
 )  # fmt: skip
 #: The pipeline's own no-verdict codes by name: an answer past the window, a stepped host clock.

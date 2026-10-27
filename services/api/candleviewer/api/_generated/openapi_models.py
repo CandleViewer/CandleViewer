@@ -806,6 +806,7 @@ class Rest(BaseModel):
             "transport_error",
             "timeout",
             "exchange_unknown",
+            "vault_refused",
         ]
         | None
     ) = None
@@ -825,6 +826,7 @@ class Websocket(BaseModel):
             "transport_error",
             "timeout",
             "exchange_unknown",
+            "vault_refused",
         ]
         | None
     ) = None
