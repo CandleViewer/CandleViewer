@@ -541,11 +541,11 @@ if §6 J1 (c) is approved (PROPOSED, owner approval pending (#2701)), the `clock
 
 **Accessible name and role:**
 
-| Element         | Role            | Name / text                                                                                                              | ARIA                                                                                                     |
-| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| the count       | none (text)     | its words, read on demand: "Cancels in 20 seconds unless you act" (the spoken form, `E30-D03.md:472`)                    | `aria-live="off"`; the visible "0:20" is `aria-hidden="true"` and a visually hidden twin holds the words |
-| the announcer   | status (polite) | at each threshold once: the host's key, e.g. `confirm.countdown.announce10` "10 seconds until this confirmation cancels" | pre-rendered empty with its host (slice 4 (#4414) conventions 33); latest only (§6 J7)                   |
-| the clock glyph | none (J1 (c))   | —                                                                                                                        | `aria-hidden="true"` (the words carry it)                                                                |
+| Element         | Role                                                    | Name / text                                                                                                              | ARIA                                                                                                     |
+| --------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| the count       | none (text)                                             | its words, read on demand: "Cancels in 20 seconds unless you act" (the spoken form, `E30-D03.md:472`)                    | `aria-live="off"`; the visible "0:20" is `aria-hidden="true"` and a visually hidden twin holds the words |
+| the announcer   | status (polite)                                         | at each threshold once: the host's key, e.g. `confirm.countdown.announce10` "10 seconds until this confirmation cancels" | pre-rendered empty with its host (slice 4 (#4414) conventions 33); latest only (§6 J7)                   |
+| the clock glyph | none (J1 (c), PROPOSED, owner approval pending (#2701)) | —                                                                                                                        | `aria-hidden="true"` (the words carry it)                                                                |
 
 **Focus:** never moves focus, at a threshold or at expiry (`05:96`). **Motion:** none: digits swap once a second in both
 modes (`E39-D02.md:191`). **Live region:** thresholds only, polite, once each; never per tick; in a grid column none.
@@ -877,7 +877,8 @@ flip (§6 J16). The payload is the analytics owner's.
 canvas), so the control keeps working (conventions 48).
 
 **Catalogue alignment (applied in this PR, §6 (f)):** Props keep the three values and add the "match system" toggle beside them (J13);
-A11y adds the committed-change rule and `Ctrl+Shift+H` (J16); a new **Analytics** line names `appearance.theme_changed`
+A11y adds the committed-change rule and `Ctrl+Shift+H` (J16) and the device-local change for every role, no T2
+(J15 (a), PROPOSED, owner approval pending (#2701)); a new **Analytics** line names `appearance.theme_changed`
 and its trigger; Storybook adds MatchSystem, Light, HighContrast.
 
 ### CMP-063 · DensityToggle
@@ -931,7 +932,8 @@ CMP-041's. **Resize & overflow:** theirs. **Forced colors:** theirs (conventions
 
 **Catalogue alignment (applied in this PR, §6 (f)):** Props `value: "compact" | "comfortable" | "dense"`, `dense` only with
 `scope: "panel"` on a chart panel (J14, E11-D02 CR-8) and `form?: "segmented" | "menu"`; A11y adds the scope in the name
-and the committed-change rule (J16); a new **Analytics** line names `appearance.density_changed`; Storybook adds
+and the committed-change rule (J16) and the device-local change for every role, no T2 (J15 (a), PROPOSED, owner
+approval pending (#2701)); a new **Analytics** line names `appearance.density_changed`; Storybook adds
 ChartPanelDense, MenuForm.
 
 ### CMP-069 · InfoPanel
