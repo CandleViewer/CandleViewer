@@ -25,5 +25,6 @@
   "F11": "browser (full screen)",
   "Ctrl+S": "browser (save page)",
   "Ctrl+O": "browser (open file)",
-  "Ctrl+U": "browser (view source)"
+  "Ctrl+U": "browser (view source)",
+  "Ctrl+Shift+K": "app (Safety cluster: freeze confirmation)"
 }
