@@ -1,0 +1,130 @@
+/* CMP-005 Checkbox. The native input is transparent over the drawn plate, so it keeps every native behaviour. */
+.cv-checkbox {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-checkbox__input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+
+.cv-checkbox__plate {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-text-tertiary);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+
+.cv-checkbox[data-state="checked"] > .cv-checkbox__plate,
+.cv-checkbox[data-state="mixed"] > .cv-checkbox__plate {
+  border-color: var(--color-action-primary-default);
+  background: var(--color-action-primary-default);
+}
+
+.cv-checkbox__input:focus-visible ~ .cv-checkbox__plate {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.cv-checkbox__glyph {
+  position: absolute;
+  inset: 0;
+  display: inline-flex;
+  color: var(--color-text-on-action);
+  pointer-events: none;
+}
+
+/* Hover: an unchecked outline steps to text.secondary; a filled box keeps its fill and gains a 1px inner outline. */
+.cv-choice:hover:not([data-disabled], [data-gated])
+  .cv-checkbox[data-state="unchecked"]
+  > .cv-checkbox__plate {
+  border-color: var(--color-text-secondary);
+}
+
+.cv-choice:hover:not([data-disabled], [data-gated])
+  .cv-checkbox:not([data-state="unchecked"])
+  > .cv-checkbox__plate {
+  box-shadow: inset 0 0 0 calc(var(--border-hairline) * 1px) var(--color-text-secondary);
+}
+
+/* Gated (T2): only the plate dims; the glyph takes text.primary at full strength. */
+.cv-choice[data-gated] .cv-checkbox__plate {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-choice[data-gated] .cv-checkbox__glyph {
+  color: var(--color-text-primary);
+}
+
+@media (forced-colors: active) {
+  .cv-checkbox__plate {
+    border-color: CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+
+  .cv-checkbox__glyph {
+    color: CanvasText;
+  }
+
+  .cv-checkbox[data-state="checked"] > .cv-checkbox__plate,
+  .cv-checkbox[data-state="mixed"] > .cv-checkbox__plate {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  .cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__glyph {
+    color: HighlightText;
+  }
+
+  /* Hover repeats both normal hover selectors so it out-specifies them (Highlight, no inner shadow). */
+  .cv-choice:hover:not([data-disabled], [data-gated])
+    .cv-checkbox[data-state="unchecked"]
+    > .cv-checkbox__plate,
+  .cv-choice:hover:not([data-disabled], [data-gated])
+    .cv-checkbox:not([data-state="unchecked"])
+    > .cv-checkbox__plate {
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .cv-checkbox__input:focus-visible ~ .cv-checkbox__plate {
+    outline-color: Highlight;
+  }
+
+  /* Disabled wins over checked and mixed: GrayText border and a Canvas fill. */
+  .cv-choice[data-disabled] .cv-checkbox > .cv-checkbox__plate,
+  .cv-choice[data-disabled] .cv-checkbox[data-state] > .cv-checkbox__plate {
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .cv-choice[data-disabled] .cv-checkbox__glyph,
+  .cv-choice[data-disabled] .cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__glyph {
+    color: GrayText;
+  }
+
+  /* Gated: the border greys and the Highlight fill goes; the glyph carries the state in CanvasText. */
+  .cv-choice[data-gated] .cv-checkbox > .cv-checkbox__plate {
+    border-color: GrayText;
+    background: Canvas;
+    opacity: 1;
+  }
+
+  .cv-choice[data-gated] .cv-checkbox__glyph,
+  .cv-choice[data-gated] .cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__glyph {
+    color: CanvasText;
+  }
+}

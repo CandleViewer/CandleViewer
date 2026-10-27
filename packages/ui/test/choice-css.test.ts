@@ -80,6 +80,7 @@ function wins(
 }
 
 const [toggle, toggleForced] = split("toggle.css");
+const [checkbox, checkboxForced] = split("checkbox.css");
 const [choice, choiceForced] = split("choice.css");
 
 describe("toggle.css contract", () => {
@@ -126,6 +127,44 @@ describe("toggle.css contract", () => {
       ),
     ).toBe("HighlightText");
     expect(toggleForced).not.toMatch(/var\(--color/);
+  });
+});
+
+describe("checkbox.css contract", () => {
+  it("gated: the glyph is text.primary and only the plate dims", () => {
+    expect(decl(checkbox, ".cv-choice[data-gated] .cv-checkbox__glyph", "color")).toBe(
+      "var(--color-text-primary)",
+    );
+    expect(decl(checkbox, ".cv-choice[data-gated] .cv-checkbox__plate", "opacity")).toBe(
+      "var(--opacity-disabled)",
+    );
+  });
+
+  it("forced colours: Highlight box with HighlightText glyph, gated keeps the glyph CanvasText", () => {
+    const filled = '.cv-checkbox[data-state="checked"] > .cv-checkbox__plate';
+    expect(decl(checkboxForced, filled, "background")).toBe("Highlight");
+    expect(
+      decl(
+        checkboxForced,
+        '.cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__glyph',
+        "color",
+      ),
+    ).toBe("HighlightText");
+    expect(
+      decl(
+        checkboxForced,
+        '.cv-choice[data-gated] .cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__glyph',
+        "color",
+      ),
+    ).toBe("CanvasText");
+    expect(
+      decl(
+        checkboxForced,
+        ".cv-choice[data-gated] .cv-checkbox > .cv-checkbox__plate",
+        "background",
+      ),
+    ).toBe("Canvas");
+    expect(checkboxForced).not.toMatch(/var\(--color/);
   });
 });
 
@@ -202,6 +241,21 @@ describe("forced colours: the cascade outcome, not only the declarations", () =>
       "background",
       "CanvasText",
     );
+  });
+
+  it("checkbox: a disabled checked or mixed box is GrayText on Canvas", () => {
+    const checked = '.cv-checkbox[data-state="checked"] > .cv-checkbox__plate';
+    const disabled = ".cv-choice[data-disabled] .cv-checkbox[data-state] > .cv-checkbox__plate";
+    wins(checkboxForced, disabled, checkboxForced, checked, "border-color", "GrayText");
+    wins(checkboxForced, disabled, checkboxForced, checked, "background", "Canvas");
+  });
+
+  it("checkbox: forced hover is Highlight with no inner shadow over both normal hover rules", () => {
+    const base = ".cv-choice:hover:not([data-disabled], [data-gated])";
+    const unchecked = `${base} .cv-checkbox[data-state="unchecked"] > .cv-checkbox__plate`;
+    const filled = `${base} .cv-checkbox:not([data-state="unchecked"]) > .cv-checkbox__plate`;
+    wins(checkboxForced, unchecked, checkbox, unchecked, "border-color", "Highlight");
+    wins(checkboxForced, filled, checkbox, filled, "box-shadow", "none");
   });
 
   it("specificity helper: not() takes its argument, attributes count as classes", () => {
