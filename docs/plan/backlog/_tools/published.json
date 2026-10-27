@@ -1781,6 +1781,38 @@
     "number": 185,
     "subissue_done": true
   },
+  "E08-S08": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYX9A",
+    "number": 4702,
+    "subissue_done": false
+  },
+  "E08-S09": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYZXQ",
+    "number": 4703,
+    "subissue_done": false
+  },
+  "E08-S10": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYa-w",
+    "number": 4704,
+    "subissue_done": false
+  },
+  "E08-S11": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYcmg",
+    "number": 4705,
+    "subissue_done": false
+  },
   "E08-T01": {
     "blockedby_done": [
       "E02-K01",
@@ -1861,6 +1893,30 @@
     "node_id": "I_kwDOUZDkl88AAAABS4Iw7A",
     "number": 289,
     "subissue_done": true
+  },
+  "E08-T07": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYeAw",
+    "number": 4706,
+    "subissue_done": false
+  },
+  "E08-T08": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYfMg",
+    "number": 4707,
+    "subissue_done": false
+  },
+  "E08-T09": {
+    "blockedby_done": [],
+    "fields_done": false,
+    "item_id": null,
+    "node_id": "I_kwDOUZDkl88AAAABaOYhaA",
+    "number": 4708,
+    "subissue_done": false
   },
   "E08-X01": {
     "blockedby_done": [
