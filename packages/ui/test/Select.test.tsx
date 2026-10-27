@@ -91,6 +91,15 @@ describe("Select (CMP-009)", () => {
     expect(list(host)?.id).toBe(box(host).getAttribute("aria-controls"));
   });
 
+  it("aria-controls names the list only while it is open", async () => {
+    const host = await mount(<Host value="c" />);
+    expect(box(host)).not.toHaveAttribute("aria-controls");
+    key(host, "Enter");
+    expect(box(host)).toHaveAttribute("aria-controls");
+    key(host, "Escape");
+    expect(box(host)).not.toHaveAttribute("aria-controls");
+  });
+
   it("opens on the first option when nothing is chosen, and on the first enabled one when the chosen is disabled", async () => {
     const one = await mount(<Host value={undefined} />);
     key(one, "Enter");
@@ -325,10 +334,11 @@ describe("Select (CMP-009)", () => {
   it("plain disabled: out of the Tab order, never opens, no status node", async () => {
     const host = await mount(<Host value="a" disabled />);
     expect(box(host)).toHaveAttribute("aria-disabled", "true");
-    expect(box(host)).toHaveAttribute("tabindex", "-1");
+    expect(box(host)).not.toHaveAttribute("tabindex");
     await userEvent.tab();
     expect(box(host)).not.toHaveFocus();
     await userEvent.click(box(host));
+    expect(box(host)).not.toHaveFocus();
     fireEvent.keyDown(box(host), { key: "Enter" });
     expect(box(host)).toHaveAttribute("aria-expanded", "false");
     expect(within(host).queryByRole("status")).toBeNull();
@@ -393,6 +403,98 @@ describe("Select (CMP-009)", () => {
   });
 });
 
+const MANY = Array.from({ length: 30 }, (_v, i) => ({
+  value: `v${String(i)}`,
+  label: `Item ${String(i)}`,
+}));
+
+describe("Select open-list keys", () => {
+  it("Space chooses the active option and closes, without scrolling the page", async () => {
+    const onChange = vi.fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    key(host, "Enter");
+    key(host, "ArrowDown");
+    expect(key(host, " ")).toBe(false);
+    expect(onChange).toHaveBeenCalledWith("c");
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it.each([
+    ["PageDown", "Item 10"],
+    ["PageUp", "Item 0"],
+  ])("%s is consumed and moves ten options", async (k, label) => {
+    const host = await mount(<Host options={MANY} value="v0" />);
+    key(host, "Enter");
+    if (k === "PageUp") {
+      key(host, "PageDown");
+      key(host, "PageDown");
+      expect(activeLabel(host)).toBe("Item 20");
+      key(host, k);
+      expect(activeLabel(host)).toBe("Item 10");
+      key(host, k);
+    } else {
+      expect(key(host, k)).toBe(false);
+    }
+    expect(activeLabel(host)).toBe(label);
+  });
+
+  it("the page keys stop at the ends and pass over plain-disabled options", async () => {
+    const some = MANY.map((o, i) => (i >= 3 && i <= 5 ? { ...o, disabled: true } : o));
+    const host = await mount(<Host options={some} value="v0" />);
+    key(host, "Enter");
+    key(host, "PageDown");
+    expect(activeLabel(host)).toBe("Item 13");
+    key(host, "PageDown");
+    key(host, "PageDown");
+    key(host, "PageDown");
+    expect(activeLabel(host)).toBe("Item 29");
+    expect(key(host, "PageDown")).toBe(false);
+    expect(activeLabel(host)).toBe("Item 29");
+  });
+
+  it("page keys are not ours while closed or with a chord", async () => {
+    const host = await mount(<Host options={MANY} value="v0" />);
+    expect(key(host, "PageDown")).toBe(true);
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("Escape's native event stops before a bubble-phase document listener", async () => {
+    const seen = vi.fn();
+    document.addEventListener("keydown", seen);
+    const host = await mount(<Host value="a" />);
+    key(host, "Enter");
+    seen.mockClear();
+    key(host, "Escape");
+    expect(seen).not.toHaveBeenCalled();
+    document.removeEventListener("keydown", seen);
+  });
+
+  it("keeps the active option valid when the options change while open", async () => {
+    function Shrink(): JSX.Element {
+      const [few, setFew] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setFew(true)}>
+            shrink
+          </button>
+          <Select
+            options={few ? OPTIONS.slice(0, 1) : OPTIONS}
+            value="d"
+            onChange={fn()}
+            aria-label="Pick"
+          />
+        </>
+      );
+    }
+    const host = await mount(<Shrink />);
+    key(host, "Enter");
+    expect(activeLabel(host)).toBe("Delta");
+    act(() => within(host).getByRole("button").click());
+    expect(activeLabel(host)).toBe("Alpha");
+    expect(document.getElementById(activeId(host) as string)).not.toBeNull();
+  });
+});
+
 describe("Select popup placement", () => {
   const rect = (top: number, bottom: number, height: number): DOMRect =>
     ({
@@ -406,8 +508,12 @@ describe("Select popup placement", () => {
       y: top,
       toJSON: () => ({}),
     }) as DOMRect;
-  const place = async (anchor: [number, number], popup: number): Promise<string | null> => {
-    vi.spyOn(window, "innerHeight", "get").mockReturnValue(600);
+  const place = async (
+    anchor: [number, number],
+    popup: number,
+    viewport = 600,
+  ): Promise<string | null> => {
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(viewport);
     vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
       this: HTMLElement,
     ) {
@@ -431,6 +537,27 @@ describe("Select popup placement", () => {
 
   it("stays below when neither side fits and below is the larger", async () => {
     expect(await place([20, 44], 700)).toBe("below");
+  });
+
+  it("stays below when it fits below even though the anchor sits low (not the side with more room)", async () => {
+    expect(await place([400, 424], 100)).toBe("below");
+  });
+
+  it("caps the popup to the room on its side, inside a 640x400 viewport", async () => {
+    vi.spyOn(window, "innerWidth", "get").mockReturnValue(640);
+    expect(await place([210, 234], 600, 400)).toBe("above");
+    const popup = document.querySelector<HTMLElement>(".cv-select__popup");
+    expect(popup?.style.getPropertyValue("--cv-select-room")).toBe("210px");
+    expect(popup?.style.getPropertyValue("--cv-select-wide")).toBe("640px");
+  });
+
+  it("caps to the room below when below is the larger side", async () => {
+    await place([100, 124], 600, 400);
+    expect(
+      document
+        .querySelector<HTMLElement>(".cv-select__popup")
+        ?.style.getPropertyValue("--cv-select-room"),
+    ).toBe("276px");
   });
 
   it("measures only at open: nothing during render or while closed", async () => {

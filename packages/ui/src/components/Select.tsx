@@ -4,6 +4,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type JSX,
   type KeyboardEvent,
   type MouseEvent,
@@ -12,7 +13,7 @@ import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { FieldMessage, useRefusalAnnounce } from "./internal/fieldParts.js";
-import { firstIndex, lastIndex, openIndex, stepIndex } from "./internal/listNav.js";
+import { firstIndex, lastIndex, openIndex, pageIndex, stepIndex } from "./internal/listNav.js";
 
 export interface SelectOption {
   readonly value: string;
@@ -46,8 +47,26 @@ export interface SelectProps {
 
 type Placement = "below" | "above";
 
+/** Where the popup sits and how much room that side has (px; conv. 28: a popup caps to the room and scrolls). */
+interface Fit {
+  readonly placement: Placement;
+  readonly room: number | undefined;
+  readonly wide: number | undefined;
+}
+
+/** Page Up / Page Down move this many options (D02F keyboard table). */
+const PAGE = 10;
+
 /** The keys a gated trigger refuses: those that would open it or move through it (printables are always refused). */
 const GATED_KEYS: ReadonlySet<string> = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+
+const fitStyle = (fit: Fit): CSSProperties | undefined =>
+  fit.room === undefined
+    ? undefined
+    : ({
+        "--cv-select-room": `${String(fit.room)}px`,
+        "--cv-select-wide": `${String(fit.wide)}px`,
+      } as CSSProperties);
 
 /** The seam for slice 11: the arrows pass over exactly these options. */
 const skipped = (option: SelectOption): boolean => option.disabled === true;
@@ -74,9 +93,15 @@ export function Select({
   const popupRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [placement, setPlacement] = useState<Placement>("below");
+  const [fit, setFit] = useState<Fit>({ placement: "below", room: undefined, wide: undefined });
 
   const chosen = options.findIndex((option) => option.value === value);
+  // `options` may change while open: an index that no longer names a reachable option falls back to the start.
+  const activeOption = options[active];
+  const current =
+    activeOption !== undefined && !skipped(activeOption)
+      ? active
+      : openIndex(options, chosen, skipped);
   const shown = options[chosen]?.label ?? placeholder;
   const optionId = (index: number): string => `${listId}-${String(index)}`;
 
@@ -96,20 +121,26 @@ export function Select({
     const anchor = anchorRef.current;
     const popup = popupRef.current;
     if (!open || anchor === null || popup === null) return;
-    const room = anchor.getBoundingClientRect();
+    const rect = anchor.getBoundingClientRect();
     const need = popup.getBoundingClientRect().height;
-    const below = window.innerHeight - room.bottom;
-    setPlacement(need > below && room.top > below ? "above" : "below");
+    const below = window.innerHeight - rect.bottom;
+    // Flip only when it does not fit below and above is the larger side; the popup then caps to that side's room.
+    const above = need > below && rect.top > below;
+    setFit({
+      placement: above ? "above" : "below",
+      room: above ? rect.top : below,
+      wide: window.innerWidth - rect.left,
+    });
   }, [open]);
 
   // The active option stays in view in a long list.
   useEffect(() => {
-    if (open && active >= 0) {
-      document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
+    if (open && current >= 0) {
+      document.getElementById(optionId(current))?.scrollIntoView({ block: "nearest" });
     }
     // `optionId` is derived from `listId`, which is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, active]);
+  }, [open, current]);
 
   const handleKey = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (reason.gated || reason.disabled) return;
@@ -118,7 +149,7 @@ export function Select({
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (event.shiftKey && key !== "Tab") return;
     if (key === "Tab") {
-      if (open) choose(active); // no preventDefault: focus moves on (APG)
+      if (open) choose(current); // no preventDefault: focus moves on (APG)
       return;
     }
     const consume = (): void => event.preventDefault();
@@ -136,7 +167,12 @@ export function Select({
       case "ArrowDown":
       case "ArrowUp":
         consume();
-        setActive(stepIndex(options, active, key === "ArrowDown" ? 1 : -1, skipped));
+        setActive(stepIndex(options, current, key === "ArrowDown" ? 1 : -1, skipped));
+        break;
+      case "PageDown":
+      case "PageUp":
+        consume();
+        setActive(pageIndex(options, current, key === "PageDown" ? 1 : -1, PAGE, skipped));
         break;
       case "Home":
       case "End":
@@ -144,11 +180,13 @@ export function Select({
         setActive((key === "Home" ? firstIndex : lastIndex)(options, skipped));
         break;
       case "Enter":
+      case " ": // APG select-only: Space chooses the active option; the spec's open rows are silent on it
         consume();
-        choose(active);
+        choose(current);
         break;
       case "Escape":
-        // The first Esc closes the list and stops there; a second one bubbles to the host.
+        // The first Esc closes the list and stops there; a second one bubbles to the host. React's stopPropagation
+        // also stops the native event, so a bubble-phase document listener never sees it (a capture one still does).
         consume();
         event.stopPropagation();
         setOpen(false);
@@ -173,6 +211,8 @@ export function Select({
 
   const description = reason.gated ? reason.ariaDescribedBy : cx(errorId, describedBy) || undefined;
   const unavailable = reason.gated || reason.disabled;
+  // A plain-disabled trigger is not focusable at all (a press never focuses it), like a native disabled control.
+  const triggerTabIndex = reason.disabled ? undefined : 0;
 
   return (
     <div className="cv-field-root" data-cmp="CMP-009" data-density={density}>
@@ -183,14 +223,16 @@ export function Select({
           data-gated={reason.gated ? "" : undefined}
           data-disabled={reason.disabled ? "" : undefined}
         >
+          {/* The tabindex is absent only when plain disabled, where `aria-activedescendant` is never set (the list cannot open). */}
+          {/* eslint-disable-next-line jsx-a11y/aria-activedescendant-has-tabindex -- see above */}
           <div
             role="combobox"
             className="cv-select__trigger"
-            tabIndex={reason.disabled ? -1 : 0}
+            tabIndex={triggerTabIndex}
             aria-haspopup="listbox"
             aria-expanded={open}
-            aria-controls={listId}
-            aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
+            aria-controls={open ? listId : undefined}
+            aria-activedescendant={open && current >= 0 ? optionId(current) : undefined}
             aria-label={ariaLabel}
             aria-labelledby={ariaLabelledBy}
             aria-describedby={description}
@@ -224,7 +266,8 @@ export function Select({
             id={listId}
             role="listbox"
             className="cv-select__popup"
-            data-placement={placement}
+            data-placement={fit.placement}
+            style={fitStyle(fit)}
             aria-label={ariaLabel}
             aria-labelledby={ariaLabelledBy}
             onMouseDown={keepFocus}
@@ -239,9 +282,9 @@ export function Select({
                 className="cv-select__option"
                 aria-selected={index === chosen}
                 aria-disabled={skipped(option) ? true : undefined}
-                data-active={index === active ? "" : undefined}
+                data-active={index === current ? "" : undefined}
                 onMouseMove={() => {
-                  if (!skipped(option) && index !== active) setActive(index);
+                  if (!skipped(option) && index !== current) setActive(index);
                 }}
                 onClick={() => choose(index)}
               >

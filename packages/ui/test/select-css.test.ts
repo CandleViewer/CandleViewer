@@ -105,9 +105,28 @@ describe("select.css popup", () => {
   });
 
   it("is at most ten rows tall then scrolls, at least the field's width", () => {
-    expect(popup.body).toMatch(/max-block-size:\s*calc\(\s*10 \* var\(--size-row-height\)/);
+    expect(popup.body).toMatch(/max-block-size:\s*min\(\s*calc\(\s*10 \* var\(--size-row-height\)/);
     expect(popup.body).toContain("overflow-y: auto");
     expect(popup.body).toContain("min-inline-size: 100%");
+  });
+
+  it("caps to the room on its side (conv. 28), one row at least, and to the viewport's inline end", () => {
+    expect(popup.body).toMatch(
+      /max\(\s*var\(--size-row-height\),\s*calc\(var\(--cv-select-room, 100vh\) - var\(--cv-select-gap\) - var\(--space-inset-xs\)\)/,
+    );
+    expect(popup.body).toContain("max-inline-size: min(100vw, var(--cv-select-wide, 100vw))");
+  });
+
+  it("the open chevron turns up with a transform only: no paint, so no forced twin is owed", () => {
+    const open = rule(normal, '.cv-select__trigger[aria-expanded="true"] .cv-select__chevron');
+    expect(prop(open, "transform")).toBe("rotate(180deg)");
+    expect(PAINT.test(open.body)).toBe(false);
+  });
+
+  it("a long label wraps instead of widening the popup", () => {
+    expect(rule(normal, ".cv-select__option > span:last-child").body).toContain(
+      "overflow-wrap: anywhere",
+    );
   });
 
   it("is absolute under a relative anchor and clears the focus ring on both sides", () => {

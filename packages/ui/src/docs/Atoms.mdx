@@ -74,7 +74,8 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Enter, Space, ↓, ↑ (closed)     | Opens the list on the chosen option, else the first enabled one. Nothing is submitted or scrolled.    |
 | Home / End (closed)             | Opens on the first / last enabled option.                                                             |
 | ↓ / ↑, Home / End (open)        | Moves the active option; a disabled option is skipped, no wrap. `aria-activedescendant` follows.      |
-| Enter (open)                    | Chooses the active option, closes; focus stays on the trigger.                                        |
+| Page Up / Page Down (open)      | Moves up to ten enabled options; the page never scrolls.                                              |
+| Enter, Space (open)             | Chooses the active option, closes; focus stays on the trigger (Space per APG select-only).            |
 | Tab (open)                      | Chooses the active option, closes and moves focus on.                                                 |
 | Esc (open)                      | Closes with the value unchanged, focus stays; the next Esc bubbles to the host.                       |
 | Ctrl, Alt, Meta or Shift chords | Ignored.                                                                                              |
