@@ -69,6 +69,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/routes/tree.tsx",  # wires the guards to every route; no session -> /login
     "apps/web/src/shell/bootstrap/bootstrap.ts",  # `/me` -> the session claims the guards read
     "apps/web/src/shell/bootstrap/httpClient.ts",  # the bootstrap's calls carry the holder's bearer
+    "apps/web/src/shell/crash/",  # crash entries and diagnostics: the redaction keeps tokens out
     "apps/web/src/shell/startShell.ts",  # gives the client its TokenSource, the token holder
 )
 MANIFESTS: tuple[str, ...] = ("package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc")

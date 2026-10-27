@@ -14,6 +14,8 @@ import { openWorkerPort } from "../lib/ws/client/workerPort.js";
 import type { PortLike } from "../lib/ws/port/endpoint.js";
 import type { WsState } from "../lib/ws/state/types.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
+import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
+import { installCrashReporter } from "./crash/reportCrash.js";
 import { applySystemUpdate, setShellState, type ConnectionState } from "./bootstrap/store.js";
 
 /** The version `hello` names (`apps/web/package.json`); nothing injects it at build time yet. */
@@ -50,6 +52,13 @@ let stopActive: (() => void) | null = null;
 /** Starts the bootstrap fetch and the WS client. Returns a `stop()` to tear down the client (used by tests and by logout). */
 export function startShell(options: StartShellOptions): { stop(): void; ready: Promise<void> } {
   stopActive?.();
+  // E10-S04: one crash reporter per shell, catching what no boundary does (window `error`, unhandled rejections)
+  // The in-memory crash log for now: the Electron file log needs its IPC channel (a later slice), and importing the
+  // Electron adapter here would pull its capabilities into the renderer bundle (SR-115's gate).
+  const uninstallCrash = installCrashReporter({
+    port: createBrowserShellAdapter(),
+    version: CLIENT_VERSION,
+  });
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
   const ready = accessToken.refresh().then(() => runBootstrap(options));
@@ -62,7 +71,8 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     // half still runs, so the app loads without a live feed instead of with a shell that never started.
     console.error("startShell: the worker's port could not be opened", error);
     setShellState({ connection: { kind: "offline", cause: "backend_unreachable" } });
-    return { ready, stop: () => undefined };
+    stopActive = uninstallCrash;
+    return { ready, stop: uninstallCrash };
   }
   const opened = options.port === undefined;
   const client = createWsClient({
@@ -83,6 +93,7 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
 
   const stop = (): void => {
     client.stop();
+    uninstallCrash();
     if (opened) port.close?.(); // what the shell opened it lets go of: a replaced shell leaves one worker, not two
     if (stopActive === stop) {
       stopActive = null;
