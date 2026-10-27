@@ -4,7 +4,8 @@ The in-process driver issues the *same* request plan as `tests/load/k6/ingestion
 (`fixture_app.requests_plan`), at a bounded concurrency, and records per-route latency. The k6
 path starts uvicorn on 127.0.0.1 over the fixture backend, runs k6 with `--summary-export`, and
 folds the per-route p95s into the same verdict. Both send the plan's first-read route to a second
-app (`build_first_read_app`, #2523). Neither path can reach an exchange host.
+app (`build_first_read_app`, #2523), in a pool or k6 scenario of its own, so the 7 budget routes
+run as they were recorded. Neither path can reach an exchange host.
 """
 
 from __future__ import annotations
@@ -46,15 +47,21 @@ K6_EXPORT_ENV: Final = "CV_BENCH_K6_EXPORT"
 #: everyone to ignore red. Every other check, and a run `k6_reading` refuses, still fail it.
 B13_REPORT_ONLY_ENV: Final = "CV_BENCH_B13_REPORT_ONLY"
 B13_SOFT_WEEKLY: Final = "reported, not gated, on the weekly run until #2825's slice 2 decides it"
+#: The in-process driver's pool for the first-read route (#2523): one request at a time, beside the
+#: `concurrency` slots the 7 budget routes share, as the k6 script's `first_read` scenario keeps it
+#: off the 5 VUs. So the 7 routes run as they were recorded before the first-read leg.
+FIRST_READ_POOL: Final = 1
 
 
 async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[float]]:
     """Per-route latencies (ms). `build_app` runs the cold page cache at the app's default bound
     (#2523 lever 5). This driver warms every route untimed, so every timed cold call is a hit,
     but the first-read route (`FIRST_READ`): it goes to `build_first_read_app`'s app, whose page
-    cache is off, through a client of its own, and one semaphore bounds the requests to both
-    apps (#2523). `drive_k6` has no warm-up: each cold route's first requests, up to one per VU
-    (no single-flight), miss inside its reading, which p95 hides but `max` can show."""
+    cache is off, through a client of its own. The 7 budget routes run `iterations` rounds under
+    one semaphore of `concurrency`; the first read runs as many rounds beside them, in a pool of
+    its own (`FIRST_READ_POOL`), so it never takes one of their slots (#2523). `drive_k6` has no
+    warm-up: each cold route's first requests, up to one per VU (no single-flight), miss inside
+    its reading, which p95 hides but `max` can show."""
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
         apps = await build_app(Path(tmp)), await build_first_read_app(Path(tmp))
@@ -70,9 +77,11 @@ async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[f
         )
         async with main, first:
             clients = {r: first if spec.get(FIRST_READ) else main for r, spec in plan.items()}
+            own = asyncio.Semaphore(FIRST_READ_POOL)
+            pools = {r: own if spec.get(FIRST_READ) else sem for r, spec in plan.items()}
 
             async def one(route: str, spec: dict[str, Any]) -> None:
-                async with sem:
+                async with pools[route]:
                     t0 = time.perf_counter()
                     r = await clients[route].get(spec["path"], params=spec["params"])
                     out[route].append((time.perf_counter() - t0) * 1000)
@@ -145,8 +154,8 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us). Where
     `K6_EXPORT_ENV` names a file, k6's summary is copied there unchanged first, also for a run
     refused below; unset, nothing is kept. The first-read route (`FIRST_READ`) has a server of
-    its own over `build_first_read_app`, on a second loopback port k6 gets as `BASE_URL_FIRST`
-    (#2523); both servers stop on every path.
+    its own over `build_first_read_app`, on a second loopback port k6 gets as `BASE_URL_FIRST`,
+    and a k6 scenario of its own (#2523); both servers stop on every path.
 
     Raises `RuntimeError` when k6 is not on PATH, both fixture apps get the same port, either
     does not start, or `k6_reading` refuses the run. Other failures propagate under their own
