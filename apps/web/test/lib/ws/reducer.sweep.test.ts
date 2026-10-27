@@ -10,6 +10,7 @@ import type {
   EngineEvent,
   KillSwitchView,
   Link,
+  Outage,
   Quality,
   TopicStatus,
   TransportState,
@@ -45,6 +46,7 @@ const NONE: KillSwitchView = { state: "unknown" };
 const V_OFF: KillSwitchView = { state: "disengaged", scope: "global", exchangeAccountIds: [] };
 const V_ON: KillSwitchView = { ...V_OFF, state: "engaged" };
 const V_SCOPED: KillSwitchView = { ...V_ON, scope: "accounts", exchangeAccountIds: ["a"] };
+const LOST: Outage = { sinceMs: 5e3, lastDataMs: 4e3 };
 const STATUSES: readonly TopicStatus[] = ["pending", "live", "resyncing", "stale", "revoked"];
 
 const CASES: readonly Case[] = [
@@ -93,6 +95,20 @@ const CASES: readonly Case[] = [
   ...STATUSES.map((s): Case => ({ name: `system stream ${s}`, event: stream(s) })),
   { name: "request_id", event: { type: "request_id", requestId: "REQ_A" } },
   { name: "request_id, not a string", event: { type: "request_id", requestId: wire({}) } },
+  // E10-S04: the outage stamp on each down event, good and junk; only an up link takes it.
+  ...[
+    LOST,
+    { sinceMs: 6e3, lastDataMs: null },
+    wire<Outage>({ sinceMs: NaN }),
+    wire<Outage>({ sinceMs: 7e3, lastDataMs: "4" }),
+  ].flatMap((lost, i): Case[] => [
+    { name: `connecting, stamp ${i}`, event: { type: "connecting", lost } },
+    {
+      name: `reconnecting, stamp ${i}`,
+      event: { type: "reconnecting", attempt: 3, nextAttemptAtMs: 1, lost },
+    },
+    { name: `offline, stamp ${i}`, event: { type: "offline", cause: "offline", lost } },
+  ]),
 ];
 
 /** A frozen state or event makes any write inside `reduce` throw, so purity is checked everywhere. */
@@ -177,6 +193,13 @@ function reference(s: WsState, c: Case): WsState {
           ? { enabled: false, reason: "kill_switch_unknown" }
           : { enabled: true, reason: null };
   const { connectionId, requestId } = s.diagnostics;
+  const lost = "lost" in e && s.link.kind === "up" ? e.lost : undefined;
+  const since = finite(lost?.sinceMs);
+  const outage = fresh
+    ? null
+    : since !== undefined
+      ? { sinceMs: since, lastDataMs: finite(lost?.lastDataMs) ?? null }
+      : s.outage;
   return {
     transport,
     transitionSeq: s.transitionSeq + (transport === s.transport ? 0 : 1),
@@ -192,6 +215,7 @@ function reference(s: WsState, c: Case): WsState {
       requestId:
         e.type === "request_id" && typeof e.requestId === "string" ? e.requestId : requestId,
     },
+    outage,
   };
 }
 

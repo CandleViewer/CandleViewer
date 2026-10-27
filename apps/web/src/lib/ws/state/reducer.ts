@@ -5,6 +5,7 @@ import type {
   EngineEvent,
   KillSwitchView,
   OrderEntry,
+  Outage,
   Quality,
   TransportState,
   WsState,
@@ -31,6 +32,7 @@ export const INITIAL_WS_STATE = deepFreeze<WsState>({
   killSwitch: UNKNOWN_KILL_SWITCH,
   orderEntry: { enabled: false, reason: "kill_switch_unknown" },
   diagnostics: { connectionId: null, requestId: null },
+  outage: null,
 });
 
 type Patch = { -readonly [K in keyof WsState]?: WsState[K] };
@@ -92,10 +94,22 @@ function systemPatch(u: SystemUpdate): Patch {
   return patch;
 }
 
+/** E10-S04: only an `up` link starts an outage; a stamp on a later attempt of the episode is ignored. */
+function outagePatch(prev: WsState, lost: Outage | undefined): Patch {
+  const sinceMs = finite(lost?.sinceMs);
+  if (prev.link.kind !== "up" || sinceMs === undefined) return {};
+  return { outage: { sinceMs, lastDataMs: finite(lost?.lastDataMs) ?? null } };
+}
+
 function patchFor(prev: WsState, e: EngineEvent): Patch {
   switch (e.type) {
     case "connecting":
-      return { link: { kind: "connecting" }, quality: "healthy", systemStream: "pending" };
+      return {
+        link: { kind: "connecting" },
+        quality: "healthy",
+        systemStream: "pending",
+        ...outagePatch(prev, e.lost),
+      };
     case "welcome":
       if (typeof e.connectionId !== "string") return {};
       return { diagnostics: { ...prev.diagnostics, connectionId: e.connectionId } };
@@ -114,16 +128,19 @@ function patchFor(prev: WsState, e: EngineEvent): Patch {
         shutdown: null,
         systemStream: "pending",
         killSwitch: viewOf(e.killSwitch),
+        outage: null,
       };
     case "reconnecting":
       return {
         link: { kind: "reconnecting", attempt: e.attempt, nextAttemptAtMs: e.nextAttemptAtMs },
         systemStream: "pending",
+        ...outagePatch(prev, e.lost),
       };
     case "offline":
       return {
         link: { kind: "offline", cause: e.cause, closeCode: e.closeCode },
         systemStream: "pending",
+        ...outagePatch(prev, e.lost),
       };
     case "system":
       return systemPatch(e.update);

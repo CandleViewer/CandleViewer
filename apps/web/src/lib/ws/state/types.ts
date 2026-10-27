@@ -44,6 +44,19 @@ export type OrderEntry =
   | { readonly enabled: true; readonly reason: null }
   | { readonly enabled: false; readonly reason: OrderEntryReason };
 
+/**
+ * E10-S04 (#306): the Disconnected episode the CMP-077 region reads (E17-D02 §6, §10 B; E17-D01 §4.1
+ * T4). The engine stamps it as `lost` on the event that takes an `up` link down (so the transition is still
+ * one state message); the next socket's `auth_ok` clears it.
+ * Epoch milliseconds of the worker's wall clock, the tab's too.
+ */
+export interface Outage {
+  /** When the link left `up`: the start of the episode (T4's 10 s / 30 s / 5 min run from here). */
+  readonly sinceMs: number;
+  /** The last topic frame (`snap` or `d`, `system` included) before that: "Last data 00:12 ago". `null`: none on this session. */
+  readonly lastDataMs: number | null;
+}
+
 export interface WsState {
   readonly transport: TransportState;
   /** +1 exactly once per change of `transport`: the chrome announces a transition once, not per heartbeat. */
@@ -60,6 +73,8 @@ export interface WsState {
   readonly orderEntry: OrderEntry;
   /** Behind a "copy details" affordance only; never in default copy. Kept across reconnects. */
   readonly diagnostics: { readonly connectionId: string | null; readonly requestId: string | null };
+  /** `null` while up, and before the first `auth_ok`: a session start is not an outage (E17-D02 §11 row 15). */
+  readonly outage: Outage | null;
 }
 
 /**
@@ -73,14 +88,20 @@ export interface WsState {
  * re-auth from a new socket. The reducer vets every wire value it reads and keeps only the vetted.
  */
 export type EngineEvent =
-  | { readonly type: "connecting" }
+  | { readonly type: "connecting"; readonly lost?: Outage | undefined }
   | { readonly type: "welcome"; readonly connectionId: string }
   | { readonly type: "auth_ok"; readonly killSwitch: KillSwitchPayload | undefined }
-  | { readonly type: "reconnecting"; readonly attempt: number; readonly nextAttemptAtMs: number }
+  | {
+      readonly type: "reconnecting";
+      readonly attempt: number;
+      readonly nextAttemptAtMs: number;
+      readonly lost?: Outage | undefined;
+    }
   | {
       readonly type: "offline";
       readonly cause: OfflineCause;
       readonly closeCode?: number | undefined;
+      readonly lost?: Outage | undefined;
     }
   | { readonly type: "system"; readonly update: SystemUpdate }
   | { readonly type: "system_stream"; readonly status: TopicStatus }

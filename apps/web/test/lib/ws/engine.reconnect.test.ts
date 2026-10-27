@@ -268,3 +268,21 @@ describe("subscribing again after a reconnect (9.3)", () => {
     expect(t.subscribed()).toEqual(["orders", BOOK, "trades.BTCUSDT"]);
   });
 });
+
+describe("the outage stamp (E10-S04, the CMP-077 region's last data)", () => {
+  it("rides on the event that takes an up link down, once per episode", async () => {
+    const t = engineHarness();
+    t.engine.consume(spec(BOOK));
+    await t.start();
+    t.gateway.latest.snap(BOOK, "upstream_desync");
+    await t.advance(0);
+    const dataAt = Date.now();
+    await t.advance(7_000);
+    t.gateway.latest.close(1011); // the resets that follow are not data
+    const lost = { sinceMs: Date.now(), lastDataMs: dataAt };
+    expect(t.events.at(-1)).toMatchObject({ type: "reconnecting", lost });
+    const seen = t.events.length;
+    await t.advance(500);
+    expect(t.events.slice(seen)[0]).toEqual({ type: "connecting" }); // the attempt is no new episode
+  });
+});
