@@ -75,14 +75,25 @@ export const Hover: Story = {
   play: async ({ canvasElement }) => userEvent.hover(link(canvasElement, "Shortcut settings")),
 };
 
-/** The CMP-039 ring at the link's own square corners (E8). */
+/** The CMP-039 ring at the link's own square corners (E8): the ring class, drawn as the token outline. */
 export const FocusVisible: Story = {
   ...Default,
   play: async ({ canvasElement }) => {
     await userEvent.tab();
     const el = link(canvasElement, "Shortcut settings");
     await expect(el).toHaveFocus();
-    await expect(parseFloat(getComputedStyle(el).borderRadius)).toBe(0);
+    await expect(el).toHaveClass("cv-focus-ring");
+    await expect(el.matches(":focus-visible")).toBe(true);
+    const style = getComputedStyle(el);
+    await expect(style.outlineStyle).toBe("solid");
+    await expect(parseFloat(style.outlineWidth)).toBeGreaterThan(0);
+    // The outline colour is the color.focus.ring token, resolved on the root.
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-focus-ring)";
+    document.body.append(probe);
+    const ring = getComputedStyle(probe).color;
+    probe.remove();
+    await expect(style.outlineColor).toBe(ring);
   },
 };
 
@@ -130,6 +141,46 @@ export const LongText: Story = {
       .
     </p>
   ),
+};
+
+const WRAP_TEXT = "Bybit API documentation for rate limits";
+
+/**
+ * The glyph never wraps alone: across every container width from 6rem to 20rem (1px steps), the glyph's
+ * line is the line of the link's last word, so each width that breaks before the glyph breaks a word earlier.
+ */
+export const ExternalNarrowWrap: Story = {
+  render: () => (
+    <p data-testid="wrap-host" style={{ width: "6rem", margin: 0 }}>
+      <Link href={DOCS} external>
+        {WRAP_TEXT}
+      </Link>
+    </p>
+  ),
+  play: async ({ canvasElement }) => {
+    const host = within(canvasElement).getByTestId("wrap-host");
+    const anchor = link(canvasElement, /opens externally/);
+    const glyph = anchor.querySelector(".cv-link__glyph");
+    const text = anchor.firstChild;
+    if (glyph === null || text === null) throw new Error("no glyph or text");
+    const range = document.createRange();
+    range.selectNodeContents(text);
+    let wrapped = 0;
+    for (let px = 96; px <= 320; px += 1) {
+      host.style.width = `${px}px`;
+      const lines = Array.from(range.getClientRects());
+      const last = lines[lines.length - 1];
+      if (last === undefined) throw new Error("no text line");
+      if (lines.length > 1) wrapped += 1;
+      const box = glyph.getBoundingClientRect();
+      const middle = box.top + box.height / 2;
+      // The glyph's middle sits within the last text line's box: same line, never alone below it.
+      await expect(middle).toBeGreaterThanOrEqual(last.top);
+      await expect(middle).toBeLessThanOrEqual(last.bottom);
+    }
+    // The sweep is only meaningful if the text really wrapped at the narrow widths.
+    await expect(wrapped).toBeGreaterThan(0);
+  },
 };
 
 /** Every state under the light and high-contrast themes; axe checks each theme. */

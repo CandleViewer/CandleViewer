@@ -9,15 +9,19 @@
   cursor: pointer;
 }
 
-/* The external glyph: size.icon, in the link colour, space.inset.xs after the last word, never wrapped
-   away from it (the word joiner before it in the markup). */
+/* The external mark stays a plain inline box: its leading word joiner (in the markup) then sits on the last
+   word's line and forbids a break, so the glyph never wraps alone. */
 .cv-link__external {
-  display: inline-flex;
+  white-space: nowrap;
+}
+
+/* The glyph: size.icon, in the link colour, space.inset.xs after the last word. */
+.cv-link__glyph {
+  display: inline-block;
   width: var(--size-icon);
   height: var(--size-icon);
   margin-inline-start: var(--space-inset-xs);
   vertical-align: middle;
-  white-space: nowrap;
 }
 
 /* Plain disabled: no href, not focusable; dimmed and inert to the pointer. */

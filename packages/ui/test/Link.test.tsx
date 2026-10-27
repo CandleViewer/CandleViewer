@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import type { JSX } from "react";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Link, type LinkProps, type LinkSlotProps } from "../src/components/index.js";
 import { EXTERNAL_LINK_TEXT } from "../src/components/Link.js";
@@ -56,9 +56,11 @@ describe("Link (CMP-021)", () => {
     expect(link).toHaveAttribute("data-external");
     const hidden = link.querySelector(".cv-visually-hidden");
     expect(hidden?.textContent).toBe(EXTERNAL_LINK_TEXT);
-    const glyph = link.querySelector(".cv-link__external");
-    expect(glyph).toHaveAttribute("aria-hidden", "true");
-    expect(glyph?.querySelector("svg")).not.toBeNull();
+    const mark = link.querySelector(".cv-link__external");
+    expect(mark).toHaveAttribute("aria-hidden", "true");
+    // The word joiner sits in the plain inline mark, before the inline-block glyph, never in the name.
+    expect(mark?.firstChild?.textContent).toBe("\u2060");
+    expect(mark?.querySelector(".cv-link__glyph svg")).not.toBeNull();
   });
 
   it("to: renders through the router slot, which owns navigation; no href of its own", async () => {
@@ -129,6 +131,35 @@ describe("Link (CMP-021)", () => {
     );
     await userEvent.click(within(host).getByRole("link"));
     expect(onClick).not.toHaveBeenCalled();
+  });
+
+  it("disabled stays unfocusable and inert even when tabIndex and handlers are passed", async () => {
+    const onKeyDown = fn();
+    const onMouseDown = fn();
+    const onFocus = fn();
+    const host = await mount(
+      <Link
+        href="#settings"
+        disabled
+        tabIndex={0}
+        onKeyDown={onKeyDown}
+        onMouseDown={onMouseDown}
+        onFocus={onFocus}
+        id="shortcuts"
+      >
+        Shortcut settings
+      </Link>,
+    );
+    const link = within(host).getByRole("link", { name: "Shortcut settings" });
+    expect(link).not.toHaveAttribute("tabindex");
+    expect(link).toHaveAttribute("id", "shortcuts");
+    await userEvent.tab();
+    expect(document.body).toHaveFocus();
+    await userEvent.click(link);
+    fireEvent.keyDown(link, { key: "Enter" });
+    expect(onKeyDown).not.toHaveBeenCalled();
+    expect(onMouseDown).not.toHaveBeenCalled();
+    expect(onFocus).not.toHaveBeenCalled();
   });
 
   it("disabled external keeps the glyph and suffix but drops rel and target", async () => {

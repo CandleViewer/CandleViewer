@@ -44,6 +44,21 @@ const status = (host: HTMLElement): HTMLElement => within(host).getByRole("statu
 const glyph = (host: HTMLElement): string =>
   host.querySelector(".cv-copy-button")?.getAttribute("data-state") ?? "";
 
+/** A promise the test settles by hand, to hold a clipboard write open. */
+const deferred = (): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: Error) => void;
+} => {
+  let resolve: () => void = () => undefined;
+  let reject: (error: Error) => void = () => undefined;
+  const promise = new Promise<void>((res, rej) => {
+    resolve = () => res();
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 /** The DOM-wide scan: the value is in no text node and no attribute of the whole document. */
 const expectValueAbsent = (): void => {
   expect(document.documentElement.outerHTML).not.toContain(VALUE);
@@ -94,16 +109,99 @@ describe("CopyButton (CMP-033)", () => {
     expect(status(host)).toBeEmptyDOMElement();
   });
 
-  it("a second press while copied re-announces and restarts the 2 s", async () => {
+  it("a repeat press empties then refills the status (a new announcement); the glyph never blinks", async () => {
+    const host = await mount(<CopyButton value={VALUE} label="Copy API key" />);
+    const root = host.querySelector(".cv-copy-button");
+    if (root === null) throw new Error("no CopyButton root");
+    const texts: string[] = [];
+    const states: string[] = [];
+    const observer = new MutationObserver(() => {
+      texts.push(status(host).textContent ?? "");
+      states.push(glyph(host));
+    });
+    observer.observe(root, {
+      subtree: true,
+      childList: true,
+      characterData: true,
+      attributes: true,
+    });
+    await press(button(host));
+    await advance(1500);
+    // The second write stays pending, so the emptied region is committed on its own, as in a browser.
+    const second = deferred();
+    writeText.mockImplementationOnce(() => second.promise);
+    await press(button(host));
+    expect(status(host)).toBeEmptyDOMElement();
+    expect(glyph(host)).toBe("copied");
+    await act(async () => second.resolve());
+    expect(status(host)).toHaveTextContent(/^Copied$/);
+    observer.disconnect();
+    expect(writeText).toHaveBeenCalledTimes(2);
+    // Copied, then an empty region, then Copied again: the second press is announced afresh.
+    const first = texts.indexOf("Copied");
+    const emptied = texts.indexOf("", first);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(emptied).toBeGreaterThan(first);
+    expect(texts.indexOf("Copied", emptied)).toBeGreaterThan(emptied);
+    // From the first success on, the glyph state is never idle: no copy-glyph frame between presses.
+    expect(states.slice(states.indexOf("copied"))).not.toContain("idle");
+  });
+
+  it("a repeat press restarts the 2 s from the second success", async () => {
     const host = await mount(<CopyButton value={VALUE} label="Copy API key" />);
     await press(button(host));
     await advance(1500);
     await press(button(host));
-    expect(writeText).toHaveBeenCalledTimes(2);
-    expect(status(host)).toHaveTextContent("Copied");
-    await advance(1500);
+    await advance(1999);
     expect(glyph(host)).toBe("copied");
-    await advance(500);
+    await advance(1);
+    expect(glyph(host)).toBe("idle");
+    expect(status(host)).toBeEmptyDOMElement();
+  });
+
+  it("overlapping writes: the last press wins, and its Copied holds a full 2 s", async () => {
+    const onCopied = fn();
+    const host = await mount(<CopyButton value={VALUE} label="Copy API key" onCopied={onCopied} />);
+    const first = deferred();
+    const second = deferred();
+    writeText.mockImplementationOnce(() => first.promise);
+    writeText.mockImplementationOnce(() => second.promise);
+    await press(button(host));
+    await press(button(host));
+    await act(async () => second.resolve());
+    expect(status(host)).toHaveTextContent(/^Copied$/);
+    expect(onCopied).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await advance(1500);
+    // The first, superseded write settles late (here: refused): it changes nothing and arms no timer.
+    await act(async () => first.reject(new Error("late")));
+    expect(glyph(host)).toBe("copied");
+    expect(status(host)).toHaveTextContent(/^Copied$/);
+    expect(onCopied).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(1);
+    await advance(499);
+    expect(glyph(host)).toBe("copied");
+    await advance(1);
+    expect(glyph(host)).toBe("idle");
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("overlapping writes resolving in order: one timer, the second press's 2 s", async () => {
+    const host = await mount(<CopyButton value={VALUE} label="Copy API key" />);
+    const first = deferred();
+    const second = deferred();
+    writeText.mockImplementationOnce(() => first.promise);
+    writeText.mockImplementationOnce(() => second.promise);
+    await press(button(host));
+    await press(button(host));
+    await act(async () => first.resolve());
+    expect(glyph(host)).toBe("idle");
+    await advance(1000);
+    await act(async () => second.resolve());
+    expect(vi.getTimerCount()).toBe(1);
+    await advance(1999);
+    expect(glyph(host)).toBe("copied");
+    await advance(1);
     expect(glyph(host)).toBe("idle");
   });
 
@@ -151,15 +249,16 @@ describe("CopyButton (CMP-033)", () => {
     expect(seen.has("Copied")).toBe(true);
   });
 
-  it("ignores held-Enter repeats: one write per activation", async () => {
+  it("cancels held-Enter keydown repeats; the first Enter and Space keydowns pass", async () => {
     const host = await mount(<CopyButton value={VALUE} label="Copy API key" />);
     const repeat = fireEvent.keyDown(button(host), { key: "Enter", repeat: true });
-    const repeatSpace = fireEvent.keyDown(button(host), { key: " ", repeat: true });
     const first = fireEvent.keyDown(button(host), { key: "Enter" });
-    // A cancelled keydown is what stops the browser's synthetic click.
+    const space = fireEvent.keyDown(button(host), { key: " ", repeat: true });
+    // A cancelled Enter keydown is what stops the browser's synthetic click on each repeat. Space clicks
+    // on keyup, once per press, so its keydown repeats are left alone.
     expect(repeat).toBe(false);
-    expect(repeatSpace).toBe(false);
     expect(first).toBe(true);
+    expect(space).toBe(true);
   });
 
   it("disabled: natively disabled through CMP-002, never copies", async () => {
