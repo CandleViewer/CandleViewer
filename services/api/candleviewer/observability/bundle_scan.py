@@ -30,15 +30,27 @@ class Finding:
 #: buffer escapes (`\'`, `\"`) before a value reads as a quote, as the filter reads it (#415).
 _LABELLED = re.compile(rf"""(?ix)["']?(?:\b|(?<=\\[tnr])){_NOT_DOTTED}(?:{_KEY_NAMES})["']?
     \s*[:=](?:\s|\\[tnr])*+(?:\\?["'])?{_NO_VALUE}[^\s"',}}\]]{{6,}}""")
+
+
+def _six_character_head(rule: re.Pattern[str]) -> re.Pattern[str]:
+    """`rule`, whose value is six or more characters, with a value of exactly six."""
+    head = rule.pattern.removesuffix("{6,}")
+    if head == rule.pattern:
+        raise ValueError("the rule's value is not six or more characters")
+    return re.compile(head + "{6}", rule.flags)
+
+
 #: `_LABELLED` with a value of exactly six characters: the same matches start at the same places,
 #: and a search costs no more than the six characters past a value's start.
-_LABELLED_HEAD: Final = re.compile(_LABELLED.pattern.removesuffix("{6,}") + "{6}", _LABELLED.flags)
+_LABELLED_HEAD: Final = _six_character_head(_LABELLED)
 #: The log buffer `repr`s a text the redaction wrote (a traceback, a stack, an event dict's value),
 #: so `password:\n[redacted:key-name]` reaches the scan as `password:\\n[redacted:key-name]`, its
 #: escape doubled (#4681). A value that is escapes (runs of `\`, each with a `t`, `n` or `r` after
 #: it or not) and then a marker or a placeholder, as `_NO_VALUE` names them, holds no value.
 _ESCAPE_RUN: Final = re.compile(r"(?:\\++[tnr]?)*+")
-_NOT_A_MARKER: Final = re.compile(_NO_VALUE, re.IGNORECASE)
+#: `_NO_VALUE` is a negative lookahead: it matches (the empty string) where no marker or
+#: placeholder starts, so a match means the text there holds a value.
+_HOLDS_VALUE: Final = re.compile(_NO_VALUE, re.IGNORECASE)
 _RULES: Final[tuple[tuple[str, re.Pattern[str]], ...]] = (
     ("private-key-block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("aws-access-key-id", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
@@ -60,7 +72,7 @@ def _labelled(text: str) -> bool:
         pos = match.end() - 6
         escapes = _ESCAPE_RUN.match(text, pos)  # it matches here, if only the empty string
         pos = escapes.end() if escapes else pos
-        if _NOT_A_MARKER.match(text, pos):
+        if _HOLDS_VALUE.match(text, pos):
             return True
     return False
 

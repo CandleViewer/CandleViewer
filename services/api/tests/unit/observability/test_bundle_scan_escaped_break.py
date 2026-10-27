@@ -72,6 +72,17 @@ def test_the_scan_keeps_mains_labelled_rule() -> None:
     assert _MAIN_LABELLED.pattern != _MAIN_SOURCE  # the value is a group in the pinned copy
 
 
+def test_the_scan_head_is_the_labelled_rule_with_a_six_character_value() -> None:
+    assert bundle_scan._LABELLED_HEAD.pattern == _MAIN_SOURCE.removesuffix("{6,}") + "{6}"
+    assert bundle_scan._LABELLED_HEAD.flags == bundle_scan._LABELLED.flags
+
+
+def test_the_scan_head_refuses_a_rule_whose_value_is_not_six_or_more_characters() -> None:
+    # `match.end() - 6` is the value's start only if the head ends at exactly six characters
+    with pytest.raises(ValueError, match="six"):
+        bundle_scan._six_character_head(re.compile(r"password=\S+"))
+
+
 # --- the issue's Gherkin, through the buffer and the bundle ---
 
 
