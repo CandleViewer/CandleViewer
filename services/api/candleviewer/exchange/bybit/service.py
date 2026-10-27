@@ -271,23 +271,6 @@ class ExchangeBybitService:
             self._credentials, env, credential_id, clock_offset_ms=clock_offset_ms
         )
 
-    def trading_port(
-        self,
-        env: str,
-        *,
-        clock_offset_ms: Callable[[], int | None] | None = None,
-        entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
-    ) -> BybitTradingPort:
-        """G-8 (#2877): the exchange `TradingPort` of this process's environment only (C-2.11),
-        signed by M2 under `sign_rest`, on the process's one governor (OM-D08) and the adapter's
-        account REST transport (#2893 S4); `entry_wait_s` bounds an `entry` token wait (24 §8.7).
-        Any other environment is refused before a client exists, and testnet, which has no
-        capability record (ruling R6), is refused too. A factory, not trading methods: the
-        service itself trades nothing. Every port shares the adapter's one private-stream
-        registry (G-8b), so its one-stream-per-account rule and its cap hold across ports.
-        `clock_offset_ms` is the measured offset, `None` while unmeasured."""
-        return self._trading_port(env, clock_offset_ms, entry_wait_s, None)
-
     def exposure_port(
         self,
         env: str,
@@ -295,8 +278,8 @@ class ExchangeBybitService:
         on_failure: Callable[[Exception], None],
         clock_offset_ms: Callable[[], int | None] | None = None,
     ) -> BybitTradingPort:
-        """E27-S04 B2a (#898): `trading_port` for one key's exposure read, refused as it is,
-        whose `on_failure` sees each call's failure before the port strips it, for
+        """E27-S04 B2a (#898): the serving loop's port (`_trading_port`) for one key's exposure
+        read, whose `on_failure` sees each call's failure before the port strips it, for
         `exposure_probe_error`. A new port per call: two keys of one account never share one."""
         return self._trading_port(env, clock_offset_ms, DEFAULT_ENTRY_WAIT_S, on_failure)
 
@@ -316,6 +299,16 @@ class ExchangeBybitService:
         entry_wait_s: float,
         on_failure: Callable[[Exception], None] | None,
     ) -> BybitTradingPort:
+        """G-8 (#2877): an exchange `TradingPort` of this process's environment only (C-2.11),
+        signed by M2 under `sign_rest` on the serving loop, on the process's one governor
+        (OM-D08) and the adapter's account REST transport (#2893 S4); `entry_wait_s` bounds an
+        `entry` token wait (24 §8.7). Any other environment is refused before a client exists,
+        and testnet, which has no capability record (ruling R6), is refused too. A factory, not
+        trading methods: the service itself trades nothing. Every such port shares the adapter's
+        one private-stream registry (G-8b), so its one-stream-per-account rule and its cap hold
+        across ports. `clock_offset_ms` is the measured offset, `None` while unmeasured. Only
+        `exposure_port` builds one: the OMS trades through `lane_trading_port` (#913 L1d-1), and
+        the serving loop's trading port is gone (#913 L1d-2c)."""
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
         if env != self._environment:
@@ -342,17 +335,18 @@ class ExchangeBybitService:
         entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
         private_streams: StreamOpener | None = None,
     ) -> BybitTradingPort:
-        """#913 L3b: `trading_port` for the order lane's loop, signed by M2's borrower for that
-        loop; refused as `trading_port` is, and for the adapter's own. It has no stream registry
-        of its own: its `subscribe_private` refuses another environment's account, then opens
-        through `private_streams`, the stream source the composition root gives it (#913
-        L1d-2a; L1d-2b's bridge to `open_private_stream` on the serving loop), and with none it
-        refuses every account (`RuntimeError`). `transport` is the lane's, never the adapter's:
-        no transport is shared across loops. With the dev-only account fixture the composition
-        root (L1b) builds one on the lane's loop and closes it there; without one, a fixture-mode
-        lane is refused, never dialling the host. `clock_offset_ms` is called on the lane's loop,
-        so it must be a side-effect-free read: never the serving clock guard's reader, whose
-        host-step check can change the guard and spawn its resync on the calling loop."""
+        """#913 L3b: the `TradingPort` for the order lane's loop, signed by M2's borrower for that
+        loop; refused for another environment as `exposure_port` is, and for the adapter's own
+        borrower and transport. It has no stream registry of its own: its `subscribe_private`
+        refuses another environment's account, then opens through `private_streams`, the stream
+        source the composition root gives it (#913 L1d-2a; L1d-2b's bridge to `open_private_stream`
+        on the serving loop), and with none it refuses every account (`RuntimeError`). `transport`
+        is the lane's, never the adapter's: no transport is shared across loops. With the dev-only
+        account fixture the composition root (L1b) builds one on the lane's loop and closes it
+        there; without one, a fixture-mode lane is refused, never dialling the host.
+        `clock_offset_ms` is called on the lane's loop, so it must be a side-effect-free read: never
+        the serving clock guard's reader, whose host-step check can change the guard and spawn its
+        resync on the calling loop."""
         if credentials is self._credentials:
             raise ValueError("the lane signs through its own loop's borrower")
         if env != self._environment:
@@ -374,7 +368,7 @@ class ExchangeBybitService:
 
     @staticmethod
     def lane_waits(entry_wait_s: float = DEFAULT_ENTRY_WAIT_S) -> Mapping[RateLane, float]:
-        """#913 ruling Q19: how long each rate lane of a port `trading_port` builds with
+        """#913 ruling Q19: how long each rate lane of a port `lane_trading_port` builds with
         `entry_wait_s` waits for its token (24 §8.7), for the OMS router's rate step, so the
         composition root reads them here and imports no venue module (C-2.2)."""
         waits: dict[RateLane, float] = {
@@ -390,7 +384,7 @@ class ExchangeBybitService:
         """#913 L1d-2a: the account's private stream (24 §14.1, §14.2 rule 13) from the adapter's
         one registry, which serves the loop its first stream opens on: the serving loop, whose M2
         binding signs each dial's `auth` (ruling Q2 (b)). The order lane's bridge (L1d-2b) calls
-        it there. Refused with no signing capability wired (`RuntimeError`), as `trading_port` is;
+        it there. Refused with no signing capability wired (`RuntimeError`), as `exposure_port` is;
         the registry's own refusals come before anything is signed, dialled or built.
         `clock_offset_ms` is the measured offset, `None` while unmeasured."""
         return await self._streams().open(account, clock_offset_ms=clock_offset_ms)
