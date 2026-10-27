@@ -637,7 +637,7 @@ class RulesManager:
         if expected_version != row.latest_version:
             self._metric("rule_save_conflicts_total", {})
             raise RuleError(
-                409,
+                412,
                 "version_conflict",
                 f"Another editor (session {row.last_session}) saved version "
                 f"{row.latest_version} since you opened this rule. "
@@ -646,6 +646,7 @@ class RulesManager:
                 author=row.last_editor,
                 session=row.last_session,
                 action="reload_and_reapply",
+                title="If-Match / ETag precondition failed",  # 22's `PreconditionFailed` (#4674)
             )
         rule, h = self._validated(
             {**ir, "mode": row.mode, "enabled": row.mode != "disabled"}, rule_id

@@ -146,7 +146,7 @@ async def test_concurrent_edit_is_rejected_naming_other_session() -> None:
     other = Actor("u3", "s-other", frozenset(), is_owner=True)
     with pytest.raises(RuleError) as e:
         await m.update(rid, _ir("3"), 1, other)
-    assert e.value.status == 409 and e.value.code == "version_conflict"
+    assert e.value.status == 412 and e.value.code == "version_conflict"
     assert e.value.extra["session"] == "s1"
     assert e.value.extra["action"] == "reload_and_reapply"
 

@@ -66,7 +66,7 @@ async def test_versions_dedupe_conflict_arm_and_delete_survive_a_reload(
         assert (await mgr.update(rid, _ir("2"), 2, actor))["created"] is False  # UNIQUE(rule, hash)
         with pytest.raises(RuleError) as e:
             await mgr.update(rid, _ir("3"), 1, actor)
-        assert e.value.status == 409
+        assert e.value.status == 412  # #4674: a stale version is a failed precondition
         fresh = RulesManager(PostgresRuleStore(repo), default_registry())  # new process view
         assert [v["version"] for v in await fresh.versions(rid)] == [2, 1]
         await fresh.set_mode(rid, "simulate", actor, "k1")
@@ -98,7 +98,7 @@ async def test_conflict_after_restart_names_the_other_session(pg_dsn: str) -> No
     fresh = RulesManager(PostgresRuleStore(repo), default_registry())  # restart / other worker
     with pytest.raises(RuleError) as e:
         await fresh.update(rid, _ir("3"), 1, b)
-    assert e.value.status == 409
+    assert e.value.status == 412  # #4674: a stale version is a failed precondition
     assert e.value.extra["session"] == "session-A"
 
 
