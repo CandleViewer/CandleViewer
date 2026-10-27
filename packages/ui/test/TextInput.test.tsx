@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { composeStories } from "@storybook/react-vite";
 import { useState, type JSX } from "react";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fireEvent, fn, userEvent, waitFor, within } from "storybook/test";
 import { describe, it } from "vitest";
 import { Icon } from "../src/icons/Icon.js";
 import { TextInput } from "../src/components/index.js";
@@ -180,25 +180,94 @@ describe("TextInput (CMP-007)", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it("T2: the reason is announced once per focus visit, not on Tab or Esc, and again after a blur", async () => {
+  it("T2: the reason is announced once per focus visit, not on Tab, Esc or a free key, and again after a blur", async () => {
     const host = await mount(
       <>
-        <TextInput aria-label="U" disabledReason={REASON} />
+        <TextInput aria-label="U" defaultValue="v" disabledReason={REASON} />
         <button type="button">next</button>
       </>,
     );
     const status = within(host).getByRole("status");
+    const writes: string[] = [];
+    new MutationObserver(() => writes.push(status.textContent ?? "")).observe(status, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
     expect(status).toHaveTextContent("");
     await userEvent.tab();
-    await userEvent.keyboard("{Escape}");
+    await userEvent.keyboard("{Escape}{ArrowLeft}{Home}{Control>}c{/Control}");
     expect(status).toHaveTextContent("");
     await userEvent.keyboard("a");
     expect(status).toHaveTextContent(REASON);
+    await Promise.resolve();
+    const afterFirst = writes.length;
+    await userEvent.keyboard("b{Backspace}{Enter}");
+    await Promise.resolve();
+    expect(status).toHaveTextContent(REASON);
+    expect(writes.length).toBe(afterFirst);
     await userEvent.tab();
     expect(status).toHaveTextContent("");
     await userEvent.tab({ shift: true });
-    await userEvent.keyboard("{Enter}");
+    expect(status).toHaveTextContent("");
+    await userEvent.keyboard("{Delete}");
     expect(status).toHaveTextContent(REASON);
+  });
+
+  it("T2: paste and cut are refused and announce; no status node exists when not gated", async () => {
+    const gated = await mount(
+      <TextInput aria-label="U" defaultValue="v" disabledReason={REASON} />,
+    );
+    const status = within(gated).getByRole("status");
+    await userEvent.click(get(gated, "U"));
+    fireEvent.cut(get(gated, "U"));
+    await waitFor(() => expect(status).toHaveTextContent(REASON));
+    await userEvent.tab();
+    expect(status).toHaveTextContent("");
+    await userEvent.click(get(gated, "U"));
+    fireEvent.paste(get(gated, "U"));
+    expect(get(gated, "U")).toHaveValue("v");
+    await waitFor(() => expect(status).toHaveTextContent(REASON));
+    const plain = await mount(<TextInput aria-label="P" />);
+    expect(within(plain).queryByRole("status")).toBeNull();
+  });
+
+  it("T2: Enter does not submit the enclosing form, while a plain field still does", async () => {
+    const onSubmit = fn((e: { preventDefault: () => void }) => e.preventDefault());
+    const host = await mount(
+      <form onSubmit={onSubmit}>
+        <TextInput aria-label="G" disabledReason={REASON} />
+        <TextInput aria-label="P" />
+        <button type="submit">go</button>
+      </form>,
+    );
+    await userEvent.click(get(host, "G"));
+    await userEvent.keyboard("{Enter}");
+    expect(onSubmit).not.toHaveBeenCalled();
+    await userEvent.click(get(host, "P"));
+    await userEvent.keyboard("{Enter}");
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("combines error, help and unit in that order in aria-describedby", async () => {
+    const host = await mount(
+      <>
+        <span id="help">Help</span>
+        <TextInput
+          aria-label="U"
+          aria-describedby="help"
+          suffix="USDT"
+          invalid
+          errorMessage="Bad."
+        />
+      </>,
+    );
+    const ids = get(host, "U").getAttribute("aria-describedby")?.split(" ") ?? [];
+    expect(ids).toHaveLength(3);
+    expect(ids[0]).toBe(host.querySelector(".cv-field__message")?.id);
+    expect(ids[1]).toBe("help");
+    expect(ids[2]).toBe(host.querySelector(".cv-field__trail")?.id);
+    expect(get(host, "U")).toHaveAccessibleDescription("Bad. Help USDT");
   });
 
   it("keeps the caller's key and blur handlers, also when gated", async () => {
@@ -232,6 +301,15 @@ describe("TextInput (CMP-007)", () => {
     await userEvent.click(host.querySelector(".cv-field__affix") as HTMLElement);
     expect(get(host, "U")).toHaveFocus();
     await userEvent.click(get(host, "U"));
+    expect(get(host, "U")).toHaveFocus();
+  });
+
+  it("only the primary button forwards a press to the input", async () => {
+    const host = await mount(<TextInput aria-label="U" suffix="USDT" />);
+    const affix = host.querySelector(".cv-field__affix") as HTMLElement;
+    expect(fireEvent.mouseDown(affix, { button: 2 })).toBe(true);
+    expect(get(host, "U")).not.toHaveFocus();
+    expect(fireEvent.mouseDown(affix, { button: 0 })).toBe(false);
     expect(get(host, "U")).toHaveFocus();
   });
 });

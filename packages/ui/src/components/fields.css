@@ -22,6 +22,7 @@
   border-radius: var(--radius-control);
   background: var(--color-surface-app);
   color: var(--color-text-primary);
+  cursor: text;
   font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
     var(--type-ui-body-line-height) var(--type-ui-body-font-family);
 }
@@ -113,6 +114,11 @@
 
 .cv-field__trail {
   padding-inline-end: var(--cv-field-pad);
+}
+
+/* The lock then a prefix: only the first lead carries the well's padding; the gap is the inset token. */
+.cv-field__lead + .cv-field__lead {
+  padding-inline-start: var(--space-inset-xs);
 }
 
 /* The message line: empty at mount (a live region), the glyph then the sentence; never colour alone. */

@@ -25,7 +25,7 @@ export const Empty: Story = {
   args: { defaultValue: "", placeholder: "e.g. trader_01" },
 };
 
-export const Affixes: Story = {
+export const WithPrefixSuffix: Story = {
   args: { "aria-label": "Search", defaultValue: "", prefix: <Icon name="info" />, suffix: "USDT" },
   play: async ({ canvasElement }) => {
     await expect(input(canvasElement)).toHaveAccessibleDescription(/^\s*USDT$/);
@@ -107,17 +107,47 @@ export const AllStates: Story = {
     <div style={col}>
       <TextInput {...args} aria-label="Default" />
       <TextInput {...args} aria-label="Empty" defaultValue="" placeholder="e.g. trader_01" />
-      <TextInput {...args} aria-label="Affixes" prefix={<Icon name="info" />} suffix="USDT" />
+      <TextInput
+        {...args}
+        aria-label="Prefix and suffix"
+        prefix={<Icon name="info" />}
+        suffix="USDT"
+      />
       <TextInput {...args} aria-label="Invalid" invalid errorMessage={ERROR} />
       <TextInput {...args} aria-label="Disabled" disabled />
       <TextInput {...args} aria-label="Gated" disabledReason={REASON} />
       <TextInput {...args} aria-label="Gated with a prefix" prefix="$" disabledReason={REASON} />
       <TextInput {...args} aria-label="Read only" readOnly />
+      <TextInput
+        {...args}
+        aria-label="Gated and invalid"
+        invalid
+        errorMessage={ERROR}
+        disabledReason={REASON}
+      />
+      <TextInput
+        {...args}
+        aria-label="Invalid and read only"
+        invalid
+        errorMessage={ERROR}
+        readOnly
+      />
+      <TextInput
+        {...args}
+        aria-label="Invalid and disabled"
+        invalid
+        errorMessage={ERROR}
+        disabled
+      />
     </div>
   ),
 };
 
-/** Gated and invalid under light and high contrast: axe checks the tertiary value and the danger cues per theme. */
+/**
+ * Gated, invalid and read-only under light and high contrast. axe checks the danger cues, the read-only value and the
+ * placeholder per theme; it skips `aria-disabled` nodes, so the gated value's contrast (5.62, 5.92 and 11.21:1,
+ * D02F a11y audit row 88) is not asserted here.
+ */
 const themed = (theme: string): Story => ({
   globals: { theme },
   play: async () => {

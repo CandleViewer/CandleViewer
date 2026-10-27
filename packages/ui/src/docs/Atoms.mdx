@@ -57,10 +57,11 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 
 ### TextInput (CMP-007, native text input)
 
-| Keys                                    | Action                                                                                               |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                         | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay.        |
-| Typing, Backspace, Delete, arrows, Home | Native editing; read-only allows selection and copy only.                                            |
-| Enter                                   | The enclosing form's implicit submission; the atom handles nothing.                                  |
-| Esc                                     | Not handled: it bubbles to the host.                                                                 |
-| Any key (with a reason)                 | Changes nothing; the first one of a focus visit announces the reason once. Tab and Esc are excluded. |
+| Keys                                                         | Action                                                                                        |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                              | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay. |
+| Typing, Backspace, Delete, arrows, Home                      | Native editing; read-only allows selection and copy only.                                     |
+| Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).           |
+| Esc                                                          | Not handled: it bubbles to the host.                                                          |
+| Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
+| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |

@@ -1,17 +1,8 @@
-import {
-  useId,
-  useRef,
-  useState,
-  type ComponentPropsWithoutRef,
-  type FocusEvent,
-  type JSX,
-  type KeyboardEvent,
-  type MouseEvent,
-  type ReactNode,
-} from "react";
+import { useId, useRef, type ComponentPropsWithoutRef, type JSX, type ReactNode } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
+import { FieldMessage, focusFieldInput, useRefusalAnnounce } from "./internal/fieldParts.js";
 
 export interface TextInputProps extends Omit<
   ComponentPropsWithoutRef<"input">,
@@ -32,7 +23,11 @@ export interface TextInputProps extends Omit<
   prefix?: ReactNode;
   /** Trailing content inside the well (a unit); its text joins the field's description. */
   suffix?: ReactNode;
-  /** Validity is a message, never T2 (D02F conv. 23): the host decides when, the atom renders it. */
+  /**
+   * Validity is a message, never T2 (D02F conv. 23): the host decides when, the atom renders it. The glyph and the
+   * words belong to the message, so the host (CMP-040) must pass `errorMessage`; without one only the 2px
+   * boundary and `aria-invalid` show.
+   */
   invalid?: boolean;
   /** The sentence under the field; shown with the `danger` glyph while `invalid`. */
   errorMessage?: string;
@@ -43,9 +38,6 @@ export interface TextInputProps extends Omit<
   /** Emits `data-density` so `theme.css` re-points the control height; absent = inherit. */
   density?: "comfortable" | "compact";
 }
-
-/** Keys that leave a gated field (focus moves, a dialog closes) and so are not a refused edit. */
-const PASSIVE_KEYS = new Set(["Tab", "Escape", "Shift", "Control", "Alt", "Meta", "CapsLock"]);
 
 /** CMP-007: the single-line text field. The label is the host's (`htmlFor`, `aria-labelledby` or `aria-label`). */
 export function TextInput({
@@ -60,6 +52,8 @@ export function TextInput({
   density,
   onKeyDown,
   onBlur,
+  onPaste,
+  onCut,
   "aria-describedby": describedBy,
   ...rest
 }: TextInputProps): JSX.Element {
@@ -67,31 +61,14 @@ export function TextInput({
   const errorId = useId();
   const suffixId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
-  // One polite announcement of the reason per focus visit (D09 9.3): set by the first refused key, cleared on blur.
-  const [spoken, setSpoken] = useState(false);
+  const refusal = useRefusalAnnounce(reason, { onKeyDown, onBlur, onPaste, onCut });
   const hasSuffix = suffix !== undefined && suffix !== null && suffix !== false;
   const hasPrefix = prefix !== undefined && prefix !== null && prefix !== false;
-  const hasMessage = invalid && errorMessage !== undefined && errorMessage !== "";
 
   // Gated: the reason alone. Otherwise: error, then the caller's help, then the unit (D02F conv. 23, 24).
   const description = reason.gated
     ? reason.ariaDescribedBy
     : cx(errorId, describedBy, hasSuffix && suffixId) || undefined;
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>): void => {
-    onKeyDown?.(event);
-    if (reason.gated && !PASSIVE_KEYS.has(event.key)) setSpoken(true);
-  };
-  const handleBlur = (event: FocusEvent<HTMLInputElement>): void => {
-    setSpoken(false);
-    onBlur?.(event);
-  };
-  // The whole well is the hit target: a press on its padding or an affix focuses the input.
-  const focusInput = (event: MouseEvent<HTMLDivElement>): void => {
-    if (event.target === inputRef.current) return;
-    event.preventDefault();
-    inputRef.current?.focus();
-  };
 
   return (
     <div className="cv-field-root" data-cmp="CMP-007" data-density={density}>
@@ -105,7 +82,7 @@ export function TextInput({
         data-readonly={readOnly ? "" : undefined}
         data-lead={reason.gated || hasPrefix ? "" : undefined}
         data-trail={hasSuffix ? "" : undefined}
-        onMouseDown={focusInput}
+        onMouseDown={(event) => focusFieldInput(event, inputRef)}
       >
         {reason.gated ? (
           <span className="cv-field__lead cv-field__lock">
@@ -123,8 +100,7 @@ export function TextInput({
           aria-disabled={reason.ariaDisabled}
           aria-invalid={invalid ? true : undefined}
           aria-describedby={description}
-          onKeyDown={handleKeyDown}
-          onBlur={handleBlur}
+          {...refusal.handlers}
         />
         {hasSuffix ? (
           <span id={suffixId} className="cv-field__trail cv-field__affix">
@@ -132,21 +108,9 @@ export function TextInput({
           </span>
         ) : null}
       </div>
-      {/* In the DOM at mount, empty while valid: a polite live region announces the swapped-in text once. */}
-      <div id={errorId} className="cv-field__message" aria-live="polite">
-        {hasMessage ? (
-          <>
-            <span className="cv-field__glyph">
-              <Icon name="danger" />
-            </span>
-            <span>{errorMessage}</span>
-          </>
-        ) : null}
-      </div>
+      <FieldMessage id={errorId} message={invalid ? errorMessage : undefined} />
       <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
-      <span className="cv-visually-hidden" role="status">
-        {reason.gated && spoken ? reason.reason : ""}
-      </span>
+      {refusal.status}
     </div>
   );
 }
