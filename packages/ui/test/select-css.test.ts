@@ -156,7 +156,7 @@ describe("select.css popup", () => {
     expect(prop(active, "outline")).toBe(
       "calc(var(--border-focus) * 1px) solid var(--color-focus-ring)",
     );
-    expect(prop(active, "outline-offset")).toBe("calc(var(--border-focus) * -1px)");
+    expect(prop(active, "outline-offset")).toBe("calc(var(--border-focus) * -2px)");
     expect(prop(active, "border-radius")).toBe("var(--radius-control)");
   });
 

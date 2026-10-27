@@ -150,13 +150,14 @@
 
 /*
  * The active option (keyboard or pointer) sits on the hover surface, which alone is near-invisible on the overlay
- * (conv. 26), so it also carries CMP-039's inset ring (H8): 2px `color.focus.ring`, drawn 2px inside the option.
+ * (conv. 26), so it also carries CMP-039's inset ring (H8): 2px `color.focus.ring`, drawn 2px inside the option,
+ * i.e. its outer edge 2px in from the row edge (offset = -(2px gap + 2px width); #264 issuecomment-6445255406).
  * The ring is on the active descendant only, so it follows the pointer; there is no :hover rule.
  */
 .cv-select__option[data-active] {
   background: var(--color-surface-hover);
   outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
-  outline-offset: calc(var(--border-focus) * -1px);
+  outline-offset: calc(var(--border-focus) * -2px);
   border-radius: var(--radius-control);
 }
 
