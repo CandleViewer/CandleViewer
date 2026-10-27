@@ -49,15 +49,17 @@ afterEach(() => {
 });
 
 describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
-  it("renders nothing while nothing is degraded, and its regions empty with the first row", () => {
-    const { container } = render(<ShellBannerSlot />);
-    expect(container.childNodes).toHaveLength(0); // the slot's 0 px contract (and R-203's tree)
+  it("pre-renders both regions empty at load and no rows; clears them when the last row goes", async () => {
+    render(<ShellBannerSlot />);
+    expect(screen.queryByRole("button")).toBeNull();
+    expect([statusText(), alertText()]).toEqual(["", ""]); // §11: pre-rendered empty at load
     say(FEED_DOWN);
-    say({ kind: "exchange_state", public_ws: "connected" });
-    expect(container.childNodes).toHaveLength(0);
+    expect(statusText()).toBe(exchangeFeedDown.message);
+    say(FEED_UP);
+    expect(statusText()).toBe(""); // no stale sentence left behind
     say(MAINTENANCE);
     expect(alertText()).toBe(`${maintenance.message} ${maintenance.stillWorks}`);
-    expect(statusText()).toBe(""); // the earlier, cleared warning is not left behind
+    await expectNoSeriousAxe();
   });
 
   it.each([
@@ -140,5 +142,49 @@ describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
     say(FEED_UP);
     say(FEED_DOWN); // a new episode starts its count again at 1
     expect(dismissNames()).toEqual([`Dismiss ${exchangeFeedDown.message}`]);
+  });
+
+  it("dismissing the last row moves focus to the next focusable element after the slot", () => {
+    render(
+      <>
+        <ShellBannerSlot />
+        <button type="button">Next stop</button>
+      </>,
+    );
+    say(RULES_DOWN);
+    fireEvent.click(screen.getByRole("button", { name: `Dismiss ${ruleEngineDown.message}` }));
+    expect(screen.queryByRole("button", { name: /^Dismiss / })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Next stop" }));
+  });
+
+  it("dismisses from the keyboard: a native button in the Tab order, activated with detail 0", () => {
+    // Enter / Space on a native <button> dispatch a click with detail 0; user-event is not a web
+    // devDependency, so the keyboard path is that click on the focused control.
+    render(<ShellBannerSlot />);
+    say(FEED_DOWN);
+    const dismiss = screen.getByRole("button", { name: `Dismiss ${exchangeFeedDown.message}` });
+    expect(dismiss.tagName).toBe("BUTTON");
+    expect(dismiss.tabIndex).toBe(0);
+    dismiss.focus();
+    fireEvent.click(document.activeElement ?? document.body, { detail: 0 });
+    expect(screen.queryByRole("button", { name: /^Dismiss / })).toBeNull();
+  });
+
+  it("clears the pending polite timer on unmount", () => {
+    const { unmount } = render(<ShellBannerSlot />);
+    say(FEED_DOWN);
+    say(RULES_DOWN); // queued behind the 5 s gap
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never announces late a row dismissed while it was queued", () => {
+    render(<ShellBannerSlot />);
+    say(FEED_DOWN);
+    say(RULES_DOWN);
+    fireEvent.click(screen.getByRole("button", { name: `Dismiss ${ruleEngineDown.message}` }));
+    act(() => vi.advanceTimersByTime(POLITE_GAP_MS));
+    expect(statusText()).toBe(exchangeFeedDown.message);
   });
 });

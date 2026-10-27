@@ -4,7 +4,7 @@
  * notes). Pure: `reduceDegraded(facts, update)` depends on its arguments only.
  *
  * Routing (`docs/design/E17/E17-D02.md` §6, first match wins; one reason, one surface): row 6
- * blocking (maintenance, the `postgres` component), row 8 the public exchange feed, row 10 the other
+ * blocking (maintenance: the `notice` or the `maintenance.mode` flag; the `postgres` component), row 8 the public exchange feed, row 10 the other
  * components. The overall `health` word routes nothing by itself. The transport states (the SCR-152
  * region) are never an issue here.
  *
@@ -105,6 +105,12 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
   if (u.kind === "notice") {
     if (u.reason === "maintenance.enabled") out.set("maintenance", true);
     if (u.reason === "maintenance.disabled") out.set("maintenance", false);
+  }
+  if (u.kind === "health" || u.kind === "feature_flags") {
+    // §15.9: the flag re-asserts maintenance on every snapshot or flag push; the notice is one-shot.
+    const flags: unknown = u.feature_flags;
+    const on = isRecord(flags) ? flags["maintenance.mode"] : undefined;
+    if (typeof on === "boolean") out.set("maintenance", on);
   }
   if (u.kind === "health" && Array.isArray(u.components)) {
     for (const c of u.components as unknown[]) {

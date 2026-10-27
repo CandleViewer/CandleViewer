@@ -95,6 +95,32 @@ describe("degraded issues", () => {
     expect(ids(run(on, { kind: "notice", reason: "maintenance.disabled" }))).toEqual([]);
   });
 
+  it("test_degraded_maintenance_flag_in_snapshot_and_flag_push_asserts_and_clears", () => {
+    // `23-ws-protocol.md` §15.9's `system` snapshot example, with the flag a fresh tab would see.
+    const snapshot = {
+      kind: "health",
+      health: "healthy",
+      kill_switch: { engaged: false, scope: "global" },
+      feature_flags: { "trading.live_enabled": false, "maintenance.mode": true },
+      exchange: { public_ws: "connected", private_ws: "connected", rest: "healthy" },
+      clock_offset_ms: 4,
+      degraded_topics: [],
+    };
+    expect(degradedIssues(run(snapshot))).toMatchObject([{ id: "maintenance", assertedSeq: 1 }]);
+    const flag = (on: unknown) => ({
+      kind: "feature_flags",
+      feature_flags: { "maintenance.mode": on },
+    });
+    expect(degradedIssues(run(snapshot, flag(true)))[0]?.assertedSeq).toBe(2); // a re-assertion
+    expect(ids(run(snapshot, flag(false)))).toEqual([]);
+    expect(ids(run(MAINTENANCE_ON, flag("yes"), { kind: "feature_flags" }))).toEqual([
+      "maintenance",
+    ]);
+    expect(run({ ...snapshot, feature_flags: { "trading.live_enabled": false } }).asserted).toEqual(
+      {},
+    );
+  });
+
   it("test_degraded_overall_health_word_and_other_components_route_nothing", () => {
     const facts = run(
       health([

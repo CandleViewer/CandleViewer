@@ -159,7 +159,8 @@ describe("test_client_never_posts_step_up_without_a_server_challenge", () => {
     fireEvent.change(await screen.findByLabelText("Username"), { target: { value: "annie" } });
     fireEvent.click(screen.getByRole("button", { name: "Create invitation" }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
-    await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("Not sent"));
+    // The shell's banner slot also pre-renders an empty status region (#306 slice 3).
+    await waitFor(() => expect(screen.getByText("Not sent")).toHaveAttribute("role", "status"));
     expect(wire.stepUps).toEqual([]);
     expectNoRouteError(router, "R-303");
   });

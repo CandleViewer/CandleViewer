@@ -196,6 +196,17 @@ describe("startShell", () => {
     expect(getActiveClient()).toBeNull();
   });
 
+  it("a stale stop() leaves the live shell's degraded facts alone (E10-S04)", () => {
+    const first = started();
+    first.port.say({ t: "system", update: { kind: "exchange_state", public_ws: "disconnected" } });
+    const second = started(); // stops the first: its facts go with it
+    expect(getShellState().degraded.asserted).toEqual({});
+    second.port.say({ t: "system", update: { kind: "notice", reason: "maintenance.enabled" } });
+    first.handle.stop();
+    expect(getShellState().degraded.asserted).toEqual({ maintenance: 1 });
+    second.handle.stop();
+  });
+
   it.each(["SharedWorker", "Worker"] as const)(
     "lets go of the worker of the shell it replaces, and of the last one when it stops: one live %s",
     (kind) => {

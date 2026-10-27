@@ -23,11 +23,11 @@ const blockingText = (i: DegradedIssue): string =>
  * through the memoized `selectDegradedIssues`; swap to `useShellSelector` when #4754 lands.
  * Dismissal hides a row while its `assertedSeq` is the dismissed one, so a re-asserting frame brings
  * it back; the entry is dropped once the condition clears. Announcements on a row's entry only:
- * blocking assertive "{message} {stillWorks}", info / warning polite (the message, ≤1 per 5 s).
- * The shell's announcer pair (#4754) is not on `main`: this pair renders empty with the first row
- * and is written one commit later, so no row = no nodes (R-203's tree unchanged). Swap then.
+ * blocking assertive "{message} {stillWorks}", info / warning polite (the message, ≤1 per 5 s);
+ * exit: unspecified (no merged string). The shell's announcer pair (#4754) is not on `main`, so
+ * this pair is pre-rendered empty at load (§11) and cleared when the last row goes. Swap then.
  */
-export function DegradedBanner(): JSX.Element | null {
+export function DegradedBanner(): JSX.Element {
   const issues = selectDegradedIssues(useShellState().degraded);
   const [dismissed, setDismissed] = useState(NO_DISMISSALS);
   const visible = useMemo(
@@ -56,7 +56,7 @@ export function DegradedBanner(): JSX.Element | null {
   useEffect(() => {
     visibleNow.current = visible;
     if (visible.length === 0) {
-      // The regions unmount with the last row; the next row's region starts empty again.
+      // No row: no stale sentence is left in the regions for a reading cursor to find.
       setAssertive((s) => (s.text === "" ? s : { text: "", n: s.n }));
       setPolite((s) => (s.text === "" ? s : { text: "", n: s.n }));
     }
@@ -82,9 +82,14 @@ export function DegradedBanner(): JSX.Element | null {
     if (wait <= 0) flush();
     else timer.current ??= setTimeout(flush, wait);
   }, [visible]);
-  useEffect(() => () => clearTimeout(timer.current ?? undefined), []);
+  useEffect(
+    () => () => {
+      clearTimeout(timer.current ?? undefined);
+      timer.current = null;
+    },
+    [],
+  );
 
-  if (visible.length === 0) return null; // the slot stays empty (0 px, no nodes) with no rows
   return (
     <>
       <div role="status" style={HIDDEN}>
@@ -93,7 +98,7 @@ export function DegradedBanner(): JSX.Element | null {
       <div role="alert" style={HIDDEN}>
         {assertive.text === "" ? null : <span key={assertive.n}>{assertive.text}</span>}
       </div>
-      <DegradedModeBanner issues={visible} onDismiss={onDismiss} />
+      {visible.length > 0 ? <DegradedModeBanner issues={visible} onDismiss={onDismiss} /> : null}
     </>
   );
 }
