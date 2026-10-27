@@ -66,7 +66,11 @@ const NOT_A_NUMBER = "Enter a number.";
 const ROUNDED = "(rounded to nearest tick)";
 const STEP_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown"]);
 const isChord = (event: KeyboardEvent): boolean => event.ctrlKey || event.metaKey || event.altKey;
-const isStepKey = (event: KeyboardEvent): boolean => STEP_KEYS.has(event.key) && !isChord(event);
+/** `1.25` at precision 1 is shown as given: only a bound that survives the rounding is shown formatted. */
+const showBound = (bound: number, precision: number): string => {
+  const text = formatNumeric(bound, precision);
+  return Number(text) === bound ? text : String(bound);
+};
 
 /**
  * CMP-008: the numeric field with `[-]` `[+]` buttons (APG spin button). The value is a number, shown fixed to
@@ -108,6 +112,21 @@ export function NumericStepperInput({
   const frozen = reason.gated || readOnly;
   const range = { ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) };
 
+  // A value moved from outside drops the draft and a caption that was earned by an older value (A to B to A).
+  const [seen, setSeen] = useState(value);
+  if (seen !== value) {
+    setSeen(value);
+    setTyped(null);
+    if (roundedTo !== value) setRoundedTo(null);
+  }
+
+  /** The keys a gated field refuses: the step keys, and Home or End when their bound is set. */
+  const isStepKey = (event: KeyboardEvent): boolean =>
+    !isChord(event) &&
+    (STEP_KEYS.has(event.key) ||
+      (event.key === "Home" && min !== undefined) ||
+      (event.key === "End" && max !== undefined));
+
   const refusal = useRefusalAnnounce(
     reason,
     {
@@ -118,7 +137,9 @@ export function NumericStepperInput({
         else keyStep(event);
       },
       onBlur: () => {
-        if (edit !== null) commit(edit.text);
+        // An edit that was under way when the field became gated or read-only is discarded, not committed.
+        if (frozen) setTyped(null);
+        else if (edit !== null) commit(edit.text);
       },
     },
     isStepKey,
@@ -152,26 +173,28 @@ export function NumericStepperInput({
       // Without `largeStep` the multiplier keeps 10 x step exact (0.1 x 10 as a scaled integer, not a float).
       stepBy(direction, largeStep ?? step, largeStep === undefined ? 10 : 1);
     } else {
+      // With text under way Home and End are caret keys, as in any text field.
       const bound = event.key === "Home" ? min : event.key === "End" ? max : undefined;
-      if (bound === undefined) return;
+      if (bound === undefined || edit !== null) return;
       apply(bound);
     }
     event.preventDefault();
   }
 
+  /** The message for a parse that cannot be committed, or null when it can. Empty text is not a number. */
+  function judge(parsed: ReturnType<typeof parseNumericInput>): string | null {
+    const verdict = parsed.ok ? validateNumeric(parsed.value, range) : "not-a-number";
+    if (verdict === "in-range") return null;
+    const bound = verdict === "below-min" ? min : verdict === "above-max" ? max : undefined;
+    if (bound === undefined) return NOT_A_NUMBER;
+    return `${verdict === "below-min" ? "Minimum" : "Maximum"} ${showBound(bound, precision)}`;
+  }
+
   function commit(text: string): void {
     const parsed = parseNumericInput(text, { precision });
-    if (!parsed.ok && parsed.reason === "empty") {
-      setTyped(null);
-      return;
-    }
-    const verdict = parsed.ok ? validateNumeric(parsed.value, range) : "not-a-number";
-    if (!parsed.ok || verdict !== "in-range") {
-      const bound = verdict === "below-min" ? min : verdict === "above-max" ? max : undefined;
-      const word = verdict === "below-min" ? "Minimum" : "Maximum";
-      const error =
-        bound === undefined ? NOT_A_NUMBER : `${word} ${formatNumeric(bound, precision)}`;
-      setTyped({ text, base: value, error });
+    const error = judge(parsed);
+    if (error !== null || !parsed.ok) {
+      setTyped({ text, base: value, error: error ?? NOT_A_NUMBER });
       return;
     }
     setTyped(null);
@@ -180,7 +203,13 @@ export function NumericStepperInput({
   }
 
   const onInput = (event: ChangeEvent<HTMLInputElement>): void => {
-    setTyped({ text: event.target.value, base: value, error: null });
+    // A shown error stays (updated) until the text is valid, then clears silently.
+    const text = event.target.value;
+    setTyped({
+      text,
+      base: value,
+      error: edit?.error == null ? null : judge(parseNumericInput(text, { precision })),
+    });
     setRoundedTo(null);
   };
 
@@ -258,7 +287,13 @@ export function NumericStepperInput({
             aria-valuenow={value}
             aria-valuemin={min}
             aria-valuemax={max}
-            aria-valuetext={valueText(value, precision, suffix)}
+            aria-valuetext={
+              edit === null
+                ? valueText(value, precision, suffix)
+                : hasSuffix
+                  ? `${edit.text} ${suffix}`
+                  : edit.text
+            }
             aria-readonly={readOnly && !reason.gated ? true : undefined}
             aria-disabled={reason.ariaDisabled}
             aria-invalid={shownInvalid ? true : undefined}
