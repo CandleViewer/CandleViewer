@@ -6,30 +6,100 @@ import type { GlyphProps } from "../IconSvg.js";
 import type { IconName } from "../registry.js";
 import { ArrowDownIcon } from "./ArrowDownIcon.js";
 import { ArrowUpIcon } from "./ArrowUpIcon.js";
+import { ArrowUpDownIcon } from "./ArrowUpDownIcon.js";
+import { CalendarIcon } from "./CalendarIcon.js";
+import { CancelledIcon } from "./CancelledIcon.js";
 import { CheckIcon } from "./CheckIcon.js";
 import { ChevronDownIcon } from "./ChevronDownIcon.js";
+import { ChevronLeftIcon } from "./ChevronLeftIcon.js";
 import { ChevronRightIcon } from "./ChevronRightIcon.js";
+import { ChevronUpIcon } from "./ChevronUpIcon.js";
+import { ChevronsUpDownIcon } from "./ChevronsUpDownIcon.js";
 import { CloseIcon } from "./CloseIcon.js";
+import { CopyIcon } from "./CopyIcon.js";
+import { CrosshairIcon } from "./CrosshairIcon.js";
 import { DangerIcon } from "./DangerIcon.js";
+import { DeleteIcon } from "./DeleteIcon.js";
+import { DisconnectedIcon } from "./DisconnectedIcon.js";
+import { DownloadIcon } from "./DownloadIcon.js";
+import { DragHandleIcon } from "./DragHandleIcon.js";
+import { EditIcon } from "./EditIcon.js";
+import { ErrorIcon } from "./ErrorIcon.js";
+import { ExternalLinkIcon } from "./ExternalLinkIcon.js";
+import { FilterIcon } from "./FilterIcon.js";
+import { HelpIcon } from "./HelpIcon.js";
+import { HideIcon } from "./HideIcon.js";
 import { InfoIcon } from "./InfoIcon.js";
 import { LockIcon } from "./LockIcon.js";
+import { MaximizeIcon } from "./MaximizeIcon.js";
+import { MinimizeIcon } from "./MinimizeIcon.js";
 import { MinusIcon } from "./MinusIcon.js";
+import { MoreHorizontalIcon } from "./MoreHorizontalIcon.js";
+import { MoreVerticalIcon } from "./MoreVerticalIcon.js";
+import { NotificationsIcon } from "./NotificationsIcon.js";
+import { PendingIcon } from "./PendingIcon.js";
+import { PinIcon } from "./PinIcon.js";
 import { PlusIcon } from "./PlusIcon.js";
+import { RedoIcon } from "./RedoIcon.js";
+import { RefreshIcon } from "./RefreshIcon.js";
+import { SearchIcon } from "./SearchIcon.js";
+import { SettingsIcon } from "./SettingsIcon.js";
+import { ShowIcon } from "./ShowIcon.js";
+import { SuccessIcon } from "./SuccessIcon.js";
+import { UndoIcon } from "./UndoIcon.js";
 import { UnlockIcon } from "./UnlockIcon.js";
+import { UploadIcon } from "./UploadIcon.js";
 import { WarningIcon } from "./WarningIcon.js";
+import { ZoomInIcon } from "./ZoomInIcon.js";
+import { ZoomOutIcon } from "./ZoomOutIcon.js";
 
 export const ICON_COMPONENTS = {
   "arrow-down": ArrowDownIcon,
   "arrow-up": ArrowUpIcon,
+  "arrow-up-down": ArrowUpDownIcon,
+  calendar: CalendarIcon,
+  cancelled: CancelledIcon,
   check: CheckIcon,
   "chevron-down": ChevronDownIcon,
+  "chevron-left": ChevronLeftIcon,
   "chevron-right": ChevronRightIcon,
+  "chevron-up": ChevronUpIcon,
+  "chevrons-up-down": ChevronsUpDownIcon,
   close: CloseIcon,
+  copy: CopyIcon,
+  crosshair: CrosshairIcon,
   danger: DangerIcon,
+  delete: DeleteIcon,
+  disconnected: DisconnectedIcon,
+  download: DownloadIcon,
+  "drag-handle": DragHandleIcon,
+  edit: EditIcon,
+  error: ErrorIcon,
+  "external-link": ExternalLinkIcon,
+  filter: FilterIcon,
+  help: HelpIcon,
+  hide: HideIcon,
   info: InfoIcon,
   lock: LockIcon,
+  maximize: MaximizeIcon,
+  minimize: MinimizeIcon,
   minus: MinusIcon,
+  "more-horizontal": MoreHorizontalIcon,
+  "more-vertical": MoreVerticalIcon,
+  notifications: NotificationsIcon,
+  pending: PendingIcon,
+  pin: PinIcon,
   plus: PlusIcon,
+  redo: RedoIcon,
+  refresh: RefreshIcon,
+  search: SearchIcon,
+  settings: SettingsIcon,
+  show: ShowIcon,
+  success: SuccessIcon,
+  undo: UndoIcon,
   unlock: UnlockIcon,
+  upload: UploadIcon,
   warning: WarningIcon,
+  "zoom-in": ZoomInIcon,
+  "zoom-out": ZoomOutIcon,
 } as const satisfies Readonly<Record<IconName, (props: GlyphProps) => JSX.Element>>;
