@@ -247,6 +247,7 @@ from candleviewer.exchange.base.service import ExchangeBaseService
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.service import ExchangeBybitService
+from candleviewer.exposure_wiring import wire_exposure_read
 from candleviewer.flags_wiring import build_feature_flags, restate_flag_write
 from candleviewer.funding_wiring import wire_funding
 from candleviewer.health_wiring import (
@@ -2305,6 +2306,9 @@ def create_app(
             elevation=keys_elevation,  # after RBAC and the account's read (#2304 slice 3b)
         )
     )
+    # E27-S04 B2a (#898): the exposure read over an account's signable keys (real backend only),
+    # for the consequence read and the revoke, disable and delete 409s. No I/O until asked.
+    app.state.exposure_read = wire_exposure_read(ctx)
     # #906 D1a (E28-T02): the profile store, the order path's effective-profile cache over it and
     # the facade over both, with the T01 counters (real backend only). The lifespan disposes of it.
     # D3a: the facade announces each committed write on the process's bus (24 Sec.9.2).
