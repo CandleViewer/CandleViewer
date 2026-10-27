@@ -16,7 +16,6 @@ import type { WsState } from "../lib/ws/state/types.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
 import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
 import { installCrashReporter } from "./crash/reportCrash.js";
-import { createElectronShellAdapter } from "./ElectronShellAdapter.js";
 import { applySystemUpdate, setShellState, type ConnectionState } from "./bootstrap/store.js";
 
 /** The version `hello` names (`apps/web/package.json`); nothing injects it at build time yet. */
@@ -54,11 +53,12 @@ let stopActive: (() => void) | null = null;
 export function startShell(options: StartShellOptions): { stop(): void; ready: Promise<void> } {
   stopActive?.();
   // E10-S04: one crash reporter per shell, catching what no boundary does (window `error`, unhandled rejections)
-  const shellPort =
-    typeof window !== "undefined" && window.cv
-      ? createElectronShellAdapter()
-      : createBrowserShellAdapter();
-  const uninstallCrash = installCrashReporter({ port: shellPort, version: CLIENT_VERSION });
+  // The in-memory crash log for now: the Electron file log needs its IPC channel (a later slice), and importing the
+  // Electron adapter here would pull its capabilities into the renderer bundle (SR-115's gate).
+  const uninstallCrash = installCrashReporter({
+    port: createBrowserShellAdapter(),
+    version: CLIENT_VERSION,
+  });
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
   const ready = accessToken.refresh().then(() => runBootstrap(options));
