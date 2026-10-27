@@ -1,44 +1,87 @@
 # E09 auth perf and chaos report (E09-Q05, #296)
 
-Status: **harness delivered; k6 numbers pending CI/nightly run.** k6 and the docker compose
-stack are not available on the authoring machine, so no latency figure below was measured.
-No number in this file is invented.
+Status: **k6 profile runnable (#2848); latency numbers pending.** No latency figure below was
+measured, and no number in this file is invented. The chaos half has CI evidence (below).
+
+## How the k6 profile runs
+
+- Script: `tests/load/k6/auth.js` (#2848). `setup()` signs each perf user in through the real two-step
+  flow: `POST /auth/login` with `identifier` and password, then `POST /auth/mfa/verify` with
+  `mfa_token`, `method: totp` and an RFC 6238 code computed in k6 (`tests/load/k6/lib/totp.js`)
+  from the seed `services/api/scripts/seed_fixture_user.py --totp-secret-out` wrote for that run.
+  It carries `tokens.access_token` and the CSRF token into the scenarios. No seed or password is
+  committed; each is made per run.
+- `stepup_burst` answers a real challenge: a `POST /admin/recorder/purge` (owner-only, no-grace
+  `recorder_purge` class) is refused `403 step_up_required` with a `challenge_id`, then
+  `POST /auth/step-up` sends `code`, `password` and that `challenge_id`. The probe's `before` is the
+  epoch, so it would purge nothing, and the VU never re-sends it while its one-shot grant lives.
+- The API refuses a spent TOTP step (SR-021), so each VU signs in as its own Owner and waits for a
+  fresh 30 s step: login_burst, stepup_burst and mfa_verify are paced by the TOTP step, not by
+  request rate. The four scenarios run one after another (about 10 minutes).
+- Sign-in verification is bounded (#4663: `CV_AUTH_LOGIN_VERIFY_CONCURRENCY`, default 4). A
+  login past the bound is refused `429 rate_limited` with `Retry-After`; the script waits as told,
+  retries (at most 5 tries) and counts each refusal in `auth_login_busy_refusals`.
+- Thresholds: `checks` rate > 0.99 and the four budget rows below marked as gated.
+- CI: `perf-ingestion-nightly.yml`, dispatched with `profile=auth` (job `auth-k6`): a keyless
+  testnet stack on the runner with `CV_AUTH_PERF_ENABLED`, 10 seeded Owners, the k6 summary kept
+  as the `e09-auth-k6-summary` artifact. Never on a schedule or a pull request; no required check.
+  A GitHub-hosted runner is not the reference host, so its numbers do not close #2105.
 
 ## Reference host and Argon2id
 
-- Reference host spec: pending CI/nightly run (record CPU, RAM, kernel at run time).
+- Reference host spec: pending (#2105; record CPU, RAM and kernel at run time).
 - Argon2id in force: `DEFAULT_ARGON2_PARAMS` = m=65536 KiB (64 MiB), t=3, p=4
-  (`candleviewer/auth/hashing.py`). `tests/load/k6/auth.js` `setup()` aborts if below this floor.
+  (`candleviewer/auth/hashing.py`). `setup()` aborts if `GET /auth/_perf/argon2-params` (#2097) does
+  not answer or reports less than this floor.
 
 ## Budgets
 
-| Budget | Source | Measured | Verdict |
-|---|---|---|---|
-| `GET /auth/session` p95 <= 100 ms, warm cache | #13 | pending CI/nightly run | pending |
-| `GET /auth/session` cold-cache p95 | reported only | pending CI/nightly run | pending |
-| `POST /auth/step-up` p95 <= 400 ms | SCR-006 | pending CI/nightly run | pending |
-| `POST /auth/mfa/verify` p95 <= 400 ms | SCR-002 | pending CI/nightly run | pending |
-| Argon2id step p50 >= 100 ms | SR-011 | pending CI/nightly run | pending |
-| Negative control (`CV_CACHE_DISABLED=1`) fails bootstrap budget | ticket | pending | pending |
+| Budget                                                | Source  | Gated | Measured | Verdict |
+| ----------------------------------------------------- | ------- | ----- | -------- | ------- |
+| `GET /auth/session` p95 <= 100 ms                     | #13     | yes   | pending  | pending |
+| `POST /auth/step-up` p95 <= 400 ms                    | SCR-006 | yes   | pending  | pending |
+| `POST /auth/mfa/verify` p95 <= 400 ms                 | SCR-002 | yes   | pending  | pending |
+| Argon2id step p50 >= 100 ms (`Server-Timing: argon2`) | SR-011  | yes   | pending  | pending |
+| Login, rest of the request (p50/p95/p99)              | report  | no    | pending  | n/a     |
+
+There is no session cache in `candleviewer/auth` (ADR-0010 addendum, "Session cache"), so the
+profile has no warm/cold split and no cache-off negative control (#2848).
 
 ## Chaos outcomes (`services/api/tests/chaos/auth/`, `-m "chaos and integration"`)
 
 C-13.6 mapping: #10 (datastore outage). C-13.6 #6 is `recv_window` drift on the exchange adapter and
 is NOT covered here; the TOTP step-skew scenario is only an analogue (SR-021). The rest are auth-specific.
-The tests drive the real SessionService, RevocationHub and WS gateway over an in-memory storage seam.
-There is no dedicated session sweeper in `candleviewer/auth`; expiry is lazy in `require_active`.
+s1 to s5 drive the real SessionService, RevocationHub and WS gateway over an in-memory storage seam;
+s1b restarts the compose Postgres. There is no session sweeper in `candleviewer/auth`; expiry is
+lazy in `require_active`.
 
-| Scenario | Local result (in-process fakes, Python 3.14) |
-|---|---|
-| Postgres restart (fail closed, recover) | pass |
-| Postgres restart vs compose stack (integration-only, real assertions) | skipped locally (no docker); runs in CI |
-| TOTP step skew +-1 accepted, +-3 rejected (#6 analogue; replay refusal cited to test_mfa_service) | pass |
-| WS gateway restart, no carried auth state | pass |
-| Revocation storm (100 sockets, `bye`/4401) | pass |
-| Session expiry under pressure (lazy expiry, concurrent auth) | pass |
+| Scenario                                                        | CI (`pr` run 38858627015, job 116835754521, 2026-10-16) |
+| --------------------------------------------------------------- | ------------------------------------------------------- |
+| s1 Postgres outage: fail closed, recover                        | PASSED                                                  |
+| s1b real Postgres restart (compose stack)                       | PASSED                                                  |
+| s2 TOTP step skew: +-1 accepted, +-3 rejected, replay refused   | PASSED                                                  |
+| s3 WS gateway restart, no carried auth state                    | PASSED                                                  |
+| s4 revocation storm (100 sockets, `bye`/4401)                   | PASSED                                                  |
+| s5 session expiry under pressure (lazy expiry, concurrent auth) | PASSED                                                  |
 
-## Not covered yet (follow-ups)
+The `integration` job runs them on every pull request.
 
-- Rate-limit / lockout race under load (SR-015/016) and the "skew raises a system event" check
-  need the staging stack; not implemented in this PR.
-- The k6 script degrades truthfully: the Argon2 param-floor check and step timing are skipped with a logged note while the backend lacks `Server-Timing: argon2` and `/auth/_perf/argon2-params` (set `CV_ARGON2_TIMING=1` once they exist).
+## Lockout race and clock-skew event (implemented)
+
+- Lockout race (SR-015/016): concurrent wrong passwords lock exactly at the threshold with no lost
+  update, and a correct password is refused after the lock: `tests/unit/auth/test_login_lockout_race.py`
+  and, on Postgres, `tests/integration/auth/test_login_lockout_race_pg.py` (#2163). The lockout's
+  audit rows and the Owner alert series: `tests/security/auth/test_lockout_owner_alert.py` (#2628).
+- Clock skew beyond tolerance raises a `system_events` row and a metric
+  (`tests/unit/auth/test_totp_skew.py`, #2606).
+
+## Not covered
+
+- Every latency number and the reference host spec: pending #2105 / #2097.
+- SR-015/016 over HTTP under load: the lockout race is proven at the service and on Postgres, not
+  driven by k6 against a running API; "a throttled attacker cannot degrade a legitimate user's
+  sign-in" is proven only by unit tests of the per-IP throttle.
+- Clock skew on a stack: ±1/±3 and the skew event are proven in process, never with a moved host
+  clock against a running API, and not the message the user sees.
+- s1 to s5 use an in-memory storage seam; only s1b restarts a real Postgres.
+- Session-store pressure with a sweeper: there is no sweeper to load (lazy expiry).

@@ -106,6 +106,8 @@ decision_ are not settled here. Paths are under `services/api/candleviewer/`.
   invalidation. The review found no such cache in `auth/`; every request reads the session
   (`authenticate_access_token`). Revocation reaches live sockets through `ws/revocation.py`.
   Role changes push a `permission_change` to sockets (`api/users.py`); the frame is documented in `23-ws-protocol.md` §9.5 and §13.4.
+  2026-10-27 (#2848): with no cache, the E09-Q05 k6 profile (`tests/load/k6/auth.js`) has no
+  cache-off control and no warm/cold split; `GET /auth/session` is measured as served.
 - **Permission vocabulary**: `x-rbac` blocks in `22-api-openapi.yaml` are the source;
   `tools/rbac/generate.py` writes `auth/generated_permissions.py` and the `permissions` list of
   `auth/rbac_seed.json`; guarded by the contract test
