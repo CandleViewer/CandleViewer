@@ -25,8 +25,11 @@ from candleviewer.audit.machine_events import APPEND_FAILURE_COOLDOWN_S, Machine
 from candleviewer.audit.writer import AuditUnavailable, AuditWriterWrongLoop
 from candleviewer.exchange.bybit.key_info import refusal
 from candleviewer.exchange.bybit.mapping import map_ret_code
+from candleviewer.exchange.bybit.private_stream import CLOSE_TIMEOUT_S
 from candleviewer.oms import submit
+from candleviewer.oms.config import HOP_BATCH, STREAM_CLOSE_BOUND_S, STREAM_READ_BOUND_S
 from candleviewer.oms.errors import OmsNotReady
+from candleviewer.oms.stream_consumer import STREAM_SILENCE_S
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, LANE_START_S
 from candleviewer.oms_wiring import (
     ENVIRONMENT_FENCE_GRACE_S,
@@ -715,8 +718,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
     stop inside the grace, from the code's own bounds; the hops left named, L2's, L3's and L4's
     gone; the notices' bound and their count (CR-S3L1A-01); the venue calls the lane's own port
-    signs and sends, and the private stream it refuses (#913 L1d); no blocking hop left
-    (SEC-S3L1A-03), the gate read in place since L4, with its read inventory and its two reads;
+    signs and sends, and the private streams it opens across its bridge (#913 L1d-2b); no
+    blocking hop left (SEC-S3L1A-03), the gate read in place since L4, with its read inventory
+    and its two reads;
     the lane's own refusals read in place (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); a
     cancelled start and nothing begun once the lane stops or dies, with OM-D10 to OM-D12
     (CR-S3L1C-03); and, the runtime on the lane since L1b, no status note left in 20, 23 or 24."""
@@ -736,7 +740,9 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "through M2's `LoopSigning` and sends, its account clients built, used and closed on the "
         "lane, its tokens drawn from the adapter's one governor",
         "and M2's `credential_borrowed` ahead of each signing, through the lane's own audit writer",
-        "so `subscribe_private` refuses every account (`RuntimeError`, 24 §14.1)",
+        "The port's `subscribe_private` refuses another environment's account on the lane, then "
+        "opens the account's stream from the adapter's one registry, which stays on the serving "
+        "loop (ruling Q2 (b)), across the bridge above.",
         "and the trading port the lane signs and sends with (`lane_trading_port`, #913 L1d), on "
         "the process's one rate governor, signing through M2's `LoopSigning`",
         "after a self-check that fails the start closed (phase `signing`) on a wiring fault",
@@ -811,7 +817,8 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "A dead lane keeps the lane pool and the port's clients until then too, paged (20 §6.2)",
         "a signing the fence refuses writes its `credential_sign_failed` through that writer after "
         "`aclose` returns",
-        "Tombstones are L1d-2's (ruling Q6)",
+        "Ruling Q6's tombstones are the adapter's, for its private streams on the serving loop "
+        "(#913 L1d-2a)",
     )
     assert (
         "as a persistence bundle's `machine_events` appends did until #913's L2 gave the lane its "
@@ -870,7 +877,8 @@ def test_20_orders_the_lanes_signing_closers_and_a_dead_lane_keeps_them_as_the_l
     )
     assert not _missing(
         lane,
-        "runs each closer on its own loop (after the sink, the trading port, then its "
+        "runs each closer on its own loop (after the sink, the streams the lane's bridge still "
+        "holds, closed on the serving loop, then the trading port, then its "
         "`LoopSigning`, whose close frees M2's lane pool, then the lane's own audit writer, then "
         "the OMS's pool, each on the lane and before the environment's lock, above, so nothing "
         "that signs or sends outlives it)",
@@ -878,6 +886,128 @@ def test_20_orders_the_lanes_signing_closers_and_a_dead_lane_keeps_them_as_the_l
         "the trading port and the lane's `LoopSigning`, whose last records it writes (#913 L1d), "
         "and before the pool",
     )
+
+
+def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> None:
+    """#913 L1d-2b (ruling Q2 (b); R24): 20 Sec.6.2 states the lane's bridge to the private streams
+    from the code's own bounds (`HOP_BATCH`, `STREAM_READ_BOUND_S` above the consumer's silence
+    bound, `STREAM_CLOSE_BOUND_S` the adapter's `CLOSE_TIMEOUT_S` plus 1 s) and the consumer's
+    closes across it; 23 Sec.6.4 and 24 Sec.8.12, Sec.14.1 and Sec.14.2 rule 13 say the items still
+    cross from the serving loop, whose B13 the lane never runs; 24 Sec.19 logs it; the E29 model's
+    OM-D10, OM-D14, Sec.11's order-lane row and revision 23 record it, OM-D12 and OM-E08 name a
+    wedged lane's streams and the bridge's two notices, and the row names the bounds' leaf and
+    plans the serving-loop port's deletion (L1d-2c); nothing stale is left."""
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert STREAM_CLOSE_BOUND_S == CLOSE_TIMEOUT_S + 1 and STREAM_READ_BOUND_S > STREAM_SILENCE_S
+    assert not _missing(
+        lane,
+        "- serving loop to lane, a batch at a time: each private stream the OMS consumes. The "
+        "adapter's one registry opens, dials, signs through the serving loop's M2 binding and "
+        "reads it there, as B13's `platform` chart (ruling Q2 (b)), and the lane's port returns "
+        "it across this bridge (`oms_streams.LaneStreams`).",
+        "A read takes, by one awaited hop, the stream's next item and every item already queued "
+        f"behind it, at most {HOP_BATCH} (`HOP_BATCH`), in arrival order; the lane asks again "
+        "only once the consumer has taken them all, so the hop holds one batch at most and never "
+        "reorders, drops or re-delivers: the adapter's queue stays the stream's only buffer, and "
+        "its policy the only shedding (24 §14.2 rule 13).",
+        f"and one not answered within {STREAM_READ_BOUND_S:g} s (`STREAM_READ_BOUND_S`, above "
+        f"the consumer's {STREAM_SILENCE_S:g} s silence bound) ends it on the lane, logged, and "
+        "closes it; an open the lane stops waiting for is closed once it opens;",
+        "the consumer's close crosses as a notice, never cut short, and the lane waits at most "
+        f"{STREAM_CLOSE_BOUND_S:g} s for it (`STREAM_CLOSE_BOUND_S`, `CLOSE_TIMEOUT_S` plus "
+        f"{STREAM_CLOSE_BOUND_S - CLOSE_TIMEOUT_S:g} s), logged past that while the close runs on.",
+        "the stop attached at create stays the floor (C-2.6), L4's tick fences new exposure "
+        "meanwhile, and L1d-3 times the hop;",
+    )
+    assert "The port opens no private stream" not in lane
+    consumer = _between(_ARCH, "**The private-stream consumer (E29-T05, #848;", "\n")
+    assert (
+        "Each close crosses to the serving loop's registry, the lane waiting at most "
+        f"{STREAM_CLOSE_BOUND_S:g} s for it (the lane bridge, above); the runtime's stop closes, "
+        "on the serving loop, any stream a consumer left open." in consumer
+    )
+    assert (
+        "Its private streams' items still reach it from the serving loop, a batch at a time "
+        "across the lane bridge (ruling Q2 (b), `20-architecture.md` §6.2)." in _words(_WS_DOC)
+    )
+    internal = _words(_INTERNAL_DOC)
+    assert not _missing(
+        internal,
+        "The port is the order lane's: the stream reaches it from the adapter's registry on the "
+        "serving loop, a batch at a time, in arrival order, the adapter's queue its only buffer "
+        "(`20-architecture.md` §6.2).",
+        "the order lane's port (`lane_trading_port`, #913) opens through the stream source its "
+        "composition root gives it, the lane's bridge (`oms_streams.LaneStreams`, L1d-2b), which "
+        "opens the account's stream from the adapter's one registry on the serving loop "
+        "(`open_private_stream`) and raises its refusals on the lane;",
+        "The order lane, which consumes the OMS's streams across its bridge "
+        "(`20-architecture.md` §6.2), runs no platform chart (29 CV-C13).",
+    )
+    port = _between(
+        _INTERNAL_DOC, "`subscribe_private` (G-8b, #3963) refuses", "`RateHeadroomPort`"
+    )
+    assert "once its composition root gives it one" not in port  # 19.44 keeps it: a change log
+    title = re.compile(
+        r"^### 19\.\d+ 2026-10-27 — §8\.12, §14\.1, §14\.2 rule 13: the order lane's bridge to "
+        r"the private streams \(E29-T04, #913\)$",
+        re.MULTILINE,
+    )
+    [head] = title.findall(_INTERNAL_DOC)
+    entry = _words(_INTERNAL_DOC.split(head, 1)[1].split("\n### ", 1)[0])
+    assert not _missing(
+        entry,
+        "the order lane's port opens through the stream source its composition root gives it, "
+        "the lane's bridge (`oms_streams.LaneStreams`)",
+        f"a batch at a time, at most {HOP_BATCH} (`HOP_BATCH`), in arrival order, never dropped "
+        "or re-delivered",
+        f"a read cut at {STREAM_READ_BOUND_S:g} s and a close waited for at most "
+        f"{STREAM_CLOSE_BOUND_S:g} s",
+        "runs no platform chart (29 CV-C13). No REST, WS, table, column, chart or `machine_hash` "
+        "change.",
+    )
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    text = threat.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    rows = {
+        found.group(1): _words(line)
+        for line in lines
+        if (found := re.match(r"^\|\s*(OM-D1[024]|OM-E08)\s*\|", line))
+    }
+    assert not _missing(
+        rows["OM-D10"],
+        "Since L1d-2b the private streams' items still cross from the serving loop (F10, F11; "
+        "ruling Q2 (b)), a batch at a time over the lane's bridge (`oms_streams.LaneStreams`)",
+        f"The bridge holds one batch per stream, at most {HOP_BATCH} (`HOP_BATCH`) in arrival "
+        "order, never dropped or re-delivered, the adapter's queue the only buffer and "
+        "`slow_consumer` the only shedding",
+        "L1d-3 times the bridge's hop too: above 5 ms at p99, an amendment proposal on #2701",
+    )
+    assert (
+        "No private stream signs through it: each dial's `auth` signs on the serving loop through "
+        "the adapter's own M2 binding (#913 L1d-2b, ruling Q2 (b))" in rows["OM-D14"]
+    )
+    assert "Tombstones are L1d-2's" not in rows["OM-D14"]
+    assert (
+        "its private streams go unread meanwhile, so the adapter's queues end their epochs as "
+        "`slow_consumer`, the hop holding one batch (#913 L1d-2b)" in rows["OM-D12"]
+    )
+    assert (
+        "a lost close or discard of the stream bridge (`_close`, `_discard`, #913 L1d-2b) leaves "
+        "its stream to the runtime's `private_streams` closer, then the adapter's `stop()`"
+        in rows["OM-E08"]
+    )
+    [row] = [_words(line) for line in lines if line.startswith("| E29-T04, the order lane (slice")]
+    assert not _missing(
+        row,
+        "its credential store inside M2 (OM-D14), L1d-2b's stream bridge, its bounds in "
+        "`candleviewer/oms/config.py`, a constants-only leaf, and L4's",
+        "the adapter's `ExchangeBybitService.trading_port`, which signs on the serving loop and "
+        "has had no product caller since L1d-1 (`test_serving_trading_port_callers.py` counts "
+        "them), stays until L1d-2c, which deletes it.",
+    )
+    assert "L1d-2 decides" not in row
+    assert "Revision 23 records #913 L1d-2b's bridge" in _words(text)
+    assert [line for line in lines if "| Revision 23, #913 L1d-2b" in line]
 
 
 def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_and_f20() -> None:
