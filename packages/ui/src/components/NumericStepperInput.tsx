@@ -219,7 +219,7 @@ export function NumericStepperInput({
   const press = (direction: StepDirection) => (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     inputRef.current?.focus();
-    if (reason.gated) refusal.announce();
+    if (reason.gated) refusal.refuse();
     else stepBy(direction, step, 1);
   };
 

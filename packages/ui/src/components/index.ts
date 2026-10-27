@@ -83,3 +83,6 @@ export type { CheckboxProps } from "./Checkbox.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
+
+export { Select } from "./Select.js";
+export type { SelectOption, SelectProps } from "./Select.js";
