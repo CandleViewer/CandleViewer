@@ -33,6 +33,9 @@
     "storybook:build": "storybook build -c .storybook -o storybook-static --disable-telemetry",
     "storybook:test": "vitest run --project storybook"
   },
+  "dependencies": {
+    "@floating-ui/dom": "1.8.0"
+  },
   "devDependencies": {
     "@candleviewer/config": "workspace:*",
     "@candleviewer/protocol": "workspace:*",

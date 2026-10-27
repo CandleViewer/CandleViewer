@@ -47,6 +47,9 @@ export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 export { Toggle } from "./Toggle.js";
 export type { ToggleProps } from "./Toggle.js";
 
+export { Tooltip } from "./Tooltip.js";
+export type { TooltipMode, TooltipProps, TooltipSide, TooltipTriggerProps } from "./Tooltip.js";
+
 export { Text, Heading, MonoText, NumericText } from "./Typography.js";
 export type {
   HeadingLevel,

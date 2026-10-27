@@ -20,6 +20,7 @@ import "../src/components/checkbox.css";
 import "../src/components/choice.css";
 import "../src/components/divider.css";
 import "../src/components/toggle.css";
+import "../src/components/tooltip.css";
 import "../src/components/typography.css";
 import "../src/components/radio.css";
 import "../src/components/segmented.css";
