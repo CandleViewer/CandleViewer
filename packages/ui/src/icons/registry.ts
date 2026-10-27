@@ -1,14 +1,16 @@
 // The icon registry (E05-T06, 16-design-system-brief.md §5), cut to the base glyphs the atoms need
 // (E05 #271 slice 1): every icon's canonical name, what it means, its group and where its glyph
-// comes from. Sorted by name, one entry per icon; each name has exactly one component in
-// `generated/`, which only `Icon` (CMP-019) reaches. The rest of the set joins in later slices.
+// comes from. Sorted by name, one entry per icon; each name has exactly one component, which
+// scripts/build-icons.mjs generates into `generated/` from `source/<origin>/<name>.svg` and only
+// `Icon` (CMP-019) reaches (packages/ui/README.md, "Icons"). The rest of the set joins in later
+// slices.
 
 /** An icon's group on the Penpot icon page and in Storybook. */
 export type IconCategory = "navigation" | "action" | "status" | "chart" | "trading" | "rule-graph";
 
 /**
- * Where a glyph comes from: `lucide/<glyph>`, a vendored Lucide glyph (ISC);
- * `custom/<ticket>`, a glyph drawn for CandleViewer by that design ticket.
+ * Where a glyph comes from: `lucide/<glyph>`, a vendored Lucide glyph (ISC, its notice in
+ * `source/lucide/LICENSE`); `custom/<ticket>`, a glyph drawn for CandleViewer by that ticket.
  */
 export type IconSource = `lucide/${string}` | `custom/${string}`;
 

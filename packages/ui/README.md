@@ -175,11 +175,43 @@ event payload: [`16-design-system-brief.md` §4](../../docs/plan/16-design-syste
   service). Publishing the static build to the Tailscale-only internal host is not yet scheduled:
   it is the E05 threat model's accepted A4 residual (E05-X01, #215; its §5 and §6).
 
+## Icons (E05-T06)
+
+`src/icons/` is the icon set of [`16-design-system-brief.md` §5](../../docs/plan/16-design-system-brief.md).
+Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, never by raw SVG.
+
+- `registry.ts`: each icon's canonical name (the `IconName` union), group, glyph source and
+  one-sentence meaning, sorted by name: the code twin of the Penpot icon page, compared by diff.
+- `source/<origin>/<name>.svg`: the vetted glyphs, committed data (nothing is fetched at
+  runtime). `lucide/` holds glyphs vendored byte for byte from `lucide-static`, each renamed to
+  its registry name, beside their licence, `source/lucide/LICENSE` (ISC, plus the MIT notice of
+  the Feather-derived glyphs); the version, its checksum and the owner are in the vendored-code
+  register, [`35-dependency-freeze-policy.md` §7](../../docs/plan/35-dependency-freeze-policy.md).
+  `custom/` is where the trading glyphs that E05-D02 draws go.
+- `generated/`: one component per icon, and `components.ts`, the map by name that `Icon` draws
+  from. Both are internal: the package exports `Icon`, the registry and the sizes, never a glyph
+  component. `scripts/build-icons.mjs` (`build:icons`) writes them from the sources, in name
+  order and with no timestamp; `build` runs it with `--check`, which fails naming each stale,
+  missing or extra module. Never edit one: `test/icons/generator.test.ts`, the drift check,
+  compares each byte for byte with the generator's rendering. The generator reads a source as
+  data, never markup: it accepts only a 24x24 outline root and plain geometry (path, circle,
+  ellipse, line, polyline, polygon, rect), and fails on anything else, naming the file. A Lucide
+  glyph's module repeats its source's `@license lucide-static v<version> - ISC` line as a legal
+  comment (`/*! ... */`) above the component, which tsup keeps in `dist` and Vite in the app's
+  bundle; a Lucide source without that line fails.
+- `IconSvg.tsx`: the grid every module draws its geometry in, which no prop changes: the
+  24-unit `viewBox`, `currentColor`, no fill, and a non-scaling 1.5px stroke at every size.
+
+To add an icon, put its SVG at `src/icons/source/<origin>/<name>.svg` (a Lucide glyph is copied
+verbatim from the registered `lucide-static` tarball, once its sha512 matches the register row),
+add its `registry.ts` entry in name order, then run `build:icons` and `test` in `packages/ui`.
+
 ## Scripts
 
 - `pnpm --filter @candleviewer/ui build` — runs `build:tokens` (Style
-  Dictionary-driven, see above) then the tsup build.
+  Dictionary-driven, see above), `build:icons --check`, then the tsup build.
 - `pnpm --filter @candleviewer/ui build:tokens` — token build only.
+- `pnpm --filter @candleviewer/ui build:icons` — writes `src/icons/generated/` (see "Icons").
 - `pnpm --filter @candleviewer/ui storybook` — dev server with the a11y addon.
 - `pnpm --filter @candleviewer/ui storybook:build` / `storybook:test` — static build / its Vitest project.
 - `pnpm --filter @candleviewer/ui test` / `test:cov` — the Vitest unit project, ≥80% gate.
