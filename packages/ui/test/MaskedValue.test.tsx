@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useState, type JSX } from "react";
+import { act, Profiler, StrictMode, useEffect, useState, type JSX } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { expect, fireEvent, fn, within } from "storybook/test";
@@ -319,7 +319,7 @@ describe("MaskedValue (CMP-034)", () => {
     await act(async () => r.unmount());
   });
 
-  it("a host that mirrors onToggleReveal and vetoes only when it must stays in step", async () => {
+  it("a host that mirrors onToggleReveal without passing it back stays in step", async () => {
     const seen: boolean[] = [];
     function Host(): JSX.Element {
       const [revealed, setRevealed] = useState(false);
@@ -410,6 +410,128 @@ describe("MaskedValue (CMP-034)", () => {
     await fire(window, "blur");
     expect(remask(types(added))).toEqual([]);
     [...added, ...removed].forEach((spy) => spy.mockRestore());
+  });
+
+  it("S1: the handoff lands in the second press's own commit; no commit ever holds two values", async () => {
+    const SECOND = "sk-demo-second-9d0e";
+    let most = 0;
+    const sample = (): void => {
+      const html = document.body.innerHTML;
+      most = Math.max(most, Number(html.includes(VALUE)) + Number(html.includes(SECOND)));
+    };
+    const host = await mount(
+      <Profiler id="pair" onRender={sample}>
+        <MaskedValue value={VALUE} label={LABEL} />
+        <MaskedValue value={SECOND} label="API key" />
+      </Profiler>,
+    );
+    await press(toggle(host));
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      within(host).getByRole("button", { name: "Show API key" }).click();
+      // The discrete update flushes in a microtask; one is enough for the whole handoff.
+      await Promise.resolve();
+      const html = document.body.innerHTML;
+      expect(html).toContain(SECOND);
+      expect(html).not.toContain(VALUE);
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+    }
+    await act(async () => undefined);
+    expect(most).toBe(1);
+  });
+
+  it("maskAllValues() from inside an effect: no warning, masked after a microtask", async () => {
+    const methods = Object.keys(console).filter(
+      (key) => typeof (console as unknown as Record<string, unknown>)[key] === "function",
+    ) as (keyof Console)[];
+    const spies = methods.map((m) => vi.spyOn(console, m as "log"));
+    function Router({ route }: { route: string }): JSX.Element {
+      useEffect(() => {
+        if (route === "/next") maskAllValues();
+      }, [route]);
+      return <MaskedValue value={VALUE} label={LABEL} />;
+    }
+    const r = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () => r.render(<Router route="/keys" />));
+    const host = document.body.lastElementChild as HTMLElement;
+    await press(toggle(host));
+    await act(async () => {
+      r.render(<Router route="/next" />);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expectMasked(host);
+    for (const spy of spies) expect(spy).not.toHaveBeenCalled();
+    spies.forEach((spy) => spy.mockRestore());
+    await act(async () => r.unmount());
+  });
+
+  it("maskAllValues() lands after the caller returns, not before", async () => {
+    const host = await render();
+    await press(toggle(host));
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      maskAllValues();
+      expect(stateOf(host)).toBe("revealed");
+      await Promise.resolve();
+      expect(stateOf(host)).toBe("masked");
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+    }
+    expectMasked(host);
+  });
+
+  it("a timed re-mask with focus on Copy moves focus to the toggle, never <body>", async () => {
+    const host = await render({ copyable: true });
+    await press(toggle(host));
+    copyButton(host).focus();
+    expect(copyButton(host)).toHaveFocus();
+    await advance(MASKED_VALUE_AUTO_HIDE_MS);
+    expectMasked(host);
+    expect(toggle(host)).toHaveFocus();
+  });
+
+  it("focus outside the actions is never moved by a re-mask", async () => {
+    const outside = document.body.appendChild(document.createElement("button"));
+    const host = await render({ copyable: true });
+    await press(toggle(host));
+    outside.focus();
+    await advance(MASKED_VALUE_AUTO_HIDE_MS);
+    expectMasked(host);
+    expect(outside).toHaveFocus();
+  });
+
+  it("StrictMode: a reveal, the auto-hide and the registry handoff behave the same", async () => {
+    const onA = fn();
+    const host = await mount(
+      <StrictMode>
+        <MaskedValue value={VALUE} label={LABEL} onToggleReveal={onA} />
+        <MaskedValue value="sk-demo-second" label="API key" />
+      </StrictMode>,
+    );
+    const toggleB = (): HTMLElement =>
+      within(host).getByRole("button", { name: /^(Show|Hide) API key$/ });
+    const states = (): string[] =>
+      [...host.querySelectorAll<HTMLElement>(".cv-masked-value")].map(
+        (el) => el.dataset["state"] ?? "",
+      );
+    await press(toggle(host));
+    expect(states()).toEqual(["revealed", "masked"]);
+    await advance(MASKED_VALUE_AUTO_HIDE_MS);
+    expect(states()).toEqual(["masked", "masked"]);
+    expect(onA.mock.calls).toEqual([[true], [false]]);
+    await press(toggle(host));
+    await press(toggleB());
+    expect(states()).toEqual(["masked", "revealed"]);
+    expect(host.innerHTML).not.toContain(VALUE);
+    await act(async () => maskAllValues());
+    expect(states()).toEqual(["masked", "masked"]);
+    expectValueAbsent();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("S7: unmounting while revealed drops the value, its timers, listeners and registry slot", async () => {
