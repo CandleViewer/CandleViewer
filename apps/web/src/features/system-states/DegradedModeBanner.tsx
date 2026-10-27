@@ -42,8 +42,8 @@ export interface DegradedModeBannerProps {
 }
 
 /**
- * TEMPORARY CMP-092 DegradedModeBanner (E10-S04 slice 3, #306): E05's `packages/ui` component (#267
- * / #265) replaces it, bringing the CMP-210 chip, `scope`, `href` and the PROPOSED "Show details".
+ * CMP-092 DegradedModeBanner (E10-S04 slice 3, #306), an E10 shell organism (#306): apps/web is its
+ * home. Still to come: the CMP-210 chip, `scope`, `href` and the PROPOSED "Show details".
  * Per row (E17-D02 §8): glyph + word in `.strong` on `.subtle`, message, stillWorks, then the
  * dismiss control (never gated); focus then moves to the next row's control or the slot's next stop.
  */

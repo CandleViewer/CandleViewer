@@ -148,7 +148,8 @@ describe("E10-S01 S1: shell slots", () => {
       expect(el, slot).not.toBeNull();
       expect(el?.childNodes.length, slot).toBe(0);
     }
-    // #306 slice 3: the banner slot holds only CMP-092's two empty live regions (E17-D02 §11).
+    // #306: the banner slot holds the CMP-077 region, which renders nothing until a socket was up,
+    // then CMP-092's two empty live regions (E17-D02 §8, §11).
     const banner = document.querySelector('[data-shell-slot="banner"]');
     expect(
       [...(banner?.children ?? [])].map((c) => [

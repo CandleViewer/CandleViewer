@@ -51,6 +51,7 @@ MAX_FILES = 3000  # GET /pulls/{n}/files lists at most this many
 PAGE = 100
 MODULES = ("secrets", "auth", "audit", "exchange", "oms", "risk", "admin")
 WEB_AUTH_PATHS = (
+    "apps/web/src/features/app-shell/ConnectionRegionSlot.tsx",  # Sign in ends the session
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment

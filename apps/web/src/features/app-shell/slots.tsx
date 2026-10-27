@@ -4,6 +4,7 @@
  *
  * - `ShellBannerSlot`: one full-width row between the top bar and the canvas (D03 §2, 0 px when
  *   empty). It has no landmark of its own; a banner brings its own role (`status` / `alert`).
+ *   #306 fills it with `ShellBanner`: the CMP-077 connection region (SCR-152), then CMP-092.
  * - `ShellConnectionSlot`: inside the header (`banner`) landmark. S3 fills it with the CMP-076 chip
  *   and the shell's live-region pair (`ConnectionStatusSlot`).
  * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
@@ -15,13 +16,14 @@
  * re-renders the outlet.
  */
 import type { JSX } from "react";
+import { ShellBanner } from "./banner";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
-import { DegradedBanner } from "../system-states/DegradedBanner";
 
 /** A shell slot: a prop-less component that renders its content or nothing. */
 export type ShellSlot = () => JSX.Element | null;
 
-export const ShellBannerSlot: ShellSlot = DegradedBanner;
+/** #306: the CMP-077 region, then the CMP-092 degraded banner below it (`ShellBanner`). */
+export const ShellBannerSlot: ShellSlot = ShellBanner;
 
 export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
