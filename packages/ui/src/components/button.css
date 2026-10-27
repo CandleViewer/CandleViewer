@@ -52,6 +52,34 @@
 
 .cv-button[data-variant="ghost"] {
   --cv-button-bg: transparent;
+  color: var(--color-text-secondary);
+}
+
+/* Buy and sell: label, arrow and spinner in text.inverse (A12); no .active token, so active = the default fill. */
+.cv-button[data-variant="buy"],
+.cv-button[data-variant="sell"] {
+  color: var(--color-text-inverse);
+}
+
+.cv-button[data-variant="buy"] {
+  --cv-button-bg: var(--color-buy-default);
+}
+
+.cv-button[data-variant="sell"] {
+  --cv-button-bg: var(--color-sell-default);
+}
+
+/* The word and the arrow stay whole: a buy or sell label never truncates (the consumer gives it room). */
+.cv-button[data-side] > .cv-button__label {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.cv-button__icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
 }
 
 /* Hover and active swap tokens instantly (no transition). Absent tokens keep the rest fill (D02 open Qs). */
@@ -61,6 +89,22 @@
 
 .cv-button[data-variant="primary"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
   --cv-button-bg: var(--color-action-primary-active);
+}
+
+.cv-button[data-variant="buy"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-buy-hover);
+}
+
+.cv-button[data-variant="sell"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-sell-hover);
+}
+
+.cv-button[data-variant="buy"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-buy-default);
+}
+
+.cv-button[data-variant="sell"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-sell-default);
 }
 
 .cv-button[data-variant="secondary"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
@@ -74,6 +118,12 @@
 
 .cv-button[data-variant="ghost"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
   --cv-button-bg: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* Ghost label: text.secondary at rest, text.primary on hover and active (D02 a11y audit, CMP-001 ghost row). */
+.cv-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+  color: var(--color-text-primary);
 }
 
 /* Plain disabled: the whole control dims (native attribute, out of the Tab order). */
@@ -113,11 +163,12 @@
   cursor: progress;
 }
 
-.cv-button[aria-busy="true"] > .cv-button__label {
+.cv-button[aria-busy="true"]:not([data-side]) > :is(.cv-button__label, .cv-button__icon) {
   opacity: 0;
 }
 
-.cv-button[aria-busy="true"] > .cv-spinner {
+/* Buy and sell loading: the spinner is in flow after the label, so the button widens once without iconRight. */
+.cv-button[aria-busy="true"]:not([data-side]) > .cv-spinner {
   position: absolute;
   inset: 0;
   margin: auto;
@@ -130,6 +181,12 @@
     background: ButtonFace;
     color: ButtonText;
     forced-color-adjust: none;
+  }
+
+  /* The ghost hover / active label colour out-specifies the rule above; keep it ButtonText here. */
+  .cv-button[data-variant="ghost"]:hover:not(:disabled, [aria-disabled], [aria-busy]),
+  .cv-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+    color: ButtonText;
   }
 
   .cv-button:hover,

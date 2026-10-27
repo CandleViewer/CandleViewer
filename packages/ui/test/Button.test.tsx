@@ -7,6 +7,8 @@ import * as stories from "../src/components/Button.stories.js";
 import { mount } from "./theme/mount.js";
 
 const REASON = "Owner only";
+// exactOptionalPropertyTypes rejects a literal `iconLeft={undefined}`; callers forwarding an optional prop do this.
+const EXPLICIT_UNDEFINED: object = { iconLeft: undefined };
 const get = (host: HTMLElement, name = "Save"): HTMLButtonElement =>
   within(host).getByRole("button", { name }) as HTMLButtonElement;
 
@@ -23,10 +25,13 @@ describe("Button (CMP-001)", () => {
     expect(b.hasAttribute("aria-disabled")).toBe(false);
   });
 
-  it.each(["primary", "secondary", "ghost", "danger"] as const)("emits variant %s", async (v) => {
-    const host = await mount(<Button variant={v}>Save</Button>);
-    expect(get(host).dataset["variant"]).toBe(v);
-  });
+  it.each(["primary", "secondary", "ghost", "danger", "buy", "sell"] as const)(
+    "emits variant %s",
+    async (v) => {
+      const host = await mount(<Button variant={v}>Save</Button>);
+      expect(get(host).dataset["variant"]).toBe(v);
+    },
+  );
 
   it("emits size, full width and density attributes", async () => {
     const host = await mount(
@@ -149,6 +154,111 @@ describe("Button (CMP-001)", () => {
   it("honours type=submit", async () => {
     const host = await mount(<Button type="submit">Save</Button>);
     expect(get(host)).toHaveProperty("type", "submit");
+  });
+});
+
+describe("Button buy, sell and icons", () => {
+  const glyphs = (b: HTMLElement): NodeListOf<SVGElement> => b.querySelectorAll("svg");
+
+  it.each([
+    ["buy", "Buy / Long"],
+    ["sell", "Sell / Short"],
+  ] as const)(
+    "%s leads with a decorative arrow and keeps its word in the name",
+    async (v, name) => {
+      const host = await mount(<Button variant={v}>{name}</Button>);
+      const b = get(host, name);
+      expect(b.dataset["side"]).toBe("");
+      expect(b.querySelector(".cv-button__icon")?.nextElementSibling).toBe(
+        b.querySelector(".cv-button__label"),
+      );
+      expect(glyphs(b)).toHaveLength(1);
+      expect(glyphs(b)[0]?.getAttribute("aria-hidden")).toBe("true");
+    },
+  );
+
+  it("buy and sell arrows differ, an iconLeft replaces the arrow, and iconLeft undefined keeps it", async () => {
+    const host = await mount(
+      <>
+        <Button variant="buy">Buy</Button>
+        <Button variant="sell">Sell</Button>
+        <Button variant="buy" iconLeft="chevron-right">
+          Buy more
+        </Button>
+        <Button variant="buy" {...EXPLICIT_UNDEFINED}>
+          Buy again
+        </Button>
+      </>,
+    );
+    const html = (n: string): string => glyphs(get(host, n))[0]?.innerHTML ?? "";
+    expect(html("Buy")).not.toBe(html("Sell"));
+    expect(html("Buy more")).not.toBe(html("Buy"));
+    expect(glyphs(get(host, "Buy again"))).toHaveLength(1);
+    expect(html("Buy again")).toBe(html("Buy"));
+  });
+
+  it("renders iconLeft and iconRight as decorative glyphs around the label", async () => {
+    const host = await mount(
+      <Button iconLeft="chevron-down" iconRight="chevron-right">
+        Save
+      </Button>,
+    );
+    const b = get(host);
+    expect(glyphs(b)).toHaveLength(2);
+    expect(b).toHaveAccessibleName("Save");
+    expect(host.querySelector(".cv-button__icon")).not.toBeNull();
+  });
+
+  it("a plain button has no glyph and no side marker", async () => {
+    const host = await mount(<Button>Save</Button>);
+    expect(glyphs(get(host))).toHaveLength(0);
+    expect(get(host).hasAttribute("data-side")).toBe(false);
+  });
+
+  it("buy loading keeps the arrow and label, with the spinner in flow after them", async () => {
+    const host = await mount(
+      <Button variant="buy" loading>
+        Buy / Long
+      </Button>,
+    );
+    const b = get(host, "Buy / Long");
+    expect(b).toHaveAttribute("aria-busy", "true");
+    expect(b.lastElementChild?.className).toBe("cv-spinner");
+    expect(b.querySelector(".cv-button__icon svg")).not.toBeNull();
+  });
+
+  it("the spinner takes the iconRight slot of a loading side button, so it does not widen", async () => {
+    const host = await mount(
+      <Button variant="sell" loading iconRight="chevron-right">
+        Sell
+      </Button>,
+    );
+    expect(host.querySelectorAll(".cv-button__icon")).toHaveLength(1);
+  });
+
+  it("the lock takes the iconRight slot of a gated button, keeping the arrow", async () => {
+    const host = await mount(
+      <Button variant="sell" iconRight="chevron-right" disabledReason={REASON}>
+        Sell
+      </Button>,
+    );
+    const b = get(host, "Sell");
+    expect(b.querySelectorAll(".cv-button__icon")).toHaveLength(1);
+    expect(b.querySelectorAll(".cv-button__glyph")).toHaveLength(1);
+    expect(b).toHaveAccessibleDescription(REASON);
+  });
+
+  it("a gated side button no-ops on Enter and Space and keeps its arrow", async () => {
+    const onClick = fn();
+    const host = await mount(
+      <Button variant="buy" disabledReason={REASON} onClick={onClick}>
+        Buy
+      </Button>,
+    );
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter} ");
+    expect(onClick).not.toHaveBeenCalled();
+    expect(get(host, "Buy").querySelector(".cv-button__icon svg")).not.toBeNull();
   });
 });
 
