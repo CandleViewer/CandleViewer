@@ -88,15 +88,18 @@ def test_a_repeated_disable_reads_no_exposure_and_ignores_open_exposure() -> Non
     )
 
 
-def test_a_stale_if_match_is_412_before_the_gate_and_again_before_any_flatten() -> None:
+def test_a_stale_if_match_is_412_before_the_gate_and_before_any_order_with_no_lock_held() -> None:
     patch = _op(_ACCOUNT, "patch")
     assert (
         "the tag is compared after the `404` and before the step-up gate, like the `422`" in patch
     )
     assert "a stale tag is `412`, spends no code and reads no exposure" in patch
-    assert "taken before the `flatten_first` flatten starts and held until the write" in patch
-    assert "decided before any close or flatten effect, and nothing changes" in patch
-    assert "that second `412` comes after the gate and leaves the grant spent" in patch
+    assert "No row lock is held across an exchange call" in patch
+    assert "re-read before its first order is sent" in patch
+    assert "one conditional `UPDATE` (compare-and-set)" in patch
+    assert "each `412` after the gate leaves the grant spent" in patch
+    assert "the write-ahead `account.disabled` record stands" in patch
+    assert "held until the write" not in patch
 
 
 def test_the_account_etag_can_be_built_from_the_body() -> None:
@@ -159,7 +162,11 @@ def test_revoke_and_disable_narrow_every_account_scoped_stream() -> None:
         assert f"`{topic}`" in narrowing
     machines = "`machines.{order|leg|algo|risk_lockout}.state`"
     assert machines in revoke
-    assert f"The account's {machines} subscriptions end with the same reason" in narrowing
+    reconciliation = "`machines.reconciliation:{account_id}.state`"
+    assert machines in revoke and reconciliation in revoke
+    assert f"The account's {machines} and {reconciliation} subscriptions end" in narrowing
+    assert "continues while any leg's account stays in scope" in narrowing
+    assert "continues while any leg's account stays in scope" in revoke
     assert "`permission_change` is sent first, then the narrowing" in narrowing
 
 
@@ -170,7 +177,7 @@ def test_resubscribe_allowed_follows_section_7_per_case() -> None:
     )
     assert "keeps its other accounts and carries `resubscribe_allowed: true`" in narrowing
     assert "is refused for it with `account_scope_denied`" in narrowing
-    assert "until the key is replaced (`key_revoked`) or the account re-enabled" in narrowing
+    assert "until the key is replaced (`key_revoked`: a new key makes the account" in narrowing
     assert "`false` for the removed account" not in narrowing
     assert "after which a new `sub` is allowed" not in narrowing
 

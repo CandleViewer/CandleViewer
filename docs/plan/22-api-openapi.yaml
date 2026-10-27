@@ -2676,11 +2676,16 @@ paths:
         **Concurrency.** `If-Match` is optional here: with the `ETag` of `getExchangeAccount`
         (`components.headers.AccountETag`) the tag is compared after the `404` and before the
         step-up gate, like the `422`: a stale tag is `412`, spends no code and reads no
-        exposure. It is compared again under the account's row lock, taken before the
-        `flatten_first` flatten starts and held until the write, so a change in between is also
-        `412`, decided before any close or flatten effect, and nothing changes; that second
-        `412` comes after the gate and leaves the grant spent, as the `409`s do. Without
-        `If-Match` the request proceeds, last write wins.
+        exposure. No row lock is held across an exchange call. A `flatten_first` flatten runs
+        with the row unlocked: the account is re-read before its first order is sent, and a tag
+        that no longer matches is `412` there, with nothing sent. The tag is compared once more
+        inside the write itself, one conditional `UPDATE` (compare-and-set), so a change after
+        the gate is also `412`; each `412` after the gate leaves the grant spent, as the `409`s
+        do. A change after the pre-flatten re-read does not stop a flatten under way (it is
+        protective, C-2.6): the account is then flat and still enabled, the `412` says the
+        disable did not happen, and the write-ahead `account.disabled` record stands with the
+        flatten's own order records, as for any write-ahead record whose action did not follow.
+        Without `If-Match` the request proceeds, last write wins.
       x-rbac: { permissions: [accounts:write], scope: granted_accounts }
       x-idempotency: optional
       parameters:
@@ -3030,8 +3035,10 @@ paths:
         `executions`, `wallet`, `trade_groups` and `rules`) with a `revoked` frame, reason
         `key_revoked`; a subscription that also names other accounts narrows instead and
         continues for them, and the account's `machines.{order|leg|algo|risk_lockout}.state`
-        subscriptions (§6.4) end with the same reason, implemented with B4
-        (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
+        and `machines.reconciliation:{account_id}.state` subscriptions (`23-ws-protocol.md`
+        §6.4) end with the same reason, implemented with B4; a `machines.trade_group` subscription
+        spans accounts and, like the `trade_groups` family, continues while any leg's account
+        stays in scope (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
         because a `rotating` key still signs and streams, so the account is not keyless while one
         remains. The route answers success only after the close of the key's private streams has
         completed within its 2 s bound; an overrun is no success (`PrivateStreamCloseOverran`,
