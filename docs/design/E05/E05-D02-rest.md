@@ -70,7 +70,9 @@ locked option — is a CMP-079 RbacGate composition with the CMP-019 `lock` glyp
 **Deviations.** (1) The coordinator's brief for this slice names the new decisions "H1…"; slice 4 already holds H1–H37
 (§6), so this slice numbers its decisions **J1–J25** (I is skipped: it reads as a numeral). (2) The brief's Penpot line
 names the per-set file; this slice therefore draws nothing of its own and says so per section. (3) No `15` entry is
-edited (the write set above).
+edited (the write set above), unlike slices 3 (#4322) and 4 (#4414), which applied their catalogue clauses in the same
+PR: this slice's brief names its two files only, so every clause is held (§6 (f)) and the coordinator decides whether
+they land in this PR or after the J-rows are ruled.
 
 ## 2. How to review
 
@@ -125,16 +127,20 @@ edited (the write set above).
 46. **Containers never gate; their nested controls do** — slice 4 (#4414) conventions 36, unchanged and cited from every
     section with a gated control: the control keeps its native role and its full label; `aria-disabled="true"`, never
     the `disabled` attribute, so it stays in the Tab order (a tab stays arrow-reachable, a palette option stays in the
-    listbox); the CMP-019 `lock` glyph (`decorative=false`, name "Not available") leads the label in rendering 2a; the
-    reason is in the DOM at mount and linked by `aria-describedby`; CMP-079 RbacGate wraps the role legs (D09 §2.1 step
-    3, §8); the label and lock `color.text.tertiary`, the reason `color.text.secondary`, a filled control's fill
-    `color.surface.raised` with a 1 px `color.border.default` hairline; never `color.text.disabled`, never
-    `opacity.disabled`; `Enter`, `Space`, a bound hotkey or an arrow that would select it changes nothing and re-shows
-    the reason inline with one polite announcement (D09 §2.2, §3.1, §9.1, §9.3, `E09-D09.md:49`). The reason is the
-    host's key (`rbac.view_as` first, then `rbac.permission` with the D09 §3.2 verb, e.g. "Your role can't change
-    settings.", `E09-D09.md:115`); a component never writes it. Several gated controls in one surface point at one
-    reason line. A command or link whose only destination is an admin route is hidden (T3, D09 §2.1 step 1; no `admin.*`
-    command exists in the palette for a session without it, `E09-D09.md:175`).
+    listbox); the CMP-019 `lock` glyph (`decorative=false`, name "Not available") leads the label in rendering 2a
+    (inline, the default); rendering 2b, the tooltip echo, only for an icon-only control (a card's CMP-002 action) or a
+    toolbar segment without room: the glyph badge on the icon is the marker, the reason node is visually hidden and
+    CMP-016 echoes it on hover and focus, never the only copy (D09 §2.2); the reason is in the DOM at mount and linked
+    by `aria-describedby`; CMP-079 RbacGate wraps the role legs (D09 §2.1 step 3, §8); the label and lock
+    `color.text.tertiary`, the reason `color.text.secondary`, a filled control's fill `color.surface.raised` with a 1 px
+    `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled`; `Enter`, `Space`, a bound
+    hotkey or an arrow that would select it changes nothing and re-shows the reason inline with one polite announcement
+    (D09 §2.2, §3.1, §9.1, §9.3, `E09-D09.md:49`). The reason is the host's key (`rbac.view_as` first, then
+    `rbac.permission` with the D09 §3.2 verb, e.g. "Your role can't change settings.", `E09-D09.md:115`); a component
+    never writes it. Several gated controls in one surface point at one reason line; a panel read-only for the session
+    carries one notice under its header and every gated control's `aria-describedby` points at it (D09 §2.2 "one notice,
+    many pointers"). A command or link whose only destination is an admin route is hidden (T3, D09 §2.1 step 1; no
+    `admin.*` command exists in the palette for a session without it, `E09-D09.md:175`).
 47. **What is not T2 here** (D09 §9.1; the standing rulings, slice 4 (#4414) conventions 37). _Availability:_ an
     emulated order type before E33 takes the validity look with its sentence, no lock (E30-D04 §7, BQ-7 RULED,
     `E30-D04.md:338`); a palette query with no match is "No command or symbol matches 'xyz'" (`14:357`); a preview with
