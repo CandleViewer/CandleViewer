@@ -58,8 +58,11 @@ tester.run("icon-only-control-label", iconOnlyControlLabel, {
     '<button type="button"><Spinner /></button>;',
     '<button type="button" />;',
     "<button type='button'>\n</button>;",
+    '<button type="button">{open ? null : false}</button>;',
     // Nor is a branch, an `||` or a fragment that may render something else.
     '<button type="button">{open ? <Icon name="chevron-down" /> : "More"}</button>;',
+    '<button type="button">{open ? <Icon name="close" /> : label}</button>;',
+    '<button type="button">{open ? <Icon name="close" /> : null} Close</button>;',
     '<button type="button">{label || <Icon name="close" />}</button>;',
     '<button type="button"><><Icon name="check" /> Save</></button>;',
     // Not a control, or not the plain JSX name.
@@ -112,6 +115,13 @@ tester.run("icon-only-control-label", iconOnlyControlLabel, {
       errors: control("button"),
     },
     { code: '<button><><Icon name="close" /></></button>;', errors: control("button") },
+    // A branch that renders nothing (null, undefined, a boolean) leaves the icon alone in it.
+    { code: '<button>{open ? <Icon name="close" /> : null}</button>;', errors: control("button") },
+    {
+      code: '<button>{busy ? undefined : <Icon name="check" />}</button>;',
+      errors: control("button"),
+    },
+    { code: '<a href="/help">{busy ? false : <Icon name="info" />}</a>;', errors: control("a") },
   ],
 });
 

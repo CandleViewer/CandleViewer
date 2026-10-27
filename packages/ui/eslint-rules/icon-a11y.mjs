@@ -47,7 +47,15 @@ const rendered = (child) =>
     ? isText(child)
     : child.type !== "JSXExpressionContainer" || child.expression.type !== "JSXEmptyExpression";
 
-/** Icons alone: an <Icon>, or only icons in `{…}`, `c && …`, `c ? … : …` or `<>…</>`. */
+/** What React renders as nothing: `null`, `undefined` or a boolean. */
+const empty = (node) =>
+  (node.type === "Literal" && (node.value === null || typeof node.value === "boolean")) ||
+  (node.type === "Identifier" && node.name === "undefined");
+
+/**
+ * Icons alone: an <Icon>, or only icons in `{…}`, `c && …`, `c ? … : …` or `<>…</>`. A branch
+ * may render nothing instead (`c ? <Icon /> : null`), so long as the other renders icons.
+ */
 function iconOnly(node) {
   switch (node.type) {
     case "JSXElement":
@@ -58,8 +66,10 @@ function iconOnly(node) {
       return iconOnly(node.expression);
     case "LogicalExpression":
       return node.operator === "&&" && iconOnly(node.right);
-    case "ConditionalExpression":
-      return iconOnly(node.consequent) && iconOnly(node.alternate);
+    case "ConditionalExpression": {
+      const drawn = [node.consequent, node.alternate].filter((branch) => !empty(branch));
+      return drawn.length > 0 && drawn.every(iconOnly);
+    }
     default:
       return false;
   }
