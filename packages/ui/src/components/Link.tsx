@@ -10,13 +10,13 @@ export const EXTERNAL_LINK_TEXT = " (opens externally)";
  * What the router slot receives: the anchor's own attributes plus `to`. A router link component (the app's
  * router, never imported here) renders the `<a>`, so the slot keeps native link semantics.
  */
-export type LinkSlotProps = Omit<ComponentPropsWithoutRef<"a">, "href"> & {
+export type LinkRouteProps = Omit<ComponentPropsWithoutRef<"a">, "href"> & {
   to: string;
   children?: ReactNode;
 };
 
 /** A router's link component, passed in by the app: `packages/ui` never imports a router. */
-export type LinkSlot = ComponentType<LinkSlotProps>;
+export type LinkRoute = ComponentType<LinkRouteProps>;
 
 interface LinkBase extends Omit<
   ComponentPropsWithoutRef<"a">,
@@ -39,7 +39,7 @@ interface HrefLink extends LinkBase {
 /** An in-app route: `to` through the app's router link component, passed as `as`. */
 interface RouteLink extends LinkBase {
   to: string;
-  as: LinkSlot;
+  as: LinkRoute;
   href?: never;
   external?: never;
 }

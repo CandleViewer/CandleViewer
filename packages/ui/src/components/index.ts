@@ -84,7 +84,7 @@ export { KeyValueRow } from "./KeyValueRow.js";
 export type { KeyValueRowProps } from "./KeyValueRow.js";
 
 export { Link } from "./Link.js";
-export type { LinkProps, LinkSlot, LinkSlotProps } from "./Link.js";
+export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
