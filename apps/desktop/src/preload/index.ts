@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { ALLOWED_IPC_CHANNELS, isChannelAllowed } from "./allowList.js";
-import { parseCrashEntry } from "../shared/crashEntry.js";
+import { parseCrashEntry } from "../main/crashEntry.js";
 
 /**
  * Exposes exactly one namespaced object, `window.cv`, as a fixed set of

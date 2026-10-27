@@ -8,7 +8,7 @@
  */
 import { appendFile, mkdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
-import { CRASH_ENTRY_LIMITS, parseCrashEntry, type CrashEntry } from "../shared/crashEntry.js";
+import { CRASH_ENTRY_LIMITS, parseCrashEntry, type CrashEntry } from "./crashEntry.js";
 
 export const CRASH_LOG_FILE = "crash.log";
 export const CRASH_LOG_ROTATED_FILE = "crash.log.1";

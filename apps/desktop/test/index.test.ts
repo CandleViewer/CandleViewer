@@ -6,6 +6,7 @@ import { buildCsp } from "../src/main/csp";
 import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
 import { CrashLogRefusedError } from "../src/main/crashLog";
+import type * as CrashLogModule from "../src/main/crashLog";
 
 // src/main/index.ts calls app.on(...) / app.whenReady() at module scope, so
 // the real "electron" module (unavailable under vitest's node environment)
@@ -54,7 +55,7 @@ vi.mock("../src/main/logger", () => ({ logStartup: vi.fn(), logAuditEvent: vi.fn
 // The real crash log, with its `append` observable, to see what the IPC handler passes it.
 const crashAppend = vi.hoisted(() => ({ calls: [] as unknown[][] }));
 vi.mock("../src/main/crashLog", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/main/crashLog")>();
+  const actual = await importOriginal<typeof CrashLogModule>();
   return {
     ...actual,
     createCrashLog: (options: Parameters<typeof actual.createCrashLog>[0]) => {

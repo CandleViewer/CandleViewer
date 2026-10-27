@@ -12,7 +12,7 @@ import {
   createCrashLog,
   scrubCrashText,
 } from "../src/main/crashLog";
-import { CRASH_ENTRY_LIMITS, parseCrashEntry } from "../src/shared/crashEntry";
+import { CRASH_ENTRY_LIMITS, parseCrashEntry } from "../src/main/crashEntry";
 
 const AT = 1_700_000_100_000;
 const AT_ISO = new Date(AT).toISOString();
