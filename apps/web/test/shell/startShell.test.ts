@@ -9,6 +9,10 @@ import { onWsError } from "../../src/lib/ws/errorHandler.js";
 import type { ErrorUiClass } from "../../src/lib/ws/errorMapping.js";
 import type { WsState } from "../../src/lib/ws/state/types.js";
 import { INITIAL_WS_STATE } from "../../src/lib/ws/state/reducer.js";
+import {
+  PRIVATE_HANDOVER_MS,
+  degradedIssues,
+} from "../../src/features/system-states/degradedIssues.js";
 import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
 import { accessToken, REFRESH_PATH, REFRESH_WAIT_MS } from "../../src/lib/auth/accessToken.js";
 import { startShell, toConnectionState } from "../../src/shell/startShell.js";
@@ -76,6 +80,37 @@ describe("startShell", () => {
     port.say({ t: "system", update: { kind: "health", health: "healthy" } });
     expect(getShellState().systemByKind.health).toEqual({ kind: "health", health: "healthy" });
     handle.stop();
+  });
+
+  it("folds system frames into the SCR-153 degraded rows, row 9 handing over to R5 at 10 s (E10-S04)", () => {
+    vi.useFakeTimers();
+    try {
+      const { port, handle } = started();
+      const rows = (): string[] => degradedIssues(getShellState().degraded).map((i) => i.id);
+      const exchange = (p: object) => ({ t: "system", update: { kind: "exchange_state", ...p } });
+      port.say(exchange({ public_ws: "disconnected", private_ws: "connecting" }));
+      expect(rows()).toEqual(["exchangeFeedDown", "privateReconnect"]);
+      vi.advanceTimersByTime(PRIVATE_HANDOVER_MS - 1);
+      port.say(exchange({ private_ws: "resyncing" })); // a re-assertion keeps the episode's clock
+      expect(rows()).toEqual(["exchangeFeedDown", "privateReconnect"]);
+      vi.advanceTimersByTime(1);
+      expect(rows()).toEqual(["exchangeFeedDown"]); // R5's from here, one surface at a time
+      port.say(exchange({ private_ws: "resyncing" }));
+      expect(rows()).toEqual(["exchangeFeedDown"]);
+      port.say(exchange({ public_ws: "connected", private_ws: "connected" }));
+      port.say(exchange({ private_ws: "connecting" })); // a new episode shows the row again
+      expect(rows()).toEqual(["privateReconnect"]);
+      vi.advanceTimersByTime(5_000);
+      port.say(exchange({ private_ws: "connected" })); // ended before 10 s: its timer is dropped
+      port.say(exchange({ private_ws: "connecting" }));
+      vi.advanceTimersByTime(5_000); // the dropped timer would have fired here
+      expect(rows()).toEqual(["privateReconnect"]);
+      vi.advanceTimersByTime(5_000);
+      expect(rows()).toEqual([]);
+      handle.stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps the client's connection onto the shell's, and says it again on each transition", () => {

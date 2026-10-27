@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { PRIVATE_HANDOVER_MS } from "../../../src/features/system-states/degradedIssues.js";
 import {
   INITIAL_SHELL_STATE,
   applySystemUpdate,
@@ -48,6 +49,22 @@ describe("shell store", () => {
     applySystemUpdate({ kind: "health", health: "healthy" });
     applySystemUpdate({ kind: "health", health: "down" });
     expect(getShellState().systemByKind.health).toEqual({ kind: "health", health: "down" });
+  });
+
+  it("resetShellState drops a pending private-reconnect hand-over (E10-S04)", () => {
+    vi.useFakeTimers();
+    try {
+      applySystemUpdate({ kind: "exchange_state", private_ws: "connecting" });
+      expect(getShellState().degraded.asserted.privateReconnect).toBe(1);
+      resetShellState();
+      const notified = vi.fn();
+      subscribeShellState(notified);
+      vi.advanceTimersByTime(PRIVATE_HANDOVER_MS);
+      expect(notified).not.toHaveBeenCalled();
+      expect(getShellState()).toBe(INITIAL_SHELL_STATE);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("resetShellState restores the frozen initial state and notifies", () => {
