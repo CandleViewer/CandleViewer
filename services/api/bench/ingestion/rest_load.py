@@ -32,6 +32,7 @@ from bench.ingestion.fixture_app import (
     requests_plan,
     write_cold_lake,
 )
+from candleviewer.observability.metrics_runtime import unfreeze_startup_heap
 
 K6_SCRIPT = Path(__file__).resolve().parents[4] / "tests" / "load" / "k6" / "ingestion_rest.js"
 #: Where `drive_k6` keeps k6's `--summary-export` when this is set (the full pack's workflow sets
@@ -221,10 +222,16 @@ def verdict(
 
 
 async def run_rest(sc: Scenario) -> budgets.Verdict:
-    if sc.p("driver") == "k6":
-        lat = await asyncio.to_thread(drive_k6, str(sc.p("k6_duration")), int(sc.p("k6_vus")))
-    else:
-        lat = await drive_inprocess(int(sc.p("iterations")), int(sc.p("concurrency")))
+    try:
+        if sc.p("driver") == "k6":
+            lat = await asyncio.to_thread(drive_k6, str(sc.p("k6_duration")), int(sc.p("k6_vus")))
+        else:
+            lat = await drive_inprocess(int(sc.p("iterations")), int(sc.p("concurrency")))
+    finally:
+        # #3641: `build_app` froze this process, and `runner all` runs two more scenarios in it
+        # (`latency_internal`, `ratelimit_headroom`). Their baselines are of an unfrozen heap, so
+        # this run ends with the freeze undone, a failed run too.
+        unfreeze_startup_heap()
     v = verdict(sc, lat, b13_report_only=os.environ.get(B13_REPORT_ONLY_ENV) == "1")
     late = [c for c in v.checks if c.note == B13_SOFT_WEEKLY and not c.passed]
     if late:  # a green weekly run still names the budget and its routes over it (#2825)

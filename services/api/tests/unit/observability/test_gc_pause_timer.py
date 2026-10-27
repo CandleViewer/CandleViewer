@@ -1,20 +1,24 @@
 """#3641: `GcPauseTimer` times each garbage collection into `cv_gc_pause_seconds{generation}` and,
 after a full one, reads the heap proxy into `cv_gc_blocks_in_use` (C-2.17: under the GIL a full
-collection on any thread stalls the event loop)."""
+collection on any thread stalls the event loop). `freeze_startup_heap` and its partner take the
+heap startup built out of those full collections."""
 
 from __future__ import annotations
 
 import gc
 import sys
 import time
+import weakref
 from collections.abc import Iterator
 
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer.observability import metrics_runtime
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE, register_r0
 from candleviewer.observability.metrics_runtime import GcPauseTimer
+from tests._gc_freeze import Cycle, Marker, is_frozen
 
 
 @pytest.fixture(autouse=True)
@@ -187,3 +191,59 @@ def test_gc_pause_timer_remove_forgets_a_pending_start(metrics: Metrics) -> None
     timer.remove()  # between the two phases of a collection
     timer("stop", _stop(2))  # an install that lands mid-collection must not pair with it
     assert _full_collections(metrics) == 0
+
+
+def test_freeze_startup_heap_freezes_and_logs_what_it_froze(clean_freeze: None) -> None:
+    marker = Marker()
+    gc.collect()
+    own = gc.get_freeze_count()  # the few hundred immortal objects CPython keeps there itself
+    with capture_logs() as logs:
+        metrics_runtime.freeze_startup_heap(clock=iter([1.0, 1.25]).__next__)
+    assert is_frozen(marker)
+    [line] = [e for e in logs if e["event"] == "gc_startup_heap_frozen"]
+    assert (line["event"], line["log_level"], line["collect_ms"]) == (
+        "gc_startup_heap_frozen",
+        "info",
+        250.0,
+    )
+    assert line["frozen"] > own and line["blocks"] > 0
+
+
+def test_freeze_startup_heap_collects_before_it_freezes(clean_freeze: None) -> None:
+    """A cycle left behind is freed by the collection that precedes the freeze, so it is not pinned
+    in the permanent generation, where nothing frees it until the unfreeze."""
+    was_enabled = gc.isenabled()
+    gc.disable()  # so that only the freeze's own collection can free it
+    try:
+        left = weakref.ref(Cycle())  # unreachable at once, yet alive: it is a cycle
+        assert left() is not None
+        metrics_runtime.freeze_startup_heap()
+        assert left() is None
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
+def test_unfreeze_startup_heap_makes_what_was_frozen_collectable_again(clean_freeze: None) -> None:
+    marker = Marker()
+    metrics_runtime.freeze_startup_heap()
+    assert is_frozen(marker)
+    metrics_runtime.unfreeze_startup_heap()
+    assert not is_frozen(marker)
+
+
+def test_freeze_startup_heap_times_the_collection_with_the_cheap_clock() -> None:
+    defaults = metrics_runtime.freeze_startup_heap.__kwdefaults__
+    assert defaults is not None and defaults["clock"] is time.perf_counter
+
+
+def test_a_timer_installed_before_the_freeze_times_its_collection(
+    metrics: Metrics, clean_freeze: None
+) -> None:
+    """Why the lifespan freezes before the metrics runtime starts: a timer already in
+    `gc.callbacks` counts the forced collection as a full one (the lifespan's own test pins the
+    order)."""
+    timer = _real(metrics)
+    timer.install()
+    metrics_runtime.freeze_startup_heap()
+    assert _full_collections(metrics) >= 1

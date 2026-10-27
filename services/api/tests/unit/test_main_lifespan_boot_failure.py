@@ -10,6 +10,10 @@ shutdown, with the same order and bounds: the steps the boot had reached, the fa
 runs; a step the boot never reached does not stop, so `WsRuntime.stop()` never waits out its grace
 for a server that never served; then `stop_all`, with the teardown's grace, stops every module in
 reverse. The exception leaves unchanged. Nothing sleeps or reads a clock: no fake suspends.
+
+The heap's freeze (#3641) is a boot call as well, the last before the metrics runtime: a failure at
+it, or at the metrics runtime after it, runs the same teardown. What a failed boot leaves frozen is
+`test_main_lifespan.py`'s to check: the root conftest's stub makes the freeze a no-op here.
 """
 
 from __future__ import annotations
@@ -36,7 +40,7 @@ from tests.unit.test_main_lifespan_teardown_isolation import (
 
 #: Every call the boot makes after `start_all`, in the lifespan's order: `<object>.<method>`, the
 #: object a step or the metrics facade, or the name of one of `main`'s own (the two boot records,
-#: the metrics runtime's class).
+#: the heap's freeze, the metrics runtime's class). The metrics runtime starts after the freeze.
 _BOOT = (
     "audit_test_clock_boot",
     "account_fixture_record",
@@ -66,10 +70,11 @@ _BOOT = (
     "health_registry.start",
     "account_health.start",
     "oms_runtime.start",
+    "ws_runtime.start",
+    "freeze_startup_heap",
     "metrics_facade.add_process_collectors",
     "MetricsRuntime",
     "metrics_runtime.start",
-    "ws_runtime.start",
 )
 #: The teardown steps the lifespan never starts: it stops them however far the boot got.
 _ALWAYS = frozenset(
@@ -164,7 +169,8 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
 
 
 @pytest.mark.parametrize(
-    "call", ["audit_test_clock_boot", "bars_runtime.start", "ws_runtime.start"]
+    "call",
+    ["audit_test_clock_boot", "bars_runtime.start", "ws_runtime.start", "metrics_runtime.start"],
 )
 @pytest.mark.parametrize(
     "make",
@@ -174,9 +180,9 @@ async def test_lifespan_boot_failing_after_start_all_stops_what_started_then_rer
 async def test_lifespan_boot_cancelled_or_exiting_after_start_all_stops_what_started_then_reraises(
     monkeypatch: pytest.MonkeyPatch, call: str, make: Callable[[], BaseException]
 ) -> None:
-    """A cancellation or a process exit at the first, an awaited and the last boot call: never
-    swallowed, it leaves the lifespan, the same object, once the same teardown has run. Caught
-    only as an `Exception`, it skips the teardown, and that fails."""
+    """A cancellation or a process exit at the first, an awaited, the last before the freeze and
+    the last boot call: never swallowed, it leaves the lifespan, the same object, once the same
+    teardown has run. Caught only as an `Exception`, it skips the teardown, and that fails."""
     stopped = await _stopped_after(call, monkeypatch)
     ran: list[str] = []
     app, steps = _app(ran, monkeypatch)
