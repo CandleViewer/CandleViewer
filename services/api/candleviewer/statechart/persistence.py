@@ -257,6 +257,21 @@ def _is_settled(interp: Interpreter[Any]) -> bool:
     return bool(descent.is_set())
 
 
+def quiescent(interp: Interpreter[Any]) -> bool:
+    """Settled (`_is_settled`), with no event accepted and not yet taken in either lane
+    (`queue_depth`): no step is open or waiting, so an event sent now is the next one the
+    interpreter takes, unless an engine completion (a running invoke's result) lands first. The
+    OMS facade judges an exit on it (#4711), here beside `_is_settled`, as this module is the one
+    place that couples to the runtime's internals. The facade takes it as settled only once two
+    looks, a pass of the event loop apart, agree, and that rule rests on two properties of the
+    pinned runtime: its run loop yields at most once (one amortised `sleep(0)`) between taking
+    an event from its inbox and raising its step flag, and it arms the replay of deferred events
+    synchronously once a step ends. A move of the runtime's pin re-reads its `_next_event` for
+    both, and re-runs `tests/unit/oms/test_exit_settled_state.py` too, beside the contract
+    suite."""
+    return _is_settled(interp) and interp.queue_depth == 0
+
+
 def _record_lane(record: dict[str, Any]) -> JournalLane:
     """The lane a record names, as the library's own restore reads it (CV-C42)."""
     return "priority" if record.get("lane") == "priority" else "inbox"

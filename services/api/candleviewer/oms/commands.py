@@ -134,7 +134,8 @@ role and the correlation id, the port's own refusals the correlation id (C-2.9, 
 spends only a registration whose command the facade took (`take_exit`, #4662), so a call that
 comes after its exit ended never names another request whose command waits at the facade. A call
 that finds none (a registration dropped past `max_watches`, or forgotten by an exit service that
-ended first, `oms.exits`) names no request.
+ended first, `oms.exits`) names no request, and says so: each of its records is marked
+`attribution: unregistered`, and it is logged once (`oms_exit_call_unregistered`, SEC-4662-01).
 """
 
 from __future__ import annotations
@@ -368,6 +369,10 @@ _MODIFIED: Final[Mapping[StopKind, str]] = {"stop_loss": SL_MODIFIED, "take_prof
 _AMENDABLE: Final = ("qty", *b01.TERMS)
 #: What a read before the amend's send raises when the store or the gate cannot answer.
 _UNREAD: Final = (TimeoutError, StorageError, OrderStoreError, StoreUnavailable)
+#: The detail of each record B1's exit call writes when it finds no registration (its exit ended
+#: first, so it names no request), and what that call logs (SEC-4662-01).
+UNREGISTERED: Final[Mapping[str, str]] = {"attribution": "unregistered"}
+EXIT_CALL_UNREGISTERED: Final = "oms_exit_call_unregistered"
 #: [LANE-26]: a resumed create that ends unsent, its record's action and reason, and its alert.
 RESEND_REFUSED: Final = "oms.resend_refused"
 EXPIRED_UNSENT_REASON: Final = "expired_unsent"
@@ -1237,12 +1242,16 @@ class OmsCommandPort:
         took (`take_exit`, #4662), never one whose command still waits at the facade or was
         refused there. The facade takes the order's commands one at a time and refuses another
         exit of the order while one's step stands, and B1 calls only while a step stands, so the
-        call finds its own step's registration, or none once that exit forgot it (#4643)."""
+        call finds its own step's registration, or none once that exit forgot it (#4643). A call
+        that finds none is logged once with the order's id (`EXIT_CALL_UNREGISTERED`), and its
+        records say so (`UNREGISTERED`, SEC-4662-01)."""
         wanted = (order_id, kind)
         taken = (w for w, took in self._exits.items() if took and (w.order_id, w.kind) == wanted)
         watch = next(taken, None)
         if watch is not None:
             del self._exits[watch]
+        else:
+            _log().warning(EXIT_CALL_UNREGISTERED, order_id=str(order_id), kind=kind)
         return watch
 
     async def cancel(self, command: b01.Command) -> Mapping[str, Any]:
@@ -1349,6 +1358,7 @@ class OmsCommandPort:
 
     async def _amend(self, command: b01.Command, watch: ExitWatch | None) -> dict[str, Any]:
         actor, rid = (None, None) if watch is None else (watch.actor, watch.request_id)
+        unnamed: Mapping[str, str] = UNREGISTERED if watch is None else {}  # SEC-4662-01
         by = self._deadline(self._amend_timeout_s)  # all of the amend, inside B1's own bound
         account_id = _uuid(command.order.get("account_id"))
         order_id = _uuid(command.order.get("order_id"))
@@ -1357,12 +1367,13 @@ class OmsCommandPort:
             row = await self._bounded(self._orders.get(account_id, order_id), by=by)
         except _UNREAD as exc:
             return await self._unread(
-                order_id, account_id, {"order_link_id": link}, exc, by=by, request_id=rid
-            )
+                order_id, account_id, {"order_link_id": link, **unnamed}, exc, by=by,
+                request_id=rid,
+            )  # fmt: skip
         if row is None:
             raise ValueError("no stored order of the account has the command's id")
         _check_names(command, row)
-        detail = {"order_link_id": row.order_link_id, "symbol": row.symbol}
+        detail = {"order_link_id": row.order_link_id, "symbol": row.symbol, **unnamed}
         detail["position_idx"] = str(row.position_idx)
         requested = _amend_terms(command.terms)
         if requested is None:  # as B1 refuses terms it could not stage: nothing is sent

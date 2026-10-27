@@ -34,6 +34,7 @@ from xstate_statemachine.events import persist_event
 
 from candleviewer.statechart import build, persistence
 from candleviewer.statechart.bindings import load_binding_maps
+from candleviewer.statechart.factory import default_clock
 from candleviewer.statechart.persistence import (
     JournalConflict,
     JournalEntry,
@@ -45,7 +46,7 @@ from candleviewer.statechart.persistence import (
     stable_send_id,
 )
 from candleviewer.statechart.registry import Registry
-from tests.xstate_contract.persist_fixtures import binding_persist  # noqa: F401
+from tests.xstate_contract.persist_fixtures import binding_persist
 from tests.xstate_contract.persist_fixtures.journals import JOURNALS, JournalSubject
 
 _FIXTURES = Path(__file__).resolve().parent / "persist_fixtures"
@@ -519,6 +520,54 @@ def test_settled_means_running_no_step_open_and_a_finished_descent_or_a_restore(
         _step_in_flight=lambda: in_step,
     )
     assert persistence._is_settled(cast(Any, interp)) is settled
+
+
+@pytest.mark.parametrize(
+    ("in_step", "waiting", "quiescent"),
+    [(False, 0, True), (True, 0, False), (False, 1, False)],
+    ids=["at rest", "mid-step", "an event not yet taken"],
+)
+def test_quiescent_means_settled_with_no_event_waiting_in_either_lane(
+    in_step: bool, waiting: int, quiescent: bool
+) -> None:
+    """#4711: quiescent is settled (`_is_settled`) with no event accepted and not yet taken in
+    either lane (`queue_depth`), what the OMS facade waits for before it judges an exit."""
+    interp = SimpleNamespace(
+        is_running=True,
+        _descent_done=_Descent(True),
+        restored_from_snapshot=False,
+        _step_in_flight=lambda: in_step,
+        queue_depth=waiting,
+    )
+    assert persistence.quiescent(cast(Any, interp)) is quiescent
+
+
+async def test_quiescent_on_the_pinned_runtime_at_rest_only(
+    registry: Registry, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#4711 on the runtime itself, built through the factory: quiescent at rest, and not with an
+    event accepted and not yet taken, nor with a step open, nor once stopped. A move of the pin
+    re-runs this and `tests/unit/oms/test_exit_settled_state.py`."""
+    began, go = asyncio.Event(), asyncio.Event()
+
+    async def held(_interp: Any, _context: dict[str, Any], _event: Any, _action: Any) -> None:
+        began.set()
+        await go.wait()  # the step stays open until `go`
+
+    monkeypatch.setitem(binding_persist.ACTIONS, "record", held)
+    built = await build(_KIND, clock=default_clock(), lane="platform", registry=registry)
+    interp = built.interpreter
+    seen = [persistence.quiescent(interp)]
+    taken = interp.send("PING", wait=True)  # its receipt answers once the step has run
+    seen.append(persistence.quiescent(interp))
+    await asyncio.wait_for(began.wait(), 5)  # a bound on the test, never a time
+    seen.append(persistence.quiescent(interp))
+    go.set()
+    await asyncio.wait_for(taken, 5)
+    seen.append(persistence.quiescent(interp))
+    await interp.stop()
+    seen.append(persistence.quiescent(interp))
+    assert seen == [True, False, False, True, False]
 
 
 # --- E50-T63 (#3898 carry): every persist() exception is a P1 page, best effort ---------------
