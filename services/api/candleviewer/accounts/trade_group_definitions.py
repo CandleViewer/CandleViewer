@@ -193,18 +193,23 @@ _REFUSALS: Final[Mapping[str, tuple[type[AccountsError], str]]] = {
     "trade_group_definition_members_exchange_account_id_fkey": (AccountNotFoundError, "account"),
     ACCOUNT_NOT_LIVE: (AccountNotFoundError, "account"),
 }
+#: The names a `DefinitionRuleError` carries, as `DEFINITION_CONFLICTS` are a conflict's.
+_RULES: Final = port.DEFINITION_RULES | {ACCOUNT_NOT_LIVE}
 
 
 def definition_error(exc: port.DefinitionStoreError) -> AccountsError:
     """The accounts error a store error answers as, chosen by its kind and name alone: a fresh one
-    that holds a name and nothing of `exc` (C-12.6). A name the store never uses fails closed."""
+    that holds a name and nothing of `exc` (C-12.6). A name the store never uses, and a name that
+    belongs to the other kind of store error, fail closed."""
     match exc:
         case port.DefinitionScopeDeniedError():
             return AccountScopeDeniedError()
         case port.DefinitionStaleError():
             return AccountVersionConflictError()
-        case port.DefinitionConflictError(constraint=name) | port.DefinitionRuleError(rule=name):
-            if name in _REFUSALS:
-                kind, held = _REFUSALS[name]
-                return kind(held)
+        case port.DefinitionConflictError(constraint=name) if name in port.DEFINITION_CONFLICTS:
+            kind, held = _REFUSALS[name]
+            return kind(held)
+        case port.DefinitionRuleError(rule=name) if name in _RULES:
+            kind, held = _REFUSALS[name]
+            return kind(held)
     return AccountsError("store error")

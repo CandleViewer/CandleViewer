@@ -83,9 +83,9 @@ def _scope(*allowed: str, every: bool = False, denied: tuple[str, ...] = ()) -> 
     return SymbolScope(every, SymbolEntries.of(allowed), SymbolEntries.of(denied))
 
 
-def _record(*members: port.MemberRow) -> port.DefinitionRecord:
+def _record(*members: port.MemberRow, created_at: datetime = _CREATED) -> port.DefinitionRecord:
     owner = UUID(int=42)
-    row = port.DefinitionRow(_ID, "Core3", "demo", owner, owner, _CREATED, _UPDATED)
+    row = port.DefinitionRow(_ID, "Core3", "demo", owner, owner, created_at, _UPDATED)
     return port.DefinitionRecord(row, members)
 
 
@@ -94,7 +94,9 @@ def _shown(error: Exception) -> tuple[type[Exception], tuple[Any, ...], dict[str
 
 
 def test_a_definition_holds_one_to_twenty_members() -> None:
-    """SCR-062 (at least one) and SR-E28-17 (at most 20): the contract's bounds, as constants."""
+    """SCR-062 (at least one) and SR-E28-17 (at most 20): the contract's bounds, as constants. A
+    member is the contract's closed, frozen shape: a lax switch and an extra key are refused, and
+    a field cannot be assigned."""
     bounds = TradeGroupDefinitionInput.model_json_schema()["properties"]["members"]
     assert (bounds["minItems"], bounds["maxItems"]) == (1, MAX_MEMBERS) == (1, 20)
     many = [AccountId(UUID(int=n)) for n in range(1, MAX_MEMBERS + 2)]
@@ -103,6 +105,12 @@ def test_a_definition_holds_one_to_twenty_members() -> None:
     for accounts in ([], many):
         with pytest.raises(ValidationError):
             _definition(*accounts)
+    for raw in ({"enabled": "yes"}, {"note": "x"}):  # `StrictBool`; `extra="forbid"`
+        with pytest.raises(ValidationError):
+            DefinitionMember.model_validate({"account_id": A} | raw)
+    member = DefinitionMember(account_id=A)
+    with pytest.raises(ValidationError):  # `frozen`
+        member.enabled = False
 
 
 def test_a_repeated_account_names_its_index() -> None:
@@ -113,6 +121,12 @@ def test_a_repeated_account_names_its_index() -> None:
             _definition(*accounts, off=frozenset(off))
         assert isinstance(repeated.value, AccountRuleError)
         assert (repeated.value.index, repeated.value.args) == (index, ("duplicate_account",))
+    enabled = DefinitionMember(account_id=A)
+    disabled = DefinitionMember(account_id=A, enabled=False)
+    for pair in ((enabled, disabled), (disabled, enabled)):  # a repeat with the other switch
+        with pytest.raises(DuplicateMember) as switched:
+            DefinitionInput(name="Core3", environment="demo", members=pair)
+        assert switched.value.index == 1
 
 
 def test_a_name_is_one_to_eighty_storable_characters() -> None:
@@ -190,7 +204,8 @@ def test_the_etag_moves_with_updated_at_and_names_no_member() -> None:
 
 def test_each_store_refusal_maps_by_name_and_carries_no_value() -> None:
     """Every name the store refuses with, and its scope and stale errors, maps to a fresh accounts
-    error that holds one name and nothing of the store error's (C-12.6); any other fails closed."""
+    error that holds one name and nothing of the store error's (C-12.6); any other fails closed,
+    and so does a name under the other kind of store error."""
     by_name: dict[str, Exception] = {
         "ux_tgd_name": AccountConflictError("ux_tgd_name"),
         "trade_group_definitions_pkey": AccountConflictError("trade_group_definitions_pkey"),
@@ -210,6 +225,8 @@ def test_each_store_refusal_maps_by_name_and_carries_no_value() -> None:
         (port.DefinitionStaleError(), AccountVersionConflictError()),
         (rule("tgd_unknown"), AccountsError("store error")),
         (port.DefinitionStoreError(), AccountsError("store error")),
+        (conflict("trg_tgdm_env"), AccountsError("store error")),  # a rule's name as a conflict
+        (rule("ux_tgd_name"), AccountsError("store error")),  # a conflict's name as a rule
     ]
     for refusal, expected in cases:
         refusal.args = (*refusal.args, _VALUE)
@@ -234,16 +251,22 @@ def test_a_stored_definition_reads_back_as_written() -> None:
 
 
 @pytest.mark.parametrize(
-    ("members", "error"),
-    [((), "ValidationError"), ((A, A), "DuplicateMember")],
-    ids=["no_member", "an_account_twice"],
+    ("members", "created_at", "error"),
+    [
+        ((), _CREATED, "ValidationError"),
+        ((A, A), _CREATED, "DuplicateMember"),
+        ((A,), _CREATED.replace(tzinfo=None), "TypeError"),
+    ],
+    ids=["no_member", "an_account_twice", "a_naive_timestamp"],
 )
-def test_an_unreadable_stored_row_fails_closed(members: tuple[UUID, ...], error: str) -> None:
-    """A row the model refuses is a schema drift: `AccountsError`, logged by id and error class
-    alone, as the fired-group facade does."""
+def test_an_unreadable_stored_row_fails_closed(
+    members: tuple[UUID, ...], created_at: datetime, error: str
+) -> None:
+    """A row the model refuses (or a time `to_us` refuses) is a schema drift: `AccountsError`,
+    logged by id and error class alone, as the fired-group facade does."""
     rows = tuple(port.MemberRow(m, True, "demo", True) for m in members)
     with structlog.testing.capture_logs() as logs, pytest.raises(AccountsError) as failed:
-        stored_definition(_record(*rows))
+        stored_definition(_record(*rows, created_at=created_at))
     assert _shown(failed.value) == _shown(AccountsError("stored trade group definition unreadable"))
     assert failed.value.__cause__ is None and failed.value.__suppress_context__
     event = "trade_group_definition.read_failed_closed"
