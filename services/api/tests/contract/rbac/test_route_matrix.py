@@ -341,7 +341,7 @@ def test_undeclared_served_route_fails_the_build(world: World) -> None:
 _REFUSAL_STATUSES: frozenset[int] = frozenset({401, 422, 501, 503})
 
 _STUB_STATUS: dict[str, int] = {
-    "POST /admin/keys/kek-rewrap": 422,  # the empty body, validated before RBAC (#2266 D2)
+    "POST /admin/keys/kek-rewrap": 422,  # the Owner's empty body (#2266 D2)
     "POST /admin/keys/audit-signing/rotate": 422,  # likewise (#889 S7)
     "PUT /admin/log-level": 501,
     "POST /auth/login": 422,
@@ -353,6 +353,17 @@ _STUB_STATUS: dict[str, int] = {
     "GET /onboarding/checklist": 501,
     "POST /onboarding/checklist/dismiss": 501,
 }
+
+#: Stub rows that authorise before they read the body (#4690): an actor its matrix row refuses
+#: gets that `403`, as the matrix says, and only the others get the stub status above.
+_RBAC_BEFORE_STUB: frozenset[str] = frozenset(
+    {"POST /admin/keys/kek-rewrap", "POST /admin/keys/audit-signing/rotate"}
+)
+
+
+def _stub_status_of(key: str, actor: str) -> int:
+    refused = key in _RBAC_BEFORE_STUB and _OPS[key]["outcomes"][actor] == "403"
+    return 403 if refused else _STUB_STATUS[key]
 
 
 def test_stub_status_table_covers_exactly_the_not_executable_rows() -> None:
@@ -378,7 +389,8 @@ def test_not_executable_rows_keep_their_stub_status_for_every_logged_in_actor(
     status as every logged-in actor, so a route that becomes reachable (or widens its permission,
     so a manager/viewer passes authorisation) fails the pack instead of hiding."""
     drifted: list[str] = []
-    for key, expected in _STUB_STATUS.items():
+    for key in _STUB_STATUS:
+        expected = _stub_status_of(key, actor)
         method, path = key.split(" ", 1)
         resp = world.client.request(
             method,
