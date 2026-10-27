@@ -3,9 +3,9 @@
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 3
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens
 and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards are PENDING.
-**Penpot:** page `10 Components — Atoms` of the CandleViewer DS file. The boards PR builds the 11 variant sets there
-(the molecules beside the atoms), exports them, adds the page id and redraws nothing in slices 1–2. Slice 5 carries
-#161's closing line.
+**Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 3 form controls` (page id
+`7761b3e4-893d-806e-8008-da8ece40d3a5`), specimen boards 05–07 (the coordinator's ruling of 2026-10-27 on #161: ten
+specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
 **Slices:** #161 ships as five design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection; slice 2 (#4290,
 `E05-D02-data-display.md`) the data display and text atoms; this slice the form controls: CMP-007 TextInput, CMP-008
 NumericStepperInput, CMP-009 Select, CMP-034 MaskedValue, CMP-040 FormField, CMP-047 DatePicker / DateRangePicker,
@@ -532,7 +532,7 @@ PR builds on page `10 Components — Atoms` and the export it adds, `docs/design
 | Value | filled, empty                                                                     | filled  |
 | Affix | none, both                                                                        | none    |
 
-_Boards PENDING: `CMP-007 · TextInput`, export `img/CMP-007-textinput.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (9 cells):**
 
@@ -614,7 +614,7 @@ dropping `size` (G7).
 | Bound | none, at-max                                                                      | none    |
 | Unit  | false, true                                                                       | false   |
 
-_Boards PENDING: `CMP-008 · NumericStepperInput`, export `img/CMP-008-numericstepperinput.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (9 cells):** the seven states of CMP-007 at Bound=none, Unit=false (the same well looks, the T2
 cell's lock leading the value; the `[−]` `[+]` glyphs turn `color.text.tertiary` there), plus **Bound=at-max** (the
@@ -681,7 +681,7 @@ Storybook adds Invalid and DisabledWithReason.
 | Value      | selected, placeholder                                                        | selected |
 | Searchable | false, true                                                                  | false    |
 
-_Boards PENDING: `CMP-009 · Select`, export `img/CMP-009-select.png`._
+_Drawn on specimen board 06 (`img/E05-D02-06-pickers-and-gates.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (9 cells):** the trigger in default, hover, focus-visible, invalid, disabled and
 disabled-with-reason (the CMP-007 looks, "sub_001" in the well and a trailing `chevron-down` in `color.text.secondary`);
@@ -757,7 +757,7 @@ option's label; Storybook adds Open, UnavailableOption and DisabledWithReason. H
 | State    | masked, revealed, expiring, copied | masked  |
 | Copyable | false, true                        | false   |
 
-_Boards PENDING: `CMP-034 · MaskedValue`, export `img/CMP-034-maskedvalue.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (4 cells):** **masked** (Copyable=false: the box with the 8-character mask and the "Show" toggle);
 **revealed** (the value in mono, "Hide" toggle, the countdown "Hides in 8 s"); **expiring** (the last 2 s: "Hides in 2
@@ -853,7 +853,7 @@ plus the box, mask and countdown tokens; Storybook adds Copyable. Held: the `aut
 | Help   | false, true                                                 | false   |
 | Marker | none, optional                                              | none    |
 
-_Boards PENDING: `CMP-040 · FormField`, export `img/CMP-040-formfield.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (8 cells):** each with a CMP-007 instance as the child. **default** ("Username" over the field);
 **invalid** (the error line: the `danger` glyph and "Enter your username.", `14:145`; the child's 2 px boundary);
@@ -923,7 +923,7 @@ error and reason tokens; Storybook adds Optional, Inline, ReadOnly and DisabledW
 | State | default, hover, focus-visible, open, invalid, disabled, disabled-with-reason, read-only | default |
 | Time  | false, true                                                                             | false   |
 
-_Boards PENDING: `CMP-047 · DatePicker`, export `img/CMP-047-datepicker.png`._
+_Drawn on specimen board 06 (`img/E05-D02-06-pickers-and-gates.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (11 cells):** at Mode=single, Time=false: the field's default, hover, focus-visible, invalid
 ("Nothing is recorded for that window.", `14:2096`), disabled, disabled-with-reason (SCR-098's range for a viewer:
@@ -1012,7 +1012,7 @@ WithTime, Invalid and DisabledWithReason. Held: `inputTimezone`, `secondaryDispl
 | ----- | ---------------------------------------------------------------------------------------------------------------- | ------- |
 | State | default, hover, focus-visible, open, loading, no-results, search-failed, invalid, disabled, disabled-with-reason | default |
 
-_Boards PENDING: `CMP-048 · Combobox`, export `img/CMP-048-combobox.png`._
+_Drawn on specimen board 06 (`img/E05-D02-06-pickers-and-gates.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (10 cells):** default, hover, focus-visible, invalid and disabled (CMP-007's looks with "BTC"
 typed); **open** (three results, the second active, its matched "BTC" in `type.ui.body-strong`); **loading** (a status
@@ -1082,7 +1082,7 @@ sortable header buttons and the focusable scroll region, and its body rows carry
 long table to one Tab stop (`05` §3.4 item 2, "200+ Tab presses"; E42-D03 §13 puts SCR-121's table, which has row
 actions, in grid mode).
 
-_Boards PENDING: `CMP-049 · Table`, export `img/CMP-049-table.png`._
+_Drawn on specimen board 07 (`img/E05-D02-07-table.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (10 cells; the ticket's Gherkin "loading, empty and error are explicitly drawn"):**
 
@@ -1193,7 +1193,7 @@ E29-D04 specifies them, and E11-D04's `fitChars` (G12).
 | State | default, hover, focus-visible, disabled | default |
 | Value | empty, filled                           | empty   |
 
-_Boards PENDING: `CMP-054 · SearchBox`, export `img/CMP-054-searchbox.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (5 cells):** default, hover, focus-visible and disabled at Value=empty (the leading `search`
 glyph and the host's placeholder); **Value=filled** ("alex", with the clear button). **Not drawn:** active, invalid
@@ -1242,7 +1242,7 @@ host's polite count, once per settled query (G17); Tokens: "inherits CMP-007" pl
 | Collapsible | false, true                                                       | false   |
 | State       | default, collapsed, errors-within, disabled, disabled-with-reason | default |
 
-_Boards PENDING: `CMP-065 · FormSection`, export `img/CMP-065-formsection.png`._
+_Drawn on specimen board 05 (`img/E05-D02-05-text-inputs.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (6 cells):** **default** ("Default SL/TP offsets", one of SCR-114's fieldsets, `14:2271`, with a
 description and two CMP-040 fields); **Collapsible=true** (expanded); **collapsed**; **errors-within** (collapsed, the
@@ -1296,7 +1296,7 @@ button, the errors opening on submit and the one notice; Tokens: `space.formsect
 | Allowed | true, false             | true    |
 | Form    | inline, tooltip, notice | inline  |
 
-_Boards PENDING: `CMP-079 · RbacGate`, export `img/CMP-079-rbacgate.png`._
+_Drawn on specimen board 06 (`img/E05-D02-06-pickers-and-gates.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Variants × States (4 cells):** **Allowed=true** (a CMP-040 field, unchanged: T1); **inline** (the same field in T2 2a:
 the T2 well with the lock leading the value, the label unchanged, the reason `rbac.view_as` "Read-only while viewing as

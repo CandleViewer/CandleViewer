@@ -3,7 +3,9 @@
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 2 of 5)
 (design PR: the owner approves under C-10.1; the coordinator reviews); text-first: the boards are PENDING and the
 boards PR completes slice 2 (§6)
-**Penpot:** page `10 Components — Atoms` (page id `a4fbc4c3-2c4d-80f4-8008-b1248b9e760f`) of the CandleViewer DS file.
+**Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 2 data display and text` (page id
+`2a1599b6-22f9-808a-8008-da8d726f1db4`), specimen boards 03–04 (the coordinator's ruling of 2026-10-27 on #161: ten
+specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
 **Slices:** #161 ships as five design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection. This slice
 covers the data display and text atoms: CMP-011 Tag, CMP-012 Badge, CMP-013 Avatar, CMP-018 Divider, CMP-020
 Typography primitives, CMP-021 Link, CMP-024 Sparkline, CMP-025 Avatar Group, CMP-030 Divider-Label, CMP-032
@@ -397,7 +399,7 @@ Slice 1's **C2** (gating props) is not one of them: it adds `disabled?/disabledR
 
 **Drawn:** 11 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d189d102ec48`.
 
-_Board `CMP-011 · Tag — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it (the estimated chip restated as CMP-227, §5 E19; the remove button takes the T2 form through CMP-002 if §5 E10 is approved) and exports `img/CMP-011-tag-chip.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (Button (the remove IconButton and the estimated chip) plus Tooltip (the estimated chip's methodology summary through CMP-016). Static chips follow no pattern: they are non-interactive text.):
 
@@ -479,7 +481,7 @@ _Board `CMP-011 · Tag — doc` PENDING (text-first merge, 2026-10-23): the boar
 
 **Drawn:** 10 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d153fe4eec00`.
 
-_Board `CMP-012 · Badge — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-012-badge-status-dot-count.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None (static indicator). A standalone count badge uses the WAI-ARIA 1.2 img role.):
 
@@ -552,7 +554,7 @@ _Board `CMP-012 · Badge — doc` PENDING (text-first merge, 2026-10-23): the bo
 
 **Drawn:** 2 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d15c412ce2b9`.
 
-_Board `CMP-013 · Avatar — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-013-avatar-profilebadge-base.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None (static image; the WAI-ARIA img role when the avatar is the only content).):
 
@@ -615,7 +617,7 @@ _Board `CMP-013 · Avatar — doc` PENDING (text-first merge, 2026-10-23): the b
 
 **Drawn:** 4 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d14b336c413c`.
 
-_Board `CMP-018 · Divider — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-018-divider.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (A non-focusable ARIA `separator`, as used inside the APG Menu/Menubar and Toolbar patterns; otherwise decorative.):
 
@@ -677,7 +679,7 @@ _Board `CMP-018 · Divider — doc` PENDING (text-first merge, 2026-10-23): the 
 
 **Drawn:** 29 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d157afaecfe3`.
 
-_Board `CMP-020 · Typography primitives — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-020-typography-primitives-text-heading-numerictext-monotext.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None. These are static text. Heading uses the ARIA `heading` role; there is no APG widget pattern.):
 
@@ -747,7 +749,7 @@ _Board `CMP-020 · Typography primitives — doc` PENDING (text-first merge, 202
 
 **Drawn:** 7 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d18bbf9079fb`.
 
-_Board `CMP-021 · Link — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it, its gated state held until §5 E27 is answered and then drawn per that ruling, and exports `img/CMP-021-link.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (Link (WAI-ARIA APG Link pattern, native `<a href>`; explicit role="link" for the disabled states, which have no href)):
 
@@ -823,7 +825,7 @@ The State=disabled-with-reason, `locked` and `reason` rows, and the keyboard tab
 
 **Drawn:** 6 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d17f976e0a2b`.
 
-_Board `CMP-024 · Sparkline — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-024-sparkline.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None. A static graphic (ARIA `img`), not an APG widget.):
 
@@ -883,7 +885,7 @@ _Board `CMP-024 · Sparkline — doc` PENDING (text-first merge, 2026-10-23): th
 
 **Drawn:** 2 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d167bfdeca91`.
 
-_Board `CMP-025 · Avatar Group — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-025-avatar-group-stack.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None (static image summary using the WAI-ARIA img role).):
 
@@ -949,7 +951,7 @@ _Board `CMP-025 · Avatar Group — doc` PENDING (text-first merge, 2026-10-23):
 
 **Drawn:** 1 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1747940818b`.
 
-_Board `CMP-030 · Divider-Label — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-030-divider-label.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None. A non-focusable ARIA `separator` named by its visible label; no APG widget pattern.):
 
@@ -1012,7 +1014,7 @@ _Board `CMP-030 · Divider-Label — doc` PENDING (text-first merge, 2026-10-23)
 
 **Drawn:** 3 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d199080bddec`.
 
-_Board `CMP-032 · Confidence Dots — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-032-rating-confidence-dots.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None. This is static text plus a decorative graphic, not the APG radio or slider 'rating' input.):
 
@@ -1076,7 +1078,7 @@ _Board `CMP-032 · Confidence Dots — doc` PENDING (text-first merge, 2026-10-2
 
 **Drawn:** 4 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1946e70bab8`.
 
-_Board `CMP-033 · CopyButton — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-033-copybutton.png` here._
+_Drawn on specimen board 04 (`img/E05-D02-04-text-and-dividers.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (Button (WAI-ARIA APG Button pattern) + status message (polite live region, WCAG 4.1.3)):
 
@@ -1145,7 +1147,7 @@ _Board `CMP-033 · CopyButton — doc` PENDING (text-first merge, 2026-10-23): t
 
 **Drawn:** 3 variant(s) per the matrix rule; Penpot variant set `17279edf-22b9-80e9-8008-d1677c770364`.
 
-_Board `CMP-037 · SwatchLegendItem — doc` PENDING (text-first merge, 2026-10-23): the boards PR redraws it and exports `img/CMP-037-swatchlegenditem.png` here._
+_Drawn on specimen board 03 (`img/E05-D02-03-tags-badges-avatars.png`); see [E05-D02-boards.md](E05-D02-boards.md)._
 
 **Keyboard** (None. A static list (ul/li) inside an ARIA `group` named by the parent legend; no APG widget pattern.):
 
