@@ -628,6 +628,34 @@ async def test_the_router_and_cancel_all_share_the_one_fold_port_over_the_lanes_
         assert [name for name, _ in parts.closers] == CLOSERS
 
 
+@pytest.mark.parametrize("tickers", [False, True], ids=["catalogue", "catalogue-and-tickers"])
+async def test_the_lock_is_released_last_when_an_exchange_feed_composes_a_catalogue(
+    tickers: bool,
+) -> None:
+    """L2b-2's lock is released by the stop's last closer, after the heartbeat's cancel, also on a
+    process whose exchange feed composes the instrument catalogue (S4-S-d's `tier_requests`
+    bridge) and the tickers (`ticker_demand`): each lands before the heartbeat, never after the
+    lock, so no watchdog tick reads the released lock as lost (`oms_environment_lock_lost`). The
+    stop's log is read first, the hazard itself, then the closers by name, in full: 14 with both."""
+    world = World()
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    if tickers:
+        world.ingestion.tickers = SimpleNamespace(
+            latest=lambda _symbol: None, is_stale=lambda _symbol: False,
+            acquire=lambda _consumer, _symbol: None, release=lambda _consumer, _symbol: None,
+        )  # fmt: skip
+    async with started(world.runtime()) as runtime:
+        names = [name for name, _ in runtime._composed().closers]
+    assert world.log[-2:] == ["heartbeat.end", "lock.release"]  # no tick reads a released lock
+    # the tickers' demand after the sink, the tier requests after the pool, both before the lock
+    demand = ["ticker_demand"] if tickers else []
+    assert names == [
+        "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", *demand,
+        "trading_port", "loop_signing", "audit", "pool", "tier_requests", "heartbeat",
+        "environment_lock",
+    ]  # fmt: skip
+
+
 #: What a composed runtime has started, in order (#913 L2): the environment's lock, then the lane's
 #: own writer and sink; and what its stop closes, in order, the lock last.
 STARTED = ["lock.acquire", "audit.start", "sink.start"]
