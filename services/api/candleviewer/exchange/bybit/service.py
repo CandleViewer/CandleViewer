@@ -404,9 +404,10 @@ class ExchangeBybitService:
         start of a rotation's overlap (the consumer then subscribes with the new key). The key is
         tombstoned first, here, whether or not a registry exists yet, so every registry the
         adapter builds refuses it (RC-G8B-03). Past `KEY_CLOSE_BOUND_S` it pages and raises
-        `PrivateStreamCloseOverran` while the close runs on. Any exception means the close is not
-        done; what its caller answers and audits, and what a retry names, are 24 §14.2 rule 13's.
-        M2 refuses a destroyed key's next `auth` borrow either way."""
+        `PrivateStreamCloseOverran` (`exchange.base.errors`) while the close runs on. Any
+        exception means the close is not done; what its caller answers and audits, and what a
+        retry names, are 24 §14.2 rule 13's. M2 refuses a destroyed key's next `auth` borrow
+        either way."""
         self._tombstones.close(key_ref, reason)
         streams = self._private_streams
         return () if streams is None else await streams.close_key(key_ref, reason=reason)

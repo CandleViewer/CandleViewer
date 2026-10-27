@@ -49,7 +49,12 @@ import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment, TsUs
 from candleviewer.exchange.base.boundary import exchange_errors_total
-from candleviewer.exchange.base.errors import AuthError, ExchangeError, RateBudgetExceededError
+from candleviewer.exchange.base.errors import (
+    AuthError,
+    ExchangeError,
+    PrivateStreamCloseOverran,
+    RateBudgetExceededError,
+)
 from candleviewer.exchange.base.guards import check_key_ref, key_ref_id
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -107,7 +112,6 @@ __all__ = [
     "STATUS_SLOTS",
     "WATCHDOG_S",
     "KeyTombstones",
-    "PrivateStreamCloseOverran",
     "PrivateStreams",
     "StreamConnect",
     "StreamOpener",
@@ -204,22 +208,6 @@ class StreamOpener(Protocol):
 
 class _Closing(Exception):
     """The stream began closing while an `auth` was being signed: nothing is sent."""
-
-
-class PrivateStreamCloseOverran(TimeoutError):
-    """`close_key` passed `KEY_CLOSE_BOUND_S` with streams on the key still closing: the revoke is
-    not done, so its caller answers no success, and a retry waits for the same close, which runs
-    on meanwhile in the registry's tasks. A `TimeoutError`, so E27-S04 (#898) catches it without
-    importing the adapter (C-2.2); its text is fixed. `accounts` names the streams still closing
-    and `closed` the ones the call closed in time: together they name every stream whose close
-    the call started, and a retry names none of them, so the audit's source is both fields."""
-
-    def __init__(
-        self, accounts: tuple[AccountId, ...], *, closed: tuple[AccountId, ...] = ()
-    ) -> None:
-        super().__init__("the key's private streams are still closing")
-        self.accounts = accounts
-        self.closed = closed
 
 
 class KeyTombstones:

@@ -12,6 +12,12 @@ preserved as `__cause__` (acceptance criterion 4).
 blocks trading mode system-wide until resolved. These semantics are
 documented here, in the docstrings, so a later ticket (E29, OMS) cannot
 reinterpret them.
+
+`PrivateStreamCloseOverran`, after the taxonomy, is outside it: it is §14.2
+rule 13's revoke contract, a private stream close past its bound, not a venue
+answer, so it is a `TimeoutError` and no `ExchangeError`, raised as is and
+never mapped by the boundary. It lives here so E27-S04 catches it and reads
+its `accounts` and `closed` without importing the adapter (C-2.2).
 """
 
 from __future__ import annotations
@@ -19,6 +25,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from enum import StrEnum
 from typing import Literal
+
+from candleviewer.domain.primitives import AccountId
 
 
 class OmsErrorCode(StrEnum):
@@ -265,3 +273,21 @@ class UnknownStateError(ExchangeError):
     def __init__(self, message: str, **kwargs: object) -> None:
         kwargs.setdefault("retryable", True)
         super().__init__(message, **kwargs)  # type: ignore[arg-type]
+
+
+class PrivateStreamCloseOverran(TimeoutError):
+    """A revoke's close of the key's private streams passed its bound with streams still closing
+    (24 §14.2 rule 13): the revoke is not done, so its caller answers no success, and a retry
+    waits for the same close, which runs on meanwhile in the adapter's tasks. Outside the §8.6
+    taxonomy, as no venue answered: a `TimeoutError`, never an `ExchangeError`, and its text is
+    fixed. `accounts` names the streams still closing and `closed` the ones the call closed in
+    time: together they name every stream whose close the call started. A retry's return and its
+    `closed` name none of them; a retry that overruns again names the streams still closing in
+    its `accounts` again, so E27-S04 audits each account once across a revoke's calls."""
+
+    def __init__(
+        self, accounts: tuple[AccountId, ...], *, closed: tuple[AccountId, ...] = ()
+    ) -> None:
+        super().__init__("the key's private streams are still closing")
+        self.accounts = accounts
+        self.closed = closed

@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 from structlog.testing import capture_logs
 
-from candleviewer.exchange.base.errors import AuthError, ExchangeError
+from candleviewer.exchange.base.errors import AuthError, ExchangeError, PrivateStreamCloseOverran
 from candleviewer.exchange.base.models import AccountRef, PrivateStreamStatus
 from candleviewer.exchange.bybit import private_stream as ps
 from candleviewer.exchange.bybit.metrics import bybit_private_ws_disconnects_total
@@ -170,7 +170,7 @@ async def test_a_revoke_whose_close_overruns_pages_raises_and_still_closes() -> 
         assert revoke.done()
     with pytest.raises(TimeoutError) as overran:
         revoke.result()
-    assert type(overran.value) is ps.PrivateStreamCloseOverran  # no boundary wraps it
+    assert type(overran.value) is PrivateStreamCloseOverran  # no boundary wraps it
     assert not isinstance(overran.value, ExchangeError)
     assert (overran.value.accounts, overran.value.closed) == ((ACCOUNT_A,), ())
     assert str(overran.value) == "the key's private streams are still closing"
@@ -217,7 +217,7 @@ async def test_an_overrun_names_the_stream_it_closed_in_time_beside_the_one_stil
     await clock.advance(BOUND_S + 0.1)
     assert venue.sockets[0].closed and first.statuses()[-1] == "closed:key_revoked:1"
     assert revoke.done() and not held.closed
-    with pytest.raises(ps.PrivateStreamCloseOverran) as overran:
+    with pytest.raises(PrivateStreamCloseOverran) as overran:
         revoke.result()
     assert (overran.value.closed, overran.value.accounts) == ((ACCOUNT_A,), (ACCOUNT_B,))
     retry = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="retry")
