@@ -1,0 +1,48 @@
+/* CMP-037 SwatchLegendItem. Static; the swatch colour is data, set per item as --cv-legend-swatch. */
+.cv-legend-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  min-height: var(--size-row-height);
+}
+
+/* The 16 px size.icon swatch never scales with text; its outline keeps the zero stop visible. */
+.cv-legend-item__swatch {
+  box-sizing: border-box;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-strong);
+  background: var(--cv-legend-swatch);
+}
+
+.cv-legend-item__glyph {
+  flex: none;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-legend-item__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cv-legend-item__value {
+  flex: none;
+  margin-inline-start: auto;
+  text-align: end;
+}
+
+@media (forced-colors: active) {
+  .cv-legend-item__glyph {
+    color: CanvasText;
+  }
+
+  /* The key must match the WebGL chart, so the swatch keeps its colour, edged in CanvasText. */
+  .cv-legend-item__swatch {
+    border-color: CanvasText;
+    forced-color-adjust: none;
+  }
+}

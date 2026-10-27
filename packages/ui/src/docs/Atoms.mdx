@@ -195,6 +195,36 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | NumericText             | none (span)                  | The value as shown: "+420.00", "-420.00", or an unsigned "0.00". No `aria-label` on the span. |
 | NumericText abbreviated | none (span)                  | The visible "1.2M" is `aria-hidden`; a visually hidden "1,200,000" is read instead.           |
 
+### Divider (CMP-018) and Divider-Label (CMP-030), static separators
+
+| Keys                        | Action                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab, Arrow keys | Never focusable. In a Menu, Menubar or Toolbar, arrow-key focus movement skips the separator. |
+
+| Element               | Role      | Name                                                                          |
+| --------------------- | --------- | ----------------------------------------------------------------------------- |
+| Divider               | separator | Unnamed; `aria-orientation="vertical"` when vertical. Never inside a listbox. |
+| Divider, `decorative` | none      | Not exposed: layout only.                                                     |
+| Divider-Label rule    | separator | Its visible caption, a sibling, through `aria-labelledby` (never a child).    |
+
+### Kbd (CMP-022, static shortcut hint)
+
+| Keys | Action                                                                                                                                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. The caps are `aria-hidden`; the outer `kbd` reads "Control plus Shift plus K" once. Unbound: nothing renders. In a menu item it is hidden. |
+
+### KeyValueRow (CMP-036, a `dt` / `dd` pair inside the host's `dl`)
+
+| Keys | Action                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; a nested link or button owns its keys. A missing "—" is read as "no value" or the host's word. |
+
+### SwatchLegendItem (CMP-037, a list item of its legend's named group)
+
+| Keys | Action                                                                                                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. Read by its label and value (an abbreviation in full); the swatch and the glyph are `aria-hidden`. |
+
 ### Skeleton (CMP-015) and Skeleton-Chart (CMP-029)
 
 | Keys | Action                                                                                                     |

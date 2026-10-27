@@ -1,5 +1,5 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
-export type { SwatchLegendItemProps } from "./SwatchLegendItem.js";
+export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
@@ -10,6 +10,9 @@ export type {
   LegendConvention,
   LegendPalette,
 } from "./ColorConventionLegend.js";
+
+export { Divider, DividerLabel } from "./Divider.js";
+export type { DividerLabelProps, DividerProps } from "./Divider.js";
 
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
@@ -28,6 +31,12 @@ export type { ButtonProps } from "./Button.js";
 
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
+
+export { Kbd, kbdExpansion } from "./Kbd.js";
+export type { KbdProps } from "./Kbd.js";
+
+export { KeyValueRow } from "./KeyValueRow.js";
+export type { KeyValueRowProps } from "./KeyValueRow.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
