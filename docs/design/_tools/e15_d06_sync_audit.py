@@ -9,8 +9,13 @@ formula is re-implemented here. Nine sections, each row labelled with its source
 1. Badge geometry (the spec's D-1, PROPOSED): the sync badge per UI density (``16`` section 3: compact 24 px
    rows, comfortable 32 px) -- tile, glyph, gaps, padding and the label box sized by the shared pill-label
    width rule (per glyph class, an upper bound on Inter's advance in em), so the widths of "symbol, crosshair,
-   drawings", "symbol", the count "3", "No sync" and the letter-plus-glyph minimum are printed, never typed;
-   E15-D02 section 3's text-only minimums (36 / 75 / 205 / 34 px, quoted) beside them with the delta.
+   drawings", "symbol", the count "3" and "No sync" are printed, never typed; E15-D02
+   section 3's text-only minimums (36 / 75 / 205 / 34 px, quoted) beside them. The header is
+   E15-D03's (merged #4478; the orchestrator's ruling, lens round 2): the pill height (its
+   section 4.2.1 #7), the letter-only chip at step 6 (its D-3, D-6, section 3.6) and the kind
+   minimums (its C-18) are re-derived by loading its ``e15_d03_workspace_audit.py``, never
+   typed; the step-6 gates fail a frame, D-1 or a sentence that keeps the tile or the glyph
+   at the minimum.
 2. Popover geometry (D-3, D-4): the 440 px popover's row stack per density from the label fit
    of every switch (the label at 13 px and its consequence line at 11 px measured against the
    column or full-width box with the pill-label rule; a label never wraps, a consequence line
@@ -18,7 +23,8 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    1168x672) and the 200 % zoom viewport (640x400 CSS px) where it becomes a modal inside the
    272 px body between the 80 px TopBar and the 48 px StatusBar, capped at it less 16 px a side
    (E15-D02 D-7 and :632; never over the bars or the banner band), with one column, a sticky
-   footer and a scrolling body; the in-app text scale at 125 % and 150 %,
+   footer and a scrolling body (and under the 32 px view-as banner stand-in, E15-D02 :173, the
+   body below it); the in-app text scale at 125 % and 150 %,
    measured the same way (the rule is the measurement, not the zoom level).
 3. The measured matrix: every fg / bg pair the spec's section 12 lists x dark / light / high-contrast,
    resolved exactly as ``verify_tokens.py`` layers the themes (``themes.json``), measured with
@@ -37,7 +43,7 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    the join and leave strings carry their consequence clause.
 8. String gates on the spec and the hand-off: the one T2 rule stated once and cited from the scale-link
    section; the view-as leg first in the Save mention; no closing keyword; no local path, user name, notes
-   folder or design-tool host (generic patterns, never the words); every section-0 board row PENDING; no
+   folder or design-tool host (generic patterns, never the words); every section-0 board row drawn; no
    placeholder words; the frame names of section 0 = the state inventory = the hand-off's count; "unsync is
    not a reset" verbatim; "storage pending" on every un-stored switch; the events table complete; a lock
    glyph only on the three T2 frames (the scale link in no group, its light twin, Save under view-as); the
@@ -45,7 +51,9 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    conflict grammar on every conflict frame; the badge density pair; exits never gated; a DOM or
    ticket in a symbol-sharing group never without its provenance; an armed state never drawn
    surviving a sync symbol change (the disarm or the held alternative beside it); section 5.1
-   quotes the computed heights.
+   quotes the computed heights; section 5.3 quotes merged E15-D02 D-7 (:125) in full, both cells;
+   no analytics payload in section 14 or A-15 carries a symbol, a name or an account (E15-D02
+   :681).
 9. The counts (``--json``) the boards and the PR quote.
 10. Frame-keyed gates (8b; the A2 list): each element is required on the state-inventory rows
     that draw it, by frame id -- the letter and the `link` glyph beside every group colour; the
@@ -54,9 +62,11 @@ formula is re-implemented here. Nine sections, each row labelled with its source
     other row (A1); PROPOSED after every drawn chord that ``keymap.json`` lacks; the disarm on
     every symbol-switch frame, with no armed state surviving (BQ-16) -- neither a "stays armed"
     phrase nor the arm-state tag (`ARMED` bare, ``Armed`` bare, backticked in any case, or "reads /
-    is / held: armed"), the one form allowed being the hold inset's own "BTCUSDT · held: armed ("
-    line, exactly and only on the hold frame; the Gate-class cell scanned for every T2 form
-    except the ``T2`` word itself (the t2-frames check's); a needle counts only un-negated ("no
+    is / was / held: armed" with any separator, "an armed ticket on ETHUSDT", "the ticket
+    armed", "(armed)"), on every frame, the one form allowed being the hold inset's own "BTCUSDT
+    · held: armed (" line, exactly and only on the hold frame; the Gate-class cell scanned for
+    every T2 form except the ``T2`` word itself (the t2-frames check's), the bare word "lock"
+    included; a needle counts only un-negated ("no
     lock glyph" is not the lock glyph), and PROPOSED qualifies a chord only with no other control
     or "or" between; each frame's exits in the inventory's Exits column, all T1 and never paired
     with a gate (A3).
@@ -93,6 +103,7 @@ TOOLS = ROOT / "docs" / "design" / "_tools"
 TOKENS = ROOT / "packages" / "ui" / "tokens"
 SPEC = ROOT / "docs" / "design" / "E15" / "E15-D06.md"
 HANDOFF = ROOT / "docs" / "design" / "E15" / "E15-D06-handoff.md"
+D02 = ROOT / "docs" / "design" / "E15" / "E15-D02.md"
 KEYMAP = ROOT / "apps" / "web" / "src" / "keymap" / "keymap.json"
 MULTI = re.MULTILINE
 
@@ -133,10 +144,10 @@ REJECTED_TINT = (
 SYNC_HUE_WORD = {"a": "cyan", "b": "amber", "c": "purple"}
 
 # ---- badge geometry (spec D-1, PROPOSED) per UI density (`16` section 3) ----
+# (the pill height is E15-D03's, read by d03_header() below)
 DENSITY = {
     "compact": {
         "row": 24,
-        "badge_h": 20,
         "tile": 16,
         "glyph": 12,
         "gap": 4,
@@ -145,7 +156,6 @@ DENSITY = {
     },
     "comfortable": {
         "row": 32,
-        "badge_h": 24,
         "tile": 18,
         "glyph": 16,
         "gap": 4,
@@ -157,6 +167,40 @@ DENSITY = {
 # "estimated at 12 px Inter": the sync badge "A · 1" 36, "A · symbol" 75, a chart's three axes in words 205,
 # the provenance "via A" 34. Quoted here so the delta to the hi-fi badge is printed, never typed.
 D02_MIN = {"A · 1": 36, "A · symbol": 75, "A · symbol, crosshair, drawings": 205, "via A": 34}
+# E15-D03 (merged #4478) owns the header (the orchestrator's ruling, lens round 2): the pill
+# height (its section 4.2.1 #7, :271), the step-6 letter-only chip (its D-3 :136, D-6 :139,
+# section 3.6 :231-:233) and the kind minimums (its C-18, :923), all read at this pin and
+# re-derived by its own tool, never typed here.
+D03_PIN = "c4989493461ec6b6d22b9254633452a6362b750e"
+D03_TOOL = TOOLS / "e15_d03_workspace_audit.py"
+
+
+@functools.cache
+def d03_header() -> dict[str, Any]:
+    """E15-D03's header figures from its own tool: the row, the pill, the step-6 chip."""
+    name = "e15_d03_workspace_audit"
+    spec = importlib.util.spec_from_file_location(name, D03_TOOL)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {D03_TOOL.name}")
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[name] = m
+    spec.loader.exec_module(m)
+    t = m.load_theme("dark")
+    d02 = m.read(m.D02)
+    f = m.parent_facts(d02, m.read(m.ROOT / "CONSTITUTION.md"), m.read(m.SPEC))
+    v = m.budget(t, f, m.parent_cells(d02))[0]
+    out: dict[str, Any] = {"row": {}, "pill": {}, "letter": {}, "min": {}}
+    for dens in m.DENSITIES:
+        out["row"][dens] = int(v[f"BUDGET:hit.badge.{dens}"])
+        out["pill"][dens] = int(v[f"BUDGET:hit.badge-visual.{dens}"])
+        dom = m.header_elements(t, dens)["dom"]
+        sync = next(e for e in dom if e[0] == "sync badge")
+        out["letter"][dens] = sync[2][6]  # the chip at step 6: the letter only
+        sfx = "" if dens == "compact" else ".comfortable"
+        out["min"][dens] = {k: int(v[f"BUDGET:hdr.{k}.min{sfx}"]) for k in ("chart", "dom", "tape")}
+    return out
+
+
 # The shared pill-label width rule (per glyph class, an upper bound on Inter's advance in em).
 PILL_EM = {
     "upper": 0.84,
@@ -226,6 +270,9 @@ STATUSBAR_H = 48
 MODAL_MARGIN = 16  # kept around a popover before it becomes a modal (E15-D02 :632, a side)
 MODAL_HEADER = 32
 MODAL_FOOTER = 40
+# n-6 (boards PR): E15-D02 :173 draws SCR-124's view-as banner as a 32 px stand-in in the banner
+# band; at 200 % it stays above the scrim, so the modal takes the body below it
+BANNER_H = 32
 TEXT_SCALES = (125, 150)  # the in-app text scale steps the spec measures
 
 # ---- fixture prices (E15-D02 section 0: BTCUSDT 64,011.0; ETHUSDT 2,412.5; SOLUSDT 142.30) ----
@@ -607,8 +654,10 @@ def rows_of(block: str) -> list[list[str]]:
 
 # ---------------------------------------------------------------- 1. badge geometry --------------------------
 def badge_report() -> dict[str, Any]:
-    out: dict[str, Any] = {"densities": {}, "d02_minimums": dict(D02_MIN)}
-    for dens, g in DENSITY.items():
+    d3 = d03_header()
+    out: dict[str, Any] = {"densities": {}, "d02_minimums": dict(D02_MIN), "d03": d3}
+    for dens, g0 in DENSITY.items():
+        g = {**g0, "badge_h": d3["pill"][dens]}  # E15-D03 section 4.2.1 #7 (:271)
         fixed = (
             g["pad_x"] + g["tile"] + g["gap"] + g["glyph"] + g["pad_x"]
         )  # letter tile + glyph, no words
@@ -619,7 +668,7 @@ def badge_report() -> dict[str, Any]:
                 widths[key] = g["pad_x"] + g["glyph"] + g["gap"] + lw + g["pad_x"]
             else:
                 widths[key] = fixed + g["gap"] + lw
-        widths["letter_glyph"] = fixed
+        widths["letter"] = d3["letter"][dens]  # step 6: E15-D03 D-6's chip, the letter only
         out["densities"][dens] = {
             **g,
             "label_w": {k: label_w(v, g["text"]) for k, v in BADGE_LABELS.items()},
@@ -628,11 +677,10 @@ def badge_report() -> dict[str, Any]:
         }
     c = out["densities"]["compact"]["width"]
     out["delta_vs_d02"] = {
-        "letter_glyph_vs_A·1": c["letter_glyph"] - D02_MIN["A · 1"],
         "one_vs_A·symbol": c["one"] - D02_MIN["A · symbol"],
         "full_vs_three_axes": c["full"] - D02_MIN["A · symbol, crosshair, drawings"],
     }
-    out["kind_minimum_delta"] = max(0, c["letter_glyph"] - D02_MIN["A · 1"])
+    out["minimums"] = d3["min"]  # E15-D03 C-18 (:923): the badge at step 6 adds nothing to them
     return out
 
 
@@ -780,6 +828,11 @@ def popover_report(switches: Switches = SWITCHES) -> dict[str, Any]:
         "header": MODAL_HEADER,
         "footer": MODAL_FOOTER,
         "switch_row": modal["compact"]["switch_rows"][0]["px"],
+        "modal_box": modal["compact"]["boxes"]["full"],
+        "banner": BANNER_H,
+        "below_banner": between - BANNER_H,
+        "modal_h_banner": between - BANNER_H - 2 * MODAL_MARGIN,
+        "visible_body_banner": between - BANNER_H - 2 * MODAL_MARGIN - MODAL_HEADER - MODAL_FOOTER,
     }
     # the in-app text scale: the boxes stay, the text grows, the lines wrap more; a popover while it
     # fits the 1280x800 canvas
@@ -1105,11 +1158,31 @@ ARMED_SURVIVES = re.compile(
 # the board script's arm: "ARMED") on a symbol-switch frame is an armed state surviving the sync
 # change: bare `ARMED` or `Armed`, backticked in any case, or a short phrase ("reads armed", "is
 # armed", "held: armed"; m-6). M-1r: the one form allowed is the hold inset's own old-symbol line,
-# exact and case-sensitive, once, on the hold frame only.
+# exact and case-sensitive, once, on the hold frame only. m-9 (boards PR): any separator after
+# the verb (quotes, a colon, emphasis, a parenthesis) and "was / were"; an armed control on a
+# symbol ("an armed ticket on ETHUSDT", "the ticket armed on ETHUSDT"); a control named armed
+# ("the ticket armed and following"); and "(armed)". m-7: scanned on every frame, not only the
+# symbol-switch ones -- an armed DOM carried into any frame after a sync change is the same defect.
 ARMED_TAG = re.compile(
-    r"(?i:`armed`)|\bARMED\b|\bArmed\b|(?i:\b(?:reads?|is|are|shows?|now|held:)\s+`?armed\b)"
+    r"(?i:`armed`)|\bARMED\b|\bArmed\b"
+    r"|(?i:\b(?:reads?|is|are|was|were|shows?|now|held:)[\s\"'\u201c\u201d:*`(]+armed\b)"
+    r"|(?i:\barmed (?:\w+ )?on [A-Z]{3,}USDT\b)"
+    r"|(?i:\b(?:DOM|ticket|chart|order|panel)s? armed\b)"
+    r"|(?i:\(\s*armed\s*\))"
 )
 HOLD_INSET = ("SCR-023/symbol-switch-hold", "BTCUSDT · held: armed (")
+
+
+def armed_hit(name: str, text: str) -> tuple[str, str] | None:
+    """The frame's armed-state FAIL ('armed-tag' or 'armed') and its clause, on any frame (m-7)."""
+    scan = text.replace(HOLD_INSET[1], "", 1) if name == HOLD_INSET[0] else text
+    tag = ARMED_TAG.search(scan)
+    if tag:
+        return "armed-tag", clause_at(scan, tag.start())
+    hit = ARMED_SURVIVES.search(scan)
+    return ("armed", clause_at(scan, hit.start())) if hit else None
+
+
 # m-2: a gate needle counts only where it is not negated ("no lock glyph" is not the lock glyph)
 NEGATED = re.compile(r"(?:\bno|\bnot|\bwithout|\bnever)\W+(?:\w+\W+)?$", re.IGNORECASE)
 
@@ -1226,6 +1299,8 @@ T2_FORM = re.compile(
     r"lock glyph|`lock`|\bpadlock\b|CMP-079|disabledReason|rbac\.[a-z_]+|\bT2\b|aria-disabled"
 )
 T2_FORM_ALLOWED = ("not a T2", "no lock", "no CMP-079")
+PAYLOAD_BANNED = re.compile(r"symbol|name|account", re.IGNORECASE)
+BARE_LOCK = re.compile(r"(?<![`\w])lock\b(?! glyph)(?!`)", re.IGNORECASE)
 CHORD = re.compile(
     r"(?:Ctrl|Alt|Shift|Meta|Cmd)\+[A-Za-z0-9←→↑↓]+(?:\+[A-Za-z0-9←→↑↓]+)*(?:\.\.\d)?"
 )
@@ -1298,25 +1373,23 @@ def frame_gates(spec: str, bindings: set[str]) -> list[str]:
                 if tok_ in ("lock glyph", "CMP-079"):
                     continue  # the over-conversion check's (one FAIL per element)
                 fails.append(f"t2-form: frame {name} draws '{tok_}' outside the three T2 frames")
+            # n-8 (boards PR): the bare word "lock" in the Gate-class cell (the backticked form,
+            # "lock glyph" and "padlock" are the scan's above; "no lock" is an absence)
+            gate_cell = r[3].replace("no lock", "") if len(r) > 3 else ""
+            if BARE_LOCK.search(gate_cell):
+                fails.append(f"t2-form: frame {name} draws 'lock' in its Gate-class cell")
         # A2-5 (BQ-16): the disarm on every symbol-switch frame; no armed state survives
         for label, needle in DISARM.get(name, ()):
             if needle not in text:
                 fails.append(f"disarm: frame {name} lacks {label}")
-        surviving = (
-            name in DISARM
-            or "symbol-switch" in name
-            or "ETHUSDT · symbol set by sync group" in text
-        )
         if "symbol-switch" in name and name not in DISARM:
             fails.append(f"disarm: frame {name} is a symbol-switch frame the tool does not key")
-        scan = text.replace(HOLD_INSET[1], "", 1) if name == HOLD_INSET[0] else text
-        tag = ARMED_TAG.search(scan) if surviving else None
-        if tag:
-            snip = clause_at(scan, tag.start())
+        hit_ = armed_hit(name, text)
+        if hit_ and hit_[0] == "armed-tag":
             fails.append(
-                f"armed-tag: frame {name} draws an armed tag after the sync change ('{snip}')"
+                f"armed-tag: frame {name} draws an armed tag after the sync change ('{hit_[1]}')"
             )
-        elif surviving and ARMED_SURVIVES.search(scan):
+        elif hit_:
             fails.append(f"armed: frame {name} draws an armed state surviving the sync change")
         for label, needle in DIALOG_CARRIERS.get(name, ()):
             if needle not in text:
@@ -1445,14 +1518,14 @@ def gates(
     # exits never gated
     if not re.search(r"Esc[^.|]*never (?:gated|locked)", spec):
         fails.append("exits: the spec does not state that Esc is never gated")
-    # section 0: every board row PENDING, frames named there = the state inventory = the hand-off's count
+    # section 0: every board row drawn, frames named there = the state inventory = the hand-off's count
     boards = section(spec, "## 0. ", "## 1. ")
     board_rows = [r for r in rows_of(boards) if r and re.fullmatch(r"\d\d", r[0])]
     if not board_rows:
         fails.append("boards: no board rows in section 0")
     for r in board_rows:
-        if "PENDING" not in r[-1]:
-            fails.append("boards: a section-0 board row is not PENDING")
+        if "drawn" not in r[-1]:
+            fails.append("boards: a section-0 board row is not drawn")
             break
     f0, finv = frame_names(boards), {r[0].strip("`") for r in inventory_rows(spec)}
     if f0 != finv:
@@ -1501,10 +1574,15 @@ def gates(
             )
         # F-5 / BQ-16: no frame keeps an ARMED state after a symbol change made by sync — armed
         # appears only beside the disarm it leads to, or as the held alternative that keeps its own
-        # symbol
-        if re.search(r"(?<!dis)\barmed\b", text, re.IGNORECASE) and not (
-            re.search(r"disarm", text, re.IGNORECASE)
-            or re.search(r"held: armed \((?:BTC|ETH|SOL)USDT|held", text)
+        # symbol; the frame-keyed armed-tag / armed gate reports the tag and phrase forms (m-7), so
+        # this one only catches a bare lowercase "armed" with no disarm or hold beside it
+        if (
+            re.search(r"(?<!dis)\barmed\b", text, re.IGNORECASE)
+            and not (
+                re.search(r"disarm", text, re.IGNORECASE)
+                or re.search(r"held: armed \((?:BTC|ETH|SOL)USDT|held", text)
+            )
+            and armed_hit(name, " | ".join(r)) is None
         ):
             fails.append(f"armed: frame {name} names an armed state without the disarm or the hold")
     # the badge density pair (section 4)
@@ -1597,8 +1675,54 @@ def gates(
     ]
     if unmarked:
         fails.append(f"tokens: {', '.join(unmarked)} not marked PROPOSED on their rows")
+    # m-8 (boards PR): section 5.3 quotes merged E15-D02 D-7 (:125) in full, both cells verbatim
+    d7 = next(r for r in rows_of(read(D02)) if r and r[0] == "D-7")
+    sec53 = section(spec, "### 5.3 ", "## 6. ")
+    for label, cell in (("decision", d7[1]), ("violated-when", d7[2])):
+        if f'"{cell}"' not in sec53:
+            fails.append(f"d7-quote: section 5.3 does not quote E15-D02 D-7's {label} cell in full")
+    # m-8: an analytics payload never carries a symbol, a name or an account (E15-D02 :681; C-19)
+    a15 = " | ".join(
+        " | ".join(r) for r in rows_of(section(spec, "## 13. ", "## 14. ")) if r[:1] == ["A-15"]
+    )
+    for where, body in (("section 14", section(spec, "## 14. ", "## 15. ")), ("A-15", a15)):
+        for ev, props in re.findall(r"`([a-z_.]+)\{([^}]*)\}`", body):
+            bad = [q.strip() for q in props.split(",") if PAYLOAD_BANNED.search(q)]
+            if bad:
+                fails.append(f"payload: {where}'s {ev} carries {', '.join(bad)}")
+    fails.extend(step6_gates(spec, handoff))
     fails.extend(frame_gates(spec, bindings))
     fails.extend(number_gates(spec, handoff))
+    return fails
+
+
+# E15-D03 D-3 (:136) / D-6 (:139) / section 3.6 (:231-:233), the orchestrator's ruling (lens
+# round 2): at step 6 the badge is the letter only; the tile, its hue edge and the glyph fold
+# away. Any sentence that keeps them at the minimum is a defect, as is a narrow-steps frame or
+# a D-1 without the letter-only step.
+STEP6 = "letter only at step 6"
+STEP6_KEPT = re.compile(
+    r"tile and the glyph never collapse|tile \+ glyph only|letter-and-glyph minimum"
+    r"|tile \+ glyph minimum|nothing collapses the tile or the glyph|tile \+ glyph \(narrow\)"
+)
+
+
+def step6_gates(spec: str, handoff: str) -> list[str]:
+    fails: list[str] = []
+    row = next(
+        (r for r in inventory_rows(spec) if r[0].strip("`") == "CMP-082/badge-narrow-steps"), []
+    )
+    if STEP6 not in " | ".join(row):
+        fails.append("step 6: frame CMP-082/badge-narrow-steps does not draw the letter-only chip")
+    d1 = next((r for r in rows_of(section(spec, "### 3.1 ", "### 3.2 ")) if r[:1] == ["D-1"]), [])
+    if STEP6 not in " | ".join(d1):
+        fails.append("step 6: D-1 does not fold the badge to its letter at step 6")
+    for where, text in (("spec", spec), ("hand-off", handoff)):
+        hit = STEP6_KEPT.search(text)
+        if hit:
+            fails.append(
+                f"step 6: the {where} keeps the tile or the glyph at the minimum ('{hit.group(0)}')"
+            )
     return fails
 
 
@@ -1681,6 +1805,11 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "zoom200_modal_w": pop["zoom200"]["modal_w"],
         "zoom200_modal_h": pop["zoom200"]["modal_h"],
         "zoom200_switch_row": pop["zoom200"]["switch_row"],
+        "modal_box": pop["zoom200"]["modal_box"],
+        "zoom200_banner": pop["zoom200"]["banner"],
+        "zoom200_below_banner": pop["zoom200"]["below_banner"],
+        "zoom200_modal_h_banner": pop["zoom200"]["modal_h_banner"],
+        "zoom200_visible_body_banner": pop["zoom200"]["visible_body_banner"],
         "switch_row_column_compact": pop["switch_rows"]["compact"]["column"],
         "switch_row_full_compact": pop["switch_rows"]["compact"]["full"],
         "switch_row_column_comfortable": pop["switch_rows"]["comfortable"]["column"],
@@ -1722,23 +1851,19 @@ def build_markers(spec: str, handoff: str) -> dict[str, Any]:
         "badge_w_one_compact": cb["width"]["one"],
         "badge_w_count_compact": cb["width"]["count"],
         "badge_w_none_compact": cb["width"]["none"],
-        "badge_w_min_compact": cb["width"]["letter_glyph"],
+        "badge_w_min_compact": cb["width"]["letter"],
         "badge_w_full_comfortable": cf["width"]["full"],
         "badge_w_one_comfortable": cf["width"]["one"],
         "badge_w_count_comfortable": cf["width"]["count"],
         "badge_w_none_comfortable": cf["width"]["none"],
-        "badge_w_min_comfortable": cf["width"]["letter_glyph"],
+        "badge_w_min_comfortable": cf["width"]["letter"],
         "d02_min_count": D02_MIN["A · 1"],
         "d02_min_one": D02_MIN["A · symbol"],
         "d02_min_full": D02_MIN["A · symbol, crosshair, drawings"],
         "d02_min_via": D02_MIN["via A"],
-        "kind_minimum_delta": badge["kind_minimum_delta"],
-        "min_w_chart_d02": 328,
-        "min_w_dom_d02": 380,
-        "min_w_tape_d02": 232,
-        "min_w_chart": 328 + badge["kind_minimum_delta"],
-        "min_w_dom": 380 + badge["kind_minimum_delta"],
-        "min_w_tape": 232 + badge["kind_minimum_delta"],
+        "min_w_chart": badge["minimums"]["compact"]["chart"],
+        "min_w_dom": badge["minimums"]["compact"]["dom"],
+        "min_w_tape": badge["minimums"]["compact"]["tape"],
         "btc": PRICES["BTCUSDT"],
         "eth": PRICES["ETHUSDT"],
         "sol": PRICES["SOLUSDT"],
@@ -1807,7 +1932,11 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
         r'the badge minimums (\d+) / (\d+) / (\d+) px at compact, "via A" (\d+)',
         ("d02_min_count", "d02_min_one", "d02_min_full", "d02_min_via"),
     ),
-    ("the minimum delta", r"\+(\d+) px at the letter-and-glyph minimum", ("kind_minimum_delta",)),
+    (
+        "the kind minimums (2)",
+        r"E15-D03 C-18's measured minimums \(chart (\d+), DOM (\d+), tape (\d+)",
+        ("min_w_chart", "min_w_dom", "min_w_tape"),
+    ),
     (
         "BTC / ETH decades",
         rf"BTC(?:USDT)? ?/? ?(?:against )?ETH[^.;|]*?{_R} decades",
@@ -1821,7 +1950,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "D-1's minimum",
-        r"the minimum is (\d+) / (\d+) px",
+        r"letter-only chip \(E15-D03 :136, :139\) — (\d+) / (\d+) px",
         ("badge_w_min_compact", "badge_w_min_comfortable"),
     ),
     ("the rejected tint", rf"the rejected tint measures {_R}:1 in light", ("tint_purple_light",)),
@@ -1878,7 +2007,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "the narrow steps",
-        r'words → "3" \((\d+) px\) → tile \+ glyph only \((\d+) px',
+        r'words → "3" \((\d+) px\) → [^(|]*\((\d+) px',
         ("badge_w_count_compact", "badge_w_min_compact"),
     ),
     (
@@ -1953,20 +2082,13 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "the badge minimum (4.2)",
-        (
-            r"\*\*(\d+) px compact / (\d+) px comfortable\*\*, against E15-D02 §3's text-only "
-            r'"A · 1" at '
-            r"(\d+) px — \*\*\+(\d+) px\*\*"
-        ),
-        ("badge_w_min_compact", "badge_w_min_comfortable", "d02_min_count", "kind_minimum_delta"),
+        r"\*\*(\d+) px compact / (\d+) px comfortable\*\* \(E15-D03 D-6's chip",
+        ("badge_w_min_compact", "badge_w_min_comfortable"),
     ),
     (
         "the kind minimums",
-        r"\(chart (\d+), DOM (\d+), tape (\d+)\) to (\d+) / (\d+) / (\d+) at compact",
-        (
-            "min_w_chart_d02", "min_w_dom_d02", "min_w_tape_d02", "min_w_chart", "min_w_dom",
-            "min_w_tape",
-        ),
+        r"the kind minimums are E15-D03 C-18's: chart (\d+), DOM (\d+), tape (\d+) at compact",
+        ("min_w_chart", "min_w_dom", "min_w_tape"),
     ),
     (
         "the header edges (4.3)",
@@ -2051,6 +2173,29 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "zoom200_modal_w", "zoom200_modal_h", "modal_header",
             "modal_box", "zoom200_switch_row", "zoom200_body_h_compact", "zoom200_visible_body",
             "modal_footer",
+        ),
+    ),
+    (
+        "the 200 % modal under a banner (5.3)",
+        (
+            r"draws as a (\d+) px stand-in; an SCR-153 banner\) the banner band stays above the "
+            r"scrim too: the body below it is (\d+) px, the modal (\d+) \u00d7 (\d+) and its body "
+            r"scrolls inside (\d+) px"
+        ),
+        (
+            "zoom200_banner", "zoom200_below_banner", "zoom200_modal_w",
+            "zoom200_modal_h_banner", "zoom200_visible_body_banner",
+        ),
+    ),
+    (
+        "the modal frame under a banner",
+        (
+            r"under the view-as banner \((\d+) px, an inset\) the banner band stays above the "
+            r"scrim and the modal is (\d+) \u00d7 (\d+), its body scrolling inside (\d+) px"
+        ),
+        (
+            "zoom200_banner", "zoom200_modal_w", "zoom200_modal_h_banner",
+            "zoom200_visible_body_banner",
         ),
     ),
     (
@@ -2162,27 +2307,24 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ),
     (
         "A-10",
-        r'the badge "A · 1" (\d+) px; chart (\d+), DOM (\d+), tape (\d+)',
-        ("d02_min_count", "min_w_chart_d02", "min_w_dom_d02", "min_w_tape_d02"),
+        r"superseded by E15-D03 C-18 \(E15-D03 :923\): chart (\d+), DOM (\d+), tape (\d+)",
+        ("min_w_chart", "min_w_dom", "min_w_tape"),
     ),
     (
-        "A-10 proposed",
-        r"tile \+ glyph minimum (\d+) px \(\+(\d+)\): chart (\d+), DOM (\d+), tape (\d+)",
-        ("badge_w_min_compact", "kind_minimum_delta", "min_w_chart", "min_w_dom", "min_w_tape"),
+        "A-10 settled",
+        r"the letter-only chip \((\d+) px\) at step 6 adds nothing",
+        ("badge_w_min_compact",),
     ),
     (
         "OQ-4",
-        (
-            r"the \+(\d+) px badge minimum raising the kind minimums "
-            r"\(chart (\d+), DOM (\d+), tape (\d+)\)"
-        ),
-        ("kind_minimum_delta", "min_w_chart", "min_w_dom", "min_w_tape"),
+        r"the kind minimums stay E15-D03 C-18's \(chart (\d+), DOM (\d+), tape (\d+)\)",
+        ("min_w_chart", "min_w_dom", "min_w_tape"),
     ),
     ("the account row cost (16)", r"the account row costs (\d+) px", ("switch_row_full_compact",)),
     (
         "the summary badge (19)",
-        r"(\d+) / (\d+) px minimum, \+(\d+) on",
-        ("badge_w_min_compact", "badge_w_min_comfortable", "kind_minimum_delta"),
+        r"(\d+) / (\d+) px letter-only chip at step 6",
+        ("badge_w_min_compact", "badge_w_min_comfortable"),
     ),
     (
         "the summary popover (19)",
@@ -2202,7 +2344,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "the summary counts (19)",
         (
-            r"(\d+) named frames on (\w+) PENDING boards; (\d+) gated pairs, (\d+) FAIL; "
+            r"(\d+) named frames on (\w+) drawn boards; (\d+) gated pairs, (\d+) FAIL; "
             r"(\d+) A-rows, "
             r"(\d+) C-rows, (\d+) G-rows, (\d+) OQs"
         ),
@@ -2258,6 +2400,14 @@ HANDOFF_CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
             "zoom200_between_bars", "zoom200_modal_w", "zoom200_modal_h",
             "modal_header", "modal_footer", "zoom200_switch_row", "zoom200_body_h_compact",
             "zoom200_visible_body", "text_scale_125_h", "text_scale_150_h",
+        ),
+    ),
+    (
+        "hand-off: the modal under a banner",
+        r"under the view-as banner \((\d+)\) (\d+) \u00d7 (\d+), scrolling in (\d+)\)",
+        (
+            "zoom200_banner", "zoom200_modal_w", "zoom200_modal_h_banner",
+            "zoom200_visible_body_banner",
         ),
     ),
     (
@@ -2343,9 +2493,6 @@ def number_values(spec: str, handoff: str) -> dict[str, Any]:
     )
     v["modal_margin"], v["modal_margin_x2"] = MODAL_MARGIN, 2 * MODAL_MARGIN
     v["switch_track_w"], v["inner_w"] = SWITCH_TRACK_W, POPOVER_W - 2 * POPOVER_PAD
-    v["modal_box"] = popover_layout("compact", 100, ZOOM200[0] - 2 * MODAL_MARGIN, 1)["boxes"][
-        "full"
-    ]
     v["label_line_125"] = SWITCH_TEXT["label"] * TEXT_SCALES[0] / 100
     v["switch_h_compact"], v["switch_h_comfortable"] = SWITCH_H["compact"], SWITCH_H["comfortable"]
     fixed = {
@@ -2466,7 +2613,7 @@ def number_gates(spec: str, handoff: str) -> list[str]:
 
     # the section 4.1 density pair, cell by cell
     cols = ("row", "badge_h", "tile", "glyph", "gap", "pad_x", "text")
-    wcols = ("full", "one", "count", "none", "letter_glyph")
+    wcols = ("full", "one", "count", "none", "letter")
     rows = {r[0]: r for r in rows_of(section(spec, "### 4.1 ", "### 4.2 ")) if r}
     for dens, g in badge_report()["densities"].items():
         r = rows.get(dens)
@@ -2553,9 +2700,8 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
     ("M04", "frame CMP-082/badge-c-compact draws group C's colour without its letter",
      (("frame:CMP-082/badge-c-compact", "tile C (purple edge, letter C)", "a purple-edged tile"),)),
     ("M05", "frame CMP-082/badge-narrow-steps draws group A's colour without its letter",
-     (("frame:CMP-082/badge-narrow-steps",
-       "(44 px: tile A, letter A, `link`)",
-       "(44 px: the hue edge and `link`)"),)),
+     (("frame:CMP-082/badge-narrow-steps", "tile A (cyan edge, letter A)", "a cyan-edged tile"),
+      ("frame:CMP-082/badge-narrow-steps", "(29 px: letter A on ", "(29 px: on "))),
     ("M06", "frame SCR-023/light-badges draws group A's colour without its letter",
      (("frame:SCR-023/light-badges",
        "(letters A / B / C, each with `link`)",
@@ -2646,8 +2792,8 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-023/symbol-switch-disarm",
        "— the disarm is the drawn outcome (the default, OQ-1)",
        "— the default (OQ-1)"),)),
-    ("M33", "badge: the §4.1 comfortable letter_glyph cell reads 52 px",
-     (("line:| comfortable | 32 ", "| 54 px ", "| 52 px "),)),
+    ("M33", "badge: the §4.1 comfortable letter cell reads 27 px",
+     (("line:| comfortable | 32 ", "| 29 px ", "| 27 px "),)),
     ("M34", "number: the comfortable frame: the spec says 14",
      (("frame:CMP-082/badge-a-comfortable", "glyph 16", "glyph 14"),)),
     ("M35", "badge: the §4.1 compact text cell reads 12",
@@ -2686,7 +2832,9 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("line:Linking across magnitudes", "449.83 times", "449.38 times"),)),
     ("M49", "t2-anatomy: frame SCR-043/link-no-group lacks the state path",
      (("frame:SCR-043/link-no-group", "`disabledReason`, state-gated", "state-gated"),)),
-    ("M50", "armed: frame SCR-023/symbol-switch-hold draws an armed state surviving",
+    # m-9 (boards PR): "armed on ETHUSDT" is now the armed tag; the phrase gate keeps M78
+    ("M50", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the DOM keeps it armed on ETHUSDT')"),
      (("frame:SCR-023/symbol-switch-hold",
        "which disarms and follows",
        "which disarms and follows; the DOM keeps it armed on ETHUSDT"),)),
@@ -2806,6 +2954,118 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-023/leave-after", "| T1 ", "| T1 (`rbac.view_as`) "),)),
     ("M77", "t2-form: frame SCR-043/axis-independent draws 'padlock'",
      (("frame:SCR-043/axis-independent", "| T1 ", "| T1 (a padlock) "),)),
+    # boards PR: the phrase gate (ARMED_SURVIVES) keeps a hold-frame mutation of its own after M50
+    ("M78", "armed: frame SCR-023/symbol-switch-hold draws an armed state surviving",
+     (("frame:SCR-023/symbol-switch-hold",
+       "which disarms and follows",
+       "which disarms and follows; the DOM stays armed after the switch"),)),
+    # boards PR, m-9: lowercase wordings outside the ruled phrase list (verb separators, "was",
+    # an armed control on a symbol, a control named armed, "(armed)")
+    ("M79", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('an armed ticket on ETHUSDT')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       '`LOCKED` too',
+       '`LOCKED` too; an armed ticket on ETHUSDT'),)),
+    ("M80", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket reads \"armed\"')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       'which disarms and follows',
+       'which disarms and follows; the ticket reads "armed"'),)),
+    ("M81", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the ticket reads: armed')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       '`LOCKED` too',
+       '`LOCKED` too; the ticket reads: armed'),)),
+    ("M82", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket reads **armed**')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       'which disarms and follows',
+       'which disarms and follows; the ticket reads **armed**'),)),
+    ("M83", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the ticket armed on ETHUSDT')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       '`LOCKED` too',
+       '`LOCKED` too; the ticket armed on ETHUSDT'),)),
+    ("M84", ("armed-tag: frame SCR-023/symbol-switch-hold draws an armed tag after the sync "
+            "change ('the ticket was armed on ETHUSDT')"),
+     (("frame:SCR-023/symbol-switch-hold",
+       'which disarms and follows',
+       'which disarms and follows; the ticket was armed on ETHUSDT'),)),
+    ("M85", ("armed-tag: frame SCR-023/symbol-switch-disarm draws an armed tag after the sync "
+            "change ('the order ticket (armed)')"),
+     (("frame:SCR-023/symbol-switch-disarm",
+       '`LOCKED` too',
+       '`LOCKED` too; the order ticket (armed)'),)),
+    # boards PR, m-7: an armed DOM carried into a conflict frame (any frame is scanned now)
+    ("M86", ("armed-tag: frame SCR-023/conflict-interval draws an armed tag after the sync "
+            "change ('the DOM reads \"SOLUSDT · symbol set by sync group A\" and `ARMED`, "
+            "its disarm not drawn')"),
+     (("frame:SCR-023/conflict-interval",
+       "the Interval switch's consequence agrees",
+       ("the Interval switch's consequence agrees; the DOM reads "
+        '"SOLUSDT · symbol set by sync group A" and `ARMED`, its disarm not drawn')),)),
+    ("M87", ("armed-tag: frame SCR-023/conflict-interval draws an armed tag after the sync "
+            "change ('the DOM reads \"ETHUSDT · symbol set by sync group A\" and `ARMED`')"),
+     (("frame:SCR-023/conflict-interval",
+       "the Interval switch's consequence agrees",
+       ("the Interval switch's consequence agrees; the DOM reads "
+        '"ETHUSDT · symbol set by sync group A" and `ARMED`')),)),
+    ("M88", "armed: frame SCR-023/conflict-interval draws an armed state surviving",
+     (("frame:SCR-023/conflict-interval",
+       "the Interval switch's consequence agrees",
+       "the Interval switch's consequence agrees; the DOM stays armed, its disarm not drawn"),)),
+    # boards PR, n-8: the bare word "lock" in a non-T2 Gate-class cell
+    ("M89", "t2-form: frame SCR-023/popover-1920 draws 'lock' in its Gate-class cell",
+     (("frame:SCR-023/popover-1920", "| T1 ", "| T1 (lock) "),)),
+    ("M90", "t2-form: frame SCR-043/axis-independent draws 'lock' in its Gate-class cell",
+     (("frame:SCR-043/axis-independent", "| T1 ", "| T1, a lock "),)),
+    # boards PR, m-8: the D-7 quote in section 5.3, each cell; no symbol in a payload
+    ("M91", "d7-quote: section 5.3 does not quote E15-D02 D-7's violated-when cell in full",
+     (("line:At 1280\u00d7800 \u00d7 200 %", "a scrim or a modal covers", "a scrim covers"),)),
+    ("M92", "d7-quote: section 5.3 does not quote E15-D02 D-7's decision cell in full",
+     (("line:At 1280\u00d7800 \u00d7 200 %",
+       "a modal scrims the body",
+       "a modal scrims the window"),)),
+    ("M93", "payload: section 14's scale.link_refused carries symbolA",
+     (("line:| `scale.link_refused{",
+       "{reason, decadeA, decadeB}",
+       "{reason, symbolA, decadeA, decadeB}"),)),
+    ("M94", "payload: A-15's scale.link_refused carries symbolA",
+     (("line:| A-15 ", "{reason, decadeA, decadeB}", "{reason, symbolA, decadeA, decadeB}"),)),
+    ("M95", "payload: section 14's sync.conflict_shown carries accountId",
+     (("line:| `sync.conflict_shown{", "{axis, reason}`", "{axis, reason, accountId}`"),)),
+    # boards PR, n-7: the modal's box is a marker; n-6: the modal under a banner, measured
+    ("M96", "marker: audit:modal_box=541",
+     (("line:<!-- audit:zoom200_modal_h=", "audit:modal_box=540", "audit:modal_box=541"),)),
+    ("M97", "number: the 200 % modal under a banner (5.3): the spec says 209",
+     (("line:At 1280\u00d7800 \u00d7 200 %",
+       "the modal 608 \u00d7 208",
+       "the modal 608 \u00d7 209"),)),
+    ("M98", "number: the modal frame under a banner: the spec says 137",
+     (("frame:SCR-023/modal-200pct",
+       "its body scrolling inside 136 px",
+       "its body scrolling inside 137 px"),)),
+    ("M99", "number: hand-off: the modal under a banner: the hand-off says 31",
+     (("hand:- [x] **Density notes** — compact: title 24",
+       "under the view-as banner (32)",
+       "under the view-as banner (31)"),)),
+    # lens round 2 (the orchestrator's ruling): E15-D03 owns the header -- the letter only at step 6
+    # (its D-3 :136, D-6 :139, section 3.6 :231-:233) and the 20 / 28 px pill (its 4.2.1 #7)
+    ("M100", "step 6: frame CMP-082/badge-narrow-steps does not draw the letter-only chip",
+     (("frame:CMP-082/badge-narrow-steps", "letter only at step 6", "tile and glyph at step 6"),)),
+    ("M101", "step 6: D-1 does not fold the badge to its letter at step 6",
+     (("line:| D-1 ", "**letter only at step 6**", "**tile and glyph at step 6**"),)),
+    ("M102", "step 6: the spec keeps the tile or the glyph at the minimum",
+     (("line:| D-1 ", "fold away into E15-D03",
+       "fold away; the tile and the glyph never collapse into E15-D03"),)),
+    ("M103", "step 6: the hand-off keeps the tile or the glyph at the minimum",
+     (("hand:| CMP-082   | badge, compact ", "letter only at step 6;", "tile + glyph only;"),)),
+    ("M104", "badge: the §4.1 comfortable badge_h cell reads 24, the tool 28",
+     (("line:| comfortable | 32 ", "| 28    |", "| 24    |"),)),
+    ("M105", "number: the badge heights: the spec says 24",
+     (("line:| D-1 ", "comfortable 28 in 32", "comfortable 24 in 32"),)),
+    ("M106", "number: the comfortable frame: the spec says 24",
+     (("frame:CMP-082/badge-a-comfortable", "badge 28, tile", "badge 24, tile"),)),
 )
 # fmt: on
 
@@ -2912,7 +3172,8 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
                 ),
             ),
         ),
-        "armed: frame SCR-023/symbol-switch-hold",
+        # m-9 (boards PR): "the ticket armed" is now the armed tag (a control named armed)
+        "armed-tag: frame SCR-023/symbol-switch-hold",
     )
     expect("add a local path", spec + "\n/ho" + "me/someone/x.md\n", "hygiene: spec")
     expect(
@@ -2957,14 +3218,14 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
         "remove the Esc sentence", re.sub(r"never (gated|locked)", r"sometimes \1", spec), "exits:"
     )
     expect(
-        "un-PENDING a board row",
+        "re-PENDING a drawn board row",
         in_section(
             spec,
             "## 0. ",
             "## 1. ",
-            lambda t: edit_row(t, r"^\| 01 .*$", lambda ln: ln.replace("PENDING", "DRAWN")),
+            lambda t: edit_row(t, r"^\| 01 .*$", lambda ln: ln.replace("drawn", "PENDING")),
         ),
-        "not PENDING",
+        "not drawn",
     )
     first_frame = min(frame_names(section(spec, "## 0. ", "## 1. ")))
     expect(
@@ -3256,10 +3517,10 @@ def main(argv: list[str] | None = None) -> int:
         )
         for dens, g in badge["densities"].items():
             p(
-                f"  {dens:12s} row {g['row']} badge {g['badge_h']} tile {g['tile']} glyph {g['glyph']} gap {g['gap']} pad {g['pad_x']} text {g['text']} px; widths: full {g['width']['full']}, one axis {g['width']['one']}, count {g['width']['count']}, No sync {g['width']['none']}, letter+glyph {g['width']['letter_glyph']}"
+                f"  {dens:12s} row {g['row']} badge {g['badge_h']} tile {g['tile']} glyph {g['glyph']} gap {g['gap']} pad {g['pad_x']} text {g['text']} px; widths: full {g['width']['full']}, one axis {g['width']['one']}, count {g['width']['count']}, No sync {g['width']['none']}, letter only (step 6) {g['width']['letter']}"
             )
         p(
-            f"  E15-D02 §3 (quoted): {badge['d02_minimums']}; delta compact vs D02: {badge['delta_vs_d02']}; kind-minimum delta {badge['kind_minimum_delta']} px"
+            f"  E15-D02 §3 (quoted): {badge['d02_minimums']}; delta compact vs D02: {badge['delta_vs_d02']}; E15-D03 at {D03_PIN[:10]} (C-18, step 6 letter only): minimums {badge['minimums']}"
         )
         p("2. POPOVER GEOMETRY (D-3, D-4)")
         p(
