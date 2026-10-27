@@ -3,6 +3,7 @@ import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
+import { useFocusRing } from "./FocusRing.js";
 
 interface IconButtonBase extends Omit<
   ComponentPropsWithoutRef<"button">,
@@ -46,6 +47,7 @@ export function IconButton({
   ...rest
 }: IconButtonProps): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
+  const ring = useFocusRing();
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
     // Enter and Space reach here as clicks: a gated button stays focusable but does nothing.
     if (reason.gated) {
@@ -59,7 +61,7 @@ export function IconButton({
       <button
         {...rest}
         type={type}
-        className={cx("cv-control", "cv-icon-button")}
+        className={cx("cv-control", ring.className, "cv-icon-button")}
         data-cmp="CMP-002"
         data-variant={variant}
         data-size={size}

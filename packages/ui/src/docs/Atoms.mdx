@@ -65,3 +65,20 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Esc                                                          | Not handled: it bubbles to the host.                                                          |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+
+### FocusRing (CMP-039, utility; no pattern of its own)
+
+| Keys                              | Action                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | The ring appears on the newly focused element (`:focus-visible`).               |
+| Arrow keys (roving tabindex)      | The ring moves with focus; only one ring is visible.                            |
+| Pointer click / tap               | No ring on buttons and similar controls; text inputs still show it.             |
+| Esc (closing a dialog or popover) | Focus returns to the trigger; the ring shows if the last interaction was a key. |
+
+`useFocusRing({ inset? })` returns `{ className }`; `inset` draws the ring inside the element's bounds.
+
+### Spinner (CMP-014, status region when labelled; decorative otherwise)
+
+| Keys | Action                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------- |
+| none | Not focusable. With `label`: a polite `role="status"`. Without: `aria-hidden` in a busy host. |

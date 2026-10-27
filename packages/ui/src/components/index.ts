@@ -7,6 +7,9 @@ export type {
   LegendPalette,
 } from "./ColorConventionLegend.js";
 
+export { useFocusRing } from "./FocusRing.js";
+export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
+
 export { Button } from "./Button.js";
 export type { ButtonProps } from "./Button.js";
 
@@ -21,6 +24,9 @@ export type { RadioGroupBaseProps, RadioGroupProps, RadioOption } from "./RadioG
 
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
+
+export { Spinner } from "./Spinner.js";
+export type { SpinnerProps } from "./Spinner.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";

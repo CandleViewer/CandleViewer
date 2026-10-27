@@ -3,6 +3,8 @@ import { Icon } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
+import { useFocusRing } from "./FocusRing.js";
+import { Spinner } from "./Spinner.js";
 
 export interface ButtonProps extends Omit<
   ComponentPropsWithoutRef<"button">,
@@ -43,6 +45,7 @@ export function Button({
   ...rest
 }: ButtonProps): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
+  const ring = useFocusRing();
   const side = variant === "buy" || variant === "sell";
   const leading =
     iconLeft ?? (variant === "buy" ? "arrow-up" : variant === "sell" ? "arrow-down" : undefined);
@@ -61,7 +64,7 @@ export function Button({
       <button
         {...rest}
         type={type}
-        className={cx("cv-control", "cv-button")}
+        className={cx("cv-control", ring.className, "cv-button")}
         data-cmp="CMP-001"
         data-variant={variant}
         data-size={size}
@@ -86,7 +89,7 @@ export function Button({
             <Icon name={iconRight} />
           </span>
         )}
-        {loading ? <span className="cv-spinner" aria-hidden="true" /> : null}
+        {loading ? <Spinner size="sm" /> : null}
         {reason.gated ? (
           <span className="cv-button__glyph">
             <Icon name="lock" />

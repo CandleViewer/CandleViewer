@@ -30,14 +30,15 @@ if (!process.argv.includes("--no-tokens")) {
 const dist = path.join(UI_ROOT, "dist");
 await mkdir(dist, { recursive: true });
 for (const source of sources) await copyFile(source, path.join(dist, path.basename(source)));
-// Component CSS (`src/components/*.css`) ships as one `components.css`: the shared `controls.css` first, then
-// each component's file in name order, so the foundation never depends on import order.
+// Component CSS (`src/components/*.css`) ships as one `components.css`: the shared foundation first (controls,
+// then the CMP-039 ring and the CMP-014 spinner every control composes), then each component's file in name order,
+// so the foundation never depends on import order.
+const FOUNDATION = ["controls.css", "focusring.css", "spinner.css"];
+const rank = (name) => (FOUNDATION.includes(name) ? FOUNDATION.indexOf(name) : FOUNDATION.length);
 const componentDir = path.join(UI_ROOT, "src/components");
 const componentFiles = (await readdir(componentDir).catch(() => []))
   .filter((name) => name.endsWith(".css"))
-  .sort((a, b) =>
-    a === "controls.css" ? -1 : b === "controls.css" ? 1 : a < b ? -1 : a > b ? 1 : 0,
-  );
+  .sort((a, b) => rank(a) - rank(b) || (a < b ? -1 : a > b ? 1 : 0));
 const written = sources.map((source) => path.basename(source));
 if (componentFiles.length > 0) {
   const parts = await Promise.all(componentFiles.map((n) => readFile(path.join(componentDir, n))));
