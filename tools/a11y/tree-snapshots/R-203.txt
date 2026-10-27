@@ -36,6 +36,7 @@
     - listitem:
       - link "Admin":
         - /url: /admin
+  - button "Collapse navigation rail" [expanded]
 - main:
   - heading "Appearance" [level=1]
   - group "Chart palette":
@@ -130,7 +131,8 @@
       - text: "|"
       - link "Keyboard shortcuts (SCR-013)":
         - /url: /settings/hotkeys
-- complementary
+- complementary "Side panels":
+  - button "Notifications"
 - contentinfo
 - status
 - status
