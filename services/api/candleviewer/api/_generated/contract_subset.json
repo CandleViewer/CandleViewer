@@ -88,7 +88,7 @@
         }
       },
       "IfMatch": {
-        "description": "ETag of the version the client believes it is editing. Omitting it accepts last-write-wins.",
+        "description": "ETag of the version the client believes it is editing. Omitting it accepts last-write-wins, except where an operation says it requires the header: `updateRule` answers `400` without it (or without the `expected_version` body member of the same meaning), and the order amend has its own `OrderIfMatch`.\n",
         "in": "header",
         "name": "If-Match",
         "required": false,
