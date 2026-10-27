@@ -118,6 +118,15 @@ class ApiKeyRotationRow:
 
 
 @dataclass(frozen=True, slots=True)
+class GranteeRow:
+    """A user granted an account (`user_account_access` with `can_view`, frozen or not)."""
+
+    user_id: UUID
+    username: str
+    can_trade: bool
+
+
+@dataclass(frozen=True, slots=True)
 class NewExchangeAccount:
     id: UUID
     exchange: str
@@ -239,6 +248,10 @@ class AccountsStore(AccountsRowCounts, Protocol):
     ) -> ApiKeyRow | None: ...
 
     async def list_keys(self, scope: OwnerScope, account_id: UUID) -> tuple[ApiKeyRow, ...]: ...
+
+    async def list_grantees(self, scope: OwnerScope, account_id: UUID) -> tuple[GranteeRow, ...]:
+        """The account's live users' grants (soft-revoked ones left out), by username, user id."""
+        ...
 
     async def transition_key_status(
         self, scope: OwnerScope, account_id: UUID, key_id: UUID, *, expected: str, new: str

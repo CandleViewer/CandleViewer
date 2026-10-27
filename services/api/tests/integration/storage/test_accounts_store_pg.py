@@ -652,3 +652,30 @@ async def test_two_concurrent_creates_for_the_last_slot_admit_exactly_one(
             (parent.id,),
         ).fetchone()
     assert row == (5,)
+
+
+async def test_list_grantees_lists_live_and_frozen_grants_of_live_users_owner_only(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    """#898 B2b `assigned_users` (ruling 9): a frozen grant is listed, a soft-revoked one
+    (`can_view` false) and a deleted user's are not; by username; behind the owner gate."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    other = await store.create_account(owner, _new(exch))
+    live, frozen, revoked, deleted = (_user(pg_dsn, "manager") for _ in range(4))
+    _grant(pg_dsn, live, acct.id, can_view=True, frozen=False)
+    _grant(pg_dsn, frozen, acct.id, can_view=True, frozen=True)
+    _grant(pg_dsn, revoked, acct.id, can_view=False, frozen=False)
+    _grant(pg_dsn, deleted, acct.id, can_view=True, frozen=False)
+    _grant(pg_dsn, revoked, other.id, can_view=True, frozen=False)
+    with _c(pg_dsn) as c:
+        c.execute("UPDATE user_account_access SET can_trade = true WHERE user_id = %s", (live,))
+        c.execute("UPDATE users SET deleted_at = now() WHERE id = %s", (deleted,))
+    got = await store.list_grantees(owner, acct.id)
+    assert {(g.user_id, g.can_trade) for g in got} == {(live, True), (frozen, False)}
+    assert [g.username for g in got] == sorted(g.username for g in got)
+    assert await store.list_grantees(owner, uuid.uuid4()) == ()
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await store.list_grantees(OwnerScope(live), acct.id)  # a manager is not a live owner
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await store.list_grantees(GrantScope(live, frozenset({acct.id})), acct.id)  # type: ignore[arg-type]

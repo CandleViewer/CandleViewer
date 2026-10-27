@@ -33,7 +33,8 @@ S4-D2b serves the frozen `amendOrder`: 104, frozen 99.
 `consequences` read took one). #906 D2-m mounts the profile writes, three frozen
 (`createAccountProfile`, `replaceAccountProfile`, `deleteAccountProfile`) and the contract-first
 `setAccountDefaultProfile`: 98, frozen 96, then frozen 90, set from the list's count (served frozen
-operations had left it 6 high). Keep both caps tight: a contract PR that
+operations had left it 6 high). #898 B2b serves the contract-first `getAccountConsequences`: 97.
+Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
 serves a frozen operation lowers ``FROZEN_BASELINE`` and ``PENDING_BASELINE`` by the same amount.
@@ -64,7 +65,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 98
+PENDING_BASELINE = 97
 FROZEN_BASELINE = 90
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

@@ -247,7 +247,7 @@ from candleviewer.exchange.base.service import ExchangeBaseService
 # Composition root: wires the one concrete exchange adapter (C-2.2).
 # nosemgrep: cv-adapter-isolation reason=B5-b owner=@CandleViewer/security review=2026-12-31
 from candleviewer.exchange.bybit.service import ExchangeBybitService
-from candleviewer.exposure_wiring import wire_exposure_read
+from candleviewer.exposure_wiring import wire_consequence_read, wire_exposure_read
 from candleviewer.flags_wiring import build_feature_flags, restate_flag_write
 from candleviewer.funding_wiring import wire_funding
 from candleviewer.health_wiring import (
@@ -2378,6 +2378,11 @@ def create_app(
             statuses=AccountStatusReader(account_health, account_health.wallets),
             auth=ctx.auth,  # a refusal names the caller's session (#4174)
             elevation=keys_elevation,  # the create's `keys`, after its shape rules (#2304)
+            # E27-S04 B2b (#898): the consequence read over the exposure read and the profile
+            # wiring's store and armed-rule read (real backend only; else 503).
+            consequences=wire_consequence_read(
+                app.state.exposure_read, profiles, env=resolved.environment.value
+            ),
         )
     )
     # #837 W3: the one order-entry gate every submit path consults, the maintenance check first and

@@ -16,6 +16,14 @@ is a 403, audited. `accounts.create` is written ahead of the commit, in the inse
 is `409 conflict`, as is a sub past its parent's cap (the 6th; the store locks the parent and counts
 before the insert), a parent that is missing, not a `main` or of another environment `422`.
 
+`getAccountConsequences` (E27-S04 B2b, #898): the session, then the permission and scope of the
+disable it precedes (`accounts:write`, `granted_accounts`; a 403 audited `rbac.denied` naming the
+account, `503 audit_unavailable` when that record cannot be written, C-2.9), the read (503 when
+unwired), then `accounts.consequences`: an account absent, foreign or of another environment is
+one `404`, byte for byte; an exposure that cannot be read is `409 exposure_unknown` with its
+`remedy`, a failed read `503 exchange_unavailable` or `502 exchange_error` (`ret_code` only,
+SR-E27-08), a store read slow or down `503 store_unavailable`. No record of its own on success.
+
 `listExchangeAccounts`: the session, `accounts:read` (a refusal is a 403 whatever its record), then
 the store, in the caller's scope applied in SQL (`auth.scopes.account_scope`, SR-051): an Owner
 sees every account, anyone else only the accounts granted to them. Each item merges the health
@@ -32,12 +40,14 @@ import json
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated, Any, Final, Literal, get_args
 
 import structlog
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, Path, Query, Request
 from fastapi.responses import JSONResponse, Response
 
+from candleviewer.accounts.consequences import AccountConsequences, ConsequenceRead, position_id
 from candleviewer.accounts.errors import (
     AccountConflictError,
     AccountNotFoundError,
@@ -45,6 +55,7 @@ from candleviewer.accounts.errors import (
     AccountScopeDeniedError,
     AccountsError,
 )
+from candleviewer.accounts.exposure import ExchangePosition, ExposureFailed, ExposureUnknown
 from candleviewer.accounts.models import AccountKind, ExchangeAccount, ExchangeEnv
 from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.accounts.status import AccountStatusReader
@@ -59,7 +70,7 @@ from candleviewer.api.idempotency import (
     request_fingerprint,
 )
 from candleviewer.api.profile_audit import Emitter
-from candleviewer.api.profiles import problem
+from candleviewer.api.profiles import OnAccount, problem
 from candleviewer.api.refusal_session import NamesSession, SessionsLike
 from candleviewer.api.step_up import RequestElevation, demand_elevation
 from candleviewer.api.step_up_challenge import register_account_text
@@ -200,10 +211,11 @@ async def _written(record: Any) -> None:
 async def _not_owner(
     audit: Emitter, principal: PrincipalSnapshot, permission: Permission, scope: Scope,
     request: Request,
-) -> None:  # fmt: skip
+) -> bool:  # fmt: skip
     """`rbac.denied` for a caller the store's live-owner gate refused once `enforce` let it through
     (SR-051), in `enforce`'s reason shape; counted first (SR-125), and a record not written is
-    logged by the actor and its class, the refusal standing."""
+    logged by the actor and its class, the refusal standing. Returns whether it was written (the
+    consequence read answers an unwritten one `503 audit_unavailable`, C-2.9)."""
     count_authz_denial(permission, principal.roles)
     actor = principal.user_id
     try:
@@ -217,6 +229,8 @@ async def _not_owner(
         _log().warning(
             "account_denial_unaudited", actor_user_id=str(actor), error=type(exc).__name__
         )
+        return False
+    return True
 
 
 def _unavailable(exc: Exception) -> JSONResponse:
@@ -229,17 +243,77 @@ def _unavailable(exc: Exception) -> JSONResponse:
     return problem("store_unavailable", "The account store is unavailable.")
 
 
+_NO_ACCOUNT: Final = "No such exchange account."  # one text: a 404 is no existence oracle
+
+
+def _number(value: Decimal) -> str:
+    """22 `Decimal`: plain digits, never an exponent."""
+    return format(value, "f")
+
+
+def _position(account_id: uuid.UUID, held: ExchangePosition) -> dict[str, Any]:
+    """22 `Position` of an exchange position; a value the exchange did not send is left out."""
+    doc: dict[str, Any] = {
+        "id": str(position_id(account_id, held)), "exchange_account_id": str(account_id),
+        "symbol": held.symbol, "side": held.side, "position_idx": held.position_idx,
+        "size": _number(held.size), "leverage": _number(held.leverage),
+        "unrealised_pnl": _number(held.unrealised_pnl),
+        "native_stop_present": held.native_stop_present,
+        "updated_at": _stamp(datetime.fromtimestamp(held.updated_at_us / 1_000_000, UTC)),
+    }  # fmt: skip
+    for name in ("avg_price", "mark_price", "trailing_stop"):
+        if (value := getattr(held, name)) is not None:
+            doc[name] = _number(value)
+    for name in ("liq_price", "take_profit", "stop_loss"):
+        value = getattr(held, name)
+        doc[name] = None if value is None else _number(value)
+    return doc
+
+
+def consequence_document(summary: AccountConsequences) -> dict[str, Any]:
+    """22 `AccountConsequenceSummary`."""
+    account = summary.account_id
+    return {
+        "exchange_account_id": str(account),
+        "open_positions": [_position(account, held) for held in summary.open_positions],
+        "working_orders": summary.working_orders, "running_algos": summary.running_algos,
+        "assigned_users": [
+            {"user_id": str(u.user_id), "username": u.username, "level": u.level}
+            for u in summary.assigned_users
+        ],
+        "armed_rules": [{"rule_id": str(r.rule_id), "name": r.name} for r in summary.armed_rules],
+    }  # fmt: skip
+
+
+def exposure_problem(outcome: ExposureUnknown | ExposureFailed) -> JSONResponse:
+    """22 `OpenExposure` for an exposure not read: `409 exposure_unknown` with its `remedy`, else
+    a failed read, `503 exchange_unavailable` (with `Retry-After`) or `502 exchange_error` with
+    the exchange's code alone, omitted when it sent none (SR-E27-08)."""
+    if isinstance(outcome, ExposureUnknown):
+        detail = "The account's open exposure cannot be read with its keys."
+        return problem("exposure_unknown", detail, status=409, remedy=outcome.remedy)
+    if outcome.status == 503:
+        detail = "The exchange could not be reached to read the account's exposure."
+        return problem("exchange_unavailable", detail, status=503)
+    sent: dict[str, Any] = {}
+    if outcome.ret_code is not None:
+        sent["exchange"] = {"ret_code": outcome.ret_code}
+    detail = "The exchange refused to read the account's exposure."
+    return problem("exchange_error", detail, status=502, **sent)
+
+
 def make_exchange_accounts_router(
     accounts: AccountsRepository | None, audit: Emitter, resolver: SnapshotResolver | None, *,
     environment: str, statuses: AccountStatusReader | None = None,
     auth: SessionsLike | None = None, replays: IdempotencyCache | None = None,
     new_id: Callable[[], uuid.UUID] = uuid.uuid4,
     clock: Callable[[], datetime] = lambda: datetime.now(UTC),
-    elevation: RequestElevation | None = None,
+    elevation: RequestElevation | None = None, consequences: ConsequenceRead | None = None,
 ) -> APIRouter:  # fmt: skip
-    """The two routes over `accounts` (`None`, the fake backend: 503) for the process's
+    """The routes over `accounts` (`None`, the fake backend: 503) for the process's
     `environment`; `resolver=None` (no identity wired): 501 for every call. `elevation` demands
-    the create's `keys` step-up (None: 503, nothing registered)."""
+    the create's `keys` step-up (None: 503, nothing registered); `consequences` serves the
+    consequence read (None: 503)."""
     router = APIRouter(tags=["exchange-accounts"])
     cache = IdempotencyCache() if replays is None else replays
 
@@ -438,5 +512,46 @@ def make_exchange_accounts_router(
         nxt = page.next_after and encode_cursor(principal.user_id, filters, page.next_after, now)
         meta = {"next_cursor": nxt, "has_more": nxt is not None, "count": len(items)}
         return JSONResponse({"items": items, "meta": meta})
+
+    @router.get("/exchange-accounts/{accountId}/consequences")  # nosem: no-raw-account-id reason=enforce-accounts:write-granted_accounts-on-the-path-id-then-the-callers-scope-in-SQL-SR-051-one-404-#898 owner=@CandleViewer/security review=2027-04-15  # noqa: E501 -- suppression metadata must stay on the matched line  # fmt: skip
+    async def get_account_consequences(
+        request: Request, account_id: Annotated[uuid.UUID, Path(alias="accountId")]
+    ) -> Response:
+        if resolver is None:
+            return problem("not_implemented", "No principal resolver is wired.")
+        got = resolver.resolve(request)
+        if (principal := await got if inspect.isawaitable(got) else got) is None:
+            return problem("unauthenticated", "No verified session for this request.")
+        permission, named = Permission.ACCOUNTS_WRITE, NamesSession(audit, auth, request)
+        try:  # the disable's permission and scope (22): a refusal names the account (C-2.9)
+            await enforce(
+                principal, permission, scope=Scope.GRANTED_ACCOUNTS,
+                exchange_account_id=account_id, emitter=OnAccount(named, account_id),
+                actor_ip=source_ip(request.scope), request_id=current_request_uuid(),
+            )  # fmt: skip
+        except ForbiddenError:
+            return _forbidden(permission)
+        except (AuditError, RuntimeError):  # RuntimeError: the audit writer is not started
+            return problem("audit_unavailable", "The refusal could not be audited.")
+        if consequences is None:
+            return problem("store_unavailable", "Consequences are not available on this backend.")
+        try:
+            read = await consequences.read(
+                account_scope(principal), OwnerScope(principal.user_id), account_id
+            )
+        except AccountNotFoundError:  # absent, foreign or of another environment: one answer
+            return problem("not_found", _NO_ACCOUNT)
+        except AccountScopeDeniedError:  # the store's live-owner gate (SR-051)
+            if not await _not_owner(
+                OnAccount(named, account_id), principal, permission, Scope.GRANTED_ACCOUNTS,
+                request,
+            ):  # fmt: skip
+                return problem("audit_unavailable", "The refusal could not be audited.")
+            return _forbidden(permission)
+        except Exception as exc:  # mapped, or raised as a defect
+            return _unavailable(exc)
+        if isinstance(read, AccountConsequences):
+            return JSONResponse(consequence_document(read))
+        return exposure_problem(read)
 
     return router

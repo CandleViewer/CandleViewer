@@ -78,10 +78,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /exchange-accounts/{accountId}/consequences": {
-      "reason": "contract-first operation (E27-S04 B1, the consequence read SCR-129 fetches first); its exposure slice serves it",
-      "ticket": "#898"
-    },
     "GET /exchange-accounts/{accountId}/fee-rate": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"

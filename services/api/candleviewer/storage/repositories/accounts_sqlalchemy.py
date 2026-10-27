@@ -46,6 +46,7 @@ from candleviewer.storage.repositories.accounts import (
     ApiKeyRow,
     ExchangeAccountPatch,
     ExchangeAccountRow,
+    GranteeRow,
     GrantScope,
     NewExchangeAccount,
     NewKeyRotation,
@@ -308,6 +309,15 @@ _LIST_KEYS = sa.text(
     " AND k.revoked_at IS NULL "
     "ORDER BY k.created_at, k.id LIMIT 100"
 )
+#: The account's grantees (#898, the consequence read): a soft-revoked grant (`can_view` false)
+#: and a deleted user are left out, a frozen grant is listed (the user is still assigned).
+_LIST_GRANTEES = sa.text(
+    "SELECT a.user_id::text AS user_id, u.username::text AS username, a.can_trade AS can_trade "
+    "FROM user_account_access a JOIN users u ON u.id = a.user_id "
+    "JOIN exchange_accounts ea ON ea.id = a.exchange_account_id "
+    "WHERE ea.deleted_at IS NULL AND a.exchange_account_id = CAST(:account AS uuid) "
+    "AND a.can_view AND u.deleted_at IS NULL ORDER BY u.username, a.user_id LIMIT 500"
+)
 _TRANSITION = sa.text(
     "UPDATE api_keys AS k SET status = CAST(:new AS key_status), "
     "updated_by = CAST(:caller AS uuid), updated_at = now() "
@@ -444,7 +454,8 @@ _COUNT_PROFILES = sa.text(
 OWNER_STATEMENTS = frozenset(
     {
         _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE,
-        _GET_KEY, _LIST_KEYS, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS, *_STEPS.values(),
+        _GET_KEY, _LIST_KEYS, _LIST_GRANTEES, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS,
+        *_STEPS.values(),
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
@@ -738,6 +749,16 @@ class SqlAlchemyAccountsStore:
             await self._gate(uow, owner)
             res = await uow.session.execute(_LIST_KEYS, {"account": str(account_id)})
             return tuple(_key(r) for r in res.mappings())
+
+    async def list_grantees(self, scope: OwnerScope, account_id: UUID) -> tuple[GranteeRow, ...]:
+        owner = _require_owner(scope)
+        async with self._relational.unit_of_work() as uow:
+            await self._gate(uow, owner)
+            res = await uow.session.execute(_LIST_GRANTEES, {"account": str(account_id)})
+            return tuple(
+                GranteeRow(UUID(r["user_id"]), r["username"], bool(r["can_trade"]))
+                for r in res.mappings()
+            )
 
     async def transition_key_status(
         self, scope: OwnerScope, account_id: UUID, key_id: UUID, *, expected: str, new: str

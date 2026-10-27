@@ -554,8 +554,7 @@ operations:
     permissions: ['accounts:write']
     scope: granted_accounts
     public: false
-    state: not_mounted
-    reason: declared in 22-api-openapi.yaml by E27-S04 (#898) B1; its exposure slice mounts it
+    state: executed
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   GET /exchange-accounts/{accountId}/default-profile:
     permissions: ['accounts:read']
@@ -1771,7 +1770,7 @@ account_scope:
   GET /exchange-accounts/{accountId}/consequences:
     step_up: null
     cells:
-      owner: {granted: admitted, foreign: admitted, absent: admitted}
+      owner: {granted: 503 store_unavailable, foreign: 503 store_unavailable, absent: 503 store_unavailable}
       manager: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
       viewer: {granted: 403 forbidden, foreign: 403 forbidden, absent: 403 forbidden}
   GET /exchange-accounts/{accountId}/default-profile: {delegated: E28-X03 (#976)}

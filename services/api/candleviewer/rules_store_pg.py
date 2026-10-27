@@ -247,7 +247,14 @@ class PostgresArmedRules:
         self._relational = relational
 
     async def armed_on(self, account_id: uuid.UUID) -> tuple[ArmedRule, ...]:
-        params = {"account": str(account_id), "limit": ARMED_SHOWN + 1}
+        return await self.covering(account_id, limit=ARMED_SHOWN + 1)
+
+    async def covering(self, account_id: uuid.UUID, *, limit: int) -> tuple[ArmedRule, ...]:
+        """The armed rules covering the account under `_ARMED_ON`, at most `limit`: the one
+        predicate the profile delete's guard and the consequence read share (#898 ruling 10)."""
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        params = {"account": str(account_id), "limit": limit}
         async with self._relational.unit_of_work() as uow:
             rows = (await uow.session.execute(_ARMED_ON, params)).all()
         return tuple(ArmedRule(uuid.UUID(row.id), row.name) for row in rows)

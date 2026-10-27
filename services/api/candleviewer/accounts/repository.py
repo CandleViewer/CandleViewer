@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from uuid import UUID
 
+from candleviewer.accounts.consequences import AssignedUser
 from candleviewer.accounts.errors import (
     AccountConflictError,
     AccountNotFoundError,
@@ -178,6 +179,16 @@ class AccountsRepository:
         except AccountsStoreError as exc:
             raise self._map(exc) from None
         return tuple(ApiKeyMetadata.model_validate(r, from_attributes=True) for r in rows)
+
+    async def list_grantees(self, scope: OwnerScope, account_id: UUID) -> tuple[AssignedUser, ...]:
+        """The users granted the account, a frozen grant included, a soft-revoked one not."""
+        try:
+            rows = await self._store.list_grantees(scope, account_id)
+        except AccountsStoreError as exc:
+            raise self._map(exc) from None
+        return tuple(
+            AssignedUser(r.user_id, r.username, "trade" if r.can_trade else "read") for r in rows
+        )
 
     async def transition_key_status(
         self,

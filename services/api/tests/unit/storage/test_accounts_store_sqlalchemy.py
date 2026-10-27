@@ -32,6 +32,7 @@ from candleviewer.storage.repositories.accounts import (
     ApiKeyRow,
     ExchangeAccountPatch,
     ExchangeAccountRow,
+    GranteeRow,
     GrantScope,
     NewExchangeAccount,
     NewKeyRotation,
@@ -186,6 +187,7 @@ _NO_COLUMN_COPY = {
     "_COUNT_ACCOUNTS",
     "_COUNT_KEYS",
     "_COUNT_PROFILES",
+    "_LIST_GRANTEES",
 }
 
 
@@ -332,6 +334,7 @@ async def test_owner_methods_with_failed_gate_run_one_statement_and_no_commit() 
         lambda s: s.soft_delete_account(_OWNER, uuid4()),
         lambda s: s.get_key(_OWNER, uuid4(), uuid4()),
         lambda s: s.list_keys(_OWNER, uuid4()),
+        lambda s: s.list_grantees(_OWNER, uuid4()),
         lambda s: s.transition_key_status(
             _OWNER, uuid4(), uuid4(), expected="pending", new="active"
         ),
@@ -357,7 +360,19 @@ async def test_owner_methods_reject_grant_scope_without_sql() -> None:
         await s.soft_delete_account(forged, uuid4())
     with pytest.raises(AccountsStoreScopeDeniedError):
         await s.list_keys(forged, uuid4())
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await s.list_grantees(forged, uuid4())
     assert rel.calls == []
+
+
+async def test_list_grantees_runs_the_gate_then_maps_each_grant() -> None:
+    """#898 B2b: the account's grantees, behind the owner gate, mapped from their rows."""
+    user, acct = uuid4(), uuid4()
+    rel = _Rel(_Result(), _Result([{"user_id": str(user), "username": "ann", "can_trade": True}]))
+    got = await _store(rel).list_grantees(_OWNER, acct)
+    assert got == (GranteeRow(user, "ann", True),) and rel.commits == 0
+    assert [c[0] for c in rel.calls] == [mod._OWNER_GATE, mod._LIST_GRANTEES]
+    assert rel.calls[1][1] == {"account": str(acct)}
 
 
 async def test_empty_grant_scope_makes_no_sql_call() -> None:

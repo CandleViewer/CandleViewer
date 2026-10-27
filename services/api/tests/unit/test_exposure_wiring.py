@@ -24,6 +24,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer import exposure_wiring as wiring
+from candleviewer.accounts.consequences import ConsequenceRead
 from candleviewer.accounts.exposure import ExposureKnown, ExposureRead, KeyReadFailed
 from candleviewer.accounts.models import (
     AccountKind,
@@ -372,3 +373,14 @@ def test_port_reader_hook_outside_a_call_or_unnamed_failure_records_nothing() ->
 def test_wire_exposure_read_reads_measured_clock_offset() -> None:
     read = wiring.wire_exposure_read(_ctx("real"))
     assert read is not None and read._reader._offset() == 25  # type: ignore[attr-defined]
+
+
+async def test_wire_consequence_read_needs_both_wirings_and_no_algo_runs() -> None:
+    """#898 B2b: the read exists only with the exposure read and the profile wiring (the fake
+    backend has neither: the route answers 503); until E33 no emulated algo runs."""
+    read, ports = wiring.wire_exposure_read(_ctx("real")), SimpleNamespace(accounts=1, rules=2)
+    assert wiring.wire_consequence_read(None, ports, env="demo") is None  # type: ignore[arg-type]
+    assert wiring.wire_consequence_read(read, None, env="demo") is None
+    wired = wiring.wire_consequence_read(read, ports, env="demo")  # type: ignore[arg-type]
+    assert isinstance(wired, ConsequenceRead)
+    assert await wiring.NoRunningAlgos().running(UUID(int=1)) == 0
