@@ -5,6 +5,7 @@ import { getMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
 import { evaluateAccess, type MeClaims } from "../../routes/rbac";
+import { slide } from "./motion";
 import { NAV_ITEMS, type NavBadges } from "./navItems";
 
 type RailItem = (typeof NAV_ITEMS)[number] & { readonly to: string };
@@ -49,6 +50,23 @@ function linkStyle({ isActive }: { isActive: boolean }): CSSProperties {
 
 const BADGE: CSSProperties = { color: "var(--color-text-secondary)" };
 
+/** Stand-in glyph while the registry has no nav glyphs (D03 G12): the label's initial, hidden from AT. */
+const INITIAL: CSSProperties = { width: "var(--space-4)", textAlign: "center", flexShrink: 0 };
+
+/**
+ * D04 T-01 / T-02: the label slides and fades beside the static glyph; the text stays in the DOM, so
+ * a collapsed item keeps its accessible name. No `width` moves here; the rail's width is the frame's.
+ */
+function labelStyle(collapsed: boolean, reduceMotion: boolean): CSSProperties {
+  return {
+    whiteSpace: "nowrap",
+    transform: collapsed ? "translateX(-100%)" : "none",
+    opacity: collapsed ? 0 : 1,
+    pointerEvents: collapsed ? "none" : undefined,
+    transition: slide(reduceMotion, "fast", collapsed ? "accelerate" : "decelerate", true),
+  };
+}
+
 const ARROWS: Readonly<Record<string, (i: number, n: number) => number>> = {
   ArrowDown: (i, n) => (i + 1) % n,
   ArrowUp: (i, n) => (i - 1 + n) % n,
@@ -59,16 +77,23 @@ const ARROWS: Readonly<Record<string, (i: number, n: number) => number>> = {
 export interface NavRailProps {
   /** Count words per item ("2 new"). Nothing supplies one yet; the slot renders nothing. */
   readonly badges?: NavBadges;
+  /** The 64 px icon rail (S6): labels concealed but named, a hover tooltip stand-in per item. */
+  readonly collapsed?: boolean;
+  readonly reduceMotion?: boolean;
 }
 
 /**
  * CMP-071 NavRail (E10-S01 S5, #304), expanded variant: a list of links inside the shell's
  * `nav` "Primary". CMP-071 and the ticket name a `nav` with `aria-current`; SCR-011, E10-D02 and
  * D03 say `role="tree"` (plan gap 9): links stay in the Tab order, and the arrows, Home and End
- * also move between them (D03 §5.4). Collapse, pin and tooltips are S6. Stand-ins: the badge is
+ * also move between them (D03 §5.4). The collapse (S6) is the `collapsed` prop. Stand-ins: the badge is
  * a plain span (CMP-012), the `Alt+N` hint is `aria-keyshortcuts` only (CMP-016 / CMP-022).
  */
-export function NavRail({ badges = {} }: NavRailProps): JSX.Element {
+export function NavRail({
+  badges = {},
+  collapsed = false,
+  reduceMotion = false,
+}: NavRailProps): JSX.Element {
   const navigate = useNavigate();
   // Read at render: main.tsx runs the bootstrap (which sets the claims) before the router mounts.
   // A role change after that shows on the next claims object only; the server's 403 is the
@@ -115,9 +140,21 @@ export function NavRail({ badges = {} }: NavRailProps): JSX.Element {
               style={linkStyle}
               aria-label={badge === undefined ? undefined : `${item.label}, ${badge}`}
               aria-keyshortcuts={`Alt+${item.digit}`}
+              // CMP-016 stand-in: D03 §5.3's "Alerts · 2 new · Alt+5" on hover only (not on focus).
+              title={
+                collapsed
+                  ? [item.label, badge, `Alt+${item.digit}`].filter(Boolean).join(" · ")
+                  : undefined
+              }
             >
-              {item.icon === null ? null : <Icon name={item.icon} />}
-              <span>{item.label}</span>
+              {item.icon !== null ? (
+                <Icon name={item.icon} />
+              ) : collapsed ? (
+                <span aria-hidden="true" style={INITIAL}>
+                  {item.label.charAt(0)}
+                </span>
+              ) : null}
+              <span style={labelStyle(collapsed, reduceMotion)}>{item.label}</span>
               {badge === undefined ? null : <span style={BADGE}>{badge}</span>}
             </NavLink>
           </li>

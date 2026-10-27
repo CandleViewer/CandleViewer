@@ -2,7 +2,8 @@ import { useRef, type JSX } from "react";
 import { Outlet } from "react-router";
 import { ShellAnnouncer } from "./announcer";
 import { AppShell } from "./AppShell";
-import { NavRail } from "./NavRail";
+import { NavRailFrame } from "./NavRailFrame";
+import { RIGHT_RAIL_LABEL, RightRail } from "./RightRail";
 import { InShellProvider } from "./ScreenRoot";
 import {
   ShellBannerSlot,
@@ -19,6 +20,7 @@ export const SHELL_MAIN_ID = "cv-main";
 /**
  * SCR-010 shell layout route (E10-S01 S1, #304): the pathless parent of every non-public route
  * in `routes/tree.tsx`. Public and error routes render outside it with their own `main`.
+ * The rails read the layout store themselves (S6), so a collapse never re-renders the outlet.
  */
 export function ShellLayout(): JSX.Element {
   const mainRef = useRef<HTMLElement>(null);
@@ -28,12 +30,14 @@ export function ShellLayout(): JSX.Element {
       <AppShell
         mainId={SHELL_MAIN_ID}
         mainRef={mainRef}
-        nav={<NavRail />}
+        nav={<NavRailFrame />}
         connection={<ShellConnectionSlot />}
         topBar={(connection) => <TopBarSlot connection={connection} />}
         panic={<ShellPanicSlot />}
         banner={<ShellBannerSlot />}
         canvasOverlay={<ShellCanvasOverlaySlot />}
+        rightRail={<RightRail />}
+        rightRailLabel={RIGHT_RAIL_LABEL}
       >
         <Outlet />
       </AppShell>

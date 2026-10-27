@@ -27,6 +27,9 @@ export interface AppShellProps {
   readonly panic?: ReactNode;
   readonly banner?: ReactNode;
   readonly canvasOverlay?: ReactNode;
+  /** The CMP-209 right rail (S6), inside the `complementary` landmark named `rightRailLabel`. */
+  readonly rightRail?: ReactNode;
+  readonly rightRailLabel?: string;
   /** The route outlet. */
   readonly children: ReactNode;
 }
@@ -53,6 +56,7 @@ const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: 
 
 export function AppShell(props: AppShellProps): JSX.Element {
   const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, children } = props;
+  const { rightRail, rightRailLabel } = props;
   return (
     <div style={FRAME}>
       <SkipLink targetId={mainId} />
@@ -72,7 +76,9 @@ export function AppShell(props: AppShellProps): JSX.Element {
           {canvasOverlay}
         </div>
       </main>
-      <aside style={{ ...CHROME, gridArea: "aside" }} />
+      <aside aria-label={rightRailLabel} style={{ ...CHROME, gridArea: "aside" }}>
+        {rightRail}
+      </aside>
       <footer style={{ ...CHROME, gridArea: "footer" }} />
     </div>
   );
