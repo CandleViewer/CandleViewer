@@ -65,3 +65,8 @@ export type {
   TextProps,
   TextVariant,
 } from "./Typography.js";
+export { Skeleton } from "./Skeleton.js";
+export type { SkeletonProps } from "./Skeleton.js";
+
+export { SkeletonChart } from "./SkeletonChart.js";
+export type { SkeletonChartProps } from "./SkeletonChart.js";

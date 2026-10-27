@@ -147,3 +147,9 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | MonoText                | none (span, or `code`)       | Its text.                                                                                     |
 | NumericText             | none (span)                  | The value as shown: "+420.00", "-420.00", or an unsigned "0.00". No `aria-label` on the span. |
 | NumericText abbreviated | none (span)                  | The visible "1.2M" is `aria-hidden`; a visually hidden "1,200,000" is read instead.           |
+
+### Skeleton (CMP-015) and Skeleton-Chart (CMP-029)
+
+| Keys | Action                                                                                                     |
+| ---- | ---------------------------------------------------------------------------------------------------------- |
+| None | Not focusable and `aria-hidden`; the host carries `aria-busy="true"` and the words that announce the wait. |
