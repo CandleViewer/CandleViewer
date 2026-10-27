@@ -1,10 +1,11 @@
 """Ingest-boundary validation primitives (E08-X02 fixes #1889 / #1890 / #1892;
-`docs/plan/24-internal-schemas.md` §14.2 rules 8-9).
+`docs/plan/24-internal-schemas.md` §14.2 item 10).
 
 Venue-neutral so every adapter parser *and* the ingestion frame pump share one
-rejection vocabulary. Every check here is O(1) per field (no regex, no
-allocation beyond one `str.translate` on the depth slow path) because book
-deltas and trade prints are hot paths (C-2.20).
+rejection vocabulary. Every field check here is O(1), because book deltas and
+trade prints are hot paths (C-2.20). The depth scan is linear in the frame:
+`str` methods, and one possessive regex, which never backtracks, only when a
+`\\"` is left once the `\\\\` pairs are dropped (SEC-G8B-B-02).
 
 A rejection is a `FrameRejectedError` carrying a bounded `reason` (the
 `ingest_rejected_total{reason}` label value) and, when known, the symbol so the
@@ -14,6 +15,7 @@ existing "malformed frame" handler keeps catching it.
 
 from __future__ import annotations
 
+import re
 from decimal import Decimal
 from typing import Final, Literal, get_args
 
@@ -61,6 +63,13 @@ MAX_TS_MS: Final[int] = 4_102_444_800_000
 MAX_FUTURE_SKEW_MS: Final[int] = 5_000
 
 _BRACKETS: Final[dict[int, None]] = {c: None for c in range(0x80) if chr(c) not in "[]{}"}
+#: One JSON string literal once `\\` pairs are gone, so every backslash left is single: a quote
+#: ends the literal unless a backslash precedes it; an unterminated literal runs to the end.
+#: `[^"]` matches a newline, so no `DOTALL` is needed.
+_LITERAL: Final[str] = r'"[^"]*+(?:(?<=\\)"[^"]*+)*+"?+'
+#: A run of literals joined by bracket-free text is one match, not one per literal. Every
+#: quantifier is possessive, so nothing backtracks and the scan stays linear.
+_LITERALS: Final[re.Pattern[str]] = re.compile(_LITERAL + r'(?:[^"\[\]{}]*+' + _LITERAL + ")*+")
 
 
 class FrameRejectedError(ValueError):
@@ -84,39 +93,24 @@ def _walk(structural: str, limit: int) -> bool:
     return False
 
 
-def _outside_strings_escaped(frame: str) -> str:
-    """Single O(n) pass dropping JSON string literals, honouring backslash
-    escapes (an odd run of backslashes escapes the following quote)."""
-    out: list[str] = []
-    in_string = False
-    escaped = False
-    for ch in frame:
-        if in_string:
-            if escaped:
-                escaped = False
-            elif ch == "\\":
-                escaped = True
-            elif ch == '"':
-                in_string = False
-        elif ch == '"':
-            in_string = True
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
 def json_depth_exceeds(frame: str, limit: int = MAX_FRAME_DEPTH) -> bool:
     """True when `frame` nests `[`/`{` deeper than `limit`, decided before any
     `json.loads` (#1889). String-aware: bracket characters inside JSON string
     literals are ignored, so they can neither raise nor lower the count.
     Fast path: fewer opening brackets than `limit` cannot nest that deep.
-    Escape-free frames (all venue frames) are split on `"` at C speed and only
-    the even (outside-string) segments are walked; a frame with a backslash
-    takes the O(n) escape-tracking pass."""
+    A frame where no backslash precedes a quote (every venue frame) is split
+    on `"` and only the even (outside-string) segments are walked. Otherwise
+    `str.replace` first drops `\\\\` pairs, in literals and out, so a run of
+    backslashes still escapes exactly what it did; then the split serves
+    unless a `\\"` is left, when one possessive regex drops the literals
+    (SEC-G8B-B-02)."""
     if frame.count("[") + frame.count("{") <= limit:
         return False
-    if "\\" in frame:
-        return _walk(_outside_strings_escaped(frame), limit)
+    first = frame.find("\\")  # no `\"` starts before the first backslash
+    if first >= 0 and frame.find('\\"', first) >= 0:
+        frame = frame.replace("\\\\", "")
+        if '\\"' in frame:
+            return _walk(_LITERALS.sub("", frame), limit)
     return _walk("".join(frame.split('"')[::2]), limit)
 
 

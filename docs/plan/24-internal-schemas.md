@@ -4245,14 +4245,25 @@ Given one bound, `order_history` reads the venue's own span for it, the 7 days f
    window admits, `probe` for a refused key probe, or `streams` for the private stream cap).
    Clock thresholds in §14.3 are unchanged: warn > 500 ms, block > 2000 ms (`recv_window/2`).
 10. **Ingest-boundary validation (#1889 / #1890 / #1892).** Parsers check market plausibility
-    _before_ building a domain event; checks are O(1) per field (no regex per frame, C-2.20).
+    _before_ building a domain event; those checks are O(1) per field and use no regex (C-2.20),
+    and the depth limit below is the one scan per frame.
     Shared primitives live in `exchange/base/frame_guard.py`; a failure raises
     `FrameRejectedError(reason, symbol)` (a `ValueError`), and **no event from that frame is
     emitted**:
     - **Depth limit.** The ingestion frame pump scans `[`/`{` nesting once per frame before any
       `json.loads`; a frame nested deeper than 32 is rejected (`depth_limit`). The parsers map a
       residual `RecursionError` to the same reason. The scan is string-aware (brackets inside JSON
-      string literals are ignored, escapes honoured, single O(n) pass, no regex).
+      string literals are ignored, escapes honoured) and linear, with no backtracking regex
+      (SEC-G8B-B-02): a frame in which no backslash precedes a quote is split on quotes; any
+      other frame first loses its `\\` pairs to `str.replace`, and one possessive regex drops the
+      literals only when a `\"` remains. Measured on 1 MiB frames, best of 5, against the split
+      path's time on the same frame, with each shape's bound in brackets: one backslash in a long
+      string 2.4x (4x), venue order rows with one backslash 1.3x (2x), dense empty literals with
+      one backslash 1.1x (2x), and the two adversarial shapes, dense `\\` pairs 12x (20x) and
+      dense empty literals with one `\"` 1.8x (3x). On each shape the scan takes at most the
+      time of the per-character loop it replaced, which took about 54x on the first. Short
+      literals between brackets with a `\"` cost up to about 1.8x that loop, about 100 to 140 ms
+      per MiB, about as much as the loop's own worst frame.
     - **Resync backoff.** A rejected book frame resyncs the book, but snapshot requests are
       rate-limited per symbol (250 ms doubling to 30 s, jittered; reset after 5 s stable LIVE).
       A symbol in cooldown stays stale and counts `ingest_book_resyncs_total{reason="backoff"}`.
@@ -6129,3 +6140,9 @@ This number follows `main`'s last entry, §19.43; an entry that lands first take
 - §14.2 rule 13, revocation (#913 L1d-2a, ruling Q6; RC-G8B-03), around B1b's sentences (#4686), which it keeps whole: `close_private_streams` tombstones the key in the adapter first, whether or not a stream registry exists yet, and every registry the adapter builds reads that one table; `reopen_private_streams` needs no registry. The accounts the call returns are those of the streams whose close it started; a stream already closing for another reason is waited for, not named. Past B1b's 2 s bound the overrun also pages (`bybit_private_key_close_overran`). By the ruling of 2026-10-26 `PrivateStreamCloseOverran` lives in `exchange/base/errors.py` (`candleviewer.exchange.base.errors.PrivateStreamCloseOverran`), so E27-S04 catches it without importing the adapter (C-2.2): a `TimeoutError` and no `ExchangeError`, outside the §8.6 taxonomy. That catch lives in a module that may import M3, such as the route (M23) or the composition root, as M13 and M21 may not; an `except TimeoutError` alone would also take the caller's own `asyncio.timeout`. Its `accounts` keeps B1b's meaning, the streams still closing; a new `closed` names the streams the call closed within the bound, so together they name every stream whose close the call started. A retry's return and its `closed` name none of them; a retry that overruns again names the streams still closing in its `accounts` again, so E27-S04 audits each account once across a revoke's calls. Any other exception from the call means the close is not done as well, including the `RuntimeError` (`PrivateStreamsWrongLoop`) from any loop but the registry's, raised once the key is tombstoned. E27-S04 (#898) answers no success and retries on any exception from the call, and audits an overrun's `accounts` and `closed`, each account once across the revoke's calls. A stream B13 itself ended is no longer named by a later revoke, and three refusals mark the key whichever close queues first (RC-G8B-04).
 - §14.2 rule 13, lifecycle (ruling Q5): the registry serves the loop of the open that creates its first stream, the serving loop (a refused open binds none), and refuses an open or a close from any other loop before anything is signed or dialled.
 - §14.1: the order lane's port opens through a stream source once its composition root gives it one (L1d-2b's bridge), after its own environment check; that source opens from the adapter's one registry on the serving loop (`open_private_stream`). A registry asked from another loop refuses every account (`RuntimeError`). No REST, WS, table, column or chart change; E27's KV-E13 and SR-E27-17 follow.
+
+### 19.45 2026-10-27 — §14.2 item 10: the depth scan's escape path, exact and linear (E29-T04, #913)
+
+This number follows `main`'s last entry, §19.44; an entry that lands first takes it, and this one moves to the next free number.
+
+- §14.2 item 10, the depth limit (#913 L1d-2 Q9, the orchestrator's ruling (b) of 2026-10-26; SEC-G8B-B-02): a frame with a backslash was walked one Python step per character, about 100 ms per 1 MiB frame on the serving loop. Now `str.replace` removes `\\` pairs, and one possessive regex drops the literals only when a `\"` remains; otherwise the frame is split on quotes, as an escape-free frame is. The scan stays exact on any text, a backslash outside a literal and a literal left open included. The item states each measured shape's ratio and bound, the two adversarial shapes, and the shape the scan does not speed up: short literals between brackets with a `\"`, up to about 1.8x the old loop. "No regex" and "single O(n) pass" leave its wording, and the item's opening now limits "no regex" to the per-field checks. No table, column, chart or `machine_hash` change.
