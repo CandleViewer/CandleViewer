@@ -6,9 +6,9 @@ entry's. Roll-off, import, compaction and purge each add, rewrite or delete a fi
 new key: one test per path here, one per part of a rewritten file's stamp, and a hypothesis
 interleaving of writes and reads against a reader with no cache. A quarantined, corrupt or
 missing part fails the read even with its page cached. Also pinned: the bound
-(`CV_COLD_KLINE_PAGE_CACHE_BYTES`: 0 = off, at most 1 GiB), an entry's cost (with the fixed
-allowance for what DuckDB's Arrow export holds), the quarter-bound rule, LRU eviction, empty
-pages never cached, `close()` dropping the pages, a hit taking no DuckDB slot, and no
+(`CV_COLD_KLINE_PAGE_CACHE_BYTES`: 0 = off, else 2 MiB to 1 GiB), an entry's cost (with the
+fixed allowance for what DuckDB's Arrow export holds), the quarter-bound rule, LRU eviction,
+empty pages never cached, `close()` dropping the pages, a hit taking no DuckDB slot, and no
 single-flight. The route golden, a miss then a hit, is
 `tests/unit/api/test_market_response_columnar.py`.
 """
@@ -461,15 +461,19 @@ def test_the_bound_setting_defaults_to_64_mib_and_zero_turns_the_cache_off(
     assert _settings().cold_kline_page_cache_bytes == 64 * 1024 * 1024
     monkeypatch.setenv("CV_COLD_KLINE_PAGE_CACHE_BYTES", "0")
     assert _settings().cold_kline_page_cache_bytes == 0
-    with pytest.raises(ValidationError):
-        _settings(cold_kline_page_cache_bytes=-1)
 
 
-def test_the_bound_setting_refuses_more_than_1_gib() -> None:
-    """A typo guard, as `CV_REPLAY_READAHEAD_BYTES` has: 1 GiB is accepted, a byte more is not."""
-    assert _settings(cold_kline_page_cache_bytes=1 << 30).cold_kline_page_cache_bytes == 1 << 30
+@pytest.mark.parametrize("bound", [0, 2 << 20, 64 << 20, 1 << 30])
+def test_the_bound_setting_takes_0_or_2_mib_to_1_gib(bound: int) -> None:
+    assert _settings(cold_kline_page_cache_bytes=bound).cold_kline_page_cache_bytes == bound
+
+
+@pytest.mark.parametrize("bound", [-1, 1, (2 << 20) - 1, (1 << 30) + 1])
+def test_the_bound_setting_refuses_a_bound_under_2_mib_but_0_or_over_1_gib(bound: int) -> None:
+    """Every page costs at least 384 KiB and one over a quarter of the bound is not cached, so
+    under 2 MiB it would cache next to nothing, silently. Over 1 GiB is a typo guard."""
     with pytest.raises(ValidationError):
-        _settings(cold_kline_page_cache_bytes=(1 << 30) + 1)
+        _settings(cold_kline_page_cache_bytes=bound)
 
 
 def test_the_composition_root_hands_the_bound_to_the_cold_reader(
@@ -485,6 +489,6 @@ def test_the_composition_root_hands_the_bound_to_the_cold_reader(
 
     monkeypatch.setattr(app_module, "ParquetKlineReader", spy)
     app_module.wire_public_ws(
-        app_module.build_app_context(_settings(cold_kline_page_cache_bytes=12_345))
+        app_module.build_app_context(_settings(cold_kline_page_cache_bytes=3 << 20))
     )
-    assert seen == [12_345]
+    assert seen == [3 << 20]
