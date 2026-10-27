@@ -1,7 +1,8 @@
 """The OMS's fixed bounds that are no setting (#913 L1d-2b; the orchestrator's ruling of 2026-10-26
 16:50Z): the order lane's bridge to the private streams (`oms_streams`, 20-architecture.md Sec.6.2),
-which L1d-3's timing of the hop may tune. Constants only, so the bridge, on C-2.20's hot-path
-contract, reads them with nothing else."""
+which L1d-3 timed under a fill burst and left as they are: there the hop's cost is the serving
+loop's turns, each batch it pulls waiting for one (E29 Sec.12.2). Constants only, so the bridge,
+on C-2.20's hot-path contract, reads them with nothing else."""
 
 from __future__ import annotations
 

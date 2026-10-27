@@ -917,7 +917,15 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
         f"{STREAM_CLOSE_BOUND_S:g} s for it (`STREAM_CLOSE_BOUND_S`, `CLOSE_TIMEOUT_S` plus "
         f"{STREAM_CLOSE_BOUND_S - CLOSE_TIMEOUT_S:g} s), logged past that while the close runs on.",
         "the stop attached at create stays the floor (C-2.6), L4's tick fences new exposure "
-        "meanwhile, and L1d-3 times the hop;",
+        "meanwhile, and L1d-3 measured the hop (`test_order_lane_stream_hop.py`, on the 5 ms "
+        "switch interval): under a burst of 3,048 fills over 64 streams the serving loop's parse,",
+        "a fill in an 8-fill frame at the median, saturates that loop, so with its other work a "
+        "1 ms timer a fill takes",
+        "at p99 from the registry's queue to a consumer there with no hop and",
+        "to the lane, and with 1,000 slices of 1 ms CPU besides",
+        "each batch the hop pulls waiting its turn of that loop; under one fill a stream the hop's "
+        "own wake is",
+        "at p99; the parse moved onto the lane would move the saturation, not remove it;",
     )
     assert "The port opens no private stream" not in lane
     consumer = _between(_ARCH, "**The private-stream consumer (E29-T05, #848;", "\n")
@@ -980,7 +988,14 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
         f"The bridge holds one batch per stream, at most {HOP_BATCH} (`HOP_BATCH`) in arrival "
         "order, never dropped or re-delivered, the adapter's queue the only buffer and "
         "`slow_consumer` the only shedding",
-        "L1d-3 times the bridge's hop too: above 5 ms at p99, an amendment proposal on #2701",
+        "The bridge's hop, measured (`test_order_lane_stream_hop.py`, on the 5 ms switch "
+        "interval): under a burst of 3,048 fills over 64 streams, the serving loop's other work a "
+        "1 ms timer, its p99 is",
+        "with no hop, and with 1,000 slices of 1 ms CPU besides,",
+        "each batch it pulls waiting its turn of a serving loop the parse saturates, a residual of "
+        "its own (§12.2), as a CPU-bound serving stall is; under one fill a stream its own wake is",
+        "ruling Q2's (a) against (c) goes to the owner on #2701 with these numbers, the bridge "
+        "staying meanwhile (ruling Q2 (b))",
     )
     assert (
         "No private stream signs through it: each dial's `auth` signs on the serving loop through "
@@ -1011,25 +1026,85 @@ def test_20_23_24_and_e29_carry_each_private_stream_across_the_lane_bridge() -> 
 
 
 def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_and_f20() -> None:
-    """#913 L1d-1: E29's ticket map gives OM-D10's close to L1d-3, leaving ruling Q7's
-    profile-cache hop and the clock guard's resync as its named residual, and holds SEC-S3E1-01
-    until L1d-3, not until "L1d ships", which L1d-1 is part of; F-20, met, names both hops left."""
+    """#913 L1d-1 and L1d-3: E29's ticket map records OM-D10 closed by L1d-3, its named residual
+    ruling Q7's profile-cache hop and the clock guard's resync, and three residuals of their own in
+    Sec.12.2: the burst's parse saturation (E29-T13's producer, Low), a CPU-bound serving stall
+    (Medium, its standing test under E29-T04 and its CPU audit under E29-T13) and the lane's audit
+    fsync on a real disk (Medium, E29-T04, the orchestrator's remedy), OM-D10's part-1 sentence
+    stating its in-memory stores; SEC-S3E1-01 closed by L1d-3, never held "until L1d ships"; F-20,
+    met, names both hops left; revision 24 in the header and the review log. Words only: the
+    measured ranges are the doc's, never pinned."""
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
-    lines = threat.read_text(encoding="utf-8").splitlines()
+    text = threat.read_text(encoding="utf-8")
+    lines = text.splitlines()
     [row] = [_words(line) for line in lines if line.startswith("| E29-T04, the order lane (slice")]
     [f20] = [_words(line) for line in lines if line.startswith("| F-20 |")]
+    [d10] = [_words(line) for line in lines if re.match(r"^\|\s*OM-D10\s*\|", line)]
+    # Sec.12.2's rows of OM-D10's, each named "OM-D10, §3.5", never "OM-D10" (the STRIDE row's)
+    [residual] = [_words(line) for line in lines if "| The burst's parse saturates" in line]
+    [stall] = [_words(line) for line in lines if "| A CPU-bound serving stall (#913" in line]
+    [fsync] = [
+        _words(line) for line in lines if "| The lane's audit fsync on a real disk (#913" in line
+    ]
     assert not _missing(
         row,
-        "L1d-3, which times that stall test for a stop attach and a KILL's cancel, closes OM-D10, "
-        "leaving ruling Q7's profile-cache hop and the clock guard's resync as its named residual;",
-        "SEC-S3E1-01 holds until L1d-3: the order facade on the serving loop is an interim, not a "
-        "waiver",
+        "L1d-3 timed that stall test for a stop attach, a KILL's cancel and a resumed create, and "
+        "the bridge's hop under a fill burst, and closed OM-D10, leaving ruling Q7's profile-cache "
+        "hop and the clock guard's resync as its named residual, and the burst's parse saturation "
+        "(E29-T13's producer), a CPU-bound serving stall and the lane's audit fsync on a real disk "
+        "as residuals of their own (§12.2);",
+        "SEC-S3E1-01 is closed by L1d-3: the order facade on the serving loop was an interim, not "
+        "a waiver, and its protective calls are measured unhurt by a 3 s stall of that loop",
     )
-    assert "until L1d ships" not in row
+    assert "SEC-S3E1-01 holds until L1d-3" not in row and "until L1d ships" not in row
+    assert not _missing(
+        d10,
+        "Since L1d-3, L2's binding stall test times the lane's protective venue calls too, each "
+        "through its own port over a venue 20 ms away and timed at the router, on in-memory "
+        "stores, the serving tick held fresh: under the 3 s stall a stop attach, a KILL's cancel "
+        "and a resumed create (L4's switches read in place) stay at",
+        "inside ruling Q11's 120 ms and 1 s, while a port served on the serving loop waits the "
+        "stall out (`test_order_lane_isolation.py`)",
+    )
+    assert not _missing(
+        residual,
+        "| OM-D10, §3.5 | The burst's parse saturates the serving loop (#913 L1d-3):",
+        "The target: E29-T13's producer, the ingestion owner, batches the per-fill parse, "
+        "measured on the same harness | Low | Ingestion owner | E29-T13 | Owner sign-off pending: "
+        "with L1d-3's finding on #2701; target 2027-02-04 (R3 gate, E29-T13's Sprint 19) |",
+    )
+    assert not _missing(  # rated Medium by the orchestrator (2026-10-28 00:08Z; owners 07:55Z)
+        stall,
+        "part 1's stall is the ruled `time.sleep`, which releases the GIL; a CPU-bound serving "
+        "stall could starve the lane's thread, and nothing here measures that.",
+        "Remedies: (i) a standing CPU-bound variant of L2's stall test in `py-perf`, held to Q11's "
+        "bound, the 1 ms switch interval measured on it, the lane's own test under E29-T04; (ii) "
+        "an audit of the serving loop's CPU-heavy paths",
+        "moved off the loop, under E29-T13 | Medium | OMS lane (i), ingestion owner (ii) | E29-T04 "
+        "(i), E29-T13 (ii) | Owner sign-off pending: with L1d-3's finding on #2701; target Sprint "
+        "08 (by 2026-11-19) |",
+    )
+    assert not _missing(  # ruled Medium (2026-10-28 07:55Z), the orchestrator's remedy verbatim
+        fsync,
+        "the lane's `machine_events` WAL sink writes and fsyncs each of its transitions on the "
+        "lane's loop thread before it returns (`audit/machine_events.py`)",
+        "past ruling Q11's 120 ms, against",
+        "The remedy, the write-ahead rule (C-2.9) its floor: group-commit per lane turn (one fsync "
+        "per batch) awaited before any external send or answer, or the sink's fsync on a worker "
+        "thread that the lane still awaits before the external effect; never a write-behind that "
+        "answers before durability | Medium | OMS lane | E29-T04 | Owner sign-off pending: with "
+        "L1d-3's finding on #2701; target Sprint 08 (by 2026-11-19) |",
+    )
     assert (
         "The order lane hops to the serving loop for a fresh submit's profile read (ruling Q7) and "
         "the clock guard's resync after a `10002`;" in f20
     )
+    assert (
+        "a stalled serving loop fencing new submits within 1 s instead (OM-D11; 29 CV-C13's "
+        "interim; SEC-S3E1-01, closed by L1d-3's measurements)" in f20
+    )
+    assert "Revision 24 records #913 L1d-3's binding measurements" in _words(text)
+    assert [line for line in lines if "| Revision 24, #913 L1d-3" in line]
 
 
 def test_20_reads_the_order_facades_versions_in_place_beside_the_in_flight_guard() -> None:

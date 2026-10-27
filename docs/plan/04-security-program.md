@@ -721,7 +721,8 @@ not in the counts above and are not accepted: they are release blockers for R2 u
 paragraph, recorded as RR-09..RR-12 in §16.1 with owner sign-off pending (queued on #2701); RR1 to RR3 are tracked as
 RSK-069..RSK-071 and RR4 through G6 and G7 (`docs/security/threat-models/E26-replay.md` §13).
 The E29 OMS rows (E29-X01, OM-S01..OM-E08) are rated Low contingent on the E29 tickets and gaps in §11 of the E29 model
-(`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (RR-20), and the other
+(`docs/security/threat-models/E29-oms.md`); OM-D04 is a Medium residual awaiting Owner acceptance (RR-20), the CPU-bound
+serving stall and the lane's audit fsync are two more (E29 model §12.2), and the other
 §12.2 residuals, OM-S05 with §5.4, OM-I09 and OM-T03 (Low), await it as RR-18, RR-19 and RR-21 (E29 model §12.2). The
 open Critical and High findings of that model are tracked as RSK-076 to RSK-081.
 The E28 rows (E28-X01, PF-S01..PF-E08, 53 rows) are rated Low contingent on the E28 tickets and the requirements
