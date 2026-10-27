@@ -24,6 +24,7 @@ known (a failed or late fetch, or the restart window) are served as `[]`, never 
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import inspect
@@ -32,9 +33,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
 
+import structlog
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import JSONResponse
 
+from candleviewer.api.market_bars import RecordingStart
+from candleviewer.api.market_response import iso_us
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.ingestion.instruments import CatalogueSnapshot, utc_now_us
@@ -149,6 +153,9 @@ def _encode_cursor(offset: int) -> str:
     return base64.urlsafe_b64encode(f"o:{offset}".encode()).decode().rstrip("=")
 
 
+_RECORDING_TIMEOUT_S = 2.0
+
+
 def _decode_cursor(cursor: str) -> int:
     padded = cursor + "=" * (-len(cursor) % 4)
     try:
@@ -165,11 +172,26 @@ def make_instruments_router(
     *,
     principal_resolver: PrincipalResolver | None = None,
     now_us: Callable[[], int] = utc_now_us,
+    recording_started_at_us: RecordingStart | None = None,
 ) -> APIRouter:
     """Bind the instruments read routes. `catalogue_provider` is called per
     request (the scheduler is created at supervisor start, after
     `create_app()`); `None` -> `503`, never an empty catalogue."""
     router = APIRouter(tags=["instruments"])
+
+    async def _recording_start(symbol: str) -> int | None:
+        """The earliest recorded data for `symbol`, or None (nothing recorded, no provider, or a
+        failing/slow store: the instrument read itself never breaks on it)."""
+        if recording_started_at_us is None:
+            return None
+        try:
+            async with asyncio.timeout(_RECORDING_TIMEOUT_S):
+                return await recording_started_at_us(symbol)
+        except Exception:
+            structlog.get_logger(__name__).warning(
+                "instrument_recording_start_unavailable", symbol=symbol, exc_info=True
+            )
+            return None
 
     async def _authorize(request: Request) -> JSONResponse | None:
         if principal_resolver is None:
@@ -261,12 +283,13 @@ def make_instruments_router(
         if instrument is None:
             return _problem(404, "Not found", f"unknown instrument {symbol}")
         tiers = await reader.ensure_risk_limits(symbol)
+        started = await _recording_start(symbol)
         body = serialize_instrument(instrument)
         body.update(
             {
                 "risk_limit_tiers": [serialize_risk_limit_tier(t) for t in tiers or ()],
-                "recorded": False,
-                "recording_started_at": None,
+                "recorded": started is not None,
+                "recording_started_at": iso_us(started) if started is not None else None,
                 "stale_since": _iso(snap.stale_since_us),
             }
         )
