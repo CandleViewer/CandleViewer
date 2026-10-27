@@ -9,6 +9,7 @@ import { buildRoutes } from "../../../src/routes/tree";
 import { ROUTE_MANIFEST } from "../../../src/routes/manifest";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import type { Role } from "../../../src/routes/rbac";
+import { PreferencesProvider } from "../../../src/features/a11y-preferences/PreferencesContext";
 
 // axe-core is a transitive dependency of @axe-core/playwright (already a devDependency).
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -54,8 +55,14 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
       const router = createMemoryRouter(buildRoutes(), {
         initialEntries: [entry.path.replace(/:[a-zA-Z]+/g, "x")],
       });
-      const { unmount } = render(<RouterProvider router={router} />);
+      const { unmount } = render(
+        <PreferencesProvider>
+          <RouterProvider router={router} />
+        </PreferencesProvider>,
+      );
       const [heading] = await screen.findAllByRole("heading");
+      // the screen itself, never the route error fallback
+      expect(screen.queryByRole("heading", { name: /Something went wrong/ }), entry.id).toBeNull();
       const mains = screen.getAllByRole("main");
       expect(mains, entry.id).toHaveLength(1);
       expect(mains[0]?.contains(heading as HTMLElement), entry.id).toBe(true);
@@ -63,7 +70,7 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
       unmount();
       router.dispose();
     }
-  });
+  }, 30_000); // a serial sweep of every route: slow under the full parallel suite
 
   it("keeps one main for a role denial rendered inside the shell", async () => {
     signIn("viewer");
