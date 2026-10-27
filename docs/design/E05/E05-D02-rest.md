@@ -2,8 +2,11 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 5
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens,
-E09-D09 and the owning screen specs without a Penpot build; the boards are PENDING. This slice closes #161 once the
-boards PR has merged; until then this PR, like slices 1–4, refers to #161 without closing it.
+E09-D09 and the owning screen specs without a Penpot build; the boards are PENDING. The boards PR carries the closing
+line for #161; this PR, like slices 1–4, refers to #161 without closing it.
+**Ruling:** the coordinator's ruling 6438042003 on #161 (2026-10-27) takes every §6 recommendation: J2–J14 and J16–J25
+are RULED; **J1 and J15 stay PROPOSED, owner approval pending (#2701)**, and every place that draws them says so. The
+`15` clauses of §7 land in this PR, each tagged with the J-row it depends on; a later "no" drops its clauses forward.
 **Penpot:** the per-set file `E05-D02 boards` (the coordinator's ruling of 2026-10-27: the shared DS file no longer
 loads, so the boards are the ten specimen boards of the boards PR, `E05-D02 / 01 actions` … `E05-D02 / 10
 light-composite`, on the four slice pages). Slice 5 adds no board (the ten-board cap per design ticket). A slice-5
@@ -44,43 +47,44 @@ their last change).
 - **The ruling on gating** (slice 4 §1, the orchestrator's ruling on slice 2, record 6368751311, M1): an atom never owns
   policy gating; the host does. A container here — a card, a tab panel, the palette, the info panel — has no gated state
   of its own; a nested control takes T2 in its own form through CMP-079 RbacGate with the host's reason (conventions
-  46). The gated cells are CMP-042's gated tab, CMP-059's gated command and the appearance controls' T2 option (§6 J15).
-- **Catalogue alignment is held.** This PR's write set is the two spec files; the `15` clauses each section proposes are
-  collected in §6 (f) for the catalogue's owner, as slice 4's were applied in its own PR.
+  46). The gated cells are CMP-042's gated tab, CMP-059's gated command and the appearance controls' T2 option (§6 J15
+  (b) only, PROPOSED, owner approval pending (#2701)).
+- **Catalogue alignment is applied in this PR** (ruling 6438042003, form (1)): the `15` clauses each section proposes
+  are edited into `15`, each tagged with its J-row, as slices 3 (#4322) and 4 (#4414) applied theirs; §6 (f) lists them.
 
-| Component              | Variant set (specified; not drawn) | Variant properties                 | Cells  | Composes (by reference)                                                             |
-| ---------------------- | ---------------------------------- | ---------------------------------- | ------ | ----------------------------------------------------------------------------------- |
-| CMP-022 Kbd            | `CMP-022 · Kbd`                    | Keys, Surface                      | 5      | —                                                                                   |
-| CMP-035 Countdown      | `CMP-035 · Countdown`              | Format, Phase                      | 7      | CMP-019 (`clock`)                                                                   |
-| CMP-036 KeyValueRow    | `CMP-036 · KeyValueRow`            | Emphasis, Value, Freshness, Layout | 7      | CMP-239 FreshnessMarker (by reference), CMP-020                                     |
-| CMP-042 Tabs           | `CMP-042 · Tabs`                   | Orientation, Icons, State          | 8      | CMP-019, CMP-079 + CMP-019 `lock` (the gated tab)                                   |
-| CMP-050 Card           | `CMP-050 · Card`                   | Surface, Header, Padding           | 5      | CMP-001 / CMP-002 (actions), CMP-015, CMP-027                                       |
-| CMP-059 CommandPalette | `CMP-059 · CommandPalette`         | Query, Row                         | 7      | CMP-043, CMP-213 FuzzyList, CMP-022, CMP-019 (`warning`, `lock`), CMP-079           |
-| CMP-062 ThemeSwitcher  | `CMP-062 · ThemeSwitcher`          | Value, State                       | 5      | CMP-003, CMP-004 ("match system"), CMP-079 + CMP-019 `lock` (§6 J15 (b) only)       |
-| CMP-063 DensityToggle  | `CMP-063 · DensityToggle`          | Scope, Value, Form                 | 6      | CMP-003, CMP-041 (`menuitemradio` form), CMP-079 + CMP-019 `lock` (§6 J15 (b) only) |
-| CMP-069 InfoPanel      | `CMP-069 · InfoPanel`              | Variant, State                     | 5      | CMP-046 (`modal=false`), CMP-002 (close), CMP-015, CMP-027, CMP-021                 |
-| CMP-085 SkipLink       | `CMP-085 · SkipLink`               | State, Targets                     | 3      | CMP-039                                                                             |
-| CMP-228 PreviewTile    | `CMP-228 · PreviewTile`            | Kind, State                        | 8      | — (the host's renderer draws inside it; CMP-015 is never used, E11-D03 D12)         |
-| **11**                 |                                    | **27**                             | **66** |                                                                                     |
-| Custom trading glyphs  | `icon/{name}` (glyph specs, §7.12) | Size                               | 13     | registered through CMP-019 (E05-T06)                                                |
+| Component              | Variant set (specified; not drawn) | Variant properties                 | Cells  | Composes (by reference)                                                                                                       |
+| ---------------------- | ---------------------------------- | ---------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| CMP-022 Kbd            | `CMP-022 · Kbd`                    | Keys, Surface                      | 5      | —                                                                                                                             |
+| CMP-035 Countdown      | `CMP-035 · Countdown`              | Format, Phase                      | 7      | CMP-019 (`clock`)                                                                                                             |
+| CMP-036 KeyValueRow    | `CMP-036 · KeyValueRow`            | Emphasis, Value, Freshness, Layout | 7      | CMP-239 FreshnessMarker (by reference), CMP-020                                                                               |
+| CMP-042 Tabs           | `CMP-042 · Tabs`                   | Orientation, Icons, State          | 8      | CMP-019, CMP-079 + CMP-019 `lock` (the gated tab)                                                                             |
+| CMP-050 Card           | `CMP-050 · Card`                   | Surface, Header, Padding           | 5      | CMP-001 / CMP-002 (actions), CMP-015, CMP-027                                                                                 |
+| CMP-059 CommandPalette | `CMP-059 · CommandPalette`         | Query, Row                         | 7      | CMP-043, CMP-213 FuzzyList, CMP-022, CMP-019 (`warning`, `lock`), CMP-079                                                     |
+| CMP-062 ThemeSwitcher  | `CMP-062 · ThemeSwitcher`          | Value, State                       | 5      | CMP-003, CMP-004 ("match system"), CMP-079 + CMP-019 `lock` (§6 J15 (b) only, PROPOSED, owner approval pending (#2701))       |
+| CMP-063 DensityToggle  | `CMP-063 · DensityToggle`          | Scope, Value, Form                 | 6      | CMP-003, CMP-041 (`menuitemradio` form), CMP-079 + CMP-019 `lock` (§6 J15 (b) only, PROPOSED, owner approval pending (#2701)) |
+| CMP-069 InfoPanel      | `CMP-069 · InfoPanel`              | Variant, State                     | 5      | CMP-046 (`modal=false`), CMP-002 (close), CMP-015, CMP-027, CMP-021                                                           |
+| CMP-085 SkipLink       | `CMP-085 · SkipLink`               | State, Targets                     | 3      | CMP-039                                                                                                                       |
+| CMP-228 PreviewTile    | `CMP-228 · PreviewTile`            | Kind, State                        | 8      | — (the host's renderer draws inside it; CMP-015 is never used, E11-D03 D12)                                                   |
+| **11**                 |                                    | **27**                             | **66** |                                                                                                                               |
+| Custom trading glyphs  | `icon/{name}` (glyph specs, §7.12) | Size                               | 13     | registered through CMP-019 (E05-T06)                                                                                          |
 
-Every gated cell — CMP-042's gated tab, CMP-059's gated command and, only under §6 J15 (b), the appearance controls'
+Every gated cell — CMP-042's gated tab, CMP-059's gated command and, only under §6 J15 (b) (PROPOSED, owner approval pending (#2701)), the appearance controls'
 locked option — is a CMP-079 RbacGate composition with the CMP-019 `lock` glyph (conventions 46).
 
 **Deviations.** (1) The coordinator's brief for this slice names the new decisions "H1…"; slice 4 already holds H1–H37
 (§6), so this slice numbers its decisions **J1–J25** (I is skipped: it reads as a numeral). (2) The brief's Penpot line
-names the per-set file; this slice therefore draws nothing of its own and says so per section. (3) No `15` entry is
-edited (the write set above), unlike slices 3 (#4322) and 4 (#4414), which applied their catalogue clauses in the same
-PR: this slice's brief names its two files only, so every clause is held (§6 (f)) and the coordinator decides whether
-they land in this PR or after the J-rows are ruled.
+names the per-set file; this slice therefore draws nothing of its own and says so per section. (3) The `15` clauses
+were held in the first draft, whose brief named the two spec files only; ruling 6438042003 lands them in this PR, as
+slices 3 (#4322) and 4 (#4414) landed theirs, each tagged with its J-row (§6 (f)); the J1 and J15 clauses carry the
+PROPOSED marker.
 
 ## 2. How to review
 
 1. Read the conventions once (§3, items 40–49): every component section cites them instead of repeating them.
 2. Read a section top to bottom: the matrix says what a build would draw, the anatomy how, the tables how it behaves;
    the catalogue text it quotes is `main`'s at `966f9edcd`.
-3. The owner decisions are §6 (J1–J25); §6 (e) says what a "no" reverts, §6 (f) lists the held `15` clauses and the
-   hand-offs.
+3. The owner decisions are §6 (J1–J25): J1 and J15 PROPOSED, owner approval pending (#2701), the rest RULED (6438042003); §6 (e) says what a "no"
+   reverts, §6 (f) lists the `15` clauses applied in this PR and the hand-offs.
 4. The glyph set (§7.12) is a specification for E05-T06: names, meanings, motifs, the grid, the stroke, the optical
    sizes, the states it never has and the accessible-name rule. E05-T06 draws them and registers them.
 
@@ -133,9 +137,12 @@ they land in this PR or after the J-rows are ruled.
     CMP-016 echoes it on hover and focus, never the only copy (D09 §2.2); the reason is in the DOM at mount and linked
     by `aria-describedby`; CMP-079 RbacGate wraps the role legs (D09 §2.1 step 3, §8); the label and lock
     `color.text.tertiary`, the reason `color.text.secondary`, a filled control's fill `color.surface.raised` with a 1 px
-    `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled`; `Enter`, `Space`, a bound
-    hotkey or an arrow that would select it changes nothing and re-shows the reason inline with one polite announcement
-    (D09 §2.2, §3.1, §9.1, §9.3, `E09-D09.md:49`). The reason is the host's key (`rbac.view_as` first, then
+    `color.border.default` hairline; never `color.text.disabled`, never `opacity.disabled`; `Enter`, `Space` or a bound
+    hotkey changes nothing and re-shows the reason inline with one polite announcement (D09 §2.2, §3.1, §9.1, §9.3,
+    `E09-D09.md:49`, `:243`). An arrow that lands on it (a tab, a palette option, an appearance segment) moves focus and
+    selects nothing, **silently**: the screen reader reads its name, "unavailable" and the reason through
+    `aria-describedby`, and nothing else is announced, as D09 §9.3's menu item lands (`E09-D09.md:245`); this aligns
+    slice 4's arrow clause with D09 §9.3, so the reason is never read twice on landing. The reason is the host's key (`rbac.view_as` first, then
     `rbac.permission` with the D09 §3.2 verb, e.g. "Your role can't change settings.", `E09-D09.md:115`); a component
     never writes it. Several gated controls in one surface point at one reason line; a panel read-only for the session
     carries one notice under its header and every gated control's `aria-describedby` points at it (D09 §2.2 "one notice,
@@ -170,12 +177,12 @@ No token is added or changed; the mirror is slice 1 §4's, re-synced with #3925 
 `packages/ui/tokens`), and every figure here and in the audit is measured at that state in all three themes. The slice
 binds only published semantic tokens — the surface, border, text, action, status (`subtle`, `default`, `strong`) and
 focus colours, `size.control.height`, `size.row.height`, `size.icon`, the `space.inset.*`, `space.stack.*`,
-`space.panel.padding` and `space.dialog.padding` aliases, `radius.control|card|dialog|badge`,
+`space.panel.padding`, `space.dialog.padding` and `space.button.paddingX` (the skip link's pill) aliases, `radius.control|card|dialog|badge`,
 `elevation.card|popover|dialog`, the `type.ui.*` and `type.num.*` styles and the motion primitives (slice 1 A8) — plus
 the named primitives of §5.2. Each section maps the catalogue names that do not exist to shipped tokens (slice 1
 conventions 9): `font.mono` (CMP-022, CMP-035) → the `type.num.*` styles over `font.family.mono` (E17-D02 CR-5,
 `E17-D02.md:386`; E30-D03 A15, `E30-D03.md:677`); `color.text.warning` (CMP-035) → none, the number carries the
-threshold (§6 J1); `space.row.*` and `font.size.body/label` (CMP-036) → `space.inset.*` and `type.ui.label` /
+threshold (§6 J1, PROPOSED, owner approval pending (#2701)); `space.row.*` and `font.size.body/label` (CMP-036) → `space.inset.*` and `type.ui.label` /
 `type.ui.body`; `space.tabs.*` (CMP-042) → `space.inset.*` (E12-D05 D05-C10, `E12-D05.md:548`); `radius.lg` and
 `elevation.1` (CMP-050) → `radius.card` and `elevation.card` (E25-D05 CR-4, `E25-D05.md:388`, `:247`); `elevation.4`
 (CMP-059) → `elevation.dialog` (E10-D03 §6.1, `E10-D03.md:281`); `color.action.primary` (CMP-085) →
@@ -219,13 +226,21 @@ slices 1–4 keep their resolution.
   - **Kbd look.** E10-D03 draws the cap on `color.surface.raised` with `color.text.primary` and a `color.border.strong`
     edge (`E10-D03.md:385`, `:405`, `:505`) at `type.num.xs` (`:285`); E15-D03 §4.8 draws it in `color.text.secondary`
     at `type.num.sm` with `radius.xs` (`E15-D03.md:406`); E12-D04 draws its digits in `color.text.secondary`
-    (`E12-D04.md:337`). Put to you (§6 J4).
+    (`E12-D04.md:337`); slice 4 (#4414) CMP-041 draws its interim shortcut in `type.num.sm`, `color.text.tertiary`
+    "until slice 5 ships" (`E05-D02-feedback-overlays.md:1557`). Ruled: one look, §6 J4 (c), RULED (6438042003); CMP-041's
+    trailing slot takes CMP-022 as drawn here.
   - **Countdown colour.** `15` names `color.text.warning` (`15:386`), which does not exist; E17-D02 CR-5 maps it to
     `color.status.warning.strong` (`E17-D02.md:386`), which measures 4.41 / 4.11 / 3.78:1 in light on canvas, raised and
     overlay (below 4.5:1 for text, audit §4), and E30-D03 A15 drops it, "the number carries the threshold"
-    (`E30-D03.md:677`). Aligned with E30-D03 (§6 J1); E17-D02 CR-5's colour row goes back to its owner.
+    (`E30-D03.md:677`). Aligned with E30-D03 (§6 J1, PROPOSED, owner approval pending (#2701)); E17-D02 CR-5's colour row goes
+    back to its owner.
+  - **Countdown threshold look.** E39-D02's motion table makes each 60 s / 10 s / 0 s threshold flip "one instant
+    change of word and weight" (`E39-D02.md:191`, E11-D06 D12 applied to CMP-035). Here the word is the host's sentence
+    (conventions 41) and CMP-035 adds no weight step: the digits keep their style, and under §6 J1 (c) (PROPOSED, owner approval pending (#2701)) the
+    `clock` glyph is the component's only threshold mark. Kept with its owner: E39-D02's word and weight are its host
+    styling; both agree the flip is instant and never a per-second colour change.
   - **Countdown formats.** E24-D02 needs `hh:mm:ss` (NG-5, `E24-D02.md:560`); E17-D02 needs an approximate "~4 s" (G10,
-    `E17-D02.md:469`); E26-D02 makes its replay clock a `role="timer"` (D-19, `E26-D02.md:61`). Put to you (§6 J6).
+    `E17-D02.md:469`); E26-D02 makes its replay clock a `role="timer"` (D-19, `E26-D02.md:61`). Ruled (§6 J6, RULED (6438042003)).
   - **Tab selection look and activation.** E29-D02 and E40-D02 mark the selected tab with a 2 px `color.border.selected`
     rule and `color.text.primary` (`E29-D02.md:166`; `E40-D02.md:1515`) and activate automatically (`E29-D02.md:158`);
     E30-D04 §7's OrderTypeTabs use a `color.surface.selected` fill with a 2 px `color.text.primary` rule and manual
@@ -244,25 +259,26 @@ slices 1–4 keep their resolution.
     stores `theme: dark | light | system` and a separate `high_contrast` boolean, and `density: compact | comfortable |
 spacious` (`22-api-openapi.yaml:21003`–`:21007`); the runtime maps `spacious` to `comfortable` and `system` to
     "match system" (`apps/web/src/shell/bootstrap/themeFromSettings.ts:9`–`:20`); `14` SCR-116 lists CVD-safe themes and
-    a cosy density (`14:2361`), and its checklist "compact / comfortable / spacious" (`14:2367`). Put to you (§6 J13,
-    J14).
+    a cosy density (`14:2361`), and its checklist "compact / comfortable / spacious" (`14:2367`). Ruled (§6 J13, J14,
+    RULED (6438042003)).
   - **Info panel trigger.** `15` opens CMP-069 "from the chip's tooltip via `Enter`" (`15:712`); a tooltip has no
     interactive content (slice 4 (#4414) CMP-016), and E25-D05 makes the chip itself a button with
     `aria-haspopup="dialog"` (`E25-D05.md:111`). Aligned with E25-D05 (§6 J18).
   - **One-click arm glyph.** E30-D04 §3.3 gives CMP-229 ArmToggle `icon/unlock` for ARMED and `icon/lock` for LOCKED
-    (`E30-D04.md:269`–`:270`); `16` §5 lists a custom "one-click-arm" glyph (`16:150`). Put to you (§6 J23).
+    (`E30-D04.md:269`–`:270`); `16` §5 lists a custom "one-click-arm" glyph (`16:150`). Ruled (§6 J23, RULED (6438042003)).
 
 ## 6. Decisions for the owner (collected)
 
-Deduplicated across the 11 components and against slices 1–4; J1–J25 are new, each PROPOSED with options and a
-recommendation unless a merged source rules it (then marked RULED with the source). Not asked again: slice 1 A8 (motion
+Deduplicated across the 11 components and against slices 1–4; J1–J25 are new, each with options and a recommendation.
+The coordinator's ruling 6438042003 on #161 took every recommendation: J2–J14 and J16–J25 are RULED (6438042003); **J1 and
+J15 stay PROPOSED, owner approval pending (#2701)**, and each row says which. Not asked again: slice 1 A8 (motion
 primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (geometry, rings, overlay anchors), C13
 (strict matrix) and C15 (stories); slice 3 (#4322) G15 (CMP-079's forms); slice 4 (#4414) H7 (surface widths), H21
 (the dialog recipe, which the palette follows) and H32 (initial focus).
 
 ### (a) Token gaps (E05-D01's token files, outside this PR's write set)
 
-- **J1 — The countdown under its threshold.** `15` CMP-035 binds `color.text.warning`, which is not shipped (`15:386`).
+- **J1 — The countdown under its threshold.** _PROPOSED, owner approval pending (#2701); recommended (c)._ `15` CMP-035 binds `color.text.warning`, which is not shipped (`15:386`).
   Options: (a) `color.status.warning.strong` on the digits (E17-D02 CR-5) — 11.65 / 4.41 / 11.65:1 on canvas, 4.11 on
   raised and 3.78 on overlay in light, below the 4.5:1 text bar there; (b) no colour change: the digits keep their
   colour, the number itself carries the threshold, and the host's words carry urgency (E30-D03 A15, `E30-D03.md:677`);
@@ -270,7 +286,7 @@ primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (g
   non-text mark: 4.41 / 4.11 / 3.78:1 in light, above 3:1). **Recommended:** (c) — never colour alone, never a text pair
   below 4.5:1, and the glyph is the one E30-D04 §3.3 already gives the countdown contexts (`icon/clock`,
   `E30-D04.md:275`). **Affects:** CMP-035; E17-D02 CR-5 (its colour row).
-- **J2 — The preview tile's edge in light.** `color.border.default` on `color.surface.sunken` measures 1.71 / 1.00 /
+- **J2 — The preview tile's edge in light.** _RULED (6438042003): (a)._ `color.border.default` on `color.surface.sunken` measures 1.71 / 1.00 /
   3.47:1 (dark / light / hc) and `color.border.strong` 2.19 / 1.20 / 2.19:1: in light the tile has no visible edge.
   Options: (a) accept it: the tile is decorative-adjacent, `role="img"` with a name, and never the only disclosure
   (`15:2673`), so its boundary is not an SC 1.4.11 component boundary; (b) a light-only edge token, an E05-D01 change.
@@ -278,20 +294,20 @@ primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (g
 
 ### (b) Geometry constants and layout
 
-- **J3 — Accept §5.1's constants** (the Kbd cap, the palette's 640 px and its 32 / 40 px rows as E10-D03's host data,
+- **J3 — Accept §5.1's constants** _RULED (6438042003): (a)._ (the Kbd cap, the palette's 640 px and its 32 / 40 px rows as E10-D03's host data,
   the tab rule, the glyph grid, the timing values) under slice 1 B1's ruling. Options: (a) recorded constants; (b) size
   tokens for them. **Recommended:** (a), like slice 4 (#4414) H7. **Affects:** CMP-022, 035, 042, 059, 085, §7.12.
 
 ### (c) Catalogue ambiguities (props, defaults, sizes)
 
-- **J4 — One Kbd look.** Two merged specs draw it differently (§5.2). Options: (a) E10-D03's: `color.surface.raised`
+- **J4 — One Kbd look.** _RULED (6438042003): (c)._ Two merged specs draw it differently (§5.2). Options: (a) E10-D03's: `color.surface.raised`
   cap, `color.text.primary`, `type.num.xs`, a 1 px `color.border.strong` edge; (b) E15-D03's: `color.text.secondary`,
   `type.num.sm`, `radius.xs`; (c) one look that takes E10-D03's cap and edge, `radius.xs` and `type.num.xs` from both,
   and `color.text.secondary` from E15-D03 and E12-D04, because a hint is secondary to the label it follows in every
   host (a menu row's label is `color.text.primary`). **Recommended:** (c): 8.81 / 8.98 / 14.35:1 on raised and 8.14 /
   8.26 / 13.27:1 on overlay, with the cap edge decorative (1.80 / 1.46 / 1.80:1 on raised; the text, not the box, is the
   hint). **Affects:** CMP-022; E10-D03 and E15-D03 follow at their next revision.
-- **J5 — Kbd keys, separators and the spoken form.** `15` gives `keys: string[]` and the expansion "Control plus Shift
+- **J5 — Kbd keys, separators and the spoken form.** _RULED (6438042003): (a)._ `15` gives `keys: string[]` and the expansion "Control plus Shift
   plus H" (`15:256`–`:257`); the keymap's bindings also use a digit range ("Alt+1..9") and pointer chords ("Ctrl+click",
   "Shift+wheel") (`apps/web/src/keymap/keymap.json`, the source of truth for default hotkeys, E49-T04). Options: (a) one
   `<kbd>` per key nested in an outer `<kbd>` (the HTML pattern for a key combination), no visible "+", the caps
@@ -300,61 +316,62 @@ primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (g
   from one name table owned with the keymap (the catalogue gives "Control" and "Shift"; every other word is the
   keymap owner's, E10/E49, never written per screen); (b) a visible "+" between caps. **Recommended:** (a) — E15-D03
   draws "`Ctrl` `S`" without a "+" (`E15-D03.md:386`) and E39-D03 speaks "Control plus Shift plus K"
-  (`E39-D03.md:155`). **Affects:** CMP-022; the keymap's name table (hand-off).
-- **J6 — Countdown formats and the clock role.** `15` offers `mm:ss | words` (`15:384`). Options: (a) add `hh:mm:ss`
+  (`E39-D03.md:155`). **Affects:** CMP-022; the keymap's name table (hand-off to E10/E49, §6 (f)).
+- **J6 — Countdown formats and the clock role.** _RULED (6438042003): (a)._ `15` offers `mm:ss | words` (`15:384`). Options: (a) add `hh:mm:ss`
   (E24-D02 NG-5) and `approx` ("~4 s", E17-D02 G10), keep `words` for E39-D02's "in 9 h 58 m"; a count is plain text
   with `aria-live="off"`; a running **clock** that is not a deadline (E26-D02's replay clock) is the host's
   `role="timer"` region, outside CMP-035; (b) keep two formats and let hosts format. **Recommended:** (a). **Affects:**
   CMP-035; E24-D02, E17-D02 (their gaps answered when approved).
-- **J7 — Countdown thresholds.** `15` says "defined thresholds (e.g. 60s, 10s, 0s)" (`15:385`); E30-D03 announces at
+- **J7 — Countdown thresholds.** _RULED (6438042003): (a)._ `15` says "defined thresholds (e.g. 60s, 10s, 0s)" (`15:385`); E30-D03 announces at
   0:10 and 0:00 only, with its own copy (`E30-D03.md:472`). Options: (a) a `thresholds?: number[]` prop (seconds,
   default `[60, 10, 0]`) and an `announce?: (s) => string` key from the host; each threshold speaks once, politely;
   crossing several at once (a tab returning from the background) speaks the latest only; (b) fixed thresholds.
   **Recommended:** (a). **Affects:** CMP-035.
-- **J8 — KeyValueRow semantics and states.** `15` asks for `dt`/`dd` (`15:394`), which need a `dl` parent. Options:
+- **J8 — KeyValueRow semantics and states.** _RULED (6438042003): (a) and (c)._ `15` asks for `dt`/`dd` (`15:394`), which need a `dl` parent. Options:
   (a) rows render `<div>` + `<dt>` + `<dd>` and always sit in the host's `<dl>` (one `dl` per group; a single row is a
-  `dl` of one); (b) rows render `role="group"` without `dl`. Plus (c) for a live row in `disconnected` /
+  `dl` of one), with a `layout?: "inline" | "stacked"` prop for conventions 49's reflow; (b) rows render
+  `role="group"` without `dl`. Plus (c) for a live row in `disconnected` /
   `reconnecting`, the value keeps `color.text.primary` and CMP-239's marker carries the state, rather than E08-D11 M25's
   `color.text.disabled` (2.86–4.31:1). **Recommended:** (a) and (c); (c) goes to E08-D11's owner as a request.
   **Affects:** CMP-036; E08-D11 M25.
-- **J9 — Tabs: the selected look and activation.** Options: (a) CMP-042's selected tab is a 2 px `color.border.selected`
+- **J9 — Tabs: the selected look and activation.** _RULED (6438042003): (a)._ Options: (a) CMP-042's selected tab is a 2 px `color.border.selected`
   bottom rule (`border.thick`) with the label `color.text.primary`, no fill (E29-D02, E40-D02; 4.89 / 4.13 / 6.66:1 on
   raised, 5.18 / 4.44 / 7.05:1 on canvas); unselected labels `color.text.secondary`; activation automatic by default
   (APG; E29-D02 D-17) with `activation: "manual"` for a host whose switch re-shapes a form or costs a fetch (E30-D04
   §7; E15-D02's WorkspaceTabStrip); CMP-103 keeps E30-D04's fill and `color.text.primary` rule as its own anatomy; (b)
   E30-D04's look for every tab strip. **Recommended:** (a): the rule is the non-colour carrier in both, and
   `aria-selected` carries it to assistive technology. **Affects:** CMP-042, CMP-103 (unchanged).
-- **J10 — Tabs without a tab panel per tab.** `15` says "lazy-mount tabpanels retain focus correctly on switch"
+- **J10 — Tabs without a tab panel per tab.** _RULED (6438042003): (a)._ `15` says "lazy-mount tabpanels retain focus correctly on switch"
   (`15:458`). Options: (a) one `tabpanel` per tab, each `aria-labelledby` its tab, the inactive panels `hidden` (or not
   mounted); a panel with no focusable content takes `tabindex="0"` so Tab reaches its content (APG); a switch never
   moves focus off the tab; (b) one shared panel re-labelled per tab. **Recommended:** (a). **Affects:** CMP-042.
-- **J11 — Card surface and heading.** Options: (a) `surface: "elevated" | "flat"` (E25-D05's `static` and `flat`,
+- **J11 — Card surface and heading.** _RULED (6438042003): (a)._ Options: (a) `surface: "elevated" | "flat"` (E25-D05's `static` and `flat`,
   `E25-D05.md:247`), `headingLevel?: 2 | 3 | 4 | 0` where 0 renders the title as plain text for a card inside a listbox
   option (E15-D05 A-4), and `region?: boolean` for a dashboard tile that is a landmark labelled by its heading (E42-D03,
   `E42-D03.md:253`); actions in the header's trailing slot; (b) the catalogue as is. **Recommended:** (a). **Affects:**
   CMP-050; E15-D05 A-4 (answered).
-- **J12 — The palette's per-command reason and rows.** E10-D03 A12 asks for `commands[].disabledReason?` (E09-D09's key
+- **J12 — The palette's per-command reason and rows.** _RULED (6438042003): (a)._ E10-D03 A12 asks for `commands[].disabledReason?` (E09-D09's key
   sentence) so a gated command renders T2 with the reason as its second line (`E10-D03.md:760`; E15-D02 §12), and draws
   rows 32 / 40 px. Options: (a) adopt A12 and E10-D03's row heights as palette data, and leave the dialog's title, the
   input's label, the listbox's name and the count sentence to E15, which implements SCR-012 (`E10-D03.md:281`) — no
   merged text writes them; (b) gated commands hidden. (b)
   contradicts `14` SCR-012's "RBAC-disabled entries greyed with a reason" (`14:357`) and D09's T2. **Recommended:** (a).
-  **Affects:** CMP-059, CMP-213.
-- **J13 — ThemeSwitcher's values.** Options: (a) three segments **Dark · Light · High contrast** (`15:647`; `16` §4's
+  **Affects:** CMP-059, CMP-213; SCR-012's strings (hand-off to E15, §6 (f)).
+- **J13 — ThemeSwitcher's values.** _RULED (6438042003): (a)._ Options: (a) three segments **Dark · Light · High contrast** (`15:647`; `16` §4's
   three presets, `16:137`), plus a separate CMP-004 Toggle for `16` §4's "match system" mode, off by default (`16:143`;
   its label is SCR-116's copy); the CVD-safe options of SCR-116 are a chart-palette choice, not a theme (E22-D03 D03-G2,
   `E22-D03.md:428`: no CVD theme ships); mapping to `22`'s `theme` + `high_contrast` is `themeFromSettings.ts`'s; (b)
   four segments with "System" as one. **Recommended:** (a): "match system" composes with a chosen theme, so it is a
   switch, not a fourth value; the accent and the chart palette stay SCR-116's other controls. **Affects:** CMP-062; `14`
   SCR-116's Type line (hand-off).
-- **J14 — DensityToggle's values.** Options: (a) **Compact · Comfortable** globally (`16` §3's two modes, `16:109`; the
+- **J14 — DensityToggle's values.** _RULED (6438042003): (a)._ Options: (a) **Compact · Comfortable** globally (`16` §3's two modes, `16:109`; the
   runtime's two), with `dense` only for `scope: "panel"` on a chart panel (E11-D02 CR-8, `E11-D02.md:648`; E11-D05,
   `E11-D05.md:301`); `22`'s `spacious` is not offered and maps to Comfortable (`themeFromSettings.ts:15`); (b) three
   global values. **Recommended:** (a). **Affects:** CMP-063; `14` SCR-116's "cosy" and "spacious" (hand-off).
 
 ### (d) Behaviour proposals
 
-- **J15 — Who may change the appearance.** `updateSettings` needs `settings:write` (`22-api-openapi.yaml:9803`), which a
+- **J15 — Who may change the appearance.** _PROPOSED, owner approval pending (#2701); recommended (a)._ `updateSettings` needs `settings:write` (`22-api-openapi.yaml:9803`), which a
   viewer never holds (`21-database-schema.md:4895`). Options: (a) the change always applies on this device through the
   runtime and its local store (`16:138`) for every role and in view-as (the actor's own presentation, `scope: self`); a
   session without `settings:write` simply skips the server save — no T2, no message; (b) T2 for a viewer: each option
@@ -362,28 +379,28 @@ primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (g
   CMP-079 (conventions 46). **Recommended:** (a): high contrast and density are accessibility needs (`05:79` gives
   high contrast a global hotkey), and the server still authorises its own record (C-12.4); (b) is drawn as an inset
   only if you choose it. Routed to D09's owner as a PROPOSED clarification of §2.1. **Affects:** CMP-062, CMP-063.
-- **J16 — When an appearance change speaks and is counted.** Options: (a) conventions 45: a committed user change speaks
+- **J16 — When an appearance change speaks and is counted.** _RULED (6438042003): (a)._ Options: (a) conventions 45: a committed user change speaks
   once ("Theme changed to High Contrast", `15:648`; a density change with its scope, "Chart panel density: dense",
   `E11-D05.md:301`; the global density sentence is the host's key, none being written yet) and emits its event once; an
   arrow that moves selection in CMP-003 is a committed change (selection follows focus, slice 1 CMP-003), and the
   region's text is replaced, so a quick run speaks its last value; initial load, server-fed applies and a match-system
   flip speak and count nothing; (b) count only on leaving the control. **Recommended:** (a). **Affects:** CMP-062,
   CMP-063.
-- **J17 — InfoPanel's two forms.** Options: (a) `variant: "drawer" | "inline"`: the drawer is CMP-046 `modal=false`
+- **J17 — InfoPanel's two forms.** _RULED (6438042003): (a)._ Options: (a) `variant: "drawer" | "inline"`: the drawer is CMP-046 `modal=false`
   (`15:712`; E25-D05 §3, `E25-D05.md:111`); the inline form is a disclosure inside its host that stays open while read
   (E12-D03 D3-8, DS-3, `E12-D03.md:53`, `:472`); (b) drawer only. **Recommended:** (a). **Affects:** CMP-069.
-- **J18 — How the InfoPanel opens.** Options: (a) `Enter` or `Space` on the trigger (the CMP-227 chip, a `button` with
+- **J18 — How the InfoPanel opens.** _RULED (6438042003): (a)._ Options: (a) `Enter` or `Space` on the trigger (the CMP-227 chip, a `button` with
   `aria-haspopup="dialog"`) opens it; nothing inside a tooltip is operable; `Esc` from the drawer returns focus to the
   chip (`E25-D05.md:104`); (b) the catalogue's "from the chip's tooltip via `Enter`". **Recommended:** (a). **Affects:**
   CMP-069.
-- **J19 — SkipLink targets.** `05` asks for a set ("Skip to order ticket" / "Skip to chart", `05:98`); `15` has one
+- **J19 — SkipLink targets.** _RULED (6438042003): (a)._ `05` asks for a set ("Skip to order ticket" / "Skip to chart", `05:98`); `15` has one
   `targetId` (`15:869`) and `14` SCR-010 "skip link to main content" (`14:297`). Options: (a) `targets: { id, label
 }[]`, "Skip to main content" always first, further links only for regions the route mounts (the order ticket, the
   chart), each its own link in DOM order before the TopBar; (b) one link. **Recommended:** (a). **Affects:** CMP-085.
-- **J20 — The skip target.** Options: (a) activation moves focus to the target, which takes `tabindex="-1"` (removed on
+- **J20 — The skip target.** _RULED (6438042003): (a)._ Options: (a) activation moves focus to the target, which takes `tabindex="-1"` (removed on
   blur) and shows the CMP-039 ring while focused, and the next Tab continues from it; (b) scroll only. **Recommended:**
   (a): WCAG 2.4.1 needs the sequential focus to move, not only the viewport. **Affects:** CMP-085.
-- **J21 — PreviewTile's kinds, source and states.** Options: (a) adopt E11-D03 D03-CR-3 (`source: "live" | "sample"`,
+- **J21 — PreviewTile's kinds, source and states.** _RULED (6438042003): (a)._ Options: (a) adopt E11-D03 D03-CR-3 (`source: "live" | "sample"`,
   `emptyText`, `errorText`, `kind` gains `"scales"`, `E11-D03.md:443`), E12-D05's chart-type and bar-mode previews
   (`E12-D05.md:546`) and E32-D04 D04-A2 (`kind: "ladder"`, `value`, `caption`, `E32-D04.md:37`), with five states —
   live, sample, empty, error, collapsed (E32-D04) — and never a spinner (E11-D03 D12); (b) the catalogue's four kinds.
@@ -391,34 +408,43 @@ primitives), A10 (icon optical sizes; J24 only adds the glyph forms), B1–B3 (g
 
 ### (e) The glyph set (§7.12)
 
-- **J22 — Glyph names.** Options: (a) `icon/flatten-all`, `icon/chase-limit`, `icon/iceberg-order`, `icon/twap`,
+- **J22 — Glyph names.** _RULED (6438042003): (a)._ Options: (a) `icon/flatten-all`, `icon/chase-limit`, `icon/iceberg-order`, `icon/twap`,
   `icon/one-click-arm`, `icon/native-sl-shield` (E36-D02's name, `E36-D02.md:342`), `icon/estimated` (E25-D05 CR-3,
   `E25-D05.md:387`), `icon/node-trigger`, `icon/node-condition`, `icon/node-action`, `icon/node-logic-gate`,
   `icon/node-comment` and `icon/heatmap-convention-swap`: `16` §5's list in its own words, kebab-case; (b) shorter
   names. **Recommended:** (a). **Affects:** §7.12; E05-T06's registry.
-- **J23 — The one-click-arm glyph and CMP-229.** Options: (a) `icon/one-click-arm` marks the 1-click trading toggle
+- **J23 — The one-click-arm glyph and CMP-229.** _RULED (6438042003): (a)._ Options: (a) `icon/one-click-arm` marks the 1-click trading toggle
   (`05:65`, "Toggle 1-click trading", "Shows persistent armed indicator"); CMP-229 ArmToggle keeps E30-D04's
   `icon/unlock` / `icon/lock` (`E30-D04.md:269`–`:270`); never two arm glyphs on one control; (b) alias
   `one-click-arm` to `unlock`. **Recommended:** (a). **Affects:** §7.12; E30-D04 (unchanged).
-- **J24 — Small forms.** Slice 1 A10 is open (shipped 12 / 16 / 20 px; proposed 16 / 20 / 24). Options: (a) each
+- **J24 — Small forms.** _RULED (6438042003): (a)._ Slice 1 A10 is open (shipped 12 / 16 / 20 px; proposed 16 / 20 / 24). Options: (a) each
   custom glyph has its 24-unit master and, where its detail closes up at 12 px, a reduced 12 px form drawn to the same
   stroke (E25-D05 CR-3's precedent for `estimated`: a solid ring or "≈" alone at 12 px); the glyphs marked "16 px
   minimum" in §7.12 are never used at 12 px; (b) one drawing at every size. **Recommended:** (a). **Affects:** §7.12.
-- **J25 — Node glyph colour.** Options: (a) the node-type glyphs are `currentColor` (the header's text token); the
+- **J25 — Node glyph colour.** _RULED (6438042003): (a)._ Options: (a) the node-type glyphs are `currentColor` (the header's text token); the
   category hue rides the node's stripe in `color.node.*` (E37-D02, `E37-D02.md:169`), so the glyph never repeats a hue
   that measures 3.03:1 (`color.node.comment` on canvas, dark); (b) glyphs in `color.node.*`. **Recommended:** (a).
   **Affects:** §7.12; CMP-147..151 (unchanged).
 
-### (f) Catalogue clauses held, and hand-offs
+### (f) Catalogue clauses applied in this PR, and hand-offs
 
-- **Held for `15`'s owner (this PR edits no `15` entry):** the "Catalogue alignment" paragraph of each §7 section —
-  CMP-022 (J4, J5), CMP-035 (J1, J6, J7), CMP-036 (J8), CMP-042 (J9, J10), CMP-050 (J11), CMP-059 (J12), CMP-062 (J13,
-  J15, J16), CMP-063 (J14, J15, J16), CMP-069 (J17, J18), CMP-085 (J19, J20), CMP-228 (J21) — and CMP-019's registry
-  line for the 13 glyphs (J22–J25). A "no" on a J-row drops the clauses that cite it.
-- **Hand-offs (outside this PR's write set):** the 13 glyphs to E05-T06 (#271), which draws, registers and tests them;
-  `14` SCR-116's Type line and checklist ("cosy", "spacious", the CVD-safe themes; J13, J14) and `14` SCR-010's skip
-  link line (J19) to their owner; E08-D11 M25 (J8 (c)), E17-D02 CR-5 (J1), E10-D03 §6.1's Kbd and E15-D03 §4.8 (J4),
-  E24-D02 NG-5 and E17-D02 G10 (J6), D09 §2.1 (J15) and `16` §5's icon list, which E05-T06's DoD updates (J22).
+- **Applied to `15` in this PR** (ruling 6438042003, form (1)), each clause tagged inline with its J-row, so a later
+  "no" drops exactly the clauses that cite it: the "Catalogue alignment" paragraph of each §7 section — CMP-022 (J4,
+  J5), CMP-035 (J1, J6, J7), CMP-036 (J8), CMP-042 (J9, J10), CMP-050 (J11), CMP-059 (J3, J12), CMP-062 (J13, J15,
+  J16), CMP-063 (J14, J15, J16), CMP-069 (J17, J18), CMP-085 (J19, J20), CMP-228 (J2, J21) — and CMP-019's new
+  **Trading glyphs** line for the 13 glyphs (J22–J25), which E05-T06 (#271) reads with §7.12 as its contract. The
+  Props and A11y clauses are appended after the catalogue's own text, so the verbatim quotes of §7 stay exact; the
+  Tokens and Storybook lines are replaced, with the names they replace. The J1 and J15 clauses say "PROPOSED, owner
+  approval pending (#2701)" in `15` as here.
+- **Hand-offs (outside this PR's write set), each with its owner:** the 13 glyphs to E05-T06 (#271), which draws,
+  registers and tests them, and whose DoD updates `16` §5's icon list (J22); the keymap's name table — the spoken key
+  words of every Kbd expansion beyond "Control" and "Shift" — to the keymap's owners, E10 and E49 (E49-T04 owns
+  `keymap.json`) (J5); SCR-012's dialog title, input label, listbox name and count sentence to E15, which implements
+  SCR-012 (`E10-D03.md:281`) (J12); `14` SCR-116's Type line and checklist ("cosy", "spacious", the CVD-safe themes;
+  J13, J14) and `14` SCR-010's skip-link line (J19) to `14`'s owner, the project owner (`14:3`), through the
+  coordinator; E08-D11 M25 to E08-D11's owner (J8 (c)); E17-D02 CR-5 to E17-D02's owner (J1, once ruled); E10-D03
+  §6.1's Kbd and E15-D03 §4.8 to their owners at their next revision (J4); E24-D02 NG-5 and E17-D02 G10 to theirs
+  (J6); D09 §2.1 to E09-D09's owner as a clarification (J15, once ruled).
 
 ## 7. Components
 
@@ -474,7 +500,7 @@ a gated command's hint stays as drawn (its row carries T2, conventions 46). **Hi
 the cap grows with the text scale; caps never wrap apart from each other. **Forced colors:** the caps keep a CanvasText
 1 px border, the text CanvasText (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props say `keys` holds the keymap's display form, ranges and pointer chords
+**Catalogue alignment (applied in this PR, §6 (f)):** Props say `keys` holds the keymap's display form, ranges and pointer chords
 included (J5); A11y adds the visible caps hidden, the keymap's name table and `aria-keyshortcuts` on a host item (J5);
 Tokens become the anatomy's (`type.num.xs` for `font.mono`, `color.text.secondary`, `color.border.strong`, J4);
 Storybook adds Range, InMenuRow, Remapped.
@@ -493,22 +519,23 @@ Storybook adds Range, InMenuRow, Remapped.
 
 **Variants × States (7 cells; not drawn — board 09 shows "Cancels in 0:20" in the order confirm):**
 
-| Cell            | Axes                        | What it shows                                                                                                    |
-| --------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| default         | Format=mm:ss, Phase=running | "Cancels in 0:20" (`confirm.countdown`, E30-D03, `E30-D03.md:472`), the digits `type.num.sm`                     |
-| under threshold | Phase=under threshold       | "Cancels in 0:09" with the CMP-019 `clock` glyph leading the digits in `color.status.warning.strong` (§6 J1 (c)) |
-| expired         | Phase=expired               | the host's outcome replaces it (SCR-076 cancels and closes), the countdown unmounted (conventions 47)            |
-| hh:mm:ss        | Format=hh:mm:ss             | "Funding in 07:58:12" (E24-D02 NG-5, §6 J6)                                                                      |
-| words           | Format=words                | "until 00:00 UTC, in 9 h 58 m" — the absolute time first (E39-D02, `E39-D02.md:179`; conventions 41)             |
-| approx          | Format=approx               | "Next try in ~4 s" (E17-D02, `E17-D02.md:279`)                                                                   |
-| in a grid       | Format=mm:ss                | a SCR-100 "Funding in" cell: same digits, no announcement at any threshold (`15:385`)                            |
+| Cell            | Axes                        | What it shows                                                                                                                                              |
+| --------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| default         | Format=mm:ss, Phase=running | "Cancels in 0:20" (`confirm.countdown`, E30-D03, `E30-D03.md:472`), the digits `type.num.sm`                                                               |
+| under threshold | Phase=under threshold       | "Cancels in 0:09" with the CMP-019 `clock` glyph leading the digits in `color.status.warning.strong` (§6 J1 (c), PROPOSED, owner approval pending (#2701)) |
+| expired         | Phase=expired               | the host's outcome replaces it (SCR-076 cancels and closes), the countdown unmounted (conventions 47)                                                      |
+| hh:mm:ss        | Format=hh:mm:ss             | "Funding in 07:58:12" (E24-D02 NG-5, §6 J6)                                                                                                                |
+| words           | Format=words                | "until 00:00 UTC, in 9 h 58 m" — the absolute time first (E39-D02, `E39-D02.md:179`; conventions 41)                                                       |
+| approx          | Format=approx               | "Next try in ~4 s" (E17-D02, `E17-D02.md:279`)                                                                                                             |
+| in a grid       | Format=mm:ss                | a SCR-100 "Funding in" cell: same digits, no announcement at any threshold (`15:385`)                                                                      |
 
 **Not drawn:** hover, focus, disabled (not interactive); paused (a countdown never pauses; a host that stops the clock
 — SCR-076 restarting on any key or pointer event, slice 4 (#4414) conventions 34 — re-mounts it with a new `expiresAt`).
 
 **Anatomy:** the host's sentence in its own `type.ui.*` style and colour, the digits `type.num.sm` (or the host's
-`type.num.*` size) in the same colour, tabular so the width never changes (conventions 41); under the threshold the
-`clock` glyph at `size.icon`, `color.status.warning.strong`, `space.inset.xs` before the digits. No density change.
+`type.num.*` size) in the same colour, tabular so the width never changes (conventions 41); under the threshold, only
+if §6 J1 (c) is approved (PROPOSED, owner approval pending (#2701)), the `clock` glyph at `size.icon`, `color.status.warning.strong`,
+`space.inset.xs` before the digits; until then the digits alone carry it (J1 (b)). No density change.
 
 **Keyboard:** none of its own (not focusable; a focusable host such as SCR-076's footer owns the keys).
 
@@ -518,7 +545,7 @@ Storybook adds Range, InMenuRow, Remapped.
 | --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | the count       | none (text)     | its words, read on demand: "Cancels in 20 seconds unless you act" (the spoken form, `E30-D03.md:472`)                    | `aria-live="off"`; the visible "0:20" is `aria-hidden="true"` and a visually hidden twin holds the words |
 | the announcer   | status (polite) | at each threshold once: the host's key, e.g. `confirm.countdown.announce10` "10 seconds until this confirmation cancels" | pre-rendered empty with its host (slice 4 (#4414) conventions 33); latest only (§6 J7)                   |
-| the clock glyph | none            | —                                                                                                                        | `aria-hidden="true"` (the words carry it)                                                                |
+| the clock glyph | none (J1 (c))   | —                                                                                                                        | `aria-hidden="true"` (the words carry it)                                                                |
 
 **Focus:** never moves focus, at a threshold or at expiry (`05:96`). **Motion:** none: digits swap once a second in both
 modes (`E39-D02.md:191`). **Live region:** thresholds only, polite, once each; never per tick; in a grid column none.
@@ -526,10 +553,10 @@ modes (`E39-D02.md:191`). **Live region:** thresholds only, polite, once each; n
 tabular digits keep the width; the sentence wraps before the digits split. **Forced colors:** CanvasText; the glyph
 `currentColor` (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props `format: "mm:ss" | "hh:mm:ss" | "words" | "approx"` (J6), `thresholds?:
+**Catalogue alignment (applied in this PR, §6 (f)):** Props `format: "mm:ss" | "hh:mm:ss" | "words" | "approx"` (J6), `thresholds?:
 number[]` and `announce?` (J7); A11y adds the spoken twin, latest-only on a multi-threshold crossing, and a running
 clock as the host's `role="timer"` (J6); Tokens become `type.num.*` and the `clock` glyph in
-`color.status.warning.strong` (J1); Storybook adds HhMmSs, Approx, InGrid.
+`color.status.warning.strong` (J1, PROPOSED, owner approval pending (#2701)); Storybook adds HhMmSs, Approx, InGrid.
 
 ### CMP-036 · KeyValueRow
 
@@ -588,9 +615,9 @@ per 2 s, latest only (CMP-121's line, `15:1381`). **T2 and not T2:** not a contr
 — a long text value wraps, a number never wraps. **Forced colors:** CanvasText for both; CMP-239's word carries its
 state (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** A11y adds the host's `dl` and the "—" read as a state word (J8 (a)); Tokens
+**Catalogue alignment (applied in this PR, §6 (f)):** A11y adds the host's `dl` and the "—" read as a state word (J8 (a)); Tokens
 become the anatomy's (`space.inset.*` and `type.ui.label` / `type.ui.body` / `type.num.*` for `space.row.*` and
-`font.size.body/label`); Props add `layout?: "inline" | "stacked"`; Storybook adds Missing, Stale, Stacked.
+`font.size.body/label`); Props add `layout?: "inline" | "stacked"` (J8 (a)); Storybook adds Missing, Stale, Stacked.
 
 ### CMP-042 · Tabs
 
@@ -634,13 +661,14 @@ state, CMP-015 or CMP-026 inside it).
 
 **Keyboard** (WAI-ARIA APG Tabs pattern; automatic activation unless the host sets manual):
 
-| Keys                            | Action                                                                                                                        |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Tab                             | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the tab panel (§6 J10)                     |
-| → / ← (↓ / ↑ when vertical)     | Next / previous tab, wrapping; automatic: selects it; manual: moves focus only                                                |
-| Home / End                      | First / last tab, as the arrows                                                                                               |
-| Enter / Space                   | Manual: selects the focused tab; automatic: nothing more                                                                      |
-| any of the above on a gated tab | Focus lands on it; nothing is selected; the reason is re-shown inline with one polite announcement (D09 §9.3; conventions 46) |
+| Keys                                   | Action                                                                                                                                                                                  |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab                                    | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the tab panel (§6 J10)                                                                               |
+| → / ← (↓ / ↑ when vertical)            | Next / previous tab, wrapping; automatic: selects it; manual: moves focus only                                                                                                          |
+| Home / End                             | First / last tab, as the arrows                                                                                                                                                         |
+| Enter / Space                          | Manual: selects the focused tab; automatic: nothing more                                                                                                                                |
+| an arrow, Home or End onto a gated tab | Focus lands on it and nothing is selected, silently: the name, "unavailable" and the reason are read through `aria-describedby` (D09 §9.3's menu row, `E09-D09.md:245`; conventions 46) |
+| Enter / Space on a gated tab           | Nothing is selected; the reason is re-shown inline with one polite announcement (D09 §9.3, `E09-D09.md:243`)                                                                            |
 
 **Accessible name and role:**
 
@@ -659,7 +687,7 @@ type (CMP-103's emulated tab) is availability, not T2 (conventions 47). **Hit ta
 tab (conventions 49); vertical tabs wrap their labels. **Forced colors:** the selected rule Highlight, labels
 ButtonText, the focus ring Highlight (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props add `activation?: "automatic" | "manual"` and a per-tab `disabledReason?`
+**Catalogue alignment (applied in this PR, §6 (f)):** Props add `activation?: "automatic" | "manual"` and a per-tab `disabledReason?`
 through CMP-079 (J9, conventions 46); A11y adds the panel `tabindex`, focus kept on switch and the T2 tab (J10); Tokens
 become the anatomy's (`color.border.selected` for `color.action.selected`, `space.inset.*` for `space.tabs.*`);
 Storybook adds ManualActivation and GatedTab.
@@ -715,7 +743,7 @@ gated actions take T2 themselves (conventions 46). **Hit target:** its actions'.
 before the actions move under it (conventions 49); the body scrolls only if its host fixes the height. **Forced
 colors:** a CanvasText 1 px border in both surfaces, because the shadow and the fill step are lost (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props add `surface?: "elevated" | "flat"`, `headingLevel?: 2 | 3 | 4 | 0` and
+**Catalogue alignment (applied in this PR, §6 (f)):** Props add `surface?: "elevated" | "flat"`, `headingLevel?: 2 | 3 | 4 | 0` and
 `region?: boolean` (J11); A11y adds the option and region readings; Tokens become `radius.card`, `elevation.card` and
 `border.hairline` + `color.border.default` (for `radius.lg`, `elevation.1`); Storybook adds Flat, RegionTile, InOption.
 
@@ -789,7 +817,7 @@ absent for a session without it (T3, `E09-D09.md:175`); no match is availability
 (conventions 49). **Forced colors:** the active row Highlight with HighlightText; the gated label CanvasText with its
 lock and reason (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props add `commands[].disabledReason?`, `destructive?` and `kbd` from the
+**Catalogue alignment (applied in this PR, §6 (f)):** Props add `commands[].disabledReason?`, `destructive?` and `kbd` from the
 keymap (J12, conventions 40); A11y adds the keys above, the option name with its tag and the count's once-per-query
 rule; Tokens become `elevation.dialog`, `radius.dialog` and the rows' (for `elevation.4`); Storybook adds EmptyQuery,
 RbacDisabled, Destructive (E10-D03's list, `E10-D03.md:563`).
@@ -809,16 +837,16 @@ RbacDisabled, Destructive (E10-D03's list, `E10-D03.md:563`).
 **Variants × States (5 cells; not drawn):** each cell shows the control in the theme it selects, because the switch
 re-themes the page within one frame (conventions 45).
 
-| Cell            | Axes                  | What it shows                                                                                                                                                               |
-| --------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| dark            | Value=dark            | CMP-003 with three segments, Dark checked (`16` §4: dark is the default, `16:137`)                                                                                          |
-| light           | Value=light           | Light checked, the control in the light theme                                                                                                                               |
-| high contrast   | Value=high-contrast   | High contrast checked, the control in the high-contrast theme                                                                                                               |
-| focus-visible   | State=focus-visible   | the CMP-039 ring on the checked segment (slice 1 CMP-003)                                                                                                                   |
-| match system on | State=match system on | the CMP-004 toggle on and the segment the system resolves to checked; the segments stay operable, and choosing one turns match system off (`(heuristic)`, PROPOSED, §6 J13) |
+| Cell            | Axes                  | What it shows                                                                                                                                                                         |
+| --------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| dark            | Value=dark            | CMP-003 with three segments, Dark checked (`16` §4: dark is the default, `16:137`)                                                                                                    |
+| light           | Value=light           | Light checked, the control in the light theme                                                                                                                                         |
+| high contrast   | Value=high-contrast   | High contrast checked, the control in the high-contrast theme                                                                                                                         |
+| focus-visible   | State=focus-visible   | the CMP-039 ring on the checked segment (slice 1 CMP-003)                                                                                                                             |
+| match system on | State=match system on | the CMP-004 toggle on and the segment the system resolves to checked; the segments stay operable, and choosing one turns match system off (`(heuristic)`, §6 J13, RULED (6438042003)) |
 
 **Not drawn:** hover, disabled and the gated form (slice 1 CMP-003 owns them; the gated form exists only under §6 J15
-(b), as CMP-003's disabled-with-reason with the `lock` and "Your role can't change settings."); the CVD-safe and accent
+(b), PROPOSED, owner approval pending (#2701), as CMP-003's disabled-with-reason with the `lock` and "Your role can't change settings."); the CVD-safe and accent
 choices of SCR-116 (other controls, §6 J13).
 
 **Anatomy:** slice 1 CMP-003's, unchanged (`size.control.height`, the `color.action.selected` fill with its
@@ -844,11 +872,11 @@ flip (§6 J16). The payload is the analytics owner's.
 
 **Focus:** stays on the segment; the re-theme never moves it. **Motion:** none: the swap is instant in both modes
 (`16:138`; `14:2365`). **Live region:** one polite sentence per committed change. **T2 and not T2:** none under §6 J15
-(a), recommended; under (b) the T2 form of conventions 46. **Hit target:** CMP-003's. **Resize & overflow:** CMP-003's.
+(a), recommended and PROPOSED, owner approval pending (#2701); under (b) the T2 form of conventions 46. **Hit target:** CMP-003's. **Resize & overflow:** CMP-003's.
 **Forced colors:** CMP-003's; in forced colours the theme choice still applies to the non-forced parts (the chart
 canvas), so the control keeps working (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props keep the three values and add the "match system" toggle beside them (J13);
+**Catalogue alignment (applied in this PR, §6 (f)):** Props keep the three values and add the "match system" toggle beside them (J13);
 A11y adds the committed-change rule and `Ctrl+Shift+H` (J16); a new **Analytics** line names `appearance.theme_changed`
 and its trigger; Storybook adds MatchSystem, Light, HighContrast.
 
@@ -876,7 +904,7 @@ and its trigger; Storybook adds MatchSystem, Light, HighContrast.
 | menu form         | Form=menu                   | "Density: Compact / Comfortable" as a `menuitemradio` pair in a panel menu (E22-D02 K9, `E22-D02.md:295`) |
 | focus-visible     | Form=segmented              | the CMP-039 ring on the checked segment                                                                   |
 
-**Not drawn:** hover, disabled, gated (CMP-003's and CMP-041's; the gated form only under §6 J15 (b)); spacious and
+**Not drawn:** hover, disabled, gated (CMP-003's and CMP-041's; the gated form only under §6 J15 (b), PROPOSED, owner approval pending (#2701)); spacious and
 cosy (§6 J14).
 
 **Anatomy:** CMP-003's (segmented) or CMP-041's checkable items (menu), unchanged; no token of its own (`15:658`).
@@ -898,10 +926,10 @@ per panel; never on load or a server-fed apply (§6 J16). The payload — scope 
 
 **Focus:** stays on the option (segmented) or returns to the menu's trigger (menu). **Motion:** none; the density swap
 is a custom-property change in one frame and never remounts a panel (`14:2365`; `16` §3 rule 1, `16:125`). **Live
-region:** one polite sentence per committed change. **T2 and not T2:** as CMP-062 (§6 J15). **Hit target:** CMP-003's or
+region:** one polite sentence per committed change. **T2 and not T2:** as CMP-062 (§6 J15, PROPOSED, owner approval pending (#2701)). **Hit target:** CMP-003's or
 CMP-041's. **Resize & overflow:** theirs. **Forced colors:** theirs (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props `value: "compact" | "comfortable" | "dense"`, `dense` only with
+**Catalogue alignment (applied in this PR, §6 (f)):** Props `value: "compact" | "comfortable" | "dense"`, `dense` only with
 `scope: "panel"` on a chart panel (J14, E11-D02 CR-8) and `form?: "segmented" | "menu"`; A11y adds the scope in the name
 and the committed-change rule (J16); a new **Analytics** line names `appearance.density_changed`; Storybook adds
 ChartPanelDense, MenuForm.
@@ -963,7 +991,7 @@ and not T2:** a container (conventions 46); loading is busy (conventions 47). **
 **Resize & overflow:** the drawer's body scrolls; at 720 CSS px or less it takes the full width (slice 4 conventions
 39); the inline panel wraps in its host. **Forced colors:** slice 4 CMP-046's; the inline hairline CanvasText.
 
-**Catalogue alignment (held, §6 (f)):** Props add `variant?: "drawer" | "inline"` (J17); A11y replaces "triggerable from
+**Catalogue alignment (applied in this PR, §6 (f)):** Props add `variant?: "drawer" | "inline"` (J17); A11y replaces "triggerable from
 the chip's tooltip via `Enter`" with `Enter` / `Space` on the trigger and `Esc` back to it (J18), and adds the heading
 focus and `aria-busy`; Storybook adds Inline, Loading, Error.
 
@@ -1018,7 +1046,7 @@ region:** none. **T2 and not T2:** never gated. **Hit target:** `size.control.he
 pill grows with the text; it never covers the ENV badge or a NavRail label (`E10-D02.md:254`). **Forced colors:**
 LinkText on Canvas with a CanvasText border; the ring Highlight (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props `targets: { id, label }[]` with main content first (J19); A11y adds the
+**Catalogue alignment (applied in this PR, §6 (f)):** Props `targets: { id, label }[]` with main content first (J19); A11y adds the
 target's `tabindex="-1"` and the Tab order (J20); Tokens become `color.action.primary.default`, `color.text.on-action`
 and `color.focus.ring` (E10-D03 A5); Storybook adds Several.
 
@@ -1029,23 +1057,23 @@ and `color.focus.ring` (E10-D03 A5); Storybook adds Several.
 - **Props**: `kind: "footprint"|"heatmap"|"candles"|"theme"` · `settings: object` · `sampleData?: unknown`.
 - **A11y**: `role="img"` with a name describing the current configuration in words; it is decorative-adjacent, so the settings themselves always remain independently readable — the preview is never the only disclosure of a setting's effect.
 
-| Axis  | Values                                               | Default |
-| ----- | ---------------------------------------------------- | ------- |
-| Kind  | candles, footprint, heatmap, theme, ladder (E32-D04) | candles |
-| State | live, sample, empty, error, collapsed (ladder only)  | live    |
+| Axis  | Values                                                                 | Default |
+| ----- | ---------------------------------------------------------------------- | ------- |
+| Kind  | candles, footprint, heatmap, theme, scales (E11-D03), ladder (E32-D04) | candles |
+| State | live, sample, empty, error, collapsed (ladder only)                    | live    |
 
 **Variants × States (8 cells; not drawn):**
 
-| Cell               | Axes                     | What it shows                                                                                                                                             |
-| ------------------ | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| candles · live     | Kind=candles, State=live | this chart's bars through the pending Scales values, axis labels `color.text.tertiary` (6.83 / 4.86 / 13.61:1 on sunken) (E11-D03 §6.4, `E11-D03.md:277`) |
-| sample             | State=sample             | bundled recorded, redacted bars with the label "Sample bars: not this chart" (E12-D05 W-19, `E12-D05.md:334`, PROPOSED there)                             |
-| empty              | State=empty              | "Preview unavailable — no bars loaded" in `color.text.secondary` (10.69 / 7.37 / 17.42:1) over the CMP-029 silhouette (`E11-D03.md:279`)                  |
-| error              | State=error              | "Preview unavailable — chart error; settings still apply" with a `color.status.danger.strong` glyph (11.31 / 3.37 / 11.31:1, non-text) (`E11-D03.md:280`) |
-| theme              | Kind=theme               | SCR-116's tile: a chart cell, a ladder row and a positions row under the current theme and density (`14:2361`)                                            |
-| footprint          | Kind=footprint           | a footprint cell sample under the current colours (`15:2675` Storybook "Footprint"); heatmap the same with the heatmap ramp                               |
-| ladder             | Kind=ladder              | E32-D04's glance tile: the value `type.num.base` `color.text.primary`, its caption under it, 24 px tall compact (`E32-D04.md:366`, D04-A2 PROPOSED)       |
-| ladder · collapsed | State=collapsed          | the five figures on one line separated by " · " (E32-D04, `E32-D04.md:376`)                                                                               |
+| Cell               | Axes                               | What it shows                                                                                                                                                                                                                                                  |
+| ------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| candles · live     | Kind=candles or scales, State=live | this chart's bars through the pending Scales values (E11-D03 names the kind `candles` at `:277` and adds `scales` for the same tile in D03-CR-3, `:443`), axis labels `color.text.tertiary` (6.83 / 4.86 / 13.61:1 on sunken) (E11-D03 §6.4, `E11-D03.md:277`) |
+| sample             | State=sample                       | bundled recorded, redacted bars with the label "Sample bars: not this chart" (E12-D05 W-19, `E12-D05.md:334`, PROPOSED there)                                                                                                                                  |
+| empty              | State=empty                        | "Preview unavailable — no bars loaded" in `color.text.secondary` (10.69 / 7.37 / 17.42:1) over the CMP-029 silhouette (`E11-D03.md:279`)                                                                                                                       |
+| error              | State=error                        | "Preview unavailable — chart error; settings still apply" with a `color.status.danger.strong` glyph (11.31 / 3.37 / 11.31:1, non-text) (`E11-D03.md:280`)                                                                                                      |
+| theme              | Kind=theme                         | SCR-116's tile: a chart cell, a ladder row and a positions row under the current theme and density (`14:2361`)                                                                                                                                                 |
+| footprint          | Kind=footprint                     | a footprint cell sample under the current colours (`15:2675` Storybook "Footprint"); heatmap the same with the heatmap ramp                                                                                                                                    |
+| ladder             | Kind=ladder                        | E32-D04's glance tile: the value `type.num.base` `color.text.primary`, its caption under it, 24 px tall compact (`E32-D04.md:366`, D04-A2 PROPOSED)                                                                                                            |
+| ladder · collapsed | State=collapsed                    | the five figures on one line separated by " · " (E32-D04, `E32-D04.md:376`)                                                                                                                                                                                    |
 
 **Not drawn:** hover, focus, disabled, gated (not interactive; the settings beside it are the controls); loading — never
 a spinner, the last frame stays until the next (E11-D03 D12, `E11-D03.md:83`; conventions 47).
@@ -1075,7 +1103,7 @@ availability and failure (conventions 47). **Hit target:** none. **Resize & over
 scales its image; the name never truncates (conventions 49). **Forced colors:** the image keeps its colours
 (`forced-color-adjust: none` on the canvas only); the edge CanvasText; the text CanvasText (conventions 48).
 
-**Catalogue alignment (held, §6 (f)):** Props add `source?: "live" | "sample"`, `emptyText`, `errorText`, the kinds
+**Catalogue alignment (applied in this PR, §6 (f)):** Props add `source?: "live" | "sample"`, `emptyText`, `errorText`, the kinds
 `scales` and `ladder`, and `value` / `caption` for `ladder` (J21; E11-D03 D03-CR-3, E32-D04 D04-A2); A11y adds the
 empty and error names and "never a spinner"; Tokens become `radius.card` and the hairline; Storybook adds Sample,
 Empty, Error, Ladder, LadderCollapsed.
@@ -1093,7 +1121,9 @@ drawings: slice 1 conventions 7 assigns them to this slice, and E05-T06 draws, r
 - **Grid and stroke.** Outline style on the base set's 24-unit grid; a 1.5 px stroke that never scales; round caps and
   joins; square-ish bounding boxes for toolbar and menu alignment (`16:149`); no filled area except dots, which follow
   slice 1 CMP-019's build record (a 2-unit dot under the stroke); every glyph stays inside the grid and never touches
-  its edge, like the base set's `icon/{name}` components (slice 1 §7).
+  its edge: the live area is the central 22 × 22 units, at least a 1-unit clear margin on every side that the stroke's
+  outer edge never crosses (Lucide's design guide for the base set, `(heuristic)`), like the base set's `icon/{name}` components
+  (slice 1 §7).
 - **Optical sizes.** Each glyph has one 24-unit master, rendered at the `size.icon.sm|md|lg` scale — 12 / 16 / 20 px as
   shipped, 16 / 20 / 24 px if slice 1 A10 is approved; the semantic `size.icon` (16 px, both densities) is the default.
   Where a glyph's detail closes up at 12 px it has a reduced 12 px form or is marked "16 px minimum" below (§6 J24;
@@ -1111,21 +1141,21 @@ drawings: slice 1 conventions 7 assigns them to this slice, and E05-T06 draws, r
 - **Registry.** Each is registered as `icon/{name}` with the description in the table, which feeds CMP-019's
   completeness test and the design file's icon page (`16:151`).
 
-| Name (§6 J22)                  | Registry description                                    | Motif (PROPOSED, `(heuristic)`)                                                                                                                                   | Where used (source)                                                                                                                   | Smallest size        | Name when meaningful      |
-| ------------------------------ | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------- |
-| `icon/flatten-all`             | Close every position at market                          | three short horizontal strokes of unequal length collapsing onto one baseline under a down-pointing chevron                                                       | CMP-123 FlattenAllButton (`15:1403`), the CMP-211 panic cluster (E39-D03)                                                             | 16 px minimum        | "Flatten all"             |
-| `icon/chase-limit`             | Limit order that follows the price                      | a horizontal price line with a short tick (the limit) and a curved arrow tracking it from behind                                                                  | SCR-068 chase-limit builder (E33-D02 §5)                                                                                              | 16 px minimum        | "Chase limit"             |
-| `icon/iceberg-order`           | Order shown in visible slices with a hidden remainder   | a waterline; a small peak above it and a larger body below in a plain outline — never dashed, because dashed means estimated or absent (E25-D05, `E25-D05.md:60`) | SCR-067 Iceberg builder (E33-D02 §4, `E33-D02.md:219`); never the iceberg **detector**, which is `icon/estimated` territory (CMP-227) | 16 px minimum        | "Iceberg order"           |
-| `icon/twap`                    | Order split evenly over a time window                   | a horizontal time axis with four equal steps rising under it                                                                                                      | SCR-066 TWAP builder (E33-D02 §3, `E33-D02.md:161`)                                                                                   | 16 px minimum        | "TWAP"                    |
-| `icon/one-click-arm`           | One-click trading is armed                              | a pointer arrow with a short lightning stroke beside its tip                                                                                                      | the 1-click trading toggle and its persistent armed indicator (`05:65`); never on CMP-229 (§6 J23)                                    | 12 px                | "One-click trading armed" |
-| `icon/native-sl-shield`        | A native exchange stop-loss protects the position       | a shield with one horizontal stop line across its lower third; distinct from `icon/shield-off`'s diagonal slash (E30-D04 §3.3, `E30-D04.md:271`)                  | CMP-158 SafetyInvariantNotice (E36-D02, `E36-D02.md:96`)                                                                              | 16 px minimum        | "Native stop-loss"        |
-| `icon/estimated`               | The value is inferred, not reported by the exchange     | at ≥16 px a dashed ring with a centred "≈"; at 12 px a solid ring or the "≈" alone (E25-D05 CR-3, `E25-D05.md:387`)                                               | CMP-227 EstimatedBadge, every variant (E25-D05, `E25-D05.md:70`)                                                                      | 12 px (reduced form) | "Estimated"               |
-| `icon/node-trigger`            | Rule node: what starts an evaluation                    | a pointed pennant, echoing the trigger node's pointed left cap (E37-D02, `E37-D02.md:169`)                                                                        | CMP-147 TriggerNode header and the palette's Trigger group (E37-D02)                                                                  | 12 px                | "Trigger"                 |
-| `icon/node-condition`          | Rule node: a comparison that is true or false           | a square with a short "=" inside, echoing the square cap                                                                                                          | CMP-148 ConditionNode                                                                                                                 | 12 px                | "Condition"               |
-| `icon/node-action`             | Rule node: what the rule does                           | a rounded square with a right-pointing triangle inside, echoing the rounded cap                                                                                   | CMP-149 ActionNode                                                                                                                    | 12 px                | "Action"                  |
-| `icon/node-logic-gate`         | Rule node: combines inputs (all, any, none, at least n) | a diamond, echoing the gate's diamond notch                                                                                                                       | CMP-150 LogicGateNode                                                                                                                 | 12 px                | "Gate"                    |
-| `icon/node-comment`            | Rule node: a note outside the rule                      | a page with a folded top-right corner, echoing the comment's dog-ear                                                                                              | CMP-151 CommentNode                                                                                                                   | 12 px                | "Comment"                 |
-| `icon/heatmap-convention-swap` | Swap which side the heatmap colours show as bid and ask | two small squares side by side with a two-headed arrow beneath them                                                                                               | the convention swap (owner decision #10, `EngineTheme.convention`; E11-D05, `E11-D05.md:277`)                                         | 16 px minimum        | "Swap heatmap colours"    |
+| Name (§6 J22)                  | Registry description                                    | Motif (PROPOSED, `(heuristic)`)                                                                                                                                                                  | Where used (source)                                                                                                                   | Smallest size        | Name when meaningful      |
+| ------------------------------ | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------- |
+| `icon/flatten-all`             | Close every position at market                          | three short horizontal strokes of unequal length collapsing onto one baseline under a down-pointing chevron                                                                                      | CMP-123 FlattenAllButton (`15:1403`), the CMP-211 panic cluster (E39-D03)                                                             | 16 px minimum        | "Flatten all"             |
+| `icon/chase-limit`             | Limit order that follows the price                      | a horizontal price line with a short tick (the limit) and a curved arrow tracking it from behind                                                                                                 | SCR-068 chase-limit builder (E33-D02 §5)                                                                                              | 16 px minimum        | "Chase limit"             |
+| `icon/iceberg-order`           | Order shown in visible slices with a hidden remainder   | a waterline; a small peak above it and a larger body below in a plain outline — never dashed, because dashed means estimated or absent (E25-D05, `E25-D05.md:60`)                                | SCR-067 Iceberg builder (E33-D02 §4, `E33-D02.md:219`); never the iceberg **detector**, which is `icon/estimated` territory (CMP-227) | 16 px minimum        | "Iceberg order"           |
+| `icon/twap`                    | Order split evenly over a time window                   | a horizontal time axis with four equal steps rising under it                                                                                                                                     | SCR-066 TWAP builder (E33-D02 §3, `E33-D02.md:161`)                                                                                   | 16 px minimum        | "TWAP"                    |
+| `icon/one-click-arm`           | One-click trading is armed                              | a pointer arrow with a short lightning stroke beside its tip                                                                                                                                     | the 1-click trading toggle and its persistent armed indicator (`05:65`); never on CMP-229 (§6 J23)                                    | 12 px                | "One-click trading armed" |
+| `icon/native-sl-shield`        | A native exchange stop-loss protects the position       | a shield with one horizontal stop line across its lower third; distinct from `icon/shield-off`'s diagonal slash (E30-D04 §3.3, `E30-D04.md:271`)                                                 | CMP-158 SafetyInvariantNotice (E36-D02, `E36-D02.md:96`)                                                                              | 16 px minimum        | "Native stop-loss"        |
+| `icon/estimated`               | The value is inferred, not reported by the exchange     | at ≥16 px a dashed ring with a centred "≈"; at 12 px a solid ring or the "≈" alone (E25-D05 CR-3, `E25-D05.md:387`): which of the two is #271's choice, made once when it draws the reduced form | CMP-227 EstimatedBadge, every variant (E25-D05, `E25-D05.md:70`)                                                                      | 12 px (reduced form) | "Estimated"               |
+| `icon/node-trigger`            | Rule node: what starts an evaluation                    | a pointed pennant, echoing the trigger node's pointed left cap (E37-D02, `E37-D02.md:169`)                                                                                                       | CMP-147 TriggerNode header and the palette's Trigger group (E37-D02)                                                                  | 12 px                | "Trigger"                 |
+| `icon/node-condition`          | Rule node: a comparison that is true or false           | a square with a short "=" inside, echoing the square cap                                                                                                                                         | CMP-148 ConditionNode                                                                                                                 | 12 px                | "Condition"               |
+| `icon/node-action`             | Rule node: what the rule does                           | a rounded square with a right-pointing triangle inside, echoing the rounded cap                                                                                                                  | CMP-149 ActionNode                                                                                                                    | 12 px                | "Action"                  |
+| `icon/node-logic-gate`         | Rule node: combines inputs (all, any, none, at least n) | a diamond, echoing the gate's diamond notch                                                                                                                                                      | CMP-150 LogicGateNode                                                                                                                 | 12 px                | "Gate"                    |
+| `icon/node-comment`            | Rule node: a note outside the rule                      | a page with a folded top-right corner, echoing the comment's dog-ear                                                                                                                             | CMP-151 CommentNode                                                                                                                   | 12 px                | "Comment"                 |
+| `icon/heatmap-convention-swap` | Swap which side the heatmap colours show as bid and ask | two small squares side by side with a two-headed arrow beneath them                                                                                                                              | the convention swap (owner decision #10, `EngineTheme.convention`; E11-D05, `E11-D05.md:277`)                                         | 16 px minimum        | "Swap heatmap colours"    |
 
 **Words and names.** The node names are E37-D02's type words ("Trigger" · "Condition" · "Action" · "Gate" ·
 "Comment", `E37-D02.md:169`); "Estimated" is CMP-227's word; "Flatten all", "Chase limit", "Iceberg order", "TWAP" and
@@ -1145,21 +1175,21 @@ the final list.
 
 Completed for the 11 components and the glyph set. Open items say why and who closes them.
 
-- [ ] **Tokens:** only published Tier-2/Tier-3 tokens, no hardcoded hex/px. **Open:** every value is a semantic token
-      or a named primitive (§4, §5.2); §5.1's constants are recorded, ticked when §6 J3 is answered.
+- [x] **Tokens:** only published Tier-2/Tier-3 tokens, no hardcoded hex/px: every value is a semantic token or a
+      named primitive (§4, §5.2); §5.1's constants are recorded constants (§6 J3, RULED (6438042003)).
 - [ ] **Themes and densities:** structurally guaranteed and measured in all three themes (audit §4). **Open:** not
       drawn (the board cap); the light composite board shows the slice 1–4 parts only.
 - [ ] **Contrast matrix:** every text pair passes; the thin pairs are decorative or carried by words — the Kbd edge
       (1.80 / 1.46 / 1.80:1), the card's fill step and hairline (1.06–1.58:1), the preview tile's edge in light (1.00:1,
-      §6 J2), the palette's destructive glyph in light (3.78:1, a glyph, E10-D03's PASS). **Open** for the owner (J1,
-      J2).
+      §6 J2), the palette's destructive glyph in light (3.78:1, a glyph, E10-D03's PASS). J2 is RULED (6438042003);
+      **open** for J1 (PROPOSED, owner approval pending (#2701)).
 - [ ] **CVD:** ΔE76 spot checks in the audit §5; selection carries a rule, a check or a word; tones carry a glyph and a
       word. **Open:** E05-D04's review.
 - [ ] **Every State has a variant (and a story):** the 66 cells are specified (§1, §7). **Open:** not drawn; the stories
       are E05-S01..S04's (slice 1 C15).
 - [ ] **Disabled with a reason (CMP-079):** containers never gate; the gated tab, the gated palette command and, under
       §6 J15 (b), the appearance options take T2 through CMP-079 with the CMP-019 `lock` (conventions 46); availability,
-      busy, outcomes and read-only data stay apart (conventions 47). **Open** for J15.
+      busy, outcomes and read-only data stay apart (conventions 47). **Open** for J15 (PROPOSED, owner approval pending (#2701)).
 - [x] **Loading, empty and error designed:** CMP-069's loading and error cells, CMP-228's empty, error and sample
       cells, CMP-059's no-results cell; CMP-050's are its content's (CMP-015, 026, 027).
 - [ ] **Keyboard tables** complete for all 11 (the APG pattern named, or none of its own with the reason). **Open** for
@@ -1188,5 +1218,5 @@ the owner's delegation): owner approval pending. This text merges first with the
 and is specified only, its two folded parts (CMP-022, CMP-035) appearing on specimen board 09. **#161 closes when the
 boards PR has merged**, which carries the closing line; this PR refers to #161 without closing it. Engineering stories
 E05-S01..S04 move to Ready only after every slice is approved, and E05-T06 (#271) takes §7.12. The accessibility
-pre-review is `E05-D02-rest-a11y-audit.md`; the formal accessibility and CVD sign-off is E05-D04's. The `15` clauses and
-hand-offs of §6 (f) go to their owners when the coordinator files them.
+pre-review is `E05-D02-rest-a11y-audit.md`; the formal accessibility and CVD sign-off is E05-D04's. The `15` clauses of
+§6 (f) land in this PR (ruling 6438042003); its hand-offs go to the owners it names.
