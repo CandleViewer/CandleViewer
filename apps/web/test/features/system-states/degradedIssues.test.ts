@@ -6,6 +6,7 @@ import { DEGRADED_COPY } from "../../../src/features/system-states/copy";
 import {
   INITIAL_DEGRADED_FACTS,
   degradedIssues,
+  handOverPrivateReconnect,
   reduceDegraded,
   type DegradedFacts,
 } from "../../../src/features/system-states/degradedIssues";
@@ -133,6 +134,41 @@ describe("degraded issues", () => {
     expect(Object.isFrozen(second)).toBe(true);
     expect(ids(first)).toEqual(["exchangeFeedDown"]);
     expect(ids(second)).toEqual([]);
+  });
+
+  it("test_degraded_private_reconnect_is_a_warning_row_between_the_feed_and_the_components", () => {
+    const facts = run(
+      health([{ name: "recorder", state: "down" }], { exchange: { private_ws: "resyncing" } }),
+      exchangeState({ public_ws: "disconnected" }),
+    );
+    expect(degradedIssues(facts).map((i) => [i.id, i.severity])).toEqual([
+      ["exchangeFeedDown", "warning"],
+      ["privateReconnect", "warning"],
+      ["recorderDown", "info"],
+    ]);
+    expect(degradedIssues(facts)[1]?.message).toBe(
+      "Position data is being verified — actions temporarily limited.",
+    );
+  });
+
+  it("test_degraded_private_disconnected_keeps_the_episode_and_connected_ends_it", () => {
+    const connecting = exchangeState({ private_ws: "connecting" });
+    const off = exchangeState({ private_ws: "disconnected" });
+    expect(run(off)).toBe(INITIAL_DEGRADED_FACTS); // not a row 9 value
+    expect(degradedIssues(run(connecting, off))[0]?.assertedSeq).toBe(1);
+    expect(ids(run(connecting, exchangeState({ private_ws: "connected" })))).toEqual([]);
+  });
+
+  it("test_degraded_private_hand_over_withdraws_the_row_for_its_episode_only", () => {
+    const connecting = exchangeState({ private_ws: "connecting" });
+    const handed = handOverPrivateReconnect(run(connecting));
+    expect(ids(handed)).toEqual([]);
+    expect(handOverPrivateReconnect(handed)).toBe(handed);
+    expect(ids(reduceDegraded(handed, connecting))).toEqual([]); // still R5's
+    const ended = reduceDegraded(handed, exchangeState({ private_ws: "connected" }));
+    expect(ids(reduceDegraded(ended, connecting))).toEqual(["privateReconnect"]);
+    // nothing to hand over without an episode
+    expect(handOverPrivateReconnect(INITIAL_DEGRADED_FACTS)).toBe(INITIAL_DEGRADED_FACTS);
   });
 
   it("test_degraded_copy_rows_have_a_message_and_full_stops", () => {

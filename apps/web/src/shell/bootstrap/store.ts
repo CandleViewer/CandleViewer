@@ -13,9 +13,18 @@
  *  - the latest `SystemUpdate` per `kind`, since the WS topic carries
  *    several independent facets (health, kill-switch, feature flags, ...);
  *  - the WS connection state and reconnect countdown;
- *  - the WS latency indicator (budget #3), at most once a second.
+ *  - the WS latency indicator (budget #3), at most once a second;
+ *  - the SCR-153 degraded facts (E10-S04 #306), folded from every `system` frame,
+ *    with row 9's 10 s hand-over to R5 timed here (E17-D02 §6).
  */
 import type { generated } from "@candleviewer/protocol";
+import {
+  INITIAL_DEGRADED_FACTS,
+  PRIVATE_HANDOVER_MS,
+  handOverPrivateReconnect,
+  reduceDegraded,
+  type DegradedFacts,
+} from "../../features/system-states/degradedIssues.js";
 import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
 
 export type Me = generated.rest.components["schemas"]["Me"];
@@ -59,6 +68,8 @@ export interface ShellState {
   readonly systemByKind: Readonly<Partial<Record<SystemUpdate["kind"], SystemUpdate>>>;
   /** The age of the newest live frame the client rendered (budget #3); `unavailable` until one is. */
   readonly latency: LatencyIndicator;
+  /** The CMP-092 rows' facts; `degradedIssues(degraded)` lists the rows. */
+  readonly degraded: DegradedFacts;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -75,9 +86,28 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   connection: INITIAL_CONNECTION,
   systemByKind: Object.freeze({}),
   latency: toLatencyIndicator(null),
+  degraded: INITIAL_DEGRADED_FACTS,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
+/** Row 9's 10 s hand-over, armed when its episode starts and cleared when the episode ends. */
+let handover: ReturnType<typeof setTimeout> | null = null;
+
+function clearHandover(): void {
+  if (handover !== null) clearTimeout(handover);
+  handover = null;
+}
+
+function syncHandover(degraded: DegradedFacts): void {
+  if (degraded.asserted.privateReconnect === undefined || degraded.privateHandedOver) {
+    clearHandover();
+    return;
+  }
+  handover ??= setTimeout(() => {
+    handover = null;
+    setShellState({ degraded: handOverPrivateReconnect(state.degraded) });
+  }, PRIVATE_HANDOVER_MS);
+}
 const listeners = new Set<() => void>();
 
 export function getShellState(): ShellState {
@@ -94,13 +124,16 @@ export function setShellState(patch: Partial<ShellState>): void {
   for (const listener of listeners) listener();
 }
 
-/** Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`. */
+/** Merges one `SystemUpdate` frame into `systemByKind`, keyed by its `kind`, and folds it into `degraded`. */
 export function applySystemUpdate(update: SystemUpdate): void {
-  setShellState({ systemByKind: { ...state.systemByKind, [update.kind]: update } });
+  const degraded = reduceDegraded(state.degraded, update);
+  setShellState({ systemByKind: { ...state.systemByKind, [update.kind]: update }, degraded });
+  syncHandover(degraded);
 }
 
 /** Test-only reset to the initial, unauthenticated shell state. */
 export function resetShellState(): void {
+  clearHandover();
   state = INITIAL_SHELL_STATE;
   for (const listener of listeners) listener();
 }

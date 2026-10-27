@@ -11,6 +11,10 @@
  * A dismissal hides a row for its episode only and the row returns when a new frame re-asserts the
  * condition (§8): each issue carries `assertedSeq`, the number of frames that asserted it in the
  * current episode, and the banner shows a dismissed row again once that number grows.
+ *
+ * Row 9 (the upstream private reconnect) is a CMP-092 row "for up to 10 s": at 10 s it withdraws and
+ * the region's R5 takes over, one surface at a time (§6). `handOverPrivateReconnect` withdraws it for
+ * the rest of its episode; the shell store calls it `PRIVATE_HANDOVER_MS` after the episode starts.
  */
 import type { SystemUpdate } from "../../lib/ws/protocol/frames";
 import { DEGRADED_COPY, type DegradedCopy, type DegradedIssueId } from "./copy";
@@ -22,16 +26,27 @@ export interface DegradedIssue extends DegradedCopy {
   readonly assertedSeq: number;
 }
 
-/** The conditions that hold: present = asserted in the current episode, the value its frame count. */
-export type DegradedFacts = Readonly<Partial<Record<DegradedIssueId, number>>>;
+export interface DegradedFacts {
+  /** The conditions that hold: present = asserted in the current episode, the value its frame count. */
+  readonly asserted: Readonly<Partial<Record<DegradedIssueId, number>>>;
+  /** Row 9 handed over to R5 in its current episode; reset when the episode ends. */
+  readonly privateHandedOver: boolean;
+}
 
-export const INITIAL_DEGRADED_FACTS: DegradedFacts = Object.freeze({});
+export const INITIAL_DEGRADED_FACTS: DegradedFacts = Object.freeze({
+  asserted: Object.freeze({}),
+  privateHandedOver: false,
+});
+
+/** §6 row 9: the private-reconnect row shows "for up to 10 s". */
+export const PRIVATE_HANDOVER_MS = 10_000;
 
 /** The routing-table order (§6): the rows are listed, and announced, in this order. */
 const ORDER: readonly DegradedIssueId[] = [
   "maintenance",
   "storeDown",
   "exchangeFeedDown",
+  "privateReconnect",
   "ruleEngineDown",
   "recorderDown",
 ];
@@ -64,6 +79,22 @@ function publicFeedDown(value: unknown): boolean | undefined {
   }
 }
 
+/**
+ * Row 9: `connecting` / `resyncing` asserts, `connected` ends the episode. `disconnected` is not a
+ * row 9 value, so it neither asserts nor clears: a running episode keeps its 10 s hand-over to R5.
+ */
+function privateReconnecting(value: unknown): boolean | undefined {
+  switch (value) {
+    case "connecting":
+    case "resyncing":
+      return true;
+    case "connected":
+      return false;
+    default:
+      return undefined;
+  }
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -84,9 +115,13 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
   }
   if (u.kind === "health" || u.kind === "exchange_state") {
     const exchange: unknown = u.exchange;
-    const top: unknown = u.kind === "exchange_state" ? u.public_ws : undefined;
-    const down = publicFeedDown(top ?? (isRecord(exchange) ? exchange["public_ws"] : undefined));
+    const word = (key: "public_ws" | "private_ws"): unknown =>
+      (u.kind === "exchange_state" ? u[key] : undefined) ??
+      (isRecord(exchange) ? exchange[key] : undefined);
+    const down = publicFeedDown(word("public_ws"));
     if (down !== undefined) out.set("exchangeFeedDown", down);
+    const verifying = privateReconnecting(word("private_ws"));
+    if (verifying !== undefined) out.set("privateReconnect", verifying);
   }
   return out;
 }
@@ -94,25 +129,34 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
 export function reduceDegraded(facts: DegradedFacts, update: SystemUpdate): DegradedFacts {
   const said = verdicts(update);
   if (said.size === 0) return facts;
-  const next: Partial<Record<DegradedIssueId, number>> = { ...facts };
+  const next: Partial<Record<DegradedIssueId, number>> = { ...facts.asserted };
   let changed = false;
   for (const [id, holds] of said) {
     if (holds) {
-      next[id] = (facts[id] ?? 0) + 1;
+      next[id] = (facts.asserted[id] ?? 0) + 1;
       changed = true;
     } else if (id in next) {
       delete next[id];
       changed = true;
     }
   }
-  return changed ? Object.freeze(next) : facts;
+  if (!changed) return facts;
+  const privateHandedOver = facts.privateHandedOver && next.privateReconnect !== undefined;
+  return Object.freeze({ asserted: Object.freeze(next), privateHandedOver });
+}
+
+/** Row 9 → R5 at 10 s: the private-reconnect row withdraws for the rest of its episode. */
+export function handOverPrivateReconnect(facts: DegradedFacts): DegradedFacts {
+  if (facts.asserted.privateReconnect === undefined || facts.privateHandedOver) return facts;
+  return Object.freeze({ asserted: facts.asserted, privateHandedOver: true });
 }
 
 /** The CMP-092 rows for the conditions that hold, in the routing-table order. */
 export function degradedIssues(facts: DegradedFacts): readonly DegradedIssue[] {
   const issues: DegradedIssue[] = [];
   for (const id of ORDER) {
-    const assertedSeq = facts[id];
+    const assertedSeq = facts.asserted[id];
+    if (id === "privateReconnect" && facts.privateHandedOver) continue;
     if (assertedSeq !== undefined) {
       issues.push({ id, ...DEGRADED_COPY[id], dismissible: true, assertedSeq });
     }

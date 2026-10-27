@@ -4,7 +4,9 @@
  * row only with its source, never retype a sentence in a component.
  *
  * SCR-153 / CMP-092 rows: `docs/design/E17/E17-D02.md` §8 "The drawn issues" (the routing table
- * is §6; the severities are its first-match partition, M-3).
+ * is §6; the severities are its first-match partition, M-3). Where the design has no string for a
+ * row, the row takes the merged spec's nearest string and is marked PROPOSED beside it (coordinator
+ * ruling on #306, 2026-10-27); every row below is verbatim, so none is PROPOSED.
  */
 
 export type DegradedSeverity = "info" | "warning" | "blocking";
@@ -38,6 +40,12 @@ export const DEGRADED_COPY = {
     severity: "warning",
     message: "Exchange feed down — the server is restoring the connection.",
     stillWorks: "Charts and book pause; positions, cancel and close still work.",
+  },
+  /** Routing row 9: `exchange_state.private_ws` in `connecting` / `resyncing` (matrix row 24), ≤ 10 s. */
+  privateReconnect: {
+    severity: "warning",
+    message: "Position data is being verified — actions temporarily limited.",
+    stillWorks: "Market data is live; cancel and close still work, confirmed over REST.",
   },
   /** Routing row 10: the `rule_engine` component `down` (`14` SCR-153). */
   ruleEngineDown: {

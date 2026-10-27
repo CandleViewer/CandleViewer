@@ -20,10 +20,7 @@ const SRC = resolve(import.meta.dirname, "../src");
 const ENTRY = join(SRC, "main.tsx");
 
 /** slice -> reason + ticket. Stale entries (slice now reachable) fail. */
-const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {
-  "system-states":
-    "E10-S04 (#306): the SCR-153 derivation lands first; the next slice feeds it from startShell's onSystem and mounts CMP-092",
-};
+const ALLOW_UNMOUNTED: Readonly<Record<string, string>> = {};
 
 interface ParsedImports {
   /** relative specifiers (static, re-export and dynamic `import()`) */
