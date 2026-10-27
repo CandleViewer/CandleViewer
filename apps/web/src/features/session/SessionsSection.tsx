@@ -183,45 +183,52 @@ export function SessionsSection({
       ) : null}
       {list.kind === "ok" && list.items.length === 0 ? <p>No active sessions.</p> : null}
       {list.kind === "ok" && list.items.length > 0 ? (
-        <table style={{ borderCollapse: "collapse" }}>
-          <caption style={{ textAlign: "start" }}>Signed-in sessions</caption>
-          <thead>
-            <tr>
-              {["Device", "IP address", "Signed in", "Last seen", "Action"].map((h) => (
-                <th key={h} scope="col" style={cell}>
-                  {h}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {list.items.map((s, index) => (
-              <tr key={s.id ?? index}>
-                <th scope="row" style={cell}>
-                  {deviceOf(s)}
-                  {s.current === true ? <span style={badge}>This session</span> : null}
-                </th>
-                <td style={cell}>{s.ip ?? "Not recorded"}</td>
-                <td style={cell}>{when(s.created_at)}</td>
-                <td style={cell}>{when(s.last_seen_at)}</td>
-                <td style={cell}>
-                  <button
-                    type="button"
-                    style={revokeButton}
-                    disabled={s.id === undefined}
-                    onClick={() => open({ kind: "one", session: s })}
-                  >
-                    Revoke
-                    {/* `14` SCR-112 A11y: a destructive control names its target */}
-                    <span style={hidden}>
-                      {` ${deviceOf(s)}${s.current === true ? " (this session)" : `, last seen ${when(s.last_seen_at)}`}`}
-                    </span>
-                  </button>
-                </td>
+        // SC 1.4.10: a data table may scroll in its own region; the page itself never scrolls sideways.
+        <div
+          role="region"
+          aria-label="Signed-in sessions"
+          style={{ overflowX: "auto", maxWidth: "100%" }}
+        >
+          <table style={{ borderCollapse: "collapse" }}>
+            <caption style={{ textAlign: "start" }}>Signed-in sessions</caption>
+            <thead>
+              <tr>
+                {["Device", "IP address", "Signed in", "Last seen", "Action"].map((h) => (
+                  <th key={h} scope="col" style={cell}>
+                    {h}
+                  </th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {list.items.map((s, index) => (
+                <tr key={s.id ?? index}>
+                  <th scope="row" style={cell}>
+                    {deviceOf(s)}
+                    {s.current === true ? <span style={badge}>This session</span> : null}
+                  </th>
+                  <td style={cell}>{s.ip ?? "Not recorded"}</td>
+                  <td style={cell}>{when(s.created_at)}</td>
+                  <td style={cell}>{when(s.last_seen_at)}</td>
+                  <td style={cell}>
+                    <button
+                      type="button"
+                      style={revokeButton}
+                      disabled={s.id === undefined}
+                      onClick={() => open({ kind: "one", session: s })}
+                    >
+                      Revoke
+                      {/* `14` SCR-112 A11y: a destructive control names its target */}
+                      <span style={hidden}>
+                        {` ${deviceOf(s)}${s.current === true ? " (this session)" : `, last seen ${when(s.last_seen_at)}`}`}
+                      </span>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       ) : null}
       <button
         type="button"
