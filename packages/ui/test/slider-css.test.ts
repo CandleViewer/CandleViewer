@@ -51,12 +51,7 @@ describe("slider.css contract", () => {
       for (const prop of ["background", "color", "opacity"]) {
         if (new RegExp(`(^|[\\s;])${prop}\\s*:`).test(block.body)) {
           expect(
-            // The forced track is drawn as a border, so a background twin may be its border colour.
-            twin.some((f) =>
-              new RegExp(
-                `(^|[\\s;])(${prop}${prop === "background" ? "|border-color" : ""})\\s*:`,
-              ).test(f.block.body),
-            ),
+            twin.some((f) => new RegExp(`(^|[\\s;])${prop}\\s*:`).test(f.block.body)),
             `${selector} ${prop}`,
           ).toBe(true);
         }
@@ -128,6 +123,8 @@ describe("slider.css contract", () => {
       ".cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track",
     );
     expect(hover).toContain("border-color: Highlight");
+    // The normal hover rule paints the track with a token; the forced one must put Canvas back.
+    expect(hover).toContain("background: Canvas");
     expect(rule(".cv-slider__thumb")).toContain("background: CanvasText");
     expect(forced).not.toContain("ButtonText");
   });

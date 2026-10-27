@@ -36,7 +36,7 @@ function Gate({ onChange }: { onChange: (v: number) => void }): JSX.Element {
   const [gated, setGated] = useState(false);
   return (
     <>
-      <button type="button" onClick={() => setGated(true)}>
+      <button type="button" onClick={() => setGated((g) => !g)}>
         gate
       </button>
       <Host onChange={onChange} {...(gated ? { disabledReason: REASON } : {})} />
@@ -270,6 +270,52 @@ describe("Slider pointer", () => {
     expect(slider(host)).toHaveAttribute("aria-disabled", "true");
     pointer("pointermove", rail(host), { pointerId: 1, clientX: 250 });
     expect(onChange).toHaveBeenCalledTimes(calls);
+  });
+
+  it("a second press while a drag is live is ignored until the first pointer ends", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    const r = rail(host);
+    pointer("pointerdown", r, { pointerId: 1, button: 0, clientX: 150 });
+    pointer("pointerdown", r, { pointerId: 2, button: 0, clientX: 250 });
+    expect(now(host)).toBe("25");
+    expect(capture).toHaveBeenCalledTimes(1);
+    pointer("pointermove", r, { pointerId: 2, clientX: 280 });
+    expect(now(host)).toBe("25");
+    pointer("pointermove", r, { pointerId: 1, clientX: 200 });
+    expect(now(host)).toBe("50");
+    pointer("pointerup", r, { pointerId: 1 });
+    pointer("pointerdown", r, { pointerId: 2, button: 0, clientX: 250 });
+    expect(now(host)).toBe("75");
+  });
+
+  it("a gate that lifts while the button is held does not resume the old drag", async () => {
+    stubLayout();
+    const onChange = fn();
+    const host = await mount(<Gate onChange={onChange} />);
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    const toggle = within(host).getByRole("button");
+    act(() => toggle.click());
+    act(() => toggle.click());
+    expect(slider(host)).not.toHaveAttribute("aria-disabled");
+    const calls = onChange.mock.calls.length;
+    pointer("pointermove", rail(host), { pointerId: 1, clientX: 250 });
+    expect(onChange).toHaveBeenCalledTimes(calls);
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 250 });
+    expect(now(host)).toBe("75");
+  });
+
+  it("the first key after a mouse press brings the focus ring back, once", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    expect(focus).toHaveBeenLastCalledWith({ focusVisible: false });
+    key(slider(host), { key: "ArrowRight" });
+    expect(focus).toHaveBeenLastCalledWith({ focusVisible: true });
+    focus.mockClear();
+    key(slider(host), { key: "ArrowRight" });
+    expect(focus).not.toHaveBeenCalled();
   });
 
   it("drags, snaps to the step, clamps past either end and stops on release", async () => {

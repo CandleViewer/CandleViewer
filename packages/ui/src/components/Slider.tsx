@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import type { CSSProperties, JSX, KeyboardEvent, PointerEvent } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
@@ -76,6 +76,12 @@ export function Slider({
   const thumb = useRef<HTMLSpanElement>(null);
   // Read once at pointer-down (no observer, no measuring in render); null when no drag is active.
   const drag = useRef<{ left: number; width: number; id: number } | null>(null);
+  // True after a mouse press focused the thumb without the ring; the next key press brings the ring back.
+  const pressFocused = useRef(false);
+  // A gate engaging ends the drag; lifting it again does not resume it (a new press is required).
+  useEffect(() => {
+    if (locked) drag.current = null;
+  }, [locked]);
   // Plain disabled has no tabindex at all (out of the Tab order); a gated thumb stays in it.
   const focusable = reason.disabled ? {} : { tabIndex: 0 };
   const shown = Math.min(Math.max(value, min), max);
@@ -89,6 +95,11 @@ export function Slider({
     stepValue(shown, step, direction, multiplier, places, min, max);
 
   const handleKeyDown = (event: KeyboardEvent<HTMLSpanElement>): void => {
+    if (pressFocused.current) {
+      // As on native controls, the first key press after a mouse press shows the focus ring.
+      pressFocused.current = false;
+      thumb.current?.focus({ focusVisible: true } as FocusOptions);
+    }
     // Chords belong to the browser and assistive tech; the slider keeps plain keys only.
     if (event.altKey || event.ctrlKey || event.metaKey) return;
     const next =
@@ -125,7 +136,10 @@ export function Slider({
     event.preventDefault();
     // A press focuses the thumb without the keyboard ring where the browser supports the option.
     thumb.current?.focus({ focusVisible: false } as FocusOptions);
+    pressFocused.current = true;
     if (locked) return;
+    // A second press while a drag is live is ignored until the first pointer is released or cancelled.
+    if (drag.current !== null) return;
     const rail = event.currentTarget;
     const rect = rail.getBoundingClientRect();
     drag.current = { left: rect.left, width: rect.width, id: event.pointerId };

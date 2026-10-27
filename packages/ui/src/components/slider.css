@@ -131,6 +131,7 @@
   }
 
   .cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track {
+    background: Canvas;
     border-color: Highlight;
   }
 
