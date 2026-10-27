@@ -392,3 +392,39 @@ The body is part of the announced message, so it holds no focusable content: lin
 message, body included, so it is announced again.
 Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
 owns the connection state; the callout announces each state entry it is given once.
+
+
+### EmptyState (CMP-026, a static block; its CTA and link follow APG Button and APG Link)
+
+| Keys            | Action                                                                                              |
+| --------------- | --------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | Moves to the CTA, then the link. The sentence form (no `cta`) has no button; with neither, no stop. |
+| Enter, Space    | Activates the CTA. Enter follows the link.                                                          |
+
+| Element | Role                              | Name      | Notes                                                                              |
+| ------- | --------------------------------- | --------- | ---------------------------------------------------------------------------------- |
+| Heading | heading, level `headingLevel` (3) | the fact  | No live region: the host's own region says a filter emptied a table, once.         |
+| CTA     | button (CMP-001 `primary`)        | its label | A gated CTA is never drawn: the sentence form puts the host's reason in its place. |
+| Link    | link (CMP-021)                    | its label | One secondary link, after the CTA.                                                 |
+| Glyph   | none                              | none      | The variant's registry glyph (`filtered-empty`: `search`), `aria-hidden`.          |
+
+`variant="error"` renders CMP-027's panel with `live="polite"` (E05-D02 H13): `title` its heading, `description`
+its message, `cta` its Retry.
+
+### ErrorState / InlineError (CMP-027, an alert or status region; Disclosure for the details)
+
+| Keys            | Action                                                                                                                     |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | Moves through the summary's links, `retry`, `action`, then "Technical details". None of them: not in the Tab order.        |
+| Enter, Space    | Activates the focused button; on "Technical details" toggles the box (`aria-expanded`).                                    |
+| Enter (link)    | An error summary's `#id` link moves focus to its field. The host moves focus to the summary heading after a failed submit. |
+
+| Element           | Role                                                             | Name                | Notes                                                                                            |
+| ----------------- | ---------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| Message           | alert (error) or status (warning); `live` overrides; none on off | none                | Atomic, filled after mount so a transient failure is read once; buttons and details sit outside. |
+| Summary heading   | heading, level `headingLevel` (3)                                | its `title`         | `tabindex="-1"` and `headingId`, so the host can focus it; inside the region with its links.     |
+| Technical details | button                                                           | "Technical details" | `aria-expanded`, `aria-controls`; the box is selectable, with a CMP-033 copy, never announced.   |
+| Glyph             | none                                                             | none                | `error` or `warning`, `aria-hidden`; the words carry the severity too.                           |
+
+Forms: `panel` (CMP-026's block), `inline` (one row, `InlineError`) and `banner` (CMP-028's box in the error or
+warning tone). The message is CandleViewer's own text, never the exchange's `ret_msg`.
