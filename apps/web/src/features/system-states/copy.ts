@@ -6,7 +6,7 @@
  * SCR-153 / CMP-092 rows: `docs/design/E17/E17-D02.md` §8 "The drawn issues" (the routing table
  * is §6; the severities are its first-match partition, M-3). Where the design has no string for a
  * row, the row takes the merged spec's nearest string and is marked PROPOSED beside it (coordinator
- * ruling on #306, 2026-10-27); every row below is verbatim, so none is PROPOSED.
+ * ruling on #306, 2026-10-27); every DEGRADED_COPY row is verbatim, so none is PROPOSED.
  */
 
 export type DegradedSeverity = "info" | "warning" | "blocking";
@@ -62,3 +62,51 @@ export const DEGRADED_COPY = {
 } as const satisfies Readonly<Record<string, DegradedCopy>>;
 
 export type DegradedIssueId = keyof typeof DEGRADED_COPY;
+
+/**
+ * SCR-156 / CMP-091. "D03" = `docs/design/E10/E10-D03.md`; "board" = its board 10 export
+ * `docs/design/E10/img/E10-D03-10-system-states.png`, frames `SCR-156/panel-level` and
+ * `SCR-156/route-level` (board-only strings, read off the export at full size).
+ */
+export const CRASH_COPY = {
+  panel: {
+    /** D03:328, :371 (PROPOSED there, §10.2); E10-D04-names.json `shell.scr156.fallback`. */
+    heading: "This panel stopped working",
+    /**
+     * Board `SCR-156/panel-level`, verbatim. Unconditional there and in D03:328 ("the surviving
+     * workspace keeps running"); D03:328's "only where true" is the positions / native-stops sentence.
+     */
+    body: "The surviving workspace is unaffected. Copy diagnostics and report it, or reload the panel.",
+    /** D03:328. */
+    reload: "Reload panel",
+    /** PROPOSED: `docs/design/E04/E04-D01.md`:189, "This panel keeps crashing — reload disabled." */
+    repeatedHeading: "This panel keeps crashing — reload disabled.",
+  },
+  route: {
+    /**
+     * Board `SCR-156/route-level`, verbatim. D03:328 calls this the shipped placeholder that E10-S04
+     * replaces, yet the board draws the same words, so the board's string is kept.
+     */
+    heading: "Something went wrong",
+    /**
+     * PROPOSED: board `SCR-156/route-level` reads "Reload the page or the app, or start in safe mode
+     * without saved layouts."; the safe-mode clause is cut until safe mode exists.
+     */
+    body: "Reload the page or the app.",
+    /** D03:328. */
+    reload: "Reload page",
+    /** PROPOSED: E04-D01:189's string, for a page. */
+    repeatedHeading: "This page keeps crashing — reload disabled.",
+  },
+  /** PROPOSED: E04-D01:189-190 asks for the reason in plain text; D03:328 gives the threshold. */
+  repeatedReason: "It crashed three times in two minutes. Reload the app to start again.",
+  /** D03:328. */
+  reloadApp: "Reload app",
+  /** D03:328. */
+  copyDiagnostics: "Copy diagnostics",
+  /** Board `SCR-156/panel-level`: "error id 7f3a-2c · 14:02:05 UTC" (the timestamp is not shown yet). */
+  errorId: "error id",
+  /** PROPOSED (both): no drawn string for the copy result. */
+  copied: "Diagnostics copied.",
+  copyFailed: "Couldn't copy the diagnostics.",
+} as const;

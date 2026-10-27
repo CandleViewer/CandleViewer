@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { isRouteErrorResponse, useRouteError } from "react-router";
 import { ForbiddenError } from "./guards";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
-import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+import { RouteCrashFallback } from "../features/system-states/RouteCrashFallback";
 
 /**
  * Route-level `errorElement`. Guard loaders throw typed errors (never plain
@@ -19,13 +19,6 @@ export function RouteErrorElement(): JSX.Element {
   if (isRouteErrorResponse(error)) {
     return error.status === 404 ? <NotFoundState /> : <ForbiddenState />;
   }
-  // Anything else is an unexpected crash; E10-S04 owns the full-page
-  // error boundary UI. This minimal fallback keeps the route tree
-  // testable standalone before that ticket lands.
-  return (
-    <ScreenRoot>
-      <h1>Something went wrong</h1>
-      <p>An unexpected error occurred while loading this route.</p>
-    </ScreenRoot>
-  );
+  // Anything else is an unexpected crash: the CMP-091 route fallback (E10-S04).
+  return <RouteCrashFallback error={error} />;
 }

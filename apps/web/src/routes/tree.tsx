@@ -15,6 +15,7 @@ import { RouteErrorElement } from "./RouteErrorElement";
 import { StubRoute } from "./StubRoute";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
 import { PlaceholderRoute } from "./PlaceholderRoute";
+import { PanelErrorBoundary } from "../features/system-states/PanelErrorBoundary";
 import { AdminInviteScreen } from "../features/invites/AdminInviteScreen";
 import { LoginScreen } from "../features/auth/LoginScreen";
 import { ChangePasswordScreen } from "../features/auth/ChangePasswordScreen";
@@ -46,7 +47,9 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
     // First sign-in lands on /terminal/last -> here; the card is server-gated (401 => renders nothing).
     return (
       <>
-        <SetupChecklistCard />
+        <PanelErrorBoundary id="setup-checklist">
+          <SetupChecklistCard />
+        </PanelErrorBoundary>
         <StubRoute routeId={routeId} owner={owner ?? "E15"} />
       </>
     );
