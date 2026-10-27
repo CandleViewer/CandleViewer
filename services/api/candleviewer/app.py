@@ -509,6 +509,7 @@ from candleviewer.ws_wiring import (
     ingestion_streams,
     loop_call_later,
     recorder_topic,
+    series_stale,
     wallet_topic,
 )
 
@@ -1586,13 +1587,12 @@ def create_app(
             publisher=publisher,
             indicators=indicators,
         )
+        # #2487: quarantined, or the symbol's tape past the watchdog's trade limit (§6, §7.2).
+        stale = series_stale(ctx, app.state.bars_runtime.builder_set.quarantined)
         snapshot_adapters["bars"] = BarsSnapshotSource(
-            bars_series, scales, seed=publisher.note_generation,
-            stale=app.state.bars_runtime.builder_set.quarantined,
-        )  # fmt: skip
-        snapshot_adapters["indicators"] = IndicatorsSnapshotSource(
-            indicators, stale=app.state.bars_runtime.builder_set.quarantined
+            bars_series, scales, seed=publisher.note_generation, stale=stale
         )
+        snapshot_adapters["indicators"] = IndicatorsSnapshotSource(indicators, stale=stale)
         if bars_reader is not None and ctx.ingestion.klines is not None:
             # E12-T05: `/market/klines` tier (1) — tape-built `bars_time` wins over klines.
             ctx.ingestion.klines.attach_tape(

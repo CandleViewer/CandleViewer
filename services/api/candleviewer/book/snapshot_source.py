@@ -9,14 +9,17 @@ injected (`ws_wiring.book_snapshot_body`). Every call reads the engine's plain p
 - `build`: only a `live` book is served (B14 tags only `live` consumable), so it is
   `None` for a replay subscription (the live book is no replay state), an unknown symbol or
   instrument, and while the book is building, rebuilding or desynced (C-2.5). Otherwise the best
-  `min(topic depth, engine tier)` levels per side. `stale` stays false: it has no source until
-  the engine publishes a freshness signal. Scales are the instrument's tick and qty step, raised
-  where a level needs more places, so both forms carry every level exactly (§3.4). A book whose
+  `min(topic depth, engine tier)` levels per side. `stale` is the injected `stale(symbol)`
+  (#2487): the wiring binds `BookStream.is_stale`, the freshness the REST book reads, so both
+  surfaces derive it once from the last applied frame against the watchdog's book limit.
+  Scales are the instrument's tick and qty step, raised where a level needs more places, so
+  both forms carry every level exactly (§3.4). A book whose
   scales or values do not fit §14.1 and the kind-1 fields is not served either: one malformed
   level never reaches the encoder.
 - `generation`: a counter that moves whenever the engine, its resync count, its update id or its
-  phase changes: monotonic, and never one value for two states (`u` is per tier, and a venue
-  reset restarts it).
+  phase changes, or `stale` flips (a stalled book applies no frame, so only the flag tells the
+  render cache its verdict is out of date): monotonic, and never one value for two states (`u`
+  is per tier, and a venue reset restarts it).
 - `continuity`: always False. The engine keeps no delta history and the book publisher (#604)
   starts at the attach point, so no `snapshot: false` attach can be proven (§7.6): every one is
   `snapshot_forced` (§7.7).
@@ -45,8 +48,8 @@ _I64: Final = range(-(2**63), 2**63)
 _U64: Final = range(2**64)
 #: Scaling a level to an integer never rounds, whatever the caller's decimal context.
 _EXACT: Final = Context(prec=MAX_PREC, Emax=MAX_EMAX, Emin=MIN_EMIN)
-#: What one engine's generation names: its resync count, update id `u` and phase.
-_State = tuple[int, int, BookPhase]
+#: What one engine's generation names: its resync count, update id `u`, phase and `stale`.
+_State = tuple[int, int, BookPhase, bool]
 
 
 class _Topic(Protocol):
@@ -78,6 +81,7 @@ class BodyFactory[B](Protocol):
         *,
         price_scale: int,
         qty_scale: int,
+        stale: bool,
     ) -> B: ...
 
 
@@ -89,9 +93,13 @@ class BookSnapshotSource[B]:
         engines: Callable[[str], BookEngine | None],
         steps: Callable[[str], tuple[Decimal, Decimal] | None],
         body: BodyFactory[B],
+        *,
+        stale: Callable[[str], bool] | None = None,
     ) -> None:
-        """`engines`: a symbol's active engine. `steps`: its instrument's tick and qty step."""
+        """`engines`: a symbol's active engine. `steps`: its instrument's tick and qty step.
+        `stale`: whether a symbol's book is behind its freshness SLO (none: never stale)."""
         self._engines, self._steps, self._body = engines, steps, body
+        self._stale = stale
         self._seen: WeakKeyDictionary[BookEngine, tuple[_State, int]] = WeakKeyDictionary()
         self._generations = itertools.count(1)
 
@@ -115,13 +123,15 @@ class BookSnapshotSource[B]:
             return None
         structured = {"symbol": eng.symbol, "depth": depth, "xu": eng.last_u, "xseq": xseq,
                       "bids": _rows(bids), "asks": _rows(asks)}  # fmt: skip
-        return self._body(structured, records, trailer, price_scale=ps, qty_scale=qs)
+        return self._body(
+            structured, records, trailer, price_scale=ps, qty_scale=qs, stale=self._is_stale(eng)
+        )
 
     def generation(self, sub: BookSub) -> int:
         eng = self._engine(sub)
         if eng is None:
             return 0
-        state = (eng.resync_count, eng.last_u, eng.phase)
+        state = (eng.resync_count, eng.last_u, eng.phase, self._is_stale(eng))
         seen = self._seen.get(eng)
         if seen is None or seen[0] != state:
             seen = self._seen[eng] = (state, next(self._generations))
@@ -130,6 +140,9 @@ class BookSnapshotSource[B]:
     def continuity(self, sub: BookSub, from_ts_ms: int | None) -> bool:
         """Never proven, so every `snapshot: false` attach is forced (see the module docstring)."""
         return False
+
+    def _is_stale(self, eng: BookEngine) -> bool:
+        return self._stale is not None and self._stale(eng.symbol)
 
     def _engine(self, sub: BookSub) -> BookEngine | None:
         symbol = sub.topic.symbol

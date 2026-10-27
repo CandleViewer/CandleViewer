@@ -5,8 +5,9 @@
   with its newest `history` points (§6.1: default 500; 0 sends none), oldest first. `None` keeps
   the subscription `snapshot_pending`: a replay one (the topic is live only), or while one of its
   instances primes from stored bars; the engine's listener flushes it once that is done.
-- **`stale`** (§7.2) while the series' builder is quarantined (`BarBuilderSet.quarantined`), as
-  on `bars.*`; `generation` is negated meanwhile, so the render cache refreshes.
+- **`stale`** (§7.2) while the injected `stale` holds, as on `bars.*`: the series' builder is
+  quarantined or its trade feed is past the watchdog's limit (`ws_wiring.series_stale`, #2487);
+  `generation` is negated meanwhile, so the render cache refreshes.
 - **Generation** is the series' change counter in the engine, so every change refreshes the
   render cache; `continuity` is False (§7.6).
 """

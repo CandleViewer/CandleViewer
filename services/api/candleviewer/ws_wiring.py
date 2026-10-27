@@ -207,21 +207,30 @@ def book_snapshot_body(
     *,
     price_scale: int,
     qty_scale: int,
+    stale: bool = False,
 ) -> SnapshotBody:
     """A book snapshot's gateway body: the §14.1 payload and its CVWB kind-1 twin (§3.4)."""
     part = Frame(
         BOOK_SNAPSHOT, records, price_scale=price_scale, qty_scale=qty_scale, trailer=trailer
     )
-    return SnapshotBody(structured, (part,), price_scale=price_scale, qty_scale=qty_scale)
+    return SnapshotBody(
+        structured, (part,), price_scale=price_scale, qty_scale=qty_scale, stale=stale
+    )
 
 
 def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
     """#2196: the `book` family's adapter over the E08 live book and instrument catalogue, both
-    resolved per call (attached only with the public WS); without them `build` gives `None`."""
+    resolved per call (attached only with the public WS); without them `build` gives `None`.
+    #2487: `stale` is `BookStream.is_stale`, the freshness `GET /market/orderbook` serves, so the
+    two surfaces share one derivation (the watchdog's book limit, `23-ws-protocol.md` §6)."""
 
     def engine(symbol: str) -> BookEngine | None:
         books = ctx.ingestion.books
         return books.engine(symbol) if isinstance(books, BookStream) else None
+
+    def stale(symbol: str) -> bool:
+        books = ctx.ingestion.books
+        return books.is_stale(symbol) if isinstance(books, BookStream) else True
 
     def steps(symbol: str) -> tuple[Decimal, Decimal] | None:
         scheduler = ctx.ingestion.instruments
@@ -229,7 +238,25 @@ def book_snapshot_source(ctx: AppContext) -> BookSnapshotSource[SnapshotBody]:
         inst = snap.get(symbol) if snap is not None else None
         return None if inst is None else (inst.tick_size, inst.qty_step)
 
-    return BookSnapshotSource(engine, steps, book_snapshot_body)
+    return BookSnapshotSource(engine, steps, book_snapshot_body, stale=stale)
+
+
+def series_stale(
+    ctx: AppContext, quarantined: Callable[[str, str], bool]
+) -> Callable[[str, str], bool]:
+    """#2487: `stale` of a `bars` or `indicators` series (§7.2): its builder is quarantined, or
+    the symbol's trade feed, which builds its bars from the tape, is past the watchdog's `trade`
+    limit (`TradeStream.is_stale`, resolved per call). Without a trade stream (the public WS is
+    not wired) nothing can be fresh, so every series is stale (25 §3), as `book_snapshot_source`'s
+    `stale` is without a `BookStream`: both fail closed when their upstream is missing."""
+
+    def stale(symbol: str, spec_hash: str) -> bool:
+        if quarantined(symbol, spec_hash):
+            return True
+        trades = ctx.ingestion.trades
+        return trades is None or trades.is_stale(symbol)
+
+    return stale
 
 
 def wallet_topic(hub: SequencingHub) -> WalletTopic[SnapshotBody]:
