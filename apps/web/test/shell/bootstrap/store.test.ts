@@ -27,6 +27,15 @@ describe("shell store", () => {
     expect(seen).toEqual(["demo"]);
   });
 
+  it("latches everLive on the first live connection until resetShellState (E10-S01 S8)", () => {
+    expect(getShellState().everLive).toBe(false);
+    setShellState({ connection: { kind: "live" } });
+    setShellState({ connection: { kind: "connecting" } });
+    expect(getShellState().everLive).toBe(true);
+    resetShellState();
+    expect(getShellState().everLive).toBe(false);
+  });
+
   it("unsubscribe stops notification", () => {
     let calls = 0;
     const unsubscribe = subscribeShellState(() => {
