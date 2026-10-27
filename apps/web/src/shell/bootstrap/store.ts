@@ -12,9 +12,11 @@
  *    `"unknown"` until `/me` (or a `system` WS frame) says otherwise;
  *  - the latest `SystemUpdate` per `kind`, since the WS topic carries
  *    several independent facets (health, kill-switch, feature flags, ...);
- *  - the WS connection state and reconnect countdown.
+ *  - the WS connection state and reconnect countdown;
+ *  - the WS latency indicator (budget #3), at most once a second.
  */
 import type { generated } from "@candleviewer/protocol";
+import { toLatencyIndicator, type LatencyIndicator } from "../../lib/telemetry/latencyIndicator.js";
 
 export type Me = generated.rest.components["schemas"]["Me"];
 export type Settings = generated.rest.components["schemas"]["Settings"];
@@ -55,6 +57,8 @@ export interface ShellState {
   readonly environment: Environment | "unknown";
   readonly connection: ConnectionState;
   readonly systemByKind: Readonly<Partial<Record<SystemUpdate["kind"], SystemUpdate>>>;
+  /** The age of the newest live frame the client rendered (budget #3); `unavailable` until one is. */
+  readonly latency: LatencyIndicator;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -70,6 +74,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   environment: "unknown",
   connection: INITIAL_CONNECTION,
   systemByKind: Object.freeze({}),
+  latency: toLatencyIndicator(null),
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;

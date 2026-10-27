@@ -352,6 +352,10 @@ describe("the worker's message (worker -> tab)", () => {
       t: "diag",
       diag: { engine: {}, host: {}, slowConsumerHint: [], clockSkewMs: undefined },
     },
+    err: { t: "err", code: "forbidden", message: "disabled" },
+    "err with no message": { t: "err", code: "degraded_data" },
+    "err with an empty message": { t: "err", code: "degraded_data", message: "" },
+    "err at its limits": { t: "err", code: "c".repeat(64), message: "m".repeat(1000) },
   };
 
   it.each(Object.entries(WORKER))("%s is accepted as it is", (_name, message) => {
@@ -394,6 +398,17 @@ describe("the worker's message (worker -> tab)", () => {
     ["diagnostics whose host counters are null", { t: "diag", diag: { engine: {}, host: null } }],
     ["diagnostics whose engine counters are null", { t: "diag", diag: { engine: null, host: {} } }],
     ["diagnostics that are null", { t: "diag", diag: null }],
+    ["an err with no code", { t: "err", message: "no" }],
+    ["an err with an empty code", { t: "err", code: "" }],
+    ["an err whose code is not text", { t: "err", code: 4403 }],
+    ["an err with a code over 64 characters", { t: "err", code: "c".repeat(65) }],
+    ["an err whose code is free text", { t: "err", code: "Session expired. Re-enter your code" }],
+    ["an err whose code is not a registry name", { t: "err", code: "Forbidden" }],
+    ["an err whose message is not text", { t: "err", code: "forbidden", message: null }],
+    [
+      "an err with a message over 1 000 characters",
+      { t: "err", code: "x", message: "m".repeat(1001) },
+    ],
   ];
   it.each(REFUSED)("refuses %s", (_name, message) => {
     expect(parseWorkerMessage(message)).toBeUndefined();
@@ -410,6 +425,23 @@ describe("the worker's message (worker -> tab)", () => {
     ],
   ])("reads %s once: what was checked is what is returned", (_name, message) => {
     expect(parseWorkerMessage(message)).toEqual({ t: "tokenRequest", req: 7, invalidate: true });
+  });
+
+  it("keeps of an err its code and message and no other field (23 10.3)", () => {
+    const frame = {
+      t: "err",
+      code: "invalid_options",
+      message: "no",
+      field: "x",
+      request_id: "urn:cv:req:1",
+    };
+    expect(parseWorkerMessage(frame)).toEqual({ t: "err", code: "invalid_options", message: "no" });
+    expect(
+      parseWorkerMessage(changing({ t: "err", code: "forbidden" }, "code", "forbidden", 1)),
+    ).toEqual({
+      t: "err",
+      code: "forbidden",
+    }); // read once: what was checked is what is returned
   });
 });
 

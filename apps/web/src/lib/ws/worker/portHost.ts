@@ -248,6 +248,9 @@ export function createPortHost(options: PortHostOptions): PortHost {
     },
     deliver: fanOut,
     changed: scheduleFlush,
+    // 23 10.3: the tabs map it, now; the code and the message are all that leave the worker
+    error: (code, message) =>
+      broadcast({ t: "err", code, ...(message !== undefined && { message }) }),
   };
 
   function scheduleFlush(): void {

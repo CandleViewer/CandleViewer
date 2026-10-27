@@ -4,7 +4,6 @@
 // close. It knows nothing of streams: the frames that are not its own go to the engine through
 // `hooks`. Worker-agnostic: the socket, the clock, the timers and the random source are injected.
 import type { TokenResult, TokenSource } from "../api";
-import { handleWsError } from "../errorHandler";
 import { decideClose } from "../policy/closePolicy";
 import { createOutboundPacer } from "../policy/outboundPacer";
 import type { Timers } from "../policy/timers";
@@ -411,10 +410,9 @@ export function createConnection(options: ConnectionOptions): Connection {
     if (first) hooks.ready();
   }
 
-  /** The gateway refused an `auth` of ours, or a request: every `err` goes through the one mapping (10.3). */
+  /** The gateway refused an `auth` of ours, or a request. Every `err` also goes on to `hooks.frame`: the tab maps it (10.3). */
   function onErr(c: Conn, frame: ControlOf<"err">): void {
-    const { code, message, request_id: requestId } = frame.p;
-    handleWsError({ t: "err", p: { code, message } });
+    const { code, request_id: requestId } = frame.p;
     if (bounded(requestId)) emit({ type: "request_id", requestId });
     if (frame.id === undefined || frame.id !== c.authId) return;
     c.authId = undefined;

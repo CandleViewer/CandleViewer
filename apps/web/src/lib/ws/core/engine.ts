@@ -39,6 +39,11 @@ export interface EngineSink {
    * after every reply of the server and when a snapshot is overdue. The sink reads the handles it holds.
    */
   changed?(): void;
+  /**
+   * An `err` frame of the gateway, any of them (23 10.1), with the two fields the error mapping reads (10.3). It is the tab
+   * that maps it: the worker is another realm, where nothing listens.
+   */
+  error?(code: string, message: string | undefined): void;
 }
 
 export interface EngineOptions {
@@ -533,6 +538,7 @@ export function createWsEngine(options: EngineOptions): WsEngine {
         onRevoked(frame);
         break;
       case "err":
+        sink.error?.(frame.p.code, frame.p.message);
         onErr(frame);
         break;
     }

@@ -118,6 +118,14 @@ describe("decodeFrame", () => {
     ["a revoked without a message", revoked({ reason: "x" })],
     ["an err message over 1000 characters", wire({ t: "err", p: { code: "x", message: LONG } })],
     ["an err code over 1000 characters", wire({ t: "err", p: { code: LONG, message: "m" } })],
+    [
+      "an err code that is free text",
+      wire({ t: "err", p: { code: "Re-enter your code", message: "m" } }),
+    ],
+    [
+      "an err code over 64 characters",
+      wire({ t: "err", p: { code: "c".repeat(65), message: "m" } }),
+    ],
     ["a revoked message that is not text", revoked({ reason: "x", message: 5 })],
     ["a revoked reason over 64 characters", revoked({ reason: `${TAG}r`, message: "m" })],
     ["a bye message over 1000 characters", bye(4403, LONG)],

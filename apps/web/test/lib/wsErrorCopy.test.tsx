@@ -5,11 +5,11 @@
 // accessibility tree. NOT RUN: the keyboard reach and the label of "copy details", as no such
 // affordance exists yet.
 import { WS_ERROR_CODES } from "@candleviewer/protocol";
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { WsErrorHost } from "../../src/lib/ws/WsErrorHost";
 import { handleWsError } from "../../src/lib/ws/errorHandler";
-import { connectionHarness } from "./ws/support/connectionHarness";
+import { shim, WAIT } from "./ws/support/portShim";
 
 const IDS = {
   request_id: "urn:cv:req:0193f2bd-4411-7c02-9911-aa22bb33cc44",
@@ -50,15 +50,19 @@ it("no WS error code puts a request, connection or build id into the default cop
   }
 });
 
-it("the ids reach the client's diagnostics events, and still not the copy", async () => {
-  const t = connectionHarness();
+it("the ids reach the client's diagnostics, and still not the copy", async () => {
+  // the real path: the worker's host over the fake gateway, and a tab at the far end of a message port
+  const { gateway, tab } = shim();
+  const { client } = tab();
   render(<WsErrorHost />);
-  await t.connect();
+  await waitFor(() => expect(client.getState().transport).toBe("connected"), WAIT);
   const p = { code: "internal_error", message: "m", request_id: IDS.request_id };
-  act(() => t.gateway.latest.send({ t: "err", p }));
-  expect(t.events).toContainEqual({ type: "request_id", requestId: IDS.request_id });
-  expect(t.events).toContainEqual({ type: "welcome", connectionId: "ws_1" });
-  expect(copy()).toContain("internal_error");
+  gateway.latest.send({ t: "err", p });
+  await waitFor(() => expect(copy()).toContain("internal_error"), WAIT);
+  expect(client.getState().diagnostics).toEqual({
+    connectionId: "ws_1",
+    requestId: IDS.request_id,
+  });
   expect(copy()).not.toMatch(NAMES);
   expect(VALUES.filter((value) => copy().includes(value))).toEqual([]);
 });

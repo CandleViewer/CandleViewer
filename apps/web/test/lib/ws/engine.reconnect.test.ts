@@ -1,6 +1,5 @@
 // E17-T04 S4 (23 4.4, 9.2; C7): what the connection does when the socket ends.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { onWsError } from "../../../src/lib/ws/errorHandler";
 import { backoffDelayWithJitter } from "../../../src/shell/bootstrap/backoff";
 import { connectionHarness, tokenOf } from "./support/connectionHarness";
 import { BOOK, engineHarness, spec } from "./support/engineHarness";
@@ -31,14 +30,11 @@ describe("backoff (9.2, C7)", () => {
     expect(t.gateway.conns).toHaveLength(1);
     await t.advance(1);
     expect(t.gateway.conns).toHaveLength(2);
-    // 4403: no reconnect, a fatal state, and `forbidden` reaches the error mapping
+    // 4403: no reconnect, a fatal state, and `forbidden` goes on to the engine (its host relays it to the tabs)
     await t.advance(100);
-    const errors: string[] = [];
-    const off = onWsError((code) => errors.push(code));
     t.gateway.latest.send({ t: "err", p: { code: "forbidden", message: "disabled" } });
     t.gateway.latest.bye("user_disabled", 4403, { reconnect: false });
-    off();
-    expect(errors).toEqual(["forbidden"]);
+    expect(t.frames.flatMap((f) => (f.t === "err" ? [f.p.code] : []))).toEqual(["forbidden"]);
     expect(t.events.at(-1)).toEqual({ type: "offline", cause: "fatal", closeCode: 4403 });
     await t.advance(600_000);
     expect(t.gateway.conns).toHaveLength(2);

@@ -5,6 +5,7 @@
 // updates, and per consumer a bounded queue behind `read()`. Rendering follows the display, never the feed: an arrival
 // only fills a queue and drops the latest of what a handle reads into the frame scheduler, which applies it on the next
 // animation frame. Nothing is applied from the arrival path, and a data message never notifies a state subscriber.
+// The gateway's `err` frames go to the error mapping of this realm (23 10.3), each in the task its message arrives in.
 import type {
   ConsumerSpec,
   PaneVisibility,
@@ -16,6 +17,7 @@ import type {
 } from "../api";
 import { throttleIndicator, type LatencyIndicator } from "../../telemetry/latencyIndicator";
 import { RESYNC_WINDOW_MS } from "../core/resyncGuard";
+import { handleWsError } from "../errorHandler";
 import { platformTimers, type Timers } from "../policy/timers";
 import type { PortLike } from "../port/endpoint";
 import { createFrameQueue, type FrameQueue, type QueueLimits } from "../port/frameQueue";
@@ -272,6 +274,19 @@ export function createWsClient(options: WsClientOptions): WsClientHandle {
       case "diag":
         diag = message.diag;
         break;
+      case "err": {
+        // 23 10.3: the modal, the badge or the toast, in this realm, from the code and the message only
+        const { code } = message;
+        try {
+          handleWsError({
+            t: "err",
+            p: { code, ...(message.message !== undefined && { message: message.message }) },
+          });
+        } catch (error) {
+          raise(error); // a listener of the app's: its bug does not stop the client
+        }
+        break;
+      }
     }
   }
 

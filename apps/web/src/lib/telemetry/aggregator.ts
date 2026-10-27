@@ -148,6 +148,9 @@ export function fetchTransport(baseUrl = "/api/v1"): Transport {
 /** Generated-contract path for `postFrontendTelemetry`. */
 export const TELEMETRY_PATH: keyof generated.rest.paths = "/telemetry/frontend";
 
+/** The aggregator `startTelemetry` started and has not stopped: the app's one. */
+let active: TelemetryAggregator | null = null;
+
 /**
  * App-level start (called once from `App` on mount): one aggregator, one
  * bounded 10 s push loop (the only network rate). Returns the teardown.
@@ -157,6 +160,19 @@ export function startTelemetry(
   engineVersion = "0.1.0",
 ): { readonly aggregator: TelemetryAggregator; stop(): void } {
   const aggregator = new TelemetryAggregator(transport, engineVersion);
-  const stop = aggregator.start();
+  const stopPush = aggregator.start();
+  active = aggregator;
+  const stop = (): void => {
+    stopPush();
+    if (active === aggregator) active = null;
+  };
   return { aggregator, stop };
+}
+
+/**
+ * `fe_ws_decode_ms` (D8) of the app's aggregator. The WS client starts before the app mounts (`startShell`), so it is
+ * handed this, not the aggregator: a decode time before `startTelemetry` or after its `stop` is not counted.
+ */
+export function recordDecode(ms: number): void {
+  active?.recordDecode(ms);
 }
