@@ -102,3 +102,15 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Keys | Action                                                                                                                                                                            |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | none | Not focusable. A standalone count is `role="img"` named `{value} {label}` (the full number, past the "99+" cap); on a labelled control, and always as a dot, it is `aria-hidden`. |
+
+### Avatar (CMP-013, static; the `img` role when it is the only content)
+
+| Keys | Action                                                                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. Beside its visible name it is `aria-hidden`; `standalone`, it is `role="img"` named by the full label, never the initials. |
+
+### AvatarGroup (CMP-025, static image summary)
+
+| Keys | Action                                                                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. `role="img"` named `{n} accounts: {every label}`, the names folded into `+N` included; avatars and the chip are `aria-hidden`. |
