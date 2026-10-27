@@ -85,7 +85,8 @@ async def test_a_flag_write_through_the_app_is_stepped_up_audited_and_pushed(
     assert (challenge.status_code, challenge.json()["code"]) == (403, "step_up_required")
     summary = f"Set feature flag '{_KEY}' to false, user overrides 1"
     assert (challenge.json()["action_summary"], challenge.json()["target"]) == (summary, None)
-    assert w.elevate(owner).json()["action_class"] == "flags"
+    answer = w.elevate(owner, challenge_id=challenge.json()["challenge_id"])  # #2304: bound
+    assert answer.json()["action_class"] == "flags"
     assert put(uid).status_code == 200
     records = [(r["reason"], r["after_state"].get("phase")) for r in w.audit.of("flags.change")]
     assert records == [("unknown_user", None), ("drill", "intent"), ("ok", "outcome")]
@@ -107,8 +108,10 @@ async def test_a_credential_shaped_reason_is_refused_and_recorded_redacted(
         body = {"value": False, "reason": reason, "expected_updated_at": read}
         return w.client.put(f"/admin/feature-flags/{_KEY}", headers=_h(owner), json=body)
 
-    assert put("drill").json()["code"] == "step_up_required"
-    assert w.elevate(owner).json()["action_class"] == "flags"  # the fresh elevation
+    challenge = put("drill").json()
+    assert challenge["code"] == "step_up_required"
+    fresh = w.elevate(owner, challenge_id=challenge["challenge_id"])  # #2304: bound
+    assert fresh.json()["action_class"] == "flags"  # the fresh elevation
     refused = put("rotated after the drill: access_token=hunter2")
     assert (refused.status_code, refused.json()["code"]) == (422, "validation_failed")
     assert refused.json()["errors"] == [{"field": "reason", "rule": "credential_in_reason"}]
