@@ -1217,6 +1217,7 @@ source_modules =
     candleviewer.oms.stop_terms
     candleviewer.oms.stream_consumer
     candleviewer.oms.stream_push
+    candleviewer.oms_streams
     candleviewer.orderflow
     candleviewer.orderbook_wiring
     candleviewer.replay.clock

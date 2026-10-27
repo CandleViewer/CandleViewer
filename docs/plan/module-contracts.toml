@@ -317,7 +317,8 @@ exempt_modules = ["candleviewer.observability"]
 # The private stream's row mapping and pairing (E29-T05) are too, and the
 # position projection, what a read shows of a recorded stop (`stop_shown`) and
 # the recorded stop's order on the stream (`recorded_stop_stream`) and its terms
-# (`stop_terms`): the facade they feed drives B1.
+# (`stop_terms`): the facade they feed drives B1. So is the order lane's bridge to the private
+# streams (#913 L1d-2b, `oms_streams`), which carries every push to the consumer.
 rule = "C-2.20"
 source_modules = [
     "candleviewer.book",
@@ -331,6 +332,7 @@ source_modules = [
     "candleviewer.oms.stop_terms",
     "candleviewer.oms.stream_consumer",
     "candleviewer.oms.stream_push",
+    "candleviewer.oms_streams",
     "candleviewer.orderflow",
     "candleviewer.orderbook_wiring",
     "candleviewer.replay.clock",
