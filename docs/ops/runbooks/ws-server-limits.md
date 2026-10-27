@@ -132,8 +132,9 @@ rendered message through the same redaction as stdout. What that looks like:
   name of 18 or more letters show as a marker (`ConnectionResetError: …` shows
   `[redacted:key-shape]: …`), as does a dotted name of three parts of 10 or more characters each
   (`websockets.exceptions.ConnectionClosedOK`). A text longer than 4096 characters and the marker
-  keeps 4096: its start and its last lines (up to 3072), around a `...[truncated:oversize]` marker,
-  so the exception's own line stays. A cut that lands inside a backup download token leaves the
+  keeps 4096: its start and its last lines (up to 3072; they start after a label's value when one
+  runs on), around a `...[truncated:oversize]` marker, so the exception's own line stays. A cut
+  that lands inside a backup download token leaves the
   path's marker only, which takes the cut's marker with it. Paths nested in one another, or a cut
   right after a path's `/download/`, make the whole text the marker, as for a message line. An
   exception logged as a value or an argument is turned into its text first: with Python's own
