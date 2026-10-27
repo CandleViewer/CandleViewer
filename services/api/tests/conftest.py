@@ -198,11 +198,22 @@ def pytest_make_collect_report(
         reset_logging()
 
 
+# #4777: the nightly-only heavy lanes run long by design, bounded by their jobs' `timeout-minutes`,
+# so the suite's 120 s per-test default (pyproject.toml) is lifted for them.
+_LONG_LANE_MARKERS = ("fuzz", "harness", "roundtrip", "chaos")
+
+
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     """Tag the E09 and E08 regression packs so `pytest -m e09_regression` (#2148) and
-    `pytest -m e08_regression` (#283) select them."""
+    `pytest -m e08_regression` (#283) select them, and lift the per-test timeout (#4777) for the
+    long nightly lanes unless a test sets its own."""
     from tests._e08_regression_pack import tag_pack as tag_e08_pack
     from tests._e09_regression_pack import tag_pack as tag_e09_pack
 
     tag_e09_pack(items)
     tag_e08_pack(items)
+    for item in items:
+        if item.get_closest_marker("timeout") is None and any(
+            item.get_closest_marker(name) is not None for name in _LONG_LANE_MARKERS
+        ):
+            item.add_marker(pytest.mark.timeout(0))
