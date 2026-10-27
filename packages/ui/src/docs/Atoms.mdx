@@ -195,7 +195,10 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Disabled link | link (`role="link"`, `aria-disabled`) | Its visible text; no href and no tabindex, so it is not focusable.     |
 | External icon | none                                  | `aria-hidden`; external links carry `rel="noopener noreferrer"` (E25). |
 
-`to` needs `as`, the app's router link component (`packages/ui` imports no router). Gated links are held (E27).
+`to` needs `as`, the app's router link component (`packages/ui` imports no router). The slot renders its
+own `<a>` and gets no `rel` or `target` (a route is never external); a router whose link does not take `to`
+plus anchor props needs a small wrapper. `href` is developer-supplied: never pass user input, and never a
+`javascript:` URL. Gated links are held (E27).
 
 ### Kbd (CMP-022, static shortcut hint)
 
@@ -287,7 +290,8 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | (none; after 2 s)   | Reverts silently: the glyph returns and the status empties.                                                           |
 | Enter, Space (fail) | The clipboard refused: the `error` glyph and "Copy failed" (E20), reverting after 2 s.                                |
 
-The value is never in the DOM, an attribute, the status or the name. `useCopy()` gives hosts the same write
+A repeat press empties the status and re-announces "Copied"; the check glyph stays. The value is never in
+the DOM, an attribute, the status or the name. `useCopy()` gives hosts the same write
 and status.
 
 ### Countdown (CMP-035, text with a threshold announcer)

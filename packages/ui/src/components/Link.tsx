@@ -46,24 +46,45 @@ interface RouteLink extends LinkBase {
 
 export type LinkProps = HrefLink | RouteLink;
 
-/** The external glyph and the hidden suffix; the word joiner keeps the glyph on the last word's line. */
+/**
+ * The external glyph and the hidden suffix. `.cv-link__external` stays a plain inline box, so the word
+ * joiner inside it is in the same line as the link's last word and forbids a break on both sides: the
+ * inline-block glyph after it can never wrap alone onto a new line. The wrapper is `aria-hidden`, so the
+ * joiner never enters the accessible name.
+ */
 function ExternalMark(): JSX.Element {
   return (
     <>
-      <span className="cv-visually-hidden">{EXTERNAL_LINK_TEXT}</span>
       <span className="cv-link__external" aria-hidden="true">
-        {"⁠"}
-        <Icon name="external-link" />
+        {/* U+2060 WORD JOINER: no line break between the last word and the glyph. */}
+        {"\u2060"}
+        <span className="cv-link__glyph">
+          <Icon name="external-link" />
+        </span>
       </span>
+      <span className="cv-visually-hidden">{EXTERNAL_LINK_TEXT}</span>
     </>
   );
+}
+
+/** Drops what would make a disabled link focusable or interactive: `tabIndex` and every `on*` handler. */
+function inertAttrs<T extends object>(attrs: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(attrs).filter(([key]) => key !== "tabIndex" && !/^on[A-Z]/.test(key)),
+  ) as Partial<T>;
 }
 
 /**
  * CMP-021 Link: a native `<a>`, always underlined (`color.text.link` alone is 2.16:1 against body text,
  * WCAG 1.4.1), with the CMP-039 ring at the link's own square corners (E8). `external` adds
  * `rel="noopener noreferrer"` (E25: no opener handle, no Referer leaking the private host),
- * `target="_blank"`, a decorative glyph and the hidden suffix. Disabled renders `<a role="link" aria-disabled="true">` with no href, so Tab skips it.
+ * `target="_blank"`, a decorative glyph and the hidden suffix. Disabled renders
+ * `<a role="link" aria-disabled="true">` with no href, no `tabIndex` and no handlers, so Tab skips it and
+ * it does nothing.
+ *
+ * `href` is developer-supplied: never pass user input (no `javascript:` or other script URLs). The router
+ * slot (`as`) renders its own `<a>` and gets no `rel` or `target` (a route is never external); a router
+ * whose link component does not take `to` plus anchor props needs a small wrapper.
  */
 export function Link(props: LinkProps): JSX.Element {
   const { children, disabled, href, to, as: Slot, external, onClick, ...rest } = props;
@@ -78,7 +99,7 @@ export function Link(props: LinkProps): JSX.Element {
   };
   if (disabled === true) {
     return (
-      <a {...common} role="link" aria-disabled="true">
+      <a {...inertAttrs(common)} role="link" aria-disabled="true">
         {children}
         {mark}
       </a>

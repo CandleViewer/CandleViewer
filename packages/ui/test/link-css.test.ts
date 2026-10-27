@@ -18,12 +18,18 @@ describe("link.css contract", () => {
     expect(css.all).not.toMatch(/border-radius|outline|box-shadow/);
   });
 
-  it("external glyph: size.icon, inset.xs from the last word, never wrapped", () => {
-    const glyph = find(normal, ".cv-link__external", "width");
+  it("external mark: a plain inline box that never wraps, so the joiner binds the glyph", () => {
+    const mark = find(normal, ".cv-link__external", "white-space");
+    expect(mark).toContain("white-space: nowrap");
+    expect(mark).not.toMatch(/display/);
+  });
+
+  it("external glyph: an inline-block size.icon, inset.xs from the last word", () => {
+    const glyph = find(normal, ".cv-link__glyph", "width");
+    expect(glyph).toContain("display: inline-block");
     expect(glyph).toContain("width: var(--size-icon)");
     expect(glyph).toContain("height: var(--size-icon)");
     expect(glyph).toContain("margin-inline-start: var(--space-inset-xs)");
-    expect(glyph).toContain("white-space: nowrap");
   });
 
   it("disabled dims with opacity.disabled", () => {
