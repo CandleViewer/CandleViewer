@@ -36,6 +36,46 @@ export const AllVariants: Story = {
   ),
 };
 
+/** Buy and sell: the word and the arrow lead in every state, so the side is never colour alone (05 4.1). */
+export const BuySellPair: Story = {
+  render: (args) => (
+    <div style={col}>
+      <div style={row}>
+        <Button {...args} variant="buy">
+          Buy / Long
+        </Button>
+        <Button {...args} variant="sell">
+          Sell / Short
+        </Button>
+      </div>
+      <div style={row}>
+        <Button {...args} variant="buy" loading>
+          Buy / Long
+        </Button>
+        <Button {...args} variant="sell" loading iconRight="chevron-right">
+          Sell / Short
+        </Button>
+      </div>
+      <div style={row}>
+        <Button {...args} variant="buy" disabled>
+          Buy / Long
+        </Button>
+        <Button {...args} variant="sell" disabledReason={REASON}>
+          Sell / Short
+        </Button>
+      </div>
+    </div>
+  ),
+  play: async ({ canvasElement }) => {
+    for (const button of within(canvasElement).getAllByRole("button"))
+      await expect(button.querySelector(".cv-button__icon svg")).not.toBeNull();
+  },
+};
+
+export const WithIcons: Story = {
+  args: { iconLeft: "chevron-down", iconRight: "chevron-right" },
+};
+
 export const AllSizes: Story = {
   render: (args) => (
     <div style={row}>
@@ -91,7 +131,7 @@ export const LongLabel: Story = {
   },
 };
 
-/** Gated primary and danger: the label is text.primary on the dimmed plate; axe checks it per theme. */
+/** Gated primary, danger, buy and sell: the label is text.primary on the dimmed plate; axe checks it per theme. */
 const gatedMatrix = (theme: string): Story => ({
   globals: { theme },
   play: async () => {
@@ -100,7 +140,7 @@ const gatedMatrix = (theme: string): Story => ({
   },
   render: (args) => (
     <div style={row}>
-      {(["primary", "danger"] as const).map((variant) => (
+      {(["primary", "danger", "buy", "sell"] as const).map((variant) => (
         <Button key={variant} {...args} variant={variant} disabledReason={REASON} />
       ))}
     </div>
