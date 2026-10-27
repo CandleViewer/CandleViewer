@@ -113,6 +113,7 @@ __all__ = [
     "WATCHDOG_S",
     "KeyTombstones",
     "PrivateStreams",
+    "PrivateStreamsWrongLoop",
     "StreamConnect",
     "StreamOpener",
     "StreamSocket",
@@ -208,6 +209,12 @@ class StreamOpener(Protocol):
 
 class _Closing(Exception):
     """The stream began closing while an `auth` was being signed: nothing is sent."""
+
+
+class PrivateStreamsWrongLoop(RuntimeError):
+    """An `open` or a `close_key` from an event loop other than the registry's own: refused
+    before anything is signed, dialled, built or closed (D6, fail closed), a wiring defect that
+    pages."""
 
 
 class KeyTombstones:
@@ -1068,10 +1075,10 @@ class PrivateStreams:
         """D6 (#913 L2; ruling Q5): the registry serves the loop of the `open` that creates its
         first stream, which `binds` it under the lock, after every refusal, so two loops never
         both take it and a refused `open` takes none. An `open` or a `close_key` from any other
-        loop is refused (`RuntimeError`) before anything is signed, dialled, built or closed:
-        M2's binding would refuse that loop's `auth` as the key's own fault (`key_unusable`).
-        The first refusal of each `WRONG_LOOP_PAGE_S` window, on the injected clock, pages: a
-        wiring defect."""
+        loop is refused (`PrivateStreamsWrongLoop`) before anything is signed, dialled, built or
+        closed: M2's binding would refuse that loop's `auth` as the key's own fault
+        (`key_unusable`). The first refusal of each `WRONG_LOOP_PAGE_S` window, on the injected
+        clock, pages: a wiring defect."""
         running = asyncio.get_running_loop()
         with self._loop_lock:
             if binds and self._loop is None:
@@ -1085,7 +1092,7 @@ class PrivateStreams:
         if page:
             logger().critical("bybit_private_streams_wrong_loop", cv_page=True)
         if foreign:
-            raise RuntimeError("the private streams serve another event loop")
+            raise PrivateStreamsWrongLoop("the private streams serve another event loop")
 
     async def aclose(self) -> None:
         """Shut down: every stream closes with `closed(shutdown)`, later opens are refused, and

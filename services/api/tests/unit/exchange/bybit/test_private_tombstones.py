@@ -253,17 +253,13 @@ async def test_a_stuck_close_refuses_a_stream_on_its_key_with_no_adapter_ahead_o
     await streams.aclose()
 
 
-async def _elsewhere(work: Callable[[], Awaitable[Any]]) -> str:
-    """`work()` on an event loop of its own, in another thread: its refusal's text, or `ran`."""
+async def _elsewhere(work: Callable[[], Awaitable[Any]]) -> None:
+    """`work()` on an event loop of its own, in another thread; its refusal is raised here."""
 
-    async def run() -> str:
-        try:
-            await work()
-        except RuntimeError as refused:
-            return str(refused)
-        return "ran"
+    async def run() -> None:
+        await work()
 
-    return await asyncio.to_thread(asyncio.run, run())
+    await asyncio.to_thread(asyncio.run, run())
 
 
 async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is_signed() -> None:
@@ -278,12 +274,10 @@ async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is
     await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
     before = (len(calls), list(venue.dialled), streams.count())
     with capture_logs() as logs:
-        opened = await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
-        assert opened == "the private streams serve another event loop"
-        closed = await _elsewhere(
-            lambda: streams.close_key(account().key_ref, reason="key_revoked")
-        )
-        assert closed == "the private streams serve another event loop"
+        with pytest.raises(ps.PrivateStreamsWrongLoop):
+            await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
+        with pytest.raises(ps.PrivateStreamsWrongLoop):
+            await _elsewhere(lambda: streams.close_key(account().key_ref, reason="key_revoked"))
     assert (len(calls), venue.dialled, streams.count()) == before
     assert not venue.sockets[0].closed and not streams.tombstones.refuses(account().key_ref)
     assert [(e["event"], e["log_level"], e.get("cv_page")) for e in logs] == [
@@ -304,9 +298,8 @@ async def test_the_registry_pages_the_first_wrong_loop_refusal_of_each_window() 
     pages = list[int]()
     for at in (0.0, 4.0, 6.0, 10.0, 1.0):
         clock.now = at
-        with capture_logs() as logs:
-            refused = await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
-        assert refused == "the private streams serve another event loop"
+        with capture_logs() as logs, pytest.raises(ps.PrivateStreamsWrongLoop):
+            await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
         pages.append(len([e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]))
     assert pages == [1, 0, 1, 0, 1]
     await stream.aclose()
@@ -326,8 +319,8 @@ async def test_a_revoke_from_another_loop_tombstones_first_and_its_retry_closes(
     assert await _next(stream, 2) == ["heartbeat:evidence", "resyncing:connected"]
     signed, dialled = len(calls), list(venue.dialled)
     with capture_logs() as logs:
-        refused = await _elsewhere(lambda: adapter.close_private_streams(account().key_ref))
-        assert refused == "the private streams serve another event loop"
+        with pytest.raises(ps.PrivateStreamsWrongLoop):
+            await _elsewhere(lambda: adapter.close_private_streams(account().key_ref))
         assert not venue.sockets[0].closed
         with pytest.raises(AuthError):  # the same key: tombstoned by the refused call itself
             await adapter.open_private_stream(account(ACCOUNT_B))
@@ -366,8 +359,8 @@ async def test_a_refused_first_open_from_another_loop_binds_no_loop(
         assert venue.dialled == []
         consumer = Consumer(await streams.open(account()))
         await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
-        refused = await _elsewhere(lambda: streams.open(first))
-        assert refused == "the private streams serve another event loop"
+        with pytest.raises(ps.PrivateStreamsWrongLoop):
+            await _elsewhere(lambda: streams.open(first))
     pages = [e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]
     assert len(pages) == 1  # the open after the bind; the refused first one paged nothing
     assert await streams.close_key(account().key_ref, reason="key_revoked") == (ACCOUNT_A,)
