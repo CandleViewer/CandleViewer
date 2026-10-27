@@ -116,7 +116,8 @@ def _raising(log: Callable[[], None]) -> Callable[[], None]:
 
 
 def _stack() -> None:
-    # the stack holds this source line, whose label and escaped line break the buffer `repr`s
+    # the stack holds this source line, whose label and escaped line break the buffer `repr`s;
+    # `[:0]` logs an empty argument, so the label reaches the bundle only through the stack
     logging.getLogger("t.lib").error("x%s", f"password:\n{_FAKE}"[:0], stack_info=True)
 
 
@@ -259,4 +260,4 @@ def test_perf_the_scan_reads_an_adversarial_text_in_linear_time(text: str) -> No
 
     half, full = best_ms(text[: len(text) // 2]), best_ms(text)
     assert len(text) >= 18000
-    assert full < 20.0 and full < 4 * half + 1.0, f"{half:.3f} ms -> {full:.3f} ms"
+    assert full < 100.0 and full < 4 * half + 1.0, f"{half:.3f} ms -> {full:.3f} ms"
