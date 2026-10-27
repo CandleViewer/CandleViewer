@@ -8,12 +8,12 @@ import {
   type RegionReason,
 } from "../../lib/ws/state/connectionRegion";
 import { useShellSelector } from "../../shell/useShellSelector.js";
-import { announce, CONNECTION_KEYS, forget } from "./announcer";
+import { announce, clearAnnouncements, CONNECTION_KEYS, forget } from "./announcer";
 import { ConnectionRegion } from "./ConnectionRegion";
 
 /**
- * The announcer key of a §11 row: rows 1 and 14 share the chip container's `CONNECTION_KEYS`, so the
- * two writers say each once per episode; row 2 has one key per read-only reason.
+ * The announcer key of a §11 row: rows 1 and 14 are `CONNECTION_KEYS` (once per episode, also
+ * across a remount); row 2 has one key per read-only reason.
  */
 function keyOf(reason: RegionReason): string {
   if (reason === "disconnected") return CONNECTION_KEYS.disconnected;
@@ -30,11 +30,11 @@ const ticks = (view: ConnectionRegionView | null): boolean =>
 const signIn = (): void => accessToken.endSession();
 
 /**
- * CMP-077's container (#306 slice 4b), `ShellCanvasOverlaySlot`'s content: `useWsState` and the
- * shell store's private-feed hand-over → slice 4a's `connectionRegion`. It re-renders at 1 Hz only
- * while the view has a clock in it, and writes §11 rows 1, 2 and 14 through the shell announcer on a
- * change of reason, never per tick. The chip container ends the episode (`clearAnnouncements` on the
- * return to live); the region forgets its own keys when its reason leaves, so a later entry speaks.
+ * CMP-077's container (#306 slice 4b), the banner slot's first content (`ShellBanner`):
+ * `useWsState` and the shell store's private-feed hand-over → slice 4a's `connectionRegion`. It
+ * re-renders at 1 Hz only while the view has a clock in it. It is the one writer of E17-D02 §11
+ * rows 1, 2 and 14 (the chip announces nothing), through the shell announcer, on a change of
+ * reason and never per tick; it ends the Disconnected episode itself when the link is back.
  */
 export function ConnectionRegionSlot(): JSX.Element | null {
   const ws = useWsState();
@@ -49,10 +49,13 @@ export function ConnectionRegionSlot(): JSX.Element | null {
     last.current = view;
     if (prev?.reason === view?.reason) return;
     // Leaving a reason lets its next entry speak: row 14 once per entry, row 2 per reason; row 1's
-    // key stays for the whole episode (a retry after a stop is no new episode) and goes with it.
+    // key stays for the whole episode (a retry after a stop is no new episode).
     if (prev !== null && prev.reason !== "disconnected") forget(keyOf(prev.reason));
+    // The link is back: the episode ends. `clearAnnouncements` forgets every key — the row 2 keys
+    // too, which is safe as the next reason is said below — and empties both live regions, so no
+    // stale alert text outlives the outage.
     if (prev !== null && EPISODE.has(prev.reason) && (view === null || !EPISODE.has(view.reason))) {
-      forget(CONNECTION_KEYS.disconnected);
+      clearAnnouncements();
     }
     const said = regionAnnouncement(prev, view);
     if (said !== null && view !== null) announce(said.politeness, said.text, keyOf(view.reason));

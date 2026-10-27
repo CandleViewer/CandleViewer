@@ -1,12 +1,16 @@
-// E10-S04 (#306) slice 4b: the CMP-077 connection region in `ShellCanvasOverlaySlot` (E17-D02 §6,
+// E10-S04 (#306) slice 4b: the CMP-077 connection region in `ShellBannerSlot` (E17-D02 §4.1, §6,
 // §10 B / D / F / R, §11, §13). Fake timers; the WS state comes from a fake active client.
 import { createRequire } from "node:module";
-import { useEffect, type JSX } from "react";
+import { StrictMode, useEffect, type JSX } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../../../src/features/app-shell/AppShell";
 import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
-import { ShellCanvasOverlaySlot, ShellConnectionSlot } from "../../../src/features/app-shell/slots";
+import {
+  ShellBannerSlot,
+  ShellCanvasOverlaySlot,
+  ShellConnectionSlot,
+} from "../../../src/features/app-shell/slots";
 import { INITIAL_DEGRADED_FACTS } from "../../../src/features/system-states/degradedIssues";
 import { accessToken } from "../../../src/lib/auth/accessToken";
 import { setActiveClient } from "../../../src/lib/ws/client/activeClient";
@@ -71,6 +75,22 @@ const assertive = (): HTMLElement => {
   return el;
 };
 
+/** Every message written into the assertive region from now on, a first render's included. */
+function watchAssertive(): Node[] {
+  const said: Node[] = [];
+  const watch = new MutationObserver((records) => {
+    for (const r of records) {
+      const live = (r.target as Element).getAttribute?.("aria-live");
+      if (live === "assertive") said.push(...r.addedNodes);
+    }
+  });
+  watch.observe(document.body, { childList: true, subtree: true });
+  return said;
+}
+const settle = async (): Promise<void> => {
+  await Promise.resolve(); // the observer's records arrive as a microtask
+};
+
 beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(T0);
@@ -89,7 +109,7 @@ afterEach(() => {
 
 describe("CMP-077 region: one view per state", () => {
   it("renders nothing while live, so the overlay slot stays empty", () => {
-    const { container } = render(<ShellCanvasOverlaySlot />);
+    const { container } = render(<ShellBannerSlot />);
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole("region")).toBeNull();
   });
@@ -139,12 +159,11 @@ describe("CMP-077 region: one view per state", () => {
   it.each(CASES)(
     "%s: its title and lines, pointer events on, no axe failure",
     async (_, to, title, texts) => {
-      render(<ShellCanvasOverlaySlot />);
+      render(<ShellBannerSlot />);
       to();
       const el = region();
       expect(within(el).getByText(title, { exact: false })).toBeInTheDocument();
       for (const text of texts) expect(el).toHaveTextContent(text);
-      expect(el.style.pointerEvents).toBe("auto");
       // Nothing to retry: the client has no manual retry yet, and a session end never retries.
       expect(within(el).queryByRole("button", { name: /Retry/ })).toBeNull();
       vi.useRealTimers(); // axe schedules with real timers
@@ -153,7 +172,7 @@ describe("CMP-077 region: one view per state", () => {
   );
 
   it("emphasises the age line from T4 30 s", () => {
-    render(<ShellCanvasOverlaySlot />);
+    render(<ShellBannerSlot />);
     go(DROPPED);
     const age = (): HTMLElement => within(region()).getByText(/^Last data/);
     expect(age().style.color).toBe("");
@@ -165,7 +184,7 @@ describe("CMP-077 region: one view per state", () => {
 
 describe("CMP-077 region: the 1 Hz clock", () => {
   it("ticks the countdown while it shows, and stops once it does not", () => {
-    render(<ShellCanvasOverlaySlot />);
+    render(<ShellBannerSlot />);
     expect(vi.getTimerCount()).toBe(0);
     go(DROPPED);
     expect(within(region()).getByText("Next try in ~4 s")).toHaveAttribute("aria-live", "off");
@@ -178,61 +197,100 @@ describe("CMP-077 region: the 1 Hz clock", () => {
     go(UP);
     expect(vi.getTimerCount()).toBe(0);
   });
+
+  it("under StrictMode, mounted already disconnected: one interval and one announcement", async () => {
+    state = DROPPED;
+    const said = watchAssertive();
+    render(
+      <StrictMode>
+        <ShellBannerSlot />
+        <ShellAnnouncer />
+      </StrictMode>,
+    );
+    await settle();
+    expect(vi.getTimerCount()).toBe(1);
+    expect(said).toHaveLength(1);
+  });
+
+  it("stops the interval on unmount", () => {
+    state = DROPPED;
+    const { unmount } = render(<ShellBannerSlot />);
+    expect(vi.getTimerCount()).toBe(1);
+    unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
 
 describe("CMP-077 region: announcements through the shell announcer (§11)", () => {
-  function mountBoth(): HTMLParagraphElement[] {
+  function mountBoth(): Node[] {
+    const said = watchAssertive();
     render(
       <>
         <ShellConnectionSlot />
-        <ShellCanvasOverlaySlot />
+        <ShellBannerSlot />
         <ShellAnnouncer />
       </>,
     );
-    const said: HTMLParagraphElement[] = [];
-    const watch = new MutationObserver((records) => {
-      for (const r of records) for (const n of r.addedNodes) said.push(n as HTMLParagraphElement);
-    });
-    watch.observe(assertive(), { childList: true });
     return said;
   }
-  const flush = (): void => act(() => void vi.advanceTimersByTime(0));
-  // The two sources in separate commits (the region's socket first, the chip's store after), so the
-  // shared announcer key, not render batching, is what keeps it to one.
-  const both = (next: WsState, connection: ConnectionState) => {
+  const SOCKET_FIRST = (next: WsState, connection: ConnectionState): void => {
     go(next);
     act(() => setShellState({ connection }));
   };
+  const STORE_FIRST = (next: WsState, connection: ConnectionState): void => {
+    act(() => setShellState({ connection }));
+    go(next);
+  };
+  const ROW_1 =
+    "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.";
+  const DOWN: ConnectionState = { kind: "offline", cause: "backend_unreachable" };
 
-  it("says row 1 once per episode with the chip mounted too, never per tick or attempt", async () => {
+  // The two sources in separate commits, in either order: the chip never speaks, the region once.
+  it.each([
+    ["socket first", SOCKET_FIRST],
+    ["store first", STORE_FIRST],
+  ])("says row 1 once per episode with the chip mounted, %s", async (_, both) => {
     const said = mountBoth();
     both(UP, { kind: "live" });
     both(DROPPED, { kind: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 4_000 });
     for (let s = 0; s < 40; s += 1) act(() => void vi.advanceTimersByTime(1_000));
     const retry2 = reduce(DROPPED, { type: "connecting" });
     both(retry2, { kind: "connecting" });
-    both(reduce(retry2, { type: "reconnecting", attempt: 2, nextAttemptAtMs: T0 + 45_000 }), {
+    const attempt2 = { type: "reconnecting", attempt: 2, nextAttemptAtMs: T0 + 45_000 } as const;
+    both(reduce(retry2, attempt2), {
       kind: "reconnecting",
       attempt: 2,
       nextAttemptAtMs: T0 + 45_000,
     });
-    flush();
-    await Promise.resolve();
-    expect(said.map((p) => p.textContent)).toEqual([
-      "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
-    ]);
-    // The return to live ends the episode; the next drop speaks again, once.
+    await settle();
+    expect(said.map((p) => p.textContent)).toEqual([ROW_1]);
+    // The return to live ends the episode and empties the region; the next drop speaks again, once.
     both(UP, { kind: "live" });
-    both(
-      reduce(UP, { type: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 50_000, lost: LOST }),
-      {
-        kind: "reconnecting",
-        attempt: 1,
-        nextAttemptAtMs: T0 + 50_000,
-      },
-    );
-    await Promise.resolve();
-    expect(said).toHaveLength(2);
+    expect(assertive()).toBeEmptyDOMElement();
+    const again = {
+      type: "reconnecting",
+      attempt: 1,
+      nextAttemptAtMs: T0 + 50_000,
+      lost: LOST,
+    } as const;
+    both(reduce(UP, again), { kind: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 50_000 });
+    await settle();
+    expect(said.map((p) => p.textContent)).toEqual([ROW_1, ROW_1]);
+  });
+
+  it.each([
+    [4403, "Your access was removed — contact the owner."],
+    [
+      1002,
+      "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
+    ],
+  ])("UP → fatal %i with the chip mounted: one message, the region's", async (code, text) => {
+    const said = mountBoth();
+    SOCKET_FIRST(UP, { kind: "live" });
+    SOCKET_FIRST(fatal(code), DOWN);
+    await settle();
+    expect(said.map((p) => p.textContent)).toEqual([text]);
+    if (code === 4403) expect(assertive()).not.toHaveTextContent("Cancel and close still work");
   });
 
   it("says row 14 once per stop, and row 2 per read-only reason", async () => {
@@ -240,7 +298,7 @@ describe("CMP-077 region: announcements through the shell announcer (§11)", () 
     go(fatal(1002));
     go(reduce(UP, killSwitch(ON)));
     go(reduce(reduce(UP, killSwitch(ON)), shutdown));
-    await Promise.resolve();
+    await settle();
     expect(said.map((p) => p.textContent)).toEqual([
       "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
       "Order entry off — trading frozen by the owner. Cancel still works.",
@@ -255,7 +313,7 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
     render(
       <>
         <button type="button">Cancel order</button>
-        <ShellCanvasOverlaySlot />
+        <ShellBannerSlot />
       </>,
     );
     const cancel = screen.getByRole("button", { name: "Cancel order" });
@@ -269,6 +327,20 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
     expect(endSession).toHaveBeenCalledTimes(1);
   });
 
+  it("renders in the banner slot below the top bar, never over the canvas", () => {
+    render(
+      <AppShell mainId="m" banner={<ShellBannerSlot />} canvasOverlay={<ShellCanvasOverlaySlot />}>
+        <h1>Screen</h1>
+      </AppShell>,
+    );
+    go(DROPPED);
+    const banner = document.querySelector('[data-shell-slot="banner"]');
+    const overlay = document.querySelector('[data-shell-slot="canvas-overlay"]');
+    expect(banner?.contains(region())).toBe(true);
+    expect(overlay).toBeEmptyDOMElement();
+    expect(screen.getByRole("main").contains(region())).toBe(false);
+  });
+
   it("renders beside the outlet without remounting or re-rendering it", () => {
     let mounts = 0;
     let renders = 0;
@@ -280,7 +352,7 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
       return <h1>Screen</h1>;
     }
     render(
-      <AppShell mainId="m" canvasOverlay={<ShellCanvasOverlaySlot />}>
+      <AppShell mainId="m" banner={<ShellBannerSlot />}>
         <Screen />
       </AppShell>,
     );
@@ -288,9 +360,7 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
     act(() => vi.advanceTimersByTime(5_000));
     go(fatal(4403));
     go(UP);
-    expect(
-      screen.getByRole("main").querySelector('[data-shell-slot="canvas-overlay"]'),
-    ).toBeEmptyDOMElement();
+    expect(document.querySelector('[data-shell-slot="banner"]')).toBeEmptyDOMElement();
     expect([mounts, renders]).toEqual([1, 1]);
   });
 });

@@ -9,12 +9,11 @@ export interface ConnectionRegionProps {
 }
 
 const BOX: CSSProperties = {
-  pointerEvents: "auto", // the overlay layer ignores the pointer (slots.tsx); the region takes it back
   display: "flex",
   alignItems: "flex-start",
   gap: "var(--space-inset-sm)",
   padding: "var(--space-inset-sm)",
-  borderBottom: "calc(var(--border-thick) * 1px) solid var(--border-ink)",
+  borderLeft: "calc(var(--border-thick) * 1px) solid var(--border-ink)",
   boxShadow: "var(--elevation-chrome)",
   color: "var(--color-text-primary)",
   fontVariantNumeric: "tabular-nums",
@@ -50,9 +49,17 @@ function look(view: ConnectionRegionView): CSSProperties {
  * **owns no live region** — the container writes §11 through the shell announcer. The countdown
  * and ages are `aria-live="off"` (§11 row 10).
  *
+ * In the banner slot below the TopBar (§4.1), so it never covers SCR-063's cancel / close or
+ * CMP-211; it pushes the workspace down rather than overlaying it.
+ *
  * Deferred: `Retry now` (B2; the WS client exposes no manual retry), `Details` and its Owner /
  * Viewer split (no role or diagnostics surface here yet), `recovered`, `unstable`, "Back in ~N s"
  * on R1 (`WsState` keeps no notice time), and the long-outage outlined pill (no retry button).
+ * Gap: the fatal L1 keeps §10 F's verbatim "Copy details and report a bug.", but no Details / Copy
+ * details control exists until `Details` lands.
+ * Visual deviations, deferred to the packages/ui CMP-077: the left border is `border.thick` (2 px),
+ * not §4.1's 4 px (no 4 px border token); no 96 px min-height (§4.1, §13.2: no size token), so the
+ * region is as tall as its text; the §4.1 pixel offsets and `color.text.secondary` body lines.
  */
 export function ConnectionRegion({ view, onSignIn }: ConnectionRegionProps): JSX.Element {
   const strong = view.state === "long-outage";

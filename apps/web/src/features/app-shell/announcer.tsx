@@ -5,9 +5,8 @@
  *
  * A key is announced once, whoever writes it, until `forget(key)` or `clearAnnouncements()` (which
  * also empties both regions, so no stale text outlives the condition). The connection rows use
- * `CONNECTION_KEYS`; their episode ends on the return to live, where the writer clears.
- * **CMP-077's callout (#306 slice 4b) must write §11 rows 1 and 14 through `announce` with these
- * keys and must not own a second live region for them**; the chip container writes the same rows.
+ * `CONNECTION_KEYS`; their one writer is CMP-077's container (`ConnectionRegionSlot`, #306 slice
+ * 4b), which owns no second live region and clears at the end of the episode.
  */
 import { useSyncExternalStore, type JSX } from "react";
 import { HIDDEN } from "./SkipLink";

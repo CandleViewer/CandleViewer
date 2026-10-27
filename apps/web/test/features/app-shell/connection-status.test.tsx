@@ -1,12 +1,10 @@
 import { createRequire } from "node:module";
-import { act, render, screen, within } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ConnectionStatus,
-  type ConnectionChipStatus,
   type ConnectionStatusProps,
 } from "../../../src/features/app-shell/ConnectionStatus";
-import { chipAnnouncement } from "../../../src/features/app-shell/ConnectionStatusSlot";
 import {
   announce,
   clearAnnouncements,
@@ -87,23 +85,6 @@ describe("CMP-076 ConnectionStatus chip", () => {
   );
 });
 
-describe("chipAnnouncement (E17-D02 §11)", () => {
-  const cases: [ConnectionChipStatus | null, ConnectionChipStatus, string | null][] = [
-    [null, "reconnecting", null],
-    ["live", "reconnecting", "disconnected"],
-    ["stale", "reconnecting", "disconnected"],
-    ["reconnecting", "offline", "retryStopped"],
-    ["offline", "reconnecting", null],
-    ["reconnecting", "live", null],
-    ["live", "delayed", null],
-    ["delayed", "live", null],
-    ["live", "stale", null],
-  ];
-  it.each(cases)("%s → %s is row %s", (prev, next, row) => {
-    expect(chipAnnouncement(prev, next)).toBe(row);
-  });
-});
-
 describe("the shell announcer", () => {
   it("announces a key once, whoever writes it, until the episode is cleared", () => {
     render(<ShellAnnouncer />);
@@ -113,7 +94,7 @@ describe("the shell announcer", () => {
       expect(announce("assertive", "Disconnected.", CONNECTION_KEYS.disconnected)).toBe(true);
     });
     const first = seq();
-    // A second writer (CMP-077's callout, #306 slice 4b) with the same key says nothing.
+    // The same key again (a remounted writer) says nothing.
     act(() => {
       expect(announce("assertive", "Disconnected.", CONNECTION_KEYS.disconnected)).toBe(false);
     });
@@ -138,7 +119,7 @@ describe("ShellConnectionSlot: the container", () => {
     vi.useRealTimers();
   });
 
-  it("alerts once per Disconnected episode, never per attempt or heartbeat", async () => {
+  it("announces nothing itself: §11 rows 1 and 14 are CMP-077's (#306 slice 4b)", async () => {
     render(
       <>
         <ShellConnectionSlot />
@@ -146,20 +127,9 @@ describe("ShellConnectionSlot: the container", () => {
       </>,
     );
     expect(screen.getByRole("button", { name: /^Connection: Connecting…/ })).toBeInTheDocument();
-    expect(region("assertive")).toBeEmptyDOMElement();
     act(() => setShellState({ connection: { kind: "live" }, latency: toLatencyIndicator(42) }));
     expect(screen.getByRole("button", { name: "Connection: Live 42 ms" })).toBeInTheDocument();
-    expect(region("assertive")).toBeEmptyDOMElement();
-
     go({ kind: "reconnecting", attempt: 1, nextAttemptAtMs: T0 + 1000 });
-    expect(
-      within(region("assertive")).getByText(/^Disconnected\. New orders off\./),
-    ).toBeInTheDocument();
-    const first = seq();
-    // CMP-077 writing the same row through the announcer adds nothing.
-    act(() => {
-      announce("assertive", "Disconnected.", CONNECTION_KEYS.disconnected);
-    });
     go({ kind: "connecting" });
     go({ kind: "offline", cause: "backend_unreachable" });
     go({ kind: "reconnecting", attempt: 2, nextAttemptAtMs: T0 + 3000 });
@@ -169,23 +139,18 @@ describe("ShellConnectionSlot: the container", () => {
         vi.advanceTimersByTime(1000);
       });
     }
-    expect(seq()).toBe(first);
     expect(
       screen.getByRole("button", {
         name: "Connection: Reconnecting (2), last data 00:12 ago, 13:42:05 UTC",
       }),
     ).toBeInTheDocument();
-    expect(region("polite")).toBeEmptyDOMElement();
-
-    // The return to live ends the episode: no stale alert text stays in the DOM.
     go({ kind: "live" });
-    expect(region("assertive")).toBeEmptyDOMElement();
     go({ kind: "offline", cause: "tailnet_unreachable" });
-    expect(seq()).not.toBeNull();
-    expect(seq()).not.toBe(first);
     expect(
       screen.getByRole("button", { name: /^Connection: Reconnecting, last data 00:00 ago/ }),
     ).toBeInTheDocument();
+    expect(region("assertive")).toBeEmptyDOMElement();
+    expect(region("polite")).toBeEmptyDOMElement();
     vi.useRealTimers(); // axe schedules with real timers
     expect(await seriousAxe(document.body)).toEqual([]);
   });
