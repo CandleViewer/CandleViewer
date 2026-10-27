@@ -33,7 +33,7 @@ def _only(answer: Any) -> Callable[[UUID], Any]:
 
 
 def _source(
-    gate: Any = None, lockouts: Any = None, env: Environment = "live", **world: Any
+    gate: Any = None, lockouts: Any = None, env: Environment = "demo", **world: Any
 ) -> GateReadiness:
     """`world`: the kill switch's answer (`kill`: a refusal, none) and the live gate's `setting` and
     `flag` (on). The flag is read for a live account alone, as the OMS reads it."""
