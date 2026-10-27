@@ -5,10 +5,11 @@ an M2 record's public members, the constant `alg`, the raw public key in base64 
 request fingerprint) can be served.
 
 The rotation is the Owner's. `CsrfMiddleware` answers before the handler, which resolves the
-caller (none wired: `501`; no verified session: `401`), checks the body, read up to 1 KiB, against
-`RotateAuditSigningKeyRequest`, and the `Idempotency-Key` as a UUID, missing or malformed (`422`,
-naming no value), then `keys:manage` and the Owner (`403`, audited as `rbac.denied`, which names
-the caller's session as every refusal's does since #4174), and only then demands the `keys`
+caller (none wired: `501`; no verified session: `401`), checks `keys:manage` and the Owner
+(`403`, audited as `rbac.denied`, which names the caller's session as every refusal's does since
+#4174), then the body, read up to 1 KiB, against `RotateAuditSigningKeyRequest`, and the
+`Idempotency-Key` as a UUID, missing or malformed (`422`, naming no value; after RBAC since #4690,
+so a refused caller never sees a validation detail), and only then demands the `keys`
 step-up (a grace class; `HANDLER_GATED_ROUTES`, #2304 slice 3b), its challenge restating the
 reason. `AdminService` has M2 run the rest in
 22's order: the stored `200` at any age (`Idempotency-Replayed: true`), `409
@@ -199,10 +200,6 @@ def make_audit_signing_router(
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem("unauthenticated")
-        checked = await _request(request)
-        if isinstance(checked, JSONResponse):
-            return checked
-        raw, reason, ref = checked
         who: dict[str, Any] = {"actor_ip": source_ip(request.scope)}
         who["request_id"] = current_request_uuid()
         denials = NamesSession(emitter, auth, request)
@@ -221,6 +218,10 @@ def make_audit_signing_router(
             return _problem("forbidden")
         except (AuditError, RuntimeError):  # RuntimeError: no writer wired (as after `stop()`)
             return _problem("audit_unavailable")  # a denial that cannot be recorded (C-2.9)
+        checked = await _request(request)  # after RBAC (#4690): a refused caller learns no shape
+        if isinstance(checked, JSONResponse):
+            return checked
+        raw, reason, ref = checked
         restated = rotate_signing_key_text(reason)  # after RBAC (#2304)
         if (refused := await demand_elevation(elevation, request, restated)) is not None:
             refused.headers.update(_NO_STORE)  # a challenge is an answer of this router too

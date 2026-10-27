@@ -154,8 +154,8 @@ operations:
     public: false
     state: not_executable
     reason: 'the CI app wires M2 without a credential store, so an authorised Owner gets 403 kek_unavailable,
-      read as a refusal; every actor gets 422 for the empty body, validated before RBAC. Each actor is
-      asserted in tests/unit/api/test_audit_signing_rotate.py (#889 S7)'
+      read as a refusal; the Owner gets 422 for the empty body, which every other actor never reaches:
+      RBAC runs first (#4690). Each actor is asserted in tests/unit/api/test_audit_signing_rotate.py (#889 S7)'
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   POST /admin/keys/kek-rewrap:
     permissions: ['keys:manage']
@@ -163,8 +163,8 @@ operations:
     public: false
     state: not_executable
     reason: 'the CI app wires M2 without a credential store, so an authorised Owner gets 403 kek_unavailable,
-      read as a refusal; every actor gets 422 for the empty body, validated before RBAC. Each actor is
-      asserted in tests/unit/api/test_admin_kek.py (#2266 D2)'
+      read as a refusal; the Owner gets 422 for the empty body, which every other actor never reaches:
+      RBAC runs first (#4690). Each actor is asserted in tests/unit/api/test_admin_kek.py (#2266 D2)'
     outcomes: {owner: allow, manager_with_grant: '403', manager_without_grant: '403', viewer: '403', unauthenticated: '401'}
   PUT /admin/log-level:
     permissions: ['admin:write']

@@ -2,14 +2,15 @@
 (`docs/plan/spikes/e27-kek.md` section 5, run as `docs/ops/runbooks/kek-custody.md` says).
 
 Owner only. `CsrfMiddleware` answers before this handler runs. It then resolves the caller (none
-wired: 501; no verified session: 401), checks the body, read up to 1 KiB, against
-`KekRewrapRequest` (422), and checks `keys:manage` with `auth.scopes.enforce`, then the Owner role
-(403), each denial audited as `rbac.denied` (C-2.9). Only then does it demand the `keys` step-up
-(`HANDLER_GATED_ROUTES`, #2304 slice 3b; unwired: 503), its challenge restating the environment
-and the version. The run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal,
-latches order entry and re-wraps. This module imports `admin` only, never `secrets` (C-3.2). The
-answer holds counts only, no key id and no KCV; `Idempotency-Key` is never read
-(`x-idempotency: ignored`: a repeat resumes the run).
+wired: 501; no verified session: 401) and checks `keys:manage` with `auth.scopes.enforce`, then
+the Owner role (403), each denial audited as `rbac.denied` (C-2.9). Only then does it check the
+body, read up to 1 KiB, against `KekRewrapRequest` (422; after RBAC since #4690, so a refused
+caller never sees a validation detail), then demand the `keys` step-up (`HANDLER_GATED_ROUTES`,
+#2304 slice 3b; unwired: 503), its challenge restating the body's environment and version. The
+run is `AdminService.rewrap_kek`: M2 checks the staged boot, audits a refusal, latches order entry
+and re-wraps. This module imports `admin` only, never `secrets` (C-3.2). The answer holds counts
+only, no key id and no KCV; `Idempotency-Key` is never read (`x-idempotency: ignored`: a repeat
+resumes the run).
 """
 
 from __future__ import annotations
@@ -119,9 +120,6 @@ def make_admin_kek_router(
         principal = await got if inspect.isawaitable(got) else got
         if principal is None:
             return _problem("unauthenticated")
-        body = await _body(request)
-        if isinstance(body, JSONResponse):
-            return body
         ip = source_ip(request.scope)
         who: dict[str, Any] = {"actor_ip": ip, "request_id": current_request_uuid()}
         denials = NamesSession(emitter, auth, request)
@@ -144,6 +142,9 @@ def make_admin_kek_router(
             return _problem("forbidden")
         except (AuditError, RuntimeError):  # RuntimeError: no writer wired (as after `stop()`)
             return _problem("audit_unavailable")  # a denial that cannot be recorded (C-2.9)
+        body = await _body(request)  # after RBAC (#4690): a refused caller learns no shape
+        if isinstance(body, JSONResponse):
+            return body
         restated = kek_rewrap_text(body.environment, body.to_version)  # after RBAC (#2304)
         if (refused := await demand_elevation(elevation, request, restated)) is not None:
             return refused

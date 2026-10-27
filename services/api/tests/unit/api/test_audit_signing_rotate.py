@@ -416,3 +416,35 @@ async def test_an_admin_service_without_m2s_rotator_records_nothing_so_answers_5
         await AdminService().rotate_audit_signing_key(
             "scheduled", client_body_sha256="a" * 64, export_running=lambda: False, **call
         )
+
+
+_EMPTY: dict[str, Any] = {"content": b""}  # no body at all
+_EMPTY_OBJECT: dict[str, Any] = {"json": {}}
+
+
+@pytest.mark.parametrize("sent", [_EMPTY, _EMPTY_OBJECT], ids=["no_body", "empty_object"])
+@pytest.mark.parametrize("perms", [frozenset(), OWNER], ids=["no_keys_manage", "not_the_owner"])
+async def test_a_manager_with_an_empty_body_is_forbidden_before_it_is_read(
+    rot: _Rot, perms: frozenset[Permission], sent: dict[str, Any]
+) -> None:
+    """#4690: RBAC and the Owner check precede the body and the `Idempotency-Key`, so a Manager's
+    empty request is the audited 403 naming the caller's session, never the 422 and its detail."""
+    token = await _login(rot.w, "manager", perms)
+    headers = {**_h(token), "content-type": "application/json"}
+    r = rot.w.client.post(PATH, headers=headers, **sent)
+    assert (r.status_code, r.json()["code"], "errors" in r.json()) == (403, "forbidden", False)
+    [denial] = rot.w.audit.of("rbac.denied")
+    session = await rot.w.auth.sessions.peek_access_token(token)
+    assert session is not None and denial["session_id"] == session.id
+    assert rot.w.audit.of("auth.step_up_required") == [] and len(rot.keys.rows) == 1
+    assert _unstored(r)
+
+
+@pytest.mark.parametrize("sent", [_EMPTY, _EMPTY_OBJECT], ids=["no_body", "empty_object"])
+async def test_an_elevated_owner_with_an_empty_body_is_the_422(
+    rot: _Rot, sent: dict[str, Any]
+) -> None:
+    headers = {**_h(await elevated(rot)), "Idempotency-Key": str(uuid.uuid4())}
+    r = rot.w.client.post(PATH, headers=headers | {"content-type": "application/json"}, **sent)
+    assert (r.status_code, r.json()["code"], len(rot.keys.rows)) == (422, "validation_failed", 1)
+    assert rot.w.audit.of("rbac.denied") == [] and _unstored(r)
