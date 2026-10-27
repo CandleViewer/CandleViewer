@@ -28,8 +28,11 @@ const dismissNames = (): string[] =>
   screen
     .getAllByRole("button", { name: /^Dismiss / })
     .map((b) => b.getAttribute("aria-label") ?? "");
-const alertText = (): string => screen.getByRole("alert").textContent ?? "";
-const statusText = (): string => screen.getByRole("status").textContent ?? "";
+/** The banner's pre-rendered live regions (aria-live, no role, as #4754's announcer). */
+const region = (live: "polite" | "assertive"): Element | null =>
+  document.querySelector(`[aria-live="${live}"]`);
+const alertText = (): string => region("assertive")?.textContent ?? "";
+const statusText = (): string => region("polite")?.textContent ?? "";
 
 async function expectNoSeriousAxe(): Promise<void> {
   vi.useRealTimers(); // axe schedules with real timers; jsdom has no canvas for contrast
@@ -98,10 +101,10 @@ describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
     render(<ShellBannerSlot />);
     say(MAINTENANCE);
     expect(alertText()).toBe(`${maintenance.message} ${maintenance.stillWorks}`);
-    const node = screen.getByRole("alert").firstChild;
+    const node = region("assertive")?.firstChild;
     say(MAINTENANCE);
     act(() => setShellState({ connection: { kind: "live" } })); // an unrelated store change
-    expect(screen.getByRole("alert").firstChild).toBe(node);
+    expect(region("assertive")?.firstChild).toBe(node);
     expect(statusText()).toBe("");
   });
 
@@ -122,7 +125,7 @@ describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
     render(<ShellBannerSlot />);
     say(MAINTENANCE);
     say(RULES_DOWN);
-    const before = screen.getByRole("alert").firstChild;
+    const before = region("assertive")?.firstChild;
     fireEvent.click(screen.getByRole("button", { name: `Dismiss ${maintenance.message}` }));
     expect(dismissNames()).toEqual([`Dismiss ${ruleEngineDown.message}`]);
     expect(document.activeElement).toBe(screen.getByRole("button", { name: /^Dismiss Armed/ }));
@@ -130,7 +133,7 @@ describe("CMP-092 DegradedModeBanner in ShellBannerSlot", () => {
     expect(dismissNames()).toHaveLength(1);
     say(MAINTENANCE);
     expect(dismissNames()[0]).toBe(`Dismiss ${maintenance.message}`);
-    expect(screen.getByRole("alert").firstChild).not.toBe(before);
+    expect(region("assertive")?.firstChild).not.toBe(before);
     expect(alertText()).toBe(`${maintenance.message} ${maintenance.stillWorks}`);
   });
 

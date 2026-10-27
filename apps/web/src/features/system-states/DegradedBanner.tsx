@@ -20,12 +20,13 @@ const blockingText = (i: DegradedIssue): string =>
 
 /**
  * SCR-153's banner slot content (E10-S04 slice 3, #306; E17-D02 §8, §11). Reads `useShellState()`
- * through the memoized `selectDegradedIssues`; swap to `useShellSelector` when #4754 lands.
+ * through the memoized `selectDegradedIssues`; swap to #4754's `useShellSelector` in a follow-up.
  * Dismissal hides a row while its `assertedSeq` is the dismissed one, so a re-asserting frame brings
  * it back; the entry is dropped once the condition clears. Announcements on a row's entry only:
  * blocking assertive "{message} {stillWorks}", info / warning polite (the message, ≤1 per 5 s);
- * exit: unspecified (no merged string). The shell's announcer pair (#4754) is not on `main`, so
- * this pair is pre-rendered empty at load (§11) and cleared when the last row goes. Swap then.
+ * exit: unspecified (no merged string). This pair is pre-rendered empty at load (§11), cleared
+ * when the last row goes, and has no role (as #4754's announcer), so it never collides with a
+ * screen's own `status` / `alert`. Moving onto #4754's announcer is a follow-up.
  */
 export function DegradedBanner(): JSX.Element {
   const issues = selectDegradedIssues(useShellState().degraded);
@@ -92,10 +93,10 @@ export function DegradedBanner(): JSX.Element {
 
   return (
     <>
-      <div role="status" style={HIDDEN}>
+      <div aria-live="polite" aria-atomic="true" style={HIDDEN}>
         {polite.text === "" ? null : <span key={polite.n}>{polite.text}</span>}
       </div>
-      <div role="alert" style={HIDDEN}>
+      <div aria-live="assertive" aria-atomic="true" style={HIDDEN}>
         {assertive.text === "" ? null : <span key={assertive.n}>{assertive.text}</span>}
       </div>
       {visible.length > 0 ? <DegradedModeBanner issues={visible} onDismiss={onDismiss} /> : null}
