@@ -1208,7 +1208,7 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "pages",
         (),
         "Cold kline pages evicted, least recently used first, to keep the cache within its bound.",
-        "sustained with few hits = CV_COLD_KLINE_PAGE_CACHE_BYTES too small for repeated windows",
+        "sustained with hits near 0 = bound too small, or boundary churn that no bound fixes",
         _L,
         "E12",
         max_series=1,

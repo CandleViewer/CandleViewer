@@ -260,7 +260,8 @@ class ParquetKlineReader:
         and purge each add, rewrite or delete a file, so they make a new key; the one blind spot
         is a rewrite that keeps a file's size, `mtime_ns` and manifest checksum. The cache is
         consulted here, on the loop, before the DuckDB semaphore: a hit takes no slot. Rows
-        (the lever-3 fallback) and empty pages are never cached."""
+        (the lever-3 fallback) and empty pages are never cached. `page_cache_bytes` is taken as
+        given: only `Settings`, which operators set, refuses a bound under 2 MiB but 0."""
         lo, hi = int(rng.start_us), int(rng.end_us)
         found = await self._resolve(symbol, interval, lo, hi)
         if not found:

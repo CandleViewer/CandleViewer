@@ -50,10 +50,11 @@ B13_SOFT_WEEKLY: Final = "reported, not gated, on the weekly run until #2825's s
 
 async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[float]]:
     """Per-route latencies (ms). `build_app` runs the cold page cache at the app's default bound
-    (#2523 lever 5), so only the untimed warm-up scans a cold window in DuckDB: every timed cold
-    call repeats it and is a cache hit. The first-read route (`FIRST_READ`) goes to
-    `build_first_read_app`'s app, whose page cache is off, through a client of its own; one
-    semaphore bounds the requests to both apps (#2523)."""
+    (#2523 lever 5). This driver warms every route untimed, so every timed cold call is a hit,
+    but the first-read route (`FIRST_READ`): it goes to `build_first_read_app`'s app, whose page
+    cache is off, through a client of its own, and one semaphore bounds the requests to both
+    apps (#2523). `drive_k6` has no warm-up: each cold route's first requests, up to one per VU
+    (no single-flight), miss inside its reading, which p95 hides but `max` can show."""
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
         apps = await build_app(Path(tmp)), await build_first_read_app(Path(tmp))

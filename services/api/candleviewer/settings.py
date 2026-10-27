@@ -649,7 +649,7 @@ class Settings(BaseSettings):
     cold_kline_concurrency: int = 2
     # #2523 lever 5: byte bound of the cold tier's LRU of kline pages, keyed by the files each
     # page was read from; a page over a quarter of it is not cached, and 0 turns the cache off.
-    # At most 1 GiB, a typo guard (as `replay_readahead_bytes`).
+    # Else 2 MiB (see its validator) to 1 GiB, a typo guard (as `replay_readahead_bytes`).
     cold_kline_page_cache_bytes: int = Field(default=64 * 1024 * 1024, ge=0, le=1 << 30)
     # #2060: seconds between reloads of the klines hot-retention rule (rules are editable).
     kline_boundary_refresh_s: int = 600
@@ -1275,6 +1275,14 @@ class Settings(BaseSettings):
         """`CV_FEED_RATE_HZ` must be positive (acceptance criterion 2)."""
         if value <= 0:
             raise ValueError("CV_FEED_RATE_HZ must be > 0")
+        return value
+
+    @field_validator("cold_kline_page_cache_bytes")
+    @classmethod
+    def _refuse_a_page_cache_bound_under_2_mib(cls, value: int) -> int:
+        """#2523 lever 5: under 2 MiB it holds few pages or none (each costs 384 KiB or more)."""
+        if 0 < value < 2 << 20:
+            raise ValueError("CV_COLD_KLINE_PAGE_CACHE_BYTES must be 0 (off) or 2 MiB to 1 GiB")
         return value
 
     @field_validator("allowed_origins")
