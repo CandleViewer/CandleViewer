@@ -6,3 +6,6 @@ export type {
   LegendConvention,
   LegendPalette,
 } from "./ColorConventionLegend.js";
+export { Icon } from "./Icon.js";
+export type { IconProps, IconSize } from "./Icon.js";
+export type { IconName } from "../icons/registry.js";
