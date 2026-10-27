@@ -148,9 +148,16 @@
   cursor: pointer;
 }
 
-/* The active option (keyboard or pointer) sits on the hover surface; the shape, not a colour, marks the choice. */
+/*
+ * The active option (keyboard or pointer) sits on the hover surface, which alone is near-invisible on the overlay
+ * (conv. 26), so it also carries CMP-039's inset ring (H8): 2px `color.focus.ring`, drawn 2px inside the option.
+ * The ring is on the active descendant only, so it follows the pointer; there is no :hover rule.
+ */
 .cv-select__option[data-active] {
   background: var(--color-surface-hover);
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -1px);
+  border-radius: var(--radius-control);
 }
 
 /* Plain disabled: dimmed, passed over by the arrows, never chosen. Later than active, so it wins. */
@@ -183,6 +190,7 @@
   .cv-select__option[data-active] {
     background: Highlight;
     color: HighlightText;
+    outline-color: HighlightText;
   }
 
   .cv-select__option[aria-disabled="true"] {

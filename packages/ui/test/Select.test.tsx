@@ -431,7 +431,7 @@ describe("Select open-list keys", () => {
       expect(activeLabel(host)).toBe("Item 20");
       key(host, k);
       expect(activeLabel(host)).toBe("Item 10");
-      key(host, k);
+      expect(key(host, k)).toBe(false);
     } else {
       expect(key(host, k)).toBe(false);
     }
@@ -492,6 +492,33 @@ describe("Select open-list keys", () => {
     act(() => within(host).getByRole("button").click());
     expect(activeLabel(host)).toBe("Alpha");
     expect(document.getElementById(activeId(host) as string)).not.toBeNull();
+  });
+});
+
+describe("Select active option when options change", () => {
+  it("falls back to an enabled option when the old active index now names a disabled one", async () => {
+    function Flip(): JSX.Element {
+      const [off, setOff] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOff(true)}>
+            disable
+          </button>
+          <Select
+            options={OPTIONS.map((o) => (off && o.value === "d" ? { ...o, disabled: true } : o))}
+            value="d"
+            onChange={fn()}
+            aria-label="Pick"
+          />
+        </>
+      );
+    }
+    const host = await mount(<Flip />);
+    key(host, "Enter");
+    expect(activeLabel(host)).toBe("Delta");
+    act(() => within(host).getByRole("button").click());
+    expect(activeLabel(host)).not.toBe("Delta");
+    expect(activeLabel(host)).toBe("Alpha");
   });
 });
 
@@ -558,6 +585,30 @@ describe("Select popup placement", () => {
         .querySelector<HTMLElement>(".cv-select__popup")
         ?.style.getPropertyValue("--cv-select-room"),
     ).toBe("276px");
+  });
+
+  it("a reopen measures the natural height, not the previous cap, so it picks the roomier side", async () => {
+    let anchor: [number, number] = [188, 212];
+    vi.spyOn(window, "innerHeight", "get").mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (!this.classList.contains("cv-select__popup")) {
+        return rect(anchor[0], anchor[1], anchor[1] - anchor[0]);
+      }
+      // Natural 250px; once capped by --cv-select-room it renders shorter, as the CSS would.
+      const room = parseFloat(this.style.getPropertyValue("--cv-select-room"));
+      const height = Number.isNaN(room) ? 250 : Math.min(250, room - 20);
+      return rect(0, height, height);
+    });
+    const host = await mount(<Host value="a" />);
+    await userEvent.tab();
+    await userEvent.keyboard("{Enter}");
+    expect(list(host)?.getAttribute("data-placement")).toBe("below");
+    await userEvent.keyboard("{Escape}");
+    anchor = [195, 219];
+    await userEvent.keyboard("{Enter}");
+    expect(list(host)?.getAttribute("data-placement")).toBe("above");
   });
 
   it("measures only at open: nothing during render or while closed", async () => {
