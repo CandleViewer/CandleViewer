@@ -1,18 +1,19 @@
 import type { ComponentPropsWithoutRef, JSX, MouseEvent } from "react";
-import { Icon } from "../icons/Icon.js";
+import { Icon, type IconSizeFor } from "../icons/Icon.js";
 import type { IconName } from "../icons/registry.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { useFocusRing } from "./FocusRing.js";
 
-interface IconButtonBase extends Omit<
+interface IconButtonBase<N extends IconName> extends Omit<
   ComponentPropsWithoutRef<"button">,
   "className" | "style" | "disabled" | "children" | "aria-disabled" | "aria-label" | "aria-pressed"
 > {
-  icon: IconName;
+  icon: N;
   /** The accessible name (`aria-label`): required, because an icon-only control has no visible text. */
   label: string;
-  size?: "sm" | "md" | "lg";
+  /** The glyph's optical size: md or lg only for a "16 px minimum" glyph (`IconSizeFor`). */
+  size?: IconSizeFor<N>;
   disabled?: boolean;
   /** The visible reason a control is denied (RBAC, environment, risk): disabled-with-reason (T2). */
   disabledReason?: string;
@@ -21,7 +22,7 @@ interface IconButtonBase extends Omit<
 }
 
 /** Toggle mode (`pressed`) exists on secondary and ghost only: a pressed primary or danger reads as another variant. */
-export type IconButtonProps = IconButtonBase &
+export type IconButtonProps<N extends IconName = IconName> = IconButtonBase<N> &
   (
     | { variant?: "secondary" | "ghost"; pressed?: boolean }
     | { variant: "primary" | "danger"; pressed?: never }
@@ -32,7 +33,7 @@ export type IconButtonProps = IconButtonBase &
  * confirm wrapper is CMP-044. The reason echo on hover and focus is CMP-016's; until it lands the reason is
  * the accessible description. The name tooltip for sighted mouse users (D10) is CMP-016's too.
  */
-export function IconButton({
+export function IconButton<N extends IconName>({
   icon,
   label,
   variant = "secondary",
@@ -45,7 +46,7 @@ export function IconButton({
   type = "button",
   "aria-describedby": describedBy,
   ...rest
-}: IconButtonProps): JSX.Element {
+}: IconButtonProps<N>): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
   const ring = useFocusRing();
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {

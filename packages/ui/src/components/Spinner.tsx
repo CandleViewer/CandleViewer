@@ -13,6 +13,7 @@ export interface SpinnerProps {
 const Arc = (): JSX.Element => (
   // No viewBox: user units are CSS px, so the 2px stroke and the dash need no scaling at either size.
   // r = 37.5% is the arc's 9/24 radius; pathLength 4 with a 3 1 dash draws 270 degrees.
+  // eslint-disable-next-line candleviewer/no-raw-svg -- an animated progress arc, not a registry glyph
   <svg className="cv-spinner__arc" aria-hidden="true" focusable="false">
     <circle cx="50%" cy="50%" r="37.5%" pathLength={4} />
   </svg>

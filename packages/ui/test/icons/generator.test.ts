@@ -31,6 +31,8 @@ const ROOT =
   'viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' +
   'stroke-linecap="round" stroke-linejoin="round">';
 const LICENCE = "<!-- @license lucide-static v1.55.0 - ISC -->";
+/** A custom source's root: CandleViewer's own glyph names no Lucide glyph. */
+const CUSTOM_ROOT = ROOT.replace('class="lucide lucide-x" ', "");
 /** A source drawing `body` under `root`, with no comment before it. */
 const unlicensed = (body: string, root = ROOT): string => `${root}\n${body}\n</svg>\n`;
 /** A source drawing `body` under `root`, after the upstream licence comment. */
@@ -60,6 +62,8 @@ const FORBIDDEN: Readonly<Record<string, string>> = {
   "xlink:href": "#glyph",
   transform: "rotate(45)",
   "clip-path": "url(#clip)",
+  // A dash means estimated or absent (E25-D05): a dashed glyph draws its dashes apart.
+  "stroke-dasharray": "2 2",
 };
 /** `<tag name="value" ... />`, the attributes in order. */
 const element = (tag: string, attributes: Readonly<Record<string, string>>): string =>
@@ -96,12 +100,16 @@ describe("the icon generator's drift check (scripts/build-icons.mjs)", () => {
     expect(command(PACKAGE, "--check")).toEqual({ status: 0, stdout: "", stderr: "" });
   });
 
-  it("renders the same bytes on every run: name order, no timestamp, one module per icon", () => {
+  it("renders the same bytes on every run: name order, no timestamp, one module per source", () => {
     const modules = renderIconModules();
     expect([...renderIconModules()]).toEqual([...modules]);
-    const names = iconSources().map(({ name }) => name);
+    // Each name's module, then one per size form of it (`<name>.<size>.svg`), then the map.
+    const components = iconSources().flatMap(({ name, forms = {} }) => [
+      componentName(name),
+      ...Object.keys(forms).map((size) => componentName(`${name}-${size}`)),
+    ]);
     expect([...modules.keys()]).toEqual([
-      ...names.map((name) => `${OUTPUT_DIR}/${componentName(name)}.tsx`),
+      ...components.map((component) => `${OUTPUT_DIR}/${component}.tsx`),
       `${OUTPUT_DIR}/components.ts`,
     ]);
     for (const [file, content] of modules) {
@@ -303,7 +311,10 @@ describe("the generator on a source tree (iconSources, run, the command line)", 
     trees.push(root);
     for (const file of files) {
       mkdirSync(path.dirname(path.join(root, "src/icons/source", file)), { recursive: true });
-      writeFileSync(path.join(root, "src/icons/source", file), source('<path d="M0 0h24" />'));
+      // A Lucide source carries its licence line; a custom one never does.
+      const body = '<path d="M0 0h24" />';
+      const text = file.startsWith("custom/") ? unlicensed(body, CUSTOM_ROOT) : source(body);
+      writeFileSync(path.join(root, "src/icons/source", file), text);
     }
     return root;
   };
@@ -323,9 +334,10 @@ describe("the generator on a source tree (iconSources, run, the command line)", 
   it("renders a source whose values span lines as the same source on one line", () => {
     const root = tree("custom/twap.svg");
     const file = path.join(root, "src/icons/source/custom/twap.svg");
-    writeFileSync(file, source('<path d="M3 12h18 M12 3v18" />'));
+    writeFileSync(file, unlicensed('<path d="M3 12h18 M12 3v18" />', CUSTOM_ROOT));
     const oneLine = renderIconModules(root);
-    writeFileSync(file, source('<path\n  d="\n    M3 12h18\n    M12 3v18\n  "\n/>'));
+    const spanning = '<path\n  d="\n    M3 12h18\n    M12 3v18\n  "\n/>';
+    writeFileSync(file, unlicensed(spanning, CUSTOM_ROOT));
     expect(renderIconModules(root)).toEqual(oneLine);
   });
 
@@ -357,6 +369,36 @@ describe("the generator on a source tree (iconSources, run, the command line)", 
     expect(() => renderIconModules(root)).toThrow(
       'src/icons/source/lucide/close.svg: a Lucide source needs its "@license lucide-static v<version> - ISC" line',
     );
+  });
+
+  // A custom glyph is CandleViewer's own: no third-party notice may ride into its module.
+  it.each(["custom/twap.svg", "custom/twap.sm.svg"])(
+    "fails on a custom source with a licence line, naming the file: %s",
+    (file) => {
+      const root = tree("custom/twap.svg", "custom/twap.sm.svg");
+      writeFileSync(path.join(root, "src/icons/source", file), source('<path d="M0 0h24" />'));
+      expect(() => renderIconModules(root)).toThrow(
+        `src/icons/source/${file}: a custom source is CandleViewer's own: it carries no @license line`,
+      );
+    },
+  );
+
+  // E05-D02 §6 J24: a glyph whose detail closes up at 12 px may have a reduced form for `sm`.
+  it("reads a size form as a second drawing of its name, with a module and a map entry", () => {
+    const root = tree("lucide/close.svg", "custom/twap.sm.svg", "custom/twap.svg");
+    const forms = iconSources(root).map((source) => source.forms);
+    expect(forms).toEqual([undefined, { sm: "src/icons/source/custom/twap.sm.svg" }]);
+    const modules = renderIconModules(root);
+    const names = ["CloseIcon.tsx", "TwapIcon.tsx", "TwapSmIcon.tsx", "components.ts"];
+    expect([...modules.keys()]).toEqual(names.map((name) => `${OUTPUT_DIR}/${name}`));
+    expect(modules.get(`${OUTPUT_DIR}/TwapSmIcon.tsx`)).toMatch(
+      /\nexport function TwapSmIcon\(props: GlyphProps\): JSX\.Element \{\n.*\n.*icon="twap">\n/,
+    );
+    expect(modules.get(`${OUTPUT_DIR}/components.ts`)).toContain(
+      "export const ICON_FORMS = {\n  twap: { sm: TwapSmIcon },\n} as const;\n",
+    );
+    const none = renderIconModules(tree("custom/twap.svg")).get(`${OUTPUT_DIR}/components.ts`);
+    expect(none).toContain("export const ICON_FORMS = {} as const;\n");
   });
 
   it("writes a tree's modules, finds them in sync, and repairs a hand-edit or a stray file", () => {
@@ -438,6 +480,13 @@ describe("the generator on a source tree (iconSources, run, the command line)", 
     ["a file that is not a kebab-case SVG", ["lucide/Close.svg"], /Close\.svg: not a kebab-case/],
     ["a stray file", ["lucide/README.md"], /README\.md: not a kebab-case/],
     ["two names with one component", ["lucide/a1b.svg", "custom/a-1b.svg"], /clashes with/],
+    ["a size form without its master", ["custom/twap.sm.svg"], /twap\.sm\.svg: no twap\.svg/],
+    ["a form at a size J24 gives none", ["custom/twap.svg", "custom/twap.md.svg"], /not a kebab/],
+    [
+      "a form whose component a name has",
+      ["custom/a.svg", "custom/a.sm.svg", "lucide/a-sm.svg"],
+      /clash/,
+    ],
   ])("fails on %s", (_, files, message) => {
     expect(() => iconSources(tree(...files))).toThrow(message);
   });
@@ -481,6 +530,20 @@ describe("the Lucide licence notice, in the committed modules and the package bu
       ]);
       const licences = lines.filter((line) => line.includes("@license"));
       expect(licences, file).toEqual([notice]);
+    }
+  });
+
+  it("carries no notice in a custom glyph's module: CandleViewer's own glyphs need none", () => {
+    const modules = readdirSync(path.join(PACKAGE, OUTPUT_DIR)).map((entry) =>
+      readFileSync(path.join(PACKAGE, OUTPUT_DIR, entry), "utf-8"),
+    );
+    const custom = readdirSync(path.join(PACKAGE, "src/icons/source/custom"));
+    expect(custom.length).toBeGreaterThan(0);
+    for (const entry of custom) {
+      const file = `src/icons/source/custom/${entry}`;
+      const owned = modules.filter((content) => content.includes(`\n// ${file} (`));
+      expect(owned, file).toHaveLength(1);
+      expect(owned[0], file).not.toMatch(/@license|\/\*!/);
     }
   });
 

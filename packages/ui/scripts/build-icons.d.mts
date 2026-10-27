@@ -24,6 +24,8 @@ export interface IconSourceFile {
   readonly origin: string;
   /** Its path in the package: `src/icons/source/<origin>/<name>.svg`. */
   readonly file: string;
+  /** Its size forms, each `src/icons/source/<origin>/<name>.<size>.svg` by size; absent if none. */
+  readonly forms?: Readonly<Record<string, string>>;
 }
 
 export declare function parseIconSource(text: string, file: string): ParsedIconSource;
