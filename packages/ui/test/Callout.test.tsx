@@ -70,6 +70,97 @@ describe("Callout (CMP-028)", () => {
   });
 
   it.each([
+    [
+      "a tone crossing to assertive",
+      { tone: "connection-reconnecting" },
+      { tone: "connection-disconnected" },
+      "alert",
+    ],
+    ["live going from off to on", { tone: "info", live: "off" }, { tone: "info" }, "status"],
+  ] as const)(
+    "re-announces on %s: a fresh region, empty first, then filled",
+    async (_, before, after, role) => {
+      const seen: string[] = [];
+      function Probe({ phase }: { phase: string }): null {
+        // Runs in the same commit as the role change, before the callout's fill effect.
+        useLayoutEffect(() => {
+          seen.push(document.querySelector(`[role="${role}"]`)?.textContent ?? "missing");
+        }, [phase]);
+        return null;
+      }
+      const { createRoot } = await import("react-dom/client");
+      const host = document.body.appendChild(document.createElement("div"));
+      const r = createRoot(host);
+      await act(async () =>
+        r.render(
+          <>
+            <Callout {...before} title="Connection" />
+            <Probe phase="before" />
+          </>,
+        ),
+      );
+      const region = host.querySelector(".cv-callout__message");
+      await act(async () =>
+        r.render(
+          <>
+            <Callout {...after} title="Connection" />
+            <Probe phase="after" />
+          </>,
+        ),
+      );
+      expect(seen.at(-1)).toBe("");
+      const fresh = within(host).getByRole(role);
+      expect(fresh).toHaveTextContent("Connection");
+      expect(fresh).not.toBe(region);
+      await act(async () => r.unmount());
+    },
+  );
+
+  it("never moves focus when it mounts or updates while focus is elsewhere", async () => {
+    const outside = document.body.appendChild(document.createElement("button"));
+    outside.textContent = "Elsewhere";
+    outside.focus();
+    const { createRoot } = await import("react-dom/client");
+    const r = createRoot(document.body.appendChild(document.createElement("div")));
+    await act(async () =>
+      r.render(<Callout tone="info" title="Syncing" dismissible onDismiss={fn()} />),
+    );
+    expect(document.activeElement).toBe(outside);
+    await act(async () =>
+      r.render(
+        <Callout
+          tone="danger"
+          title="Locked"
+          retry={{ label: "Retry now", onClick: fn() }}
+          dismissible
+          onDismiss={fn()}
+        />,
+      ),
+    );
+    expect(document.activeElement).toBe(outside);
+    await act(async () => r.unmount());
+  });
+
+  it("actions with the same label render as separate buttons", async () => {
+    const first = fn();
+    const second = fn();
+    const host = await mount(
+      <Callout
+        title="Two"
+        actions={[
+          { label: "Details", onClick: first },
+          { label: "Details", onClick: second },
+        ]}
+      />,
+    );
+    const buttons = within(host).getAllByRole("button", { name: "Details" });
+    expect(buttons).toHaveLength(2);
+    act(() => buttons[1]?.click());
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  it.each([
     ["info", "info"],
     ["success", "success"],
     ["warning", "warning"],

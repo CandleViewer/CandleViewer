@@ -162,10 +162,12 @@ export const DismissFocusVisible: Story = {
 };
 
 /**
- * E30-D04 §2.3's `unprotected` banner, with the solid edge: the hatched edge is PROPOSED and deferred. Not
- * dismissible while the stop is missing.
+ * A protection-pending danger callout with its two actions, drawn with the solid edge every callout ships. This
+ * is not the `unprotected` banner: its hatched edge (E30-D04 §2.3) is PROPOSED and deferred, so no story shows
+ * it. Not dismissible while the stop is missing.
  */
-export const Unprotected: Story = {
+export const ProtectionPendingSolidEdge: Story = {
+  name: "Protection pending (solid edge; hatched edge deferred)",
   args: {
     tone: "danger",
     title: "Order live · protective stop pending — attaching the exchange stop (attempt 1 of 3)",

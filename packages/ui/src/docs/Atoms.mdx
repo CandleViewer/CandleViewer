@@ -337,6 +337,8 @@ Known token dependency (E05-D02 A5): there is no user-pickable palette yet, and 
 below WCAG 1.4.11 on a picker's own surface. Until the palette token pass lands, a light picker that offers
 it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
 
+---
+
 ### Callout / Banner (CMP-028, a status or alert region; its buttons follow APG Button)
 
 | Keys                   | Action                                                                                                                       |
@@ -353,3 +355,5 @@ it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
 | Dismiss | button                                                                        | "Dismiss {title}" | A ghost CMP-002 `close`, after the actions.                                                  |
 
 The hatched `unprotected` edge is deferred until its PROPOSED pattern token lands; every callout draws the solid edge.
+Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
+owns the connection state; the callout announces each state entry it is given once.

@@ -78,7 +78,9 @@ interface Dismissible extends CalloutBase {
  * Not built here: `edge="hatched"` (the `unprotected` banner's 4 px hatched start edge). Its
  * `pattern.hatch.unprotected` token is PROPOSED (E30-D04 CR-5) and deferred; until it lands every callout draws
  * the solid 2 px edge. The "What changed" disclosure is held (E05-D02 §6 H15 (3)). The dismissal fade waits for
- * the E05-D03 motion recipe: the host's removal is a cut, which every order-ticket banner needs anyway.
+ * the E05-D03 motion recipe: the host's removal is a cut, which every order-ticket banner needs anyway. The
+ * flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
+ * owns the connection state; this callout announces each state entry it is given once.
  */
 export type CalloutProps = Persistent | Dismissible;
 
@@ -104,11 +106,17 @@ export function Callout(props: CalloutProps): JSX.Element {
   } = props;
   const politeness = live ?? TONE_LIVE[tone];
   const role = roleOf(politeness);
-  // A live region announces content inserted after it exists, so the message lands one effect after mount.
-  const [mounted, setMounted] = useState(role === undefined);
+  // A live region announces content inserted after it exists, so the message lands one effect after the region
+  // mounts. The region is keyed on its role: a change of role (a tone crossing the polite / assertive line, or
+  // `live` going from off to on) mounts a fresh region and repeats the empty-then-insert step, so it re-announces.
+  // Trade-off: the title and body are blank for one frame on entry and on each role change; an empty frame is the
+  // price of a reliable announcement (the same step CMP-014 and CMP-038 take). `off` fills at once.
+  const regionKey = role ?? "off";
+  const [filledKey, setFilledKey] = useState<string | null>(role === undefined ? regionKey : null);
   useEffect(() => {
-    setMounted(true);
-  }, []);
+    setFilledKey(regionKey);
+  }, [regionKey]);
+  const filled = role === undefined || filledKey === regionKey;
   const buttons = retry === undefined ? actions : [retry, ...actions];
   const dismiss = props.dismissible === true ? props.onDismiss : undefined;
   return (
@@ -118,12 +126,13 @@ export function Callout(props: CalloutProps): JSX.Element {
       </span>
       <div className="cv-callout__main">
         <div
+          key={regionKey}
           className="cv-callout__message"
           role={role}
           aria-live={role === undefined ? undefined : politeness}
           aria-atomic={role === undefined ? undefined : true}
         >
-          {mounted ? (
+          {filled ? (
             <>
               <p className="cv-callout__title">{title}</p>
               {children === undefined ? null : <div className="cv-callout__body">{children}</div>}
@@ -133,8 +142,12 @@ export function Callout(props: CalloutProps): JSX.Element {
         </div>
         {buttons.length === 0 ? null : (
           <div className="cv-callout__actions">
-            {buttons.map((action) => (
-              <Button key={action.label} variant="secondary" onClick={() => action.onClick()}>
+            {buttons.map((action, index) => (
+              <Button
+                key={`${index}-${action.label}`}
+                variant="secondary"
+                onClick={() => action.onClick()}
+              >
                 {action.label}
               </Button>
             ))}

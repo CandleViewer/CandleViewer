@@ -47,12 +47,18 @@ const CANCELLABLE: ReadonlySet<string> = new Set<CancellableWait>(["load", "expo
 export function InlineSpinnerText(props: InlineSpinnerTextProps): JSX.Element {
   const { label, slowLabel, kind = "wait" } = props;
   const [mounted, setMounted] = useState(false);
-  const [slow, setSlow] = useState(false);
   useEffect(() => {
     setMounted(true);
-    const timer = setTimeout(() => setSlow(true), SLOW_AFTER_MS);
-    return () => clearTimeout(timer);
   }, []);
+  // A new label or kind is a new wait: the slow phase belongs to the wait it was reached in, so it resets with
+  // no stale frame and the 5 s timer restarts. One frame of blank text on mount is the empty-then-insert step.
+  const wait = `${kind}\u0000${label}`;
+  const [slowWait, setSlowWait] = useState<string | null>(null);
+  useEffect(() => {
+    const timer = setTimeout(() => setSlowWait(wait), SLOW_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [wait]);
+  const slow = slowWait === wait;
   // Enforced at run time as well as in the types, for JavaScript and spread callers.
   const cancel =
     props.onCancel !== undefined && CANCELLABLE.has(kind) && slow ? props.onCancel : undefined;
