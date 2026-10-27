@@ -98,6 +98,9 @@ export type {
   PopoverProps,
 } from "./Popover.js";
 
+export { MaskedValue, maskAllValues } from "./MaskedValue.js";
+export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
+
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
 
