@@ -248,14 +248,16 @@ info:
     downgrade survives lock and unlock.
 
     Activity is explicit. Only `POST /auth/session/extend` and a successful `POST /auth/unlock`
-    record activity (`REQUEST` for extend and `UNLOCK_OK` for unlock, on B16, re-stamp
-    `last_seen_at`), so only they move `session.idle_deadline`. No other operation moves it,
+    record activity: both re-stamp `last_seen_at` on the session row, and unlock's re-stamp is
+    recorded as `UNLOCK_OK` on B16 (extend sends B16 nothing), so only they move
+    `session.idle_deadline`. No other operation moves it,
     whatever it reads or writes, and neither does client-side input or WS traffic.
     `POST /auth/refresh` is not activity: the
     rotated session inherits `last_seen_at` (as it inherits `expires_at`), so
     `session.idle_deadline` is unchanged and a client that refreshes on the
     `23-ws-protocol.md` section 4.3 schedule still locks on time. `GET /auth/session` is
     read-only. Extend is refused once locked; only `POST /auth/unlock` lifts a lock.
+    A read-only downgrade (`POST /auth/step-up`) does not refuse extend: extend acts on no data.
     `session_revoked` is answered only by `POST /auth/unlock`; every other operation keeps the
     uniform `unauthenticated` for a revoked or expired session, so no other route works as a
     session oracle.
@@ -1661,13 +1663,14 @@ paths:
       description: |
         The explicit activity call behind the CMP-098 "Extend" control; with a successful
         `POST /auth/unlock` it is the only operation that records activity (see "Idle lock").
-        It re-stamps `last_seen_at` (`REQUEST` on B16) and returns the new
+        It re-stamps `last_seen_at` on the session row (it sends B16 nothing) and returns the new
         `session.idle_deadline` with `server_time`. It never moves `expires_at` (the 12 h
         absolute lifetime). Once the session is idle-locked it is refused with
         `401 session_idle_locked`, so Extend can never lift a lock: only `POST /auth/unlock` does.
         Audited write-ahead as `auth.session_extended` (extend is not a token rotation, so it is
         not `auth.session_refreshed`); if the audit sink is down the answer is `503` and the
-        deadline does not move.
+        deadline does not move. A read-only downgrade does not refuse it: extend acts on no data
+        and moves only the idle deadline.
       x-rbac: { permissions: [], scope: self }
       x-idempotency: ignored
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
@@ -12330,7 +12333,8 @@ paths:
         earlier 15). `live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` and
         `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive
         invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on
-        every write). Endpoints that require elevation return `403` with `code: step_up_required`
+        every write except `POST /auth/logout`, `POST /auth/session/extend` and
+        `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that require elevation return `403` with `code: step_up_required`
         until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
 
