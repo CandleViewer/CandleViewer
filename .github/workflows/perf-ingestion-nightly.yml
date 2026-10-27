@@ -29,11 +29,10 @@ name: perf-ingestion-nightly
 # a group keeps one pending run and replaces the older one (perf-ws-load.yml's header). Busy: a
 # scheduled run skips the pack with a notice (green, no issue), a dispatch fails. Any API error
 # fails it, a 404 too: all three are on main; so does a job count that is not a number. A re-run
-# skips the pack, as its all-clear may be stale: dispatch again. On the weekly run, Budget #13's
-# per-route p95s are reported, not gated (CV_BENCH_B13_REPORT_ONLY: a warning names the routes,
-# the run stays green and files nothing), until #2825's slice 2 decides the budget, because a
-# known-red weekly job trains everyone to ignore red. A dispatch still gates them, and a refused
-# k6 run, an app that never started or any other failed check stays red on the schedule too.
+# skips the pack, as its all-clear may be stale: dispatch again. The weekly run gates Budget #13's
+# per-route p95s as a dispatch does (#2523): a route over 150 ms fails the pack and files its
+# issue, as a refused k6 run, an app that never started or any other failed check does. The
+# first read (klines_cold_first) is reported, never gated.
 # #2848: a dispatch with profile=auth runs E09-Q05's k6 auth profile (tests/load/k6/auth.js, job
 # auth-k6) alone (no soak), never on a schedule or a PR, and no required check reads it (C-9.2).
 # It boots the API on this runner as dast-admin-nightly.yml does (keyless testnet, real storage,
@@ -214,7 +213,6 @@ jobs:
         working-directory: services/api
         env:
           CV_BENCH_K6_EXPORT: bench/reports/rest_k6-k6-summary.json # k6's own summary, kept
-          CV_BENCH_B13_REPORT_ONLY: ${{ github.event_name == 'schedule' && '1' || '' }} # weekly
         run: uv run python -m bench.ingestion.runner "$SCENARIO" --profile full --out-dir bench/reports
       - name: Hand the gate diff to the issue job
         id: handoff

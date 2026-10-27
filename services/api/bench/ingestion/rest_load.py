@@ -20,7 +20,6 @@ import subprocess
 import tempfile
 import time
 from collections.abc import Mapping
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, Final
 
@@ -42,11 +41,6 @@ K6_SCRIPT = Path(__file__).resolve().parents[4] / "tests" / "load" / "k6" / "ing
 #: Where `drive_k6` keeps k6's `--summary-export` when this is set (the full pack's workflow sets
 #: it, into its artifact): k6's own bytes, before `k6_reading` judges them (#2825).
 K6_EXPORT_ENV: Final = "CV_BENCH_K6_EXPORT"
-#: "1" on the full pack's weekly scheduled run alone (#2825): Budget #13's 150 ms rows are then
-#: reported, not gated, until #2825's slice 2 decides the budget, as a known-red weekly job trains
-#: everyone to ignore red. Every other check, and a run `k6_reading` refuses, still fail it.
-B13_REPORT_ONLY_ENV: Final = "CV_BENCH_B13_REPORT_ONLY"
-B13_SOFT_WEEKLY: Final = "reported, not gated, on the weekly run until #2825's slice 2 decides it"
 #: The in-process driver's pool for the first-read route (#2523): one request at a time, beside the
 #: `concurrency` slots the 7 budget routes share, as the k6 script's `first_read` scenario keeps it
 #: off the 5 VUs. So the 7 routes run as they were recorded before the first-read leg.
@@ -233,18 +227,14 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     return k6_reading(ran.returncode, text)
 
 
-def verdict(
-    sc: Scenario, lat: dict[str, list[float]], *, b13_report_only: bool = False
-) -> budgets.Verdict:
+def verdict(sc: Scenario, lat: dict[str, list[float]]) -> budgets.Verdict:
     """Budget #13 over every route of `requests_plan()`. A route the driver did not measure (k6
-    wrote no `p(95)` for it) fails, named, in every profile: never a 0.0 that passes (#399).
-    `b13_report_only` (the weekly run) reports the full profile's 150 ms rows as the smoke does,
-    noted `B13_SOFT_WEEKLY`; every other check stays hard (#2825). The cache speed-up is the first
-    read's p95 over the warm read's, and the first read's row is reported in every profile, under
-    its own note (`budgets.check_rest`, #2523). The first read is the route the plan marks
-    `FIRST_READ`, as the drivers send it; a plan that marks no route, or more than one, raises
-    `RuntimeError`."""
-    weekly = b13_report_only and sc.profile != "smoke"
+    wrote no `p(95)` for it) fails, named, in every profile: never a 0.0 that passes (#399). The
+    full profile gates the 150 ms rows on every run, the weekly one included (#2523); the smoke
+    reports them (#399). The cache speed-up is the first read's p95 over the warm read's, and the
+    first read's row is reported in every profile, under its own note (`budgets.check_rest`,
+    #2523). The first read is the route the plan marks `FIRST_READ`, as the drivers send it; a
+    plan that marks no route, or more than one, raises `RuntimeError`."""
     plan = requests_plan()
     marked = [r for r, spec in plan.items() if spec.get(FIRST_READ)]
     if len(marked) != 1:
@@ -261,15 +251,9 @@ def verdict(
             float(sc.p("min_cache_speedup")),
             first=marked[0],
             repeat="klines_warm",
-            budget_hard=sc.profile != "smoke" and not weekly,
+            budget_hard=sc.profile != "smoke",
         )
     )
-    if weekly:  # its soft rows are the 150 ms ones (the speed-up stays hard): say why. The first
-        # read's keeps its own note: it is soft on every run, not until slice 2 decides (#2523)
-        v.checks = [
-            c if c.hard or c.note == budgets.B13_FIRST_READ else replace(c, note=B13_SOFT_WEEKLY)
-            for c in v.checks
-        ]
     v.metrics = {f"rest_{r}_ms": budgets.summary(x) for r, x in lat.items()}
     return v
 
@@ -285,9 +269,4 @@ async def run_rest(sc: Scenario) -> budgets.Verdict:
         # (`latency_internal`, `ratelimit_headroom`). Their baselines are of an unfrozen heap, so
         # this run ends with the freeze undone, a failed run too.
         unfreeze_startup_heap()
-    v = verdict(sc, lat, b13_report_only=os.environ.get(B13_REPORT_ONLY_ENV) == "1")
-    late = [c for c in v.checks if c.note == B13_SOFT_WEEKLY and not c.passed]
-    if late:  # a green weekly run still names the budget and its routes over it (#2825)
-        over = ", ".join(f"{c.name} {c.measured:.4g} ms" for c in late)
-        print(f"::warning::{sc.name}: over Budget #13's 150 ms: {over}; {B13_SOFT_WEEKLY}")
-    return v
+    return verdict(sc, lat)
