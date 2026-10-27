@@ -1,0 +1,2062 @@
+{
+  "pack": "E29-D06",
+  "version": "v1",
+  "base": "927794a8ba",
+  "strings": {
+    "fills.title.order": {
+      "string": "Fills — order …a3f2 · BTCUSDT ▲ Buy · Main · LIVE",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:261",
+      "params": {
+        "…a3f2": "short id",
+        "BTCUSDT": "symbol",
+        "▲ Buy": "side",
+        "Main": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "fills.title.group": {
+      "string": "Fills — trade group …7c1e · BTCUSDT ▲ Buy · 3 accounts · LIVE",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:262",
+      "params": {
+        "…7c1e": "short id",
+        "BTCUSDT": "symbol",
+        "▲ Buy": "side",
+        "3": "count",
+        "LIVE": "environment"
+      }
+    },
+    "fills.title.position": {
+      "string": "Fills — closed BTCUSDT long · Sub-1 · LIVE · 13:58–14:03 UTC",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:263",
+      "params": {
+        "BTCUSDT": "symbol",
+        "long": "side",
+        "Sub-1": "account label",
+        "LIVE": "environment",
+        "13:58–14:03": "time window (UTC)"
+      }
+    },
+    "fills.chrome": {
+      "string": "Time",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:264"
+    },
+    "fills.scope": {
+      "string": "Limit 63,420.0 · Filled · placed 14:02:10 UTC",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:265",
+      "params": {
+        "63,420.0": "figure",
+        "14:02:10": "time (UTC)"
+      }
+    },
+    "fills.section": {
+      "string": "Main · LIVE — 0.300 BTC · avg 63,496.67 · 33 % maker · −8.25 USDT · 1.00 USDT better",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:266",
+      "params": {
+        "Main": "account label",
+        "LIVE": "environment",
+        "0.300 BTC": "quantity",
+        "63,496.67": "figure",
+        "33 %": "percentage",
+        "−8.25 USDT": "money (USDT)",
+        "1.00 USDT": "money (USDT)"
+      }
+    },
+    "fills.footer": {
+      "string": "3 fills · newest first · times UTC",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:267",
+      "params": {
+        "3": "count"
+      }
+    },
+    "fills.sum.filled": {
+      "string": "Filled 0.250 of 0.250 BTC · 3 fills",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:268",
+      "params": {
+        "0.250": "figure",
+        "0.250 BTC": "quantity",
+        "3": "count"
+      }
+    },
+    "fills.sum.avg": {
+      "string": "Avg price 63,414.02",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:269",
+      "params": {
+        "63,414.02": "figure"
+      }
+    },
+    "fills.sum.split": {
+      "string": "Liquidity 24 % maker · 76 % taker by quantity",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:270",
+      "params": {
+        "24 %": "percentage",
+        "76 %": "percentage"
+      }
+    },
+    "fills.sum.fees": {
+      "string": "Fees −7.39 USDT paid",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:271",
+      "params": {
+        "−7.39 USDT": "money (USDT)"
+      }
+    },
+    "fills.sum.slip.better": {
+      "string": "Slippage −5.98 (59.8 ticks) · 1.50 USDT better than the limit 63,420.0",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:272",
+      "params": {
+        "−5.98": "figure",
+        "59.8 ticks": "ticks",
+        "1.50 USDT": "money (USDT)",
+        "63,420.0": "figure"
+      }
+    },
+    "fills.sum.slip.worse": {
+      "string": "Slippage +20.00 (200 ticks) · 5.00 USDT worse than the trigger 63,900.0",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:273",
+      "params": {
+        "+20.00": "figure",
+        "200 ticks": "ticks",
+        "5.00 USDT": "money (USDT)",
+        "63,900.0": "figure"
+      }
+    },
+    "fills.sum.slip.none": {
+      "string": "Slippage — · a market order has no intended price",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:274"
+    },
+    "fills.sum.slip.amended": {
+      "string": "Slippage −0.40 (4 ticks) · 0.04 USDT better than the amended limit 63,400.0",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:275",
+      "params": {
+        "−0.40": "figure",
+        "4 ticks": "ticks",
+        "0.04 USDT": "money (USDT)",
+        "63,400.0": "figure"
+      }
+    },
+    "fills.sum.partial": {
+      "string": "So far: 500 fills — loading more",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:276",
+      "params": {
+        "500": "count"
+      }
+    },
+    "fills.link.*": {
+      "string": "Trade group …7c1e",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:277",
+      "params": {
+        "…7c1e": "short id"
+      }
+    },
+    "fills.link.diag": {
+      "string": "Order diagnostics",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:278"
+    },
+    "fills.row.menu": {
+      "string": "Copy exec id",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:279"
+    },
+    "fills.row.detail": {
+      "string": "Exec id {full}",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:280",
+      "params": {
+        "{full}": "placeholder"
+      }
+    },
+    "fills.type.*": {
+      "string": "Trade",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:281"
+    },
+    "fills.cell.null": {
+      "string": "—",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:282"
+    },
+    "fills.pill.new": {
+      "string": "3 new fills",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:283",
+      "params": {
+        "3": "count"
+      }
+    },
+    "fills.provisional": {
+      "string": "Provisional — fees pending",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:284"
+    },
+    "fills.pos.check": {
+      "string": "These fills do not add up to the closed 0.250 BTC — totals are not final.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:285",
+      "params": {
+        "0.250 BTC": "quantity"
+      }
+    },
+    "fills.pos.hedge": {
+      "string": "Hedge mode: fills of both sides in this window are listed — totals are not final.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:286"
+    },
+    "fills.announce.adl": {
+      "string": "ADL reduced BTCUSDT on Main · LIVE.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D03:287",
+      "params": {
+        "BTCUSDT": "symbol",
+        "Main": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "fills.empty.order": {
+      "string": "No fills for this order yet — it is Working.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:288"
+    },
+    "fills.empty.group": {
+      "string": "No fills for this trade group yet.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:289"
+    },
+    "fills.empty.window": {
+      "string": "No fills on Sub-1 between 13:58 and 14:03 UTC.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:290",
+      "params": {
+        "Sub-1": "account label",
+        "13:58": "time (UTC)",
+        "14:03": "time (UTC)"
+      }
+    },
+    "fills.error": {
+      "string": "Could not load fills. Try again.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:291"
+    },
+    "fills.revoked": {
+      "string": "No longer shown — access to Sub-1 was withdrawn.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:292",
+      "params": {
+        "Sub-1": "account label"
+      }
+    },
+    "fills.offline": {
+      "string": "As of 14:02:11 UTC — new fills appear when the connection is back.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:293",
+      "params": {
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "fills.acct.checking": {
+      "string": "Sub-1 · LIVE is being checked against Bybit — fills it finds are added here.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:294",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "fills.acct.stale": {
+      "string": "Sub-1 · LIVE is stale — fills may be missing until it is reconciled.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:295",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "fills.acct.killlock": {
+      "string": "Sub-1 · LIVE is locked for new orders after the kill switch.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:296",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "fills.export.button": {
+      "string": "Export CSV",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:297"
+    },
+    "fills.export.progress": {
+      "string": "Exporting… 500 fills so far",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:298",
+      "params": {
+        "500": "count"
+      }
+    },
+    "fills.export.done": {
+      "string": "Exported 1,240 fills.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:299",
+      "params": {
+        "1,240": "count"
+      }
+    },
+    "fills.export.failed": {
+      "string": "Export failed — not every fill could be read. Try again.",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:300"
+    },
+    "fills.export.watermark": {
+      "string": "# CandleViewer fills export — not the audit trail · exported by {display name} (Owner) · accounts: Main (LIVE) · generated 2026-10-22 14:05:09 UTC",
+      "screen": "SCR-078",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:301",
+      "params": {
+        "{display name}": "placeholder",
+        "Main": "account label",
+        "LIVE": "environment",
+        "2026-10-22 14:05:09": "date-time (UTC)"
+      }
+    },
+    "acct.reconciling.line": {
+      "string": "Sub-1 · LIVE — Reconciling with the exchange… Values shown are the last Bybit confirmed. Closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:309",
+      "safety": true,
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.reconciling.retry": {
+      "string": "Reconciling with the exchange… (retrying)",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:310"
+    },
+    "acct.marker.checking": {
+      "string": "checking",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:311"
+    },
+    "acct.desync.line": {
+      "string": "Sub-1 · LIVE — Position data is being verified — actions temporarily limited. Bybit's values replace CandleViewer's as they are confirmed. Closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:312",
+      "safety": true,
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.marker.verifying": {
+      "string": "Verifying",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:313"
+    },
+    "acct.stale.line": {
+      "string": "Sub-2 · LIVE is stale — CandleViewer could not reconcile it with Bybit for 2 minutes. New orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:314",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "LIVE": "environment",
+        "2": "fixed"
+      }
+    },
+    "acct.stale.line.fault": {
+      "string": "Sub-2 · LIVE is stale — reconciliation with Bybit stopped on a fault. New orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:315",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.stale.line.nocause": {
+      "string": "Sub-2 · LIVE is stale — new orders are locked until the owner resolves it; closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:316",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.killlock.line": {
+      "string": "Sub-2 · LIVE is still locked for new orders after the kill switch; the owner must resolve it. Closing, cancelling and tightening stops still work, each sent at once.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:317",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.locked.line": {
+      "string": "Sub-2 · LIVE is locked for new orders until the owner resolves it; closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:318",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "acct.stale.details": {
+      "string": "Each exit is sent at once and nothing waits for Bybit: if Bybit cannot be reached, the order shows Unknown — checking, and until reconciliation resolves it the position may still be open. Rows show the last values Bybit confirmed; each row's time is in its description.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:319"
+    },
+    "acct.killlock.details": {
+      "string": "Each exit is sent at once, a stop's tighten included. Rows stay live: the kill switch stopped reconciliation, not Bybit's updates. The native stop stays on Bybit.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:320"
+    },
+    "acct.marker.stale": {
+      "string": "Stale — locked since 14:04:11 UTC",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:321",
+      "params": {
+        "14:04:11": "time (UTC)"
+      }
+    },
+    "acct.reassure.true": {
+      "string": "Your exchange-side stop-losses are unaffected.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:322",
+      "safety": true
+    },
+    "acct.reassure.false": {
+      "string": "2 open positions have no confirmed exchange-side stop: BTCUSDT, SOLUSDT.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:323",
+      "safety": true,
+      "params": {
+        "2": "count",
+        "BTCUSDT": "symbol",
+        "SOLUSDT": "symbol"
+      }
+    },
+    "acct.resolve": {
+      "string": "Resolve…",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:324"
+    },
+    "acct.details": {
+      "string": "Details",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:325"
+    },
+    "acct.more": {
+      "string": "+2 more accounts",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:326",
+      "params": {
+        "+2": "count"
+      }
+    },
+    "acct.announce.reconciling": {
+      "string": "Reconciling Sub-1 with Bybit. Closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:327",
+      "safety": true,
+      "params": {
+        "Sub-1": "account label"
+      }
+    },
+    "acct.announce.desync": {
+      "string": "Sub-1: position data is being verified. New orders placed here are paused; closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:328",
+      "safety": true,
+      "params": {
+        "Sub-1": "account label"
+      }
+    },
+    "acct.announce.stale": {
+      "string": "Sub-2 is locked for new orders: reconciliation with Bybit failed for 2 minutes. Closing, cancelling and tightening stops still work.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D03:329",
+      "safety": true,
+      "params": {
+        "Sub-2": "account label",
+        "2": "fixed"
+      }
+    },
+    "acct.announce.synced": {
+      "string": "Sub-1 reconciled with Bybit.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D03:330",
+      "params": {
+        "Sub-1": "account label"
+      }
+    },
+    "recon.reconciling": {
+      "string": "Reconciling with Bybit — new orders are paused.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:336"
+    },
+    "recon.desync": {
+      "string": "Data being verified — new orders are paused.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:337"
+    },
+    "recon.stale": {
+      "string": "Stale — new orders locked until the owner resolves it.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:338"
+    },
+    "recon.killlock": {
+      "string": "After the kill switch — new orders locked until resolved.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:339"
+    },
+    "recon.reduce": {
+      "string": "Locked — reduce through Close position.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "polite",
+      "source": "D03:340"
+    },
+    "corr.cat.sl_repaired.recorded": {
+      "string": "Your stop at 62,700.0 on BTCUSDT (Sub-1 · LIVE) was missing on Bybit and was put back.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:348",
+      "key_status": "PROPOSED name",
+      "params": {
+        "62,700.0": "figure",
+        "BTCUSDT": "symbol",
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "corr.cat.sl_repaired.fallback": {
+      "string": "A stop at 62,150.0 was attached automatically to BTCUSDT (Sub-1 · LIVE) because none was found on Bybit. You did not choose this price — review it.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "62,150.0": "figure",
+        "BTCUSDT": "symbol",
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "corr.cat.sl_repaired.not_carried": {
+      "string": "Bybit had no stop on BTCUSDT (Sub-1 · LIVE); a stop at 62,700.0 was attached automatically — check its price.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:350",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "Sub-1": "account label",
+        "LIVE": "environment",
+        "62,700.0": "figure"
+      }
+    },
+    "corr.cat.position_drift": {
+      "string": "Bybit reports BTCUSDT size 0.200; CandleViewer showed 0.250. Bybit's value is now shown.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:351",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "0.200": "figure",
+        "0.250": "figure"
+      }
+    },
+    "corr.cat.corrected": {
+      "string": "Bybit reports the ETHUSDT limit at 2,505.00; CandleViewer showed 2,500.00. Bybit's value is now shown.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:352",
+      "key_status": "PROPOSED name",
+      "params": {
+        "ETHUSDT": "symbol",
+        "2,505.00": "figure",
+        "2,500.00": "figure"
+      }
+    },
+    "corr.cat.resolved_from_history": {
+      "string": "This order filled on Bybit at 14:01:58 UTC while CandleViewer was not watching; its final state is now shown.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:353",
+      "key_status": "PROPOSED name",
+      "params": {
+        "14:01:58": "time (UTC)"
+      }
+    },
+    "corr.cat.abandoned.unknown": {
+      "string": "CandleViewer sent this order, but after two checks Bybit has no record of it, so it is marked Rejected. Nothing is working on Bybit for it.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:354",
+      "key_status": "PROPOSED name"
+    },
+    "corr.cat.abandoned.untracked": {
+      "string": "An order placed outside CandleViewer is no longer on Bybit; it is shown as Cancelled.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:355",
+      "key_status": "PROPOSED name"
+    },
+    "corr.cat.abandoned.expired": {
+      "string": "Bybit demo keeps 7 days of history; this order's outcome can no longer be read, so it is marked Rejected.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:356",
+      "key_status": "PROPOSED name",
+      "params": {
+        "7": "fixed"
+      }
+    },
+    "corr.cat.newly_unknown": {
+      "string": "Bybit no longer lists this order as open; checking its history.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:357",
+      "key_status": "PROPOSED name"
+    },
+    "corr.cat.untracked": {
+      "string": "Bybit has an order CandleViewer did not place: ETHUSDT Sell 1.00 at 2,520.00. It is shown, but CandleViewer will not manage it.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:358",
+      "key_status": "PROPOSED name",
+      "params": {
+        "ETHUSDT": "symbol",
+        "Sell": "side",
+        "1.00": "figure",
+        "2,520.00": "figure"
+      }
+    },
+    "corr.cat.anomalies": {
+      "string": "Bybit shows an open order whose id CandleViewer has already closed, or uses on another account. No order was changed; it waits for your review.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:359",
+      "key_status": "PROPOSED name"
+    },
+    "corr.cat.held": {
+      "string": "Bybit has an order under CandleViewer's id that does not match what CandleViewer sent. Nothing was taken from it; the order is held for the owner's review.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:360",
+      "key_status": "PROPOSED name"
+    },
+    "corr.cat.unpaired": {
+      "string": "Bybit reports a fill no CandleViewer order explains: BTCUSDT Buy 0.010 at 63,500.0. It is shown as Bybit reports it and listed for the owner's review.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:361",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "Buy": "side",
+        "0.010": "figure",
+        "63,500.0": "figure"
+      }
+    },
+    "corr.cat.sl_restored": {
+      "string": "Bybit held a looser stop on BTCUSDT (62,500.0) than CandleViewer recorded (62,700.0); the recorded stop was put back on Bybit.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:362",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "62,500.0": "figure",
+        "62,700.0": "figure"
+      }
+    },
+    "corr.cat.sl_restore_refused": {
+      "string": "Bybit holds a looser stop on BTCUSDT (62,500.0) than CandleViewer recorded (62,700.0); putting the recorded stop back was refused, so Bybit's stop stays. The owner is paged.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:363",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "62,500.0": "figure",
+        "62,700.0": "figure"
+      }
+    },
+    "corr.cat.sl_tighter": {
+      "string": "Bybit holds a tighter stop on BTCUSDT (63,000.0) than CandleViewer recorded (62,700.0); it was left in place and is shown.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:364",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "63,000.0": "figure",
+        "62,700.0": "figure"
+      }
+    },
+    "corr.cat.foreign_stops": {
+      "string": "Bybit has a stop order CandleViewer did not place: BTCUSDT Sell 0.250 at 62,000.0. It is shown, not managed, and new orders on Sub-1 are locked until the owner clears it.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:365",
+      "key_status": "PROPOSED name",
+      "params": {
+        "BTCUSDT": "symbol",
+        "Sell": "side",
+        "0.250": "figure",
+        "62,000.0": "figure",
+        "Sub-1": "account label"
+      }
+    },
+    "corr.line": {
+      "string": "Sub-1 · LIVE — 3 changes found by a check with Bybit. {most severe line}",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D03:371",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment",
+        "3": "count",
+        "{most severe line}": "placeholder"
+      }
+    },
+    "corr.standing": {
+      "string": "1 open finding on Sub-1 · Review",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:372",
+      "params": {
+        "1": "count",
+        "Sub-1": "account label"
+      }
+    },
+    "corr.window": {
+      "string": "While the link to Bybit was down (14:01:30–14:02:11 UTC):",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:373",
+      "params": {
+        "14:01:30–14:02:11": "time window (UTC)"
+      }
+    },
+    "corr.tooltip": {
+      "string": "{marker} · {field} ~~{old}~~ → {new} ({authority}) · Detected {time} UTC · both values are in the audit log",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:374",
+      "params": {
+        "{marker}": "placeholder",
+        "{field}": "placeholder",
+        "{old}": "placeholder",
+        "{new}": "placeholder",
+        "{authority}": "placeholder",
+        "{time}": "placeholder"
+      }
+    },
+    "corr.description": {
+      "string": "Corrected. Size was 0.250, now 0.200, from Bybit. Detected 14:02:11 UTC.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:375",
+      "params": {
+        "0.250": "figure",
+        "0.200": "figure",
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "summary.body": {
+      "string": "While you were offline: 1 order filled, 1 stop moved by a rule.",
+      "screen": "SCR-152",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:381",
+      "params": {
+        "1": "count"
+      }
+    },
+    "summary.line2": {
+      "string": "Offline 14:01:30–14:02:11 UTC · Sub-1: 3 changes, including 1 stop attached automatically — review them in Positions.",
+      "screen": "SCR-152",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:382",
+      "params": {
+        "14:01:30–14:02:11": "time window (UTC)",
+        "Sub-1": "account label",
+        "3": "count",
+        "1": "count"
+      }
+    },
+    "summary.interim": {
+      "string": "Offline 14:01:30–14:02:11 UTC. Rule actions are not listed here yet — check your stops.",
+      "screen": "SCR-152",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "none",
+      "source": "D03:383",
+      "params": {
+        "14:01:30–14:02:11": "time window (UTC)"
+      }
+    },
+    "summary.announce": {
+      "string": "Reconnected. 1 order filled and 1 stop moved by a rule while offline.",
+      "screen": "SCR-152",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D03:384",
+      "params": {
+        "1": "count"
+      }
+    },
+    "summary.adl": {
+      "string": "Main · LIVE — ADL reduced BTCUSDT while you were offline (Bybit's fill at 14:01:52 UTC).",
+      "screen": "SCR-152",
+      "owner": "E29-D03",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D03:385",
+      "params": {
+        "Main": "account label",
+        "LIVE": "environment",
+        "BTCUSDT": "symbol",
+        "14:01:52": "time (UTC)"
+      }
+    },
+    "blotter.ui.loading": {
+      "string": "Loading Sub-1 · LIVE…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:388",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.snapshot_failed": {
+      "string": "Could not load Sub-1 · LIVE",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:389",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.empty": {
+      "string": "No open positions",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:390",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.empty_cause": {
+      "string": "Positions you open on any account appear here.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:390",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.no_accounts": {
+      "string": "No accounts to show. None is assigned to you, or your access to them is frozen.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:391",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.last_update": {
+      "string": "Last update 5 s ago",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:392",
+      "key_status": "PROPOSED name",
+      "params": {
+        "5 s": "duration"
+      }
+    },
+    "blotter.ui.mark_old": {
+      "string": "Mark 15 s old — unverified",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:393",
+      "key_status": "PROPOSED name",
+      "params": {
+        "15 s": "duration"
+      }
+    },
+    "blotter.ui.feed_down_header": {
+      "string": "Not up to date · as of 14:02:11 UTC",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:398",
+      "key_status": "PROPOSED name",
+      "params": {
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "blotter.ui.feed_down_banner": {
+      "string": "Sub-2's data may be out of date (as of 14:02:11 UTC).",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:398",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Sub-2": "account label",
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "blotter.ui.degraded": {
+      "string": "Sub-1's link to Bybit is degraded; values may lag.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:399",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Sub-1": "account label"
+      }
+    },
+    "blotter.ui.filter_empty": {
+      "string": "No rows match 2 filters",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:380",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2": "count"
+      }
+    },
+    "blotter.ui.tab.trade_groups": {
+      "string": "Trade groups are not available yet",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:166",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.tab.algos": {
+      "string": "Algos are not available yet",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:166",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.liq.near": {
+      "string": "! Near 1.2",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:219",
+      "key_status": "PROPOSED name",
+      "params": {
+        "1.2": "figure"
+      }
+    },
+    "blotter.ui.liq.critical": {
+      "string": "!! Critical 0.5",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D02:220",
+      "key_status": "PROPOSED name",
+      "params": {
+        "0.5": "figure"
+      }
+    },
+    "blotter.ui.sl.verifying": {
+      "string": "SL sent — verifying",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:230",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.sl.naked": {
+      "string": "NO SL ! 12 s",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D02:232",
+      "key_status": "PROPOSED name",
+      "params": {
+        "12 s": "duration"
+      }
+    },
+    "blotter.ui.closed_today": {
+      "string": "▸ Closed today (since 00:00 UTC) · 3 · net +40.20 USDT · incl. provisional",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:244",
+      "key_status": "PROPOSED name",
+      "params": {
+        "00:00": "time (UTC)",
+        "3": "count",
+        "+40.20 USDT": "money (USDT)"
+      }
+    },
+    "blotter.ui.closing": {
+      "string": "Closing…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:341",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.ks_owner": {
+      "string": "Kill switch active — engaged by the owner at 14:02:11 UTC",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:420",
+      "key_status": "PROPOSED name",
+      "params": {
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "blotter.ui.ks_manager": {
+      "string": "Kill switch active since 14:02:11 UTC",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:421",
+      "key_status": "PROPOSED name",
+      "params": {
+        "14:02:11": "time (UTC)"
+      }
+    },
+    "blotter.ui.ks_ask": {
+      "string": "Ask the owner to close or release.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:421",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.env_block": {
+      "string": "LIVE positions",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:441",
+      "key_status": "PROPOSED name",
+      "params": {
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.amend.editing": {
+      "string": "Editing — 2,500.00 is live",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:319",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2,500.00": "figure"
+      }
+    },
+    "blotter.ui.amend.pending": {
+      "string": "Amending → 2,495.00 · 2,500.00 still live",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:320",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2,495.00": "figure",
+        "2,500.00": "figure"
+      }
+    },
+    "blotter.ui.amend.unconfirmed": {
+      "string": "Unknown — checking · 2,500.00 may still be live",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:321",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2,500.00": "figure"
+      }
+    },
+    "blotter.ui.amend.confirmed": {
+      "string": "Amend confirmed: price 2,495.00.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:322",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2,495.00": "figure"
+      }
+    },
+    "blotter.ui.amend.rejected": {
+      "string": "Amend rejected — your order is unchanged",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:323",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.amend.rejected_desc": {
+      "string": "Amend rejected. Your order is unchanged: the price is still 2,500.00.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "assertive",
+      "source": "D02:323",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2,500.00": "figure"
+      }
+    },
+    "blotter.ui.offline_notice": {
+      "string": "New orders off; cancel and close remain available, confirmed over the server.",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:396",
+      "key_status": "PROPOSED name"
+    },
+    "inflight.pending": {
+      "string": "Outcome pending — see Orders",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D02:400"
+    },
+    "sl.tighten.pending": {
+      "string": "Moving the stop to 63,980.0 — waiting for Bybit…",
+      "screen": "SCR-063",
+      "owner": "E32-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D02:320",
+      "params": {
+        "63,980.0": "figure"
+      }
+    },
+    "sl.tighten.done": {
+      "string": "Stop moved to 63,980.0 — tighter by 30.0 (300 ticks) · risk now 5.60 USDT · held by Bybit (exchange).",
+      "screen": "SCR-063",
+      "owner": "E32-D01",
+      "status": "registered",
+      "announce": "polite",
+      "source": "D02:322",
+      "params": {
+        "63,980.0": "figure",
+        "30.0": "figure",
+        "300 ticks": "ticks",
+        "5.60 USDT": "money (USDT)"
+      }
+    },
+    "sl.ws_down.acked": {
+      "string": "Bybit accepted the move to 63,980.0 — the position read that confirms it is waiting for the connection. Last confirmed stop 63,950.0.",
+      "screen": "SCR-063",
+      "owner": "E32-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D02:321",
+      "params": {
+        "63,980.0": "figure",
+        "63,950.0": "figure"
+      }
+    },
+    "rbac.view_as": {
+      "string": "Read-only while viewing as {user}.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:449",
+      "params": {
+        "{user}": "placeholder"
+      }
+    },
+    "rbac.permission": {
+      "string": "Your role can't {verb}.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:450",
+      "params": {
+        "{verb}": "placeholder"
+      }
+    },
+    "rbac.owner_only": {
+      "string": "Only the owner can {verb}.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:451",
+      "params": {
+        "{verb}": "placeholder"
+      }
+    },
+    "rbac.account": {
+      "string": "This account isn't assigned to you.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:453"
+    },
+    "rbac.account_read_only": {
+      "string": "You can view this account, not trade it.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:453"
+    },
+    "rbac.env": {
+      "string": "Live trading isn't enabled for you.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:454"
+    },
+    "glyph.name": {
+      "string": "Not available",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:455"
+    },
+    "panel.no_longer_shown": {
+      "string": "No longer shown — access to {account} was withdrawn.",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "polite",
+      "source": "D04:455",
+      "params": {
+        "{account}": "placeholder"
+      }
+    },
+    "inflight.not_sent": {
+      "string": "Not sent — your access changed. {reason}",
+      "screen": "SCR-063",
+      "owner": "E09-D09",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:455",
+      "params": {
+        "{reason}": "placeholder"
+      }
+    },
+    "frozen": {
+      "string": "Trading frozen by the owner at {hh:mm} UTC — new orders off. Cancel and close still work.",
+      "screen": "SCR-063",
+      "owner": "E30-D02",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:456",
+      "safety": true,
+      "params": {
+        "{hh:mm}": "placeholder"
+      }
+    },
+    "arm.refused": {
+      "string": "One-click trading is locked",
+      "screen": "SCR-063",
+      "owner": "E30-D02",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:457"
+    },
+    "refusal.trading_disabled.maintenance": {
+      "string": "Order entry is paused for maintenance",
+      "screen": "SCR-063",
+      "owner": "E30-D02",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:457"
+    },
+    "refusal.trading_disabled.no_active_key": {
+      "string": "{account} has no active API key",
+      "screen": "SCR-063",
+      "owner": "E30-D02",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:457",
+      "params": {
+        "{account}": "placeholder"
+      }
+    },
+    "blotter.ui.frozen_control": {
+      "string": "Frozen — the owner closes or releases",
+      "screen": "SCR-063",
+      "owner": "E39-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:458",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.lockout_chip": {
+      "string": "Locked · daily loss limit · until 00:00 UTC · closing and reducing still work",
+      "screen": "SCR-063",
+      "owner": "E39-D01",
+      "status": "registered",
+      "announce": "assertive",
+      "source": "D04:458",
+      "key_status": "PROPOSED name",
+      "safety": true,
+      "params": {
+        "00:00": "time (UTC)"
+      }
+    },
+    "blotter.ui.feed_stale": {
+      "string": "Price feed stale Ns",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:459",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Ns": "duration"
+      }
+    },
+    "blotter.ui.rate_limited": {
+      "string": "Rate limited — retry in N s",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:459",
+      "key_status": "PROPOSED name",
+      "params": {
+        "N s": "duration"
+      }
+    },
+    "blotter.ui.unreachable": {
+      "string": "Cannot reach server",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "registered",
+      "announce": "none",
+      "source": "D04:459",
+      "key_status": "PROPOSED name"
+    },
+    "guard.mismatch.row": {
+      "string": "DEMO rows are read-only in a LIVE session.",
+      "screen": "SCR-063",
+      "owner": "E30-D02",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:461",
+      "params": {
+        "DEMO": "environment",
+        "LIVE": "environment"
+      }
+    },
+    "feed.clock_drift": {
+      "string": "New orders wait until the clock is back in sync.",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:462"
+    },
+    "feed.system_unknown": {
+      "string": "New orders wait until the trading status is known.",
+      "screen": "SCR-063",
+      "owner": "E17-D01",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:462"
+    },
+    "blotter.close_in_flight": {
+      "string": "A close for this position is already in flight.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:463"
+    },
+    "blotter.amend_in_flight": {
+      "string": "An amend is already in flight.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:464"
+    },
+    "blotter.untracked": {
+      "string": "Not placed by CandleViewer — manage it on Bybit.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:465"
+    },
+    "blotter.held": {
+      "string": "Held for owner review — nothing can be sent.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:465"
+    },
+    "blotter.unknown": {
+      "string": "We could not confirm this order with Bybit; checking.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:465"
+    },
+    "sl.note": {
+      "string": "Every position keeps a native stop — you can move it, not delete it.",
+      "screen": "SCR-063",
+      "owner": "E32-D01",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:466",
+      "safety": true
+    },
+    "rbac.owner_only#2": {
+      "string": "Only the owner can resolve the lock.",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "D04:452"
+    },
+    "flatten.typed.account": {
+      "rule": "the object's own name",
+      "renders": "the account label",
+      "screen": "SCR-063",
+      "owner": "E29-D03",
+      "status": "PROPOSED",
+      "announce": "none",
+      "source": "`15`:477",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.section.working": {
+      "string": "Working · 3",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:281",
+      "key_status": "PROPOSED name",
+      "params": {
+        "3": "count"
+      }
+    },
+    "blotter.ui.section.conditional": {
+      "string": "Conditional — not triggered · 2",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:281",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2": "count"
+      }
+    },
+    "blotter.ui.sel.bar": {
+      "string": "2 selected · Close selected · Clear selection",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2": "count"
+      }
+    },
+    "blotter.ui.sel.cancel": {
+      "string": "Cancel selected",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.bulk.close_all": {
+      "string": "Close all in view…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.bulk.cancel_all": {
+      "string": "Cancel all in view…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.bulk.count": {
+      "string": "2 positions on Sub-1 · LIVE",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2": "count",
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.bulk.excluded": {
+      "string": "1 native-stop order is not included: every position keeps a native stop.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "1": "count"
+      },
+      "safety": true
+    },
+    "blotter.ui.bulk.tp_excluded": {
+      "string": "1 take-profit is not included: an amend is already in flight.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "1": "count"
+      }
+    },
+    "blotter.ui.result.done": {
+      "string": "Cancelled 4 on Main · LIVE",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "4": "count",
+        "Main": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.result.failed": {
+      "string": "Sub-1 · LIVE: Bybit did not answer — nothing cancelled",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name",
+      "params": {
+        "Sub-1": "account label",
+        "LIVE": "environment"
+      }
+    },
+    "blotter.ui.result.retry": {
+      "string": "Retry failed",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:349",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.split": {
+      "string": "Close ▾",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:153",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.pct25": {
+      "string": "Close 25 %",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:334",
+      "key_status": "PROPOSED name",
+      "params": {
+        "25 %": "fixed"
+      }
+    },
+    "blotter.ui.close.pct50": {
+      "string": "Close 50 %",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:334",
+      "key_status": "PROPOSED name",
+      "params": {
+        "50 %": "fixed"
+      }
+    },
+    "blotter.ui.close.custom": {
+      "string": "Close custom size…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:335",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.limit": {
+      "string": "Close at limit…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:336",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.reverse": {
+      "string": "Reverse…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:337",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.rounded": {
+      "string": "0.37 ETH · Rounded down to the 0.01 step",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:334",
+      "key_status": "PROPOSED name",
+      "params": {
+        "0.37 ETH": "quantity",
+        "0.01": "figure"
+      }
+    },
+    "blotter.ui.close.full": {
+      "string": "Close the full position",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:334",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.close.stop_stays": {
+      "string": "Your stop at 63,880.0 stays on the remaining 0.125 BTC.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:363",
+      "key_status": "PROPOSED name",
+      "params": {
+        "63,880.0": "figure",
+        "0.125 BTC": "quantity"
+      },
+      "safety": true
+    },
+    "blotter.ui.close.no_row": {
+      "string": "No row to close here.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:447",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.cancel.split": {
+      "string": "Cancel ▾",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:153",
+      "key_status": "PROPOSED name"
+    },
+    "blotter.ui.divergent": {
+      "string": "⚠ Bybit's figure — ours +25.04",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:252",
+      "key_status": "PROPOSED name",
+      "params": {
+        "+25.04": "figure"
+      }
+    },
+    "flatten.account.item": {
+      "string": "Flatten account…",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:155",
+      "key_status": "PROPOSED name"
+    },
+    "flatten.account.stops": {
+      "string": "cancelled with the position",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "none",
+      "source": "D02:353",
+      "key_status": "PROPOSED name"
+    },
+    "flatten.account.spans": {
+      "string": "Flatten one account at a time: the selection spans 2 accounts.",
+      "screen": "SCR-063",
+      "owner": "E29-D02",
+      "status": "merged",
+      "announce": "polite",
+      "source": "D02:447",
+      "key_status": "PROPOSED name",
+      "params": {
+        "2": "count"
+      }
+    },
+    "flatten.account.name": {
+      "string": "Flatten account — {account} · {environment}",
+      "screen": "SCR-063",
+      "owner": "E29-D04",
+      "status": "merged",
+      "announce": "none",
+      "source": "D04H:153",
+      "key_status": "PROPOSED name",
+      "params": {
+        "{account}": "placeholder",
+        "{environment}": "placeholder"
+      }
+    }
+  }
+}
