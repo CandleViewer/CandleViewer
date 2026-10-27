@@ -468,7 +468,8 @@ async def test_session_route_401_is_a_problem_with_a_catalogued_code(
     ).validate(body)
 
 
-async def test_refresh_401_is_refresh_token_invalid_for_every_cause() -> None:
-    """22 `authRefresh`: an unusable refresh token is `refresh_token_invalid`, for every cause."""
+async def test_refresh_401_names_refresh_token_invalid() -> None:
+    """22 `authRefresh`: refresh's 401 is `refresh_token_invalid` (here with no token; the other
+    causes are pinned in `tests/unit/api/idle_lock/test_refresh.py` and the fixation tests)."""
     response = await _answer(_OK, lambda w, c: w.post("/auth/refresh"))
     assert (response.status_code, response.json()["code"]) == (401, "refresh_token_invalid")
