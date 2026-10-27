@@ -1,10 +1,16 @@
 import { test, expect } from "@playwright/test";
-import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
+import {
+  assertNoClientSecrets,
+  json,
+  stubSession,
+  stubSessionsList,
+  watchForLeaks,
+} from "../support/api";
 import { installWsHarness } from "../support/wsHarness";
 
 // E09-Q02 (#293) session.spec. Covered here: the unauthenticated redirect, cookie-stripped/401
 // handling, the bootstrap session read, SCR-005 idle lock -> unlock (#1640 S2) and SCR-112 sign out
-// everywhere -> WS 4401 -> SCR-001 (#1640 S3). @electron tagged.
+// everywhere -> SCR-001, with the server's 4401 close honoured (#1640 S3). @electron tagged.
 
 test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron", async ({
   page,
@@ -138,32 +144,20 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
   await guard.flush();
 });
 
-test("#1640 SCR-112 sign out everywhere: logout all, the socket closes 4401, SCR-001", async ({
+// What this proves: the confirm sends `{all_sessions: true}` once, and the tab reaches SCR-001 through
+// `endSession()` on the 204, not through the socket. The server's `bye session_revoked` + 4401 close
+// (sent before the 204, as the hub does) is honoured: the client never re-authenticates on it. A
+// revocation from another device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS
+// client stops on it as a fatal close (`connectionRegion.ts`, G12), so that is not asserted here.
+test("#1640 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
   page,
 }) => {
   await stubSession(page, { role: "owner" });
   const harness = await installWsHarness(page);
   let revoked = false;
-  // services/api/candleviewer/api/sessions.py: `_view_json` rows in a page; after the logout the
-  // cleared cookie refreshes nothing (`_unauthorized("refresh_token_invalid")`)
-  const view = (id: string, current: boolean, device: string | null) => ({
-    id,
-    device_name: device,
-    ip: "100.64.0.7",
-    user_agent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0",
-    created_at: "2026-10-27T08:00:00+00:00",
-    last_seen_at: "2026-10-27T09:00:00+00:00",
-    expires_at: "2026-10-27T20:00:00+00:00",
-    current,
-  });
-  const items = [
-    view("00000000-0000-4000-8000-000000000002", true, null),
-    view("00000000-0000-4000-8000-000000000003", false, "Desktop app"),
-  ];
-  await page.route(
-    (url) => url.pathname === "/api/v1/auth/sessions",
-    (r) => r.fulfill(json({ items, meta: { next_cursor: null, has_more: false, count: 2 } })),
-  );
+  await stubSessionsList(page);
+  // services/api/candleviewer/api/sessions.py: after the logout the cleared cookie refreshes
+  // nothing (`_unauthorized("refresh_token_invalid")`)
   await page.route("**/api/v1/auth/refresh", (r) =>
     revoked
       ? r.fulfill(

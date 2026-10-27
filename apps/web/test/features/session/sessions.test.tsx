@@ -47,7 +47,7 @@ afterEach(cleanup);
 describe("SCR-112 sessions: states", () => {
   it("loading, then the list with the current session marked in text", async () => {
     render(<SessionsSection api={fakeApi()} />);
-    expect(screen.getByText("Loading sessions…")).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toBe("Loading sessions…"); // announced
     await noSeriousAxe();
     const table = await screen.findByRole("table", { name: "Signed-in sessions" });
     const current = within(table).getByRole("rowheader", { name: /Desktop app/u });
@@ -138,6 +138,68 @@ describe("SCR-112 sessions: revoke", () => {
     const dialog = screen.getByRole("alertdialog");
     expect((await within(dialog).findByRole("alert")).textContent).toBe(copy);
     expect(api.endSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("SCR-112 sessions: races", () => {
+  it("an older list answer never overwrites a newer one; a newer read and unmount abort", async () => {
+    type Out = { kind: "ok"; items: UserSession[] };
+    const answers: ((out: Out) => void)[] = [];
+    const signals: (AbortSignal | undefined)[] = [];
+    const list = vi.fn((signal?: AbortSignal) => {
+      signals.push(signal);
+      return new Promise<Out>((resolve) => answers.push(resolve));
+    });
+    const api = fakeApi({ list, revoke: () => Promise.resolve({ kind: "not_found" }) });
+    const view = render(<SessionsSection api={api} />);
+    answers[0]?.({ kind: "ok", items: SESSIONS });
+    fireEvent.click(await screen.findByRole("button", { name: /^Revoke Mozilla/u }));
+    const dialog = screen.getByRole("alertdialog");
+    const confirm = within(dialog).getByRole("button", { name: "Revoke" });
+    fireEvent.click(confirm); // 404: read 2
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(confirm).toHaveProperty("disabled", false));
+    fireEvent.click(confirm); // 404 again: read 3 replaces read 2
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(3));
+    expect(signals[1]?.aborted).toBe(true);
+    answers[2]?.({ kind: "ok", items: [SESSIONS[0] as UserSession] });
+    await waitFor(() => expect(screen.getAllByRole("row")).toHaveLength(2)); // header + 1
+    answers[1]?.({ kind: "ok", items: SESSIONS }); // the older answer, last
+    await Promise.resolve();
+    expect(screen.getAllByRole("row")).toHaveLength(2);
+    view.unmount();
+    expect(signals[2]?.aborted).toBe(true);
+  });
+
+  it("unmounted mid-request: a done sign-out still ends the session", async () => {
+    let answer: (v: { kind: "done" }) => void = () => undefined;
+    const api = fakeApi({ signOutEverywhere: () => new Promise((r) => (answer = r)) });
+    const view = render(<SessionsSection api={api} />);
+    await screen.findByRole("table");
+    fireEvent.click(screen.getByRole("button", { name: "Sign out everywhere" }));
+    const dialog = screen.getByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Sign out everywhere" }));
+    view.unmount();
+    answer({ kind: "done" });
+    await waitFor(() => expect(api.endSession).toHaveBeenCalledTimes(1));
+  });
+
+  it("cancel after the opener's row went in a re-read: focus goes to the heading", async () => {
+    const list = vi
+      .fn<SessionsApi["list"]>()
+      .mockResolvedValueOnce({ kind: "ok", items: SESSIONS })
+      .mockResolvedValue({ kind: "ok", items: [SESSIONS[0] as UserSession] });
+    const api = fakeApi({ list, revoke: () => Promise.resolve({ kind: "not_found" }) });
+    render(<SessionsSection api={api} />);
+    const revoke = await screen.findByRole("button", { name: /^Revoke Mozilla/u });
+    revoke.focus();
+    fireEvent.click(revoke);
+    fireEvent.click(screen.getByRole("button", { name: "Revoke" }));
+    const dialog = screen.getByRole("alertdialog");
+    await within(dialog).findByText("That session has already ended.");
+    await waitFor(() => expect(revoke.isConnected).toBe(false));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(document.activeElement).toBe(screen.getByRole("heading", { name: "Sessions" }));
   });
 });
 

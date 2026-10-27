@@ -41,12 +41,20 @@ describe("sessionsApi.list", () => {
   });
 
   it.each([
+    [401, "unavailable"], // not the sign-out-everywhere refusal
     [403, "forbidden"],
     [503, "unavailable"],
     [422, "unavailable"],
   ])("%s -> %s", async (status, kind) => {
     apiFetch.mockResolvedValueOnce(problem(status, "x", "server detail never shown"));
     expect(await sessionsApi.list()).toEqual({ kind });
+  });
+
+  it("passes the caller's abort signal to every page", async () => {
+    apiFetch.mockResolvedValueOnce(reply(200, page(["a"], null)));
+    const abort = new AbortController();
+    await sessionsApi.list(abort.signal);
+    expect(apiFetch.mock.calls[0]?.[1]).toEqual({ signal: abort.signal });
   });
 
   it("a body without items, or no answer, is unavailable", async () => {

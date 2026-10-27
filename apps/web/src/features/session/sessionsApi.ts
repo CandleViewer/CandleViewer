@@ -21,7 +21,8 @@ export type ListOutcome =
 export type ActionOutcome = { readonly kind: "done" } | { readonly kind: SessionsFailure };
 
 export interface SessionsApi {
-  list(): Promise<ListOutcome>;
+  /** `signal` aborts the read (the section unmounted, or a newer read replaced it). */
+  list(signal?: AbortSignal): Promise<ListOutcome>;
   revoke(sessionId: string): Promise<ActionOutcome>;
   signOutEverywhere(): Promise<ActionOutcome>;
   /** Forgets the token in every tab and routes to SCR-001. */
@@ -39,14 +40,18 @@ function failure(status: number): SessionsFailure {
   return "unavailable"; // 503, 422 and anything unexpected
 }
 
-async function list(): Promise<ListOutcome> {
+async function list(signal?: AbortSignal): Promise<ListOutcome> {
   const items: UserSession[] = [];
   let cursor: string | null = null;
   try {
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const query = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-      const res = await apiFetch(`/api/v1/auth/sessions?limit=${PAGE}${query}`);
-      if (!res.ok) return { kind: failure(res.status) };
+      const res = await apiFetch(
+        `/api/v1/auth/sessions?limit=${PAGE}${query}`,
+        signal === undefined ? undefined : { signal },
+      );
+      // a 401 here judged no sign-out everywhere: it is not `refused` (whose copy is about that)
+      if (!res.ok) return { kind: res.status === 401 ? "unavailable" : failure(res.status) };
       const body = (await res.json()) as {
         items?: unknown;
         meta?: { has_more?: unknown; next_cursor?: unknown };

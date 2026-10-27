@@ -3,6 +3,41 @@
  * PROPOSED (no hi-fi): the layout is built from the text (E09-D09 grammar, the `14` entry, E09-D06
  * vocabulary); every string not quoted from a merged spec is PROPOSED (copy-pending, #2701).
  * Temporary dialog chrome (#2725) as in SCR-005. Fetched on open, never polled (`14` Performance).
+ *
+ * Deviation from `14` ("device, IP, location"): `UserSession` has no location field, so the IP
+ * stands in for it. View-as: the server scopes the list to the viewed user and the actions to the
+ * caller's own sessions; this section hides nothing under view-as, and no view-as UI exists yet.
+ *
+ * Copy-pending table (PROPOSED unless marked verbatim):
+ *
+ * | Key                     | String                                                              |
+ * | ----------------------- | ------------------------------------------------------------------- |
+ * | `sessions.heading`      | "Sessions"                                                          |
+ * | `sessions.caption`      | "Signed-in sessions"                                                |
+ * | `sessions.columns`      | "Device" · "IP address" · "Signed in" · "Last seen" · "Action"      |
+ * | `sessions.current`      | "This session"                                                      |
+ * | `sessions.no_ip`        | "Not recorded"                                                      |
+ * | `sessions.no_device`    | "Unknown device"                                                    |
+ * | `sessions.no_time`      | "Unknown"                                                           |
+ * | `sessions.loading`      | "Loading sessions…"                                                 |
+ * | `sessions.empty`        | "No active sessions."                                               |
+ * | `sessions.retry`        | "Try again"                                                         |
+ * | `sessions.revoked`      | "Session revoked."                                                  |
+ * | `sessions.revoke`       | "Revoke" (+ hidden " {device} (this session)" / ", last seen {t}")  |
+ * | `sessions.revoke.title` | "Revoke session?"                                                   |
+ * | `sessions.revoke.other` | "{device} will be signed out."                                      |
+ * | `sessions.revoke.self`  | "This will sign you out on this device." (verbatim, `14` SCR-112)   |
+ * | `sessions.revoke.self.verb` | "Revoke and sign out"                                           |
+ * | `sessions.all`          | "Sign out everywhere" (button and confirm verb)                     |
+ * | `sessions.all.title`    | "Sign out everywhere?"                                              |
+ * | `sessions.all.body`     | "Every session, this one included, will be signed out." + E09-D06   |
+ * |                         | `sign-out-instead` body (verbatim)                                  |
+ * | `sessions.cancel`       | "Cancel"                                                            |
+ * | `sessions.forbidden`    | "This was refused. Reload the page, then try again."                |
+ * | `sessions.not_found`    | "That session has already ended."                                   |
+ * | `sessions.refused`      | "Signing out everywhere needs a fresh sign-in. Sign in again, then try." |
+ * | `sessions.unavailable`  | "Couldn't reach the server. Try again." (= `lock.unreachable`)      |
+ * | page h1 (R-201)         | "Security settings" (the `14` screen name)                          |
  */
 import { useCallback, useEffect, useId, useRef, useState, type JSX } from "react";
 import { actions, card, hidden, primary, scrim, secondary, title, useModalKeys } from "./chrome";
@@ -42,6 +77,8 @@ const cell = {
 } as const;
 /** On the page (no themed surface under it yet), a button carries its own surface for contrast. */
 const onPage = { ...secondary, background: "var(--color-surface-raised)" } as const;
+/** `hidden` (the 1 px clip, as packages/ui's live region) is absolute: the button contains it. */
+const revokeButton = { ...onPage, position: "relative" } as const;
 const badge = {
   marginInlineStart: "var(--space-2)",
   padding: "0 var(--space-2)",
@@ -61,6 +98,8 @@ export function SessionsSection({
   /** Focused once the dialog is gone: its focus guard pulls focus back while it is mounted. */
   const focusNext = useRef<HTMLElement | null>(null);
   const alive = useRef(true);
+  /** The latest list read: an older answer never overwrites a newer one; unmount aborts it. */
+  const reads = useRef<{ seq: number; abort: AbortController | null }>({ seq: 0, abort: null });
   const [list, setList] = useState<ListState>({ kind: "loading" });
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(false);
@@ -68,15 +107,23 @@ export function SessionsSection({
   const [status, setStatus] = useState("");
 
   const load = useCallback(async () => {
+    const seq = (reads.current.seq += 1);
+    reads.current.abort?.abort();
+    const abort = new AbortController();
+    reads.current.abort = abort;
     setList({ kind: "loading" });
-    const out = await api.list();
-    if (!alive.current) return;
+    const out = await api.list(abort.signal);
+    if (!alive.current || seq !== reads.current.seq) return;
     setList(out.kind === "ok" ? out : { kind: "error", failure: out.kind });
   }, [api]);
   useEffect(() => {
+    const live = reads.current; // the same object for the component's life; read at cleanup time
     alive.current = true;
     void load();
-    return () => void (alive.current = false);
+    return () => {
+      alive.current = false;
+      live.abort?.abort();
+    };
   }, [load]);
 
   const open = (next: Pending): void => {
@@ -91,20 +138,23 @@ export function SessionsSection({
     focusNext.current = null;
   }, [pending]);
   const cancel = (): void => {
-    focusNext.current = opener.current;
+    // the opener's row may have gone in a re-read meanwhile: the heading takes focus then
+    focusNext.current = opener.current?.isConnected === true ? opener.current : heading.current;
     setPending(null);
   };
   const confirm = async (): Promise<void> => {
     if (pending === null) return;
+    const one = pending.kind === "one" ? pending.session : null;
+    // `null` is "everywhere"; a row without an id (its button disabled) is never widened to it
+    const target: string | null | undefined = one === null ? null : one.id;
+    if (target === undefined) return;
     setBusy(true);
     setFailed(null);
-    const one = pending.kind === "one" ? pending.session : null;
-    const target = one === null ? null : (one.id ?? "");
-    // a row without an id never reaches here (its button is disabled); never widened to "everywhere"
     const out = target === null ? await api.signOutEverywhere() : await api.revoke(target);
-    if (!alive.current) return;
-    // 22 `revokeMySession`: revoking the current session is a logout; so is signing out everywhere
+    // 22 `revokeMySession`: revoking the current session is a logout; so is signing out everywhere.
+    // The session is gone server-side, so it ends here even if the section unmounted meanwhile.
     if (out.kind === "done" && (one === null || one.current === true)) return api.endSession();
+    if (!alive.current) return;
     setBusy(false);
     if (out.kind !== "done") {
       setFailed(out.kind);
@@ -122,8 +172,7 @@ export function SessionsSection({
       <h2 id={`${id}-h`} ref={heading} tabIndex={-1}>
         Sessions
       </h2>
-      <p role="status">{status}</p>
-      {list.kind === "loading" ? <p>Loading sessions…</p> : null}
+      <p role="status">{list.kind === "loading" ? "Loading sessions…" : status}</p>
       {list.kind === "error" ? (
         <>
           <p role="alert">{FAILURE[list.failure]}</p>
@@ -146,8 +195,8 @@ export function SessionsSection({
             </tr>
           </thead>
           <tbody>
-            {list.items.map((s) => (
-              <tr key={s.id}>
+            {list.items.map((s, index) => (
+              <tr key={s.id ?? index}>
                 <th scope="row" style={cell}>
                   {deviceOf(s)}
                   {s.current === true ? <span style={badge}>This session</span> : null}
@@ -158,7 +207,7 @@ export function SessionsSection({
                 <td style={cell}>
                   <button
                     type="button"
-                    style={onPage}
+                    style={revokeButton}
                     disabled={s.id === undefined}
                     onClick={() => open({ kind: "one", session: s })}
                   >
