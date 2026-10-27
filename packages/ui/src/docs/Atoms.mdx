@@ -259,3 +259,19 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | tooltip, `describes` | tooltip | —       | In the DOM at mount and `hidden`; the trigger's `aria-describedby` points at it.             |
 | tooltip, `echo`      | tooltip | —       | `aria-hidden`: a visual copy of the trigger's `aria-label` or of its always-rendered reason. |
 | trigger              | its own | its own | Must take focus; a static atom never hosts a tooltip. Never the `title` attribute.           |
+
+### Popover (CMP-017, a non-modal dialog; APG Dialog (Modal) when `modal`)
+
+| Keys                         | Action                                                                                                                          |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Enter / Space on the trigger | Opens it; focus moves to `initialFocusRef`, else its first control, else its heading (`tabindex="-1"`), else the panel.         |
+| Tab / Shift+Tab, modal       | Cycles inside, in DOM order.                                                                                                    |
+| Tab / Shift+Tab, non-modal   | Through its controls; Tab past the last closes it and moves on from the trigger; Shift+Tab before the first returns and closes. |
+| Esc                          | Closes it (the topmost layer: a tooltip inside takes Esc first); focus returns to the trigger.                                  |
+| A press outside              | Closes it only when the press starts and ends outside; focus goes to the pressed control, else to the trigger.                  |
+| Focus leaving it, non-modal  | Closes it; focus stays where it went. A modal popover takes escaped focus back.                                                 |
+
+| Element | Role               | Name                                                                 | ARIA                                                       |
+| ------- | ------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------- |
+| trigger | button (its own)   | its own                                                              | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls` |
+| popover | dialog (portalled) | `aria-label`, `aria-labelledby` or its `heading`; one required (H11) | `aria-modal="true"` only when `modal`                      |
