@@ -37,7 +37,7 @@ from candleviewer.app import create_app
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
-from candleviewer.observability.correlation import CorrelationMiddleware
+from candleviewer.observability.correlation import CORRELATION_HEADER, CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.cancel_all import (
     CancelAll,
@@ -81,13 +81,16 @@ _RESULT = Draft202012Validator(
 #: A first `200` the 24 h record holds for the key under another body's fingerprint.
 _OTHER_BODY = StoredResponse("0" * 64, 200, b"{}", None)
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
-#: 22's `InternalError` example: the redacted `500` its text says every exit route answers.
-[_FAULT_BODY] = [
+#: 22's `InternalError` example: the redacted `500` every exit route answers, with its request's
+#: `instance` (CG11).
+[_FAULT_EXAMPLE] = [
     shown["value"]
     for shown in _SPEC["components"]["responses"]["InternalError"]["content"][
         "application/problem+json"
     ]["examples"].values()
 ]
+#: Its members but `instance`, which names each answer's own request.
+_FAULT_BODY = {name: value for name, value in _FAULT_EXAMPLE.items() if name != "instance"}
 
 
 def _row(n: int, account: UUID = ACCOUNT, **over: Any) -> OrderRow:
@@ -683,12 +686,14 @@ async def test_a_stop_begun_after_step_3_answers_not_ready_and_frees_the_key() -
 
 
 async def test_a_run_that_raises_answers_500_pages_and_keeps_nothing() -> None:
-    """The redacted `500` (22 `InternalError`, its example as it stands), paged once by the
-    fault's class; nothing kept, and the in-flight key free again (N1, S4-E's delta 4)."""
+    """The redacted `500` (22 `InternalError`, its example with the request's own `instance`),
+    paged once by the fault's class; nothing kept, and the in-flight key free again (N1, S4-E's
+    delta 4)."""
     world = World()
     world.oms.broken = True
     answer = await post(world, "owner", {})
-    assert (answer.status_code, answer.json()) == (500, _FAULT_BODY)
+    named = {**_FAULT_BODY, "instance": f"urn:cv:req:{answer.headers[CORRELATION_HEADER]}"}
+    assert (answer.status_code, answer.json()) == (500, named)
     assert world.pager.pages == [f"{EXIT_FAULT_PAGE}:ExceptionGroup"]  # one page by its class
     assert world.cache.get(str(USER), f"cancelAllOrders:{KEY}") is None
     assert world.refused("internal_error") == 1
@@ -936,6 +941,8 @@ async def test_a_fault_answering_or_keeping_the_200_is_the_paged_500(
         monkeypatch.setattr(world.cache, "put", broken)
     answer = await post(world, "owner", {})
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
+    trace = answer.headers[CORRELATION_HEADER]  # CG11: the `500` names its request
+    assert answer.json()["instance"] == f"urn:cv:req:{trace}"
     assert world.pager.pages == [f"{EXIT_FAULT_PAGE}:ValueError"]  # one page by its class
     assert len(world.oms.exits.cancelled) == 2
 

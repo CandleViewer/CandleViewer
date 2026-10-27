@@ -10,7 +10,6 @@ as generated, and let FastAPI own the cache.
 from __future__ import annotations
 
 import copy
-import re
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -366,9 +365,8 @@ def test_openapi_json_is_a_redacted_500_for_a_refused_or_failed_publish_then_rec
     problem = refused.json()
     Problem.model_validate(problem)
     assert (problem["status"], problem["code"]) == (500, "internal_error")
-    assert set(problem) <= {"type", "title", "status", "code", "instance"}, "free text echoed"
-    instance = problem.pop("instance", None)  # contract: urn:cv:req:{uuid}
-    assert instance is None or re.fullmatch(r"urn:cv:req:[0-9a-f-]{36}", instance)
+    # 22 `InternalError` (CG11): the unhandled-exception handler's `500` names no request
+    assert set(problem) <= {"type", "title", "status", "code"}, "free text echoed"
     assert problem == {
         "type": "https://candleviewer.local/errors/internal_error",
         "title": "Internal server error",

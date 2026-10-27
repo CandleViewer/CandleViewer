@@ -21,6 +21,7 @@ from structlog.testing import capture_logs
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.order_problems import order_problem, outcome_problem
 from candleviewer.domain.order_entry import _ID_SHAPED, OrderEntryRefusal
+from candleviewer.observability.context import bind_context
 from candleviewer.oms.errors import (
     PROBLEMS,
     AccountScopeDenied,
@@ -263,6 +264,20 @@ def test_an_error_no_row_names_is_the_redacted_500_unpaged(error: OmsError) -> N
 def test_an_error_that_is_no_refusal_answers_its_code_and_title_only() -> None:
     body = _body(order_problem(AuditNotDurable("the order's write-ahead audit did not land")))
     assert (body["status"], set(body)) == (503, _REDACTED)
+
+
+def test_an_internal_error_names_its_request_in_instance_and_no_other_code_does() -> None:
+    """CG11 (S4-G2d, the orchestrator's ruling of 2026-10-26 19:24Z): an order route's `500
+    internal_error` carries `instance`, `urn:cv:req:{id}`, the id `CorrelationMiddleware` bound
+    for the request and `X-Correlation-Id` echoes; any other code carries none, even in a
+    request, and outside one (no id bound) the `500` carries none either."""
+    request_id = str(uuid4())
+    with bind_context(request_id=request_id):
+        fault = _body(order_problem(OmsError("a fault no row names")))
+        refusal = _body(order_problem(AuditNotDurable("the order's write-ahead audit")))
+    assert fault["instance"] == f"urn:cv:req:{request_id}"
+    assert set(fault) == _REDACTED | {"instance"} and "instance" not in refusal
+    assert "instance" not in _body(order_problem(OmsError("a fault outside a request")))
 
 
 def test_a_pager_that_fails_is_logged_never_the_answer() -> None:

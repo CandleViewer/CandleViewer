@@ -381,13 +381,16 @@ class _Pager:
 
 
 _SPEC: Any = load_openapi_spec()  # a parsed YAML document, walked untyped
-#: 22's `InternalError` example: the redacted `500` its text says every exit route answers.
-[_FAULT_BODY] = [
+#: 22's `InternalError` example: the redacted `500` its text says every exit route answers, with
+#: its request's `instance` (CG11).
+[_FAULT_EXAMPLE] = [
     shown["value"]
     for shown in _SPEC["components"]["responses"]["InternalError"]["content"][
         "application/problem+json"
     ]["examples"].values()
 ]
+#: The same `500` outside a request, where no id is bound: no `instance`.
+_FAULT_BODY = {name: value for name, value in _FAULT_EXAMPLE.items() if name != "instance"}
 _TEXT = "a defect naming order 0a000000-0000-4000-8000-000000000003"
 
 
@@ -415,6 +418,29 @@ def test_every_exit_500_is_the_redacted_500_paged_once_by_its_class(
     assert json.loads(bytes(answer.body)) == _FAULT_BODY and "retry-after" not in answer.headers
     assert pager.pages == [("page", page, "order")]
     assert _TEXT not in bytes(answer.body).decode() and _TEXT not in page
+
+
+@pytest.mark.parametrize(
+    "error",
+    [RuntimeError(_TEXT), OrderHistoryRefused(_TEXT), OrderMachinesFull(_TEXT)],
+    ids=["no-oms-error", "no-row", "a-row-that-pages"],
+)
+def test_every_exit_500_names_its_request_in_instance(error: Exception) -> None:
+    """CG11 (S4-G2d, the orchestrator's ruling of 2026-10-26 19:24Z): within a request, every exit
+    `500 internal_error`, the exit routes' own (`exit_problem`) or a row's (`order_problem`),
+    carries `instance`, `urn:cv:req:{id}`, the id `X-Correlation-Id` echoes; a refusal of
+    another code carries none."""
+    request_id = str(uuid.uuid4())
+    with bind_context(request_id=request_id):
+        _, answer = common.exit_fault(error, pager=_Pager())
+        refused = common.exit_problem(
+            ExitOutcome(kind="refused", status=409, code="conflict", detail="Not now.")
+        )
+    body = json.loads(bytes(answer.body))
+    assert body == {**_FAULT_BODY, "instance": f"urn:cv:req:{request_id}"}
+    assert "instance" not in json.loads(bytes(refused.body))
+    shown = uuid.UUID(_FAULT_EXAMPLE["instance"].removeprefix("urn:cv:req:"))
+    assert (_FAULT_EXAMPLE["instance"], shown.version) == (f"urn:cv:req:{shown}", 4)
 
 
 def test_the_exit_routes_page_is_its_key_and_the_faults_class() -> None:
@@ -510,3 +536,21 @@ async def test_a_faults_answer_that_raises_is_the_last_resorts_500_paged_by_clas
         "event": "oms_exit_fault_answer_failed", "fault": "RuntimeError", "failure": "KeyError",
         "cv_page": True, "log_level": "critical",
     }]  # fmt: skip
+
+
+async def test_the_last_resorts_500_within_a_request_names_it_in_instance() -> None:
+    """CG11 (S4-G2d): the last resort's redacted `500`, answered in the exit's task when `faulted`
+    raises too, names its request in `instance` as every exit `500` does, the task running under
+    a copy of the request's context."""
+    oms, request_id = _Runtime(), str(uuid.uuid4())
+
+    async def exit_() -> Response:
+        raise RuntimeError(_TEXT)
+
+    def broken(error: Exception) -> Response:
+        raise KeyError(_TEXT)
+
+    with bind_context(request_id=request_id):
+        got = await run_claimed(oms, USER, "cancel", KEY, exit_, refused=_never, faulted=broken)
+    named = {**_FAULT_BODY, "instance": f"urn:cv:req:{request_id}"}
+    assert (got.status_code, json.loads(bytes(got.body))) == (500, named)

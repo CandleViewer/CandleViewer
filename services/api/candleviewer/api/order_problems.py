@@ -7,10 +7,12 @@ order-entry gate's `reason` (`TradingDisabledProblem`; any other `trading_disabl
 `Problem`) and a business rejection's `exchange.ret_code` alone (`OrderExchangeProblem`,
 SR-E29-09). A row that pages pages the operator and answers the redacted 500, its code and title
 only, as does an error no row names, unpaged; an error that is no `OrderRefused` answers its code
-and title only too, as its text may name an id. `outcome_problem(outcome)` renders a recorded 429
-or 502 (`SubmitOutcome`): `Retry-After` on a first 429 only (22 `placeOrder`), a 502's return
-code alone. The repeat of either answers `Idempotency-Replayed: true` (22, Idempotency), and a
-repeated 429, which is not retryable under its key, says to send the order again under a new one.
+and title only too, as its text may name an id. A `500 internal_error` adds its request's
+`instance` (`internal_instance`, 22 `InternalError`; CG11). `outcome_problem(outcome)` renders a
+recorded 429 or 502 (`SubmitOutcome`): `Retry-After` on a first 429 only (22 `placeOrder`), a
+502's return code alone. The repeat of either answers `Idempotency-Replayed: true` (22,
+Idempotency), and a repeated 429, which is not retryable under its key, says to send the order
+again under a new one.
 
 A plain module, like `api/exchange_keys.py`'s problems, with no router (the composition guard
 fails an `api` module whose router `create_app` leaves out): slice 3's route calls it. Every
@@ -25,6 +27,7 @@ from typing import Any, Final
 import structlog
 from fastapi.responses import JSONResponse
 
+from candleviewer.observability.context import current_request_uuid
 from candleviewer.oms.errors import (
     INTERNAL_ERROR,
     PROBLEMS,
@@ -40,7 +43,7 @@ from candleviewer.oms.submit import SubmitOutcome
 from candleviewer.statechart.plugins import LogPager, Pager
 from candleviewer.ws._generated.error_codes import ERROR_META, ErrorCode
 
-__all__ = ["order_problem", "outcome_problem"]
+__all__ = ["internal_instance", "order_problem", "outcome_problem"]
 
 _MEDIA: Final = "application/problem+json"
 _TYPE: Final = "https://candleviewer.local/errors/"
@@ -69,6 +72,16 @@ def order_problem(error: OmsError, *, pager: Pager | None = None) -> JSONRespons
     )
 
 
+def internal_instance(code: str) -> str | None:
+    """A `500 internal_error`'s `instance` (22 `InternalError`; CG11, the orchestrator's ruling of
+    2026-10-26 19:24Z): `urn:cv:req:{id}`, the id `CorrelationMiddleware` bound for the request,
+    which `X-Correlation-Id` echoes and the logs carry, so the answer names its request. Any other
+    code carries none (`instance` on every problem answer is post-GA), nor does a `500` outside a
+    request, where no id is bound."""
+    request_id = current_request_uuid() if code == INTERNAL_ERROR.code else None
+    return None if request_id is None else f"urn:cv:req:{request_id}"
+
+
 def outcome_problem(outcome: SubmitOutcome) -> JSONResponse:
     """A recorded 429 or 502 (module docstring); a 202 is an acceptance, never a problem."""
     if outcome.status == 429:
@@ -90,8 +103,9 @@ def outcome_problem(outcome: SubmitOutcome) -> JSONResponse:
 
 
 def _response(problem: Problem, *, replayed: bool = False, **members: object) -> JSONResponse:
-    """The body of `problem`'s code with each member that is set; `retry_after_seconds` sets the
-    `Retry-After` header too, and a repeat of a recorded answer `Idempotency-Replayed: true`."""
+    """The body of `problem`'s code with each member that is set and, on an `internal_error`, its
+    request's `instance` (`internal_instance`); `retry_after_seconds` sets the `Retry-After`
+    header too, and a repeat of a recorded answer `Idempotency-Replayed: true`."""
     code = problem.code
     body: dict[str, object] = {
         "type": f"{_TYPE}{code}",
@@ -100,6 +114,8 @@ def _response(problem: Problem, *, replayed: bool = False, **members: object) ->
         "code": code,
     }
     body |= {name: value for name, value in members.items() if value is not None}
+    if (instance := internal_instance(code)) is not None:
+        body["instance"] = instance
     retry = members.get("retry_after_seconds")
     headers = {} if retry is None else {"Retry-After": str(retry)}
     if replayed:

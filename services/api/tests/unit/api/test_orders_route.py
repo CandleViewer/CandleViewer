@@ -33,7 +33,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.order_entry import OrderEntryRefusal
 from candleviewer.domain.primitives import Environment, GroupId
-from candleviewer.observability.correlation import CorrelationMiddleware
+from candleviewer.observability.correlation import CORRELATION_HEADER, CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
     AccountScopeDenied,
@@ -988,6 +988,8 @@ async def test_a_first_answer_without_its_rows_fails_closed_and_pages() -> None:
     world.oms.submission.outcome = replace(first_entry(), written=None)
     answer = await post(world)
     assert (answer.status_code, answer.json()["code"]) == (500, "internal_error")
+    trace = answer.headers[CORRELATION_HEADER]  # CG11: the `500` names its request
+    assert answer.json()["instance"] == f"urn:cv:req:{trace}"
     assert world.pager.pages == ["orders_first_answer_unwritten"]
     assert world.rejected("internal_error") == 1  # 20 Sec.12.1 pages on it
     assert world.cache.get(str(USER), f"placeOrder:{KEY}") is None
