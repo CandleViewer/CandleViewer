@@ -284,6 +284,21 @@ async def test_wrong_factor_names_the_attempts_left_before_the_downgrade() -> No
     assert (elsewhere.status_code, elsewhere.json()["failures_remaining"]) == (401, 2)
 
 
+async def test_wrong_factor_title_is_the_error_registry_title() -> None:
+    """`401 mfa_invalid` states the catalogued title (`x-error-codes`,
+    error_registry_single_source), never a literal of its own."""
+    w = await _world()
+    cid = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h()).json()["challenge_id"]
+    body = w.step_up(code="000000", challenge_id=cid).json()
+    spec: dict[str, Any] = _SPEC
+    entry = {e["code"]: e for e in spec["x-error-codes"]}["mfa_invalid"]
+    assert (body["code"], body["status"], body["title"]) == (
+        entry["code"],
+        entry["status"],
+        entry["title"],
+    )
+
+
 async def test_failures_remaining_starts_again_after_a_successful_step_up() -> None:
     w = await _world()
     path = f"/users/{uuid.uuid4()}/invite"

@@ -98,6 +98,9 @@ SESSION_READ_ONLY_DETAIL = (
 AUDIT_UNAVAILABLE_CODE = ErrorCode.AUDIT_UNAVAILABLE.value
 AUDIT_UNAVAILABLE_TITLE = ERROR_META[ErrorCode.AUDIT_UNAVAILABLE].title
 AUDIT_UNAVAILABLE_DETAIL = "audit unavailable"
+#: `401 mfa_invalid` of a wrong step-up factor: the catalogued code and title (`x-error-codes`).
+MFA_INVALID_CODE = ErrorCode.MFA_INVALID.value
+MFA_INVALID_TITLE = ERROR_META[ErrorCode.MFA_INVALID].title
 #: What `AuditService.writer` raises before `start()`; any other `RuntimeError` is a defect.
 _AUDIT_NOT_STARTED = "AuditService.start() has not wired"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
@@ -852,8 +855,8 @@ def make_step_up_router(
             # the read-only downgrade, from its row (`sessions.step_up_failures`).
             return _problem(
                 401,
-                "mfa_invalid",
-                "Step-up rejected",
+                MFA_INVALID_CODE,
+                MFA_INVALID_TITLE,
                 "Invalid password or code.",
                 failures_remaining=exc.failures_remaining,
             )
