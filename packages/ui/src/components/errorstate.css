@@ -1,0 +1,149 @@
+/*
+ * CMP-027 ErrorState / InlineError. Tokens only. The panel form lays out as CMP-026's block (emptystate.css);
+ * the banner form is CMP-028's box (callout.css, the danger or warning tone) and takes nothing here but its
+ * summary and details parts. The glyph is the severity's .strong; the words are text.primary. Static: no
+ * motion, it appears at once.
+ */
+.cv-error-state {
+  --cv-error-strong: var(--color-status-danger-strong);
+  color: var(--color-text-primary);
+}
+
+.cv-error-state[data-severity="warning"] {
+  --cv-error-strong: var(--color-status-warning-strong);
+}
+
+.cv-error-state__glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--cv-error-strong);
+}
+
+.cv-error-state[data-form="panel"] > .cv-error-state__glyph {
+  width: var(--size-icon-lg);
+  height: var(--size-icon-lg);
+}
+
+.cv-error-state__message > p {
+  margin: 0;
+}
+
+.cv-error-state[data-form="panel"] .cv-error-state__text,
+.cv-error-state[data-form="inline"] .cv-error-state__text {
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* The panel: CMP-026's column; the words and the actions centred under the glyph. */
+.cv-error-state[data-form="panel"] .cv-error-state__main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-stack-sm);
+}
+
+.cv-error-state[data-form="panel"] .cv-error-state__message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-stack-sm);
+}
+
+.cv-error-state[data-form="panel"] .cv-error-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-inset-sm);
+  margin-block-start: calc(var(--space-stack-md) - var(--space-stack-sm));
+}
+
+/* Inline: one row at the point of action, glyph, words, then Retry; inset.xs apart, no fill. */
+.cv-error-state[data-form="inline"],
+.cv-error-state[data-form="inline"] .cv-error-state__main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+.cv-error-state[data-form="inline"] .cv-error-state__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cv-error-state[data-form="inline"] .cv-error-state__actions {
+  display: inline-flex;
+  gap: var(--space-inset-xs);
+}
+
+/* The error summary: its heading over a list of CMP-021 links, stack.xs apart. */
+.cv-error-state__title {
+  color: var(--color-text-primary);
+}
+
+.cv-error-state__items {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cv-error-state[data-form="banner"] .cv-error-state__message {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+}
+
+/* "Technical details": selectable, scrolling inside its box, never truncated, beside its CMP-033 copy. */
+.cv-error-state__disclosure {
+  align-self: stretch;
+  text-align: start;
+}
+
+.cv-error-state__details:not([hidden]) {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-sm);
+  margin-block-start: var(--space-stack-xs);
+  padding: var(--space-inset-sm);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+
+.cv-error-state__details-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: auto;
+  color: var(--color-text-secondary);
+  font-family: var(--type-num-sm-font-family);
+  font-size: var(--type-num-sm-font-size);
+  font-weight: var(--type-num-sm-font-weight);
+  line-height: var(--type-num-sm-line-height);
+  font-variant-numeric: tabular-nums;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+@media (forced-colors: active) {
+  /* The words and the glyph CanvasText (the glyph's shape carries the severity); the details box a 1px
+     CanvasText border. The banner's box is CMP-028's forced-colours box. */
+  .cv-error-state,
+  .cv-error-state__glyph,
+  .cv-error-state__title,
+  .cv-error-state__text,
+  .cv-error-state__details-text {
+    color: CanvasText;
+  }
+
+  .cv-error-state__details:not([hidden]) {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+}

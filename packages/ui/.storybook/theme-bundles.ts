@@ -27,6 +27,8 @@ import "../src/components/confidencedots.css";
 import "../src/components/copybutton.css";
 import "../src/components/countdown.css";
 import "../src/components/divider.css";
+import "../src/components/emptystate.css";
+import "../src/components/errorstate.css";
 import "../src/components/toggle.css";
 import "../src/components/tooltip.css";
 import "../src/components/typography.css";
