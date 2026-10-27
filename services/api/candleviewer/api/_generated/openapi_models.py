@@ -2968,7 +2968,7 @@ class Member(BaseModel):
         ]
         | None,
         Field(
-            description="Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count.\n"
+            description="Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3); a reason a client does not know is read by `ready: false`.\n"
         ),
     ]
 
@@ -5867,7 +5867,7 @@ class Rejection(BaseModel):
         ]
         | None,
         Field(
-            description="`skipped` and the sizer's skips (24-internal-schemas.md section 9.3.4)\nmark a `skipped` leg, and every other code a `blocked` one, a member's\nreadiness reason (`TradeGroupReadiness`) included. Among them:\n- `skipped`: the request's `overrides.skip` leaves the leg out.\n- `profile_disabled`: its profile is disabled or does not trade.\n- `symbol_denied`: its profile's `blocked_symbols` holds the symbol.\n- `below_min_notional`: it sizes under the minimum quantity or notional.\n- `no_reference_price`: no mid or last price to size a market leg from.\n- `invalid_stop_distance`: its stop is not above 0 or not on the loss side.\n- `figure_unknown`: a figure its sizing needs is not cached.\n- `stop_beyond_liquidation`: its stop would not fire before liquidation.\n- `account_disabled`: its account is disabled.\n- `account_unhealthy`: its account fails the health check.\n- `trading_disabled`: order entry is closed for its account.\n- `risk_state_unavailable`: the risk gate has no state to judge it by.\n"
+            description="`skipped` and the sizer's skips (24-internal-schemas.md section 9.3.4)\nmark a `skipped` leg, and every other code a `blocked` one, a member's\nreadiness reason (`TradeGroupReadiness`) included. Among them:\n- `skipped`: the request's `overrides.skip` leaves the leg out.\n- `profile_disabled`: its profile is disabled or does not trade.\n- `symbol_denied`: its profile's `blocked_symbols` holds the symbol.\n- `below_min_notional`: it sizes under the minimum quantity or notional.\n- `no_reference_price`: no mid or last price to size a market leg from.\n- `invalid_stop_distance`: its stop is not above 0 or not on the loss side.\n- `figure_unknown`: a figure its sizing needs is not cached.\n- `stop_beyond_liquidation`: its stop would not fire before liquidation.\n- `account_disabled`: its account is disabled.\n- `account_unhealthy`: its account fails the health check.\n- `trading_disabled`: order entry is closed for its account.\n- `risk_state_unavailable`: the risk gate has no state to judge it by.\n\n**Open-ended for readers:** clients must tolerate values they do not know,\nso adding a code is an additive change (C-6.3); a code a client does not\nknow is read by the leg's `status`.\n"
         ),
     ] = None
     message: str | None = None

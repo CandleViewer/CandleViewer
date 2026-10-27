@@ -5633,7 +5633,7 @@ export interface paths {
     };
     /**
      * List trade groups (multi-account fan-outs)
-     * @description A malformed, foreign or expired `cursor` is `400 invalid_cursor`, and `from` after `to` is `400 invalid_time_range`.
+     * @description A group is served only when every leg's account is in the caller's grants; any other is left out of the list and is `404` on a read, as if it did not exist (SR-E28-21). `created_by`, `note` and `client_group_ref` are served only to the Owner and the group's creator. A malformed, foreign or expired `cursor` is `400 invalid_cursor`, and `from` after `to` is `400 invalid_time_range`.
      */
     get: operations["listTradeGroups"];
     put?: never;
@@ -5714,8 +5714,8 @@ export interface paths {
      *
      *     **Environment.** A leg whose account is outside this server's environment, or legs in two
      *     environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry
-     *     per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the
-     *     account-scope check.
+     *     per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided at validation,
+     *     after the account-scope check and before any leg is sized.
      *
      *     **Idempotency.** The group keeps the request's `Idempotency-Key` as its `client_group_ref`
      *     with the request's fingerprint, unique per creator (24-internal-schemas.md section 8.3
@@ -5746,7 +5746,10 @@ export interface paths {
       };
       cookie?: never;
     };
-    /** Get a trade group with all legs and resolved parameters */
+    /**
+     * Get a trade group with all legs and resolved parameters
+     * @description A group is served only when every leg's account is in the caller's grants; any other is left out of the list and is `404` on a read, as if it did not exist (SR-E28-21). `created_by`, `note` and `client_group_ref` are served only to the Owner and the group's creator.
+     */
     get: operations["getTradeGroup"];
     put?: never;
     post?: never;
@@ -5849,7 +5852,7 @@ export interface paths {
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
      * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile's caps and risk budget is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg, as on the submit (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists) answers `400` here too.
-     *     Rate-limited per user by a token bucket (`CV_TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND`, default 20 a second, a burst of the same size): past it `429 rate_limited` with `Retry-After`. No `Idempotency-Key` is read. It reads cached figures only and never refreshes one (SR-E28-22): a leg whose account figures are not cached is `blocked` with `figure_unknown`. A leg whose account is outside this server's environment, or legs in two environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the account-scope check. While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
+     *     Rate-limited per user by a token bucket (`CV_TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND`, default 20 a second, a burst of the same size): past it `429 rate_limited` with `Retry-After`. No `Idempotency-Key` is read. It reads cached figures only and never refreshes one (SR-E28-22): a leg whose account figures are not cached is `blocked` with `figure_unknown`. A leg whose account is outside this server's environment, or legs in two environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided at validation, after the account-scope check and before any leg is sized. While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -10986,7 +10989,7 @@ export interface components {
         trailing_stop?: components["schemas"]["Offset"];
       };
     };
-    /** @description What `POST /trade-groups` would do, without doing it. Mirrors the resolved leg shape used in `TradeGroup.legs` so the ticket renders the preview and the result with one component. */
+    /** @description What `POST /trade-groups` would do, without doing it. Each leg carries the `resolved` parameters a `TradeGroupLeg` carries, so the ticket renders the preview and the result with one component. A preview leg's `status` (`ready`, `warn`, `skipped`, `blocked`) is the preview's own, not `TradeGroupLeg.status`. */
     TradeGroupPreview: {
       legs: {
         account_label?: string;
@@ -11013,6 +11016,10 @@ export interface components {
            *     - `account_unhealthy`: its account fails the health check.
            *     - `trading_disabled`: order entry is closed for its account.
            *     - `risk_state_unavailable`: the risk gate has no state to judge it by.
+           *
+           *     **Open-ended for readers:** clients must tolerate values they do not know,
+           *     so adding a code is an additive change (C-6.3); a code a client does not
+           *     know is read by the leg's `status`.
            * @enum {string}
            */
           code?:
@@ -11071,7 +11078,7 @@ export interface components {
         exchange_account_id: string;
         ready: boolean;
         /**
-         * @description Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count.
+         * @description Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count. **Open-ended for readers:** clients must tolerate values they do not know, so adding a reason is an additive change (C-6.3); a reason a client does not know is read by `ready: false`.
          * @enum {string|null}
          */
         reason:
