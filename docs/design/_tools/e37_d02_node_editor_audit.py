@@ -1602,6 +1602,11 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "feeding two logic gates, wired as §20 pins it;",
         "feeding two logic gates;",
     ),
+    (
+        "section 0 no longer records the boards as drawn",
+        "Boards as drawn (exported",
+        "Boards as planned (exported",
+    ),
 )
 
 
