@@ -276,7 +276,7 @@ class FeatureFlagsRuntime:
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
         self._view_polls: list[asyncio.Task[None]] = []
-        # #913 slice 3: the OMS's process-wide reads, built before the writer that takes their hook.
+        # Process-wide reads (#913 slice 3, E28-T05), built before the writer that takes their hook.
         self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
         self.live_enabled = FlagView(self, LIVE_ENABLED)
         self.trade_groups = FlagView(self, TRADING_TRADE_GROUPS)  # E28-T05 (#909)
@@ -464,7 +464,7 @@ class FlagView:
 
     def _lost(self, event: str, exc: Exception) -> None:
         """A poll left the flag unread: a warning when the view turns unread, debug while it stays
-        so (two views, twelve polls a minute each, through an outage); the error's class alone."""
+        so (three views, twelve polls a minute each, through an outage); the error's class alone."""
         log = _log().debug if self._failing else _log().warning
         log(event, key=self.key, error=type(exc).__name__)
         self._failing = True
