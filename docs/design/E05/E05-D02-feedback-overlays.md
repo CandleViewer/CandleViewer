@@ -2,7 +2,7 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 4
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens
-and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards are PENDING.
+and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards PR drew it as specimen boards 08–10.
 **Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 4 feedback and overlays` (page id
 `006e12a1-d0c6-803c-8008-da92b1e868e0`), specimen boards 08–10 (the coordinator's ruling of 2026-10-27 on #161: ten
 specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
@@ -994,8 +994,9 @@ arrival (H21, against E13-D04's CR-11 and M3, RULED with its BQ-16, record 63647
 
 ## 7. Components
 
-**Boards PENDING (text-first, 2026-10-23).** No section below has a Penpot build. Each names the variant set the boards
-PR builds on page `10 Components — Atoms` and the export it adds, `docs/design/E05/img/CMP-0xx-name.png`.
+**Boards (as built, 2026-10-27).** The boards PR drew this slice as specimen boards 08–10 on the slice page (the
+page id in the header; [E05-D02-boards.md](E05-D02-boards.md)). Each section's board line names its board or says it is not drawn; what a
+board does not show is not drawn, and the text is binding (board cap). No per-section `CMP-0xx-name.png` is exported.
 
 ### CMP-015 · Skeleton
 
@@ -2103,7 +2104,7 @@ Completed for the 17 components. Open items say why and who closes them.
       a named primitive (§4, §5.2); §5.1's constants and the scrim's primitives are recorded, ticked when §6 H1 and H7
       are answered and the boards PR has drawn them.
 - [ ] **Themes and densities:** structurally guaranteed and measured in all three themes (audit §4). **Open:** the
-      boards are PENDING.
+      boards are specimens, dark except board 10 light (08–10, E05-D02-boards.md).
 - [ ] **Contrast matrix:** every text pair passes; three non-text pairs are thin and carried by words — the dark danger
       progress fill (2.92:1, §6 H4), light warning's toast edge (2.76:1, §6 H6), E39-D03's hold ring on its track
       (1.90:1 dark). **Open** for the owner.

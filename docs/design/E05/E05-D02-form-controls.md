@@ -2,7 +2,7 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 3
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens
-and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards are PENDING.
+and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards PR drew it as specimen boards 05–07.
 **Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 3 form controls` (page id
 `7761b3e4-893d-806e-8008-da8ece40d3a5`), specimen boards 05–07 (the coordinator's ruling of 2026-10-27 on #161: ten
 specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
@@ -516,8 +516,9 @@ A "no" reverts the named clause; the catalogue lines carry no approval marker (s
 
 ## 7. Components
 
-**Boards PENDING (text-first, 2026-10-23).** No section below has a Penpot build. Each names the variant set the boards
-PR builds on page `10 Components — Atoms` and the export it adds, `docs/design/E05/img/CMP-0xx-name.png`.
+**Boards (as built, 2026-10-27).** The boards PR drew this slice as specimen boards 05–07 on the slice page (the
+page id in the header; [E05-D02-boards.md](E05-D02-boards.md)). Each section's board line names its board or says it is not drawn; what a
+board does not show is not drawn, and the text is binding (board cap). No per-section `CMP-0xx-name.png` is exported.
 
 ### CMP-007 · TextInput
 
@@ -1342,7 +1343,8 @@ Completed for the 11 components of this slice. Open items say why and who closes
       when the owner accepts them (slice 1 B1, §6 G5) or tokens replace them, and the boards PR has drawn them.
 - [ ] Verified in all three themes at both density modes. **Open:** structurally guaranteed (every paint is a
       semantic token that all three themes resolve; density re-points only the two heights), and the figures cover
-      all three themes (audit §4), but the boards are PENDING.
+      all three themes (audit §4), but the boards are dark-only
+      specimens (05–07, E05-D02-boards.md).
 - [ ] Passes the automated contrast-matrix check for every colour pair it introduces or touches. **Open:** every pair
       passes on the surfaces it is specified for (audit §4); two fall below 3:1 off them and are handled by a rule:
       the invalid boundary on `surface.hover` and `surface.selected` in dark (§6 G2: fields are not placed there) and a

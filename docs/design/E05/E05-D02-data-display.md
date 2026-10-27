@@ -1,8 +1,8 @@
 # E05-D02 — Design-system atoms and molecules: slice 2 of 5 (data display and text atoms)
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 2 of 5)
-(design PR: the owner approves under C-10.1; the coordinator reviews); text-first: the boards are PENDING and the
-boards PR completes slice 2 (§6)
+(design PR: the owner approves under C-10.1; the coordinator reviews); text-first; the boards PR completes slice 2 with
+specimen boards 03–04 (§6, [E05-D02-boards.md](E05-D02-boards.md))
 **Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 2 data display and text` (page id
 `2a1599b6-22f9-808a-8008-da8d726f1db4`), specimen boards 03–04 (the coordinator's ruling of 2026-10-27 on #161: ten
 specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
@@ -84,16 +84,15 @@ the Penpot-only layout workarounds and Penpot's own variant-set chrome.
 
 ## 2. How to review
 
-1. Open page `10 Components — Atoms` (its page id is in the header) and switch the colour theme (`theme/dark` → `light` → `high-contrast`) and the density
+1. Open the slice page (its page id is in the header) and switch the colour theme (`theme/dark` → `light` → `high-contrast`) and the density
    theme (`density/compact` → `comfortable`) in the token panel. Only colours change with the theme. Density re-points
    only `size.control.height` and `size.row.height` (slice 1 §4), so the chips, the md avatar, the avatar stack, the
    vertical divider, the CopyButton and the legend row grow from 24 to 32 px, and nothing else moves; the 8 px dots
    of CMP-012 and CMP-032 keep their size.
-2. The boards are PENDING (text-first merge, 2026-10-23): this PR carries no exports. The boards PR, which completes
-   slice 2, redraws the 12 sections on page `10 Components — Atoms` (the page id in the header), with CMP-021's gated
-   state held until §5 E27 is answered and then drawn per that ruling, the E09-D09 §2.2 T2 form on CMP-011's remove
-   button through CMP-002 if §5 E10 is approved, CMP-011's estimated chip restated as CMP-227 (§5 E19) and the hover
-   cells of §5 E18, and exports each at dark/compact (§6).
+2. The boards PR drew slice 2 as specimen boards 03–04 at dark/compact on the slice page (the page id in the
+   header; `img/E05-D02-03-tags-badges-avatars.png`,
+   `img/E05-D02-04-text-and-dividers.png`; see [E05-D02-boards.md](E05-D02-boards.md)). Each §6 section's board line says
+   whether it is drawn; what a board does not show is not drawn, and the text is binding (board cap).
 3. The owner decisions this slice needs are collected in §5; each component's own questions are listed with it in §6.
    What the boards show that is clipped, overlapping or off is in §4.3.
 4. The catalogue text quoted in §6 is each entry as it stands on `main`, before this PR's alignment edits (§1).
@@ -1211,8 +1210,8 @@ Completed for the 12 components of this slice. Open items say why and who closes
       hidden. Ticked when the owner accepts them (slice 1 B1, §5 E4 and E5) or tokens replace them.
 - [ ] Verified in all three themes at both density modes. **Open:** structurally guaranteed (every paint is a
       semantic token that all three themes resolve, heights bind the two density-owned tokens, auto-layout
-      everywhere), and the contrast figures cover all three themes, but the boards are PENDING (the boards PR, §6)
-      and the mode-switch walk-through (§2 step 1) is not recorded yet.
+      everywhere), and the contrast figures cover all three themes, but the boards are dark-only specimens (03–04,
+      E05-D02-boards.md) and the mode-switch walk-through (§2 step 1) is not recorded yet.
 - [ ] Passes the automated contrast-matrix check for every colour pair it introduces or touches. **Open:** 14
       `colorBySign` text pairs fail 4.5:1 (§5 E1). The non-text pairs below 3:1 that
       `E05-D02-data-display-a11y-audit.md` §4 lists are not relied on for meaning (dividers, the legend swatch
