@@ -340,7 +340,15 @@ jobs:
       - name: E09-Q05 k6 auth profile (its thresholds decide the step)
         env:
           CV_PERF_USERS_FILE: ${{ runner.temp }}/cv/users.json
+          K6_HOST_CLASS: hosted # the step-up p95 is reported, not judged, off #2105's host
         run: k6 run --summary-export "$RUNNER_TEMP/k6-auth-summary.json" tests/load/k6/auth.js
+      - name: Report the step-up p95 beside its reference-host budget
+        if: always()
+        run: |
+          summary="$RUNNER_TEMP/k6-auth-summary.json"
+          [ -f "$summary" ] || exit 0
+          p95=$(jq -r '.metrics["http_req_duration{scenario:stepup_burst,endpoint:step_up}"]["p(95)"] // "n/a"' "$summary")
+          echo "::notice title=step-up p95 (hosted, informational)::${p95} ms; the 400 ms budget is judged on the reference host (#2105)"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

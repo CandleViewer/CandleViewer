@@ -76,6 +76,22 @@ def test_auth_k6_gates_on_the_scripts_thresholds() -> None:
     step = _step("E09-Q05 k6 auth profile")
     assert step["run"].startswith("k6 run ") and step["run"].endswith(" tests/load/k6/auth.js")
     assert "continue-on-error" not in step and "if" not in step
+    # hosted: the step-up p95 is reported beside its reference-host budget, never gating
+    assert step["env"]["K6_HOST_CLASS"] == "hosted"
+    assert _step("Report the step-up p95")["if"] == "always()"
+
+
+def test_the_step_up_budget_gates_on_the_reference_host_only() -> None:
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert '[STEP_UP]: [HOSTED ? "p(95)>=0" : "p(95)<=400"]' in text
+    assert 'const HOST_CLASS = __ENV.K6_HOST_CLASS || "reference";' in text
+    for budget in (
+        '["rate>0.99"]',
+        '["p(95)<=100"]',
+        '"p(95)<=400"], // SCR-002',
+        '["p(50)>=100"]',
+    ):
+        assert budget in text  # every other threshold gates on both host classes
 
 
 def test_the_users_file_lists_each_seeded_identifier_with_its_seed(tmp_path: Path) -> None:
