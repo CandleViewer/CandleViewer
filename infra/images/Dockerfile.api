@@ -2,9 +2,11 @@
 #
 # Multi-stage build for services/api. Builder installs the locked venv with
 # uv; the runtime stage copies only the venv + application code, runs as a
-# non-root UID, and carries no dev dependencies (ruff/mypy/pytest/etc. never
-# reach the runtime layer). See docs/plan/20-architecture.md Sec.5 and the
-# E02-X01 threat model (supply-chain / container-escape controls).
+# non-root UID, and carries no dependency group: both syncs pass
+# --no-default-groups, so neither `dev` (ruff/mypy/...) nor `test`
+# (pytest/hypothesis/...) is installed, only [project.dependencies] (#4814).
+# See docs/plan/20-architecture.md Sec.5 and the E02-X01 threat model
+# (supply-chain / container-escape controls).
 
 # --- builder ---------------------------------------------------------------
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS builder
@@ -13,15 +15,19 @@ ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
     PYTHONDONTWRITEBYTECODE=1
 
-RUN pip install --no-cache-dir "pip==26.2.1" uv==0.4.27
+# uv: an exact release of the series CI's astral-sh/setup-uv steps install (0.9.x), so the image is
+# synced by the uv that CI syncs and tests the lock with (test_image_dependency_groups.py).
+RUN pip install --no-cache-dir "pip==26.2.1" "uv==0.9.30"
 
 WORKDIR /build
 COPY services/api/pyproject.toml services/api/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+# --no-default-groups: `[tool.uv] default-groups` names `dev` and `test`, so `--no-dev` alone would
+# still install the test tooling. Whatever the runtime imports is in [project.dependencies].
+RUN uv sync --frozen --no-default-groups --no-install-project
 
 COPY services/api/candleviewer ./candleviewer
 COPY services/api/README.md ./README.md
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-default-groups
 
 # --- runtime -----------------------------------------------------------------
 FROM python:3.12-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS runtime

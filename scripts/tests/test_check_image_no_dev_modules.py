@@ -1,7 +1,8 @@
-"""Unit tests for tools/ci/check_image_no_dev_modules.py (#2893 S3, CI-IMG-006).
+"""Unit tests for tools/ci/check_image_no_dev_modules.py (#2893 S3, #4814, CI-IMG-006).
 
 A fake `subprocess.run` stands in for the docker CLI (no daemon in the unit lane); the real runs
-happen in main.yml before every image push and in the trivy job's boot smoke.
+happen in main.yml before every image push and in the trivy job's boot smoke. The test-only probe
+also runs for real, in this interpreter, with and without its site-packages.
 """
 
 from __future__ import annotations
@@ -34,24 +35,30 @@ OTHER_REFUSAL = (
 
 
 class FakeDocker:
-    """Answers the two probes by their `-c` code and records every command."""
+    """Answers the three probes by their `-c` code and records every command."""
 
-    def __init__(self, spec: tuple[int, str], boot: tuple[int, str]) -> None:
-        self.answers = {mod.FIND_SPEC: spec, mod.BOOT: boot}
+    def __init__(
+        self, spec: tuple[int, str], boot: tuple[int, str], test_only: tuple[int, str] | None
+    ) -> None:
+        none = (0, f"{mod.NONE_IMPORTABLE}\n")
+        self.answers = {mod.FIND_SPEC: spec, mod.TEST_ONLY_PROBE: test_only or none, mod.BOOT: boot}
         self.commands: list[list[str]] = []
 
     def __call__(self, cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
         assert kwargs["timeout"] == mod.TIMEOUT_S
         self.commands.append(cmd)
         returncode, output = self.answers[cmd[-1]]
-        stdout, stderr = (output, "") if cmd[-1] == mod.FIND_SPEC else ("", output)
+        stdout, stderr = ("", output) if cmd[-1] == mod.BOOT else (output, "")
         return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
 
 
 def _install(
-    monkeypatch: pytest.MonkeyPatch, spec: tuple[int, str], boot: tuple[int, str]
+    monkeypatch: pytest.MonkeyPatch,
+    spec: tuple[int, str],
+    boot: tuple[int, str],
+    test_only: tuple[int, str] | None = None,
 ) -> FakeDocker:
-    fake = FakeDocker(spec, boot)
+    fake = FakeDocker(spec, boot, test_only)
     monkeypatch.setattr(subprocess, "run", fake)
     return fake
 
@@ -65,7 +72,7 @@ def test_an_image_without_the_package_that_refuses_the_switch_passes(
 ) -> None:
     fake = _install(monkeypatch, ABSENT, REFUSED)
     assert mod.main(["--image", IMAGE]) == 0
-    assert [cmd[-1] for cmd in fake.commands] == [mod.FIND_SPEC, mod.BOOT]
+    assert [cmd[-1] for cmd in fake.commands] == [mod.FIND_SPEC, mod.TEST_ONLY_PROBE, mod.BOOT]
     assert "CI-IMG-006" not in capsys.readouterr().err
 
 
@@ -85,6 +92,28 @@ def test_a_dev_package_that_is_not_proven_absent_fails(
     _install(monkeypatch, spec, REFUSED)
     assert mod.main(["--image", IMAGE]) == 1
     assert "CI-IMG-006: `cvdev` must not be importable" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "test_only",
+    [
+        (0, "importable: ['pytest', '_pytest']\n"),
+        (0, "importable: ['respx']\n"),
+        (1, "Traceback (most recent call last):\nSyntaxError: invalid syntax\n"),
+        (0, ""),
+        (1, f"{mod.NONE_IMPORTABLE}\n"),
+    ],
+    ids=["pytest", "respx", "probe-error", "no-output", "none-but-exit-1"],
+)
+def test_a_test_only_module_that_is_not_proven_absent_fails(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], test_only: tuple[int, str]
+) -> None:
+    """#4814: the image syncs no dependency group, so no test tool may be importable there."""
+    _install(monkeypatch, ABSENT, REFUSED, test_only)
+    assert mod.main(["--image", IMAGE]) == 1
+    err = capsys.readouterr().err
+    assert "CI-IMG-006: no test-only module may be importable in the image" in err
+    assert err.count("CI-IMG-006:") == 1
 
 
 @pytest.mark.parametrize(
@@ -124,22 +153,53 @@ def _value(cmd: list[str], flag: str) -> str:
     return cmd[cmd.index(flag) + 1]
 
 
-def test_both_runs_are_offline_and_read_only_and_pass_only_the_named_variables(
+def test_every_run_is_offline_and_read_only_and_passes_only_the_named_variables(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     fake = _install(monkeypatch, ABSENT, REFUSED)
     mod.main(["--image", IMAGE])
-    spec, boot = fake.commands
-    for cmd in (spec, boot):
+    spec, test_only, boot = fake.commands
+    for cmd in (spec, test_only, boot):
         assert cmd[:3] == ["docker", "run", "--rm"]
         assert _value(cmd, "--network") == "none"
         assert _value(cmd, "--pull") == "never"
         assert "--read-only" in cmd
         assert cmd[-3:-1] == [IMAGE, "-c"]
     assert "-e" not in spec
+    assert "-e" not in test_only
     passed = [boot[i + 1] for i, arg in enumerate(boot) if arg == "-e"]
     assert passed == ["CV_ENVIRONMENT=demo", "CV_FEED=synthetic", "CV_ACCOUNT_FIXTURE=compliant"]
     assert not [arg for arg in boot if "BYBIT" in arg]
+
+
+def _probe(*flags: str) -> list[str]:
+    """The lines the test-only probe prints when this interpreter runs it, isolated."""
+    result = subprocess.run(  # noqa: S603 — fixed argv: this interpreter, isolated (#4814)
+        [sys.executable, "-I", *flags, "-c", mod.TEST_ONLY_PROBE],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    return result.stdout.splitlines()
+
+
+def test_the_test_only_probe_names_a_module_this_interpreter_can_import() -> None:
+    """This interpreter runs pytest, so the probe as written names `pytest` and `_pytest`."""
+    (line,) = _probe()
+    assert line.startswith("importable: ")
+    assert "'pytest'" in line
+    assert "'_pytest'" in line
+
+
+def test_the_test_only_probe_finds_none_without_site_packages() -> None:
+    assert _probe("-S") == [mod.NONE_IMPORTABLE]
+
+
+def test_the_test_only_modules_are_top_level_names() -> None:
+    """`find_spec` of a dotted name imports its parents first; a top-level name imports nothing."""
+    assert mod.TEST_ONLY_MODULES
+    assert all(name.isidentifier() for name in mod.TEST_ONLY_MODULES)
 
 
 def test_the_expected_refusal_is_the_wiring_modules_own_text() -> None:
