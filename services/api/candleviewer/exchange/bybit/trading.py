@@ -317,6 +317,7 @@ class BybitTradingPort:
         monotonic: Callable[[], float] = time.monotonic,
         now_us: Callable[[], TsUs] = _wall_us,
         private_streams: PrivateStreams | None = None,
+        on_failure: Callable[[Exception], None] | None = None,
     ) -> None:
         self.capabilities: ExchangeCapabilities = capabilities_for(environment)
         self.environment: Environment = self.capabilities.environment
@@ -335,6 +336,10 @@ class BybitTradingPort:
         )
         self._clients: dict[AccountId, tuple[str, BybitRestClient]] = {}
         self._streams = private_streams
+        #: #898 B2a: the exposure read's classifier, handed each call's failure before it is
+        #: stripped (`_leaving`), so a timeout or a reset keeps the cause `probe_error` reads.
+        #: Called, never stored; it must not raise. `None` everywhere else.
+        self._on_failure = on_failure
 
     async def aclose(self) -> None:
         clients, self._clients = self._clients, {}
@@ -404,6 +409,12 @@ class BybitTradingPort:
         except Exception as exc:  # every failure is mapped below, outside this handler
             failure = exc
         latency_ms = max(0, int((self._monotonic() - started) * 1000))
+        if failure is not None and self._on_failure is not None:
+            try:
+                self._on_failure(failure)
+            except Exception as fault:  # a hook fault never replaces the port's stripped error
+                # type name only: no message and no request leave the port (SR-E29-08, C-12.6)
+                logger().warning("trading_failure_hook_faulted", fault=type(fault).__name__)
         return reply, None if failure is None else _leaving(failure), latency_ms
 
     async def _trade(
