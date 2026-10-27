@@ -85,7 +85,7 @@ async def test_a_key_closed_before_any_registry_is_refused_by_the_first_one(reas
     assert await adapter.close_private_streams(account().key_ref, reason=reason) == ()
     budget = adapter.ws_connection_budget.remaining("private")
     with pytest.raises(AuthError):
-        await adapter.trading_port("demo").subscribe_private(account())
+        await adapter.open_private_stream(account())
     assert (calls, venue.dialled) == ([], [])
     assert adapter.ws_connection_budget.remaining("private") == budget
     await adapter.stop(5.0)
