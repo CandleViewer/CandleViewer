@@ -7,9 +7,9 @@ name: governance
 #     against a deliberately-broken fixture (scripts/gov_self_test.py),
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
 #   - a 90 s duration budget per job on one measure, recorded as a `::notice` on every run;
-#     exceeding it fails that job. A test shard budgets its pytest time and `governance` its
-#     combine step, not their job wall time, which runner contention stretches (#4666);
-#     `governance-checks` still budgets its job wall time (#4693).
+#     exceeding it fails that job. A test shard budgets its pytest time, `governance` its
+#     combine step (#4666) and `governance-checks` its checks' span, from after its installs to
+#     its last report (#4693), not their job wall time, which runner contention stretches.
 # Owning ticket: E01-Q02. #3789: parallel jobs instead of one. `governance-checks` runs the
 # checks, the canary and the reports; the `governance-tests` shards run the unit tests
 # (tools/ci/governance_shards.py splits the files by measured duration; #4365, #4588: six shards,
@@ -52,6 +52,12 @@ jobs:
 
       - name: Install check dependencies (PyYAML for GOV-004, pytest(-cov) for unit tests)
         run: python -m pip install --quiet -r scripts/requirements-ci.txt
+
+      - name: "Open the checks' span (the budgeted work, E01-Q02)"
+        # #4693: the budget step judges the span from here to `checks_span`, the checks, the
+        # canary and the reports; checkout, setup and the installs before it are not judged.
+        id: checks_start
+        run: echo "start_ns=$(date +%s%N)" >> "$GITHUB_OUTPUT"
 
       - name: Create artefact output directory
         run: mkdir -p gov-artifacts
@@ -138,6 +144,20 @@ jobs:
         run: python scripts/validate-backlog.py --summary > gov-artifacts/backlog-summary.txt
         continue-on-error: true
 
+      - name: "Close the checks' span (the budgeted work, E01-Q02)"
+        # Before the reports' upload, whatever the checks did. With no measured start it writes
+        # nothing, and the budget step fails the run as unmeasured.
+        id: checks_span
+        if: always()
+        env:
+          START_NS: ${{ steps.checks_start.outputs.start_ns }}
+        run: |
+          case "$START_NS" in
+            '' | *[!0-9]*) exit 0 ;;
+          esac
+          end_ns=$(date +%s%N)
+          echo "checks_ms=$(( (end_ns - START_NS) / 1000000 ))" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
@@ -146,25 +166,38 @@ jobs:
           retention-days: 90
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
+        # #4693: judges the checks' span, the job's own work. The job wall time (checkout, setup,
+        # the installs and the reports' upload, which runner contention stretches) is reported,
+        # not judged; the accepted-risk report's small upload sits inside the span. A run that
+        # recorded no span fails here instead of passing unmeasured.
         if: always()
         continue-on-error: false
         env:
           BUDGET_MS: "90000"
           START_NS: ${{ steps.gov_start.outputs.start_ns }}
+          CHECKS_MS: ${{ steps.checks_span.outputs.checks_ms }}
         run: |
           end_ns=$(date +%s%N)
           duration_ms=$(( (end_ns - START_NS) / 1000000 ))
-          echo "$GITHUB_JOB job duration: ${duration_ms}ms (budget ${BUDGET_MS}ms)"
           {
             echo "### $GITHUB_JOB duration"
-            echo "| metric | ms |"
+            echo "| metric | value |"
             echo "|---|---|"
-            echo "| wall time | ${duration_ms} |"
-            echo "| budget | ${BUDGET_MS} |"
+            echo "| checks wall time (ms), budgeted | ${CHECKS_MS:-n/a} |"
+            echo "| job wall time (ms), informational | ${duration_ms} |"
+            echo "| budget (ms) | ${BUDGET_MS} |"
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=$GITHUB_JOB job duration::${duration_ms}ms (budget ${BUDGET_MS}ms)"
-          if [ "$duration_ms" -gt "$BUDGET_MS" ]; then
-            echo "::error title=$GITHUB_JOB job over budget::${duration_ms}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+          case "$CHECKS_MS" in
+            '' | *[!0-9]*)
+              echo "::error title=$GITHUB_JOB budget not measured::the checks' span recorded no wall time (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
+              exit 1
+              ;;
+          esac
+          echo "::notice title=$GITHUB_JOB duration::checks wall time ${CHECKS_MS}ms (budget ${BUDGET_MS}ms); job wall time ${duration_ms}ms, not budgeted"
+          # `! [ -le ]`, not `[ -gt ]`: `[` errors on a time past bash's 64-bit integers and an
+          # `if` reads the error as false, so `-gt` would pass that time; `! -le` fails it.
+          if ! [ "$CHECKS_MS" -le "$BUDGET_MS" ]; then
+            echo "::error title=$GITHUB_JOB job over budget::checks wall time ${CHECKS_MS}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi
 
