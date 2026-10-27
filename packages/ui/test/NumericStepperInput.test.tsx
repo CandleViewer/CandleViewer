@@ -415,6 +415,33 @@ describe("NumericStepperInput typed text", () => {
     expect(el).toHaveValue("");
   });
 
+  it("a field whose value is NaN takes a typed number and commits it", async () => {
+    const onChange = fn();
+    const host = await mount(
+      <NumericStepperInput
+        label="Qty"
+        step={1}
+        precision={0}
+        value={Number.NaN}
+        onChange={onChange}
+      />,
+    );
+    const el = field(host);
+    expect(el).not.toHaveAttribute("aria-valuenow");
+    await userEvent.type(el, "5");
+    expect(el).toHaveValue("5");
+    await userEvent.tab();
+    expect(onChange).toHaveBeenLastCalledWith(5);
+  });
+
+  it("an empty draft carries no stale aria-valuenow", async () => {
+    const host = await mount(<Stepper start={4} />);
+    const el = field(host);
+    expect(el).toHaveAttribute("aria-valuenow", "4");
+    await userEvent.clear(el);
+    expect(el).not.toHaveAttribute("aria-valuenow");
+  });
+
   it("an off-grid bound is shown as given, an on-grid one at the precision", async () => {
     const host = await mount(<Stepper start={1} min={0.05} />);
     const el = field(host);
