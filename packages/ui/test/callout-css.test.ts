@@ -64,6 +64,11 @@ describe("callout.css contract", () => {
     expect(actions).toContain("gap: var(--space-inset-sm)");
   });
 
+  it("no motion: no transition and no animation (the dismissal fade waits for E05-D03)", () => {
+    expect(css.all).not.toMatch(/transition/);
+    expect(css.all).not.toMatch(/animation|@keyframes/);
+  });
+
   it("no ring or dimming of its own: its buttons draw theirs", () => {
     expect(css.all).not.toMatch(/focus|outline|opacity/);
   });

@@ -74,6 +74,38 @@ describe("InlineSpinnerText (CMP-038)", () => {
     expect(status.textContent).toBe(text);
   });
 
+  it.each([
+    ["label", { kind: "load", label: "Loading trades" }],
+    ["kind", { kind: "export", label: "Loading" }],
+  ] as const)("a new %s resets the slow phase and restarts the 5 s timer", async (_, next) => {
+    const { createRoot } = await import("react-dom/client");
+    const host = document.body.appendChild(document.createElement("div"));
+    const r = createRoot(host);
+    const onCancel = fn();
+    await act(async () =>
+      r.render(
+        <InlineSpinnerText kind="load" label="Loading" slowLabel="Still…" onCancel={onCancel} />,
+      ),
+    );
+    await advance(SLOW_AFTER_MS);
+    const status = within(host).getByRole("status");
+    expect(status).toHaveTextContent("Still…");
+    await act(async () =>
+      r.render(<InlineSpinnerText {...next} slowLabel="Still…" onCancel={onCancel} />),
+    );
+    expect(status).toHaveTextContent(next.label);
+    expect(host.querySelector<HTMLElement>(".cv-inline-spinner-text")?.dataset["phase"]).toBe(
+      "waiting",
+    );
+    expect(within(host).queryByRole("button")).toBeNull();
+    await advance(SLOW_AFTER_MS - 1);
+    expect(status).toHaveTextContent(next.label);
+    await advance(1);
+    expect(status).toHaveTextContent("Still…");
+    expect(within(host).getByRole("button", { name: "Cancel" })).toBeTruthy();
+    await act(async () => r.unmount());
+  });
+
   it("without slowLabel the label holds through the slow phase", async () => {
     const host = await mount(<InlineSpinnerText label="Loading" />);
     await advance(SLOW_AFTER_MS);
