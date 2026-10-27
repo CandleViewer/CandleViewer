@@ -17,6 +17,7 @@ import { logStartup, logAuditEvent } from "./logger.js";
 import { applyGpuFlags, probeGpu } from "./gpu.js";
 import { getKekHandle } from "./keychain.js";
 import { checkForUpdate } from "./updateChannel.js";
+import { createCrashLog, type CrashLog } from "./crashLog.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -313,30 +314,55 @@ function readSenderFrame(event: IpcMainInvokeEvent): SenderFrame {
 }
 
 /**
- * Wraps an ipcMain.handle listener so it answers only the shell's own page (SR-111), checked
- * before `reply` runs; `reply` never sees the renderer's arguments. A refused call throws
- * IpcSenderRefusedError and logs one line: the reason and the sender's origin, never its URL.
+ * Answers only the shell's own page (SR-111): a refused call throws IpcSenderRefusedError and
+ * logs one line: the reason and the sender's origin, never its URL.
+ */
+function assertShellPage(event: IpcMainInvokeEvent, devServerUrl: DevServerUrl | undefined): void {
+  const { url, kind } = readSenderFrame(event);
+  if (!isTrustedIpcSender(url, kind === "main-frame", devServerUrl)) {
+    const reason = kind === "main-frame" ? "not-shell-origin" : kind;
+    logAuditEvent("ipc-sender-refused", { reason, origin: safeOriginOf(url) });
+    throw new IpcSenderRefusedError();
+  }
+}
+
+/**
+ * Wraps an ipcMain.handle listener so the sender check runs before `reply`; `reply` never sees
+ * the renderer's arguments.
  */
 function fromShellPage<T>(
   devServerUrl: DevServerUrl | undefined,
   reply: () => T,
 ): (event: IpcMainInvokeEvent) => T {
   return (event) => {
-    const { url, kind } = readSenderFrame(event);
-    if (!isTrustedIpcSender(url, kind === "main-frame", devServerUrl)) {
-      const reason = kind === "main-frame" ? "not-shell-origin" : kind;
-      logAuditEvent("ipc-sender-refused", { reason, origin: safeOriginOf(url) });
-      throw new IpcSenderRefusedError();
-    }
+    assertShellPage(event, devServerUrl);
     return reply();
   };
 }
 
+/**
+ * The one-argument form: after the sender check, `reply` gets the first argument only, as
+ * `unknown`, and must validate it itself; any further arguments are dropped.
+ */
+function fromShellPageWithArg<T>(
+  devServerUrl: DevServerUrl | undefined,
+  reply: (arg: unknown) => T,
+): (event: IpcMainInvokeEvent, arg?: unknown) => T {
+  return (event, arg) => {
+    assertShellPage(event, devServerUrl);
+    return reply(arg);
+  };
+}
+
 /** Registers the fixed set of ipcMain handlers backing the preload bridge (SR-111). */
-function installIpcHandlers(devServerUrl: DevServerUrl | undefined): void {
+function installIpcHandlers(devServerUrl: DevServerUrl | undefined, crashLog: CrashLog): void {
   ipcMain.handle("cv:gpu:info", fromShellPage(devServerUrl, probeGpu));
   ipcMain.handle("cv:keychain:getKekHandle", fromShellPage(devServerUrl, getKekHandle));
   ipcMain.handle("cv:updates:check", fromShellPage(devServerUrl, checkForUpdate));
+  ipcMain.handle(
+    "cv:crashLog:append",
+    fromShellPageWithArg(devServerUrl, (entry) => crashLog.append(entry)),
+  );
 }
 
 app.on("window-all-closed", () => {
@@ -358,7 +384,12 @@ void app.whenReady().then(() => {
   installCspHeader(csp);
   installAppProtocol(csp);
   installPermissionHandler();
-  installIpcHandlers(devServerUrl);
+  // The renderer's crash entries, one JSON line each, in <userData>/logs (local only, E10-S04).
+  const crashLog = createCrashLog({
+    dir: path.join(app.getPath("userData"), "logs"),
+    audit: logAuditEvent,
+  });
+  installIpcHandlers(devServerUrl, crashLog);
   logStartup();
   createMainWindow(devServerUrl);
   app.emit("workspace-ready");

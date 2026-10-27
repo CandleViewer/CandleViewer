@@ -12,6 +12,8 @@ export const ALLOWED_IPC_CHANNELS: readonly string[] = [
   "cv:gpu:info",
   "cv:keychain:getKekHandle",
   "cv:updates:check",
+  // E10-S04: append one schema-checked crash entry to the local log; validated in preload and main.
+  "cv:crashLog:append",
 ];
 
 export function isChannelAllowed(
