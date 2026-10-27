@@ -31,7 +31,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Query, Request
@@ -59,6 +59,17 @@ _STATUS_REASON = {
     "closed": "Delisted: trading closed on the exchange; order entry is disabled.",
 }
 _LISTED = frozenset({"trading", "pre_launch"})
+#: How long the detail read waits for the recording start before serving it as unknown.
+RECORDING_TIMEOUT_S: Final = 2.0
+
+
+class _Unknown:
+    """The recording start is unknown (no store wired, or it failed): `recorded` is omitted."""
+
+
+_UNKNOWN = _Unknown()
+
+_log = structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,9 +164,6 @@ def _encode_cursor(offset: int) -> str:
     return base64.urlsafe_b64encode(f"o:{offset}".encode()).decode().rstrip("=")
 
 
-_RECORDING_TIMEOUT_S = 2.0
-
-
 def _decode_cursor(cursor: str) -> int:
     padded = cursor + "=" * (-len(cursor) % 4)
     try:
@@ -173,25 +181,25 @@ def make_instruments_router(
     principal_resolver: PrincipalResolver | None = None,
     now_us: Callable[[], int] = utc_now_us,
     recording_started_at_us: RecordingStart | None = None,
+    recording_timeout_s: float = RECORDING_TIMEOUT_S,
 ) -> APIRouter:
     """Bind the instruments read routes. `catalogue_provider` is called per
     request (the scheduler is created at supervisor start, after
     `create_app()`); `None` -> `503`, never an empty catalogue."""
     router = APIRouter(tags=["instruments"])
 
-    async def _recording_start(symbol: str) -> int | None:
-        """The earliest recorded data for `symbol`, or None (nothing recorded, no provider, or a
-        failing/slow store: the instrument read itself never breaks on it)."""
+    async def _recording_start(symbol: str) -> int | _Unknown | None:
+        """The earliest recorded data for `symbol`, None when nothing is recorded, or `_UNKNOWN`
+        when no store is wired or it fails or is slow: the instrument read never breaks on it,
+        and an unknown is never served as "not recorded"."""
         if recording_started_at_us is None:
-            return None
+            return _UNKNOWN
         try:
-            async with asyncio.timeout(_RECORDING_TIMEOUT_S):
+            async with asyncio.timeout(recording_timeout_s):
                 return await recording_started_at_us(symbol)
         except Exception:
-            structlog.get_logger(__name__).warning(
-                "instrument_recording_start_unavailable", symbol=symbol, exc_info=True
-            )
-            return None
+            _log.warning("instrument_recording_start_unavailable", symbol=symbol, exc_info=True)
+            return _UNKNOWN
 
     async def _authorize(request: Request) -> JSONResponse | None:
         if principal_resolver is None:
@@ -288,11 +296,12 @@ def make_instruments_router(
         body.update(
             {
                 "risk_limit_tiers": [serialize_risk_limit_tier(t) for t in tiers or ()],
-                "recorded": started is not None,
-                "recording_started_at": iso_us(started) if started is not None else None,
+                "recording_started_at": iso_us(started) if isinstance(started, int) else None,
                 "stale_since": _iso(snap.stale_since_us),
             }
         )
+        if not isinstance(started, _Unknown):  # `recorded` is optional: omitted while unknown
+            body["recorded"] = started is not None
         return JSONResponse(status_code=200, content=body)
 
     return router

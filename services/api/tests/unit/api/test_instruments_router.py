@@ -15,7 +15,11 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from candleviewer.api.instruments import InstrumentsPrincipal, make_instruments_router
+from candleviewer.api.instruments import (
+    RECORDING_TIMEOUT_S,
+    InstrumentsPrincipal,
+    make_instruments_router,
+)
 from candleviewer.api.market_bars import RecordingStart
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import RiskLimitTier
@@ -100,6 +104,7 @@ def _client(
     reader: FakeReader | None,
     resolver: Resolver | None = VIEWER,
     recording_started_at_us: RecordingStart | None = None,
+    recording_timeout_s: float = RECORDING_TIMEOUT_S,
 ) -> TestClient:
     app = FastAPI()
     app.include_router(
@@ -108,6 +113,7 @@ def _client(
             principal_resolver=resolver,
             now_us=lambda: _NOW,
             recording_started_at_us=recording_started_at_us,
+            recording_timeout_s=recording_timeout_s,
         )
     )
     return TestClient(app)
@@ -292,27 +298,39 @@ def test_detail_with_nothing_recorded_reports_false_and_null() -> None:
     assert body["recording_started_at"] is None
 
 
-def test_detail_without_a_provider_reports_false_and_null() -> None:
+def test_detail_without_a_provider_omits_recorded_as_unknown() -> None:
     body = _client(FakeReader(_snap())).get("/instruments/BTCUSDT").json()
-    assert body["recorded"] is False
+    assert "recorded" not in body  # unknown is never "not recorded" (SCR-140's CTA)
     assert body["recording_started_at"] is None
 
 
-def test_detail_survives_a_failing_provider() -> None:
+def test_detail_survives_a_failing_provider_and_omits_recorded() -> None:
     r = _client(FakeReader(_snap()), recording_started_at_us=_boom).get("/instruments/BTCUSDT")
     assert r.status_code == 200
-    assert r.json()["recorded"] is False
+    assert "recorded" not in r.json()
     assert r.json()["recording_started_at"] is None
 
 
-def test_detail_survives_a_hanging_provider() -> None:
+def test_detail_survives_a_hanging_provider_and_omits_recorded() -> None:
     async def hang(symbol: str) -> int | None:
-        await asyncio.sleep(3600)
+        await asyncio.Event().wait()  # never set: only the timeout ends it
         return 1
 
-    r = _client(FakeReader(_snap()), recording_started_at_us=hang).get("/instruments/BTCUSDT")
+    client = _client(FakeReader(_snap()), recording_started_at_us=hang, recording_timeout_s=0.01)
+    r = client.get("/instruments/BTCUSDT")
     assert r.status_code == 200
-    assert r.json()["recorded"] is False
+    assert "recorded" not in r.json()
+
+
+def test_detail_asks_the_provider_for_the_upper_cased_symbol() -> None:
+    calls: list[str] = []
+
+    async def spy(symbol: str) -> int | None:
+        calls.append(symbol)
+        return _REC_US
+
+    body = _client(FakeReader(_snap()), recording_started_at_us=spy).get("/instruments/btcusdt")
+    assert (body.json()["recorded"], calls) == (True, ["BTCUSDT"])
 
 
 def test_unknown_symbol_never_consults_the_provider() -> None:
