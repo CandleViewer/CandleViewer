@@ -40,6 +40,11 @@ export const primary: CSSProperties = {
   background: "var(--color-action-primary-default)",
   color: "var(--color-text-on-action)",
 };
+export const secondary: CSSProperties = {
+  ...primary,
+  background: "transparent",
+  color: "var(--color-text-primary)",
+};
 export const hidden: CSSProperties = {
   position: "absolute",
   inlineSize: 1,

@@ -9,6 +9,14 @@ const MESSAGES: Record<"invalid" | "disabled" | "unreachable", string> = {
   unreachable: "Cannot reach the server. Check your connection and try again.",
 };
 
+/**
+ * Why the session ended, by a fixed `reason` key the client itself put on the URL (`endSession`):
+ * the line is ours, never text from the URL. PROPOSED copy (#1640 ruling 5, owner approval pending).
+ */
+const REASONS: Readonly<Record<string, string>> = {
+  unlock_attempts: "Signed out after too many unlock attempts.",
+};
+
 /** SCR-001 Login (R-001): idle / submitting / invalid / disabled / locked / server-unreachable. */
 export function LoginScreen(): JSX.Element {
   const [state, setState] = useState<State>("idle");
@@ -19,6 +27,10 @@ export function LoginScreen(): JSX.Element {
   const [remaining, setRemaining] = useState(0);
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const summary = useRef<HTMLDivElement>(null);
+  const [reason] = useState(() => {
+    const key = new URLSearchParams(window.location.search).get("reason");
+    return key !== null && Object.hasOwn(REASONS, key) ? REASONS[key] : undefined;
+  });
 
   useEffect(() => {
     if (state !== "locked") return;
@@ -81,6 +93,7 @@ export function LoginScreen(): JSX.Element {
   return (
     <main>
       <h1>Sign in to CandleViewer</h1>
+      {reason === undefined ? null : <p role="status">{reason}</p>}
       <form onSubmit={(e) => void onSubmit(e)} noValidate aria-busy={busy}>
         <div ref={summary} tabIndex={-1} role="alert" id="login-error">
           {message}

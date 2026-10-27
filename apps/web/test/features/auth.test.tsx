@@ -103,6 +103,21 @@ describe("LoginScreen (SCR-001)", () => {
     );
   });
 
+  it.each([
+    ["?next=%2Fterminal&reason=unlock_attempts", "Signed out after too many unlock attempts."],
+    ["?reason=%3Cb%3Eany+text%3C%2Fb%3E", null],
+    ["?reason=toString", null],
+    ["", null],
+  ])("the five-strike reason line shows only for its own key (%s)", async (search, line) => {
+    window.history.replaceState(null, "", `/login${search}`);
+    render(<LoginScreen />);
+    const status = screen.queryByText(/Signed out|any text/u);
+    expect(status?.textContent ?? null).toBe(line);
+    if (line !== null) expect(screen.getByRole("status")).toHaveTextContent(line);
+    expect(await serious()).toEqual([]);
+    window.history.replaceState(null, "", "/");
+  });
+
   it("formats remaining time", () => {
     expect(formatRemaining(872)).toBe("14:32");
   });

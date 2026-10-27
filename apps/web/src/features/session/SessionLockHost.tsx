@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { SessionLockDialog, type LockFailure, type LockPhase } from "./SessionLockDialog";
+import { SessionExpiredCard, SignOutConfirm } from "./SessionLockEscapes";
 import { SessionTimeoutWarning } from "./SessionTimeoutWarning";
 import { sessionApi, type SessionApi, type SessionClock, type UnlockOutcome } from "./sessionApi";
 
@@ -22,12 +23,17 @@ const FAILURE_COPY: Partial<Record<UnlockOutcome["kind"], string>> = {
 type View =
   | { readonly kind: "none" }
   | { readonly kind: "warning"; readonly deadlineMs: number }
-  | { readonly kind: "locked"; readonly phase: LockPhase; readonly failure: LockFailure | null };
+  | { readonly kind: "locked"; readonly phase: LockPhase; readonly failure: LockFailure | null }
+  | { readonly kind: "signout"; readonly busy: boolean; readonly failed: boolean }
+  | { readonly kind: "expired" };
 
 interface Actions {
   extend(): void;
   dismiss(): void;
   unlock(password: string): void;
+  signOut(): void;
+  confirmSignOut(): void;
+  back(): void;
 }
 
 export interface SessionLockHostProps {
@@ -68,6 +74,8 @@ export function SessionLockHost({
     let failures = 0;
     let retryMs = RETRY_MS;
     let unlocking = false;
+    /** The session ended here (signed out, or past its lifetime): nothing more is read. */
+    let ended = false;
     let reading = false;
     const at = (ms: number, task: () => void): void => {
       clearTimeout(timer);
@@ -81,7 +89,10 @@ export function SessionLockHost({
         apply(clock);
       });
     };
-
+    const finish = (): void => {
+      ended = true;
+      clearTimeout(timer);
+    };
     const retry = (): void => {
       at(retryMs, read);
       retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
@@ -96,7 +107,7 @@ export function SessionLockHost({
       setView({ kind: "locked", phase: "error", failure });
     };
     function apply(clock: SessionClock | null): void {
-      if (!live) return;
+      if (!live || ended) return;
       if (clock === null) return retry();
       const { session } = clock;
       setIdleMinutes(Math.round(session.idle_timeout_s / 60));
@@ -104,7 +115,7 @@ export function SessionLockHost({
         clearTimeout(timer);
         retryMs = RETRY_MS;
         setView((v) =>
-          v.kind === "locked" && v.phase !== "verifying"
+          v.kind === "signout" || (v.kind === "locked" && v.phase !== "verifying")
             ? v
             : { kind: "locked", phase: "locked", failure: null },
         );
@@ -129,8 +140,12 @@ export function SessionLockHost({
       if (!live) return;
       if (outcome.kind === "unlocked") return apply(outcome.clock);
       if (outcome.kind === "revoked") {
-        setView({ kind: "none" }); // the typed password goes with the dialog, before the route change
-        return api.endSession();
+        finish();
+        // the typed password goes with the dialog, before the route change
+        if (outcome.reason === "expired") return setView({ kind: "expired" });
+        setView({ kind: "none" });
+        const fiveStrikes = outcome.reason === "unlock_attempts_exceeded";
+        return api.endSession(fiveStrikes ? "unlock_attempts" : undefined);
       }
       if (outcome.kind !== "not_locked") return fail(outcome.kind);
       void api.read().then((clock) => (clock === null ? fail("unreachable") : apply(clock)));
@@ -148,6 +163,18 @@ export function SessionLockHost({
         void api.unlock(password).then((outcome) => {
           unlocking = false;
           settle(outcome);
+        });
+      },
+      signOut: () => setView({ kind: "signout", busy: false, failed: false }),
+      back: () => setView({ kind: "locked", phase: "locked", failure: null }),
+      confirmSignOut: () => {
+        setView({ kind: "signout", busy: true, failed: false });
+        void api.signOut().then((gone) => {
+          if (!live) return;
+          if (!gone) return setView({ kind: "signout", busy: false, failed: true });
+          finish();
+          setView({ kind: "none" });
+          api.endSession();
         });
       },
     };
@@ -186,8 +213,20 @@ export function SessionLockHost({
         phase={view.phase}
         failure={view.failure}
         onUnlock={(password) => actions.current?.unlock(password)}
+        onSignOut={() => actions.current?.signOut()}
       />
     );
   }
+  if (view.kind === "signout") {
+    return (
+      <SignOutConfirm
+        busy={view.busy}
+        failed={view.failed}
+        onConfirm={() => actions.current?.confirmSignOut()}
+        onBack={() => actions.current?.back()}
+      />
+    );
+  }
+  if (view.kind === "expired") return <SessionExpiredCard onSignIn={() => api.endSession()} />;
   return null;
 }

@@ -1018,6 +1018,20 @@ describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
     expect(after).toHaveBeenCalledTimes(1);
     expect(gone).not.toHaveBeenCalled();
   });
+
+  it("endSession carries its reason to sign-in, and the tab's holder puts it on the URL", () => {
+    holder.endSession("unlock_attempts");
+    expect(toSignIn).toHaveBeenCalledWith("unlock_attempts");
+    const assign = vi.fn();
+    const { origin } = window.location;
+    vi.stubGlobal("location", { origin, pathname: "/terminal/abc", search: "", assign });
+    accessToken.endSession("unlock_attempts");
+    accessToken.endSession();
+    expect(assign.mock.calls).toEqual([
+      ["/login?next=%2Fterminal%2Fabc&reason=unlock_attempts"],
+      ["/login?next=%2Fterminal%2Fabc"],
+    ]);
+  });
 });
 
 describe("the test setup takes BroadcastChannel away for the token holder alone", () => {

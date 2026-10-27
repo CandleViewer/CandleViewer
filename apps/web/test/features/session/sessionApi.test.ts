@@ -121,7 +121,40 @@ describe("sessionApi.read / extend", () => {
 });
 
 describe("sessionApi: S2 (#1640)", () => {
-  it("onLocked goes to the tab's token holder", () => {
+  it.each([
+    [{ code: "session_revoked", revoked_reason: "expired" }, "expired"],
+    [
+      { code: "session_revoked", revoked_reason: "unlock_attempts_exceeded" },
+      "unlock_attempts_exceeded",
+    ],
+    [{ code: "session_revoked", revoked_reason: "revoked" }, undefined],
+    [{ code: "unauthenticated", revoked_reason: "expired" }, undefined],
+  ])("a 401 %j is revoked with reason %s", async (body, reason) => {
+    apiFetch.mockResolvedValueOnce(reply(401, body));
+    expect(await sessionApi.unlock("pw")).toEqual(
+      reason === undefined ? { kind: "revoked" } : { kind: "revoked", reason },
+    );
+  });
+
+  it.each([
+    [204, true],
+    [401, true],
+    [503, false],
+    [403, false],
+  ])("signOut: a logout answered %i -> %s", async (status, gone) => {
+    apiFetch.mockResolvedValueOnce(new Response(null, { status }));
+    expect(await sessionApi.signOut()).toBe(gone);
+    expect(apiFetch).toHaveBeenCalledWith("/api/v1/auth/logout", { method: "POST" });
+  });
+
+  it("signOut: no answer revoked nothing", async () => {
+    apiFetch.mockRejectedValueOnce(new TypeError("offline"));
+    expect(await sessionApi.signOut()).toBe(false);
+  });
+
+  it("endSession and onLocked go to the tab's token holder", () => {
+    sessionApi.endSession("unlock_attempts");
+    expect(endSession).toHaveBeenCalledWith("unlock_attempts");
     const listener = vi.fn();
     sessionApi.onLocked(listener);
     expect(onLocked).toHaveBeenCalledWith(listener);

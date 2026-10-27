@@ -11,6 +11,10 @@ import type { SessionApi, SessionClock } from "../../../src/features/session/ses
 import { SessionLockDialog } from "../../../src/features/session/SessionLockDialog";
 import { SessionLockHost } from "../../../src/features/session/SessionLockHost";
 import { SessionTimeoutWarning } from "../../../src/features/session/SessionTimeoutWarning";
+import {
+  SessionExpiredCard,
+  SignOutConfirm,
+} from "../../../src/features/session/SessionLockEscapes";
 import { KeymapHost, registerCommand } from "../../../src/keymap/KeymapHost";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -39,6 +43,7 @@ function fakeApi(over: Partial<SessionApi> = {}): SessionApi {
     read: vi.fn(() => Promise.resolve(clock(900))),
     extend: vi.fn(() => Promise.resolve(clock(900))),
     unlock: vi.fn(() => Promise.resolve({ kind: "unlocked" as const, clock: clock(900) })),
+    signOut: vi.fn(() => Promise.resolve(true)),
     endSession: vi.fn(),
     onLocked: vi.fn(() => () => undefined),
     ...over,
@@ -74,6 +79,25 @@ describe("session dialogs: axe per state", () => {
         onUnlock={vi.fn()}
       />,
     ],
+    [
+      "SCR-005 locked with Sign out instead",
+      <SessionLockDialog
+        key="s"
+        idleMinutes={15}
+        phase="locked"
+        onUnlock={vi.fn()}
+        onSignOut={vi.fn()}
+      />,
+    ],
+    [
+      "SCR-005 sign-out-instead",
+      <SignOutConfirm key="c" busy={false} failed={false} onConfirm={vi.fn()} onBack={vi.fn()} />,
+    ],
+    [
+      "SCR-005 sign-out-instead, logout failed",
+      <SignOutConfirm key="f" busy={false} failed onConfirm={vi.fn()} onBack={vi.fn()} />,
+    ],
+    ["SCR-005 absolute-expiry-signed-out", <SessionExpiredCard key="e" onSignIn={vi.fn()} />],
   ];
   it.each(STATES)("%s has no serious or critical axe violations", async (_name, ui) => {
     render(ui);
@@ -424,6 +448,83 @@ describe("SessionLockHost: S2 (#1640)", () => {
     await tick(0);
     expect(read).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("Sign out instead: confirm, keyboard path, then logout and SCR-001", async () => {
+    const api = fakeApi({ read: lockedRead() });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    fireEvent.click(screen.getByRole("button", { name: "Sign out instead" }));
+    const confirm = screen.getByRole("alertdialog", { name: "Sign out?" });
+    expect(confirm).toHaveAccessibleDescription(
+      "Unsent ticket inputs will be discarded. Open orders stay live on the exchange with their native stop-loss.",
+    );
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument(); // no password field
+    const back = screen.getByRole("button", { name: "Back to unlock" });
+    expect(back).toHaveFocus();
+    const signOut = screen.getByRole("button", { name: "Sign out" });
+    fireEvent.keyDown(back, { key: "Tab", shiftKey: true });
+    expect(signOut).toHaveFocus();
+    fireEvent.keyDown(signOut, { key: "Tab" });
+    expect(back).toHaveFocus();
+    fireEvent.keyDown(confirm, { key: "Escape" }); // Esc goes back, never past the lock
+    expect(screen.getByLabelText("Password")).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Sign out instead" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(api.signOut).toHaveBeenCalledTimes(1);
+    await tick(0);
+    expect(api.endSession).toHaveBeenCalledWith();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("a logout that revoked nothing stays on the confirm with the unreachable line", async () => {
+    let answer: (gone: boolean) => void = () => undefined;
+    const signOut = vi.fn(() => new Promise<boolean>((r) => (answer = r)));
+    const api = fakeApi({ read: lockedRead(), signOut });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    fireEvent.click(screen.getByRole("button", { name: "Sign out instead" }));
+    fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeDisabled();
+    await act(async () => answer(false));
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't reach the server. Try again.");
+    expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
+    expect(api.endSession).not.toHaveBeenCalled();
+  });
+
+  it("absolute expiry: the expired card replaces the password, Esc stays, Sign in goes to SCR-001", async () => {
+    const unlock = vi.fn().mockResolvedValue({ kind: "revoked", reason: "expired" });
+    const read = lockedRead();
+    const api = fakeApi({ read, unlock });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    submit("pw");
+    await tick(0);
+    const card = screen.getByRole("alertdialog", { name: "Session expired" });
+    expect(card).toHaveAccessibleDescription("Session expired. Signed out. Sign in again.");
+    expect(card).toHaveTextContent("NOT SENT · DISCARDED · DISARMED");
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+    expect(api.endSession).not.toHaveBeenCalled();
+    fireEvent.keyDown(card, { key: "Escape" });
+    const signIn = screen.getByRole("button", { name: "Sign in" });
+    expect(signIn).toHaveFocus();
+    await tick(600_000);
+    expect(read).toHaveBeenCalledTimes(1); // nothing more is read for an ended session
+    fireEvent.click(signIn);
+    expect(api.endSession).toHaveBeenCalledWith();
+  });
+
+  it("five strikes route to SCR-001 with the unlock_attempts reason", async () => {
+    const unlock = vi
+      .fn()
+      .mockResolvedValue({ kind: "revoked", reason: "unlock_attempts_exceeded" });
+    const api = fakeApi({ read: lockedRead(), unlock });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    submit("pw");
+    await tick(0);
+    expect(api.endSession).toHaveBeenCalledWith("unlock_attempts");
   });
 
   it("reports a session found unlocked: a locked reload boots on after the unlock", async () => {

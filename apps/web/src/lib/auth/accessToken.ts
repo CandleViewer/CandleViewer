@@ -28,6 +28,8 @@ import type { TokenResult, TokenSource } from "../ws/api";
 
 export type TokenBundle = generated.rest.components["schemas"]["TokenBundle"];
 export type RefreshOutcome = "ok" | "locked" | "lost" | "failed";
+/** Why a session ended, for SCR-001's reason line: a fixed key, never text from a response or the user. */
+export type SignOutReason = "unlock_attempts";
 type Transport = (init: RequestInit) => Promise<Response>;
 
 export const REFRESH_PATH = "/api/v1/auth/refresh";
@@ -118,8 +120,8 @@ export interface AccessTokenHolder extends TokenSource {
    * answers `unavailable` until the next bundle; a refresh on the wire is dropped.
    */
   clear(): void;
-  /** Logout or a lost session: forgets the token and routes to sign-in. */
-  endSession(): void;
+  /** Logout or a lost session: forgets the token and routes to sign-in, with `reason` if given. */
+  endSession(reason?: SignOutReason): void;
   /**
    * Calls `listener` each time the session is found idle-locked: a refresh answered `locked`, or a call got
    * `401 session_idle_locked`. Returns the unsubscribe.
@@ -277,7 +279,9 @@ async function getSession(): Promise<Response> {
   }
 }
 
-export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder {
+export function createAccessTokenHolder(
+  toSignIn: (reason?: SignOutReason) => void,
+): AccessTokenHolder {
   let token: { readonly value: string; readonly expiresAtMs: number } | null = null;
   /** The WS client or a refused call reported it rejected: the next ask refreshes. */
   let stale = false;
@@ -382,9 +386,9 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     channel?.postMessage({ cleared: true });
   }
 
-  function endSession(): void {
+  function endSession(reason?: SignOutReason): void {
     clear();
-    toSignIn();
+    toSignIn(reason);
   }
 
   /**
@@ -580,10 +584,11 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
   };
 }
 
-/** SCR-001, carrying where the user was, as the route guard does (`routes/guards.ts`). */
-function goToSignIn(): void {
+/** SCR-001, carrying where the user was, as the route guard does (`routes/guards.ts`), and why if known. */
+function goToSignIn(reason?: SignOutReason): void {
   const { pathname, search } = window.location;
-  window.location.assign(`${SIGN_IN_PATH}?next=${encodeURIComponent(pathname + search)}`);
+  const why = reason === undefined ? "" : `&reason=${reason}`;
+  window.location.assign(`${SIGN_IN_PATH}?next=${encodeURIComponent(pathname + search)}${why}`);
 }
 
 /** The tab's holder: the HTTP clients, the WS client (`startShell`) and the auth responses share it. */
