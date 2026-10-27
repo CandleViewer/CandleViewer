@@ -217,6 +217,10 @@ refused before any password check when its CSRF token belongs to another session
   `test_extend_is_the_activity_that_keeps_a_polled_session_unlocked` and
   `test_a_read_only_session_extends_and_stays_read_only`; the session-backed resolvers, which this
   stack replaces with a fake, in `tests/unit/api/test_session_resolvers_not_activity.py`.
+  Residual, open (#4052 F6): extend is unthrottled, and since #2300 it is the one write that needs no
+  permission and survives the read-only downgrade. Every call appends an `auth.session_extended`
+  row, kept indefinitely, so a held bearer can write audit rows at line rate (it still cannot move
+  `expires_at`). The fix is contract-first: a per-session window with a `429`, as refresh has.
 - AC-LOCK-04: `test_wrong_password_is_unlock_invalid_counted_toward_the_account_lockout`,
   `test_the_wrong_unlock_password_that_locks_the_account_writes_account_locked` and
   `test_a_locked_account_fails_like_a_wrong_password`. The password check is step-up's, on login's
