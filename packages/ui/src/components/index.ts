@@ -11,6 +11,15 @@ export type {
   LegendPalette,
 } from "./ColorConventionLegend.js";
 
+export { ColorSwatch, ColorSwatchPicker } from "./ColorSwatch.js";
+export type {
+  ColorSwatchOption,
+  ColorSwatchPickerBaseProps,
+  ColorSwatchPickerProps,
+  ColorSwatchProps,
+  SwatchGlyphTone,
+} from "./ColorSwatch.js";
+
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
