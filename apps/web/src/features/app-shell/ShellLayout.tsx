@@ -1,5 +1,6 @@
 import { useRef, type JSX } from "react";
 import { Outlet } from "react-router";
+import { ShellAnnouncer } from "./announcer";
 import { AppShell } from "./AppShell";
 import { InShellProvider } from "./ScreenRoot";
 import { ShellBannerSlot, ShellCanvasOverlaySlot, ShellConnectionSlot } from "./slots";
@@ -26,6 +27,7 @@ export function ShellLayout(): JSX.Element {
       >
         <Outlet />
       </AppShell>
+      <ShellAnnouncer />
     </InShellProvider>
   );
 }

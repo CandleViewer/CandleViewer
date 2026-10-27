@@ -17,6 +17,7 @@ export {
 } from "./ElectronShellAdapter.js";
 
 export { useShellState } from "./useShellState.js";
+export { useShellSelector } from "./useShellSelector.js";
 export { startShell, type StartShellOptions } from "./startShell.js";
 export {
   getShellState,
