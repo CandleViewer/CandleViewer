@@ -2,7 +2,7 @@
 """E12-D05 (#241) audit: SCR-031's General tab (spec + hand-off).
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
-AS TEXT at the pinned base `b4ef4f1508` (`git show`): the token JSON (`themes.json` layering:
+AS TEXT at the pinned base `15ba8bbc1b` (`git show`): the token JSON (`themes.json` layering:
 dark = primitives + semantic-dark, light = + semantic-light, hc = + semantic-hc), the plan texts
 `05`, `11`, `14`, `15`, `16`, `22`, the merged design docs the spec cites, `bars/limits.py` and
 `bars/spec.py` (as syntax trees, never imported) and the recorded instrument fixture; then this
@@ -20,38 +20,41 @@ E12-D02.md (which must equal the fork point; no other path may differ from it bu
    FAILs on a difference, a `{{` left outside a code span, a hand-typed figure with a unit or a
    hand-typed hex.
 2. **The comment strip.** One pattern over the whole text, `re.DOTALL`: `<!--` closes at `-->` or
-   `--!>`, `<!-->` and `<!--->` close at once, and an unclosed comment runs to the end. Every comment
-   must be a value anchor the tool computes (G-MARKER); the lexicon gates read rendered text only.
+   `--!>`, `<!-->` and `<!--->` close at once, and an unclosed comment runs to the end. Every
+   comment must be a value anchor the tool computes (G-MARKER); the lexicon gates read rendered text
+   only.
 3. **Cites.** Every `NN`:line, `D0n`/`D0nh`/`SEED`/`LIM`/`BSPEC`/`E05-FO`:line and `Exx-Dyy`:line
    cite is read at the base (FAIL when the line is gone or blank; WARN when it drifted at
    `origin/main`), and the load-bearing fragments in CITED must sit on the cited line.
 4. **Gates.** Lexicon gates first (each reads rows and prose after the comment strip, NFKC, markup
    dropped, dashes to spaces and lower case; a claim is read per clause; a negation covers its own
-   term within five words and a list coordinated after it; quoted copy, §15.2's mutation rows and the
-   hand-off's Old cells are not claims), then the measured gates (the D03 parity matrix, the
+   term within five words and a list coordinated after it; quoted copy, §15.2's mutation rows and
+   the hand-off's Old cells are not claims), then the measured gates (the D03 parity matrix, the
    chart-type set, the frame register column by column, the contrast pairs, the boards, the budgets,
    G-UNTOUCHED against `git merge-base HEAD origin/main`), then the pins. Each gate reports one FAIL
    line.
 5. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over EVERY unit of both docs, in
    RULED_PIN_TXT (`e12_d05_ruled_pins.txt`): each heading, table row (by its lead cell), rule line,
    prose sentence (`s<k>`) and fenced block, by doc, region (heading path plus occurrence `#n`),
-   location and exact text (NFKC, whitespace collapsed). Anchored values are pinned with their values
-   cut out (G-ANCHOR re-derives them). Each region pins its line shape (line-shape tags: `.` blank,
-   `h` heading, `t` row, `r` rule, `b` bullet, `n` numbered item, `p` prose, `f` fence; a prose,
-   bullet or numbered tag carries its sentence count, the line-form tag; `>n` an n-column indent).
-   A unit changed, moved, duplicated, deleted or added FAILs by location. `--repin-ruled` is the only
-   writer (it refuses while a placeholder is unfilled); `--check` writes nothing. Pins fold NFKC,
-   so G-CHARSET FAILs any compatibility character but `…`, any CR and any trailing whitespace: a
-   change the pins cannot see is not allowed in. NOTE demotion: when
-   a lexicon or measured gate already FAILs a section, that section's pin findings print as NOTE
-   lines, so one wrong form yields one FAIL.
+   location and exact text (NFKC, whitespace collapsed). Anchored values are pinned with their
+   values cut out (G-ANCHOR re-derives them). Each region pins its line shape (line-shape tags: `.`
+   blank, `h` heading, `t` row, `r` rule, `b` bullet, `n` numbered item, `p` prose, `f` fence; a
+   prose, bullet or numbered tag carries its sentence count, the line-form tag; `>n` an n-column
+   indent). A unit changed, moved, duplicated, deleted or added FAILs by location. `--repin-ruled`
+   is the only writer (it refuses while a placeholder is unfilled); `--check` writes nothing. Pins
+   fold NFKC, so G-CHARSET FAILs any compatibility character but `…`, any CR and any trailing
+   whitespace: a change the pins cannot see is not allowed in. NOTE demotion: when a lexicon or
+   measured gate already FAILs a section, that section's pin findings print as NOTE lines, so one
+   wrong form yields one FAIL.
 6. **--self-test** (alias `--selftest`) applies every §15.2 mutation M-1 … M-88 in memory, plus the
-   tool's own X-n and P-n (one per pin class) and the N-n probes (which must trip nothing), with the
-   values frozen at the filled baseline; each must add exactly one FAIL, from the gate it names, and
-   every text is restored byte-identically (sha256 in memory and on disk).
+   tool's own X-n (X-16 … X-21: PR #4669's six paraphrases, each FAILed by its own gate) and P-n
+   (one per pin class) and the N-n probes (which must trip nothing), with the values frozen at the
+   filled baseline; each must add exactly one FAIL, from the gate it names, and every text is
+   restored byte-identically (sha256 in memory and on disk).
 
 Usage (from the repo root):
-  python3 -I docs/design/_tools/e12_d05_settings_audit.py --check [SPEC] [--handoff F] [--json] [--fill]
+  python3 -I docs/design/_tools/e12_d05_settings_audit.py --check [SPEC] [--handoff F] \
+      [--json] [--fill]
   python3 -I docs/design/_tools/e12_d05_settings_audit.py --self-test
   python3 -I docs/design/_tools/e12_d05_settings_audit.py --repin-ruled
 Exit 0 = no FAIL; 1 = at least one FAIL.
@@ -64,9 +67,11 @@ import ast
 import difflib
 import functools
 import hashlib
+import io
 import json
 import math
 import re
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -77,7 +82,7 @@ from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "b4ef4f1508"  # every cite was read here (the spec's Inputs line)
+BASE = "15ba8bbc1b"  # every cite was read here (the spec's Inputs line)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 
@@ -97,6 +102,13 @@ OWN_PATHS = (
     "docs/design/_tools/e12_d05_ruled_pins.txt",
 )
 OWN_IMG = re.compile(r"docs/design/E12/img/E12-D05-\d{2}-[a-z0-9-]+\.png")
+# the boards PR's committed board script set (`sheets/e12-d05/`) and the four shared helpers it
+# runs (`sheets/common/`), plus the folder's regenerated MANIFEST.sha256: never read by this tool
+OWN_SHEETS = re.compile(
+    r"docs/design/_tools/sheets/(?:e12-d05/[A-Za-z0-9._-]+"
+    r"|common/(?:listexp|openpage|pull/export_to_storage|pull/read_chunk)\.js\.txt"
+    r"|MANIFEST\.sha256)"
+)
 CITE_FILES: dict[str, str] = {
     "D01": "docs/design/E12/E12-D01.md",
     "D02": "docs/design/E12/E12-D02.md",
@@ -231,17 +243,17 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("05", 126, "≥3:1"),
     ("11", 906, "client-side with no refetch"),
     ("11", 915, "type switch ≤100 ms"),
-    ("22", 3999, "maxLength: 24"),
-    ("22", 3951, "`heikin_ashi`"),
-    ("22", 20200, "^[a-z][a-z0-9_]{0,31}$"),
+    ("22", 4112, "maxLength: 24"),
+    ("22", 4064, "`heikin_ashi`"),
+    ("22", 20542, "^[a-z][a-z0-9_]{0,31}$"),
     ("D02", 236, "(*) Candles ( ) Bars ( ) Hollow"),
     ("D02", 254, '"all panels" belongs to the layouts epic and is not drawn.'),
     ("D02", 370, "10 s per 1 M prints"),
     ("D03", 62, "Order: Time, then Tick, Volume, Range, Delta, Renko"),
     ("D03", 237, "Recent"),
     ("D03", 245, "Requested 300 ms after the last keystroke"),
-    ("D06", 314, "· width mapping off"),
-    ("D06", 567, "Switch to time bars"),
+    ("D06", 312, "· width mapping off"),
+    ("D06", 565, "Switch to time bars"),
     ("E11-D02", 116, "default off"),
     ("E11-D03", 272, "This chart panel only. Other panels and future panels are unchanged."),
     ("E14-D02", 332, "weak (12 CSS px, default)"),
@@ -258,12 +270,13 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("E11-D03", 486, "stays in the Tab order and its reason is read"),
     ("E11-D09", 1106, "`workspaces:write`"),
     ("15", 103, "reachable by the arrows but never checked"),
-    ("15", 2605, "CMP-222 ChartTypeToggle"),
-    ("22", 9668, "`_meta.overridden` lists which keys came from the user"),
-    ("22", 9738, "Sending `null` for a leaf resets it"),
-    ("22", 11962, "operationId: updateMyPreferences"),
+    ("15", 2610, "CMP-222 ChartTypeToggle"),
+    ("22", 9826, "`_meta.overridden` lists which keys came from the user"),
+    ("22", 9896, "Sending `null` for a leaf resets it"),
+    ("22", 12120, "operationId: updateMyPreferences"),
 )
-# copy the spec quotes verbatim from a merged line: (cite id, line, text, the spec section quoting it)
+# copy the spec quotes verbatim from a merged line:
+# (cite id, line, text, the spec section quoting it)
 VERBATIM: tuple[tuple[str, int, str, str], ...] = (
     (
         "D02",
@@ -280,7 +293,10 @@ VERBATIM: tuple[tuple[str, int, str, str], ...] = (
     (
         "E11-D03",
         858,
-        "Defaults for the other fields are stored per panel until the settings contract carries them",
+        (
+            "Defaults for the other fields are stored per panel until the settings contract"
+            " carries them"
+        ),
         "7.2 The scope",
     ),
     ("E11-D02", 302, "Crosshair magnet: weak", "2.2 Crosshair"),
@@ -944,6 +960,11 @@ def is_twin(row: list[str]) -> bool:
     return "twin of" in row[2]
 
 
+BOARD_SCRIPT = "docs/design/_tools/sheets/e12-d05/e12-d05-board.js.txt"  # the r2 script §0 names
+DRAWN_CELL = re.compile(
+    r"drawn \(r2\): board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>[^`]+)` \((?P<w>\d+) × (?P<h>\d+)\)"
+)
 FRAME_HEAD = "15.1 The frame register"
 FR_COLS = ("Frame", "Board", "Theme", "State", "Components", "Copy", "Tokens", "Status")
 
@@ -1364,9 +1385,34 @@ def g_boards(t: Texts) -> list[Finding]:
         bad.append(F("G-BOARDS", "§0 does not make each frame a window on a canvas", "spec", sec))
     for r in rows:
         want = "dark" if not is_twin(r) else ("hc" if "high-contrast" in r[2] else "light")
-        if len(r) < 5 or r[3] != want or not r[4].startswith("PENDING"):
+        if len(r) < 5 or r[3] != want or not drawn_cell_ok(r):
             bad.append(F("G-BOARDS", f"board {r[0]}: theme or status cell", "spec", sec))
+    script = ROOT / BOARD_SCRIPT
+    sha = hashlib.sha256(script.read_bytes()).hexdigest() if script.exists() else "missing"
+    if f"board script r2, sha256 `{sha}`" not in section(t.spec, "0. Status"):
+        bad.append(F("G-BOARDS", f"§0 does not name {BOARD_SCRIPT}'s sha256", "spec", sec))
     return bad
+
+
+def png_size(rel: str) -> tuple[int, int] | None:
+    """Width and height from a working-tree PNG's IHDR, else None."""
+    path = ROOT / rel
+    head = path.read_bytes()[:24] if path.is_file() else b""
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return int(w), int(h)
+
+
+def drawn_cell_ok(row: list[str]) -> bool:
+    """A §0 Status cell reads `drawn (r2): board id `<uuid>`, `<its export path>` (W × H)`, the
+    path the board's own slug names and W × H its PNG header (the boards PR)."""
+    slug = re.fullmatch(rf"`E12-D05 / {row[0]} ([a-z0-9-]+)`", row[1])
+    m = DRAWN_CELL.fullmatch(row[4])
+    if not slug or not m:
+        return False
+    want = f"docs/design/E12/img/E12-D05-{row[0]}-{slug[1]}.png"
+    return m["png"] == want and png_size(want) == (int(m["w"]), int(m["h"]))
 
 
 def g_penpot(t: Texts) -> list[Finding]:
@@ -1435,6 +1481,29 @@ def whole_runs(value: str) -> set[str]:
     return {value[a:b].strip().removesuffix(" ·").strip() for a in cuts for b in cuts if b > a}
 
 
+# a Table A row a merged `15` change already applied: its Old cell is exactly this marker, the PR
+# is a commit on the cited file at the base, and every code span of its New is on the cited line
+CLOSED_ROW = re.compile(r"applied by #(\d+) \(closed\)")
+
+
+def closed_resolves(pr: str, cite: re.Match[str], new: str) -> bool:
+    """A closed A-row's cite resolves: `#pr` merged into the cited file by the base, and the New
+    cell quotes (as code spans) only what the cited line holds at the base."""
+    rel = cite_path(cite["a"] or cite["b"])
+    nums = [int(x) for x in re.split(r"[–-]", cite["first"])]
+    if not rel or len(nums) != 1 or cite["more"]:
+        return False
+    log = git_out("log", "--format=%s", BASE, "--", rel)
+    if not re.search(rf"\(#{pr}\)$", log, flags=re.MULTILINE):
+        return False
+    line = (git_show(BASE, rel) or "").split("\n")
+    spans = CODE.findall(new)
+    if not spans or nums[0] > len(line):
+        return False
+    held = line[nums[0] - 1]  # spans compared whole, backticks and `*` kept (`_flat` drops both)
+    return all(x.replace("\\|", "|") in held for x in spans)
+
+
 def g_old(t: Texts) -> list[Finding]:
     """BQ-3: every Old cell of Table A is verbatim on its cited line at the base."""
     sec = hand_sec(t, "§C Copy-ready")
@@ -1446,6 +1515,11 @@ def g_old(t: Texts) -> list[Finding]:
         m = CITE_GROUP.search(r[2])
         if not m:
             bad.append(F("G-OLD", f"{aid}: no cite in its Field cell", "hand", sec))
+            continue
+        shut = CLOSED_ROW.fullmatch(old)
+        if shut or "closed" in old.lower():
+            if not shut or not closed_resolves(shut[1], m, r[4] if len(r) > 4 else ""):
+                bad.append(F("G-OLD", f"{aid}: its closed marker does not resolve", "hand", sec))
             continue
         cid = m["a"] or m["b"]
         first = m["first"]
@@ -1469,22 +1543,37 @@ def g_old(t: Texts) -> list[Finding]:
     return bad
 
 
+# a setting R-1 homes elsewhere, as §2.1 may name it in any cell (the crosshair's own magnet is
+# General's, so a bare "magnet" counts only in the lead cell)
+ELSEWHERE = (
+    r"\bdecimals?\b|\bprecision\b|\bcount ?down\b|\bbar close timer\b|\bdrawing magnet\b"
+    r"|\bsnap(?:ping)? to (?:ohlc|price)\b|\bcolou?rs?\b|\bdensity\b|\bup ?/ ?down\b"
+)
+
+
 def g_home(t: Texts) -> list[Finding]:
     """BQ-4 (M-10, M-11): General points to precision and the countdown and names the drawing
-    magnet; it hosts none of them (R-1)."""
+    magnet; it hosts none of them (R-1). Every cell of §2.1's table is read (lens r1 P01), and a
+    clause hosting, holding, carrying, offering or containing one of them FAILs."""
     sec = spec_sec(t, "2.1 Layout")
-    rows = table_rows(section(t.spec, "2.1 Layout"))
-    bad = [
-        F("G-HOME", f"§2.1 hosts {r[0]!r}", "spec", sec)
-        for r in rows
-        if re.search(r"precision|countdown|magnet|colou?r|density", r[0], re.IGNORECASE)
-    ]
-    hits = claims(lex(t), r"\bhost(?:s|ed|ing)?\b", near=r"drawing magnet|precision|countdown")
+    bad: list[Finding] = []
+    for r in table_rows(section(t.spec, "2.1 Layout")):
+        hit = re.search(r"magnet", r[0], re.IGNORECASE) or re.search(
+            ELSEWHERE, norm_text(" | ".join(r))
+        )
+        if hit:
+            bad.append(F("G-HOME", f"§2.1 {r[0]!r} hosts {hit[0]!r}", "spec", sec))
+    hits = claims(
+        lex(t),
+        r"\b(?:host|hold|carr(?:y|ie)|offer|contain)(?:s|ed|ing)?\b",
+        near=r"drawing magnet|precision|decimals?\b|count ?down",
+    )
     return bad + as_findings("G-HOME", "a hosted setting", hits)
 
 
 def g_crosshair(t: Texts) -> list[Finding]:
-    """BQ-4 (M-12): magnet Off (default) / Weak / Strong; readout Follow (default) / Docked / Off."""
+    """BQ-4 (M-12): magnet Off (default) / Weak / Strong; readout Follow (default) / Docked /
+    Off."""
     body = section(t.spec, "2.2 Crosshair")
     sec = spec_sec(t, "2.2 Crosshair")
     return [
@@ -1520,11 +1609,19 @@ def g_types(t: Texts) -> list[Finding]:
     return bad
 
 
+WIRE_VERB = (
+    r"(?:sen[dt]s?|sending|post(?:s|ed|ing)?|request(?:s|ed|ing)?|transmit\w*|pass(?:es|ed))"
+)
 g_wire = lexicon(
     "G-WIRE",
     "heikin_ashi sent as a wire bar_type or interval_code",
     r"\bsends?\b[^.;]*\bheikin_ashi\b|\bheikin_ashi\b[^.;]*\b(?:as|in) (?:the |a |an )?"
-    r"(?:bar_type|interval_code)\b|\binterval_code\b[^.;]*\bheikin_ashi:",
+    r"(?:bar_type|interval_code)\b|\binterval_code\b[^.;]*\bheikin_ashi:"
+    # lens r1 P05: a passive or synonym verb before the wire field, or §3.1's row as the subject
+    rf"|\b{WIRE_VERB}\b(?: \S+){{0,3}}? (?:as|in|via|through) (?:the |a |an )?(?:wire )?"
+    r"(?:bar_type|interval_code)\b[^.;]*\bheikin(?:_| )ashi\b"
+    rf"|^heikin ashi \|[^|]*\b{WIRE_VERB}\b(?: \S+){{0,3}}? (?:as|in|via|through) "
+    r"(?:the |a |an )?(?:wire )?(?:bar_type|interval_code)\b",
 )
 g_base = require("G-BASE", "3.2 Baseline", ("first visible close (default)",))
 
@@ -1630,14 +1727,27 @@ def g_modes(t: Texts) -> list[Finding]:
 
 
 g_diff = require("G-DIFF", "4.1 The parity", ("shows no recent row", "recorded on #241"))
-g_live = lexicon(
-    "G-LIVE",
-    "a bar mode applied live",
-    r"\b(?:applies|apply|applied|commits?|committed) live\b|\blive\b[^.;]*\bbar mode\b",
-    near=r"\bbar mode\b|\bparameter\b",
-    unless=r"\bchart type\b|\bcrosshair\b",
+g_live = both(
+    lexicon(
+        "G-LIVE",
+        "a bar mode applied live",
+        r"\b(?:applies|apply|applied|commits?|committed|rebuilds?|takes effect)"
+        r"(?: \w+){0,2}? (?:live|instantly|immediately|at once|on change|as you type)\b"
+        r"|\blive\b[^.;]*\bbar mode\b"
+        # lens r1 P20: a row led by the bar mode whose cell reads live
+        r"|\bbar mode\b[^|.;]*\|\s*(?:\S+\s+){0,2}?(?:live|instantly|immediately|at once)\b",
+        near=r"\bbar mode\b|\bparameter\b",
+        unless=r"\bchart type\b|\bcrosshair\b",
+    ),
+    require("G-LIVE", "5. Apply model", ("| on save only (r 2) |",)),
 )
-g_enter = lexicon("G-ENTER", "Enter saving the dialog", r"\bsaves\b", near=r"\benter\b")
+g_enter = lexicon(
+    "G-ENTER",
+    "Enter saving the dialog",
+    # lens r1 P02: the synonyms of saving (verbs only: "to Save, `Enter`" names the button)
+    r"\b(?:saves|saved|commits|committed|submits|submitted|persists|persisted)\b",
+    near=r"\benter\b",
+)
 g_rebuild = require("G-REBUILD", "5. Apply model", ("needs a build", "rebuilds the chart on save"))
 
 
@@ -1729,7 +1839,7 @@ g_haanchor = lexicon(
 def g_keys(t: Texts) -> list[Finding]:
     """BQ-10 (M-33): the PROPOSED `PaneConfig.settings` keys match `22`'s key pattern, and the
     hand-off's A-15 names the same keys."""
-    pat = grab(r"`(\^\[a-z\][^`]+)`", base_line("22", 20200), "22:20200 key pattern")
+    pat = grab(r"`(\^\[a-z\][^`]+)`", base_line("22", 20542), "22:20542 key pattern")
     sec = spec_sec(t, "7.1 Where")
     spec_keys = [
         k
@@ -1805,7 +1915,8 @@ g_notice = both(
     lexicon(
         "G-NOTICE",
         "the notice posted while the build runs",
-        r"\bwhile (?:it|the build|that build|a build) (?:runs|is running)\b|\bwhen (?:the|a) build starts\b",
+        r"\bwhile (?:it|the build|that build|a build) (?:runs|is running)\b"
+        r"|\bwhen (?:the|a) build starts\b",
         near=r"\bw 13\b|\bnotice\b|\bposted\b|\bundo\b",
         unless=r"\bclears\b",
     ),
@@ -1846,7 +1957,31 @@ def g_reset(t: Texts) -> list[Finding]:
         r"(?:at once|immediately|right away|on (?:its own|confirm\w*))",
         near=r"\breset\b",
     )
-    return bad + as_findings("G-RESET", "a confirmed Reset that commits", hits)
+    return bad + w25_scope(t) + as_findings("G-RESET", "a confirmed Reset that commits", hits)
+
+
+W25_SCOPE = re.compile(
+    r" for (?:this panel|all panels in this workspace|your defaults and this panel)$"
+)
+W25_LEAD = re.compile(r"^(?:General|All chart settings) reset\b")
+
+
+def w25_scope(t: Texts) -> list[Finding]:
+    """Lens r1 P10: W-25 names its scope, in §12's row and in each copy §9.1 quotes."""
+    bad: list[Finding] = []
+    rows = {r[0]: r for r in table_rows(section(t.spec, "12. Copy deck"))}
+    w25 = rows.get("W-25")
+    items = [x.strip() for x in w25[2].split(" · ")] if w25 and len(w25) > 2 else []
+    if len(items) != 2 or not all(W25_SCOPE.search(x) for x in items):
+        sec = spec_sec(t, "12. Copy deck")
+        bad.append(F("G-RESET", f"§12 W-25 without its scope: {items}", "spec", sec))
+    body = " ".join(section(t.spec, "9.1 Reset").split())
+    quoted = [q.strip('"“”') for q in QUOTED.findall(body)]
+    said = [q for q in quoted if W25_LEAD.match(q)]
+    if len(said) != 2 or not all(W25_SCOPE.search(q) for q in said):
+        sec = spec_sec(t, "9.1 Reset")
+        bad.append(F("G-RESET", f"§9.1 quotes W-25 without its scope: {said}", "spec", sec))
+    return bad
 
 
 g_guard = require("G-GUARD", "9.2 The dirty", ("keep editing focused",))
@@ -1971,9 +2106,31 @@ g_density = both(
         "G-DENSITY", "compact by default", r"\bcompact by default\b|\bdefaults? (?:to|is) compact\b"
     ),
 )
+SETTINGS_PROPS = ("section", "key", "scope")  # E11-D03:393: keys only, no values
+
+
+def g_event_props(t: Texts) -> list[Finding]:
+    """Lens r1 P09: §14's `chart.settings_changed` row carries exactly {section, key, scope}."""
+    sec = spec_sec(t, "14. Analytics")
+    for r in table_rows(section(t.spec, "14. Analytics")):
+        if r[0] == "`chart.settings_changed`":
+            m = re.search(r"\{([^{}]*)\}", r[1]) if len(r) > 1 else None
+            props = tuple(x.split(":")[0].strip(" `") for x in m[1].split(",")) if m else ()
+            if props != SETTINGS_PROPS:
+                return [F("G-EVENTS", f"settings_changed carries {props}", "spec", sec)]
+            return []
+    return [F("G-EVENTS", "§14 has no `chart.settings_changed` row", "spec", sec)]
+
+
 g_events = both(
-    lexicon("G-EVENTS", "an event carrying values", r"\bvalues?\b", near=r"settings_changed"),
+    lexicon(
+        "G-EVENTS",
+        "an event carrying values",
+        r"\bvalues?\b|\bparam\w*|\b(?:old|new|previous|before|after)\b",
+        near=r"settings_changed",
+    ),
     require("G-EVENTS", "14. Analytics", ("no audit record", 'source: "settings"')),
+    g_event_props,
 )
 
 
@@ -2006,7 +2163,7 @@ def g_frame(t: Texts) -> list[Finding]:
         for tok in re.findall(r"`([a-z][a-z0-9.*-]+)`", fr.get("Tokens", "")):
             if any(resolve(load_theme(th), tok) == "MISSING" for th in THEMES):
                 bad.append(F("G-FRAME", f"{fid}: {tok} does not resolve", "spec", sec))
-        if fr.get("Status") != "PENDING":
+        if fr.get("Status") != "drawn":
             bad.append(F("G-FRAME", f"{fid}: status {fr.get('Status')!r}", "spec", sec))
     return bad
 
@@ -2071,6 +2228,24 @@ def g_contrast(t: Texts) -> list[Finding]:
     return bad
 
 
+def table_a_quoted_ids(hand: str) -> set[tuple[str, str, str]]:
+    """Comment ids a Table A row quotes from its cited `15` line at the base (another ticket's
+    ruling, copied verbatim into Old / New), keyed by the hand-off line that carries them."""
+    out: set[tuple[str, str, str]] = set()
+    for ln in section(hand, "Table A").split("\n"):
+        if not ln.startswith("| A-"):
+            continue
+        m = CITE_GROUP.search(split_row(ln)[2])
+        rel = cite_path(m["a"] or m["b"]) if m else None
+        if not m or not rel:
+            continue
+        no = int(re.split(r"[–-]", m["first"])[0])
+        base = (git_show(BASE, rel) or "").split("\n")
+        held = base[no - 1] if 0 < no <= len(base) else ""
+        out |= {("hand", ln, cid) for cid in COMMENT_ID.findall(ln) if cid in held}
+    return out
+
+
 def g_ruled(t: Texts) -> list[Finding]:
     """Ruling form: the RULED heading cites the ruling and the BQ list; every comment id the docs
     name is on the allow-list."""
@@ -2085,10 +2260,11 @@ def g_ruled(t: Texts) -> list[Finding]:
                 "The twenty questions",
             )
         )
+    quoted = table_a_quoted_ids(t.hand)
     for doc, text in (("spec", t.spec), ("hand", t.hand)):
         for i, line in enumerate(text.split("\n"), 1):
             for cid in COMMENT_ID.findall(line):
-                if cid not in RULED_IDS:
+                if cid not in RULED_IDS and (doc, line, cid) not in quoted:
                     bad.append(F("G-RULED", f"{cid} is not a ruling comment", doc, h2_at(text, i)))
     return bad
 
@@ -2113,7 +2289,16 @@ def stray_paths() -> tuple[str, ...]:
     names = git_out("diff", "--name-only", ref).split("\n")
     names += git_out("ls-files", "--others", "--exclude-standard").split("\n")
     return tuple(
-        sorted({n for n in names if n and n not in OWN_PATHS and not OWN_IMG.fullmatch(n)})
+        sorted(
+            {
+                n
+                for n in names
+                if n
+                and n not in OWN_PATHS
+                and not OWN_IMG.fullmatch(n)
+                and not OWN_SHEETS.fullmatch(n)
+            }
+        )
     )
 
 
@@ -2838,7 +3023,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-2",
         spec=drop_row(
             "1.3 Locked",
-            "E11-D03 — the scope control (D10), the confirmed Reset (D11), the live preview (D12); precision and countdown on Scales (X-10); the chrome split (X-14); the crosshair section received here (X-7); the default interim (CG-3)",
+            "E11-D03 — the scope control (D10), the confirmed Reset (D11), the live preview"
+            " (D12); precision and countdown on Scales (X-10); the chrome split (X-14); the"
+            " crosshair section received here (X-7); the default interim (CG-3)",
         ),
     ),
     Mutation("M-9", "G-AROW", "BQ-3", hand=drop_row("Table A", "A-2")),
@@ -3080,7 +3267,7 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation("M-54", "G-FRAME", "BQ-20", spec=reg("types/radio-list · dark", "Copy", to("W-99"))),
     Mutation(
-        "M-55", "G-FRAME", "BQ-20", spec=reg("types/radio-list · dark", "Status", to("drawn"))
+        "M-55", "G-FRAME", "BQ-20", spec=reg("types/radio-list · dark", "Status", to("PENDING"))
     ),
     Mutation(
         "M-56",
@@ -3088,7 +3275,8 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-1",
         spec=drop_row(
             "Acceptance-criteria trace",
-            "AC3 — all panels where a symbol lacks recorded tape: which panels changed, which did not and why; never skipped silently, never blocking the whole apply",
+            "AC3 — all panels where a symbol lacks recorded tape: which panels changed, which"
+            " did not and why; never skipped silently, never blocking the whole apply",
         ),
     ),
     Mutation(
@@ -3158,7 +3346,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-12",
         spec=sub_in(
             "7.4 As new default",
-            ", `null` where the leaf was not overridden (`_meta.overridden`, `22`:9668)",
+            ", `null` where the leaf was not overridden (`_meta.overridden`, `22`:9826)",
             "",
         ),
     ),
@@ -3268,7 +3456,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-81",
         "G-MARKED",
         "BQ-1",
-        spec=sub_in("8. The preview", "(PROPOSED, not in `15`:2670; E11-D03:443)", "(E11-D03:443)"),
+        spec=sub_in("8. The preview", "(PROPOSED, not in `15`:2675; E11-D03:443)", "(E11-D03:443)"),
     ),
     Mutation(
         "M-82",
@@ -3404,6 +3592,85 @@ MUTATIONS: tuple[Mutation, ...] = (
                 "within 1" + av(v, "BUDGET:type-switch"),
             )
         ),
+    ),
+    # PR #4669 text lens r1: the six paraphrases the pins alone stopped; each now FAILs by its gate
+    Mutation(
+        "X-16",
+        "G-HOME",
+        "lens r1 P01: a Decimals radio group in §2.1's Session row",
+        spec=row_edit(
+            "2.1 Layout",
+            "Session",
+            1,
+            to('the read-only row, a "Decimals" radio group and the pointer to Scales'),
+        ),
+    ),
+    Mutation(
+        "X-17",
+        "G-ENTER",
+        "lens r1 P02: `Enter` commits the dialog",
+        spec=sub_in(
+            "5. Apply model",
+            "validates and, when invalid, speaks the message once; it never saves (R-2)",
+            "validates, then commits the dialog (R-2)",
+        ),
+    ),
+    Mutation(
+        "X-18",
+        "G-WIRE",
+        "lens r1 P05: sent as `bar_type` `heikin_ashi` in §3.1's Kind cell",
+        spec=row_edit(
+            "3.1 The nine",
+            "Heikin-Ashi",
+            3,
+            to("client transform over time bars, sent as `bar_type` `heikin_ashi`"),
+        ),
+    ),
+    Mutation(
+        "X-19",
+        "G-EVENTS",
+        "lens r1 P09: a `param` property on `chart.settings_changed`",
+        spec=row_edit(
+            "14. Analytics",
+            "`chart.settings_changed`",
+            1,
+            lambda c: c.replace("key, scope}", "key, scope, param}"),
+        ),
+    ),
+    Mutation(
+        "X-20",
+        "G-RESET",
+        "lens r1 P10: W-25 without its scope",
+        spec=row_edit(
+            "12. Copy deck",
+            "W-25",
+            2,
+            to("General reset to defaults · All chart settings reset to defaults"),
+        ),
+    ),
+    Mutation(
+        "X-21",
+        "G-LIVE",
+        "lens r1 P20: **live** in §5's bar-mode row",
+        spec=row_edit("5. Apply model", "Bar mode, parameter", 1, to("**live**")),
+    ),
+    Mutation(
+        "X-22",
+        "G-OLD",
+        "Table A refresh: a closed marker citing a PR that never touched `15`",
+        hand=row_edit("Table A", "A-11", 3, to("applied by #4718 (closed)")),
+    ),
+    Mutation(
+        "X-23",
+        "G-OLD",
+        "Table A refresh: a closed marker on a row whose New is not on `15`",
+        hand=row_edit("Table A", "A-12", 3, to("applied by #4719 (closed)")),
+    ),
+    Mutation(
+        "X-24",
+        "G-OLD",
+        "Table A refresh: a near-miss closed marker",
+        hand=row_edit("Table A", "A-11", 3, to("closed by #4719")),
     ),
     # one per pin class (G-RULED-PIN only)
     Mutation(
@@ -3566,6 +3833,10 @@ def write_text(path: Path, text: str) -> None:
 
 
 def main(argv: list[str]) -> int:
+    # the reports print `→`, `§` and `…`: a cp1252 (or any non-UTF-8) console must not crash them,
+    # and `python3 -I` ignores PYTHONIOENCODING, so the tool sets the stream itself
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="E12-D05 settings audit (module docstring)")
     ap.add_argument(
         "--check",
