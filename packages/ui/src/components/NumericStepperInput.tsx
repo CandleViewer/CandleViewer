@@ -110,7 +110,8 @@ export function NumericStepperInput({
   const [typed, setTyped] = useState<Edit | null>(null);
   const [roundedTo, setRoundedTo] = useState<number | null>(null);
   // An edit belongs to the value it was typed against: a host that moves the value discards it.
-  const edit = typed !== null && typed.base === value ? typed : null;
+  // `Object.is`, not `===`: a draft typed against a NaN value must survive (NaN !== NaN).
+  const edit = typed !== null && Object.is(typed.base, value) ? typed : null;
   const rounded = edit === null && roundedTo === value;
   const frozen = reason.gated || readOnly;
   const range = { ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) };
@@ -285,7 +286,7 @@ export function NumericStepperInput({
             readOnly={frozen}
             aria-label={labelledBy === undefined ? label : undefined}
             aria-labelledby={labelledBy}
-            aria-valuenow={value}
+            aria-valuenow={Number.isFinite(value) && edit?.text !== "" ? value : undefined}
             aria-valuemin={min}
             aria-valuemax={max}
             aria-valuetext={
