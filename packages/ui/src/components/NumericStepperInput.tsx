@@ -66,11 +66,14 @@ const NOT_A_NUMBER = "Enter a number.";
 const ROUNDED = "(rounded to nearest tick)";
 const STEP_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown"]);
 const isChord = (event: KeyboardEvent): boolean => event.ctrlKey || event.metaKey || event.altKey;
-/** `1.25` at precision 1 is shown as given: only a bound that survives the rounding is shown formatted. */
-const showBound = (bound: number, precision: number): string => {
-  const text = formatNumeric(bound, precision);
-  return Number(text) === bound ? text : String(bound);
+/** Decimal places a number needs, read from its shortest text (`1e-7` is 7, `0.05` is 2). */
+const ownDecimals = (n: number): number => {
+  const [mantissa = "", exponent = "0"] = String(n).split("e");
+  return Math.max(0, (mantissa.split(".")[1]?.length ?? 0) - Number(exponent));
 };
+/** A bound is shown at the precision, or at its own decimals when it has more: never in exponent form. */
+const showBound = (bound: number, precision: number): string =>
+  formatNumeric(bound, Math.min(15, Math.max(precision, ownDecimals(bound))));
 
 /**
  * CMP-008: the numeric field with `[-]` `[+]` buttons (APG spin button). The value is a number, shown fixed to
@@ -114,7 +117,7 @@ export function NumericStepperInput({
 
   // A value moved from outside drops the draft and a caption that was earned by an older value (A to B to A).
   const [seen, setSeen] = useState(value);
-  if (seen !== value) {
+  if (!Object.is(seen, value)) {
     setSeen(value);
     setTyped(null);
     if (roundedTo !== value) setRoundedTo(null);
@@ -203,13 +206,11 @@ export function NumericStepperInput({
   }
 
   const onInput = (event: ChangeEvent<HTMLInputElement>): void => {
-    // A shown error stays (updated) until the text is valid, then clears silently.
+    // A shown error keeps its words (nothing new is spoken per keystroke) until the text is valid, then
+    // clears silently; the next commit (blur or Enter) words it again.
     const text = event.target.value;
-    setTyped({
-      text,
-      base: value,
-      error: edit?.error == null ? null : judge(parseNumericInput(text, { precision })),
-    });
+    const stays = edit?.error != null && judge(parseNumericInput(text, { precision })) !== null;
+    setTyped({ text, base: value, error: stays ? (edit?.error ?? null) : null });
     setRoundedTo(null);
   };
 
@@ -290,9 +291,11 @@ export function NumericStepperInput({
             aria-valuetext={
               edit === null
                 ? valueText(value, precision, suffix)
-                : hasSuffix
-                  ? `${edit.text} ${suffix}`
-                  : edit.text
+                : edit.text === ""
+                  ? undefined
+                  : hasSuffix
+                    ? `${edit.text} ${suffix}`
+                    : edit.text
             }
             aria-readonly={readOnly && !reason.gated ? true : undefined}
             aria-disabled={reason.ariaDisabled}
