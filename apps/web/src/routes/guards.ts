@@ -32,6 +32,9 @@ function logDenial(routeId: string, reason: string): void {
 export function guardRoute(routeId: string, access: RouteAccess, requestUrl: string): void {
   const claims = getMeClaims();
   const decision = evaluateAccess(access, claims);
+  // A hidden route (`/admin/**`, `denyAs: "404"`) logs nothing, so the console cannot tell it
+  // from an unknown route, which logs nothing either (E09-D09 §6).
+  const log = access.denyAs === "404" ? (): void => undefined : logDenial;
   switch (decision.kind) {
     case "allow":
       return;
@@ -40,15 +43,28 @@ export function guardRoute(routeId: string, access: RouteAccess, requestUrl: str
       // Nothing reads `next` yet. Its first reader must use it only when
       // `new URL(next, location.origin)` keeps the same origin.
       const next = encodeURIComponent(url.pathname + url.search);
-      logDenial(routeId, "unauthenticated");
+      log(routeId, "unauthenticated");
       throw redirect(`/login?next=${next}`);
     }
     case "deny":
-      logDenial(routeId, `role-denied:${decision.as}`);
+      log(routeId, `role-denied:${decision.as}`);
       throw new ForbiddenError(decision.as);
     default: {
       const exhaustive: never = decision;
       throw new Error(`unreachable: ${JSON.stringify(exhaustive)}`);
     }
   }
+}
+
+/** Every role, denied as a hidden route: the catch-all answers exactly as `/admin/**` does. */
+const UNKNOWN: RouteAccess = { roles: ["owner", "manager", "viewer"], denyAs: "404" };
+
+/**
+ * The catch-all loader: an unauthenticated session goes to `/login?next=…` and every other one
+ * gets the same `ForbiddenError("404")` a hidden route throws, so an unknown route and an admin
+ * route the session cannot see take one path to one page (E09-D09 §6).
+ */
+export function guardUnknownRoute(requestUrl: string): never {
+  guardRoute("*", UNKNOWN, requestUrl);
+  throw new ForbiddenError("404");
 }

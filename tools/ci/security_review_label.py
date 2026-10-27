@@ -54,6 +54,7 @@ WEB_AUTH_PATHS = (
     "apps/web/src/features/app-shell/ConnectionRegionSlot.tsx",  # Sign in ends the session
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
+    "apps/web/src/routes/ErrorStates.tsx",  # the 404 try list reads the session claims
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment
     "apps/web/src/features/app-shell/TopBarSlot.tsx",  # the TopBar's Sign out: drives
     # `POST /auth/logout` and `endSession()`

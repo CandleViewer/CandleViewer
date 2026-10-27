@@ -63,7 +63,9 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("viewer");
     renderAt("/risk");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Forbidden" })).toBeInTheDocument(),
+      expect(
+        screen.getByRole("heading", { name: "You don't have access to this", level: 1 }),
+      ).toBeInTheDocument(),
     );
   });
 
@@ -71,7 +73,7 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("viewer");
     renderAt("/admin/users");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Not found" })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
     );
   });
 
@@ -79,7 +81,7 @@ describe("route tree x RBAC matrix", () => {
     claimsFor("manager");
     renderAt("/admin");
     await waitFor(() =>
-      expect(screen.getByRole("heading", { name: "Not found" })).toBeInTheDocument(),
+      expect(screen.getByRole("heading", { name: "Page not found", level: 1 })).toBeInTheDocument(),
     );
   });
 

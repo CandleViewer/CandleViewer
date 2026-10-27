@@ -75,12 +75,12 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
   it("keeps one main for a role denial rendered inside the shell", async () => {
     signIn("viewer");
     renderAt("/risk");
-    await screen.findByRole("heading", { name: "Forbidden" });
+    await screen.findByRole("heading", { name: "You don't have access to this", level: 1 });
     expect(screen.getAllByRole("main")).toHaveLength(1);
     expect(screen.getByRole("banner")).toBeInTheDocument();
   });
 
-  it("leaves public and catch-all routes outside the shell, each with its own single main", async () => {
+  it("leaves public routes outside the shell, each with its own single main", async () => {
     signIn(null);
     renderAt("/login/2fa");
     await screen.findByRole("heading", { name: /R-002/ });
@@ -88,12 +88,12 @@ describe("E10-S01 S1: ShellLayout landmarks and one main per route", () => {
     expect(screen.queryByRole("banner")).not.toBeInTheDocument();
   });
 
-  it("renders the catch-all 404 with one main and no shell", async () => {
+  it("renders the catch-all 404 inside the shell, with one main, like a hidden admin route", async () => {
     signIn("owner");
     renderAt("/no/such/page");
-    await screen.findByRole("heading", { name: "Not found" });
+    await screen.findByRole("heading", { name: "Page not found", level: 1 });
     expect(screen.getAllByRole("main")).toHaveLength(1);
-    expect(screen.queryByRole("navigation", { name: "Primary" })).not.toBeInTheDocument();
+    expect(screen.getByRole("navigation", { name: "Primary" })).toBeInTheDocument();
   });
 });
 

@@ -76,6 +76,9 @@ export type {
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
 
+export { ForbiddenState } from "./ForbiddenState.js";
+export type { ForbiddenStateProps } from "./ForbiddenState.js";
+
 export { FormField } from "./FormField.js";
 export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
 
@@ -129,6 +132,8 @@ export type { KeyValueRowProps } from "./KeyValueRow.js";
 export { Link } from "./Link.js";
 export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
 
+export type { LinkSlotProps, RenderLink } from "./internal/linkSlot.js";
+
 export { MaskedValue, maskAllValues } from "./MaskedValue.js";
 export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
 
@@ -144,6 +149,9 @@ export type {
   MenuSubmenuItem,
   MenuTriggerProps,
 } from "./Menu.js";
+
+export { NotFoundState } from "./NotFoundState.js";
+export type { NotFoundStateProps, TryRoute } from "./NotFoundState.js";
 
 export { NumericStepperInput } from "./NumericStepperInput.js";
 export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
