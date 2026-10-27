@@ -727,7 +727,7 @@ def walk(n: Node, path: str = "") -> Iterable[tuple[str, Node]]:
 
 # --- Reading the four frozen specs: raw lines, cleaned text, tables, CMP sections.
 _LINES: dict[str, list[str]] = {}
-_COMMENT = re.compile(r"<!--.*?-->")
+_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 TOKEN_RE = re.compile(
     r"\b(?:color|space|size|radius|type|opacity|elevation|border)\.[a-z0-9]+(?:[.-][a-z0-9]+)*\b"
 )
