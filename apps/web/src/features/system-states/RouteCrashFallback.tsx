@@ -4,9 +4,9 @@
  */
 import { useEffect, useRef, useState, type JSX } from "react";
 import { useLocation, useMatches, useNavigate } from "react-router";
+import { GlobalErrorAnnouncement, GlobalErrorBoundaryFallback } from "@candleviewer/ui";
 import { ScreenRoot } from "../app-shell/ScreenRoot";
-import { CrashFallback } from "./CrashFallback";
-import { recordCrash, type CrashRecord } from "./crashGuard";
+import { copyCrashDiagnostics, recordCrash, type CrashRecord } from "./crashGuard";
 
 export function RouteCrashFallback({ error }: { readonly error: unknown }): JSX.Element {
   const matches = useMatches();
@@ -26,19 +26,26 @@ export function RouteCrashFallback({ error }: { readonly error: unknown }): JSX.
   const location = useLocation();
   // The one wrapper is `ScreenRoot` (E10-S01 #304): a child route's error renders inside the shell's
   // `main` (a `div` then), the layout route's outside it (its own `main`), so the page keeps exactly
-  // one `main`. The alert region is pre-rendered empty (the first commit, before the effect) and the
-  // fallback is injected into it.
+  // one `main`. The alert region is pre-rendered empty (the first commit, before the effect); only the
+  // crash's sentence is injected into it, and the fallback renders beside it.
   return (
     <ScreenRoot>
       <div role="alert">
         {crash === null ? null : (
-          <CrashFallback
-            scope="route"
-            crash={crash}
-            onReload={() => void navigate(location, { replace: true })}
-          />
+          <GlobalErrorAnnouncement scope="route" repeated={crash.repeated} />
         )}
       </div>
+      {crash === null ? null : (
+        <GlobalErrorBoundaryFallback
+          scope="route"
+          correlationId={crash.correlationId}
+          repeated={crash.repeated}
+          details={crash.details}
+          onReload={() => void navigate(location, { replace: true })}
+          onReloadApp={() => window.location.reload()}
+          onCopyDiagnostics={copyCrashDiagnostics}
+        />
+      )}
     </ScreenRoot>
   );
 }

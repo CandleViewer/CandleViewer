@@ -5,7 +5,7 @@
  * to the spec (coordinator ruling on #306, 2026-10-27). The window is inclusive — a third crash exactly
  * 2:00 after the first trips it (PROPOSED: the spec does not say).
  */
-import { reportCrash } from "../../shell/crash/reportCrash";
+import { buildDiagnostics, reportCrash } from "../../shell/crash/reportCrash";
 
 export const REPEAT_LIMIT = 3;
 export const REPEAT_WINDOW_MS = 120_000;
@@ -45,6 +45,30 @@ export function setCrashGuardForTests(guard: CrashGuard): void {
 export interface CrashRecord {
   readonly correlationId: string;
   readonly repeated: boolean;
+  /** CMP-091's "Technical detail": this crash's lines of the redacted diagnostics (SR-177), if any. */
+  readonly details?: string | undefined;
+}
+
+/**
+ * The redacted log lines carrying `correlationId`; never the error itself. Only each entry's first
+ * line is kept, so a newline inside a message cannot pass for another log line.
+ */
+function crashDetails(correlationId: string): string | undefined {
+  try {
+    const lines = buildDiagnostics()
+      .recentLogLines.map((l) => l.split(/\r\n|[\n\r\u2028\u2029]/, 1)[0] ?? "")
+      .filter((l) => l.includes(correlationId));
+    return lines.length === 0 ? undefined : lines.join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+/** Copy diagnostics: the redacted payload, assembled at click time (SR-177); rejects without a clipboard. */
+export function copyCrashDiagnostics(): Promise<void> {
+  const clipboard = (navigator as Partial<Navigator>).clipboard;
+  if (clipboard === undefined) return Promise.reject(new Error("clipboard unavailable"));
+  return clipboard.writeText(JSON.stringify(buildDiagnostics(), null, 2));
 }
 
 /**
@@ -58,9 +82,11 @@ export function recordCrash(
   boundaryId: string,
 ): CrashRecord {
   try {
+    const correlationId = reportCrash(error, level, boundaryId);
     return {
-      correlationId: reportCrash(error, level, boundaryId),
+      correlationId,
       repeated: activeGuard.record(boundaryId),
+      details: crashDetails(correlationId),
     };
   } catch {
     return { correlationId: "unavailable", repeated: false };

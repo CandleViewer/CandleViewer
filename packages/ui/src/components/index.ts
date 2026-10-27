@@ -24,3 +24,13 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+export {
+  GlobalErrorAnnouncement,
+  GlobalErrorBoundaryFallback,
+  GLOBAL_ERROR_FALLBACK_COPY,
+} from "./GlobalErrorBoundaryFallback.js";
+export type {
+  GlobalErrorAnnouncementProps,
+  GlobalErrorBoundaryFallbackProps,
+  GlobalErrorScope,
+} from "./GlobalErrorBoundaryFallback.js";

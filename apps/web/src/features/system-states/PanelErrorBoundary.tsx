@@ -1,12 +1,15 @@
 /**
  * The CMP-091 panel-level boundary (E10-S04 #306, slice 6): a crashing panel is replaced by the
  * fallback while the rest of the workspace keeps running (`14` SCR-156). A class, because React has no
- * hook for error boundaries. Reload panel re-mounts the child under a new key; three crashes of one
+ * hook for error boundaries. It renders `@candleviewer/ui`'s CMP-091 (E05-S04) beside a `role="alert"`
+ * region pre-rendered empty, into which only the crash's sentence is injected: one assertive
+ * announcement per crash (E10-D04 F-09); later fallback changes never re-announce it.
+ * Reload panel re-mounts the child under a new key; three crashes of one
  * `id` within two minutes stop it (`crashGuard.ts`).
  */
 import { Component, Fragment, type ReactNode } from "react";
-import { CrashFallback } from "./CrashFallback";
-import { recordCrash, type CrashRecord } from "./crashGuard";
+import { GlobalErrorAnnouncement, GlobalErrorBoundaryFallback } from "@candleviewer/ui";
+import { copyCrashDiagnostics, recordCrash, type CrashRecord } from "./crashGuard";
 
 export interface PanelErrorBoundaryProps {
   /** Stable per panel: the crash log's component and the repeated-crash ring's key. */
@@ -44,17 +47,23 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State
     return (
       <>
         {failed ? null : <Fragment key={generation}>{this.props.children}</Fragment>}
-        {/* CRASH_REGION: pre-rendered empty; the fallback is announced into it */}
+        {/* CRASH_REGION: pre-rendered empty; only the crash's sentence is injected into it */}
         <div role="alert">
           {crash === null ? null : (
-            <CrashFallback
-              scope="panel"
-              crash={crash}
-              onReload={this.reload}
-              onReloadApp={this.props.onReloadApp}
-            />
+            <GlobalErrorAnnouncement scope="panel" repeated={crash.repeated} />
           )}
         </div>
+        {crash === null ? null : (
+          <GlobalErrorBoundaryFallback
+            scope="panel"
+            correlationId={crash.correlationId}
+            repeated={crash.repeated}
+            details={crash.details}
+            onReload={this.reload}
+            onReloadApp={this.props.onReloadApp ?? (() => window.location.reload())}
+            onCopyDiagnostics={copyCrashDiagnostics}
+          />
+        )}
       </>
     );
   }

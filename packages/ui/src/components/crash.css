@@ -1,0 +1,143 @@
+/* CMP-091 GlobalErrorBoundaryFallback (E05-D02 §7, E10-D03 §9.4 / A6). Tokens only; no motion. */
+.cv-crash {
+  display: grid;
+  gap: var(--space-stack-sm);
+  justify-items: start;
+  box-sizing: border-box;
+  padding: var(--space-inset-lg);
+  background: var(--color-surface-canvas);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: anywhere;
+}
+
+.cv-crash:not([data-scope="panel"]) {
+  min-height: 100%;
+  align-content: center;
+  background: var(--color-surface-app);
+}
+
+/* The static lead (glyph, heading, sentence, error id): the app scope's alert wraps only this. */
+.cv-crash__lead {
+  display: grid;
+  gap: var(--space-stack-sm);
+  justify-items: start;
+}
+
+.cv-crash__glyph {
+  display: inline-flex;
+  color: var(--color-status-danger-strong);
+}
+
+.cv-crash__heading {
+  margin: 0;
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-crash:not([data-scope="panel"]) .cv-crash__heading {
+  font: var(--type-ui-heading-lg-font-weight) var(--type-ui-heading-lg-font-size) /
+    var(--type-ui-heading-lg-line-height) var(--type-ui-heading-lg-font-family);
+}
+
+.cv-crash__body,
+.cv-crash__result {
+  margin: 0;
+  color: var(--color-text-secondary);
+}
+
+/* The error id: selectable, in the numeric face. Stand-in until CMP-033 CopyButton lands in this
+   package: no copy button beside the id yet (Copy diagnostics carries the payload). */
+.cv-crash__id {
+  margin: 0;
+  color: var(--color-text-tertiary);
+  font: var(--type-num-xs-font-weight) var(--type-num-xs-font-size) / var(--type-num-xs-line-height)
+    var(--font-family-mono);
+  user-select: text;
+}
+
+.cv-crash__id > code {
+  font: inherit;
+}
+
+.cv-crash__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+/* Stand-in for CMP-027's details box until CMP-027 lands in this package: the disclosure and the
+   scrolling box below follow its anatomy (E05-D02 §7 CMP-091 Anatomy). */
+.cv-crash__details {
+  display: grid;
+  gap: var(--space-stack-xs);
+  width: 100%;
+}
+
+/* APG Disclosure trigger: a text button at the control height (>= 24 px, cv-control). */
+.cv-crash__disclosure {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-inset-xs);
+  padding-inline: var(--space-inset-xs);
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.cv-crash__disclosure:hover {
+  color: var(--color-text-primary);
+}
+
+.cv-crash__chevron {
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+/* The details scroll inside their box. */
+.cv-crash__detail-text {
+  box-sizing: border-box;
+  max-block-size: 16lh;
+  margin: 0;
+  padding: var(--space-inset-sm);
+  overflow: auto;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-raised);
+  color: var(--color-text-secondary);
+  font: var(--type-num-xs-font-weight) var(--type-num-xs-font-size) / var(--type-num-xs-line-height)
+    var(--font-family-mono);
+  white-space: pre-wrap;
+}
+
+@media (forced-colors: active) {
+  .cv-crash,
+  .cv-crash__body,
+  .cv-crash__id,
+  .cv-crash__result,
+  .cv-crash__disclosure,
+  .cv-crash__detail-text {
+    color: CanvasText;
+  }
+
+  /* The static lead (glyph, heading, sentence, error id): the app scope's alert wraps only this. */
+  .cv-crash__lead {
+    display: grid;
+    gap: var(--space-stack-sm);
+    justify-items: start;
+  }
+
+  .cv-crash__glyph {
+    color: currentcolor;
+  }
+
+  .cv-crash__detail-text {
+    border-color: CanvasText;
+  }
+}
