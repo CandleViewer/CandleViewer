@@ -357,17 +357,62 @@ describe("NumericStepperInput typed text", () => {
     watch.disconnect();
   });
 
-  it("while an error shows, the message follows the text (Minimum, then Enter a number.)", async () => {
+  it("while an error shows, typing does not re-word it; a commit does, and valid text clears it", async () => {
     const host = await mount(<Stepper start={1} min={0} max={9} />);
     const el = field(host);
+    const message = host.querySelector("[aria-live]") as HTMLElement;
     await type(el, "-1");
     await userEvent.tab();
     described(el, "Minimum 0.0");
+    const spoken: string[] = [];
+    const watch = new MutationObserver(() => spoken.push(message.textContent ?? ""));
+    watch.observe(message, { childList: true, characterData: true, subtree: true });
     await userEvent.click(el);
     await userEvent.type(el, "{Backspace}{Backspace}{Backspace}");
-    described(el, "Enter a number.");
+    expect(el).toHaveValue("");
+    described(el, "Minimum 0.0");
     await userEvent.type(el, "-3");
     described(el, "Minimum 0.0");
+    expect(spoken).toEqual([]);
+    await userEvent.tab();
+    described(el, "Minimum 0.0");
+    await userEvent.click(el);
+    await userEvent.clear(el);
+    await userEvent.tab();
+    described(el, "Enter a number.");
+    expect(spoken).toEqual(["Enter a number."]);
+    watch.disconnect();
+  });
+
+  it("an empty draft has no aria-valuetext, and a tiny bound is shown in plain decimals", async () => {
+    const host = await mount(<Stepper start={1} min={0.0000001} />);
+    const el = field(host);
+    await userEvent.clear(el);
+    expect(el).not.toHaveAttribute("aria-valuetext");
+    await userEvent.type(el, "0");
+    await userEvent.tab();
+    described(el, "Minimum 0.0000001");
+  });
+
+  it("a NaN value renders empty without a render loop, and a later finite value shows", async () => {
+    const Moves = (): JSX.Element => {
+      const [v, setV] = useState(Number.NaN);
+      return (
+        <>
+          <NumericStepperInput label="Qty" step={1} precision={0} value={v} onChange={setV} />
+          <button type="button" onClick={() => setV((x) => (Number.isNaN(x) ? 3 : Number.NaN))}>
+            swing
+          </button>
+        </>
+      );
+    };
+    const host = await mount(<Moves />);
+    const el = field(host);
+    expect(el).toHaveValue("");
+    await userEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("3");
+    await userEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("");
   });
 
   it("an off-grid bound is shown as given, an on-grid one at the precision", async () => {
@@ -468,6 +513,27 @@ describe("NumericStepperInput typed text", () => {
     await type(field(host), "4");
     await userEvent.click(within(host).getByRole("button", { name: "reset" }));
     expect(field(host)).toHaveValue("7.0");
+  });
+
+  it("a draft typed against A does not come back when the host goes A, B, A", async () => {
+    const Moves = (): JSX.Element => {
+      const [v, setV] = useState(1);
+      return (
+        <>
+          <NumericStepperInput label="Qty" step={0.1} precision={1} value={v} onChange={setV} />
+          <button type="button" onClick={() => setV((x) => (x === 1 ? 7 : 1))}>
+            swing
+          </button>
+        </>
+      );
+    };
+    const host = await mount(<Moves />);
+    const el = field(host);
+    await type(el, "4");
+    await fireEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("7.0");
+    await fireEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("1.0");
   });
 
   it("the host's own invalid and message render; a typed error replaces its message", async () => {
