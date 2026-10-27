@@ -1,11 +1,11 @@
-import { useEffect, useRef, type CSSProperties, type JSX } from "react";
+import { useEffect, useMemo, useRef, type CSSProperties, type JSX } from "react";
 import { NavLink, useNavigate } from "react-router";
 import { Icon } from "@candleviewer/ui";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { registerCommand } from "../../keymap/KeymapHost";
 import { ROUTE_MANIFEST } from "../../routes/manifest";
 import { evaluateAccess, type MeClaims } from "../../routes/rbac";
-import { NAV_ITEMS, type NavBadges, type NavItem } from "./navItems";
+import { NAV_ITEMS, type NavBadges } from "./navItems";
 
 type RailItem = (typeof NAV_ITEMS)[number] & { readonly to: string };
 
@@ -24,25 +24,26 @@ export function visibleNavItems(claims: MeClaims): readonly RailItem[] {
   });
 }
 
-/** `Alt+N` for the Nth item; Admin and anything past the ninth get none (plan gap 3). */
-function digitFor(item: NavItem, index: number): number | null {
-  return item.id === "admin" || index >= 9 ? null : index + 1;
-}
-
 const LIST: CSSProperties = { listStyle: "none", margin: 0, padding: "var(--space-2) 0" };
 
-/** D03 §5.2 "current": the selected fill, a 3 px leading bar and the medium weight — not colour alone. */
+/**
+ * D03 §5.2 "current": the selected fill, a 3 px leading bar and the medium weight — not colour
+ * alone. The bar is a border, which forced colours keep (a box-shadow is dropped); other items
+ * get no border, since a transparent one turns visible there, and pad by its width instead.
+ */
 function linkStyle({ isActive }: { isActive: boolean }): CSSProperties {
   return {
     display: "flex",
     gap: "var(--space-2)",
-    padding: "var(--space-inset-sm)",
+    paddingBlock: "var(--space-inset-sm)",
+    paddingRight: "var(--space-inset-sm)",
+    paddingLeft: isActive ? "var(--space-inset-sm)" : "calc(var(--space-inset-sm) + 3px)",
+    borderLeft: isActive ? "3px solid var(--color-border-selected)" : "none",
     minHeight: "var(--size-target-min)",
     color: "var(--color-text-primary)",
     textDecoration: "none",
     fontWeight: isActive ? "var(--font-weight-medium)" : "var(--font-weight-regular)",
     background: isActive ? "var(--color-surface-selected)" : "transparent",
-    boxShadow: isActive ? "inset 3px 0 0 var(--color-border-selected)" : "none",
   };
 }
 
@@ -69,22 +70,29 @@ export interface NavRailProps {
  */
 export function NavRail({ badges = {} }: NavRailProps): JSX.Element {
   const navigate = useNavigate();
-  const items = visibleNavItems(getMeClaims());
+  // Read at render: main.tsx runs the bootstrap (which sets the claims) before the router mounts.
+  // A role change after that shows on the next claims object only; the server's 403 is the
+  // boundary, and the live update is E10-T04's subscription (no reactive source exists yet).
+  const claims = getMeClaims();
+  const items = useMemo(() => visibleNavItems(claims), [claims]);
   const list = useRef<HTMLUListElement>(null);
 
-  const targets = items.flatMap((item, i) => (digitFor(item, i) === null ? [] : [item.to]));
-  // `Alt+1..9` (keymap.json); re-registered per render (on navigation only), so it sees these items.
-  useEffect(() =>
-    registerCommand("global.nav_rail", (digit) => {
-      const to = digit === undefined ? undefined : targets[digit - 1];
-      if (to !== undefined) void navigate(to);
-    }),
+  // `Alt+1..9` (keymap.json). Deps: the visible items (new only when the claims change) and the
+  // router's navigate, so the command is registered once per role, not per render.
+  useEffect(
+    () =>
+      registerCommand("global.nav_rail", (digit) => {
+        const to = items.find((item) => item.digit === digit)?.to;
+        if (to !== undefined) void navigate(to);
+      }),
+    [items, navigate],
   );
 
   // The list owns the arrow keys of the links inside it; each link stays a Tab stop.
   useEffect(() => {
     const el = list.current;
     const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
       const move = ARROWS[e.key];
       const links = [...(el?.querySelectorAll<HTMLAnchorElement>("a") ?? [])];
       const at = links.findIndex((a) => a === document.activeElement);
@@ -98,16 +106,15 @@ export function NavRail({ badges = {} }: NavRailProps): JSX.Element {
 
   return (
     <ul ref={list} style={LIST}>
-      {items.map((item, i) => {
+      {items.map((item) => {
         const badge = badges[item.id];
-        const digit = digitFor(item, i);
         return (
           <li key={item.id}>
             <NavLink
               to={item.to}
               style={linkStyle}
               aria-label={badge === undefined ? undefined : `${item.label}, ${badge}`}
-              aria-keyshortcuts={digit === null ? undefined : `Alt+${digit}`}
+              aria-keyshortcuts={`Alt+${item.digit}`}
             >
               {item.icon === null ? null : <Icon name={item.icon} />}
               <span>{item.label}</span>

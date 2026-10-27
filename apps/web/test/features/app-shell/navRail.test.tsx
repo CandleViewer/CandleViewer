@@ -1,9 +1,12 @@
 import { createRequire } from "node:module";
+import type { ReactNode } from "react";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { createMemoryRouter, MemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createDispatcher } from "../../../src/keymap/dispatcher";
+import { validateBinding } from "../../../src/keymap/validate";
+import { KEYMAP } from "../../../src/keymap/keymap";
 import { NavRail } from "../../../src/features/app-shell/NavRail";
 import { KeymapHost } from "../../../src/keymap/KeymapHost";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
@@ -20,15 +23,17 @@ function signIn(role: Role): void {
   setMeClaims({ authenticated: true, role, permissions: [] });
 }
 
-async function renderAt(path: string, heading: RegExp) {
+async function renderAt(path: string, heading: RegExp, extra?: ReactNode) {
   const router = createMemoryRouter(buildRoutes(), { initialEntries: [path] });
   render(
     <PreferencesProvider>
+      {extra}
       <KeymapHost />
       <RouterProvider router={router} />
     </PreferencesProvider>,
   );
   await screen.findByRole("heading", { name: heading });
+  await act(async () => {}); // flush the effects that register the rail's command
   return router;
 }
 
@@ -40,19 +45,21 @@ const names = (): string[] =>
 const altKey = (key: string) =>
   act(async () => void fireEvent.keyDown(window, { key, altKey: true }));
 
-const OWNER = ["Terminal", "Watchlist", "Positions/Orders", "Risk Dashboard", "Rules"];
-const REST = ["Replay", "Journal", "Alerts", "Settings"];
-
+// Claims are set before render, as main.tsx runs the bootstrap before the router mounts.
 beforeEach(() => resetMeClaims());
 
 describe("E10-S01 S5: nav rail items per role", () => {
   it.each([
-    ["owner", [...OWNER, ...REST, "Admin"], ""],
-    ["manager", [...OWNER.slice(0, 3), "Rules", ...REST], 'a[href^="/admin"], a[href="/risk"]'],
+    ["owner", ["Terminal", "Rules", "Journal", "Replay", "Alerts", "Settings", "Admin"], ""],
+    [
+      "manager",
+      ["Terminal", "Rules", "Journal", "Replay", "Alerts", "Settings"],
+      'a[href^="/admin"]',
+    ],
     [
       "viewer",
-      [...OWNER.slice(0, 3), ...REST],
-      'a[href^="/admin"], a[href="/risk"], a[href="/rules"]',
+      ["Terminal", "Journal", "Replay", "Alerts", "Settings"],
+      'a[href^="/admin"], a[href="/rules"]',
     ],
   ] as const)(
     "renders a %s only the allowed items, with no axe violations",
@@ -80,41 +87,57 @@ describe("E10-S01 S5: current page", () => {
     async (path, h, item) => {
       signIn("owner");
       await renderAt(path, h);
-      const current = within(rail())
-        .getAllByRole("link")
-        .filter((a) => a.getAttribute("aria-current") === "page");
+      const links = within(rail()).getAllByRole("link");
+      const current = links.filter((a) => a.getAttribute("aria-current") === "page");
       expect(current.map((a) => a.textContent)).toEqual([item]);
-      expect(current[0]?.style.boxShadow).toContain("inset 3px 0 0");
+      // a border, which forced colours keep; the others have none (a transparent one would show)
+      expect(current[0]?.style.borderLeft).toBe("3px solid var(--color-border-selected)");
       expect(current[0]?.style.fontWeight).toBe("var(--font-weight-medium)");
+      expect(links.filter((a) => a.style.borderLeft.includes("solid"))).toEqual(current);
     },
   );
 });
 
 describe("E10-S01 S5: keyboard", () => {
-  it("Alt+N opens the Nth item, and Admin has no shortcut", async () => {
-    signIn("owner");
-    const router = await renderAt("/journal", /R-180/);
-    expect(within(rail()).getByRole("link", { name: "Alerts" })).toHaveAttribute(
-      "aria-keyshortcuts",
-      "Alt+8",
-    );
-    expect(within(rail()).getByRole("link", { name: "Admin" })).not.toHaveAttribute(
-      "aria-keyshortcuts",
-    );
-    await altKey("6");
-    await waitFor(() => expect(router.state.location.pathname).toBe("/replay"));
+  it.each([
+    ["owner", ["1", "2", "3", "4", "5", "6", "7"]],
+    ["viewer", ["1", "3", "4", "5", "6"]],
+  ] as const)("gives a %s's items their fixed Alt digit, leaving gaps", async (role, digits) => {
+    signIn(role);
+    await renderAt("/journal", /R-180/);
+    const keys = within(rail())
+      .getAllByRole("link")
+      .map((a) => a.getAttribute("aria-keyshortcuts"));
+    expect(keys).toEqual(digits.map((d) => `Alt+${d}`));
   });
 
-  it("Alt+N counts a viewer's visible items, and a digit past them does nothing", async () => {
+  it("Alt+N opens item N, and a viewer's Alt+2 (Rules) and Alt+7 (Admin) do nothing", async () => {
     signIn("viewer");
     const router = await renderAt("/journal", /R-180/);
-    await altKey("4");
-    await waitFor(() => expect(router.state.location.pathname).toBe("/replay"));
-    await altKey("9");
-    expect(router.state.location.pathname).toBe("/replay");
+    await altKey("5");
+    await waitFor(() => expect(router.state.location.pathname).toBe("/alerts"));
+    await altKey("2");
+    await altKey("7");
+    expect(router.state.location.pathname).toBe("/alerts");
   });
 
-  it("moves focus with the arrows, Home and End, wrapping at the ends", async () => {
+  it("does nothing behind the idle lock", async () => {
+    signIn("owner");
+    const router = await renderAt("/journal", /R-180/, <div data-keymap-context="Locked" />);
+    await altKey("4");
+    expect(router.state.location.pathname).toBe("/journal");
+  });
+
+  it("never toasts a bare digit typed in a Chart context: no Chart range handler is registered", async () => {
+    signIn("owner");
+    await renderAt("/journal", /R-180/, <input aria-label="probe" data-keymap-context="Chart" />);
+    const probe = screen.getByRole("textbox", { name: "probe" });
+    act(() => probe.focus());
+    await act(async () => void fireEvent.keyDown(probe, { key: "3" }));
+    expect(screen.getByTestId("toast-host")).toBeEmptyDOMElement();
+  });
+
+  it("moves focus with the arrows, Home and End, wrapping, but not with a modifier", async () => {
     signIn("viewer");
     await renderAt("/journal", /R-180/);
     const links = within(rail()).getAllByRole("link");
@@ -129,6 +152,10 @@ describe("E10-S01 S5: keyboard", () => {
     ] as const) {
       fireEvent.keyDown(document.activeElement as Element, { key });
       expect(document.activeElement, key).toBe(links[at]);
+    }
+    for (const mod of ["altKey", "ctrlKey", "metaKey", "shiftKey"]) {
+      fireEvent.keyDown(links[0] as Element, { key: "ArrowDown", [mod]: true });
+      expect(document.activeElement, mod).toBe(links[0]);
     }
     expect(links.every((a) => a.tabIndex === 0)).toBe(true);
   });
@@ -148,12 +175,13 @@ describe("E10-S01 S5: badges", () => {
   });
 });
 
-describe("E10-S01 S5: range bindings in the dispatcher", () => {
+describe("E10-S01 S5: range bindings in the dispatcher and the validator", () => {
   const key = (k: string, alt = false) => ({
     ...{ ctrlKey: false, metaKey: false, shiftKey: false },
     key: k,
     altKey: alt,
   });
+  const cur = () => new Map(KEYMAP.map((c) => [c.id, c.defaultBinding]));
 
   it("passes the digit of a valid range command to execute", () => {
     const execute = vi.fn();
@@ -165,11 +193,43 @@ describe("E10-S01 S5: range bindings in the dispatcher", () => {
     expect(execute.mock.calls[0]?.[1]).toBe(3);
   });
 
+  it("lets an exact binding beat a range binding", () => {
+    const execute = vi.fn();
+    const bindings = new Map([["global.cheatsheet", "Alt+3"]]);
+    const d = createDispatcher({
+      isValid: () => true,
+      execute,
+      notify: vi.fn(),
+      now: () => 0,
+      bindings,
+    });
+    expect(d(key("3", true), new Set(["Global"]))).toMatchObject({
+      commandId: "global.cheatsheet",
+    });
+  });
+
   it("leaves a range command with no valid handler unbound, so typed digits never toast", () => {
     const notify = vi.fn();
     const d = createDispatcher({ isValid: () => false, execute: vi.fn(), notify, now: () => 0 });
     expect(d(key("3"), new Set(["Global", "Chart"])).status).toBe("unbound");
     expect(d(key("3", true), new Set(["Global"])).status).toBe("unbound");
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  it("checks each atom of a range against reserved keys and same-context bindings, both ways", () => {
+    expect(validateBinding("global.nav_rail", "Ctrl+1..9", cur())).toMatchObject({
+      kind: "reserved",
+      reason: expect.stringMatching(/^Ctrl\+1 /),
+    });
+    expect(validateBinding("global.cheatsheet", "Alt+4", cur())).toMatchObject({
+      kind: "conflict",
+      with: "global.nav_rail",
+    });
+    const exact = new Map([...cur(), ["global.cheatsheet", "Alt+4"]]);
+    expect(validateBinding("global.nav_rail", "Alt+1..9", exact)).toMatchObject({
+      kind: "conflict",
+      with: "global.cheatsheet",
+    });
+    expect(validateBinding("global.nav_rail", "Alt+1..9", cur())).toBeNull();
   });
 });
