@@ -7,11 +7,12 @@ Create Date: 2026-10-27
 `docs/plan/21-database-schema.md` Sec.3.3.2, third block, verbatim (SEC-2-04 of #3934's review).
 `tg_write_once()` is replaced in place (`CREATE OR REPLACE`; the trigger stays BEFORE UPDATE, per
 row and `ENABLE ALWAYS`): 0039's list stays, and once `OLD.status` is not `draft`, `symbol`, `side`,
-`entry_type`, `origin`, `is_paper`, `algo_params` and `origin_rule_id` are frozen too, with 0039's
-refusal (SQLSTATE 23514, the column, never a value). `origin_rule_id` may still become NULL once its
-rule row is gone (the FK's `ON DELETE SET NULL`, as a leg's `account_profile_id` in 0039).
-Residuals: the statement that fires a draft is the last to take a change, and a status written back
-to `draft` re-opens the window (B2 has no such transition; the store writes none).
+`entry_type`, `origin`, `is_paper`, `algo`, `algo_params`, `created_at`, `origin_rule_id` and
+`origin_rule_run_id` are frozen too, with 0039's refusal (SQLSTATE 23514, the column, never a
+value). The two references may still become NULL once their rule or run row is gone (the FKs'
+`ON DELETE SET NULL`, as a leg's `account_profile_id` in 0039). A fired group never returns to
+`draft` (refused on `status`, after the columns), which completes SEC-2-04. Residual: the statement
+that fires a draft is the last to take a change.
 
 Additive (C-5.1) and reversible (C-5.2): no row changes; `downgrade()` restores 0039's function
 verbatim (rollback only). `lock_timeout` (5 s) brackets both directions (C-5.6).
@@ -61,15 +62,25 @@ BEGIN
       WHEN NEW.entry_type IS DISTINCT FROM OLD.entry_type THEN 'entry_type'
       WHEN NEW.origin IS DISTINCT FROM OLD.origin THEN 'origin'
       WHEN NEW.is_paper IS DISTINCT FROM OLD.is_paper THEN 'is_paper'
+      WHEN NEW.algo IS DISTINCT FROM OLD.algo THEN 'algo'
       WHEN NEW.algo_params IS DISTINCT FROM OLD.algo_params THEN 'algo_params'
+      WHEN NEW.created_at IS DISTINCT FROM OLD.created_at THEN 'created_at'
       WHEN NEW.origin_rule_id IS DISTINCT FROM OLD.origin_rule_id
         AND (NEW.origin_rule_id IS NOT NULL
           OR EXISTS (SELECT FROM public.rules r WHERE r.id = OLD.origin_rule_id))
         THEN 'origin_rule_id'
+      WHEN NEW.origin_rule_run_id IS DISTINCT FROM OLD.origin_rule_run_id
+        AND (NEW.origin_rule_run_id IS NOT NULL
+          OR EXISTS (SELECT FROM public.rule_runs r WHERE r.id = OLD.origin_rule_run_id))
+        THEN 'origin_rule_run_id'
     END
   END;
   IF changed IS NOT NULL THEN
     RAISE EXCEPTION 'trg_tg_write_once: trade_groups.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_write_once';
+  END IF;
+  IF OLD.status <> 'draft' AND NEW.status = 'draft' THEN
+    RAISE EXCEPTION 'trg_tg_write_once: trade_groups.status cannot return to draft'
       USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_write_once';
   END IF;
   RETURN NEW;

@@ -1,10 +1,11 @@
 """Integration: `0053_tg_frozen_after_draft` against real Postgres 16 (E28-T05 #909, SEC-2-04).
 
-Once a trade group leaves `draft`, `trg_tg_write_once` refuses a change of the seven create-only
-columns (SQLSTATE 23514, the column named, never a value); a draft still takes them, the OMS's
-updates of `status` and the times pass, and a rule's delete still clears `origin_rule_id`. The round
-trip holds on an empty and on the E28-seeded database (C-5.5). `testcontainers` in CI; the offline
-render is `tests/unit/migrations/test_0053_tg_frozen_after_draft.py`.
+Once a trade group leaves `draft`, `trg_tg_write_once` refuses a change of the ten columns written
+at its creation (SQLSTATE 23514, the column named, never a value) and a return to `draft`; a draft
+still takes them, the OMS's updates of `status` and the times pass, and a rule's or a run's delete
+still clears its reference. The round trip holds on an empty and on the E28-seeded database
+(C-5.5). `testcontainers` in CI; the offline render is
+`tests/unit/migrations/test_0053_tg_frozen_after_draft.py`.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import subprocess
 import sys
 import uuid
 from datetime import UTC, datetime
+from itertools import cycle
 from pathlib import Path
 from typing import Any
 
@@ -31,7 +33,9 @@ pytestmark = pytest.mark.integration
 pg_dsn = _refused.pg_dsn  # the module-scoped Postgres 16 at head; its database is named `test`
 _ROOT = Path(__file__).resolve().parents[3]  # services/api, where `alembic.ini` lives
 _REPO, _PREV = _ROOT.parents[1], "0052_ia_purge_anchor"
-_USER, _RULE_A, _RULE_B = (uuid.UUID(int=n) for n in (0xA1, 0xB1, 0xB2))
+_USER, _RULE_A, _RULE_B, _VERSION, _RUN_A, _RUN_B = (
+    uuid.UUID(int=n) for n in (0xA1, 0xB1, 0xB2, 0xC0, 0xC1, 0xC2)
+)
 _SEEDED = uuid.UUID("e28f0000-0000-4000-8000-0000000000b1")  # G-CORE3: `cancelled`, so fired
 Conn = psycopg.Connection[tuple[Any, ...]]
 #: Per column, the value a group is written with and the value a later write tries.
@@ -41,8 +45,11 @@ _CASES: dict[str, tuple[Any, Any]] = {
     "entry_type": ("Limit", "Market"),
     "origin": ("manual", "hotkey"),
     "is_paper": (False, True),
+    "algo": ("none", "twap"),
     "algo_params": (Jsonb({"k": "a"}), Jsonb({"k": "b"})),
+    "created_at": (datetime(2026, 10, 1, tzinfo=UTC), datetime(2026, 10, 2, tzinfo=UTC)),
     "origin_rule_id": (_RULE_A, _RULE_B),
+    "origin_rule_run_id": (_RUN_A, _RUN_B),
 }
 _STATUSES = ("submitting", "partially_open", "open", "closing", "closed", "failed", "cancelled")
 _CATALOG = (
@@ -75,7 +82,8 @@ def db(pg_dsn: str) -> str:
 
 
 def _world(c: Conn) -> None:
-    """The user the groups belong to and two rules they can name."""
+    """The user the groups belong to, two rules they can name, and two runs (of the second rule, so
+    that the first one's delete cascades to no run) they can be attributed to."""
     c.execute(
         "INSERT INTO users (id, email, username, password_hash, status) "
         "VALUES (%s, 'u@example.test', 'user_one', '$argon2id$x', 'active')",
@@ -84,6 +92,17 @@ def _world(c: Conn) -> None:
     stmt = "INSERT INTO rules (id, name, owner_user_id) VALUES (%s, %s, %s)"
     for rule in (_RULE_A, _RULE_B):
         c.execute(stmt, (rule, str(rule), _USER))
+    c.execute(
+        "INSERT INTO rule_versions (id, rule_id, version, ir, ir_hash, compiler_version) "
+        "VALUES (%s, %s, 1, '{\"conditions\": [], \"actions\": []}', repeat('ab', 32), 'v1')",
+        (_VERSION, _RULE_B),
+    )
+    stmt = (
+        "INSERT INTO rule_runs (id, rule_id, rule_version_id, mode, trigger_reason, input_snapshot)"
+        " VALUES (%s, %s, %s, 'simulate', 'manual', '{}')"
+    )
+    for run in (_RUN_A, _RUN_B):
+        c.execute(stmt, (run, _RULE_B, _VERSION))
 
 
 def _group(c: Conn, **cols: Any) -> uuid.UUID:
@@ -105,22 +124,28 @@ def _write(c: Conn, group: uuid.UUID, **values: Any) -> None:
     c.execute(stmt, [*values.values(), group])
 
 
-def _frozen(c: Conn, group: uuid.UUID, column: str, value: Any) -> None:
-    """`trg_tg_write_once` refuses the write and names the column, nothing else."""
+def _denied(c: Conn, group: uuid.UUID, refusal: str, **values: Any) -> None:
+    """`trg_tg_write_once` refuses the write as `trade_groups.<refusal>`, and says nothing else."""
     with pytest.raises(pgerr.CheckViolation) as exc, c.transaction():
-        _write(c, group, **{column: value})
+        _write(c, group, **values)
     diag = exc.value.diag
     assert exc.value.sqlstate == "23514" and diag.constraint_name == "trg_tg_write_once"
-    assert diag.message_primary == f"trg_tg_write_once: trade_groups.{column} is write-once"
+    assert diag.message_primary == f"trg_tg_write_once: trade_groups.{refusal}"
     assert diag.message_detail is None and diag.message_hint is None
 
 
-@pytest.mark.parametrize(("column", "status"), list(zip(_CASES, _STATUSES, strict=True)))
-def test_each_create_only_column_freezes_once_a_group_leaves_draft(
+def _frozen(c: Conn, group: uuid.UUID, column: str, value: Any, **also: Any) -> None:
+    """The write of `column` (with `also` in the same statement) is refused by the column's name."""
+    _denied(c, group, f"{column} is write-once", **{column: value}, **also)
+
+
+@pytest.mark.parametrize(("column", "status"), list(zip(_CASES, cycle(_STATUSES), strict=False)))
+def test_each_create_only_column_is_frozen_once_a_group_leaves_draft(
     db: str, column: str, status: str
 ) -> None:
     """A draft takes the write, and so does the statement that fires it (the freeze reads the row as
-    it was, `OLD.status`); the next one is refused, whichever status the group fired into."""
+    it was, `OLD.status`); the next one is refused by name, whichever status the group fired into,
+    even riding on a return to `draft`, and 0039's columns stay refused."""
     first, second = _CASES[column]
     with _conn(db) as c:
         _world(c)
@@ -128,6 +153,27 @@ def test_each_create_only_column_freezes_once_a_group_leaves_draft(
         _write(c, group, **{column: second})
         _write(c, group, status=status, **{column: first})
         _frozen(c, group, column, second)
+        _frozen(c, group, column, second, status="draft")
+        _frozen(c, group, "env", "live")
+
+
+def test_algo_params_is_frozen_to_and_from_null(db: str) -> None:
+    """`IS DISTINCT FROM`: clearing the value, or giving one where there was none, is a change."""
+    with _conn(db) as c:
+        _world(c)
+        _frozen(c, _group(c, status="open"), "algo_params", None)
+        _frozen(c, _group(c, status="open", algo_params=None), "algo_params", Jsonb({"k": "a"}))
+
+
+@pytest.mark.parametrize("status", _STATUSES)
+def test_a_fired_group_never_returns_to_draft(db: str, status: str) -> None:
+    """B2 has no transition into `draft`, and the freeze reads `OLD.status`, so a status written
+    back would re-open it: refused on `status`. A draft still fires, or is cancelled."""
+    with _conn(db) as c:
+        _world(c)
+        _denied(c, _group(c, status=status), "status cannot return to draft", status="draft")
+        for target in ("submitting", "cancelled"):
+            _write(c, _group(c), status=target)
 
 
 def test_a_rule_delete_still_clears_origin_rule_id(db: str) -> None:
@@ -149,14 +195,35 @@ def test_origin_rule_id_is_never_cleared_swapped_or_given_while_its_rule_stands(
         _frozen(c, _group(c, status="submitting", origin_rule_id=None), "origin_rule_id", _RULE_A)
 
 
-def test_status_and_times_still_update_after_draft(db: str) -> None:
+def test_a_run_delete_still_clears_origin_rule_run_id(db: str) -> None:
+    """The run retention hard-deletes runs, and the FK's `ON DELETE SET NULL` must pass too."""
+    with _conn(db) as c:
+        _world(c)
+        group = _group(c, status="submitting", origin="rule")
+        c.execute("DELETE FROM rule_runs WHERE id = %s", (_RUN_A,))
+        stmt = "SELECT origin_rule_run_id, origin_rule_id FROM trade_groups WHERE id = %s"
+        assert c.execute(stmt, (group,)).fetchone() == (None, _RULE_A)  # nothing else moved
+
+
+def test_origin_rule_run_id_is_never_cleared_swapped_or_given_while_its_run_stands(db: str) -> None:
+    with _conn(db) as c:
+        _world(c)
+        named = _group(c, status="submitting")
+        _frozen(c, named, "origin_rule_run_id", None)  # only the run's delete may clear it
+        _frozen(c, named, "origin_rule_run_id", _RUN_B)
+        bare = _group(c, status="submitting", origin_rule_run_id=None)
+        _frozen(c, bare, "origin_rule_run_id", _RUN_A)
+
+
+def test_status_and_times_still_update(db: str) -> None:
     """The OMS's updates pass; so does a frozen column written over its own value, NULL over NULL
     included."""
     now = datetime(2026, 10, 27, tzinfo=UTC)
+    nulls = dict.fromkeys(("algo_params", "origin_rule_id", "origin_rule_run_id"))
     with _conn(db) as c:
         _world(c)
         group = _group(c, status="submitting")
-        bare = _group(c, status="open", algo_params=None, origin_rule_id=None)
+        bare = _group(c, status="open", **nulls)
         for status, time in (("partially_open", "submitted_at"), ("open", "opened_at")):
             _write(c, group, status=status, **{time: now})
         _write(c, group, status="closed", closed_at=now)

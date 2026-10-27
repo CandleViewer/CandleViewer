@@ -259,7 +259,7 @@
     },
     "0053_tg_frozen_after_draft": {
       "path": "services/api/candleviewer/migrations/versions/0053_tg_frozen_after_draft.py",
-      "sha256": "89b29db2c40e12540bf73f185d06d306eb50378c732214861484e68a355dfa3c",
+      "sha256": "12040e541f3da00de45c4565daa56fb3e8419b1a1883ec58415fd28976330b11",
       "down_revision": "0052_ia_purge_anchor"
     }
   }

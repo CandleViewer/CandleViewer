@@ -23,7 +23,13 @@ _0039 = _ROOT / "candleviewer" / "migrations" / "versions" / "0039_trade_groups.
 _REV, _PREV = "0053_tg_frozen_after_draft", "0052_ia_purge_anchor"
 _LOCK, _RESET = "SET LOCAL lock_timeout = '5s';", "SET LOCAL lock_timeout = DEFAULT;"
 _STAMP = "UPDATE alembic_version SET version_num='{}' WHERE alembic_version.version_num = '{}';"
-_FROZEN = ("symbol", "side", "entry_type", "origin", "is_paper", "algo_params", "origin_rule_id")
+#: The columns a fired group freezes, in the function's order: the port's create-only seven, plus
+#: the three others written only at creation (the algo kind, the time, the run it is attributed to).
+_FROZEN = (
+    "symbol", "side", "entry_type", "origin", "is_paper", "algo", "algo_params", "created_at",
+    "origin_rule_id", "origin_rule_run_id",
+)  # fmt: skip
+_BACK = "IF OLD.status <> 'draft' AND NEW.status = 'draft' THEN RAISE"  # no way back to `draft`
 
 
 def _alembic(*args: str) -> str:
@@ -79,20 +85,23 @@ def test_the_function_keeps_0039s_list_and_freezes_the_create_only_columns_after
     assert f"changed := CASE {kept} WHEN OLD.status <> 'draft' THEN CASE " in new
     after = new.split("'draft'", 1)[1]
     arms = re.findall(r"WHEN NEW\.(\w+) IS DISTINCT FROM OLD\.\1 (?:AND|THEN)", after)
-    assert tuple(arms) == _FROZEN and set(arms) == CREATE_ONLY_GROUP_COLUMNS
+    assert tuple(arms) == _FROZEN
+    assert set(arms) == CREATE_ONLY_GROUP_COLUMNS | {"algo", "created_at", "origin_rule_run_id"}
     assert not set(arms) & (WRITE_ONCE_GROUP_COLUMNS | set(GROUP_PATCH_COLUMNS))  # the CAS passes
-    assert new.count("OLD.status") == 1  # one place decides what a draft may still take
-    assert not re.search(r"NEW\.\w+ *(=|<>|!=)", new)  # IS DISTINCT FROM throughout: changes only
+    assert new.count("OLD.status") == 2 and _BACK in new  # the freeze, and no return to `draft`
+    assert not re.search(r"NEW\.(?!status\b)\w+ *(=|<>|!=)", new)  # IS DISTINCT FROM: changes only
 
 
 def test_a_refusal_names_the_column_never_a_value_and_the_function_runs_as_its_caller() -> None:
     up, using = _up(), "USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_write_once'"
     assert re.findall(r"RAISE EXCEPTION '([^']*)'(.*?);", up) == [
-        ("trg_tg_write_once: trade_groups.% is write-once", f", changed {using}")
+        ("trg_tg_write_once: trade_groups.% is write-once", f", changed {using}"),
+        ("trg_tg_write_once: trade_groups.status cannot return to draft", f" {using}"),
     ]
     assert set(re.findall(r"THEN '(\w+)'", up)) == WRITE_ONCE_GROUP_COLUMNS | set(_FROZEN)
     assert "SET search_path = pg_catalog, pg_temp" in up and "SECURITY DEFINER" not in up
-    assert re.findall(r"(?<!DISTINCT )\bFROM (\S+)", _function(up)) == ["public.rules"]
+    read = re.findall(r"(?<!DISTINCT )\bFROM (\S+)", _function(up))
+    assert read == ["public.rules", "public.rule_runs"]
     assert not re.search(r"\b(?:CREATE TRIGGER|ALTER TABLE|DROP)\b", up)  # the trigger stays as is
 
 
@@ -108,3 +117,5 @@ def test_the_plan_doc_names_the_frozen_columns_the_carve_out_and_closes_sec_2_04
     named = (*sorted(WRITE_ONCE_GROUP_COLUMNS), *_FROZEN, "draft")
     assert all(f"`{name}`" in bullet for name in named) and "ON DELETE SET NULL" in bullet
     assert _REV in section and "left to E28-T05" not in section  # 0039's deferral is closed
+    assert "that closes SEC-2-04 of E28-T01's review" in section  # the closing sentence
+    assert "completes SEC-2-04" in section and "re-opens the window" not in section  # no residual
