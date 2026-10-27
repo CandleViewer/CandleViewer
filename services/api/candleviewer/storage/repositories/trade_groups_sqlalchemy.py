@@ -92,7 +92,6 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from candleviewer.storage.repositories.trade_groups import (
     ACCOUNT_NOT_LIVE,
     DEFINITION_NOT_LIVE,
-    MAX_GROUP_PAGE,
     OPEN_GROUP_STATUSES,
     PROFILE_CHANGED,
     TRADE_GROUP_CONFLICTS,
@@ -119,6 +118,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupStoreScopeDeniedError,
     TradeGroupStoreStaleError,
     UnprotectedLegRow,
+    check_page,
     parse_json,
     render_json,
 )
@@ -744,11 +744,7 @@ class SqlAlchemyTradeGroupStore:
         created_from: datetime | None, created_to: datetime | None,
         after: tuple[datetime, UUID] | None, limit: int,
     ) -> tuple[TradeGroupRecord, ...]:  # fmt: skip
-        if isinstance(limit, bool) or not 1 <= limit <= MAX_GROUP_PAGE:
-            raise ValueError(f"limit must be 1 to {MAX_GROUP_PAGE}")
-        times = (created_from, created_to, None if after is None else after[0])
-        if any(t is not None and t.utcoffset() is None for t in times):
-            raise ValueError("a time must be timezone-aware")
+        check_page(limit, created_from, created_to, after)
         if self._fails_closed(scope):
             return ()
         page = scoped_page_statement(

@@ -742,3 +742,14 @@ async def test_a_scoped_list_never_serves_a_grant_a_group_without_legs_but_an_ow
         page = await TradeGroupReader(store).list(scope, **_PAGE)
         assert [s.record.group.group_id for s in page] == served
         assert store.calls == [("list_groups", (scope,), _PAGE)]
+
+
+@pytest.mark.parametrize("bad", [{"limit": 0}, {"after": (datetime(2026, 10, 20), _GROUP)}])
+async def test_a_bad_page_argument_is_a_value_error_before_the_store_never_a_row_fault(
+    bad: dict[str, Any],
+) -> None:
+    """Refused here, so it is neither relabelled `stored trade group unreadable` nor logged."""
+    store, why = _Store(()), "limit must be" if "limit" in bad else "timezone-aware"
+    with structlog.testing.capture_logs() as logs, pytest.raises(ValueError, match=why):
+        await TradeGroupReader(store).list(_OWNER, **(_PAGE | bad))
+    assert store.calls == [] and logs == []

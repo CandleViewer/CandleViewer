@@ -92,6 +92,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupStoreRuleError,
     TradeGroupStoreScopeDeniedError,
     TradeGroupStoreStaleError,
+    check_page,
 )
 
 #: The request fingerprint the store compares verbatim (`sha256_hex`).
@@ -344,8 +345,10 @@ class TradeGroupReader:
         created_to: datetime | None = None, after: tuple[datetime, UUID] | None = None, limit: int,
     ) -> tuple[ScopedTradeGroup, ...]:  # fmt: skip
         """One keyset page, newest first, of the groups `scope` sees, each as `get` serves it
-        (SR-E28-21); the store checks the arguments (`ValueError`). A grant never sees a group
-        answered without legs, and an Owner does."""
+        (SR-E28-21). `ValueError` for a `limit` outside 1 to `MAX_GROUP_PAGE` or a naive time,
+        refused here, before the store, so a caller's mistake never reads as a stored row's fault.
+        A grant never sees a group answered without legs, and an Owner does."""
+        check_page(limit, created_from, created_to, after)
         page = self._store.list_groups(
             scope, symbol=symbol, statuses=statuses, created_from=created_from,
             created_to=created_to, after=after, limit=limit,

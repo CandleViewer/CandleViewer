@@ -25,7 +25,8 @@ patch (`GROUP_PATCH_COLUMNS`, `LEG_PATCH_COLUMNS`). `list_open_groups` and
 `list_unprotected_legs` filter no soft delete, so the C-2.6 alarm sees every open leg.
 `TradeGroupReads` is the principal-scoped read, SR-051 in SQL: an Owner sees every group, anyone
 else a group that has a leg and whose every leg account is live and granted to them (SR-E28-21),
-and every other group reads as missing.
+and every other group reads as missing. `list_groups` pages them with their legs (`check_page`
+bounds it) and `leg_order_ids` reads a leg's orders, each under the predicate `get_group` applies.
 
 A refusal is mapped by its constraint name, never by its message or DETAIL, which repeats the
 failing row, and no error here carries a value. The store caps each statement as the order store
@@ -70,7 +71,8 @@ __all__ = [
     "TradeGroupReads", "TradeGroupRecord", "TradeGroupRefusal", "TradeGroupRow",
     "TradeGroupStatus", "TradeGroupStore", "TradeGroupStoreConflictError", "TradeGroupStoreError",
     "TradeGroupStoreRefusedError", "TradeGroupStoreRuleError", "TradeGroupStoreScopeDeniedError",
-    "TradeGroupStoreStaleError", "TriggerBy", "UnprotectedLegRow", "parse_json", "render_json",
+    "TradeGroupStoreStaleError", "TriggerBy", "UnprotectedLegRow", "check_page", "parse_json",
+    "render_json",
 ]  # fmt: skip
 
 #: A `jsonb` value as this store writes and reads it: no float anywhere (C2).
@@ -696,5 +698,19 @@ class TradeGroupReads(Protocol):
         self, scope: AccountScope, leg_ids: Collection[UUID]
     ) -> Mapping[UUID, tuple[UUID, ...]]:
         """The ids of these legs' orders, oldest first, by leg (a leg with none is absent), read
-        only for legs of groups the scope sees: any other id reads nothing."""
+        only for legs of groups the scope sees: any other id reads nothing. No leg id, like an
+        empty `GrantScope`, runs no SQL: it is answered empty before an `OwnerScope`'s gate."""
         ...
+
+
+def check_page(
+    limit: int, created_from: datetime | None, created_to: datetime | None,
+    after: tuple[datetime, UUID] | None,
+) -> None:  # fmt: skip
+    """`ValueError` for a `limit` outside 1 to `MAX_GROUP_PAGE` and for a naive time: what
+    `list_groups` refuses before any SQL, and `TradeGroupReader.list` before it calls the store."""
+    if isinstance(limit, bool) or not 1 <= limit <= MAX_GROUP_PAGE:
+        raise ValueError(f"limit must be 1 to {MAX_GROUP_PAGE}")
+    times = (created_from, created_to, None if after is None else after[0])
+    if any(t is not None and t.utcoffset() is None for t in times):
+        raise ValueError("a time must be timezone-aware")

@@ -977,8 +977,8 @@ async def test_a_filled_leg_without_a_confirmed_stop_is_listed_even_on_a_soft_de
 # -- scope and IDOR (SR-E28-21) --------------------------------------------------------------------
 
 #: A Manager granted A and B, each cell changing one thing; the Owner sees every group. The E28
-#: world's G-CORE3 (A, B, C) and G-PAIR (A, C) are the cells `legs-a-b-and-c` and
-#: `a-leg-on-ungranted-c`: hidden from a manager missing E28-C, on `get_group` and the list alike.
+#: world's G-CORE3 and G-PAIR have legs on A and C: the cell `a-leg-on-ungranted-c`, hidden from a
+#: manager missing E28-C on `get_group` and the list alike (`legs-a-b-and-c` is a three-leg extra).
 _CELLS = {
     "legs-a-and-b": True,
     "legs-a-b-and-c": False,

@@ -18,7 +18,7 @@ from candleviewer.accounts import trade_groups as tg
 from candleviewer.api._generated import openapi_models as api
 from candleviewer.api.trade_group_projection import group_document
 from tests.contract._admin_support import SPEC, validate_example
-from tests.unit.accounts.test_trade_groups import _GROUP_BASE, _LEG_BASE
+from tests.unit.accounts.test_trade_groups import _GROUP_BASE, _LEG_BASE, _US
 
 _SCHEMAS = SPEC["components"]["schemas"]
 _PRIVATE = {"created_by", "note", "client_group_ref"}
@@ -69,6 +69,44 @@ def test_a_group_is_a_22_trade_group_with_only_the_members_22_declares_and_plain
     assert doc["totals"] == {
         "requested_legs": 3, "submitted_legs": 2, "rejected_legs": 1, "filled_qty": "0.004",
         "target_qty": "0.03", "realised_pnl": "-12.5",
+    }  # fmt: skip
+
+
+def test_group_document_renders_every_member_from_its_own_value() -> None:
+    """A distinct value in each member: a member read from another, or inverted, shows."""
+    at, d, u = "2026-10-20T09:00:00.{:06d}Z".format, Decimal, [UUID(int=0xA0 + n) for n in range(8)]
+    leg = _leg(
+        7, leg_id=u[1], group_id=u[0], account_id=u[2], account_profile_id=u[3], status="error",
+        target_qty=d("3.3"), filled_qty=d("1.1"), avg_entry_price=d("101.5"),
+        avg_exit_price=d("102.5"), resolved_leverage=d("7"), resolved_sl_price=d("90.5"),
+        resolved_tp_price=d("120.5"), risk_usd=d("12.5"), realised_pnl=d("-4.5"),
+        fees_paid=d("0.25"), rejection_code="c1", rejection_message="m1",
+        native_sl_confirmed_at=_US + 4, submitted_at=_US + 5, closed_at=_US + 6,
+        created_at=_US + 7, updated_at=_US + 8,
+    )  # fmt: skip
+    group = _scoped(
+        (leg,), group_id=u[0], symbol="ETHUSDT", side="sell", status="closing", algo="twap",
+        leg_failure_policy="all_or_none", rule_id=u[4], is_paper=True, created_by=u[5],
+        client_group_ref=u[6], created_at=_US + 1, updated_at=_US + 2, closed_at=_US + 3,
+    )  # fmt: skip
+    assert group_document(group, {u[1]: (u[7],)}) == {
+        "id": str(u[0]), "symbol": "ETHUSDT", "side": "sell", "status": "closing",
+        "algo": {"kind": "twap"}, "atomicity": "all_or_none", "rule_id": str(u[4]),
+        "is_paper": True, "created_at": at(1), "updated_at": at(2), "closed_at": at(3),
+        "created_by": str(u[5]), "note": _NOTE, "client_group_ref": str(u[6]),
+        "totals": {"requested_legs": 1, "submitted_legs": 1, "rejected_legs": 1,
+                   "filled_qty": "1.1", "target_qty": "3.3", "realised_pnl": "-4.5"},
+        "legs": [{
+            "id": str(u[1]), "trade_group_id": str(u[0]), "exchange_account_id": str(u[2]),
+            "account_profile_id": str(u[3]), "status": "error", "sequence_no": 7,
+            "resolved": {"qty": "3.3", "leverage": "7", "stop_loss_price": "90.5",
+                         "take_profit_price": "120.5", "risk_usd": "12.5"},
+            "orders": [str(u[7])], "target_qty": "3.3", "filled_qty": "1.1",
+            "avg_entry_price": "101.5", "avg_exit_price": "102.5", "risk_usd": "12.5",
+            "native_sl_confirmed": True, "fees_paid": "0.25", "native_sl_confirmed_at": at(4),
+            "realised_pnl": "-4.5", "error": {"code": "c1", "message": "m1"},
+            "submitted_at": at(5), "closed_at": at(6), "created_at": at(7), "updated_at": at(8),
+        }],
     }  # fmt: skip
 
 

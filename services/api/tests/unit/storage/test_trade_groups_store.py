@@ -786,9 +786,11 @@ async def test_list_groups_reads_a_page_then_its_legs_and_a_grant_loses_a_bare_g
     rel = _Rel(_Result(page), _Result([_leg_mapping()]))
     shown = await _store(rel).list_groups(_GRANT, limit=2, **_FILTERS)
     assert [r.group.id for r in shown] == [_GROUP] and len(rel.calls) == 2 and rel.commits == 0
+    assert all("user_account_access" in _sql(c) for c in rel.calls)  # the page and its legs
     owner = _Rel(_GATE_OK, _Result(page), _Result([_leg_mapping()]))
     seen = await _store(owner).list_groups(_OWNER, limit=2, **_FILTERS)
     assert [r.group.id for r in seen] == [_GROUP, other] and seen[1].legs == ()
+    assert all("user_roles" in _sql(c) for c in owner.calls[1:])  # still scoped behind the gate
 
 
 @pytest.mark.parametrize(
@@ -803,11 +805,21 @@ async def test_list_groups_is_bounded_and_aware_before_any_sql_and_an_empty_scop
     bad: dict[str, Any],
 ) -> None:
     rel, empty = _Rel(), GrantScope(_CALLER, frozenset())
-    with pytest.raises(ValueError, match=r"limit must be|timezone-aware"):
+    why = "limit must be" if "limit" in bad else "timezone-aware"
+    with pytest.raises(ValueError, match=why):
         await _store(rel).list_groups(_GRANT, **{"limit": 1, **_FILTERS, **bad})
     assert await _store(rel).list_groups(empty, limit=1, **_FILTERS) == ()
     assert await _store(rel).leg_order_ids(empty, [_LEG_A]) == {}
-    assert await _store(rel).leg_order_ids(_GRANT, []) == {} and rel.calls == [] and rel.caps == []
+    assert await _store(rel).leg_order_ids(_OWNER, []) == {} and rel.calls == [] and rel.caps == []
+
+
+async def test_leg_order_ids_reads_the_scoped_statement_and_groups_the_orders_by_leg() -> None:
+    a, b = UUID(int=0x7001), UUID(int=0x7002)
+    rows = _Result([{"trade_group_leg_id": str(_LEG_A), "id": str(i)} for i in (a, b)])
+    grant, owner = _Rel(rows), _Rel(_GATE_OK, rows)
+    assert await _store(grant).leg_order_ids(_GRANT, [_LEG_A]) == {_LEG_A: (a, b)}
+    assert await _store(owner).leg_order_ids(_OWNER, [_LEG_A]) == {_LEG_A: (a, b)}
+    assert "user_account_access" in _sql(grant.calls[0]) and "user_roles" in _sql(owner.calls[1])
 
 
 async def test_a_non_owner_holding_an_owner_scope_is_refused_on_list_and_order_ids() -> None:

@@ -14,20 +14,15 @@ so it shares no code with this read of stored rows.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
 from uuid import UUID
 
 from candleviewer.accounts.trade_groups import ScopedTradeGroup, TradeGroupLeg, group_totals
-from candleviewer.api.profile_projection import plain, rfc3339
+from candleviewer.api.profile_projection import plain, plain_or_none, rfc3339
 from candleviewer.domain.primitives import TsUs
 
 __all__ = ["group_document"]
 
 type Body = dict[str, object]
-
-
-def _plain(value: Decimal | None) -> str | None:
-    return None if value is None else plain(value)
 
 
 def _time(us: TsUs | None) -> str | None:
@@ -45,7 +40,7 @@ def _leg_document(leg: TradeGroupLeg, orders: Sequence[UUID]) -> Body:
         resolved = {
             "qty": plain(leg.target_qty), "leverage": plain(leg.resolved_leverage),
             "stop_loss_price": plain(leg.resolved_sl_price),
-            "take_profit_price": _plain(leg.resolved_tp_price),
+            "take_profit_price": plain_or_none(leg.resolved_tp_price),
         }  # fmt: skip
         if leg.risk_usd is not None:
             resolved["risk_usd"] = plain(leg.risk_usd)
@@ -56,8 +51,9 @@ def _leg_document(leg: TradeGroupLeg, orders: Sequence[UUID]) -> Body:
         "account_profile_id": _id(leg.account_profile_id), "status": leg.status,
         "sequence_no": leg.sequence_no, "resolved": resolved,
         "orders": [str(order_id) for order_id in orders], "target_qty": plain(leg.target_qty),
-        "filled_qty": plain(leg.filled_qty), "avg_entry_price": _plain(leg.avg_entry_price),
-        "avg_exit_price": _plain(leg.avg_exit_price), "risk_usd": _plain(leg.risk_usd),
+        "filled_qty": plain(leg.filled_qty), "avg_entry_price": plain_or_none(leg.avg_entry_price),
+        "avg_exit_price": plain_or_none(leg.avg_exit_price),
+        "risk_usd": plain_or_none(leg.risk_usd),
         "native_sl_confirmed": leg.native_sl_confirmed, "fees_paid": plain(leg.fees_paid),
         "native_sl_confirmed_at": _time(leg.native_sl_confirmed_at),
         "realised_pnl": plain(leg.realised_pnl),
