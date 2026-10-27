@@ -245,7 +245,8 @@ def test_the_owners_plan_is_its_purge_refusals_each_named_by_its_record(
     written_plans: Path,
 ) -> None:
     """E16-X02 (#494): the matrix allows the Owner the purge, so its refusal for want of a
-    `recorder` step-up is a fixed plan: each purge 403 with its own `retention.purge` record."""
+    `recorder_purge` step-up is a fixed plan: each purge 403 with its own `retention.purge`
+    record."""
     assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"]["owner"] == "allow"
     planned = json.loads((written_plans / "owner-requests.json").read_text(encoding="utf-8"))
     assert [(item["operation"], item["expected"], item["action"]) for item in planned] == [
