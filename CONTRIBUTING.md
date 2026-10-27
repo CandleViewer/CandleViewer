@@ -175,8 +175,10 @@ replays every checker above against a deliberately-broken fixture tree under
 check that has silently stopped checking anything — and a **coverage gate** over all of `scripts/**`:
 six `governance-tests` shards run the unit tests, the infra suites included (#4361), with
 `--cov=scripts`, and the `governance` job
-combines their data and fails under 85% (#3789, #4365). Each of its jobs measures its own duration
-against a 90 s budget, recorded as a `::notice` annotation on every run; exceeding it fails that job
+combines their data and fails under 85% (#3789, #4365). Each job has a 90 s budget on its own
+measure: a shard budgets its pytest time and `governance` its combine step (#4666), and
+`governance-checks` (still) its job wall time (#4693). Each is recorded as a `::notice` annotation
+on every run, and exceeding it fails that job
 (`::error` annotation). Per-run artefacts (CODEOWNERS ownership report, backlog per-epic summary) are
 uploaded as the `governance-reports` artefact for diffable history across runs.
 
