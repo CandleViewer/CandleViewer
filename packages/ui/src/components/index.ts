@@ -86,6 +86,9 @@ export type { KeyValueRowProps } from "./KeyValueRow.js";
 export { Link } from "./Link.js";
 export type { LinkProps, LinkRoute, LinkRouteProps } from "./Link.js";
 
+export { MaskedValue, maskAllValues } from "./MaskedValue.js";
+export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
+
 export { Popover } from "./Popover.js";
 export type {
   PopoverAnchorProps,
@@ -94,9 +97,6 @@ export type {
   PopoverPlacement,
   PopoverProps,
 } from "./Popover.js";
-
-export { MaskedValue, maskAllValues } from "./MaskedValue.js";
-export type { MaskedValueProps, MaskedValueState } from "./MaskedValue.js";
 
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
