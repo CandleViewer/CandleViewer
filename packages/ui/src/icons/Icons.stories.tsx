@@ -9,7 +9,7 @@ import { ICONS, type IconName } from "./registry.js";
 const NAMES = Object.keys(ICONS) as IconName[];
 
 /** CMP-019 Icon: every registered glyph by name (a stub: the full catalogue joins in #271). */
-const meta: Meta = { title: "Foundations/Icons" };
+const meta: Meta = { title: "Atoms/Icon" };
 export default meta;
 type Story = StoryObj;
 
@@ -31,7 +31,7 @@ export const FullSet: Story = {
 };
 
 /** The three optical sizes, each the `size.icon.*` token, and a meaningful (named) icon. */
-export const SizesAndNamed: Story = {
+export const SizeScale: Story = {
   render: (): JSX.Element => (
     <p>
       {ICON_SIZES.map((size) => (

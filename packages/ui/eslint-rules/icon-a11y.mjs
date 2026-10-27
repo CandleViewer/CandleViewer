@@ -1,6 +1,8 @@
 // Custom ESLint rule (E05 #271): the decorative-vs-meaningful rule of 16-design-system-brief.md
 // §5 for CMP-019 `Icon`. `decorative={false}` makes an icon a named image, so it needs a `label`.
 // The types enforce this for TypeScript callers; the rule covers the rest (and fails the lint).
+// Spread props and computed labels are trusted (not statically knowable; the types cover TypeScript
+// callers), and only the JSX name `Icon` is matched: an aliased import is not checked.
 
 /** The value of a JSX attribute: a literal, `true` when bare, undefined when absent or computed. */
 function staticValue(opening, name) {
