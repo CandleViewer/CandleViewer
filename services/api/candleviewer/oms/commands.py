@@ -311,7 +311,9 @@ AMEND_TIMEOUT_S: Final = CV_COMMAND_TIMEOUT - 2.0
 #: B1's bound: a read the deadline ended is answered, recorded, never raised (the 10:18Z ruling).
 AMEND_AUDIT_GRACE_S: Final = 1.0
 #: How long before the amend's deadline its venue call must end, in seconds, so an answer that
-#: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2).
+#: lands just inside it still leaves `_settle_stop` time to settle the rows (review fold 2). The
+#: call's credential report (24 Sec.8.6) ends with the call too, answered or raised, so the
+#: reserve is the settle's alone (#913 CG19, S4-B2's Fable L2).
 AMEND_SETTLE_RESERVE_S: Final = 0.5
 #: A read that failed before the amend's send (the 10:18Z ruling): `STORE_UNAVAILABLE` (as the
 #: cancel's) with this reason, retried after `STORE_UNAVAILABLE_RETRY_AFTER_S`, the one wait the
@@ -1464,8 +1466,8 @@ class OmsCommandPort:
             _log().warning("oms_amend_rate_refused", order_link_id=row.order_link_id)
             retry = retry_after(exc.retry_after_s)
             return {"ok": False, "error_code": code, "retry_after_s": retry}
-        if not ack.ok:
-            await self._venue(account, ack.error_code, ack.exchange_ret_code, by=by)
+        if not ack.ok:  # its report ends with the call: the settle keeps its reserve (CG19)
+            await self._venue(account, ack.error_code, ack.exchange_ret_code, by=venue_by)
         if recorded:
             await self._settle_stop(
                 recorded, ack.ok, ack.error_code, detail, reason=AMEND_REFUSED, by=by, actor=actor,

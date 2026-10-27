@@ -1246,7 +1246,7 @@ generated vocabulary plus `other`).
   `killswitch:write` for `setKillSwitch`), even when its audit row cannot be written; then only
   the warning log `auth.view_as_target_denial_unaudited` (the error's class) marks it. A
   protective write counts here once its handler has registered with the guard (`cancelAllOrders`
-  is mounted and registered; the others are not yet, and `PROTECTIVE_WRITES` in
+  and `cancelOrder` are mounted and registered; the others are not yet, and `PROTECTIVE_WRITES` in
   `api/view_as_policy.py` names each one's ticket).
 
 Not counted:

@@ -3,7 +3,10 @@
 
 After the middleware (CSRF, the session state and the view-as guard, deny-by-default) each route
 checks 24 Sec.8.4's exit-route steps, each before the next. A cancel has no body, no arm token
-and no switches (steps 5, 6 and 10): it is never gated (C-2.6).
+and no switches (steps 5, 6 and 10): it is never gated (C-2.6). Under view-as a cancel is a
+protective write (22 "View-as session"): the guard passes it on once the target holds
+`orders:write`, and it runs as the viewer, its step 4 scope the target's trade grants as well
+(`exit_caller`, `scope_for_target`), the viewer's own in the hold.
 
 1. the principal, as `POST /orders`' step 1: none is 401, one that cannot be read 503
    `store_unavailable`, no source composed 501; then the order's id, which is not a UUID is
@@ -94,6 +97,7 @@ from candleviewer.api.order_exits_common import (
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.refusal_session import SessionsLike
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.scopes import ForbiddenError, decide, enforce
 from candleviewer.domain.primitives import Environment
@@ -254,12 +258,18 @@ def make_order_exits_router(
     principals: OrderPrincipals | None, runtime: Callable[[], ExitRoutesRuntime | None], *,
     audit: AuditEmitter, metrics: Metrics, auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None, pager: Pager | None = None,
+    protective: ProtectiveWrites | None = None,
 ) -> APIRouter:  # fmt: skip
     """`DELETE` and `PATCH /orders/{orderId}` (module docstring). No principal source (no identity
     composed) answers 501, as no runtime (the fake backend) does after RBAC. `audit` takes step 2's
     `rbac.denied`; the exit service records the rest. `replays` is the 24 h record of first `2xx`
-    answers. Cancel-all is its own router (`api/order_cancel_all.py`), mounted ahead of this one
-    (the orchestrator's ruling of 2026-10-24 19:43Z)."""
+    answers. `protective`, the view-as guard's registry, learns that this handler decides a
+    viewer's cancel itself: protective whole (C-2.6), it runs as the viewer in the scope
+    `exit_caller` gives (`scope_for_target`). Cancel-all is its own router
+    (`api/order_cancel_all.py`), mounted ahead of this one (the orchestrator's ruling of
+    2026-10-24 19:43Z)."""
+    if protective is not None:
+        protective.register(_OPERATION)
     router = APIRouter(tags=["trading"])
     kept = replays if replays is not None else IdempotencyCache()
     paging: Pager = LogPager() if pager is None else pager

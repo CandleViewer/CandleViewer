@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import functools
 import uuid
 from collections.abc import Iterator
 from typing import Any, cast
@@ -45,6 +46,7 @@ from candleviewer.admin.flags.registry import Category, FlagSpec, UnsafeFlagDefi
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES
 from candleviewer.auth.generated_permissions import Permission
+from candleviewer.auth.view_as import ViewAsEndReason
 from candleviewer.statechart.bindings import b16_session
 from tests.contract.rbac import rbac_harness as matrix
 from tests.security.admin._world import (
@@ -328,8 +330,9 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _UI_FLAG = "rules.graph_editor"
 
 
-#: The protective write registered so far (E29-T04's cancel-all, `PROTECTIVE_WRITES`).
+#: The protective writes registered so far (E29-T04's cancel-all and cancel, `PROTECTIVE_WRITES`).
 _CANCEL_ALL = ("POST", "/orders/cancel-all")
+_CANCEL = ("DELETE", "/orders/{orderId}")
 
 
 def _coded(answer: httpx.Response) -> tuple[int, Any]:
@@ -372,12 +375,16 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     as `test_ac_adm_15` reads the audit routes, so a new write route cannot escape the case, and
     the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
     The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
-    second start is the start route's own refusal, and leaving is never refused. One protective
-    write is registered, E29-T04's cancel-all: the guard passes it on, the Manager holding
-    `orders:write` (22's dual check, its permission half), and its handler decides it, which this
-    case says. The others (E39-S03, E29-T07, E34-S03 and E29-T04's cancel) are not registered
-    yet, so the sweep refuses them; the day one is, this case must say what it admits. The guard's
-    own check of a registered one's target, through this same wiring, is the case after it."""
+    second start is the start route's own refusal, and leaving is never refused. Two protective
+    writes are registered, E29-T04's cancel-all and cancel, each protective whole (C-2.6): the
+    guard passes each on, the Manager holding `orders:write` (22's dual check, its permission
+    half), and its handler decides it, as the viewer, which this case says: with no OMS composed
+    here, each answers its handler's own `501`, no refusal recorded. E29-T04's amend is not
+    registered yet, so the sweep refuses it as any write. E39-S03's kill switch, E34-S03's group
+    amend and E29-T07's position stop are not mounted yet; the sweep reads the served operations,
+    so once one is mounted it is refused as any write until its handler registers. The day one
+    registers, this case must say what it admits. The guard's own check of a registered one's
+    target, through this same wiring, is the case after it."""
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
     stamp = _flag_updated_at(admin, _UI_FLAG)
@@ -407,7 +414,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
     registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
-    assert registered == {_CANCEL_ALL}  # cancel-all's handler decides it; the next must say what
+    assert registered == {_CANCEL_ALL, _CANCEL}  # their handlers decide them; the next must say
     assert _contract_own_operations() == OWN_OPERATIONS  # the contract's list, read from its prose
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
     assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
@@ -455,13 +462,17 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     refused = Stack.in_process("auth_view_as_refused_total", reason="view_as_read_only")
     assert refused - counted == len(swept)
 
-    # The registered protective write reaches its handler, which decides it: with no OMS composed
-    # here, its own `501`. The guard records no refusal for it, and nothing changes.
-    routed, mark = len(admin.reached), len(admin.audit.records)
-    passed = admin.send("owner", *_CANCEL_ALL, {"json": {}})
-    assert _coded(passed) == (501, "not_implemented")
-    assert admin.reached[routed:] == [_CANCEL_ALL]
-    assert (admin.audit.records[mark:], _held(admin)) == ([], before)
+    # The registered protective writes reach their handlers, which decide them: with no OMS composed
+    # here, each its own `501`. The guard records no refusal for them, and nothing changes.
+    for operation, path, body in (
+        (_CANCEL_ALL, _CANCEL_ALL[1], {"json": {}}),
+        (_CANCEL, f"/orders/{uuid.uuid4()}", {}),
+    ):
+        routed, mark = len(admin.reached), len(admin.audit.records)
+        passed = admin.send("owner", operation[0], path, body)
+        assert _coded(passed) == (501, "not_implemented"), operation
+        assert admin.reached[routed:] == [(operation[0], path)]
+        assert (admin.audit.records[mark:], _held(admin)) == ([], before)
 
     second = admin.send("owner", "POST", "/admin/view-as", start)  # the viewer's own: not refused
     assert _coded(second) == (409, "view_as_active")  # as the start route answers it, not read-only
@@ -487,9 +498,8 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
 ) -> None:
     """#3085, #913: `create_app`'s own wiring of the view-as guard's `permissions=`, `identity=`
     and `denials=`, which the unit tests (`test_view_as_gate.py`) build by hand. An Owner viewing
-    a Viewer, who holds no `orders:write`, sends a cancel whose handler has registered
-    (`cancelOrder`'s handler is mounted but not registered yet, so the case registers it as its
-    route will): `403 forbidden` before any handler, counted, and one `rbac.denied` naming the
+    a Viewer, who holds no `orders:write`, sends a cancel, whose handler registers it as it is
+    mounted: `403 forbidden` before any handler, counted, and one `rbac.denied` naming the
     Owner, the Owner's session and address as the actor and the Viewer as the object, and the
     refused operation (22 "View-as session")."""
     admin.elevate(["users"])  # the start's step-up class
@@ -497,7 +507,6 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
     start = {"json": {"target_user_id": str(viewer.user_id), "reason": "cancel check"}}
     started = admin.send("owner", "POST", "/admin/view-as", start)
     assert started.status_code == 201, started.text
-    admin.app.state.protective_writes.register("cancelOrder")
     counted = Stack.in_process("authz_denied_total", permission="orders:write")
     routed = len(admin.reached)
     answer = admin.send("owner", "DELETE", f"/orders/{uuid.uuid4()}", {})
@@ -510,3 +519,33 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
     assert (denied["object_kind"], denied["object_id"]) == ("user", str(viewer.user_id))
     assert denied["reason"] == "missing_permission:orders:write:none"
     assert denied["after_state"] == {"method": "DELETE", "path": "/orders/{orderId}"}
+
+
+def test_in_the_hold_a_viewing_owners_cancel_reaches_its_handler_as_the_viewer(
+    admin: AdminWorld,
+) -> None:
+    """AC-ADM-22's hold, for E29-T04's cancel (22 "View-as session", Protective writes): once the
+    server has ended the context, the session answers nothing but its own operations and the
+    protective writes, which run in the viewer's own scope with no target read. The Owner's cancel
+    reaches its handler, which answers its own `501` (no OMS composed here), and the guard
+    records no `view_as_expired` and reads no target, so no `rbac.denied` either."""
+    admin.elevate(["users"])  # the start's step-up class
+    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
+    start = {"json": {"target_user_id": str(manager.user_id), "reason": "hold check"}}
+    assert admin.send("owner", "POST", "/admin/view-as", start).status_code == 201
+    store = cast(Any, admin.auth.view_as_store)
+    sid = str(owner.session_id)
+    ended = functools.partial(
+        store.end_view_as, sid, store.sessions[sid].view_as.context_id,
+        ended_at=admin.clock.now, reason=ViewAsEndReason.TARGET_INELIGIBLE,
+    )  # fmt: skip
+    assert admin.client.portal is not None
+    assert admin.client.portal.call(ended) is not None  # the server ended it: held
+    write = admin.send("owner", "PUT", f"/users/{manager.user_id}/roles", {"json": {"roles": []}})
+    assert _coded(write) == (403, "view_as_expired")  # held: any other write is refused
+    routed, mark = len(admin.reached), len(admin.audit.records)
+    path = f"/orders/{uuid.uuid4()}"
+    answer = admin.send("owner", "DELETE", path, {})
+    assert _coded(answer) == (501, "not_implemented"), answer.text  # the handler's own answer
+    assert admin.reached[routed:] == [("DELETE", path)]
+    assert admin.audit.records[mark:] == []  # no refusal, no target read: nothing recorded

@@ -24,9 +24,12 @@ from httpx import ASGITransport, AsyncClient
 from jsonschema import Draft202012Validator
 from structlog.testing import capture_logs
 
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse
 from candleviewer.api.order_exits import make_order_exits_router
 from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.view_as_policy import ProtectiveWrites
 from candleviewer.app import create_app
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
@@ -53,7 +56,7 @@ from candleviewer.statechart.gateway import (
     GatewayOverloadedError,
 )
 from candleviewer.storage.errors import StorageTierUnavailable
-from candleviewer.storage.repositories.accounts import OwnerScope
+from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
 from candleviewer.storage.repositories.orders import (
     ORDER_STATE_OF,
     NewOrder,
@@ -99,9 +102,18 @@ def principal(who: str) -> TradingPrincipal:
     return TradingPrincipal(sr.SESSION, snap)
 
 
+def viewing(target: str) -> TradingPrincipal:
+    """The Owner viewing as `target` (a name `principal` knows) in a live view-as context, as the
+    resolver builds a protective write's principal (`TradingPrincipal.target`); `""` is the hold,
+    which carries no target (22 "View-as session", Protective writes)."""
+    held = principal(target).snapshot if target else None
+    return TradingPrincipal(sr.SESSION, principal("owner").snapshot, held)
+
+
 @dataclass
 class Principals:
-    """`SessionTradingPrincipalResolver`: the bearer names the principal; `fail`, a 503."""
+    """`SessionTradingPrincipalResolver`: the bearer names the principal (`viewing:<target>`, the
+    Owner viewing as it); `fail`, a 503."""
 
     fail: bool = False
 
@@ -109,6 +121,8 @@ class Principals:
         if self.fail:
             raise StoreUnavailable
         who = request.headers.get("authorization", "").partition(" ")[2]
+        if who.startswith("viewing:"):
+            return viewing(who.removeprefix("viewing:"))
         return None if who == "nobody" else principal(who)
 
 
@@ -927,6 +941,86 @@ async def test_a_cancel_meets_no_switch_and_no_flag(rig: SubmitRig) -> None:
     answer = await delete(world, row.id)
     assert (answer.status_code, answer.json()["lifecycle_state"]) == (202, "cancelled")
     assert rig.calls().count("cancel_order") == 1
+
+
+# --- view-as (#3085; 22 "View-as session", Protective writes; 24 Sec.8.4 step 4) ------------------
+
+
+def scopes(world: World, monkeypatch: pytest.MonkeyPatch) -> list[object]:
+    """The account scope step 4 reads the order in (`ExitCaller.scope`), as the service is asked."""
+    seen: list[object] = []
+    real = world.oms.service.scope
+
+    async def spy(caller: ex.ExitCaller, order_id: UUID) -> ScopedOrder | ex.ExitOutcome:
+        seen.append(caller.scope)
+        return await real(caller, order_id)
+
+    monkeypatch.setattr(world.oms.service, "scope", spy)
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("target", "status", "code", "denied"),
+    [
+        ("creator", 202, None, None),
+        ("other", 403, "forbidden", ex.NOT_ORDER_CREATOR),
+        ("view_only", 404, "not_found", ex.NOT_GRANTED),
+        ("ungranted", 404, "not_found", ex.NOT_GRANTED),
+    ],
+)
+async def test_a_viewing_owners_cancel_runs_as_the_viewer_in_the_targets_scope(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch, target: str, status: int, code: str | None,
+    denied: str | None,
+) -> None:  # fmt: skip
+    """22's dual check, its account half (24 Sec.8.4 step 4, `scope_for_target`): an Owner viewing
+    as a Manager cancels only what the Manager may cancel, the order the Manager created on an
+    account it trades. The scope is the Manager's trade grants alone, so a Manager who did not
+    create the order is refused as its own cancel would be (ruling Q6), and an account it may only
+    view, or not at all, is outside the scope (`404`, SR-E29-13). The viewer stays the actor of
+    every record, the target never: the cancel runs as the viewer."""
+    row = await tx.placed(rig)
+    world = granted(rig, target)
+    seen = scopes(world, monkeypatch)
+    answer = await delete(world, row.id, f"viewing:{target}")
+    assert answer.status_code == status
+    user = sr.USER if target == "creator" else OTHER
+    held = frozenset() if target in ("view_only", "ungranted") else frozenset({cr.ACCOUNT})
+    assert seen == [GrantScope(user, held)]  # the Manager's grants, never the Owner's every account
+    assert {actor for actor, _ in world.named()} == {ACTOR}  # the viewer, never the target
+    if code is None:
+        assert (answer.json()["lifecycle_state"], rig.calls().count("cancel_order")) == (
+            "cancelled", 1,
+        )  # fmt: skip
+        return
+    assert (answer.json()["code"], rig.calls().count("cancel_order")) == (code, 0)
+    assert world.actions() == [("rbac.denied", denied)]
+
+
+async def test_in_the_hold_a_viewing_owners_cancel_runs_in_the_viewers_own_scope(
+    rig: SubmitRig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """22: in the hold a protective write runs in the viewer's own scope, no target read: the
+    Owner's, so an order another user created is the Owner's to cancel."""
+    row = await tx.placed(rig)
+    world = granted(rig, "other")
+    seen = scopes(world, monkeypatch)
+    answer = await delete(world, row.id, "viewing:")
+    assert (answer.status_code, answer.json()["lifecycle_state"]) == (202, "cancelled")
+    assert seen == [OwnerScope(OWNER)]
+    assert {actor for actor, _ in world.named()} == {ACTOR}
+
+
+def test_the_router_registers_cancel_order_as_a_protective_write() -> None:
+    """Its handler decides a viewer's cancel itself, protective whole (C-2.6), so the view-as
+    guard passes it to it (22 "View-as session"). The amend stays refused as any write until its
+    handler classifies it (fail closed)."""
+    protective = ProtectiveWrites(declared_operations(load_openapi_spec()))
+    assert not protective.is_registered(("DELETE", "/orders/{orderId}"))
+    make_order_exits_router(
+        None, lambda: None, audit=Emitted(), metrics=Metrics("demo"), protective=protective
+    )
+    assert protective.is_registered(("DELETE", "/orders/{orderId}"))
+    assert not protective.is_registered(("PATCH", "/orders/{orderId}"))
 
 
 # --- the app -------------------------------------------------------------------------------------
