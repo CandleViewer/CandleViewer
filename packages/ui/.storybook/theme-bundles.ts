@@ -16,3 +16,4 @@ import "../src/components/segmented.css";
 import "../src/components/slider.css";
 import "../src/components/fields.css";
 import "../src/components/tag.css";
+import "../src/components/badge.css";

@@ -96,3 +96,9 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Remove (ghost CMP-002) | button      | "Remove {label}", e.g. "Remove Breakout" | Gated removal: `aria-disabled` plus the reason description. |
 
 Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word.
+
+### Badge (CMP-012, static; the `img` role when a count stands alone)
+
+| Keys | Action                                                                                                                                                                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. A standalone count is `role="img"` named `{value} {label}` (the full number, past the "99+" cap); on a labelled control, and always as a dot, it is `aria-hidden`. |

@@ -1,0 +1,76 @@
+/* CMP-012 Badge. Static: no hover, focus or motion; tone changes are an instant token swap. */
+.cv-badge {
+  --cv-badge-fill: var(--color-neutral-subtle);
+  --cv-badge-edge: var(--color-neutral-default);
+  --cv-badge-dot: var(--color-neutral-default);
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+}
+
+.cv-badge[data-tone="info"] {
+  --cv-badge-fill: var(--color-status-info-subtle);
+  --cv-badge-edge: var(--color-status-info-strong);
+  --cv-badge-dot: var(--color-status-info-default);
+}
+
+.cv-badge[data-tone="success"] {
+  --cv-badge-fill: var(--color-status-success-subtle);
+  --cv-badge-edge: var(--color-status-success-strong);
+  --cv-badge-dot: var(--color-status-success-default);
+}
+
+.cv-badge[data-tone="warning"] {
+  --cv-badge-fill: var(--color-status-warning-subtle);
+  --cv-badge-edge: var(--color-status-warning-strong);
+  --cv-badge-dot: var(--color-status-warning-default);
+}
+
+.cv-badge[data-tone="danger"] {
+  --cv-badge-fill: var(--color-status-danger-subtle);
+  --cv-badge-edge: var(--color-status-danger-strong);
+  --cv-badge-dot: var(--color-status-danger-default);
+}
+
+/* Count: size.icon is a minimum, so the pill grows with digits and text scale; it never truncates. */
+.cv-badge[data-variant="count"] {
+  min-width: var(--size-icon);
+  min-height: var(--size-icon);
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid var(--cv-badge-edge);
+  border-radius: var(--radius-badge);
+  background: var(--cv-badge-fill);
+  color: var(--color-text-primary);
+  font: var(--type-num-xs-font-weight) var(--type-num-xs-font-size) / var(--type-num-xs-line-height)
+    var(--type-num-xs-font-family);
+  white-space: nowrap;
+}
+
+/* Dot: an 8 px mark sized by its inset.xs padding, centred in a size.icon slot; it never scales with text. */
+.cv-badge[data-variant="dot"] {
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-badge__dot {
+  padding: var(--space-inset-xs);
+  border-radius: var(--radius-badge);
+  background: var(--cv-badge-dot);
+}
+
+@media (forced-colors: active) {
+  .cv-badge[data-variant="count"] {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  /* A background-only dot would be repainted as Canvas and vanish, so it keeps a CanvasText fill. */
+  .cv-badge__dot {
+    background: CanvasText;
+    forced-color-adjust: none;
+  }
+}
