@@ -280,6 +280,22 @@ describe("scrubCrashText (defence in depth behind the renderer's redaction)", ()
       "secret: s passwd=p sessionToken=t",
       "secret: [redacted] passwd=[redacted] sessionToken=[redacted]",
     ],
+    [
+      `Error: 401 {"apiKey":"K1","ok":true} token='t 2' "csrf": "c"`,
+      `Error: 401 {"apiKey":"[redacted]","ok":true} token='[redacted]' "csrf": "[redacted]"`,
+    ],
+    [
+      "pwd=a auth=b credential=c jwt=d totp=e recovery_code=f kek_handle=g sealed_seed=h dek_ref=i",
+      "pwd=[redacted] auth=[redacted] credential=[redacted] jwt=[redacted] totp=[redacted] recovery_code=[redacted] kek_handle=[redacted] sealed_seed=[redacted] dek_ref=[redacted]",
+    ],
+    [
+      `{"message":"Request failed apiKey=K1 password=P1 for user","code":401}`,
+      `{"message":"Request failed apiKey=[redacted] password=[redacted] for user","code":401}`,
+    ],
+    [
+      `Error: apiKey=K1 url: https://h/x?access_token=abc {"password":"p\\"q"} __Host-cv_csrf=c`,
+      `Error: apiKey=[redacted] url: https://h/x?access_token=[redacted] {"password":"[redacted]"} __Host-cv_csrf=[redacted]`,
+    ],
   ])("redacts %j", (input, expected) => {
     expect(scrubCrashText(input)).toBe(expected);
   });

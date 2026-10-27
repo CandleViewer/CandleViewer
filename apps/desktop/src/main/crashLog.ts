@@ -30,13 +30,22 @@ export const CRASH_LOG_AUDIT_BURST = 5;
 export const CRASH_LOG_AUDIT_WINDOW_MS = 60_000;
 
 const REDACTED = "[redacted]";
-/** A name whose value is a credential: `key` also covers apiKey / api_key / api-key. */
-const SENSITIVE_NAME = /(?:key|token|secret|password|passwd|cookie|signature|sign|authorization)$/i;
+/** Name endings whose value is a credential: `key` also covers apiKey / api_key / api-key. */
+const SENSITIVE_SUFFIX =
+  "key|token|secret|pass|passwd|password|pwd|cookie|signature|sign|auth|authorization|credentials?|jwt|totp|csrf|session|recovery_code|kek_handle|sealed_seed|dek_ref|input_value";
+const SENSITIVE_NAME = new RegExp(`(?:${SENSITIVE_SUFFIX})$`, "i");
 // Every pattern starts only where no word character precedes it (a lookbehind, not `\b`) and its
 // classes are disjoint from what follows them, so each runs in linear time.
 const HEADER_TO_EOL = /(?<![\w-])(set-cookie|cookie|authorization)(\s*[:=]\s*)[^\r\n]*/gi;
 const AUTH_SCHEME = /(?<![\w-])(bearer|basic)\s+[\w.~+/=-]+/gi;
-const NAME_VALUE = /(?<![\w-])([A-Za-z][\w-]*)(\s*[:=]\s*)("?)([^\s"'&,;]+)/g;
+// Only a sensitive name is matched, so a benign name never consumes the text after it (a free-text
+// `"message": "… apiKey=K1 …"` is still scanned). The name may be quoted or start with `_`
+// (`{"token":"…"}`, `__Host-cv_csrf=…`); a quoted value, escapes included, is redacted whole.
+// eslint-disable-next-line security/detect-non-literal-regexp -- built once from the module constant SENSITIVE_SUFFIX, never from input
+const NAME_VALUE = new RegExp(
+  String.raw`(?<![\w-])(_*(?:[A-Za-z][\w-]*?)?(?:${SENSITIVE_SUFFIX}))(["']?\s*[:=]\s*)("(?:[^"\\\n]|\\[^\n])*"?|'(?:[^'\\\n]|\\[^\n])*'?|[^\s"'&,;]+)`,
+  "gi",
+);
 
 /**
  * Defence in depth behind the renderer reporter's redaction (#306 slice 5): replaces credential
@@ -47,9 +56,10 @@ export function scrubCrashText(text: string): string {
   return text
     .replace(HEADER_TO_EOL, `$1$2${REDACTED}`)
     .replace(AUTH_SCHEME, `$1 ${REDACTED}`)
-    .replace(NAME_VALUE, (match, name: string, sep: string, quote: string) =>
-      SENSITIVE_NAME.test(name) ? `${name}${sep}${quote}${REDACTED}` : match,
-    );
+    .replace(NAME_VALUE, (_match, name: string, sep: string, value: string) => {
+      const quote = value.startsWith('"') || value.startsWith("'") ? value.charAt(0) : "";
+      return `${name}${sep}${quote}${REDACTED}${quote}`;
+    });
 }
 
 function scrubEntry(entry: CrashEntry): CrashEntry {
