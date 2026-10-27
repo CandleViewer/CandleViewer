@@ -20,6 +20,7 @@ from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
 from candleviewer.accounts.sizer import FailReason, SkipReason
+from candleviewer.accounts.trade_group_readiness import ReadinessReason
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.audit.actions import AUDIT_ACTIONS
@@ -72,11 +73,8 @@ _SIGNED_IN = (*_DEFINITIONS, "GET /trade-groups/{tradeGroupId}", "POST /trade-gr
 #: What the `trading.trade_groups` flag refuses while off (C-4.13): the writes and the preview.
 _FLAGGED = {f"{verb}TradeGroupDefinition" for verb in ("create", "update", "delete")}
 _FLAGGED.add("previewTradeGroup")
-#: S2a's `ReadinessReason`: whichever of S0 and S2a merges second reads it from there instead.
-_READINESS_REASONS = (
-    "member_disabled account_disabled key_invalid account_unhealthy account_locked "
-    "kill_switch_engaged trading_disabled"
-).split()
+#: The code's readiness vocabulary (C-16.5): 22's `reason` enum must equal it, in its order.
+_READINESS_REASONS = list(get_args(ReadinessReason))
 
 
 def _words(text: str) -> str:
@@ -597,8 +595,15 @@ def test_the_preview_is_rate_limited_per_user_and_never_idempotency_keyed() -> N
         "figures are not cached is `blocked` with `figure_unknown`.",
     ):
         assert sentence in text, sentence
-    rule_2 = _words(_INTERNAL_DOC.split("### 9.4 ", 1)[1].split("### 9.5 ", 1)[0])  # its rule 2
-    assert "never refreshes: it reads caches only, within the order path's figures TTL" in rule_2
+    section = _INTERNAL_DOC.split("### 9.4 ", 1)[1].split("### 9.5 ", 1)[0]
+    rule_2 = _words(section.split("\n2. ", 1)[1].split("\n3. ", 1)[0])
+    for phrase in (
+        "The preview alone never refreshes: it reads caches only, within the order path's figures "
+        "TTL (`day_figures.FIGURES_TTL_S`, §9.3.6), so a leg whose figures are not cached is "
+        "`blocked` with `figure_unknown`",
+        "The submit keeps this rule.",
+    ):
+        assert phrase in rule_2, phrase
 
 
 def test_a_preview_leg_states_its_status_and_a_closed_reason() -> None:
