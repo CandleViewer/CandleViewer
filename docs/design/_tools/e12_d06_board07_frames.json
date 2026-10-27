@@ -1,0 +1,128 @@
+{
+ "marks/area-L2 · dark": {
+  "board": "03",
+  "x": 1400,
+  "y": 901,
+  "w": 600,
+  "h": 275
+ },
+ "marks/baseline-L2 · dark": {
+  "board": "03",
+  "x": 40,
+  "y": 1643,
+  "w": 600,
+  "h": 275
+ },
+ "marks/candle-L1 · dark": {
+  "board": "03",
+  "x": 40,
+  "y": 146,
+  "w": 600,
+  "h": 528
+ },
+ "marks/candle-L2 · dark": {
+  "board": "03",
+  "x": 720,
+  "y": 146,
+  "w": 600,
+  "h": 524
+ },
+ "marks/delta-subpane-L2 · dark": {
+  "board": "03",
+  "x": 1400,
+  "y": 1643,
+  "w": 600,
+  "h": 240
+ },
+ "marks/equi-L1 · dark": {
+  "board": "03",
+  "x": 720,
+  "y": 1643,
+  "w": 600,
+  "h": 528
+ },
+ "marks/hollow-L1 · dark": {
+  "board": "03",
+  "x": 1400,
+  "y": 146,
+  "w": 600,
+  "h": 532
+ },
+ "marks/line-L2 · dark": {
+  "board": "03",
+  "x": 720,
+  "y": 901,
+  "w": 600,
+  "h": 275
+ },
+ "marks/ohlc-L2 · dark": {
+  "board": "03",
+  "x": 40,
+  "y": 901,
+  "w": 600,
+  "h": 524
+ },
+ "types/area · dark": {
+  "board": "02",
+  "x": 1400,
+  "y": 615,
+  "w": 600,
+  "h": 295
+ },
+ "types/baseline · dark": {
+  "board": "02",
+  "x": 40,
+  "y": 1062,
+  "w": 600,
+  "h": 295
+ },
+ "types/candle · dark": {
+  "board": "02",
+  "x": 40,
+  "y": 146,
+  "w": 600,
+  "h": 310
+ },
+ "types/delta-volume · dark": {
+  "board": "02",
+  "x": 1400,
+  "y": 1062,
+  "w": 600,
+  "h": 400
+ },
+ "types/equi-cap · dark": {
+  "board": "02",
+  "x": 720,
+  "y": 1062,
+  "w": 600,
+  "h": 328
+ },
+ "types/heikin-ashi · dark": {
+  "board": "02",
+  "x": 40,
+  "y": 615,
+  "w": 600,
+  "h": 310
+ },
+ "types/hollow-four-marks · dark": {
+  "board": "02",
+  "x": 720,
+  "y": 146,
+  "w": 600,
+  "h": 295
+ },
+ "types/line · dark": {
+  "board": "02",
+  "x": 720,
+  "y": 615,
+  "w": 600,
+  "h": 295
+ },
+ "types/ohlc · dark": {
+  "board": "02",
+  "x": 1400,
+  "y": 146,
+  "w": 600,
+  "h": 310
+ }
+}
