@@ -157,3 +157,11 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Keys | Action                                                                                                 |
 | ---- | ------------------------------------------------------------------------------------------------------ |
 | None | Not focusable; read in reading order by its name and value (`aria-valuetext` when `valueText` is set). |
+
+### SkipLink (CMP-085, WCAG 2.4.1 bypass blocks)
+
+| Keys        | Action                                                                                                                |
+| ----------- | --------------------------------------------------------------------------------------------------------------------- |
+| Tab (first) | The first Tab on a page focuses the first skip link and shows it.                                                     |
+| Tab         | To the next skip link, then into the TopBar; each link hides again when it loses focus.                               |
+| Enter       | Moves focus to the target, which takes `tabindex="-1"` until blur and shows the ring; the next Tab continues from it. |

@@ -77,3 +77,5 @@ export type { TextInputProps } from "./TextInput.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
+export { SkipLink, SKIP_LINK_COPY } from "./SkipLink.js";
+export type { SkipLinkProps, SkipLinkTarget } from "./SkipLink.js";

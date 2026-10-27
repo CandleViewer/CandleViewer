@@ -10,7 +10,6 @@
  * `clearAnnouncements(CONNECTION_PREFIX)`, leaving other writers' keys and text alone.
  */
 import { useSyncExternalStore, type JSX } from "react";
-import { HIDDEN } from "./SkipLink";
 
 export type Politeness = "polite" | "assertive";
 
@@ -72,7 +71,7 @@ export function ShellAnnouncer(): JSX.Element {
   const region = (politeness: Politeness): JSX.Element => {
     const message = current[politeness];
     return (
-      <div aria-live={politeness} aria-atomic="true" style={HIDDEN}>
+      <div aria-live={politeness} aria-atomic="true" className="cv-visually-hidden">
         {message === null ? null : (
           <p key={message.seq} data-seq={message.seq}>
             {message.text}
