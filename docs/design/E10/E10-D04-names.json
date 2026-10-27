@@ -1,0 +1,460 @@
+{
+  "$schema": "cv.a11y-names.v1",
+  "base": "63b13d034afdd1966a79704c327a3f27d30360dd",
+  "spec": "docs/design/E10/E10-D04.md",
+  "names": [
+    {
+      "id": "shell.env.live",
+      "element": "ENV badge, LIVE (CMP-074 / 075 / 215)",
+      "cmp": [
+        "CMP-074",
+        "CMP-075",
+        "CMP-215"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\" (CMP-074) / role=\"img\" (CMP-075, static)",
+      "name": "Trading environment: Live",
+      "template": null,
+      "source": "`15`:762; D02:258",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.env.demo",
+      "element": "ENV badge, DEMO",
+      "cmp": [
+        "CMP-074",
+        "CMP-075",
+        "CMP-215"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\" (CMP-074) / role=\"img\" (CMP-075, static)",
+      "name": "Trading environment: Demo",
+      "template": null,
+      "source": "`15`:762",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.env.unconfirmed",
+      "element": "ENV badge, unconfirmed (Q9)",
+      "cmp": [
+        "CMP-074",
+        "CMP-075",
+        "CMP-215"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\" (CMP-074) / role=\"img\" (CMP-075, static)",
+      "name": "Trading environment: Live — unconfirmed, reconnecting",
+      "template": null,
+      "source": "D03:214",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.statusbar.feed",
+      "element": "feed chip (CMP-076)",
+      "cmp": [
+        "CMP-076"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\" inside the StatusBar's polite region",
+      "name": "Connection: reconnecting, attempt 3, last data 12 seconds ago",
+      "template": null,
+      "source": "D02:258",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.healthchip",
+      "element": "HealthChip (CMP-210)",
+      "cmp": [
+        "CMP-210"
+      ],
+      "scr": "SCR-010",
+      "role": "a button when it links (owner), text otherwise",
+      "name": "Exchange WS: error, public feed down",
+      "template": null,
+      "source": "D02:258",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.statusbar.latency",
+      "element": "latency value (StatusBar)",
+      "cmp": [
+        "CMP-208"
+      ],
+      "scr": "SCR-010",
+      "role": "text in the polite region",
+      "name": "WS latency: ok, 38 ms",
+      "template": null,
+      "source": "D03:349",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.statusbar.killswitch",
+      "element": "Kill switch… (StatusBar)",
+      "cmp": [
+        "CMP-208"
+      ],
+      "scr": "SCR-010",
+      "role": "button; aria-disabled + aria-describedby when T2",
+      "name": "Kill switch…",
+      "template": null,
+      "source": "D02:71",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.cluster.engaged",
+      "element": "FREEZE… engaged pill",
+      "cmp": [
+        "CMP-211"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\"",
+      "name": "Kill switch: engaged · 1 account",
+      "template": null,
+      "source": "D03:351",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.skiplink",
+      "element": "SkipLink (CMP-085)",
+      "cmp": [
+        "CMP-085"
+      ],
+      "scr": "SCR-010",
+      "role": "link",
+      "name": "Skip to main content",
+      "template": null,
+      "source": "`14`:303",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.topbar.search",
+      "element": "search trigger (CMP-084)",
+      "cmp": [
+        "CMP-084"
+      ],
+      "scr": "SCR-010",
+      "role": "button",
+      "name": "Search commands, Ctrl+K",
+      "template": null,
+      "source": "D03:353",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.topbar.overflow",
+      "element": "the TopBar's overflow menu (`⋯`, CMP-041)",
+      "cmp": [
+        "CMP-041"
+      ],
+      "scr": "SCR-010",
+      "role": "button, aria-haspopup=\"menu\"",
+      "name": null,
+      "template": null,
+      "source": "D03:159",
+      "status": "open",
+      "finding": "F-01"
+    },
+    {
+      "id": "shell.navrail.item",
+      "element": "NavRail item with a count",
+      "cmp": [
+        "CMP-071"
+      ],
+      "scr": "SCR-011",
+      "role": "treeitem; aria-current=\"page\" when current",
+      "name": "Alerts, 2 new",
+      "template": "Alerts, {count} new",
+      "source": "`14`:327; D02:257",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.navrail.item.collapsed",
+      "element": "NavRail item, collapsed, with its key",
+      "cmp": [
+        "CMP-071",
+        "CMP-016"
+      ],
+      "scr": "SCR-011",
+      "role": "treeitem + CMP-016 tooltip",
+      "name": "Alerts · 2 new · Alt+5",
+      "template": "Alerts · {count} new · {key}",
+      "source": "D03:355",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.navrail.current",
+      "element": "current workspace",
+      "cmp": [
+        "CMP-071"
+      ],
+      "scr": "SCR-011",
+      "role": "treeitem, aria-current=\"page\"",
+      "name": "Swing 4H, current, open, unsaved changes",
+      "template": null,
+      "source": "D03:356",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.navrail.toggle.collapse",
+      "element": "rail collapse toggle",
+      "cmp": [
+        "CMP-071"
+      ],
+      "scr": "SCR-011",
+      "role": "button, aria-expanded",
+      "name": "Collapse navigation rail",
+      "template": null,
+      "source": "D03:357",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.navrail.toggle.expand",
+      "element": "rail collapse toggle",
+      "cmp": [
+        "CMP-071"
+      ],
+      "scr": "SCR-011",
+      "role": "button, aria-expanded",
+      "name": "Expand navigation rail",
+      "template": null,
+      "source": "D03:357",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.rightrail.launcher",
+      "element": "RightRail launcher (icon-only)",
+      "cmp": [
+        "CMP-209"
+      ],
+      "scr": "SCR-010",
+      "role": "button, aria-expanded",
+      "name": "Notifications, 2 unread",
+      "template": "Notifications, {count} unread",
+      "source": "D03:358",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.rightrail.launcher.other",
+      "element": "the strip's other launchers (board 02)",
+      "cmp": [
+        "CMP-209"
+      ],
+      "scr": "SCR-010",
+      "role": "button, aria-expanded",
+      "name": null,
+      "template": null,
+      "source": "D02:70",
+      "status": "open",
+      "finding": "F-02"
+    },
+    {
+      "id": "shell.toast.dismiss",
+      "element": "toast dismiss (CMP-002)",
+      "cmp": [
+        "CMP-002"
+      ],
+      "scr": "SCR-015",
+      "role": "button",
+      "name": "Dismiss {title}",
+      "template": "Dismiss {title}",
+      "source": "FO:1838",
+      "status": "rewritten",
+      "finding": "F-03"
+    },
+    {
+      "id": "shell.toast.overflow",
+      "element": "overflow summary (SCR-015)",
+      "cmp": [
+        "CMP-212"
+      ],
+      "scr": "SCR-015",
+      "role": "button",
+      "name": "3 more notifications, open the notification centre",
+      "template": "{count} more notifications, open the notification centre",
+      "source": "D03:360",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.cheatsheet.conflict",
+      "element": "conflict chip (CMP-244, proposed)",
+      "cmp": [
+        "CMP-244"
+      ],
+      "scr": "SCR-013",
+      "role": "role=\"img\" inside the row",
+      "name": "Warning: conflicting binding",
+      "template": null,
+      "source": "D03:361",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.cheatsheet.remapped",
+      "element": "remapped marker (SCR-013)",
+      "cmp": [
+        "CMP-094"
+      ],
+      "scr": "SCR-013",
+      "role": "text",
+      "name": "remapped",
+      "template": null,
+      "source": "D03:362",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.palette.confirms",
+      "element": "destructive palette row tag",
+      "cmp": [
+        "CMP-059"
+      ],
+      "scr": "SCR-012",
+      "role": "text in the option",
+      "name": "confirms",
+      "template": null,
+      "source": "D03:363",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.t2.lock",
+      "element": "T2 lock glyph (CMP-019)",
+      "cmp": [
+        "CMP-019"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"img\"",
+      "name": "Not available",
+      "template": null,
+      "source": "D03:364",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.panel.readonly",
+      "element": "panel notice (read-only)",
+      "cmp": [],
+      "scr": "SCR-010",
+      "role": "text, the aria-describedby target",
+      "name": "Read-only — your role can't place orders.",
+      "template": null,
+      "source": "D03:365",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "window.titlebar.more",
+      "element": "title bar ⋮ (CMP-002)",
+      "cmp": [
+        "CMP-002"
+      ],
+      "scr": "SCR-027",
+      "role": "button, aria-haspopup=\"menu\"",
+      "name": "More window actions",
+      "template": null,
+      "source": "D03:366",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "window.titlebar.close",
+      "element": "title bar × (CMP-002)",
+      "cmp": [
+        "CMP-002"
+      ],
+      "scr": "SCR-027",
+      "role": "button",
+      "name": "Close window — DOM BTCUSDT LIVE",
+      "template": "Close window — {kind} {symbol} {environment}",
+      "source": "D03:367",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "window.titlebar.return",
+      "element": "Return to workspace / Pin on top (CMP-215)",
+      "cmp": [
+        "CMP-215"
+      ],
+      "scr": "SCR-027",
+      "role": "button",
+      "name": "Return to workspace",
+      "template": null,
+      "source": "D03:368",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "window.titlebar.pin",
+      "element": "Return to workspace / Pin on top (CMP-215)",
+      "cmp": [
+        "CMP-215"
+      ],
+      "scr": "SCR-027",
+      "role": "toggle button (aria-pressed)",
+      "name": "Pin on top",
+      "template": null,
+      "source": "D03:368",
+      "status": "cited",
+      "finding": null
+    },
+    {
+      "id": "shell.statusbar.region",
+      "element": "the StatusBar's live region",
+      "cmp": [
+        "CMP-208"
+      ],
+      "scr": "SCR-010",
+      "role": "role=\"status\", labelled",
+      "name": "System status",
+      "template": null,
+      "source": "D03:369",
+      "status": "confirmed",
+      "finding": null
+    },
+    {
+      "id": "shell.scr157.dialog",
+      "element": "the blocking SCR-157 dialog",
+      "cmp": [
+        "CMP-043"
+      ],
+      "scr": "SCR-157",
+      "role": "role=\"alertdialog\", aria-modal=\"true\", labelled by its heading",
+      "name": "This version can't trade with the server",
+      "template": null,
+      "source": "D03:370; `15`:468",
+      "status": "confirmed",
+      "finding": "F-08"
+    },
+    {
+      "id": "shell.scr156.fallback",
+      "element": "CMP-091 panel fallback",
+      "cmp": [
+        "CMP-091"
+      ],
+      "scr": "SCR-156",
+      "role": "the heading; one assertive announcement through the shell's pre-rendered region",
+      "name": "This panel stopped working",
+      "template": null,
+      "source": "D03:371; `15`:924",
+      "status": "confirmed",
+      "finding": "F-09"
+    }
+  ]
+}
