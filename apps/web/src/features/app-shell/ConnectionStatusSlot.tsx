@@ -1,8 +1,8 @@
-import { useEffect, useState, type JSX } from "react";
-import type { ConnectionState } from "../../shell/bootstrap/store";
-import { useShellSelector } from "../../shell/useShellSelector";
+import { useEffect, useRef, useState, type JSX } from "react";
+import type { ConnectionState } from "../../shell/bootstrap/store.js";
+import { useShellSelector } from "../../shell/useShellSelector.js";
+import { announce, clearAnnouncements, CONNECTION_KEYS, forget } from "./announcer";
 import { ConnectionStatus, type ConnectionChipStatus } from "./ConnectionStatus";
-import { HIDDEN } from "./SkipLink";
 
 /**
  * The store's `connection` → the chip (E17-D02 §3, B-1). The store folds `fatal` into a shell cause,
@@ -19,75 +19,73 @@ export function chipFromShell(
     : { status: "reconnecting" };
 }
 
-export interface Announcement {
-  readonly politeness: "assertive" | "polite";
-  readonly text: string;
-}
-
+type Row = keyof typeof CONNECTION_KEYS;
 const LIVE_FAMILY: ReadonlySet<ConnectionChipStatus> = new Set(["live", "delayed", "stale"]);
-/** E17-D02 §11 row 1, verbatim. */
-const DISCONNECTED =
-  "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.";
-/** §11 row 14 (PROPOSED there), verbatim. */
-const RETRY_STOPPED =
-  "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.";
+/**
+ * E17-D02 §11 rows 1 and 14, verbatim. Open question (raised to the owner, the §6 vs §10 B1b
+ * class): row 1 says "Cancel and close still work", while §2 row 3 makes them T2 under a shell-cause
+ * `offline` — which is every `offline` the store holds (REST is unreachable too).
+ */
+const TEXT: Record<Row, string> = {
+  disconnected:
+    "Disconnected. New orders off. Cancel and close still work, confirmed over the server. Exchange-side stops still protect open positions.",
+  retryStopped:
+    "Offline — retry stopped. New orders off. Cancel and close still work, confirmed over the server.",
+};
 
 /**
- * E17-D02 §11: assertive once per Disconnected episode (row 1; the attempt cycle says nothing) and
- * on a stopped retry (row 14); polite on entering / leaving `delayed` (E17-D01 §7; words PROPOSED).
- * A session start (row 15), ages, counters and latency never announce (row 10).
+ * Which §11 row a chip move announces, or `null`. Row 1 on leaving a live value (the attempt cycle
+ * says nothing; the announcer's key keeps it once per episode, CMP-077 included); row 14 on a
+ * stopped retry, from any state. A session start (row 15), ages, counters and latency never
+ * announce (row 10). Delayed's polite entry / exit (row 5) is the Delayed host panel's, not the chip's.
  */
 export function chipAnnouncement(
   prev: ConnectionChipStatus | null,
   next: ConnectionChipStatus,
-): Announcement | null {
+): Row | null {
   if (prev === null || prev === next) return null;
-  if (next === "offline") return { politeness: "assertive", text: RETRY_STOPPED };
-  if (next === "reconnecting") {
-    return LIVE_FAMILY.has(prev) ? { politeness: "assertive", text: DISCONNECTED } : null;
-  }
-  if (next === "delayed" && LIVE_FAMILY.has(prev)) {
-    return { politeness: "polite", text: "Connection rate reduced." };
-  }
-  if (prev === "delayed" && next === "live")
-    return { politeness: "polite", text: "Connection live." };
-  return null;
+  if (next === "offline") return "retryStopped";
+  return next === "reconnecting" && LIVE_FAMILY.has(prev) ? "disconnected" : null;
 }
 
 interface Track {
   readonly status: ConnectionChipStatus | null;
   readonly everLive: boolean;
-  /** When the chip last left `live`, the last-data time (PROPOSED: the store has no `lastDataMs`). */
+  /**
+   * `Date.now()` when the chip last left `live`; `null` while live or before the first live. It
+   * stands in for the last-data time (PROPOSED: the store keeps no `lastDataMs`).
+   */
   readonly leftLiveAt: number | null;
-  readonly said: (Announcement & { readonly seq: number }) | null;
 }
-const START: Track = { status: null, everLive: false, leftLiveAt: null, said: null };
+const START: Track = { status: null, everLive: false, leftLiveAt: null };
 
 /**
- * CMP-076's container (#304 S3), `ShellConnectionSlot`'s content, on `useShellSelector`. Beside the
- * chip it renders the shell's live-region pair (E17-D02 §11; `aria-live`, no role, so a screen's own
- * `status` / `alert` stays unique). A new message replaces the node, so each episode is announced.
+ * CMP-076's container (#304 S3), `ShellConnectionSlot`'s content, on `useShellSelector`. It writes
+ * rows 1 and 14 through the shell announcer and clears it on the return to live (the episode ends).
  */
 export function ConnectionStatusSlot(): JSX.Element {
   const connection = useShellSelector((s) => s.connection);
   const latencyMs = useShellSelector((s) => s.latency.valueMs);
+  const last = useRef(START);
   const [track, setTrack] = useState(START);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const chip = chipFromShell(connection, track.everLive);
 
   useEffect(() => {
+    const prev = last.current;
+    if (prev.status === chip.status) return;
     const now = Date.now();
+    const row = chipAnnouncement(prev.status, chip.status);
+    if (prev.status === "offline") forget(CONNECTION_KEYS.retryStopped); // row 14: once per entry
+    if (row !== null) announce("assertive", TEXT[row], CONNECTION_KEYS[row]);
+    if (chip.status === "live") clearAnnouncements();
+    last.current = {
+      status: chip.status,
+      everLive: prev.everLive || chip.status === "live",
+      leftLiveAt: prev.status === "live" ? now : chip.status === "live" ? null : prev.leftLiveAt,
+    };
+    setTrack(last.current);
     setNowMs(now);
-    setTrack((t) => {
-      if (t.status === chip.status) return t;
-      const said = chipAnnouncement(t.status, chip.status);
-      return {
-        status: chip.status,
-        everLive: t.everLive || chip.status === "live",
-        leftLiveAt: t.status === "live" ? now : chip.status === "live" ? null : t.leftLiveAt,
-        said: said === null ? t.said : { ...said, seq: (t.said?.seq ?? 0) + 1 },
-      };
-    });
   }, [chip.status]);
 
   const ticking = chip.status !== "live" && track.leftLiveAt !== null;
@@ -97,26 +95,12 @@ export function ConnectionStatusSlot(): JSX.Element {
     return () => clearInterval(id);
   }, [ticking]);
 
-  const { said } = track;
-  const region = (live: Announcement["politeness"]): JSX.Element => (
-    <div aria-live={live} aria-atomic="true" style={HIDDEN}>
-      {said?.politeness === live ? (
-        <p key={said.seq} data-seq={said.seq}>
-          {said.text}
-        </p>
-      ) : null}
-    </div>
-  );
   return (
-    <>
-      <ConnectionStatus
-        {...chip}
-        lastGoodTs={chip.status === "live" ? null : track.leftLiveAt}
-        latencyMs={latencyMs}
-        nowMs={nowMs}
-      />
-      {region("polite")}
-      {region("assertive")}
-    </>
+    <ConnectionStatus
+      {...chip}
+      lastGoodTs={chip.status === "live" ? null : track.leftLiveAt}
+      latencyMs={latencyMs}
+      nowMs={nowMs}
+    />
   );
 }

@@ -73,8 +73,18 @@ const PILL: CSSProperties = {
 
 /**
  * CMP-076 ConnectionStatus (#304 S3; E17-D02 §5): props only; glyph + word + fill, never colour
- * alone; **owns no live region** (§11). Stand-ins: the UTC time is a `title` until CMP-016 Tooltip
- * (E05-S02); the details popover waits for the `connection_quality` numbers.
+ * alone; **owns no live region** (§11: the shell announcer does).
+ *
+ * Deferred: the details popover (a later #304 slice, once the `connection_quality` numbers reach
+ * the client) and the tooltip (CMP-016 Tooltip, E05-S02 #265); until then the UTC time is in the
+ * name and a `title`, and there is no `aria-haspopup`. It stays the merged spec's native `<button>`
+ * with no action yet: a Tab stop keeps the name and time reachable from the keyboard, and the
+ * popover slice adds the action without changing the Tab order.
+ *
+ * PROPOSED / deferred visuals: `density` (one compact pill for now); hover and focus-ring styling
+ * (inline styles have no pseudo-classes: the browser's focus ring shows); the `type.ui.caption` /
+ * `.label` token (inherited font); the 20 px pill inside a 24 px target (the pill is the target);
+ * the `serverStale` and `upstreamDown` detail states (no source in the shell store).
  */
 export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const { status, lastGoodTs, nowMs } = props;
@@ -84,7 +94,9 @@ export function ConnectionStatus(props: ConnectionStatusProps): JSX.Element {
   const age =
     disconnected && lastGoodTs !== null ? `last data ${formatAge(nowMs - lastGoodTs)} ago` : null;
   const at = lastGoodTs === null ? null : utc(lastGoodTs);
-  const name = [`Connection: ${word}`, age, at === null ? null : `last data ${at} UTC`];
+  // SC 2.5.3: the visible words lead; "last data" is said once ("…, last data 00:12 ago, 13:42:05 UTC").
+  const time = at === null ? null : age === null ? `last data ${at} UTC` : `${at} UTC`;
+  const name = [`Connection: ${word}`, age, time];
   const [glyph, fill, ink] = LOOK[status === "stale" && props.strong === true ? "strong" : status];
   return (
     <button

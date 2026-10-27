@@ -1,6 +1,6 @@
 import type { JSX } from "react";
 import { act, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   resetShellState,
   setShellState,
@@ -8,6 +8,23 @@ import {
 } from "../../src/shell/bootstrap/store.js";
 import { useShellSelector } from "../../src/shell/useShellSelector.js";
 import { toLatencyIndicator } from "../../src/lib/telemetry/latencyIndicator.js";
+
+// Counts the hook's live store subscriptions, for the teardown test.
+const active = vi.hoisted(() => ({ n: 0 }));
+vi.mock("../../src/shell/bootstrap/store.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../../src/shell/bootstrap/store.js")>();
+  return {
+    ...real,
+    subscribeShellState: (listener: () => void) => {
+      active.n += 1;
+      const off = real.subscribeShellState(listener);
+      return () => {
+        active.n -= 1;
+        off();
+      };
+    },
+  };
+});
 
 afterEach(() => act(() => resetShellState()));
 
@@ -22,6 +39,7 @@ function Probe<T>(props: {
 }
 const byConnection = (s: ShellState) => s.connection;
 const byLatencyState = (s: ShellState) => ({ state: s.latency.state });
+const byEnvironment = (s: ShellState) => s.environment;
 
 describe("useShellSelector", () => {
   it("does not re-render a connection subscriber on a 1 Hz latency tick", () => {
@@ -42,5 +60,23 @@ describe("useShellSelector", () => {
     expect(renders.n).toBe(settled);
     tick(300);
     expect(screen.getByRole("status")).toHaveTextContent('{"state":"breach"}');
+  });
+
+  it("reads the new selector when its identity changes between renders, with no store change", () => {
+    const { rerender } = render(<Probe<unknown> select={byConnection} />);
+    expect(screen.getByRole("status")).toHaveTextContent('{"kind":"connecting"}');
+    rerender(<Probe<unknown> select={byEnvironment} />);
+    expect(screen.getByRole("status")).toHaveTextContent('"unknown"');
+  });
+
+  it("unsubscribes on unmount: a later store change renders nothing and reaches no listener", () => {
+    const before = active.n;
+    const { unmount } = render(<Probe select={byConnection} />);
+    expect(active.n).toBe(before + 1);
+    unmount();
+    expect(active.n).toBe(before);
+    const settled = renders.n;
+    act(() => setShellState({ connection: { kind: "live" } }));
+    expect(renders.n).toBe(settled);
   });
 });

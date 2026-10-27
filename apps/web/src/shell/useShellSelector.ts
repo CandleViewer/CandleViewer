@@ -3,6 +3,12 @@
  * component re-renders only when its selection changes (by `isEqual`, `Object.is` by default), so a
  * chip that reads `connection` stays still through the 1 Hz `latency` tick that `useShellState()`
  * would re-render it on.
+ *
+ * Select a primitive, or pass `isEqual` for an object selection: with `Object.is`, a selector that
+ * builds a new object per call re-renders on every store change. The memo is a ref written inside
+ * `getSnapshot` (the same idempotent per-state memo `use-sync-external-store/with-selector` keeps
+ * in a closure); a ref, not a `useMemo` closure, keeps the equal value across inline selectors,
+ * whose identity changes every render. No new dependency.
  */
 import { useRef, useSyncExternalStore } from "react";
 import { getShellState, subscribeShellState, type ShellState } from "./bootstrap/store.js";
