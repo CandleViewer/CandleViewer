@@ -175,9 +175,13 @@ function signIn(user, last) {
 
 export function setup() {
   // Before any credential leaves: the perf route answers 401 unauthenticated only where it is
-  // mounted (a keyless testnet with CV_AUTH_PERF_ENABLED); anywhere else it is a 404.
-  const probe = http.get(`${BASE}/auth/_perf/argon2-params`);
-  if (probe.status !== 401) {
+  // mounted (a keyless testnet with CV_AUTH_PERF_ENABLED); anywhere else it is a 404. Only that
+  // exact Problem passes, never a redirect or another server's 401.
+  const probe = http.get(`${BASE}/auth/_perf/argon2-params`, { redirects: 0 });
+  const problem = String(probe.headers["Content-Type"] || "").startsWith(
+    "application/problem+json",
+  );
+  if (probe.status !== 401 || !problem || probe.json("code") !== "unauthenticated") {
     throw new Error(
       `GET /auth/_perf/argon2-params answered HTTP ${probe.status} unauthenticated: not a perf ` +
         "stack, so no credential is sent",
