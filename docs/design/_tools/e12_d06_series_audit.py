@@ -2,7 +2,7 @@
 """E12-D06 (#202) audit: the price-series visual language (spec + hand-off).
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python -I`. It reads,
-AS TEXT at the pinned base `89fd1f1555` (`git show`): the token JSON (`themes.json` layering:
+AS TEXT at the pinned base `5930749cdf` (`git show`): the token JSON (`themes.json` layering:
 dark = primitives + semantic-dark, light = + semantic-light, hc = + semantic-hc), the plan texts
 `05`, `11`, `14`, `15`, `16`, `26`, the ticket JSON (`docs/plan/backlog/E12.json`), the merged
 design docs the spec cites, the E11-D05 tool's JND floor and the recorded fixtures; then this
@@ -96,7 +96,7 @@ from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "89fd1f1555"  # every cite was read here (the spec's Inputs line)
+BASE = "5930749cdf"  # every cite was read here (the spec's Inputs line)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 
@@ -130,7 +130,7 @@ SIM_KEY = {"protanopia": "protan", "deuteranopia": "deutan", "tritanopia": "trit
 # ---- the ruling and the fixed facts
 RULING_ID = "6415375587"
 BQ_LIST_ID = "6415040959"
-CONFIRM_ID = "6420049971"  # the orchestrator's round-1 record: confirms the five derived values
+CONFIRM_ID = "6421337981"  # the orchestrator's round-2 record: confirms the five derived values
 RULED_IDS = (RULING_ID, BQ_LIST_ID, CONFIRM_ID)  # the allow-list: every comment id the docs cite
 # the five values derived from the DESIGN decisions (geom_values), ruled defaults (CONFIRM_ID)
 DERIVED_KEYS = (
@@ -142,7 +142,8 @@ DERIVED_KEYS = (
 )
 OWNER_PENDING = "owner approval pending (#2701)"  # the record: D06-C11 and the AC2 trace
 PREDECESSOR = "#2324"  # the closed, unmerged first attempt: named once in §0, never quoted
-# the predecessor's last commit, read ONLY to prove that no run of its text is quoted (G-PREDECESSOR)
+# the predecessor's last commit, read ONLY to prove that no run of its text is quoted
+# (G-PREDECESSOR)
 PREDECESSOR_REF = "e1b08be2e9"
 PREDECESSOR_REL = "docs/design/E12/E12-D06.md"
 SHINGLE = 10  # words: a run this long shared with the predecessor is a quote
@@ -2247,8 +2248,9 @@ def g_pending(t: Texts) -> list[Finding]:
 
 
 def g_ruled(t: Texts) -> list[Finding]:
-    """Ruling form: "RULED" cites the allow-list only (the ruling 6415375587 and the BQ list
-    6415040959), in any form; the RULED heading cites both; nothing cites a lane thread."""
+    """Ruling form: "RULED" cites the allow-list only (RULED_IDS: the ruling 6415375587, the BQ
+    list 6415040959 and the round-2 record 6421337981 confirming the five derived values), in any
+    form; the RULED heading cites the first two; nothing cites a lane thread."""
     bad: list[Finding] = []
     head = next((ln for ln in t.spec.split("\n") if ln.startswith("## The twenty questions")), "")
     if f"comment {RULING_ID}, on the BQ list {BQ_LIST_ID}" not in head:
@@ -3569,7 +3571,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-49",
         "G-PREDECESSOR",
         "BQ-3",
-        spec=line_edit("1. Text-first series spec", "PENDING", f"PENDING (after {PREDECESSOR})"),
+        spec=line_edit("1. Series spec + hand-off", "(PR 1)", f"(PR 1, after {PREDECESSOR})"),
     ),
     Mutation(
         "M-50",
@@ -4481,9 +4483,8 @@ def main(argv: list[str]) -> int:
         gates = len(LEXICON_GATES) + len(MEASURED_GATES) + 5
         print(f"## E12-D06 audit of {SPEC_REL} (+ the hand-off) at base {BASE}")
         print(f"values computed: {len(values)}; cites checked: {n}; gates: {gates}")
-        print(
-            f"color.chart.line: {values['HEX:chart.line.primitive']} {values['HEX:chart.line.dark']}"
-        )
+        line_hex = (values["HEX:chart.line.primitive"], values["HEX:chart.line.dark"])
+        print(f"color.chart.line: {line_hex[0]} {line_hex[1]}")
         print("\n".join(f"WARN {w}" for w in warns))
         print("\n".join(notes))
         print("\n".join(f"FAIL {x}" for x in fails) or "OK — every gate passed")
