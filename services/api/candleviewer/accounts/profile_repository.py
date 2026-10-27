@@ -181,6 +181,9 @@ class ArmedRules(Protocol):
         """Armed, live rules that cover the account (their active version's scope lists it or
         lists no account, at any scope level), by lower(name), id; at most ARMED_SHOWN + 1."""
 
+    async def covering(self, account_id: UUID, *, limit: int) -> tuple[ArmedRule, ...]:
+        """The same rules, at most `limit`: the consequence read's list (#898 ruling 10)."""
+
 
 class ProfilesRepository:
     """`AccountProfile` reads and writes over an `AccountProfileStore`."""

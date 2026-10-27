@@ -310,3 +310,26 @@ async def test_armed_on_reads_a_rule_the_manager_armed_over_two_accounts(pg_dsn:
         assert [await rules.armed_on(x) for x in (a, b)] == [(), ()]
     finally:
         _retire(pg_dsn, rid)
+
+
+async def test_covering_lists_past_the_delete_guards_cap_by_the_same_predicate(
+    pg_dsn: str,
+) -> None:
+    """#898 ruling 10: the consequence read lists every armed rule covering the account, one
+    that lists no account included, by the guard's predicate; `limit` bounds it."""
+    account = uuid.uuid4()
+    with _mig._conn(pg_dsn) as c:
+        owner = _mig._user(c)
+        many = [(_armed(c, owner, f"c{i:02}", account), f"c{i:02}") for i in range(ARMED_SHOWN + 2)]
+        _armed(c, owner, "off", account, mode="disabled")
+        everywhere = _armed(c, owner, "zz-everywhere", level="global")
+    rules = _store(pg_dsn)
+    try:
+        got = _named(await rules.covering(account, limit=100))
+        assert got == [*many, (everywhere, "zz-everywhere")]
+        assert _named(await rules.covering(account, limit=3)) == many[:3]
+        assert await rules.armed_on(account) == await rules.covering(account, limit=ARMED_SHOWN + 1)
+        with pytest.raises(ValueError):
+            await rules.covering(account, limit=0)
+    finally:
+        _retire(pg_dsn, everywhere)

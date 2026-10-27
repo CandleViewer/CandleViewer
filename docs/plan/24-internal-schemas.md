@@ -1391,6 +1391,8 @@ class Position(BaseModel):
     updated_at: TsUs
 ```
 
+`Position.id` in `AccountConsequenceSummary` (`22-api-openapi.yaml`, E27-S04 #898) is derived, never a stored id: the UUIDv5 of (account, symbol, `position_idx`) in the fixed namespace `accounts.consequences.POSITION_NAMESPACE`, so one position keeps its id across reads.
+
 ### 8.2 Order state machine
 
 > **Statechart contract:** [`28-statechart-catalogue.md` §B1](28-statechart-catalogue.md#b1--order) — the two-region `lifecycle` × `protection` chart, plus `quarantined` as the landing state for a faulted action. The contract is normative for the _behaviour_; this section remains the owner of the state enum, field types and persistence schema (`CONSTITUTION.md` §16.5). Governed by [`27-adrs/ADR-0016-statechart-runtime.md`](27-adrs/ADR-0016-statechart-runtime.md).

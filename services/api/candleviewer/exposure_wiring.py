@@ -30,6 +30,7 @@ from uuid import UUID
 
 import structlog
 
+from candleviewer.accounts.consequences import ConsequenceRead, ConsequenceStores
 from candleviewer.accounts.exposure import (
     EXCHANGE_ERROR,
     ExchangePosition,
@@ -39,6 +40,7 @@ from candleviewer.accounts.exposure import (
     combine,
 )
 from candleviewer.accounts.models import ExchangeAccount
+from candleviewer.accounts.profile_repository import ArmedRules
 from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.base.models import AccountRef, Order, Position
@@ -47,7 +49,15 @@ from candleviewer.observability import spawn, spawn_child
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
 
-__all__ = ["CLOSE_BOUND_S", "ExposureVenue", "PortReader", "wire_exposure_read"]
+__all__ = [
+    "CLOSE_BOUND_S",
+    "ConsequencePorts",
+    "ExposureVenue",
+    "NoRunningAlgos",
+    "PortReader",
+    "wire_consequence_read",
+    "wire_exposure_read",
+]
 
 #: The bound on closing one key's port after its read (its clients, never the shared transport).
 CLOSE_BOUND_S: Final = 0.1
@@ -213,3 +223,31 @@ def wire_exposure_read(ctx: AppContext) -> ExposureRead | None:
 
     venue: ExposureVenue = ctx.exchange_bybit
     return ExposureRead(PortReader(venue, env, offset_ms), env=env)
+
+
+class NoRunningAlgos:
+    """`RunningAlgos` until the emulated-algo supervisor lands (E33): none can run, so none is."""
+
+    async def running(self, account_id: UUID) -> int:
+        return 0
+
+
+class ConsequencePorts(Protocol):
+    """What the read takes of `profiles_wiring.ProfilesWiring`: its store and armed-rule read."""
+
+    @property
+    def accounts(self) -> ConsequenceStores: ...
+
+    @property
+    def rules(self) -> ArmedRules: ...
+
+
+def wire_consequence_read(
+    exposure: ExposureRead | None, profiles: ConsequencePorts | None, *, env: str
+) -> ConsequenceRead | None:
+    """The consequence read (E27-S04 B2b, #898) over the exposure read and the profile wiring's
+    accounts store and armed-rule read (one pool), on the process environment; `None` without
+    either (the fake backend: the route answers 503)."""
+    if exposure is None or profiles is None:
+        return None
+    return ConsequenceRead(profiles.accounts, exposure, profiles.rules, NoRunningAlgos(), env=env)

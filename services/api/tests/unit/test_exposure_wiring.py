@@ -24,15 +24,18 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer import exposure_wiring as wiring
+from candleviewer.accounts.consequences import ConsequenceRead, ConsequenceStores
 from candleviewer.accounts.exposure import ExposureKnown, ExposureRead, KeyReadFailed
 from candleviewer.accounts.models import (
     AccountKind,
     ApiKeyMetadata,
+    AssignedUser,
     ExchangeAccount,
     ExchangeEnv,
     KeyStatus,
     PermissionSnapshot,
 )
+from candleviewer.accounts.profile_repository import ArmedRule, ArmedRules
 from candleviewer.exchange.base.errors import TransportError
 from candleviewer.exchange.bybit.service import ExchangeBybitService
 from candleviewer.exchange.bybit.trading import BybitTradingPort
@@ -43,6 +46,7 @@ from candleviewer.secrets import (
     RequestSignature,
     SecretsError,
 )
+from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
 from tests._corpus import rest
 from tests._signing import fake_capability
 from tests.unit.exchange.bybit._trading import RecordingGovernor
@@ -372,3 +376,42 @@ def test_port_reader_hook_outside_a_call_or_unnamed_failure_records_nothing() ->
 def test_wire_exposure_read_reads_measured_clock_offset() -> None:
     read = wiring.wire_exposure_read(_ctx("real"))
     assert read is not None and read._reader._offset() == 25  # type: ignore[attr-defined]
+
+
+class _ProfilePorts:
+    """A typed `ConsequencePorts`: the store and the armed-rule read in one object, none of
+    whose reads the wiring makes."""
+
+    @property
+    def accounts(self) -> ConsequenceStores:
+        return self
+
+    @property
+    def rules(self) -> ArmedRules:
+        return self
+
+    async def get_account(self, scope: AccountScope, account_id: UUID) -> ExchangeAccount:
+        raise AssertionError("wiring reads nothing")
+
+    async def list_keys(self, scope: OwnerScope, account_id: UUID) -> tuple[ApiKeyMetadata, ...]:
+        raise AssertionError("wiring reads nothing")
+
+    async def list_grantees(self, scope: OwnerScope, account_id: UUID) -> tuple[AssignedUser, ...]:
+        raise AssertionError("wiring reads nothing")
+
+    async def armed_on(self, account_id: UUID) -> tuple[ArmedRule, ...]:
+        raise AssertionError("wiring reads nothing")
+
+    async def covering(self, account_id: UUID, *, limit: int) -> tuple[ArmedRule, ...]:
+        raise AssertionError("wiring reads nothing")
+
+
+async def test_wire_consequence_read_needs_both_wirings_and_no_algo_runs() -> None:
+    """#898 B2b: the read exists only with the exposure read and the profile wiring (the fake
+    backend has neither: the route answers 503); until E33 no emulated algo runs."""
+    read, ports = wiring.wire_exposure_read(_ctx("real")), _ProfilePorts()
+    assert wiring.wire_consequence_read(None, ports, env="demo") is None
+    assert wiring.wire_consequence_read(read, None, env="demo") is None
+    wired = wiring.wire_consequence_read(read, ports, env="demo")
+    assert isinstance(wired, ConsequenceRead)
+    assert await wiring.NoRunningAlgos().running(UUID(int=1)) == 0

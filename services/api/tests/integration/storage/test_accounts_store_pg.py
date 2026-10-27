@@ -12,6 +12,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import replace
@@ -24,7 +25,13 @@ import pytest_asyncio
 import sqlalchemy as sa
 from testcontainers.postgres import PostgresContainer
 
+from candleviewer.accounts.consequences import GRANTEES_LISTED, ConsequenceRead, StoreReadFailed
+from candleviewer.accounts.exposure import ExposureOutcome, ExposureUnknown
+from candleviewer.accounts.models import ExchangeAccount
+from candleviewer.accounts.profile_repository import ArmedRule
+from candleviewer.accounts.repository import AccountsRepository
 from candleviewer.secrets.models import CredentialRow
+from candleviewer.storage.repositories import accounts_sqlalchemy as store_sql
 from candleviewer.storage.repositories.accounts import (
     SUB_ACCOUNT_CAP_CONFLICT,
     AccountKey,
@@ -652,3 +659,115 @@ async def test_two_concurrent_creates_for_the_last_slot_admit_exactly_one(
             (parent.id,),
         ).fetchone()
     assert row == (5,)
+
+
+async def test_list_grantees_lists_live_and_frozen_grants_of_live_users_owner_only(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    """#898 B2b `assigned_users` (ruling 9): a frozen grant is listed, a soft-revoked one
+    (`can_view` false) and a deleted user's are not; by username; behind the owner gate."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    other = await store.create_account(owner, _new(exch))
+    live, frozen, revoked, deleted = (_user(pg_dsn, "manager") for _ in range(4))
+    _grant(pg_dsn, live, acct.id, can_view=True, frozen=False)
+    _grant(pg_dsn, frozen, acct.id, can_view=True, frozen=True)
+    _grant(pg_dsn, revoked, acct.id, can_view=False, frozen=False)
+    _grant(pg_dsn, deleted, acct.id, can_view=True, frozen=False)
+    _grant(pg_dsn, revoked, other.id, can_view=True, frozen=False)
+    with _c(pg_dsn) as c:
+        c.execute("UPDATE user_account_access SET can_trade = true WHERE user_id = %s", (live,))
+        c.execute("UPDATE users SET deleted_at = now() WHERE id = %s", (deleted,))
+    got = await store.list_grantees(owner, acct.id)
+    assert {(g.user_id, g.can_trade) for g in got} == {(live, True), (frozen, False)}
+    assert [g.username for g in got] == sorted(g.username for g in got)
+    assert await store.list_grantees(owner, uuid.uuid4()) == ()
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await store.list_grantees(OwnerScope(live), acct.id)  # a manager is not a live owner
+    with pytest.raises(AccountsStoreScopeDeniedError):
+        await store.list_grantees(GrantScope(live, frozenset({acct.id})), acct.id)  # type: ignore[arg-type]
+
+
+async def test_list_grantees_reads_one_past_the_summarys_listing(
+    store: SqlAlchemyAccountsStore, pg_dsn: str
+) -> None:
+    """#898 B2b: the statement returns the 501st grantee, so the read can fail closed on it."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    users = [uuid.uuid4() for _ in range(GRANTEES_LISTED + 2)]
+    with _c(pg_dsn) as c, c.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO users (id, email, username, display_name, password_hash, status) "
+            "VALUES (%s, %s, %s, 'u', '$argon2id$x', 'active')",
+            [(str(u), f"{u}@example.test", f"g{u.hex[:12]}") for u in users],
+        )
+        cur.executemany(
+            "INSERT INTO user_account_access (user_id, exchange_account_id, can_view) "
+            "VALUES (%s, %s, true)",
+            [(str(u), str(acct.id)) for u in users],
+        )
+    assert len(await store.list_grantees(owner, acct.id)) == GRANTEES_LISTED + 1
+
+
+class _NoExposure:
+    """The exposure read and the other ports, answered at once: only the store is timed."""
+
+    async def read(
+        self, account: ExchangeAccount, keys: object, *, within_s: float | None = None
+    ) -> ExposureOutcome:
+        return ExposureUnknown("leave_positions", ())
+
+    async def armed_on(self, account_id: uuid.UUID) -> tuple[ArmedRule, ...]:
+        return ()
+
+    async def covering(self, account_id: uuid.UUID, *, limit: int) -> tuple[ArmedRule, ...]:
+        return ()
+
+    async def running(self, account_id: uuid.UUID) -> int:
+        return 0
+
+
+#: Fable M1: a grantee statement that outlasts the 0.25 s store bound eightfold.
+_SLOW_GRANTEES = sa.text(
+    "SELECT NULL::text AS user_id, NULL::text AS username, false AS can_trade "
+    "FROM pg_sleep(2) WHERE CAST(:account AS uuid) IS NOT NULL"
+)
+
+
+async def test_a_slow_grantee_read_fails_closed_at_its_bound_and_the_pool_stays_healthy(
+    store: SqlAlchemyAccountsStore, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#898 B2b, Fable M1: the 0.25 s bound cancels a running statement on a live connection;
+    `StoreReadFailed` arrives well before the statement would end, and the next read on the
+    same store and pool succeeds."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    user = _user(pg_dsn, "manager")
+    _grant(pg_dsn, user, acct.id, can_view=True, frozen=False)
+    ports = _NoExposure()
+    read = ConsequenceRead(AccountsRepository(store), ports, ports, ports, env="demo")
+    assert await store.list_grantees(owner, acct.id)  # the pool is warm
+    monkeypatch.setattr(store_sql, "_LIST_GRANTEES", _SLOW_GRANTEES)
+    started = time.monotonic()
+    with pytest.raises(StoreReadFailed):
+        await read.read(owner, owner, acct.id)
+    assert time.monotonic() - started < 0.5
+    monkeypatch.undo()
+    got = await store.list_grantees(owner, acct.id)
+    assert [g.user_id for g in got] == [user]
+
+
+async def test_the_grantee_read_ends_on_the_server_at_250_ms_without_a_caller_bound(
+    store: SqlAlchemyAccountsStore, pg_dsn: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The server-side cap alone (no caller bound): Postgres cancels the statement (57014)."""
+    exch, owner = _exchange(pg_dsn), OwnerScope(_user(pg_dsn, "owner"))
+    acct = await store.create_account(owner, _new(exch))
+    monkeypatch.setattr(store_sql, "_LIST_GRANTEES", _SLOW_GRANTEES)
+    started = time.monotonic()
+    with pytest.raises(Exception) as raised:
+        await store.list_grantees(owner, acct.id)
+    assert time.monotonic() - started < 1.0  # the statement sleeps 2 s
+    assert sqlstate_of(raised.value) == "57014"
+    monkeypatch.undo()
+    assert await store.list_grantees(owner, acct.id) == ()
