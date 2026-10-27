@@ -267,7 +267,7 @@ async def test_challenge_states_why_the_action_needs_a_fresh_step_up() -> None:
 
 
 async def test_wrong_factor_names_the_attempts_left_before_the_downgrade() -> None:
-    """`401 mfa_invalid` carries `attempts_remaining` (#2304): 2, then 1; the third failure is
+    """`401 mfa_invalid` carries `failures_remaining` (#2304): 2, then 1; the third failure is
     the read-only downgrade, which names none. It counts this session's failures only: the same
     user's other session still has both (no cross-session oracle)."""
     w = await _world()
@@ -277,22 +277,22 @@ async def test_wrong_factor_names_the_attempts_left_before_the_downgrade() -> No
     assert [a.status_code for a in answers] == [401, 401, 403]
     for answer in answers[:2]:
         _validator(_SPEC, _ref(_PROBLEM)).validate(answer.json())
-    assert [a.json().get("attempts_remaining") for a in answers] == [2, 1, None]
+    assert [a.json().get("failures_remaining") for a in answers] == [2, 1, None]
     assert answers[2].json()["code"] == "session_read_only"
     other = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h("tok2"))
     elsewhere = w.step_up("tok2", code="000000", challenge_id=other.json()["challenge_id"])
-    assert (elsewhere.status_code, elsewhere.json()["attempts_remaining"]) == (401, 2)
+    assert (elsewhere.status_code, elsewhere.json()["failures_remaining"]) == (401, 2)
 
 
-async def test_attempts_remaining_starts_again_after_a_successful_step_up() -> None:
+async def test_failures_remaining_starts_again_after_a_successful_step_up() -> None:
     w = await _world()
     path = f"/users/{uuid.uuid4()}/invite"
     cid = w.client.post(path, headers=w.h()).json()["challenge_id"]
-    assert w.step_up(code="000000", challenge_id=cid).json()["attempts_remaining"] == 2
+    assert w.step_up(code="000000", challenge_id=cid).json()["failures_remaining"] == 2
     assert w.step_up(challenge_id=cid).status_code == 200
     w.clock.now += timedelta(minutes=5, seconds=1)  # the window ends; a new challenge
     cid = w.client.post(path, headers=w.h()).json()["challenge_id"]
-    assert w.step_up(code="000000", challenge_id=cid).json()["attempts_remaining"] == 2
+    assert w.step_up(code="000000", challenge_id=cid).json()["failures_remaining"] == 2
 
 
 @pytest.mark.parametrize("stale", ["expired", "unknown", "superseded"])

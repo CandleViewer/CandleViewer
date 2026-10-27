@@ -848,15 +848,13 @@ def make_step_up_router(
         # Step-up granted / failed / read-only downgrade are audited by the B16
         # chart's actions (`StepUpService` records each decision on it).
         except StepUpCodeInvalid as exc:
-            # `attempts_remaining` (#2304) is the contract's name for this session's own strikes
-            # left (`sessions.step_up_failures`); `failures_remaining`, the same number, predates
-            # it and is kept for the clients that read it.
+            # `failures_remaining` (#2304, E42-D03 CG-3): this session's own strikes left before
+            # the read-only downgrade, from its row (`sessions.step_up_failures`).
             return _problem(
                 401,
                 "mfa_invalid",
                 "Step-up rejected",
                 "Invalid password or code.",
-                attempts_remaining=exc.failures_remaining,
                 failures_remaining=exc.failures_remaining,
             )
         except SessionReadOnly as exc:
