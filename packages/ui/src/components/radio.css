@@ -1,0 +1,174 @@
+/* CMP-006 RadioGroup. State lives in data-* attributes set by RadioGroup.tsx; colours are tokens only.
+   The row is the radio and the hit target: min one control tall (24 compact / 32 comfortable), ring + gap + label wide. */
+.cv-radio-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-stack-sm);
+}
+
+.cv-radio-group[data-orientation="horizontal"] {
+  flex-flow: row wrap;
+  gap: var(--space-stack-sm) var(--space-inset-lg);
+}
+
+.cv-radio {
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-field-gap);
+  min-height: var(--size-control-height);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  cursor: pointer;
+  outline: none;
+}
+
+/* The ring and the lock sit in a one-control-tall slot, so they centre on the first line of a wrapped label. */
+.cv-radio__mark {
+  display: flex;
+  flex: none;
+  align-items: center;
+  min-height: var(--size-control-height);
+}
+
+.cv-radio__label {
+  align-self: center;
+  min-width: 0;
+}
+
+.cv-radio__lock {
+  width: var(--size-icon);
+  color: var(--color-text-secondary);
+}
+
+.cv-radio__ring {
+  position: relative;
+  box-sizing: border-box;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  border-radius: 50%;
+}
+
+/* The plate carries the ring's fill and outline, so a gated group can dim it without dimming the dot above. */
+.cv-radio__ring::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-text-tertiary);
+  border-radius: 50%;
+  background: var(--color-surface-raised);
+}
+
+/* The dot (a shape, never colour alone) marks the checked ring. */
+.cv-radio__ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: calc(var(--size-icon) - 2 * var(--space-inset-xs));
+  height: calc(var(--size-icon) - 2 * var(--space-inset-xs));
+  border-radius: 50%;
+  background: var(--color-text-on-action);
+  display: none;
+}
+
+.cv-radio[data-checked] .cv-radio__ring::before {
+  border-color: var(--color-action-primary-default);
+  background: var(--color-action-primary-default);
+}
+
+.cv-radio[data-checked] .cv-radio__ring::after {
+  display: block;
+}
+
+/* Hover swaps tokens instantly (no transition); the checked fill stays, only the outline steps up. */
+.cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring::before {
+  border-color: var(--color-text-secondary);
+}
+
+/* Keyboard focus: the 2px ring sits around the radio's ring (CMP-039), at a 2px offset. */
+.cv-radio:focus-visible .cv-radio__ring {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Plain disabled: the whole row dims and leaves the Tab order. */
+.cv-radio[data-disabled] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): only the plate dims; the label, the lock and the checked dot stay at full strength. */
+.cv-radio[data-gated] {
+  cursor: not-allowed;
+}
+
+.cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::before {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::after {
+  background: var(--color-text-primary);
+}
+
+@media (forced-colors: active) {
+  .cv-radio {
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-radio .cv-radio__ring::before {
+    border-color: CanvasText;
+    background: Canvas;
+  }
+
+  .cv-radio .cv-radio__ring::after {
+    background: HighlightText;
+  }
+
+  .cv-radio .cv-radio__lock {
+    color: CanvasText;
+  }
+
+  .cv-radio[data-checked] .cv-radio__ring::before {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  .cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring::before {
+    border-color: Highlight;
+  }
+
+  .cv-radio:focus-visible .cv-radio__ring {
+    outline-color: Highlight;
+  }
+
+  /* Disabled and gated come last and out-specify the checked and hover rules: disabled wins. */
+  .cv-radio[data-disabled] {
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-radio[data-disabled] .cv-radio__mark .cv-radio__ring::before {
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .cv-radio[data-disabled] .cv-radio__mark .cv-radio__ring::after {
+    background: GrayText;
+  }
+
+  /* Gated: the ring border greys and loses the Highlight fill; the dot, label and lock stay CanvasText. */
+  .cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::before {
+    border-color: GrayText;
+    background: Canvas;
+    opacity: 1;
+  }
+
+  .cv-radio[data-gated] .cv-radio__mark .cv-radio__ring::after {
+    background: CanvasText;
+  }
+}
