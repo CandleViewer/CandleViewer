@@ -8,12 +8,15 @@ touches are opened, only manifest-listed + verified files are read, the DuckDB s
 fully parameterised, `LIMIT` is pushed down, and the blocking call runs off the event loop
 under a timeout (C-2.18) that interrupts the read's DuckDB cursor. Reads share one in-memory
 DuckDB instance per reader, each on its own `cursor()` (#2523): no per-read connect/close.
+`page()` keeps a byte-bounded LRU of the pages it read, keyed by the files they came from
+(#2523 lever 5).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,6 +30,12 @@ import pyarrow as pa
 import pyarrow.compute as pc
 import structlog
 
+from candleviewer.observability.cold_kline_cache_metrics import (
+    cv_cold_kline_page_cache_bytes,
+    cv_cold_kline_page_cache_evictions_total,
+    cv_cold_kline_page_cache_hits_total,
+    cv_cold_kline_page_cache_misses_total,
+)
 from candleviewer.observability.context import thread_future
 from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestStore
@@ -43,6 +52,11 @@ _DEFAULT_MAX_ROWS = 5_100
 _DEFAULT_CONCURRENCY = 2
 _MEMORY_LIMIT = "256MiB"
 _THREADS = 2
+
+#: `(path, size, mtime_ns)` of one Parquet file a read resolved (#2523 lever 5).
+type _FileId = tuple[str, int, int]
+#: `page()`'s cache key: `(symbol, interval, lo_us, hi_us, max_rows)` and the sorted file ids.
+type _PageKey = tuple[str, str, int, int, int, tuple[_FileId, ...]]
 
 
 class ColdKlineReadTimeout(StorageTierUnavailable):
@@ -114,6 +128,7 @@ class ParquetKlineReader:
         timeout_s: float = 5.0,
         max_rows: int = _DEFAULT_MAX_ROWS,
         max_concurrency: int = _DEFAULT_CONCURRENCY,
+        page_cache_bytes: int = 0,
     ) -> None:
         self._registry = registry
         self._events: SystemEventSink = events or LoggingSystemEventSink()
@@ -124,6 +139,8 @@ class ParquetKlineReader:
         self._sem = asyncio.Semaphore(max(1, max_concurrency))
         self._verified: dict[Path, tuple[int, int]] = {}
         self._db: _SharedDuckDB | None = None
+        # #2523 lever 5: `page()`'s cache, bound `CV_COLD_KLINE_PAGE_CACHE_BYTES` (0: off).
+        self._pages = _PageCache(page_cache_bytes)
 
     def close(self) -> None:
         """Release the shared DuckDB instance; it closes once no read still holds a cursor.
@@ -186,7 +203,9 @@ class ParquetKlineReader:
             StreamKind.KLINES, partition_values={"symbol": symbol, "interval": interval, "ym": ym}
         )
 
-    async def _files(self, paths: ColdPaths) -> list[str]:
+    async def _files(self, paths: ColdPaths) -> list[_FileId]:
+        """The partition's manifested, verified files, each with the `(size, mtime_ns)` stamp
+        the verification check read (#2523 lever 5's key reuses it: no extra `stat`)."""
         store = ManifestStore(paths.manifests_dir)
         read = store.read_with_quarantine
         try:
@@ -209,32 +228,46 @@ class ParquetKlineReader:
                 # rather than silently serving a partial window.
                 raise ColdKlineReadError("cold kline partition failed verification") from exc
             self._verified.update(stamps)
-        return [f.as_posix() for f in files]
+        return [(f.as_posix(), *stamps[f]) for f in files]
+
+    async def _resolve(self, symbol: str, interval: str, lo: int, hi: int) -> list[_FileId]:
+        found: list[_FileId] = []
+        # Validation happens inside `_partition` for every component, before any I/O.
+        for ym in months_between(lo, hi):
+            found.extend(await self._files(self._partition(symbol, interval, ym)))
+        return found
 
     async def __call__(self, symbol: str, interval: str, rng: Any) -> list[ColdKlineRow]:
         lo, hi = int(rng.start_us), int(rng.end_us)
-        files: list[str] = []
-        # Validation happens inside `_partition` for every component, before any I/O.
-        for ym in months_between(lo, hi):
-            files.extend(await self._files(self._partition(symbol, interval, ym)))
-        if not files:
+        found = await self._resolve(symbol, interval, lo, hi)
+        if not found:
             return []
-        return await self._query(files, lo, hi)
+        return await self._query([path for path, _, _ in found], lo, hi)
 
     async def page(
         self, symbol: str, interval: str, rng: Range
     ) -> ColdKlinePage | list[ColdKlineRow]:
         """`ingestion.kline_read.ColdKlinePager`: the window as a `ColdKlinePage` (bar JSON
         emitted by DuckDB, #2523 lever 4), or the lever-3 rows when the files cannot be emitted
-        as JSON text. Same files, verification, bounds and timeout as `__call__`."""
+        as JSON text. Same files, verification, bounds and timeout as `__call__`.
+
+        #2523 lever 5: a page is cached under the read and the `(path, size, mtime_ns)` of
+        every file it resolved. Roll-off, import, compaction and purge each add, rewrite or
+        delete a file, so they make a new key and a stale page is never served. The cache is
+        consulted here, on the loop, before the DuckDB semaphore: a hit takes no slot. Rows
+        (the lever-3 fallback) are never cached."""
         lo, hi = int(rng.start_us), int(rng.end_us)
-        files: list[str] = []
-        for ym in months_between(lo, hi):
-            files.extend(await self._files(self._partition(symbol, interval, ym)))
-        if not files:
+        found = await self._resolve(symbol, interval, lo, hi)
+        if not found:
             return []
+        key: _PageKey = (symbol, interval, lo, hi, self._max_rows, tuple(sorted(found)))
+        if (hit := self._pages.get(key)) is not None:
+            return hit
         async with self._sem:
-            return await self._query_unbounded(_read_page, files, lo, hi)
+            got = await self._query_unbounded(_read_page, [p for p, _, _ in found], lo, hi)
+        if isinstance(got, ColdKlinePage):
+            self._pages.put(key, got)
+        return got
 
     async def _query(self, files: list[str], lo: int, hi: int) -> list[ColdKlineRow]:
         async with self._sem:
@@ -499,6 +532,58 @@ class ColdKlinePage:
                 t.column("source").to_pylist(),
             )
         )
+
+
+def _page_cost(page: ColdKlinePage) -> int:
+    """A cached page's cost (#2523 lever 5): `table.nbytes + len(bars_json)`, the bar array
+    `bars_json(b"")` builds: every `body`, a `}` each and a `,` between two, counted without
+    building it. `body` is in `table.nbytes` too, so the bound over-counts what is held: a
+    5 000-bar page costs about 2.1 MB and holds about 1.4 MB."""
+    n = len(page)
+    held = int(page.table.nbytes)
+    if not n:
+        return held
+    return held + int(pc.sum(pc.binary_length(page.table.column("body"))).as_py()) + 2 * n - 1
+
+
+class _PageCache:
+    """`ParquetKlineReader.page`'s LRU of pages, bounded in bytes (#2523 lever 5); event loop
+    thread only. A page over a quarter of the bound is never stored; a store evicts the least
+    recently used pages until the held cost fits. No single-flight: concurrent misses on one key
+    each read, and the first store wins. A bound of 0 turns it off: no lookup, store or count."""
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max(0, max_bytes)
+        self.held = 0
+        self._entries: OrderedDict[_PageKey, tuple[ColdKlinePage, int]] = OrderedDict()
+
+    def get(self, key: _PageKey) -> ColdKlinePage | None:
+        if not self.max_bytes:
+            return None
+        entry = self._entries.get(key)
+        if entry is None:
+            cv_cold_kline_page_cache_misses_total.inc()
+            return None
+        self._entries.move_to_end(key)
+        cv_cold_kline_page_cache_hits_total.inc()
+        return entry[0]
+
+    def put(self, key: _PageKey, page: ColdKlinePage) -> None:
+        if not self.max_bytes or key in self._entries:
+            return
+        cost = _page_cost(page)
+        if 4 * cost > self.max_bytes:
+            return
+        self._entries[key] = (page, cost)
+        self._count(cost)
+        while self.held > self.max_bytes:
+            _, (_, evicted) = self._entries.popitem(last=False)
+            self._count(-evicted)
+            cv_cold_kline_page_cache_evictions_total.inc()
+
+    def _count(self, delta: int) -> None:
+        self.held += delta
+        cv_cold_kline_page_cache_bytes.inc(delta)
 
 
 def _read_page(
