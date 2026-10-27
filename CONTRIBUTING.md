@@ -177,7 +177,8 @@ six `governance-tests` shards run the unit tests, the infra suites included (#43
 `--cov=scripts`, and the `governance` job
 combines their data and fails under 85% (#3789, #4365). Each job has a 90 s budget on its own
 measure: a shard budgets its pytest time and `governance` its combine step (#4666), and
-`governance-checks` (still) its job wall time (#4693). Each is recorded as a `::notice` annotation
+`governance-checks` its checks' span, from after its installs to its last report (#4693). Each is
+recorded as a `::notice` annotation
 on every run, and exceeding it fails that job
 (`::error` annotation). Per-run artefacts (CODEOWNERS ownership report, backlog per-epic summary) are
 uploaded as the `governance-reports` artefact for diffable history across runs.
