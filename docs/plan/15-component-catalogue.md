@@ -157,6 +157,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **E25-D05**: the `estimated` variant is a deprecated alias that renders CMP-227 EstimatedBadge (the one canonical badge, bound to the methodology drawer by its provider) — new consumers use CMP-227 directly.
 - **Storybook**: AllVariants, Removable, EstimatedChip (with tooltip).
 - **Tests**: unit, visual, axe, keyboard remove.
+- **As built (E05-S02)**: the `estimated` variant is omitted until CMP-227 exists, so no second estimated look ships and Storybook has no EstimatedChip (#265 ruling 3); `density?` emits `data-density`; a removable chip takes `disabled?` / `disabledReason?` for its remove CMP-002.
 
 ### CMP-012 Badge (status dot/count)
 
@@ -175,6 +176,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `radius.badge` (circle on a square box), `size.control.height` (md) / `size.icon` (sm), initials `type.ui.label` (md) / `type.ui.caption` (sm) in `color.text.primary`, fill `color.neutral.subtle` until an avatar palette is approved. (Replaces `color.avatar.palette[]`, which is not shipped, and `radius.circle`, which is a primitive.)
 - **Storybook**: Default, AllSizes, ColorPalette.
 - **Tests**: unit, visual.
+- **As built (E05-S02)**: no `color` prop until an avatar palette is approved (§5 E2), so ColorPalette waits; `standalone?: boolean` selects the only-content form (`role="img"` named by the full label), decorative otherwise.
 
 ### CMP-014 Spinner / Loader
 
@@ -194,15 +196,17 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: blocks `color.surface.hover` (`color.surface.selected` on an overlay host); the shimmer's band `color.surface.raised` (`color.surface.hover` on an overlay host), a 1,200 ms period (3 × `motion.duration.slow`) (motion-reduce: static tone, no shimmer); `radius.control` (text and row blocks), `radius.card` (card and chart); rows `size.row.height`; `space.stack.xs`, `space.inset.sm`, `space.inset.md`. (Replaces `color.surface.skeleton` and `motion.shimmer`, which are not shipped tokens.)
 - **Storybook**: AllShapes, Count, Static, OnOverlay.
 - **Tests**: unit, visual, reduced-motion snapshot.
+- **As built (E05-S02)**: `surface?: "base"|"overlay"` (default `base`) selects the overlay tones; `count` is a whole number from 1 to 50.
 
 ### CMP-016 Tooltip
 
 - **Tier**: Atom · **Purpose**: contextual help / disabled-reason / estimated-methodology text.
 - **Props**: `content: string` (text only; a link or a control needs CMP-017 Popover) · `mode?: "describes"|"echo"` (default `describes`; `echo` duplicates a name or a reason that lives elsewhere) · `side` · `delay?: number` (default 300ms) · `triggerOnFocus?: boolean` (true always, for keyboard parity).
-- **A11y**: Radix Tooltip primitive — appears on hover AND focus, dismissible via `Esc`, does not trap focus, `role="tooltip"` + `aria-describedby` linking trigger. In `describes` mode the tooltip node is in the DOM at mount (`hidden` until shown), so the description is there when focus lands; in `echo` mode it is `aria-hidden="true"` and the trigger keeps its own `aria-label` or its `aria-describedby` → the always-rendered reason (`docs/design/E09/E09-D09.md` §9.2), so nothing is read twice; it is never the only copy of a reason and never the `title` attribute. As T2's 2b echo it shows the reason of a trigger wrapped in CMP-079 RbacGate (`form="tooltip"`), whose CMP-019 `lock` badge is the visible marker. Hover shows it after `delay`; keyboard focus (`:focus-visible`) shows it at once; it stays while the pointer is on the trigger or the tooltip (WCAG 1.4.13) and hides on leave after a 100 ms grace, on blur and on `Esc`, which stops there; never on a timer.
+- **A11y**: appears on hover AND focus, dismissible via `Esc`, does not trap focus, `role="tooltip"` + `aria-describedby` linking trigger. In `describes` mode the tooltip node is in the DOM at mount (`hidden` until shown), so the description is there when focus lands; in `echo` mode it is `aria-hidden="true"` and the trigger keeps its own `aria-label` or its `aria-describedby` → the always-rendered reason (`docs/design/E09/E09-D09.md` §9.2), so nothing is read twice; it is never the only copy of a reason and never the `title` attribute. As T2's 2b echo it shows the reason of a trigger wrapped in CMP-079 RbacGate (`form="tooltip"`), whose CMP-019 `lock` badge is the visible marker. Hover shows it after `delay`; keyboard focus (`:focus-visible`) shows it at once; it stays while the pointer is on the trigger or the tooltip (WCAG 1.4.13) and hides on leave after a 100 ms grace, on blur and on `Esc`, which stops there; never on a timer.
 - **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge; `type.ui.caption` + `color.text.primary`; padding `space.inset.xs` (block) and `space.inset.sm` (inline); `space.inset.xs` from the trigger; at most 320 px wide. (Replaces `elevation.3` and `radius.sm`, which are primitives.)
 - **Storybook**: Default, LongContent, KeyboardTriggered, Echo.
 - **Tests**: unit, visual, axe, keyboard show/dismiss.
+- **As built (E05-S02)**: positioned by `@floating-ui/dom` (positioning only) through one internal anchored-position hook shared with CMP-017, which flips rather than clips and listens only while shown; the ARIA and behaviour are ours (#265 ruling 1). Empty or whitespace-only `content` renders no node and never shows, so a host keeps one stable tree while its echo comes and goes; content that arrives while the trigger holds keyboard focus or the pointer shows at once, unless `Esc` dismissed it or the trigger has since gone natively disabled. `triggerOnFocus` admits only `true`; a trigger that cannot take focus never shows it and warns in development (ruling 8). A pointer focus waits for the hover delay; a 300 ms skip window opens the next trigger's tooltip at once. On CMP-002 the D10 name echo of a gated control joins "name · reason". Storybook splits Echo into EchoName and EchoReason and adds EscDismiss, Right, Bottom, Left and EdgeFlip.
 
 ### CMP-017 Popover
 
@@ -212,15 +216,17 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.surface.overlay`, `elevation.popover`, `radius.card`, a 1 px `color.border.default` edge; padding `space.inset.sm`; `space.inset.xs` from the anchor. (Replaces `elevation.3` and `radius.md`, which are primitives.)
 - **Storybook**: Default, Modal, NonModal, Flipped, Scrolling.
 - **Tests**: unit, visual, axe, focus-trap/return test.
+- **As built (E05-S02)**: `anchor` is the trigger element itself (one CMP-001 or CMP-002), onto which the popover composes `aria-haspopup`, `aria-expanded`, `aria-controls` and the toggle; `open` / `defaultOpen` / `onOpenChange` work controlled or not; `placement?: "below"|"above"` (default `below`, flipped when there is no room); `heading?` names it through `aria-labelledby` (one of `aria-label`, `aria-labelledby` or `heading` is required); `footer?` is an end-aligned CMP-001 row. Focus leaving a non-modal popover closes it; an outside press moves focus to the pressed control, else the trigger. It appears at once and the exit fades over `fast` (a cut under reduced motion); closed, it is an empty `hidden` shell so `aria-controls` stays valid. Known limits: a non-modal popover closes when focus enters another portalled layer, and a Popover inside a future CMP-043 Dialog is portalled outside its trap. Storybook adds EscDismiss, OutsideClick and Above.
 
 ### CMP-018 Divider
 
 - **Tier**: Atom · **Purpose**: visual/semantic separator.
-- **Props**: `orientation: "horizontal"|"vertical"` (default `horizontal`) · `inset?: boolean` (default false; insets both ends: horizontal `space.inset.md`, vertical `space.inset.xs`) · `decorative?: boolean` (Radix Separator; true removes it from the accessibility tree).
+- **Props**: `orientation: "horizontal"|"vertical"` (default `horizontal`) · `inset?: boolean` (default false; insets both ends: horizontal `space.inset.md`, vertical `space.inset.xs`) · `decorative?: boolean` (default false; true removes it from the accessibility tree).
 - **A11y**: `role="separator"` when semantically meaningful (e.g. inside menu), decorative otherwise.
 - **Tokens**: rule fill `color.border.subtle`, 1 px thick (equal to primitive `border.hairline`; no semantic width token); inset `space.inset.md` (horizontal) / `space.inset.xs` (vertical); vertical default length `size.control.height`.
 - **Storybook**: Horizontal, Vertical.
 - **Tests**: unit, visual.
+- **As built (E05-S02)**: a plain `div` drawn as a border (forced colours keep it), not Radix Separator: `role="separator"` by default and `role="none"` when `decorative`; `aria-orientation` is set only when vertical. Storybook adds Decorative and Labelled.
 
 ### CMP-019 Icon
 
@@ -244,12 +250,13 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-021 Link
 
 - **Tier**: Atom · **Purpose**: in-app navigation/external link.
-- **Props**: `href?` · `to?` (internal route) · `external?: boolean` (renders icon + `rel="noopener"` + opens Electron shell external browser).
+- **Props**: `href?` · `to?` (internal route) · `external?: boolean` (renders icon + `rel="noopener noreferrer"` + opens Electron shell external browser).
 - **States**: default, focus-visible, disabled; the link text is always underlined (`color.text.link` is 2.16:1 against body text, so colour alone cannot mark a link, WCAG 1.4.1).
 - **A11y**: native `<a>`, focus-visible ring, external-link icon has `aria-hidden` with adjacent visually-hidden "(opens externally)" text; disabled renders `<a role="link" aria-disabled="true">` with no `href` (not focusable).
-- **Tokens**: `color.text.link` (text, underline, external-link icon), `type.ui.body`, `size.icon`, `space.inset.xs`, `color.focus.ring`, `radius.control`, `opacity.disabled`, `border.focus`.
+- **Tokens**: `color.text.link` (text, underline, external-link icon), `type.ui.body`, `size.icon`, `space.inset.xs`, `color.focus.ring`, `opacity.disabled`, `border.focus`.
 - **Storybook**: Internal, External.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `rel="noopener noreferrer"` and `target="_blank"` on every external link (E25, #265 ruling 5: no opener handle and no Referer for the private host); the CMP-039 ring sits at the link's own square corners, with no radius (E8); `to` requires `as`, the app's router link component (`packages/ui` never imports a router), which gets no `rel` or `target`; ungated (E27 held). Storybook adds Default, Hover, FocusVisible, ExternalFocusVisible, Disabled, LongText and ExternalNarrowWrap.
 
 ### CMP-022 Kbd (keyboard-shortcut glyph)
 
@@ -259,6 +266,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: cap `color.surface.raised` with a 1 px `color.border.strong` edge (`border.hairline`, decorative), `radius.xs`, padding `space.inset.xs` inline, at least square; key text `type.num.xs` in `color.text.secondary`; caps `space.inset.xs` apart (`docs/design/E05/E05-D02-rest.md` §6 J4, RULED 6438042003). (Replaces `font.mono`, which is not a shipped token.)
 - **Storybook**: SingleKey, Combo, Range, InMenuRow, Remapped (J4, J5).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `names?` takes the keymap's name table from its owner (Ctrl and Shift have built-in words; any other key is read as written). Storybook adds PointerChord and Unbound.
 
 ### CMP-023 Progress Bar
 
@@ -278,6 +286,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: stroke `color.buy.default` (net up) / `color.sell.default` (net down) / `color.neutral.default` (flat) when `colorBySign`, otherwise `color.text.tertiary` (as E06-D02 §2.3); 1.5 px stroke (icon-grid weight), no fill, transparent background.
 - **Storybook**: Uptrend, Downtrend, Flat (each with `colorBySign` on and off).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `floorRatio?` sets E22's y-range floor (at least ± `floorRatio` × the first value's magnitude); a series over 200 points keeps its latest 200; below two points the name is "no trend over 1 bar" or "no data". Storybook names the variants UptrendColorBySign, DowntrendColorBySign and FlatColorBySign and adds Empty, SinglePoint, Sized and InRow, plus a `perf`-tagged Perf story.
 
 ### CMP-025 Avatar Group / Stack
 
@@ -287,6 +296,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: CMP-013 Avatar (md) instances, each in a fixed `size.icon`-wide slot, so each avatar overlaps the next by the difference (8 px compact); 2 px `color.surface.canvas` cut-out ring; `+N` chip `color.neutral.subtle` + `type.num.sm` in `color.text.secondary`, `radius.badge`, height and min-width `size.control.height`, paddingX `space.inset.xs`. (Replaces `space.avatar.overlap`, which is not shipped.)
 - **Storybook**: Default, Overflow.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `items: {label}[]`, with no `color` until an avatar palette is approved (§5 E2).
 
 ### CMP-026 EmptyState
 
@@ -298,6 +308,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: glyph CMP-019 `size="lg"` in `color.text.tertiary`; heading `type.ui.heading-sm` + `color.text.primary`; description `type.ui.body` + `color.text.secondary`; padding `space.inset.xl`; gaps `space.stack.sm` and `space.stack.md`; actions `space.inset.sm` apart. (Replaces `space.emptystate.*`, which is not a shipped token.)
 - **Storybook**: AllVariants, SentenceForm.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `icon?` is optional over a glyph per variant (`info` for no-data, `pending` for recording-not-started and backfill-in-progress, `search` for filtered-empty); a `progress?` slot under the description takes the host's CMP-023, or CMP-038 when the total is unknown (backfill only); `variant="error"` admits no `link` or `progress` and maps `title`, `description` and `cta` to CMP-027's title, message and `retry`, with no heading when there is no description; the 480 px column cap (shared with CMP-027's panel) is written as 30rem because no layout token exists yet. Storybook adds Default, FocusVisible, RecordingNotStarted, BackfillInProgress, FilteredEmpty, ErrorVariant and LongText.
 
 ### CMP-027 ErrorState / InlineError
 
@@ -305,9 +316,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Props**: `message` · `severity: "warning"|"error"` · `form?: "panel"|"inline"|"banner"` (default `panel`; `banner` for a rejected order's class line, `docs/design/E30/E30-D03.md` §4) · `title?` and `headingLevel?` (a heading over the message, e.g. an error summary's "Can't submit — 2 problems") · `items?: {label,href}[]` (an error summary's links, one per field, in document order) · `live?: "assertive"|"polite"|"off"` (default by severity) · `retry?: {label,onClick}` · `action?: {label,onClick}` · `details?: string` (collapsible technical detail).
 - **States**: panel, inline and banner; error and warning; details closed and open; the error summary (`banner` with `title` and `items`, `docs/design/E30/E30-D02.md` D16).
 - **A11y**: `role="alert"` for severity `error` (assertive live region), `role="status"` for `warning` (polite). `live` overrides it: `polite` for an in-panel load failure, `off` (no live role) when another node already announced it; the region is mounted with its host and its text inserted when the failure begins; the message is CandleViewer's own text (a mapped class line, `LegError.message` or the problem's `detail`), never the exchange's `ret_msg` or a wire payload (`docs/design/E30/E30-D03.md` D5; `docs/design/E30/E30-D04.md` C9); an error summary keeps `role="alert"` and its host moves focus to its heading (`tabindex="-1"`), whose links move focus to their fields (E30-D02 D16); `details` sit behind a "Technical details" disclosure (`aria-expanded`), selectable and never in the live region.
-- **Tokens**: glyph CMP-019 `danger` / `warning` in `color.status.danger.strong` / `color.status.warning.strong` (`danger` until E05-T06 registers the PROPOSED `icon/x-circle`, `docs/design/E30/E30-D04.md` §3.3); message `type.ui.body` + `color.text.primary` (`type.ui.body-strong` in the banner); the banner CMP-028's inline box in the error or warning tone (`color.status.danger.subtle` / `color.status.warning.subtle`, a 2 px `border.thick` start edge in `.strong`, `radius.card`, `space.inset.sm`, `space.inset.md`); a summary's heading `type.ui.heading-sm` over CMP-021 links, `space.stack.xs`; details `type.num.sm` + `color.text.secondary` on `color.surface.raised`, `radius.control`, `space.inset.sm`; inline gap `space.inset.xs`; the panel form lays out as CMP-026. (Replaces the bare `color.status.warning/danger`.)
+- **Tokens**: glyph CMP-019 `error` / `warning` in `color.status.danger.strong` / `color.status.warning.strong` (`error` is the registry's circle-x, the shape of the PROPOSED `icon/x-circle`, `docs/design/E30/E30-D04.md` §3.3); message `type.ui.body` + `color.text.primary` (`type.ui.body-strong` in the banner); the banner CMP-028's inline box in the error or warning tone (`color.status.danger.subtle` / `color.status.warning.subtle`, a 2 px `border.thick` start edge in `.strong`, `radius.card`, `space.inset.sm`, `space.inset.md`); a summary's heading `type.ui.heading-sm` over CMP-021 links, `space.stack.xs`; details `type.num.sm` + `color.text.secondary` on `color.surface.raised`, `radius.control`, `space.inset.sm`; inline gap `space.inset.xs`; the panel form lays out as CMP-026. (Replaces the bare `color.status.warning/danger`.)
 - **Storybook**: Warning, Error, WithRetry, WithDetails, Inline, Polite, Banner, Summary.
 - **Tests**: unit, visual, axe, live-region announcement test.
+- **As built (E05-S02)**: the `error` glyph (circle-x) replaces the interim `danger`; `headingId?` gives the title heading an id and `tabindex="-1"`, so an error summary's host moves focus to it after a failed submit; the "Technical details" box carries a CMP-033 copy. Storybook names Error as ErrorSeverityStory and adds BannerWarning, InlineWithRetry, LiveOff and LongText.
 
 ### CMP-028 Callout / Banner (inline, non-global)
 
@@ -317,8 +329,9 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **States**: the six tones; inline and band; dismissible (a close button named "Dismiss {title}"); content at 0 ms; the `unprotected` banner (`tone="danger"`, `edge="hatched"`: a sustained `role="alert"` announced once per step, not dismissible while the stop is missing; it appears, persists and leaves in one frame, never animated; `docs/design/E30/E30-D04.md` §2.3).
 - **A11y**: `role="status"` (info/success/connection-reconnecting) or `role="alert"` (warning/danger/connection-disconnected). `live` overrides the default (`off` renders no live role, for a banner whose announcement another region makes); each state entry is announced once; the region is mounted with its host and its text inserted when the state begins.
 - **Tokens**: fill `color.status.{tone}.subtle`, a 2 px `border.thick` start edge and the glyph in `color.status.{tone}.strong`; `edge="hatched"` replaces that edge with a 4 px start edge hatched 45°, 1 px `color.status.danger.strong` lines at 6 px pitch on `color.status.danger.subtle` (PROPOSED `pattern.hatch.unprotected`, E30-D04 CR-5); the two connection tones on `color.status.danger.subtle` and `.strong` (the `color.data-confidence.*.indicator` accents measure 2.88:1 dark and 2.81:1 light on that fill and stay on `color.surface.*`); title `type.ui.body-strong` + `color.text.primary`; body `type.ui.body` + `color.text.secondary`; `radius.card` (inline), `space.inset.sm`, `space.inset.md`. (Replaces `color.callout.*`, which is not a shipped token.)
-- **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected, Band, LivePolite, Unprotected.
+- **Storybook**: AllTones, Dismissible, ConnectionReconnecting, ConnectionDisconnected, Band, LivePolite, ProtectionPendingSolidEdge.
 - **Tests**: unit, visual, axe, live-region announcement test (assertive vs polite, flap-collapse).
+- **As built (E05-S02)**: `edge` is not built: the hatched edge waits for the PROPOSED `pattern.hatch.unprotected` token and is deferred (#265 ruling 6), so every callout draws the solid 2 px edge and the Unprotected story is ProtectionPendingSolidEdge (the solid edge, not dismissible while the stop is missing); the flap-collapse ("Connection unstable") is owned by CMP-077, which holds the connection state, and the callout announces each state entry it is given once; both connection tones draw the `disconnected` glyph until E17-D02 CR-8's glyphs are registered; the "What changed" disclosure (E05-D02 §6 H15 (3)) is held and the dismissal is a cut until the E05-D03 motion recipe.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the `connection-*` tones appear at 0 ms and dismiss with a `fast` opacity fade; fill and announcements are debounced on the clearing side only — PROPOSED).
 
 ### CMP-029 Skeleton-Chart placeholder
@@ -330,6 +343,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: candle, wick and axis blocks `color.surface.hover` on `color.surface.canvas`; CMP-015's sweep. (Replaces `color.surface.skeleton`, which is not a shipped token.)
 - **Storybook**: SinglePane, MultiPane, Static.
 - **Tests**: unit, visual, reduced-motion snapshot.
+- **As built (E05-S02)**: Storybook names SinglePane and MultiPane as Default and ThreePanes.
 
 ### CMP-030 Divider-Label ("section rule with caption")
 
@@ -339,6 +353,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: label `type.ui.caption` + `color.text.secondary`; gap `space.inset.sm`; rule = CMP-018 Divider (horizontal) in `color.border.subtle`.
 - **Storybook**: Default.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: the separator's horizontal orientation is implicit (`role="separator"` defaults to horizontal), so no `aria-orientation` attribute is written.
 
 ### CMP-031 ColorSwatch / ThemeChip
 
@@ -349,6 +364,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: swatch fill = the colour token being displayed (Penpot master: `color.drawing.default`); selected `check` glyph and the `locked` badge in `color.text.inverse` or `color.text.on-action`, whichever is ≥3:1 on that swatch; hover outline `color.text.secondary`; `radius.control`, `size.control.height` (swatch = 24×24 compact hit target), `size.icon` (check glyph), `size.icon.sm` (`locked` badge), `space.inset.xs` (picker gap), `opacity.disabled`, `color.focus.ring`.
 - **Storybook**: Picker, StaticSwatch.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: two exports replace `selected?` / `onSelect?`: `ColorSwatch` (`color`, `label`, `decorative?`, `density?`), a static named `img` or `aria-hidden` beside text that names the colour, never focusable; and `ColorSwatchPicker` (`swatches: {value,label,color,glyphTone?,disabled?,disabledReason?}[]`, `value?`, `onChange?`, `disabled?` / `disabledReason?` for the whole picker, `density?`, named by `aria-label` or `aria-labelledby`), a `radiogroup` with roving focus. `glyphTone?: "inverse"|"on-action"` (default `inverse`) picks the check and lock colour per swatch. Storybook adds NoSelection, Hover, HoverSelected, FocusVisible, KeyboardNavigation, Disabled, SwatchLocked, PickerLocked, LockedSelected, StaticDecorative, AllStates and Wrapping.
 
 ### CMP-032 Rating/Confidence Dots ("estimated confidence indicator")
 
@@ -358,26 +374,29 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: filled dot `color.status.info.default`, empty dot 1 px `color.text.tertiary` outline, dot 8 px = `space.inset.xs` padding, `radius.badge`, dot gap `space.inset.xs`, dots-to-label gap `space.inset.sm`, label `type.ui.caption` in `color.text.secondary`.
 - **Storybook**: AllLevels.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: a `label` without a level word gets ", {level} confidence" appended, and one that names a different level is replaced by "{Level} confidence" with a development warning. Storybook adds Low, Medium, High, NumericLabel and LongText.
 
 ### CMP-033 CopyButton
 
 - **Tier**: Atom · **Purpose**: copy-to-clipboard affordance (API key display, audit record id, order id).
 - **Props**: `value: string` · `label` (a11y name) · `onCopied?`.
-- **States**: default, copied (`check` glyph in `color.status.success.default`, reverts to default after 2 s), focus-visible, disabled.
+- **States**: default, copied (`check` glyph in `color.status.success.default`, reverts to default after 2 s), failed (`error` glyph in `color.status.danger.default`, "Copy failed", reverts after 2 s), focus-visible, disabled.
 - **A11y**: `aria-label`, announces "Copied" via a transient polite live region on success; the announcement never contains the copied value.
 - **Tokens**: inherits CMP-002 IconButton `variant="ghost"`, `size="md"` (`color.text.secondary`, `color.text.primary`, `color.surface.hover`, `radius.control`, `size.control.height`, `size.icon`); copied glyph `color.status.success.default`.
 - **Storybook**: Default, CopiedState.
 - **Tests**: unit, visual, axe, clipboard-mock interaction test.
+- **As built (E05-S02)**: the failed state is E20's (a refused write, or no clipboard API outside a secure context); the internal `useCopy` hook is exported (`copy(value)`, `status`, `message`) so hosts share the write and the 2 s status, which never speaks or stores the value (#265 ruling 9); the last press wins, and a repeat press empties the status so it is a new announcement; held-Enter repeats are ignored; `disabled?` and `density?` reach the nested CMP-002. Storybook adds Hover, FocusVisible, Failed, Disabled and LongText.
 
 ### CMP-034 MaskedValue ("secret reveal")
 
 - **Tier**: Atom · **Purpose**: masked API key/secret display with reveal toggle (admin key screens).
-- **Props**: `value: string` (a value the client holds in the current flow, never a stored secret: C-2.7) · `label: string` (what it is, e.g. "API secret"; names the group and the buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal` · `autoHideMs?: number` (default 10000, re-masks automatically) · `copyable?: boolean` (default `false`; CMP-033).
+- **Props**: `value: string` (a value the client holds in the current flow, never a stored secret: C-2.7) · `label: string` (what it is, e.g. "API secret"; names the group and the buttons) · `revealed?: boolean` (never `true` at mount) · `onToggleReveal?` · `autoHideMs?: number` (default 10000, re-masks automatically) · `copyable?: boolean` (default `false`; CMP-033).
 - **States**: masked (default, at every mount: an 8-character mask whatever the value's length), revealed (only after a press of the toggle), expiring (the last 2 s, announced once), copied (CMP-033).
 - **A11y**: toggle is CMP-002 IconButton with label "Show {label}"/"Hide {label}" ("Show secret"/"Hide secret" when `label` is "secret"); auto-hide timer announced via polite live region ~2s before hiding ("Secret will hide in 2 seconds") satisfying WCAG 2.2.1 (no silent unannounced timing change). A route change, window blur, the idle lock and sign-out re-mask; while masked the DOM holds the mask only, never the value; copy logs nothing and the live region never holds the value; the value never enters browser storage (`docs/design/E05/E05-D02-form-controls.md` §7, rules S1–S7; flagged for E05-X02; recovery codes are CMP-206's).
 - **Tokens**: box `color.surface.raised` with a 1 px `color.border.default` hairline, `radius.control`, `size.control.height`, `space.inset.sm`; value `type.num.base` + `color.text.primary`; mask `color.text.secondary`; countdown (CMP-035) `type.ui.caption` + `color.text.tertiary`; buttons `space.inset.xs` apart. (Replaces `font.mono`.)
 - **Storybook**: Masked, Revealed, AutoHideCountdown, Copyable.
 - **Tests**: unit, visual, axe, timing-announcement test.
+- **As built (E05-S02)**: `revealed` is a veto only: `false` masks, `true` never reveals (only a press of the toggle does); `onToggleReveal` is optional; `autoHideMs` is clamped to 3–30 s (30 s is G19's cap); an exported `maskAllValues()` re-masks every instance, for the host's route change, idle lock and sign-out. `copyable` copies the value only while it is revealed, with no clipboard-clearing promise; on the board the copied cell is drawn masked, but copy works only while revealed. Residuals the component cannot close, recorded per #265 ruling 12 for E05-X02: clipboard history and sync, screen capture, devtools props, accessibility-tree exposure while revealed, DOM-reading extensions, manual selection and heap retention.
 
 ### CMP-035 Countdown / Timer text
 
@@ -387,6 +406,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: the digits `type.num.*` (`type.num.sm` by default), tabular, in the host sentence's colour; no colour change under the threshold. Under the threshold a CMP-019 `clock` glyph at `size.icon` in `color.status.warning.strong` leads the digits, `space.inset.xs` before them (J1 (c), PROPOSED, owner approval pending (#2701); until then the number alone carries the threshold). (Replaces `font.mono` and `color.text.warning`, which are not shipped tokens; J1.)
 - **Storybook**: Default, UnderThreshold, Expired, HhMmSs, Approx, InGrid (J6).
 - **Tests**: unit (threshold announcement logic), visual, axe.
+- **As built (E05-S02)**: `size?` picks the digits' `type.num.*` step (default `sm`) and `now?` injects the clock (default `Date.now`) for tests and frozen stories; the `clock` glyph is not drawn while J1 (c) is pending. Storybook adds Words and Live.
 
 ### CMP-036 KeyValueRow
 
@@ -396,6 +416,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: row min-height `size.row.height`, gap `space.inset.sm`, rows `space.stack.xs` apart; label `type.ui.label` + `color.text.secondary`; value `color.text.primary`, a number `type.num.base` (or the host's `type.num.*`), any other value `type.ui.body`; a missing value "—" in `color.text.secondary` (J8). (Replaces `space.row.*` and `font.size.body/label`, which are not shipped tokens.)
 - **Storybook**: Default, Emphasis, LiveFreshness, Missing, Stale, Stacked (J8).
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `freshness?` is a `ReactNode` slot (the host's CMP-239 marker) until CMP-239 exists, then the typed state (#265 ruling 10); `missingLabel?` (default "no value") is what "—" is read as. LiveFreshness waits for CMP-239; Storybook adds TextValue.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; a live field settles once through CMP-239; no value-change emphasis while stale).
 
 ### CMP-037 SwatchLegendItem
@@ -406,16 +427,18 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: swatch `size.icon` square, fill = the keyed data token (context-dependent `color.*`), 1 px `color.border.strong` outline; gap `space.inset.sm`; row min-height `size.row.height`; label `type.ui.caption` + `color.text.secondary`; value = CMP-020 NumericText `type.num.sm` + `color.text.primary`.
 - **Storybook**: Default, WithoutValue, WithGlyph.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: `format?` (any CMP-020 format but `pnl`, default `notional`) and `precision?` pass to the value's NumericText; `glyph` is required by type when `color` is a directional token.
 
 ### CMP-038 InlineSpinnerText ("Loading…" text+spinner pairing)
 
 - **Tier**: Atom · **Purpose**: standard "loading X" composite used in buttons/rows/panels needing a text+spinner pairing without re-deriving CMP-014 usage each time.
-- **Props**: `label: string` · `slowLabel?: string` (replaces `label` after 5 s) · `onCancel?` and `cancelLabel?` (a load, an export or a replay only; never an order submit).
+- **Props**: `label: string` · `slowLabel?: string` (replaces `label` after 5 s) · `kind?: "load"|"export"|"replay"|"wait"|"submit"` (default `wait`) · `onCancel?` and `cancelLabel?` (a load, an export or a replay only; never an order submit).
 - **States**: waiting; slow (after 5 s, the slow-path text, e.g. a slow boot's "Still loading… the server is slow to answer"); slow with Cancel. An order submit's slow path is its host's, never CMP-038's: the button reads `submit.awaiting` at 2 s and stays busy, with no spinner (CMP-107; `docs/design/E30/E30-D04.md` M1).
 - **A11y**: single `role="status"` wrapping both icon and text (avoids double-announcement bug class). It is mounted empty with its host and its text inserted when the wait begins; the label is announced once and the slow text once, with no time cap and no elapsed counter.
 - **Tokens**: CMP-014 `sm` (its arc `color.action.primary.default`); text `type.ui.body` + `color.text.secondary`; gap `space.inset.xs`; Cancel a CMP-001 `ghost` `sm`, `space.inset.sm` apart. (Replaces "inherits CMP-014/CMP-020".)
 - **Storybook**: Default, SlowPath, SlowPathWithCancel.
 - **Tests**: unit, visual, axe.
+- **As built (E05-S02)**: the new `kind` prop types the Cancel rule: `onCancel` is accepted only for `load`, `export` and `replay`, and the Cancel shows only from the 5 s slow path; a new `label` or `kind` is a new wait and restarts the 5 s. Storybook adds SubmitNeverCancels and LongText.
 
 ### CMP-039 FocusRing (utility, non-visual export)
 
@@ -425,6 +448,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **Tokens**: `color.focus.ring` (colour) · `border.focus` (2 px width) · 2 px `outline-offset`; the ring follows the element's corner radius (CSS outline).
 - **Storybook**: RingOnButton, RingOnCustomSurrogate.
 - **Tests**: contrast-ratio automated check, visual.
+- **As built (E05-S02)**: the hook is `useFocusRing({ inset? })` returning `{ className }`, `inset` drawing the ring inside the element (#265 ruling 11; D11's halo held). Storybook shows it on a plain sample as Normal and Inset; RingOnButton and RingOnCustomSurrogate are not separate stories.
 - **On canvas-adjacent surrogates (`docs/design/E11/E11-D05.md` §9.1):** on a DOM-mirror surrogate aligned over canvas content (`05-accessibility-standard.md` §6.1; E06-D03; E11-D02 §7) the ring is **2 px `color.focus.ring` at 2 px offset with a 1 px pane-colour halo** (`color.surface.canvas`) between ring and content, so it stays visible over data ink of any luminance; the keyboard cursor column is E06-D03 D10's double ring (core ≥2 px plus halos), drawn on the canvas in `color.chart.focus.ring` with a `color.chart.pane.bg.default` halo (= `color.focus.ring` / `color.surface.canvas` — the engine-prefix aliases of `docs/design/E11/E11-D05.md` §4.1b, because the engine never reads CSS), and the chart draws **one** CMP-039 ring at the chart boundary, never two; measured on the canvas 7.05 / 6.30 / 18.32 and on raised chrome 6.66 / 5.86 / 17.30 (dark / light / high-contrast — the high-contrast ring is `palette.white` since #3896); in high-contrast the ring is ≥20 CIE76 ΔE from the primary and selected fills (`16` §2.1). Storybook adds RingOnCanvasData (the ring over candles in three themes; PROPOSED).
 
 ---

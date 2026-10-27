@@ -580,6 +580,7 @@ The four a11y lines (keyboard, name/role, motion pair, exceptions) are the mecha
 - **No credential ever belongs in a token file**, `themes.json`, `CHANGELOG.md`, a PNG export, a PR body or this document: the token JSON is bundled into the app and read by every reviewer and agent. A `$description` or `$comment` is a public string.
 - Any Penpot access token, MCP user key or CI token used by export or sync automation lives only in the user's local client config or the CI secret store, never in the repository, a ticket, a log or a screenshot (C-12.2; `27-adrs/ADR-0009-secrets-and-key-management.md` for how this project keeps secrets). Today the only automation is `docs/design/_tools/penpot_export.py`, which reads the per-user MCP key from `~/.claude.json` at run time and prints no key; never commit, print or paste `~/.claude.json`, `.mcp.json` or anything under `.claude/relayroom/`.
 - Before every push: `gitleaks protect --staged --redact`; CI's secret and dependency scans run on the PR (check names: C-9.1). `style-dictionary` stays a pinned devDependency; the build driver itself imports nothing outside the repo (E05-X01 supply-chain model).
+- **Overlay positioning** (#265 ruling 1): `@candleviewer/ui` takes `@floating-ui/dom` (MIT) as a runtime dependency for positioning only, shared by CMP-016 and CMP-017; their ARIA and behaviour stay ours, and the owner may revisit the choice.
 
 ### 11.7 Known gaps (recorded honestly, 2026-10-20)
 
