@@ -210,13 +210,16 @@ class PrivateStreamCloseOverran(TimeoutError):
     """`close_key` passed `KEY_CLOSE_BOUND_S` with streams on the key still closing: the revoke is
     not done, so its caller answers no success, and a retry waits for the same close, which runs
     on meanwhile in the registry's tasks. A `TimeoutError`, so E27-S04 (#898) catches it without
-    importing the adapter (C-2.2); its text is fixed and `accounts` names the streams still
-    closing. A retry names only the streams whose close it starts, none of these, so `accounts`
-    is the audit's source for them."""
+    importing the adapter (C-2.2); its text is fixed. `accounts` names the streams still closing
+    and `closed` the ones the call closed in time: together they name every stream whose close
+    the call started, and a retry names none of them, so the audit's source is both fields."""
 
-    def __init__(self, accounts: tuple[AccountId, ...]) -> None:
+    def __init__(
+        self, accounts: tuple[AccountId, ...], *, closed: tuple[AccountId, ...] = ()
+    ) -> None:
         super().__init__("the key's private streams are still closing")
         self.accounts = accounts
+        self.closed = closed
 
 
 class KeyTombstones:
@@ -1056,13 +1059,14 @@ class PrivateStreams:
             except TimeoutError:
                 still = tuple(c.account.account_id for c, task in closes.items() if not task.done())
         if still:
+            closed = tuple(c.account.account_id for c in started if closes[c].done())
             logger().critical(
                 "bybit_private_key_close_overran",
                 cv_page=True,
                 reason=reason,
                 accounts=[str(account_id) for account_id in still],
             )
-            raise _bare(PrivateStreamCloseOverran(still))
+            raise _bare(PrivateStreamCloseOverran(still, closed=closed))
         if started:
             logger().warning("bybit_private_key_closed", reason=reason, streams=len(started))
         return tuple(conn.account.account_id for conn in started)
