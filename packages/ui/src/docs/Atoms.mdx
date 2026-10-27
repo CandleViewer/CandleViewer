@@ -65,3 +65,19 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Esc                                                          | Not handled: it bubbles to the host.                                                          |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+
+### Tag (CMP-011; the remove control follows APG Button through CMP-002)
+
+| Keys                         | Action                                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus to the remove button of a removable chip; the nested CMP-002 draws the only ring. Static chips are not in the Tab order.                             |
+| Enter, Space (remove)        | Fires `onRemove`. The chip never moves focus: the owning group moves it to the next chip's remove button, else the previous one, else its input; never `<body>`. |
+| Enter, Space (with a reason) | No removal; the remove button stays focusable and its reason is the accessible description.                                                                      |
+
+| Element                | Role        | Name                                     | Notes                                                       |
+| ---------------------- | ----------- | ---------------------------------------- | ----------------------------------------------------------- |
+| Chip                   | none (span) | its visible label                        | Status tones carry a fixed glyph plus the word.             |
+| Leading glyph          | none        | none                                     | `aria-hidden`: the word is in the label.                    |
+| Remove (ghost CMP-002) | button      | "Remove {label}", e.g. "Remove Breakout" | Gated removal: `aria-disabled` plus the reason description. |
+
+Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word.
