@@ -43,7 +43,7 @@ formula is re-implemented here. Nine sections, each row labelled with its source
    the join and leave strings carry their consequence clause.
 8. String gates on the spec and the hand-off: the one T2 rule stated once and cited from the scale-link
    section; the view-as leg first in the Save mention; no closing keyword; no local path, user name, notes
-   folder or design-tool host (generic patterns, never the words); every section-0 board row PENDING; no
+   folder or design-tool host (generic patterns, never the words); every section-0 board row drawn; no
    placeholder words; the frame names of section 0 = the state inventory = the hand-off's count; "unsync is
    not a reset" verbatim; "storage pending" on every un-stored switch; the events table complete; a lock
    glyph only on the three T2 frames (the scale link in no group, its light twin, Save under view-as); the
@@ -1518,14 +1518,14 @@ def gates(
     # exits never gated
     if not re.search(r"Esc[^.|]*never (?:gated|locked)", spec):
         fails.append("exits: the spec does not state that Esc is never gated")
-    # section 0: every board row PENDING, frames named there = the state inventory = the hand-off's count
+    # section 0: every board row drawn, frames named there = the state inventory = the hand-off's count
     boards = section(spec, "## 0. ", "## 1. ")
     board_rows = [r for r in rows_of(boards) if r and re.fullmatch(r"\d\d", r[0])]
     if not board_rows:
         fails.append("boards: no board rows in section 0")
     for r in board_rows:
-        if "PENDING" not in r[-1]:
-            fails.append("boards: a section-0 board row is not PENDING")
+        if "drawn" not in r[-1]:
+            fails.append("boards: a section-0 board row is not drawn")
             break
     f0, finv = frame_names(boards), {r[0].strip("`") for r in inventory_rows(spec)}
     if f0 != finv:
@@ -2344,7 +2344,7 @@ CONTEXTS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "the summary counts (19)",
         (
-            r"(\d+) named frames on (\w+) PENDING boards; (\d+) gated pairs, (\d+) FAIL; "
+            r"(\d+) named frames on (\w+) drawn boards; (\d+) gated pairs, (\d+) FAIL; "
             r"(\d+) A-rows, "
             r"(\d+) C-rows, (\d+) G-rows, (\d+) OQs"
         ),
@@ -3218,14 +3218,14 @@ def self_test(spec: str, handoff: str, tool: str, bindings: set[str]) -> list[st
         "remove the Esc sentence", re.sub(r"never (gated|locked)", r"sometimes \1", spec), "exits:"
     )
     expect(
-        "un-PENDING a board row",
+        "re-PENDING a drawn board row",
         in_section(
             spec,
             "## 0. ",
             "## 1. ",
-            lambda t: edit_row(t, r"^\| 01 .*$", lambda ln: ln.replace("PENDING", "DRAWN")),
+            lambda t: edit_row(t, r"^\| 01 .*$", lambda ln: ln.replace("drawn", "PENDING")),
         ),
-        "not PENDING",
+        "not drawn",
     )
     first_frame = min(frame_names(section(spec, "## 0. ", "## 1. ")))
     expect(
