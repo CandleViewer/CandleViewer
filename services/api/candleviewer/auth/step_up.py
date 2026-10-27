@@ -29,11 +29,20 @@ racing to use a grant one does, and a grant used while another request of
 the session is in flight stays used. A change is a function of the columns it
 is given and of the values it was built with, with no I/O and no await; the
 strike also notes on itself whether it started a downgrade.
+
+Minimum time (#4664): a step-up refused once its factors are being checked, and a failed
+`verify_password`, return no sooner than the minimum time (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`)
+after the call started, after the strike or the account failure count is written; a success
+is never held (`FailureHold`, shared with `LoginService`). A refusal decided before any factor
+is checked (an unknown class, a read-only or revoked session, a refused challenge) is answered
+at once: it does not depend on the factors.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -50,6 +59,7 @@ from candleviewer.auth.errors import (
     StepUpRequired,
     UnknownActionClass,
 )
+from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
 from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD
 from candleviewer.auth.metrics import (
@@ -382,7 +392,12 @@ class StepUpService:
         publish_revocation: RevocationSink | None = None,
         chart: SessionChart | None = None,
         skew_reporter: TotpSkewReporter | None = None,
+        failure_floor: timedelta = FAILURE_MINIMUM,
+        monotonic: MonotonicClock = time.monotonic,
+        sleep: Sleep = asyncio.sleep,
     ) -> None:
+        #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
+        self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
         self._chart = chart if chart is not None else SessionChart()
         #: #2272: the owner TOTP reset closes the target's sockets through it.
         self._publish_revocation = publish_revocation
@@ -471,7 +486,12 @@ class StepUpService:
         cross-check, or names a grace class when no challenge is live (#2304).
         `StepUpChallengeRefused` is decided before any factor is checked. Every
         failure - wrong password, locked account, wrong/replayed code - raises
-        the same `StepUpCodeInvalid` and is counted identically."""
+        the same `StepUpCodeInvalid` and is counted identically.
+
+        #4664: every refusal raised once the factors are being checked (`StepUpCodeInvalid`,
+        `SessionReadOnly`, `SessionRevoked`) returns no sooner than the minimum time after this
+        call started, after the strike is written; a grant is never held."""
+        started = self._failure_hold.start()
         if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
         await self.assert_writable(session_id)
@@ -481,38 +501,43 @@ class StepUpService:
         now = self._clock()
         action_class, challenge = _answered(record, now, action_class, challenge_id)
         grant_key = _grant_key(action_class, challenge)
-        if not await self._verify_both(user_id, code, password, now):
-            auth_stepup_failures_total.inc()  # SR-125; the audit row names the action class
-            strike = _Strike(now)
-            struck = await self._update(session_id, strike)
+        try:
+            if not await self._verify_both(user_id, code, password, now):
+                auth_stepup_failures_total.inc()  # SR-125; the audit row names the action class
+                strike = _Strike(now)
+                struck = await self._update(session_id, strike)
+                await self._record(
+                    record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
+                )
+                if struck.readonly_until is not None:
+                    if strike.downgraded:  # one that landed meanwhile was counted when it began
+                        auth_readonly_downgrades_total.inc()
+                    raise SessionReadOnly(struck.readonly_until)
+                raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
+            single_use = action_class in NO_GRACE_ACTION_CLASSES
+            until = now + (SINGLE_USE_WINDOW if single_use else GRACE_WINDOW)
+            saved = await self._update(session_id, _elevate(action_class, grant_key, until, now))
+            if saved.readonly_until is not None:  # downgraded during the factor check
+                raise SessionReadOnly(saved.readonly_until)
+            fingerprint = challenge.fingerprint if single_use and challenge is not None else None
+            cid = None if challenge is None else challenge.challenge_id
             await self._record(
-                record, now, "STEP_UP_FAILED", action_class=action_class, now_us=to_us(now)
+                record,
+                now,
+                "STEP_UP_OK",
+                action_class=action_class,
+                elevated_until_us=to_us(until),
+                **({} if cid is None else {"challenge_id": str(cid)}),
+                **({} if fingerprint is None else {"request_sha256": fingerprint}),
             )
-            if struck.readonly_until is not None:
-                if strike.downgraded:  # one that landed meanwhile was counted when it began
-                    auth_readonly_downgrades_total.inc()
-                raise SessionReadOnly(struck.readonly_until)
-            raise StepUpCodeInvalid(FAILURE_CAP - struck.step_up_failures)
-        single_use = action_class in NO_GRACE_ACTION_CLASSES
-        until = now + (SINGLE_USE_WINDOW if single_use else GRACE_WINDOW)
-        saved = await self._update(session_id, _elevate(action_class, grant_key, until, now))
-        if saved.readonly_until is not None:  # downgraded during the factor check
-            raise SessionReadOnly(saved.readonly_until)
-        fingerprint = challenge.fingerprint if single_use and challenge is not None else None
-        cid = None if challenge is None else challenge.challenge_id
-        await self._record(
-            record,
-            now,
-            "STEP_UP_OK",
-            action_class=action_class,
-            elevated_until_us=to_us(until),
-            **({} if cid is None else {"challenge_id": str(cid)}),
-            **({} if fingerprint is None else {"request_sha256": fingerprint}),
-        )
-        auth_step_up_total.labels(action_class=action_class).inc()
-        return StepUpGrant(
-            action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
-        )
+            auth_step_up_total.labels(action_class=action_class).inc()
+            return StepUpGrant(
+                action_class, until, single_use, challenge_id=cid, fingerprint=fingerprint
+            )
+        except (StepUpCodeInvalid, SessionReadOnly, SessionRevoked):
+            # A cancellation during the wait propagates (nothing here catches it).
+            await self._failure_hold.hold(started)
+            raise
 
     async def record_pending(
         self, session_id: str, action_class: str, *, fingerprint: str | None = None
@@ -561,9 +586,16 @@ class StepUpService:
         (SR-015, SR-016), as step-up checks it: a wrong password counts toward
         the account lockout, and a locked or unknown account fails like a wrong
         password. `POST /auth/unlock` (#2300) re-authenticates with it and audits
-        the lockout a wrong password applies (`locked_until`)."""
+        the lockout a wrong password applies (`locked_until`).
+
+        #4664: a failed verdict returns no sooner than the minimum time after the call
+        started, after the failure count is written; a verified one is never held."""
+        started = self._failure_hold.start()
         user = await self._users.find_by_id(user_id)
-        return await self._password_verdict(user, password, self._clock())
+        verdict = await self._password_verdict(user, password, self._clock())
+        if not verdict.ok:
+            await self._failure_hold.hold(started)
+        return verdict
 
     async def _verify_both(self, user_id: str, code: str, password: str, now: datetime) -> bool:
         """Password first (login's hasher + lockout counters), then TOTP.

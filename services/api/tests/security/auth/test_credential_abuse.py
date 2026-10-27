@@ -18,7 +18,7 @@ from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LOGIN_FAILURE_FLOOR, LoginService
 from candleviewer.auth.models import LoginRequest, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 from ._kit import Clock
 
@@ -34,15 +34,16 @@ WARMUP = 10
 
 
 async def _world(
-    *, throttle: int = 10**9, clock: Clock | None = None, floor: timedelta = timedelta(0)
+    *, throttle: int = 10**9, clock: Clock | None = None
 ) -> tuple[LoginService, FakeUserRepository, Hasher]:
-    """No failure floor by default: AC-ENUM-03 measures the two arms' own work, which the floor
-    would pad to one deadline, and the other cases need no wait. The floor's case passes it."""
+    """No wait for the minimum time (#4664: an injected no-op wait, the minimum itself kept):
+    AC-ENUM-03 measures the two arms' own work, which the wait would pad to one deadline, and
+    the other cases need no wait. The minimum time's own case builds its service itself."""
     repo, hasher = FakeUserRepository(), Hasher(pepper="p")
     repo.add(make_user(password_hash=await hasher.hash(PW)))
     kw: dict[str, object] = {
         "per_ip_throttle": PerIpLoginThrottle(max_attempts=throttle),
-        "failure_floor": floor,
+        "sleep": no_wait,
     }
     if clock is not None:
         kw["clock"] = clock
@@ -131,7 +132,7 @@ async def test_ac_enum_02_disabled_user_revealed_only_after_correct_password() -
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
     with pytest.raises(InvalidCredentials):
         await svc.login(LoginRequest(identifier="basiltt", password=BAD), source_ip="3.3.3.3")

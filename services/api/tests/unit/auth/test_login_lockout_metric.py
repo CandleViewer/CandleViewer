@@ -18,7 +18,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.models import LoginRequest
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 PASSWORD = "correct-horse-battery-staple"
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
@@ -45,7 +45,7 @@ async def _service() -> tuple[LoginService, _Clock]:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=clock,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
     return service, clock
 

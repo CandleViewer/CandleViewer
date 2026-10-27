@@ -21,6 +21,7 @@ from candleviewer.auth.mfa_service import CHALLENGE_ATTEMPT_CAP, MfaService, _ha
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, MfaVerifyRequest
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
 from candleviewer.auth.totp import generate_code, time_step_for
+from tests.unit.auth.auth_fakes import no_wait
 
 from .mfa_fakes import FakeMfaRepository
 from .totp_code_cases import ARABIC_INDIC_CODE
@@ -31,7 +32,11 @@ _NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
 
 def _service(repo: FakeMfaRepository) -> MfaService:
     return MfaService(
-        repo, TotpEncryptor(os.urandom(32)), recovery_code_key=_RC_KEY, clock=lambda: _NOW
+        repo,
+        TotpEncryptor(os.urandom(32)),
+        recovery_code_key=_RC_KEY,
+        clock=lambda: _NOW,
+        sleep=no_wait,
     )
 
 
@@ -351,7 +356,11 @@ async def test_recover_with_wrong_hmac_key_rejects_valid_code() -> None:
     codes = await _with_codes(repo, uid)
     token = await _challenge(repo, uid)
     other = MfaService(
-        repo, TotpEncryptor(os.urandom(32)), recovery_code_key=b"z" * 32, clock=lambda: _NOW
+        repo,
+        TotpEncryptor(os.urandom(32)),
+        recovery_code_key=b"z" * 32,
+        clock=lambda: _NOW,
+        sleep=no_wait,
     )
     with pytest.raises(RecoveryCodeInvalid):
         await other.check_recovery(token, codes[0])

@@ -375,7 +375,7 @@ tests:
         component: auth
         env: live
       exp_annotations:
-        summary: Failed sign-ins took longer than the minimum failed sign-in time
+        summary: Refused authentication steps took longer than the minimum time
         runbook_url: docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed
 - interval: 1m
   input_series:

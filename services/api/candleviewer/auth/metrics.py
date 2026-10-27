@@ -138,13 +138,15 @@ auth_lockouts_total = Counter(
     "auth_lockouts_total",
     "Account lockouts applied by repeated wrong passwords (SR-016), from login or step-up.",
 )
-#: #4648: one per failed sign-in that took longer than `LOGIN_FAILURE_FLOOR` before its response
-#: was due, so it was returned without the wait (`LoginService._hold_failure`). No label. Any
-#: increase means failed sign-ins were not all held to the same minimum time;
+#: #4648: one per refused authentication step that took longer than the minimum time before its
+#: response was due, so it was returned without the wait (`FailureHold.hold`): a failed sign-in,
+#: and since #4664 a refused second factor, recovery code, step-up or step-up password re-check.
+#: No label. Any increase means refusals were not all held to the same minimum time;
 #: `AuthLoginFailureFloorMissed` tickets it.
 auth_login_failure_floor_missed_total = Counter(
     "auth_login_failure_floor_missed_total",
-    "Failed sign-ins that took longer than the minimum failed sign-in time, so were not held.",
+    "Refused authentication steps (sign-in, second factor, recovery code, step-up) that took "
+    "longer than the minimum time, so were not held.",
 )
 #: #4663: one per sign-in attempt refused at once, with a retry-after, because sign-in
 #: verification was already running for as many attempts as it admits at a time

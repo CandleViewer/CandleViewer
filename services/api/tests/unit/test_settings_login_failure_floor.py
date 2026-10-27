@@ -3,7 +3,8 @@
 A failed sign-in returns no sooner than this many milliseconds after the attempt started. The
 setting defaults to `AUTH_LOGIN_FAILURE_FLOOR_MS` (500), which `LoginService` also uses as its
 default, and a value outside 250-5000 refuses startup: zero included, so no setting turns the
-minimum time off (C-4.14). Production wiring passes the setting through to `LoginService`.
+minimum time off (C-4.14). Production wiring passes the setting through to `LoginService`,
+and (#4664) to `MfaService` and `StepUpService`, which hold their refusals to the same value.
 """
 
 from __future__ import annotations
@@ -23,6 +24,8 @@ from candleviewer.settings import (
     Settings,
 )
 from tests.unit.auth.auth_fakes import FakeUserRepository
+from tests.unit.auth.mfa_fakes import FakeMfaRepository
+from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _ENV = "CV_AUTH_LOGIN_FAILURE_FLOOR_MS"
 
@@ -106,7 +109,26 @@ async def test_auth_service_start_passes_the_floor_to_login_service() -> None:
 
     await service.start(ctx=None)  # type: ignore[arg-type]  # no MFA store: ctx is not read
 
-    assert service.login._failure_floor_s == pytest.approx(1.234)
+    assert service.login._failure_hold.minimum == timedelta(milliseconds=1234)
+
+
+async def test_auth_service_start_passes_the_floor_to_the_second_factor_and_step_up() -> None:
+    service = AuthService(
+        repository=FakeUserRepository(),
+        pepper="pepper",
+        mfa_repository=FakeMfaRepository(),
+        totp_encryption_key=b"0" * 32,
+        recovery_code_hmac_key=b"1" * 32,
+        session_repository=FakeSessionRepository(),
+        login_failure_floor=timedelta(milliseconds=1234),
+    )
+
+    await service.start(ctx=None)  # type: ignore[arg-type]  # explicit keys: ctx is not read
+    try:
+        assert service.mfa._failure_hold.minimum == timedelta(milliseconds=1234)
+        assert service.step_up._failure_hold.minimum == timedelta(milliseconds=1234)
+    finally:
+        await service.stop(grace_s=1.0)
 
 
 def test_auth_service_default_floor_is_the_login_service_default() -> None:

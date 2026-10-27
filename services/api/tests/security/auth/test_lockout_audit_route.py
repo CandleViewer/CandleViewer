@@ -9,7 +9,7 @@ wrong passwords yields zero `account_locked` records, and every later attempt yi
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -22,7 +22,7 @@ from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.settings import AUTH_LOGIN_VERIFY_CONCURRENCY_MAX
 from tests.unit.api._fakes import WriterLane
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
@@ -61,7 +61,7 @@ async def _client() -> tuple[httpx.AsyncClient, _Audit, FakeUserRepository]:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
         # #4663: every attempt of a burst is admitted, so the lockout is what is tested here.
         verify_concurrency=AUTH_LOGIN_VERIFY_CONCURRENCY_MAX,
     )

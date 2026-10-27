@@ -27,6 +27,7 @@ from candleviewer.auth.step_up import StepUpService, grace_expires_at
 from candleviewer.observability.context import bind_context
 from candleviewer.statechart.bindings import b16_session
 from tests.conftest import RecordingAuditSink
+from tests.unit.auth.auth_fakes import no_wait
 
 from .session_fakes import FakeSessionRepository
 from .test_step_up import (
@@ -228,7 +229,7 @@ async def test_owner_reset_refused_by_its_write_ahead_audit_keeps_chart_and_sock
         raise RuntimeError("WAL unwritable")
 
     deps = (base._mfa, sessions, base._encryptor, base._users, base._hasher)
-    svc = StepUpService(*deps, clock=clock, publish_revocation=sink)
+    svc = StepUpService(*deps, clock=clock, publish_revocation=sink, sleep=no_wait)
     target = uuid.uuid4()
     sessions.sessions["t1"] = _session(target)
     await svc.record_pending("t1", "keys")  # target has a live chart
@@ -252,7 +253,7 @@ async def test_hydration_from_row_is_not_re_audited(b16_audit: RecordingAuditSin
     svc, clock, seed, user, sessions = await _setup()
     await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
     rebuilt = StepUpService(
-        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock
+        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
     )
     before = len(b16_audit.calls)
     await rebuilt.require_elevation("s1", "keys")  # chart rebuilt from the row

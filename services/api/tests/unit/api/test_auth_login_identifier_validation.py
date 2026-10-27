@@ -5,7 +5,6 @@ audited and the identifier is not echoed. Through the real router, `LoginService
 
 from __future__ import annotations
 
-from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -21,7 +20,7 @@ from candleviewer.auth.login_service import LoginService
 from candleviewer.domain.text import UNSTORABLE_TEXT
 from tests.unit.api._fakes import WriterLane
 from tests.unit.audit.audit_fakes import FakeClock, PgTextAuditRepository
-from tests.unit.auth.auth_fakes import FakeUserRepository
+from tests.unit.auth.auth_fakes import FakeUserRepository, no_wait
 
 _PEER = ("127.0.0.1", 50000)
 _GUESS = "not-the-password"
@@ -49,7 +48,7 @@ async def test_failed_login_with_a_nul_identifier_is_refused_and_not_audited(
 ) -> None:
     repo = PgTextAuditRepository()
     writer = AuditWriter(repo, str(tmp_path / "a.wal"), clock=FakeClock(), sleep=repo.retry_sleep)
-    login = LoginService(FakeUserRepository(), Hasher(pepper="p"), failure_floor=timedelta(0))
+    login = LoginService(FakeUserRepository(), Hasher(pepper="p"), sleep=no_wait)
     app = FastAPI()
     install_error_redaction(app)
     auth = cast(Any, _Auth(login))

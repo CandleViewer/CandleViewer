@@ -173,15 +173,16 @@ groups:
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authlockouts"
       - alert: AuthLoginFailureFloorMissed
         # #4648: a failed sign-in that took longer than the minimum failed sign-in time before its
-        # response was due is returned without the wait, and counted. Any in 10m is a ticket:
-        # failed sign-ins were not all held to the same minimum time.
+        # response was due is returned without the wait, and counted; since #4664 so is a refused
+        # second factor, recovery code or step-up. Any in 10m is a ticket: refusals were not all
+        # held to the same minimum time.
         expr: sum by (env) (increase(auth_login_failure_floor_missed_total[10m])) > 0
         for: 0m
         labels:
           severity: ticket
           component: auth
         annotations:
-          summary: "Failed sign-ins took longer than the minimum failed sign-in time"
+          summary: "Refused authentication steps took longer than the minimum time"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed"
       - alert: AuthLoginVerifyRefused
         # #4663: sign-in verification runs for at most CV_AUTH_LOGIN_VERIFY_CONCURRENCY attempts

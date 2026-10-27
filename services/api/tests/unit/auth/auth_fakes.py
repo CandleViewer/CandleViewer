@@ -10,6 +10,12 @@ from candleviewer.auth.models import MfaMethodKind, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 
 
+async def no_wait(_delay: float) -> None:
+    """#4664: the injected wait for suites that do not test the minimum time of a refused step.
+    A service refuses a minimum time below the setting's lowest value, so such a suite keeps the
+    minimum and skips the wait instead (the hold itself still runs)."""
+
+
 class FakeUserRepository(UserRepository):
     def __init__(self) -> None:
         self.users: dict[str, UserRecord] = {}

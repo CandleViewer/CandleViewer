@@ -26,7 +26,6 @@ fabricated pass.
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -38,7 +37,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 
@@ -137,7 +136,7 @@ def test_e09_tc_a07_unknown_user_and_wrong_password_are_indistinguishable() -> N
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     app = FastAPI()

@@ -20,6 +20,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.models import MintedSession, SessionRecord
 from candleviewer.auth.session_service import SessionService
 from candleviewer.auth.step_up import FAILURE_CAP, READONLY_WINDOW, StepUpService
+from tests.unit.auth.auth_fakes import no_wait
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
@@ -71,6 +72,7 @@ async def test_a_refresh_keeps_the_read_only_window_and_the_strike_count() -> No
         FakeUserRepository(),
         Hasher(),
         clock=lambda: _T0,
+        sleep=no_wait,
     )
     try:
         with pytest.raises(SessionReadOnly):

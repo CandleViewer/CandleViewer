@@ -13,7 +13,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, EnrolmentOnlyLogin, LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 
 PASSWORD = "correct-horse-battery-staple"
@@ -32,7 +32,7 @@ def _service(repo: FakeUserRepository, *, clock: object = None) -> LoginService:
     hasher = Hasher(pepper="test-pepper")
     kwargs: dict[str, object] = {
         "per_ip_throttle": PerIpLoginThrottle(max_attempts=1000),
-        "failure_floor": timedelta(0),  # the floor's own tests: test_login_failure_paths.py
+        "sleep": no_wait,  # the minimum time's own tests: test_login_failure_paths.py
     }
     if clock is not None:
         kwargs["clock"] = clock
@@ -50,7 +50,7 @@ async def test_successful_login_advances_to_mfa_challenge() -> None:
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     result = await service.login(
@@ -72,7 +72,7 @@ async def test_wrong_password_raises_invalid_credentials_with_uniform_message() 
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     with pytest.raises(InvalidCredentials) as exc:
@@ -91,7 +91,7 @@ async def test_disabled_account_with_correct_password_raises_account_disabled() 
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     with pytest.raises(AccountDisabled):
@@ -155,7 +155,7 @@ async def test_unknown_user_indistinguishable_from_wrong_password() -> None:
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     with pytest.raises(InvalidCredentials) as unknown_exc:
@@ -190,7 +190,7 @@ async def test_unknown_user_path_runs_exactly_one_hash_verification() -> None:
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     with pytest.raises(InvalidCredentials):
@@ -217,7 +217,7 @@ async def test_unknown_user_timing_matches_wrong_password_within_tolerance() -> 
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     samples = 5
@@ -251,7 +251,7 @@ async def test_per_ip_throttle_blocks_independent_of_username() -> None:
     hasher = Hasher(pepper="test-pepper")
     repo.add(make_user(password_hash=await hasher.hash(PASSWORD)))
     throttle = PerIpLoginThrottle(max_attempts=2, window_s=60.0)
-    service = LoginService(repo, hasher, per_ip_throttle=throttle, failure_floor=timedelta(0))
+    service = LoginService(repo, hasher, per_ip_throttle=throttle, sleep=no_wait)
 
     for _ in range(2):
         with pytest.raises(InvalidCredentials):
@@ -276,7 +276,7 @@ async def test_successful_login_resets_failed_count_and_lockout() -> None:
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     await service.login(LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1")
@@ -298,7 +298,7 @@ async def test_stale_argon2_params_trigger_rehash_on_login() -> None:
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     await service.login(LoginRequest(identifier="basiltt", password=PASSWORD), source_ip="10.0.0.1")
@@ -325,7 +325,7 @@ async def test_successful_login_persists_hashed_mfa_challenge_when_repository_in
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
         mfa_repository=mfa_repo,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     result = await service.login(
@@ -356,7 +356,7 @@ async def test_user_who_must_enrol_gets_an_enrolment_only_login_and_no_challenge
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
         mfa_repository=mfa_repo,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     result = await service.login(

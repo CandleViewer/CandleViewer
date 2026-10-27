@@ -101,7 +101,9 @@ OMS_PRICE_BAND_MIN: Final = Decimal("0.005")
 OMS_PRICE_BAND_MAX: Final = Decimal("0.20")
 
 #: #4648: `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`. A failed sign-in returns no sooner than this many
-#: milliseconds after the attempt started; this module owns the default (`LoginService` reads it).
+#: milliseconds after the attempt started, and since #4664 so does a refused second factor,
+#: recovery code, step-up or step-up password re-check; this module owns the default
+#: (`FailureHold` reads it).
 AUTH_LOGIN_FAILURE_FLOOR_MS: Final = 500
 #: The lowest accepted value. Below it a normal failed sign-in could take longer than the minimum
 #: time, so failures would no longer all wait out the same deadline. Zero is refused: no setting

@@ -17,7 +17,9 @@
 - a per-IP throttle independent of the per-account one (ticket "Scope /
   Deliverables": "one attacker cannot lock every account");
 - every failed sign-in (`InvalidCredentials`, `AccountLocked`, `AccountDisabled`)
-  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648);
+  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648), held by
+  the `FailureHold` the second factor and step-up share (#4664); a minimum time below the
+  setting's lowest value is refused at construction;
 - sign-in verification runs for at most `LOGIN_VERIFY_CONCURRENCY` attempts at a time; an
   attempt beyond that is refused at once with `SignInBusy` and a retry-after (#4663).
 
@@ -37,7 +39,7 @@ import hashlib
 import secrets
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -49,16 +51,13 @@ from candleviewer.auth.errors import (
     InvalidCredentials,
     SignInBusy,
 )
+from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
-from candleviewer.auth.metrics import (
-    auth_lockouts_total,
-    auth_login_failure_floor_missed_total,
-    auth_login_verify_refused_total,
-)
+from candleviewer.auth.metrics import auth_lockouts_total, auth_login_verify_refused_total
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
 from candleviewer.auth.throttle import PerIpLoginThrottle, VerifyAdmission
-from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MS, AUTH_LOGIN_VERIFY_CONCURRENCY
+from candleviewer.settings import AUTH_LOGIN_VERIFY_CONCURRENCY
 
 if TYPE_CHECKING:
     from candleviewer.auth.mfa_repository import MfaRepository
@@ -77,7 +76,7 @@ MFA_CHALLENGE_TTL = timedelta(minutes=5)
 #: deadline; a failure that is already slower is never held longer, and is counted
 #: (`auth_login_failure_floor_missed_total`). A successful sign-in is never held. The
 #: default only: production passes `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`, whose default this is.
-LOGIN_FAILURE_FLOOR = timedelta(milliseconds=AUTH_LOGIN_FAILURE_FLOOR_MS)
+LOGIN_FAILURE_FLOOR = FAILURE_MINIMUM
 
 #: #4663: sign-in verification runs for at most this many attempts at a time. The default only:
 #: production passes `CV_AUTH_LOGIN_VERIFY_CONCURRENCY`, whose default this is.
@@ -87,8 +86,6 @@ LOGIN_VERIFY_CONCURRENCY = AUTH_LOGIN_VERIFY_CONCURRENCY
 LOGIN_BUSY_RETRY_AFTER_S = 1
 
 Clock = Callable[[], datetime]
-MonotonicClock = Callable[[], float]
-Sleep = Callable[[float], Awaitable[None]]
 
 #: The id of the placeholder record below: the nil UUID, never a real user (user ids are
 #: server-generated uuid4), so `UserRepository.record_login_failure` for it changes no row.
@@ -152,9 +149,8 @@ class LoginService:
         self._clock = clock
         self._mfa_token_factory = mfa_token_factory
         self._mfa_repository = mfa_repository
-        self._failure_floor_s = max(failure_floor.total_seconds(), 0.0)
-        self._monotonic = monotonic
-        self._sleep = sleep
+        #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
+        self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
         #: #4663: the bound on sign-in verifications in flight; `admission` is for tests.
         self._admission = admission or VerifyAdmission(verify_concurrency)
 
@@ -169,31 +165,20 @@ class LoginService:
         still raises `NotImplementedError` (see the note at that branch).
 
         #4648: each of those three refusals returns no sooner than the failure floor after
-        the attempt started (`_hold_failure`); a successful outcome is never held.
+        the attempt started (`FailureHold.hold`); a successful outcome is never held.
 
         #4663: raises `SignInBusy` at once, before the identifier is looked up or any password
         is checked, when verification is already running for as many attempts as it admits.
         That refusal is not held to the failure floor: it is answered as soon as it is decided.
         """
-        started = self._monotonic()
+        started = self._failure_hold.start()
         try:
             return await self._check_credentials(request, source_ip=source_ip)
         except (InvalidCredentials, AccountLocked, AccountDisabled):
             # Every failure write has already happened inside the check; only the response
             # waits. A cancellation during the wait propagates (nothing here catches it).
-            await self._hold_failure(started)
+            await self._failure_hold.hold(started)
             raise
-
-    async def _hold_failure(self, started: float) -> None:
-        """Wait until the failure floor has passed since *started*. Bounded by the floor
-        itself, and no wait at all when the attempt already took longer: that attempt is
-        counted, so a failure returned without the wait is never silent."""
-        remaining = started + self._failure_floor_s - self._monotonic()
-        wait = min(remaining, self._failure_floor_s)
-        if wait > 0:
-            await self._sleep(wait)
-        elif self._failure_floor_s > 0:
-            auth_login_failure_floor_missed_total.inc()
 
     async def _check_credentials(
         self, request: LoginRequest, *, source_ip: str

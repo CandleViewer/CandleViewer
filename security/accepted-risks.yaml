@@ -86,21 +86,23 @@ entries:
   # import above it. Pull request scans are diff-informed and never re-report an unchanged
   # line, so only a full scan (the merge queue) showed it. Triaged a false positive by
   # construction (orchestrator ruling); scripts/tests/test_security_gate.py now pins every
-  # line-keyed codeql entry to the code it accepts. Expires with its twin (mfa_service.py:72)
+  # line-keyed codeql entry to the code it accepts. Expires with its twin (mfa_service.py:91)
   # at the GA cut, about five months after triage and the latest date the freeze test allows.
   # #4540 re-keyed it from line 75 to 94 (the placeholder-user constants above it), and #4648
   # from 94 to 106 (the failed sign-in floor's imports and constant above it), then to 108 (the
   # floor's default now read from settings), then to 126 (#4663: the sign-in verification bound's
-  # imports and constants above it); the hashed value and its token source are unchanged, so the
-  # triage stands.
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:126"
+  # imports and constants above it), then to 123 (#4664: the minimum-time hold moved to its own
+  # module); the hashed value and its token source are unchanged, so the triage stands.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/login_service.py:123"
     tool: codeql
     severity: HIGH
     reason: "False positive by construction: the SHA-256 digest is the lookup key for an opaque 256-bit random MFA challenge token (secrets.token_urlsafe(32)), not a password, so a slow KDF adds nothing. Re-check if the token source or the hashed value changes"
     approver: "basiltt" # approval = the orchestrator's merge under the owner's delegation; ratification listed on #2701
     expires: "2027-03-25"
     ticket: "https://github.com/CandleViewer/CandleViewer/issues/3540"
-  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:72"
+  # #4664 re-keyed it from line 72 to 91 (the minimum-time hold's imports and refusal lists above
+  # it); the hashed value and its token source are unchanged, so the triage stands.
+  - id: "py/weak-sensitive-data-hashing:services/api/candleviewer/auth/mfa_service.py:91"
     tool: codeql
     severity: HIGH
     reason: "Random 256-bit bearer mfa_token hashed with SHA-256 as a storage lookup key (high-entropy input, not a password; slow KDFs are inappropriate); CodeQL's password-hashing heuristic keys on the token name. Standing owner-delegated acceptance (run log 2026-09-25, #1778)"

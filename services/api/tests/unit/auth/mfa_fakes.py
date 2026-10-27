@@ -20,6 +20,7 @@ from candleviewer.auth.models import (
 from candleviewer.auth.totp import TOTP_STEP_SECONDS, generate_code, time_step_for
 from candleviewer.auth.totp_skew import SKEW_HOLD_S, TotpSkewReporter
 from candleviewer.observability.health_probes import SystemEvent, SystemEventWriter
+from tests.unit.auth.auth_fakes import no_wait
 
 
 class FakeMfaRepository:
@@ -285,6 +286,7 @@ class SkewRig:
             recovery_code_key=b"k" * 32,
             clock=self.clock,
             skew_reporter=self.reporter,
+            sleep=no_wait,
         )
 
     def clock(self) -> datetime:

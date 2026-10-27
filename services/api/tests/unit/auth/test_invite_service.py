@@ -31,6 +31,7 @@ from candleviewer.auth.models import (
     InviteRecord,
     UserStatus,
 )
+from tests.unit.auth.auth_fakes import no_wait
 
 T0 = datetime(2026, 10, 1, 12, 0, tzinfo=UTC)
 GOOD_PW = "correct horse battery"
@@ -448,7 +449,7 @@ async def test_abandoned_enrolment_cannot_sign_in_through_real_login() -> None:
         users,
         Hasher(pepper="p"),
         per_ip_throttle=PerIpLoginThrottle(max_attempts=1000),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
     for pw in (GOOD_PW, ""):
         with pytest.raises(InvalidCredentials):

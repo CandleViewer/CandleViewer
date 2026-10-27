@@ -9,7 +9,7 @@ registry, where the module-level counters live.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import httpx
@@ -23,7 +23,7 @@ from candleviewer.auth.hashing import DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.login_service import LOGIN_BUSY_RETRY_AFTER_S, LoginService
 from candleviewer.auth.throttle import VerifyAdmission
 from tests.unit.api._fakes import AuditService
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _BODY = {"identifier": "basiltt", "password": "any-guess-at-all"}  # never checked
@@ -46,7 +46,7 @@ def _full_service() -> LoginService:
         repo,
         Hasher(pepper="p"),
         clock=lambda: _NOW,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
         admission=admission,
     )
 
