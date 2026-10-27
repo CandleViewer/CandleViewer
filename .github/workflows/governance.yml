@@ -282,7 +282,9 @@ jobs:
               ;;
           esac
           echo "::notice title=$GITHUB_JOB shard ${SHARD}/${TOTAL} duration::pytest wall time ${PYTEST_MS}ms (budget ${BUDGET_MS}ms); job wall time ${duration_ms}ms, not budgeted"
-          if [ "$PYTEST_MS" -gt "$BUDGET_MS" ]; then
+          # `! [ -le ]`, not `[ -gt ]`: `[` errors on a time past bash's 64-bit integers and an
+          # `if` reads the error as false, so `-gt` would pass that time; `! -le` fails it.
+          if ! [ "$PYTEST_MS" -le "$BUDGET_MS" ]; then
             echo "::error title=$GITHUB_JOB job over budget::pytest wall time ${PYTEST_MS}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi
@@ -377,7 +379,9 @@ jobs:
               ;;
           esac
           echo "::notice title=$GITHUB_JOB duration::combine wall time ${COMBINE_MS}ms (budget ${BUDGET_MS}ms); job wall time ${duration_ms}ms, not budgeted"
-          if [ "$COMBINE_MS" -gt "$BUDGET_MS" ]; then
+          # `! [ -le ]`, not `[ -gt ]`: `[` errors on a time past bash's 64-bit integers and an
+          # `if` reads the error as false, so `-gt` would pass that time; `! -le` fails it.
+          if ! [ "$COMBINE_MS" -le "$BUDGET_MS" ]; then
             echo "::error title=$GITHUB_JOB job over budget::combine wall time ${COMBINE_MS}ms exceeds ${BUDGET_MS}ms (docs/plan/backlog/testplans/E01-governance-charter.md, E01-Q02)"
             exit 1
           fi
