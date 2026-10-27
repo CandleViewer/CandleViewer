@@ -4,6 +4,10 @@ import { describe, expect, it } from "vitest";
 
 const SRC = resolve(import.meta.dirname, "../src/components");
 const CSS = readFileSync(resolve(SRC, "radio.css"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
+const FOCUS_RING = readFileSync(resolve(SRC, "focusring.css"), "utf-8").replace(
+  /\/\*[\s\S]*?\*\//g,
+  "",
+);
 const [normal = "", forced = ""] = CSS.split("@media (forced-colors: active)");
 
 interface Block {
@@ -120,8 +124,10 @@ describe("radio.css contract", () => {
     expect(decl(FORCED, CHECKED, "background")).toBe("Highlight");
     expect(decl(FORCED, `.cv-radio ${RING}::after`, "background")).toBe("HighlightText");
     expect(decl(FORCED, HOVER, "border-color")).toBe("Highlight");
-    expect(decl(FORCED, ".cv-radio:focus-visible .cv-radio__ring", "outline-color")).toBe(
-      "Highlight",
+    // The ring is CMP-039's host / target form; radio.css no longer draws an outline of its own.
+    expect(normal).not.toMatch(/outline\s*:\s*calc/);
+    expect(FOCUS_RING).toMatch(
+      /@media \(forced-colors: active\)[^@]*\.cv-focus-ring-host:focus-visible \.cv-focus-ring-target[^}]*outline-color: Highlight/,
     );
   });
 

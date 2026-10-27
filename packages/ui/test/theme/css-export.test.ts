@@ -77,6 +77,10 @@ describe("components.css package export", () => {
     expect(built).toBe(join(UI_ROOT, "dist", "components.css"));
     const css = readFileSync(built, "utf-8");
     expect(css.indexOf(".cv-control")).toBeLessThan(css.indexOf(".cv-button"));
+    // The CMP-039 ring and the CMP-014 spinner sit in the foundation, ahead of every component file.
+    expect(css.indexOf(".cv-control {")).toBeLessThan(css.indexOf(".cv-focus-ring:focus-visible"));
+    expect(css.indexOf(".cv-focus-ring:focus-visible")).toBeLessThan(css.indexOf(".cv-spinner {"));
+    expect(css.indexOf(".cv-spinner {")).toBeLessThan(css.indexOf(".cv-button {"));
     expect(css).toContain(".cv-visually-hidden");
   });
 });

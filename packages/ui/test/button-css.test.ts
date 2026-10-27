@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 const SRC = resolve(import.meta.dirname, "../src/components");
 const BUTTON = readFileSync(resolve(SRC, "button.css"), "utf-8").replace(/\/\*[\s\S]*?\*\//g, "");
-const CONTROLS = readFileSync(resolve(SRC, "controls.css"), "utf-8");
+const SPINNER = readFileSync(resolve(SRC, "spinner.css"), "utf-8");
 
 interface Block {
   readonly selectors: readonly string[];
@@ -105,7 +105,7 @@ describe("button.css contract", () => {
   });
 
   it("the spinner turns at twice the slow motion token, not a hard-coded second", () => {
-    expect(CONTROLS).toContain("animation: cv-spin calc(var(--motion-duration-slow) * 2) linear");
-    expect(CONTROLS).not.toMatch(/cv-spin\s+\d/);
+    expect(SPINNER).toContain("animation: cv-spin calc(var(--motion-duration-slow) * 2) linear");
+    expect(SPINNER).not.toMatch(/cv-spin\s+\d/);
   });
 });

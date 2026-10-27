@@ -1,0 +1,28 @@
+/*
+ * CMP-039 FocusRing: the one focus-ring definition every interactive atom uses (`useFocusRing()` or the classes).
+ * Keyboard focus only (`:focus-visible`, never `:focus`): 2px `color.focus.ring` at the `border.focus` width.
+ * The 2px offset is a CMP-039 geometry constant (D02 section 5.1); the outline follows the element's radius.
+ * A real outline, never a box-shadow, so forced colours keep it (as Highlight).
+ */
+
+/* Outside the element, 2px clear of it. `.cv-control` keeps the ring for atoms that compose the control foundation. */
+.cv-focus-ring:focus-visible,
+.cv-control:focus-visible,
+.cv-focus-ring-host:focus-visible .cv-focus-ring-target {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Inset (H8): the same ring drawn inside the element's bounds, for items a scrolling container would clip. */
+/* Equal specificity to the base rule: it must stay after it to win. */
+.cv-focus-ring--inset:focus-visible {
+  outline-offset: calc(var(--border-focus) * -1px);
+}
+
+@media (forced-colors: active) {
+  .cv-focus-ring:focus-visible,
+  .cv-control:focus-visible,
+  .cv-focus-ring-host:focus-visible .cv-focus-ring-target {
+    outline-color: Highlight;
+  }
+}

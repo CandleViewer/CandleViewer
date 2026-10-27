@@ -114,3 +114,20 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Keys | Action                                                                                                                                        |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | none | Not focusable. `role="img"` named `{n} accounts: {every label}`, the names folded into `+N` included; avatars and the chip are `aria-hidden`. |
+
+### FocusRing (CMP-039, utility; no pattern of its own)
+
+| Keys                              | Action                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | The ring appears on the newly focused element (`:focus-visible`).               |
+| Arrow keys (roving tabindex)      | The ring moves with focus; only one ring is visible.                            |
+| Pointer click / tap               | No ring on buttons and similar controls; text inputs still show it.             |
+| Esc (closing a dialog or popover) | Focus returns to the trigger; the ring shows if the last interaction was a key. |
+
+`useFocusRing({ inset? })` returns `{ className }`; `inset` draws the ring inside the element's bounds.
+
+### Spinner (CMP-014, status region when labelled; decorative otherwise)
+
+| Keys | Action                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------- |
+| none | Not focusable. With `label`: a polite `role="status"`. Without: `aria-hidden` in a busy host. |

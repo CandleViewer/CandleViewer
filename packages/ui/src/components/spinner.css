@@ -1,0 +1,81 @@
+/*
+ * CMP-014 Spinner. A 270-degree arc (radius 9/24 of the box, round caps) with a 2px stroke: the arc geometry and
+ * stroke are spinner-glyph constants (D02 section 5.1), the stroke bound to the `border.thick` primitive.
+ * sm = size.icon (nested and inline), md = size.control.height (standalone). Tokens only.
+ */
+.cv-spinner {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+}
+
+.cv-spinner[data-size="sm"] {
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+/* Standalone (`label` set) draws in the primary action colour; nested takes its host's label colour. */
+.cv-spinner[data-standalone] {
+  color: var(--color-action-primary-default);
+}
+
+.cv-spinner__arc {
+  display: block;
+  width: 100%;
+  height: 100%;
+  animation: cv-spin calc(var(--motion-duration-slow) * 2) linear infinite;
+}
+
+.cv-spinner__arc circle {
+  fill: none;
+  stroke: currentcolor;
+  stroke-width: calc(var(--border-thick) * 1px);
+  stroke-dasharray: 3 1;
+  stroke-linecap: round;
+}
+
+@keyframes cv-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): no rotation, a static arc.
+   The pulse of D15 waits for the E05-D03 motion recipe, which is what lets it survive theme.css's reduce rule. */
+:root[data-motion="reduce"] .cv-spinner__arc {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-spinner__arc {
+    animation: none;
+  }
+}
+
+/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+@media (forced-colors: active) {
+  .cv-spinner[data-standalone] {
+    color: CanvasText;
+  }
+}
