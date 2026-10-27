@@ -75,7 +75,7 @@ async def test_the_refresh_cookie_alone_never_signs_out_every_session(w: World) 
     locked = await w.mint(uid, idle_timeout_s=900)
     unlocked = await w.mint(uid, idle_timeout_s=3600)
     w.lock(900)
-    for minted, code in ((locked, "session_idle_locked"), (unlocked, None)):
+    for minted, code in ((locked, "session_idle_locked"), (unlocked, "unauthenticated")):
         r = await _logout(w, _cookie(minted), {"all_sessions": True})
         assert (r.status_code, r.json().get("code")) == (401, code)
     assert not (await w.row(locked)).is_revoked and not (await w.row(unlocked)).is_revoked

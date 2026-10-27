@@ -68,11 +68,11 @@ async def test_introspection_of_a_revoked_or_expired_session_is_the_uniform_401(
     revoked = await w.mint(uid)
     await w.sessions.revoke(str(revoked.session_id), reason="logout")
     refused = await _session(w, _bearer(revoked))
-    assert refused.status_code == 401 and refused.json().get("code") is None
+    assert refused.status_code == 401 and refused.json().get("code") == "unauthenticated"
     expired = await w.mint(uid, idle_timeout_s=900)
     w.clock.now += timedelta(hours=12, seconds=1)
     r = await _session(w, {"Cookie": f"{REFRESH_COOKIE}={expired.refresh_token}"})
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
 
 
 async def test_a_rotated_away_refresh_cookie_is_audited_as_a_reuse_probe(w: World) -> None:
@@ -84,7 +84,7 @@ async def test_a_rotated_away_refresh_cookie_is_audited_as_a_reuse_probe(w: Worl
     probes = auth_session_fixation_attempts_total.labels(reason="rotated")
     before = probes._value.get()
     r = await _session(w, {"Cookie": f"{REFRESH_COOKIE}={minted.refresh_token}"})
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
     assert probes._value.get() == before + 1
     (probe,) = w.audit.writer.records
     assert (probe["action"], probe["outcome"], probe["severity"]) == (
@@ -110,7 +110,7 @@ async def test_a_never_issued_refresh_cookie_is_audited_as_a_fixation_attempt(w:
     before = attempts._value.get()
     forged = "never-issued-" + "c" * 32
     r = await _session(w, {"Cookie": f"{REFRESH_COOKIE}={forged}"})
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
     assert attempts._value.get() == before + 1
     (attempt,) = w.audit.writer.records
     assert (attempt["action"], attempt["outcome"], attempt["reason"]) == (
@@ -137,6 +137,6 @@ async def test_a_locked_session_of_a_disabled_user_is_revoked_when_read(
     w.lock()
     w.repo.user_statuses[str(uid)] = UserStatus.DISABLED
     r = await _session(w, credential(minted))
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
     assert (await w.row(minted)).revoked_reason == "user_disabled"
     assert w.published == [(str(minted.session_id), "user_disabled")]

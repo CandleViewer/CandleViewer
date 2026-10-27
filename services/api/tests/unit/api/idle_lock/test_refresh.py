@@ -68,8 +68,8 @@ async def test_the_same_token_refreshes_after_unlock(w: World) -> None:
 @pytest.mark.parametrize(
     ("case", "status", "code", "revoked"),
     [
-        ("disabled", 401, None, "user_disabled"),
-        ("expired", 401, None, "expired"),
+        ("disabled", 401, "refresh_token_invalid", "user_disabled"),
+        ("expired", 401, "refresh_token_invalid", "expired"),
         ("wrong_csrf_pair", 403, "csrf_token_invalid", None),
     ],
 )
@@ -108,7 +108,7 @@ async def test_an_expired_enrolment_only_session_is_refused_before_the_lock(w: W
     w.lock()
     before = _idle_locks_refused()
     r = await _refresh(w, _cookie(minted))
-    assert (r.status_code, r.json().get("code")) == (401, None)
+    assert (r.status_code, r.json().get("code")) == (401, "refresh_token_invalid")
     assert w.audit.writer.records == []
     assert not (await w.row(minted)).is_revoked
     assert _idle_locks_refused() == before
@@ -125,7 +125,7 @@ async def test_a_rotated_token_is_reuse_even_once_its_successor_has_locked(w: Wo
     w.lock()
     before = _idle_locks_refused()
     r = await _refresh(w, old)
-    assert (r.status_code, r.json().get("code")) == (401, None)
+    assert (r.status_code, r.json().get("code")) == (401, "refresh_token_invalid")
     reuse = [e for e in w.audit.writer.records if e["action"] == "auth.refresh_reuse_detected"]
     assert [(e["severity"], e["reason"]) for e in reuse] == [(Severity.CRITICAL, "rotation_reuse")]
     assert (successor, "rotation_reuse") in w.published
