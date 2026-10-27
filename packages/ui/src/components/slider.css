@@ -6,6 +6,11 @@
   gap: var(--space-field-gap);
 }
 
+/* LTR only (declared): the pointer maths reads clientX - left, so the rail is never mirrored. */
+.cv-slider__body {
+  direction: ltr;
+}
+
 /* The body is inset by half a thumb so the thumb at min or max stays inside the box. */
 .cv-slider__body {
   flex: 1;
@@ -25,8 +30,9 @@
 .cv-slider__track {
   position: absolute;
   inset-inline: 0;
-  top: calc(50% - var(--space-inset-xs) / 2);
-  height: var(--space-inset-xs);
+  /* 8 px: twice space.inset.xs (D02 B4, CMP-010), under the 16 px thumb. */
+  top: calc(50% - var(--space-inset-xs));
+  height: calc(var(--space-inset-xs) * 2);
   border-radius: var(--radius-badge);
   background: var(--color-text-tertiary);
 }
@@ -63,7 +69,6 @@
 
 .cv-slider__marks {
   position: relative;
-  height: var(--type-num-sm-line-height);
   margin-block-start: var(--space-stack-xs);
   font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
     var(--type-num-sm-font-family);
@@ -118,12 +123,15 @@
     forced-color-adjust: none;
   }
 
+  /* The empty track is a 1 px CanvasText border on Canvas (the border sits inside the 8 px). */
   .cv-slider__track {
-    background: ButtonText;
+    box-sizing: border-box;
+    border: 1px solid CanvasText;
+    background: Canvas;
   }
 
   .cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track {
-    background: ButtonText;
+    border-color: Highlight;
   }
 
   .cv-slider__fill {
@@ -131,7 +139,7 @@
   }
 
   .cv-slider__thumb {
-    background: ButtonText;
+    background: CanvasText;
   }
 
   .cv-slider__thumb:focus-visible {
@@ -144,14 +152,18 @@
   }
 
   /* Gated: the tracks grey, the thumb, marks and lock keep full strength. */
-  .cv-slider[data-gated] .cv-slider__track,
+  .cv-slider[data-gated] .cv-slider__track {
+    border-color: GrayText;
+    opacity: 1;
+  }
+
   .cv-slider[data-gated] .cv-slider__fill {
     background: GrayText;
     opacity: 1;
   }
 
   .cv-slider[data-gated] .cv-slider__thumb {
-    background: ButtonText;
+    background: CanvasText;
   }
 
   /* Disabled wins: last, and not weaker than any rule above. */
@@ -159,7 +171,10 @@
     opacity: 1;
   }
 
-  .cv-slider[data-disabled] .cv-slider__track,
+  .cv-slider[data-disabled] .cv-slider__track {
+    border-color: GrayText;
+  }
+
   .cv-slider[data-disabled] .cv-slider__fill,
   .cv-slider[data-disabled] .cv-slider__thumb {
     background: GrayText;

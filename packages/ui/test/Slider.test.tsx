@@ -31,6 +31,19 @@ function Host({ onChange, ...rest }: Base & { onChange?: (v: number) => void }):
   );
 }
 
+/** A host whose button engages the gate, to lock the slider while a drag is live. */
+function Gate({ onChange }: { onChange: (v: number) => void }): JSX.Element {
+  const [gated, setGated] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setGated(true)}>
+        gate
+      </button>
+      <Host onChange={onChange} {...(gated ? { disabledReason: REASON } : {})} />
+    </>
+  );
+}
+
 const slider = (host: HTMLElement): HTMLElement => within(host).getByRole("slider");
 const rail = (host: HTMLElement): HTMLElement =>
   host.querySelector<HTMLElement>(".cv-slider__rail") as HTMLElement;
@@ -226,6 +239,39 @@ describe("Slider pointer", () => {
     expect(capture).toHaveBeenCalledWith(7);
   });
 
+  it("prevents default on an unlocked pointer-down and move", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    expect(pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 })).toBe(
+      false,
+    );
+    expect(pointer("pointermove", rail(host), { pointerId: 1, clientX: 160 })).toBe(false);
+  });
+
+  it("only the pressing pointer steers or ends the drag", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    const r = rail(host);
+    pointer("pointerdown", r, { pointerId: 1, button: 0, clientX: 150 });
+    pointer("pointermove", r, { pointerId: 2, clientX: 250 });
+    expect(now(host)).toBe("25");
+    pointer("pointerup", r, { pointerId: 2 });
+    pointer("pointermove", r, { pointerId: 1, clientX: 200 });
+    expect(now(host)).toBe("50");
+  });
+
+  it("a gate engaging mid-drag stops committing", async () => {
+    stubLayout();
+    const onChange = fn();
+    const host = await mount(<Gate onChange={onChange} />);
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    const calls = onChange.mock.calls.length;
+    act(() => within(host).getByRole("button").click());
+    expect(slider(host)).toHaveAttribute("aria-disabled", "true");
+    pointer("pointermove", rail(host), { pointerId: 1, clientX: 250 });
+    expect(onChange).toHaveBeenCalledTimes(calls);
+  });
+
   it("drags, snaps to the step, clamps past either end and stops on release", async () => {
     stubLayout();
     const onChange = fn();
@@ -357,6 +403,14 @@ describe("Slider marks and density", () => {
     expect(count(await mount(<Host marks={[]} />))).toBe(0);
   });
 
+  it("a drag snaps to the nearest step, not down", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    // 66 px on a 200 px rail at x = 100 is 6.6 steps of 5 (floor would give 30).
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 166 });
+    expect(now(host)).toBe("35");
+  });
+
   it("drops marks outside the range and duplicates", () => {
     expect(visibleMarks([100, 50, 50, -5, 200, 0], 0, 100, 0)).toEqual([0, 50, 100]);
     expect(visibleMarks([500], 0, 100, 0)).toEqual([]);
@@ -368,7 +422,9 @@ describe("Slider marks and density", () => {
     expect(visibleMarks(dense, 0, 100, 0)).toEqual([0, 100]);
     expect(visibleMarks([0, 25, 50, 75, 100], 0, 100, 0)).toHaveLength(5);
     // Longer labels need more room: 4-digit labels at 12.5 % gaps collide.
-    expect(visibleMarks([0, 1250, 2500], 0, 10000, 0)).toEqual([0]);
+    expect(visibleMarks([0, 1250, 2500], 0, 10000, 0)).toEqual([0, 10000]);
+    // Min and max show even when no mark sits on them, never nothing or a lone mark.
+    expect(visibleMarks([10, 20, 30], 0, 100, 0)).toEqual([0, 100]);
     expect(visibleMarks([0, 5000, 10000], 0, 10000, 0)).toHaveLength(3);
     // The same 12.5 % gaps fit 1-digit labels.
     expect(visibleMarks([0, 1, 2, 3, 4, 5, 6, 7, 8], 0, 8, 0)).toHaveLength(9);

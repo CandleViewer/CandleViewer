@@ -38,7 +38,7 @@ const decimals = (n: number): number => {
   return Math.max(0, (mantissa.split(".")[1] ?? "").length - Number(exponent));
 };
 
-/** Marks inside the range, ascending and unique; only min and max when the labels would overlap (a heuristic). */
+/** Marks inside the range, ascending and unique; when the labels would overlap (a heuristic), exactly min and max. */
 export const visibleMarks = (
   marks: readonly number[],
   min: number,
@@ -49,7 +49,7 @@ export const visibleMarks = (
   const chars = Math.max(...inside.map((m) => formatNumeric(m, precision).length + 1));
   const gaps = inside.slice(1).map((m, i) => ((m - (inside[i] ?? m)) / (max - min)) * 100);
   const crowded = Math.min(...gaps) < CROWD_PERCENT_PER_CHAR * chars;
-  return crowded ? inside.filter((m) => m === min || m === max) : inside;
+  return crowded ? [min, max] : inside;
 };
 
 const pos = (fraction: number): CSSProperties => ({ "--cv-slider-pos": fraction }) as CSSProperties;
@@ -75,7 +75,7 @@ export function Slider({
   const places = precision ?? Math.max(decimals(step), decimals(min));
   const thumb = useRef<HTMLSpanElement>(null);
   // Read once at pointer-down (no observer, no measuring in render); null when no drag is active.
-  const drag = useRef<{ left: number; width: number } | null>(null);
+  const drag = useRef<{ left: number; width: number; id: number } | null>(null);
   // Plain disabled has no tabindex at all (out of the Tab order); a gated thumb stays in it.
   const focusable = reason.disabled ? {} : { tabIndex: 0 };
   const shown = Math.min(Math.max(value, min), max);
@@ -117,22 +117,23 @@ export function Slider({
     const steps = Math.round((ratio * (max - min)) / step);
     return stepValue(min, step, "up", steps, places, min, max);
   };
-  const end = (): void => {
-    drag.current = null;
+  const end = (event: PointerEvent<HTMLDivElement>): void => {
+    if (drag.current?.id === event.pointerId) drag.current = null;
   };
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>): void => {
     if (event.button !== 0) return;
     event.preventDefault();
-    thumb.current?.focus();
+    // A press focuses the thumb without the keyboard ring where the browser supports the option.
+    thumb.current?.focus({ focusVisible: false } as FocusOptions);
     if (locked) return;
     const rail = event.currentTarget;
     const rect = rail.getBoundingClientRect();
-    drag.current = { left: rect.left, width: rect.width };
+    drag.current = { left: rect.left, width: rect.width, id: event.pointerId };
     rail.setPointerCapture(event.pointerId);
     commit(valueAt(event.clientX, drag.current));
   };
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
-    if (drag.current === null) return;
+    if (locked || drag.current === null || drag.current.id !== event.pointerId) return;
     event.preventDefault();
     commit(valueAt(event.clientX, drag.current));
   };

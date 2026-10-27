@@ -51,7 +51,12 @@ describe("slider.css contract", () => {
       for (const prop of ["background", "color", "opacity"]) {
         if (new RegExp(`(^|[\\s;])${prop}\\s*:`).test(block.body)) {
           expect(
-            twin.some((f) => new RegExp(`(^|[\\s;])${prop}\\s*:`).test(f.block.body)),
+            // The forced track is drawn as a border, so a background twin may be its border colour.
+            twin.some((f) =>
+              new RegExp(
+                `(^|[\\s;])(${prop}${prop === "background" ? "|border-color" : ""})\\s*:`,
+              ).test(f.block.body),
+            ),
             `${selector} ${prop}`,
           ).toBe(true);
         }
@@ -93,14 +98,57 @@ describe("slider.css contract", () => {
           b.selectors.includes(`.cv-slider[data-disabled] .cv-slider__${part}`) &&
           b.body.includes(`${prop}: GrayText`),
       );
-    expect(grey("track", "background")).toBeDefined();
+    expect(grey("track", "border-color")).toBeDefined();
     expect(grey("fill", "background")).toBeDefined();
     expect(grey("thumb", "background")).toBeDefined();
     expect(grey("mark", "color")).toBeDefined();
     const thumb = blocks(forced).find((b) =>
       b.selectors.includes(".cv-slider[data-gated] .cv-slider__thumb"),
     );
-    expect(thumb?.body).toContain("background: ButtonText");
+    expect(thumb?.body).toContain("background: CanvasText");
+  });
+
+  it("the track is 8 px, twice space.inset.xs, centred on the rail", () => {
+    const track = blocks(normal).find((b) => b.selectors.includes(".cv-slider__track"));
+    expect(track?.body).toContain("height: calc(var(--space-inset-xs) * 2)");
+    expect(track?.body).toContain("top: calc(50% - var(--space-inset-xs))");
+  });
+
+  it("in forced colours the empty track is a 1 px CanvasText border on Canvas, hover Highlight, thumb CanvasText", () => {
+    const rule = (sel: string): string =>
+      blocks(forced)
+        .filter((b) => b.selectors.includes(sel))
+        .map((b) => b.body)
+        .join("\n");
+    const track = rule(".cv-slider__track");
+    expect(track).toContain("border: 1px solid CanvasText");
+    expect(track).toContain("background: Canvas");
+    expect(track).toContain("box-sizing: border-box");
+    const hover = rule(
+      ".cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track",
+    );
+    expect(hover).toContain("border-color: Highlight");
+    expect(rule(".cv-slider__thumb")).toContain("background: CanvasText");
+    expect(forced).not.toContain("ButtonText");
+  });
+
+  it("in forced colours a gated slider keeps the empty track bordered, apart from the filled one", () => {
+    const rule = (sel: string): string =>
+      blocks(forced)
+        .filter((b) => b.selectors.includes(sel))
+        .map((b) => b.body)
+        .join("\n");
+    const track = rule(".cv-slider[data-gated] .cv-slider__track");
+    expect(track).toContain("border-color: GrayText");
+    expect(track).not.toContain("background");
+    expect(rule(".cv-slider[data-gated] .cv-slider__fill")).toContain("background: GrayText");
+    expect(rule(".cv-slider[data-disabled] .cv-slider__track")).toContain("border-color: GrayText");
+  });
+
+  it("the rail is laid out left to right, matching the pointer maths", () => {
+    expect(blocks(normal).find((b) => b.selectors.includes(".cv-slider__body"))?.body).toContain(
+      "direction: ltr",
+    );
   });
 
   it("a gated rule out-specifies the base thumb rule, in both modes", () => {
