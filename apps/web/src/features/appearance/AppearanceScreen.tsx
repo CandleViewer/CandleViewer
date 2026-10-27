@@ -43,7 +43,7 @@ export function AppearanceScreen(): JSX.Element {
   }
 
   return (
-    <main>
+    <div>
       <h1>Appearance</h1>
       <fieldset>
         <legend>Chart palette</legend>
@@ -76,6 +76,6 @@ export function AppearanceScreen(): JSX.Element {
           <ColorConventionLegend key={view} view={view} palette={palette} convention={convention} />
         ))}
       </section>
-    </main>
+    </div>
   );
 }

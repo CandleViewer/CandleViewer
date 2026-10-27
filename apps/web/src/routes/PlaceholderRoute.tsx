@@ -1,3 +1,6 @@
+import type { JSX } from "react";
+import { ScreenRoot } from "../features/app-shell/ScreenRoot";
+
 /**
  * Placeholder route (E02-T04). Establishes the accessibility baseline
  * (landmark structure, visible focus, keyboard reachability) that the a11y
@@ -5,7 +8,7 @@
  */
 export function PlaceholderRoute(): JSX.Element {
   return (
-    <main>
+    <ScreenRoot>
       <h1>CandleViewer</h1>
       <p>
         This is a placeholder route. The real route tree, RBAC guards and env badge ship in E10.
@@ -14,6 +17,6 @@ export function PlaceholderRoute(): JSX.Element {
       <button id="placeholder-focus-target" type="button">
         Focusable placeholder control
       </button>
-    </main>
+    </ScreenRoot>
   );
 }

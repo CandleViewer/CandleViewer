@@ -1,3 +1,7 @@
+- link "Skip to main content":
+  - /url: "#cv-main"
+- banner
+- navigation "Primary"
 - main:
   - heading "Appearance" [level=1]
   - group "Chart palette":
@@ -34,63 +38,65 @@
       - list:
         - listitem: Green = buy / bid / up
         - listitem: Red = sell / ask / down
-- region "Accessibility":
-  - heading "Accessibility" [level=2]
-  - paragraph: Changes apply immediately, including chart canvases. They are saved to your account.
-  - status
-  - group "Reduced motion":
-    - text: Reduced motion
-    - paragraph: Stops transitions, heatmap fade, chart inertia and flash-on-tick.
-    - radio "Off (from system)" [checked]
-    - text: Off (from system)
-    - radio "On"
-    - text: "On"
-    - radio "Off"
-    - text: "Off"
-  - group "Increased contrast":
-    - text: Increased contrast
-    - paragraph: Uses higher-contrast colours throughout.
-    - radio "Off (from system)" [checked]
-    - text: Off (from system)
-    - radio "On"
-    - text: "On"
-    - radio "Off"
-    - text: "Off"
-  - text: Disable canvas animation
-  - switch "Disable canvas animation"
-  - paragraph: Chart canvases stop animating and the heatmap updates instantly.
-  - text: Always show data-table alternatives
-  - switch "Always show data-table alternatives"
-  - paragraph: Panels open in their table view by default; no data is re-fetched.
-  - text: Increase focus-ring thickness
-  - switch "Increase focus-ring thickness"
-  - paragraph: Draws a thicker outline around the focused control.
-  - group "Announce price updates":
-    - text: Announce price updates
-    - paragraph: How often screen readers hear price changes.
-    - radio "Off"
-    - text: "Off"
-    - radio "On significant change" [checked]
-    - text: On significant change
-    - radio "Always"
-    - text: Always
-  - group "Screen-reader verbosity for the tape":
-    - text: Screen-reader verbosity for the tape
-    - paragraph: Low announces only significant events.
-    - radio "Low"
-    - text: Low
-    - radio "Normal" [checked]
-    - text: Normal
-    - radio "High"
-    - text: High
-  - text: Keyboard-only mode
-  - switch "Keyboard-only mode"
-  - paragraph: Hides drag-only interactions and shows nudge controls and numeric fields instead.
-  - paragraph:
-    - link "Accessibility statement":
-      - /url: /accessibility
-    - text: "|"
-    - link "Keyboard shortcuts (SCR-013)":
-      - /url: /settings/hotkeys
+  - region "Accessibility":
+    - heading "Accessibility" [level=2]
+    - paragraph: Changes apply immediately, including chart canvases. They are saved to your account.
+    - status
+    - group "Reduced motion":
+      - text: Reduced motion
+      - paragraph: Stops transitions, heatmap fade, chart inertia and flash-on-tick.
+      - radio "Off (from system)" [checked]
+      - text: Off (from system)
+      - radio "On"
+      - text: "On"
+      - radio "Off"
+      - text: "Off"
+    - group "Increased contrast":
+      - text: Increased contrast
+      - paragraph: Uses higher-contrast colours throughout.
+      - radio "Off (from system)" [checked]
+      - text: Off (from system)
+      - radio "On"
+      - text: "On"
+      - radio "Off"
+      - text: "Off"
+    - text: Disable canvas animation
+    - switch "Disable canvas animation"
+    - paragraph: Chart canvases stop animating and the heatmap updates instantly.
+    - text: Always show data-table alternatives
+    - switch "Always show data-table alternatives"
+    - paragraph: Panels open in their table view by default; no data is re-fetched.
+    - text: Increase focus-ring thickness
+    - switch "Increase focus-ring thickness"
+    - paragraph: Draws a thicker outline around the focused control.
+    - group "Announce price updates":
+      - text: Announce price updates
+      - paragraph: How often screen readers hear price changes.
+      - radio "Off"
+      - text: "Off"
+      - radio "On significant change" [checked]
+      - text: On significant change
+      - radio "Always"
+      - text: Always
+    - group "Screen-reader verbosity for the tape":
+      - text: Screen-reader verbosity for the tape
+      - paragraph: Low announces only significant events.
+      - radio "Low"
+      - text: Low
+      - radio "Normal" [checked]
+      - text: Normal
+      - radio "High"
+      - text: High
+    - text: Keyboard-only mode
+    - switch "Keyboard-only mode"
+    - paragraph: Hides drag-only interactions and shows nudge controls and numeric fields instead.
+    - paragraph:
+      - link "Accessibility statement":
+        - /url: /accessibility
+      - text: "|"
+      - link "Keyboard shortcuts (SCR-013)":
+        - /url: /settings/hotkeys
+- complementary
+- contentinfo
 - status
 - status

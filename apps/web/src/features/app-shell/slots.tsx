@@ -1,0 +1,25 @@
+/**
+ * Shell slots (E10-S01 S1, #304). The contract for content that later slices put into the shell
+ * chrome without editing it:
+ *
+ * - `ShellBannerSlot`: one full-width row between the top bar and the canvas (D03 §2, 0 px when
+ *   empty). It has no landmark of its own; a banner brings its own role (`status` / `alert`).
+ * - `ShellConnectionSlot`: inside the header (`banner`) landmark.
+ * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
+ *   visible canvas. It never wraps or re-renders the outlet. Its layer ignores the pointer, so
+ *   overlay content that takes input sets `pointer-events: auto` itself.
+ *
+ * Each slot renders nothing until a later slice (#306 slices 3 and 4b) fills it by editing only
+ * this file. A slot reads its own state; it takes no props from the layout, so filling one never
+ * re-renders the outlet.
+ */
+import type { JSX } from "react";
+
+/** A shell slot: a prop-less component that renders its content or nothing. */
+export type ShellSlot = () => JSX.Element | null;
+
+export const ShellBannerSlot: ShellSlot = () => null;
+
+export const ShellConnectionSlot: ShellSlot = () => null;
+
+export const ShellCanvasOverlaySlot: ShellSlot = () => null;

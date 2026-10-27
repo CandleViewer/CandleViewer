@@ -96,7 +96,7 @@ export function AdminInviteScreen(): JSX.Element {
   const link = created ? `${window.location.origin}${created.invite_url}` : "";
 
   return (
-    <main>
+    <div>
       <h1>Invite user</h1>
       <p>
         The invitee also needs a Tailscale ACL grant before the link will open. Link delivery is
@@ -166,6 +166,6 @@ export function AdminInviteScreen(): JSX.Element {
           ))}
         </ul>
       </section>
-    </main>
+    </div>
   );
 }
