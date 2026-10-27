@@ -19,6 +19,7 @@ import { InlineSpinnerText } from "./InlineSpinnerText.js";
 import { Kbd } from "./Kbd.js";
 import { KeyValueRow } from "./KeyValueRow.js";
 import { Link } from "./Link.js";
+import { MaskedValue } from "./MaskedValue.js";
 import { Popover } from "./Popover.js";
 import { ProgressBar } from "./ProgressBar.js";
 import { Skeleton } from "./Skeleton.js";
@@ -31,9 +32,11 @@ import { Tooltip } from "./Tooltip.js";
 import { Heading, MonoText, NumericText, Text } from "./Typography.js";
 
 /**
- * E05-T04's visual-regression matrix for the E05-S02 band: every atom built so far in its main states on one
- * page, once per theme x density. Interactive states (hover, open, copied, revealed) stay in each atom's own
- * stories; this page holds only what renders at rest, on a frozen clock and fixed data, so a capture is stable.
+ * E05-T04's visual-regression matrix for the E05-S02 band: every atom in its main states on one page, once per
+ * theme x density. Interactive states (hover, open, copied, revealed) stay in each atom's own stories; this page
+ * holds only what renders at rest, so a capture is stable: fixed data, the countdowns on a frozen clock, motion
+ * stopped by the in-app reduced-motion override (Spinner and Skeleton draw static), no wait that changes its
+ * layout at the 5 s slow path, and MaskedValue masked only, so its stand-in value never reaches the DOM.
  */
 const meta: Meta = {
   title: "Atoms/All atoms matrix",
@@ -134,7 +137,8 @@ function AllAtoms(): JSX.Element {
       <Cell id="CMP-014 Spinner · CMP-038 InlineSpinnerText">
         <div style={col}>
           <Spinner label="Loading positions" />
-          <InlineSpinnerText kind="load" label="Loading 5,000 bars" onCancel={fn()} />
+          {/* No Cancel and no slowLabel: the 5 s slow path changes nothing on screen mid-capture. */}
+          <InlineSpinnerText kind="load" label="Loading 5,000 bars" />
           <InlineSpinnerText kind="submit" label="Saving rule" />
         </div>
       </Cell>
@@ -265,6 +269,10 @@ function AllAtoms(): JSX.Element {
           </Text>
         </div>
       </Cell>
+      <Cell id="CMP-034 MaskedValue">
+        {/* Masked only: a reveal would put the value in the DOM. A stand-in, never a real secret. */}
+        <MaskedValue value="demo-key-not-a-secret" label="API secret" copyable />
+      </Cell>
       <Cell id="CMP-036 KeyValueRow · CMP-037 SwatchLegendItem">
         <div style={{ ...col, justifyItems: "stretch", width: "100%" }}>
           <dl style={list}>
@@ -289,12 +297,16 @@ function AllAtoms(): JSX.Element {
 }
 
 const matrix = (theme: ThemeName, density: DensityName): Story => ({
-  globals: { theme, density },
+  // `motion: "on"` turns the reduced-motion override on (`data-motion="reduce"`), so nothing animates.
+  globals: { theme, density, motion: "on" },
   render: () => <AllAtoms />,
   play: async () => {
     // The theme runtime applies the globals in an effect: prove the capture and axe see this cell of the matrix.
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", theme));
     await waitFor(() => expect(document.documentElement).toHaveAttribute("data-density", density));
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-motion", "reduce"));
+    // MaskedValue mounts masked: the stand-in value is nowhere in the document.
+    await expect(document.documentElement.outerHTML).not.toContain("demo-key-not-a-secret");
   },
 });
 

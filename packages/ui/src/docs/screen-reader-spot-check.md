@@ -35,17 +35,19 @@ in the blank columns; nothing in this file has been checked yet.
 | P5  | Modal      | Open, then Tab and Shift+Tab around the ends | Focus stays inside; the reader reports a modal dialog and does not browse the page behind |        |                |
 | P6  | EscDismiss | Press Esc inside                             | Popover closes; focus returns to the trigger; trigger reads collapsed                     |        |                |
 
-## CMP-034 MaskedValue (`Atoms/MaskedValue`, lands with slice 15)
+## CMP-034 MaskedValue (`Atoms/MaskedValue`)
 
-| #   | Story / state      | Steps                                         | Expected                                                                      | Result | Notes / defect |
-| --- | ------------------ | --------------------------------------------- | ----------------------------------------------------------------------------- | ------ | -------------- |
-| M1  | Masked (default)   | Browse the group with the virtual cursor      | The label and a masked placeholder; the value itself is never read            |        |                |
-| M2  | Masked (default)   | Tab to the reveal toggle                      | The toggle's name includes the label; its pressed / not-pressed state is read |        |                |
-| M3  | Revealed           | Activate the toggle, then browse to the value | The value is read only when navigated to; it is not announced on reveal       |        |                |
-| M4  | Expiring           | Wait for the last 2 s of the reveal           | One polite announcement that it is about to hide; no per-second countdown     |        |                |
-| M5  | Re-masked          | Wait for the timeout                          | The value is masked again; browsing no longer reads it                        |        |                |
-| M6  | Copyable, revealed | Activate copy while revealed                  | "Copied" once, politely; the value is never spoken                            |        |                |
-| M7  | Copyable, masked   | Try to copy while masked                      | No copy happens and the value is never spoken                                 |        |                |
+| #   | Story              | Steps                                                        | Expected                                                                                           | Result | Notes / defect |
+| --- | ------------------ | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- | ------ | -------------- |
+| M1  | Masked             | Browse the group with the virtual cursor                     | The group's label, then "{label}, hidden"; the mask dots and the value are never read              |        |                |
+| M2  | Masked             | Tab to the toggle, press it, then press it again             | The name changes between "Show {label}" and "Hide {label}"; no pressed state is announced          |        |                |
+| M3  | Revealed           | Activate the toggle, then browse to the value                | The value is read only when navigated to; it is not announced on reveal                            |        |                |
+| M4  | Expiring           | Wait for the last 2 s of the reveal                          | One polite "{label} will hide in 2 seconds"; no per-second countdown                               |        |                |
+| M5  | Expiring           | Wait for the timeout with focus on the toggle                | The value is masked again silently; focus stays on the toggle; browsing no longer reads it         |        |                |
+| M6  | CopiedState        | Reveal, Tab to Copy, wait for the timed re-mask              | Focus moves from Copy to the toggle ("Show {label}"), never to the page body                       |        |                |
+| M7  | CopiedState        | Activate copy while revealed                                 | "Copied" once, politely; the value is never spoken                                                 |        |                |
+| M8  | Copyable           | Tab through the group while masked                           | Copy is disabled and skipped by Tab; the value is never spoken                                     |        |                |
+| M9  | OneRevealedPerPage | Reveal the first value, then press the second value's toggle | The second value reveals and the first is masked in the same step; only one value is ever readable |        |                |
 
 ## Sign-off
 
