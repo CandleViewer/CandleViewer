@@ -7,7 +7,7 @@
  * - `ShellConnectionSlot`: inside the header (`banner`) landmark. S3 fills it with the CMP-076 chip
  *   and the shell's live-region pair (`ConnectionStatusSlot`).
  * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
- *   visible canvas. It never wraps or re-renders the outlet. Its layer ignores the pointer, so
+ *   visible canvas; #306 slice 4b fills it with the CMP-077 region (`ConnectionRegionSlot`). It never wraps or re-renders the outlet. Its layer ignores the pointer, so
  *   overlay content that takes input sets `pointer-events: auto` itself.
  *
  * Each slot renders nothing until a later slice (#306 slices 3 and 4b) fills it by editing only
@@ -15,6 +15,7 @@
  * re-renders the outlet.
  */
 import type { JSX } from "react";
+import { ConnectionRegionSlot } from "./ConnectionRegionSlot";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
 import { DegradedBanner } from "../system-states/DegradedBanner";
 
@@ -25,4 +26,5 @@ export const ShellBannerSlot: ShellSlot = DegradedBanner;
 
 export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
-export const ShellCanvasOverlaySlot: ShellSlot = () => null;
+/** #306 slice 4b: the CMP-077 connection region (SCR-152), empty while live. */
+export const ShellCanvasOverlaySlot: ShellSlot = ConnectionRegionSlot;
