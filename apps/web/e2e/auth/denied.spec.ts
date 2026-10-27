@@ -25,8 +25,10 @@ test("E09-TC-E06 owner-only risk route returns the forbidden state to a viewer",
 }) => {
   await stubSession(page, { role: "viewer" });
   await page.goto("/risk");
-  await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
-  await expect(page.getByRole("link", { name: "Return to the terminal" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { level: 1, name: "You don't have access to this" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "Back to your workspace" })).toBeVisible();
 });
 
 test("E09-TC-E07 denied page is identical for any account id (no enumeration)", async ({
