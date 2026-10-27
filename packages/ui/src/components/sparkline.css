@@ -1,0 +1,38 @@
+/* CMP-024 Sparkline. Static data ink (slice 2 conventions 15): the stroke binds what the trend stands for. */
+.cv-sparkline {
+  display: inline-block;
+  flex: none;
+  vertical-align: middle;
+  overflow: visible;
+  color: var(--color-text-tertiary);
+}
+
+.cv-sparkline[data-color-by-sign][data-trend="up"] {
+  color: var(--color-buy-default);
+}
+
+.cv-sparkline[data-color-by-sign][data-trend="down"] {
+  color: var(--color-sell-default);
+}
+
+.cv-sparkline[data-color-by-sign][data-trend="flat"] {
+  color: var(--color-neutral-default);
+}
+
+/* No fill, round caps and joins; the width is the SVG's 1.5 glyph-grid constant, kept by non-scaling-stroke. */
+.cv-sparkline__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Forced colours: the line is CanvasText; the slope and the accessible name carry the direction. */
+@media (forced-colors: active) {
+  .cv-sparkline,
+  .cv-sparkline[data-color-by-sign][data-trend="up"],
+  .cv-sparkline[data-color-by-sign][data-trend="down"],
+  .cv-sparkline[data-color-by-sign][data-trend="flat"] {
+    color: CanvasText;
+  }
+}

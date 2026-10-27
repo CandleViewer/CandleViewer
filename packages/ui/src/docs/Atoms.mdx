@@ -285,3 +285,21 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | ------- | ------------------ | -------------------------------------------------------------------- | ---------------------------------------------------------- |
 | trigger | button (its own)   | its own                                                              | `aria-haspopup="dialog"`, `aria-expanded`, `aria-controls` |
 | popover | dialog (portalled) | `aria-label`, `aria-labelledby` or its `heading`; one required (H11) | `aria-modal="true"` only when `modal`                      |
+
+### Sparkline (CMP-024, static `img`)
+
+| Keys | Action                                                                                                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; the parent row owns focus and its DOM-mirror table holds the data. Read as its trend summary, e.g. "up 3.2% over 20 bars"; the line is hidden. |
+
+### Confidence Dots (CMP-032, static text plus decorative dots)
+
+| Keys | Action                                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable. The dots are `aria-hidden`; the visible label ("Low confidence") is plain text and always names the level. |
+
+### Countdown (CMP-035, text with a threshold announcer)
+
+| Keys | Action                                                                                                                                                                                   |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable; never moves focus. The digits are hidden and a twin reads the words on demand (`aria-live="off"`); a polite status speaks each threshold once. In a grid column, nothing. |
