@@ -8,12 +8,13 @@ a 64-character token shape keeps hex digests readable, and neither takes the ids
 The redaction key list names the token, header and signature forms the services use: a field or a
 header line of each is redacted by name, and so is a value labelled with a key name in message or
 exception text (`token = …`), so such a line passes the support bundle's scan. A long text keeps
-its start and its last lines, and a second pass changes nothing. A placeholder is no value only as
-the whole value or right before the cut's marker, a dotted id (`machines.session:<id>`) is no label
-where a dotted attribute and its value is one, a format string is left to format, and the buffer
-writes each record on one line. The redaction filter and the bundle scan agree on whitespace
-between a label and its value. Each backup download path (E42-T05 BK-11) in a traceback or a stack
-shows its marker where it stood, as the whole of a message line that holds one does.
+its start and its last lines, a cut keeps a label with the value it names or drops both, and a
+second pass changes nothing. A placeholder is no value only as the whole value or right before the
+cut's marker, a dotted id (`machines.session:<id>`) is no label where a dotted attribute and its
+value is one, a format string is left to format, and the buffer writes each record on one line.
+The redaction filter and the bundle scan agree on whitespace between a label and its value. Each
+backup download path (E42-T05 BK-11) in a traceback or a stack shows its marker where it stood, as
+the whole of a message line that holds one does.
 
 Values are assembled at runtime, so no secret-shaped literal sits in the repo.
 """
@@ -710,11 +711,13 @@ def test_text_with_no_value_shape_is_kept_as_it_is() -> None:
 
 #: The longest text that is not cut: the cap and the marker that ends a cut.
 _CAP = redaction._MAX_SCAN_LEN + len(redaction._TRUNCATED)
-#: Each place a text is cut: traceback text, message text, an exception logged as a value.
+#: Each place a text is cut: traceback text, message text, an exception logged as a value, and a
+#: value of a mapping (a structlog event dict).
 _REDACTIONS: dict[str, Callable[[str], str]] = {
     "traceback": redaction._redact_runs,
     "message": redact_text,
     "exception-value": lambda text: str(redaction.redact_structure(ValueError(text))),
+    "mapping": lambda text: str(redaction.redact_structure({"detail": text})["detail"]),
 }
 
 
@@ -827,6 +830,190 @@ def test_a_label_whose_value_the_cut_dropped_passes_the_bundle_scan() -> None:
 
     assert out.endswith(f"token={redaction._TRUNCATED}")
     assert list(scan_text(out)) == []
+
+
+#: The start and the last lines of a long text: no label and no value shape. Few lines, so that a
+#: failed assertion's diff of a text stays quick.
+_FILLER, _LINES = "x " * 2100, ("y" * 99 + "\n") * 20
+#: A second value of no value shape: only its label masks it.
+_OTHER_VALUE = "".join(("pass", "phrase9"))
+#: Long texts with a label and the value it names on a later line, as the label rule reads them:
+#: after a line break, an escaped one or an escaped tab, with the separator on the value's line,
+#: quoted, a header's value to its line's end, after blank lines or long whitespace, two labels on
+#: consecutive lines, and a label in the start of a text with whitespace after it.
+_LONG_LABELLED = {
+    "line-break": f"{_FILLER}password:\n{_LABELLED_ONLY} ok\n{_LINES}",
+    "escaped-line-break": f"{_FILLER}password:\\n\n{_LABELLED_ONLY} ok\n{_LINES}",
+    "escaped-tab": f"{_FILLER}token =\\t \n{_LABELLED_ONLY} ok\n{_LINES}",
+    "separator-on-the-next-line": f"{_FILLER}password\n: {_LABELLED_ONLY} ok\n{_LINES}",
+    "quoted": f'{_FILLER}{{"password":\n"{_LABELLED_ONLY}"}}\n{_LINES}',
+    "to-line-end": f"{_FILLER}Cookie:\na={_LABELLED_ONLY}; b=1\n{_LINES}",
+    "blank-lines": f"{_FILLER}token=\n\n  \n{_LABELLED_ONLY} ok\n{_LINES}",
+    "long-whitespace": f"{_FILLER}password:{' ' * 400}\n{_LABELLED_ONLY} ok\n{_LINES}",
+    "two-labels": f"{_FILLER}password:\n{_LABELLED_ONLY} token:\n{_OTHER_VALUE} ok\n{_LINES}",
+    "label-in-the-start": f"{'x ' * 1000}password:{' ' * 1300}\n{_LABELLED_ONLY} ok\n{_LINES}",
+}
+
+
+@pytest.mark.parametrize("text", _LONG_LABELLED.values(), ids=_LONG_LABELLED)
+@pytest.mark.parametrize("redact", _REDACTIONS.values(), ids=_REDACTIONS)
+def test_a_cut_keeps_a_label_with_the_value_it_names(
+    redact: Callable[[str], str], text: str
+) -> None:
+    out = redact(text)
+
+    assert _LABELLED_ONLY not in out
+    assert _OTHER_VALUE not in out
+    assert out.endswith(f"{redaction._TRUNCATED}\n{_LINES}")  # the last lines are kept
+    assert len(out) <= _CAP
+    assert redact(out) == out
+    assert list(scan_text(out)) == []
+
+
+@pytest.mark.parametrize("path", ["structlog", "stdlib"])
+def test_a_cut_traceback_keeps_a_label_with_its_value_on_stdout_and_in_the_buffer(
+    path: str, tmp_path: Path
+) -> None:
+    lines, ring = _capture(_log_exc_info(path, "alone", _LONG_LABELLED["line-break"]))
+
+    assert _LABELLED_ONLY not in _logged(lines, ring)
+    assert _build(ring, tmp_path).is_file()
+
+
+#: Stands for a value: each one becomes a distinct canary (`_with_canaries`).
+_SLOT = "\x00"
+#: A canary: a value of no value shape, so that only its label masks it.
+_CANARY = re.compile(r"vq\d{3}zk")
+
+
+def _with_canaries(text: str) -> str:
+    parts = text.split(_SLOT)
+    return "".join(f"{part}vq{i:03d}zk" for i, part in enumerate(parts[:-1])) + parts[-1]
+
+
+def _labelled_canaries(text: str) -> set[str]:
+    """The canaries in `text` that the label rule reads as a labelled value."""
+    values = [range(m.end("label"), m.end()) for m in redaction._LABELLED_VALUE.finditer(text)]
+    return {c.group() for c in _CANARY.finditer(text) if any(c.start() in v for v in values)}
+
+
+#: Key names, separators, quotes, whitespace and line breaks (and the escapes that the bundle's
+#: buffer writes for some), words and values.
+_CUT_PIECES = (
+    *("password", "token", "Cookie", '"session"', "x", "ok", ","),
+    *(":", "=", " = ", '"', "'", " ", "\t", "\n", "\r\n", "\\n", "\\t", " " * 64),
+    *(_SLOT,) * 4,
+)
+_NOISE = st.lists(st.sampled_from(_CUT_PIECES), max_size=12).map("".join)
+#: Whitespace before a separator and after it, as the label rule reads it.
+_BEFORE_SEP = st.lists(st.sampled_from([" ", "\t", "\n", "\r\n"]), max_size=3).map("".join)
+_AFTER_SEP = st.lists(
+    st.sampled_from([" ", "\t", "\n", "\r\n", "\\n", "\\t", " " * 64]), max_size=4
+).map("".join)
+_QUOTE = st.sampled_from(["", '"', "'"])
+
+
+def _long_labelled(pad: int, noise: str, label: tuple[str, ...], more: str, shift: int) -> str:
+    """A long text of a start, a label and its value, and a last line; the text ends
+    `_TAIL_MAX + shift` characters after the label's start."""
+    name, quote, before, sep, after, value_quote = label
+    head = "x " * pad + noise
+    body = _with_canaries(
+        f"{head}{name}{quote}{before}{sep}{after}{value_quote}{_SLOT}{value_quote} ok{more}\n"
+    )
+    at = len(_with_canaries(head))  # where the label starts
+    return body + "y" * max(0, redaction._TAIL_MAX + at + shift - len(body))
+
+
+#: Long texts that hold a label and its value among those pieces.
+_LONG_LABELLED_TEXT = st.builds(
+    _long_labelled,
+    st.integers(520, 2100),
+    _NOISE,
+    st.tuples(
+        st.sampled_from(sorted(redaction._REDACT_KEYS | redaction._REDACT_KEY_FORMS)),
+        _QUOTE,
+        _BEFORE_SEP,
+        st.sampled_from([":", "=", " = "]),
+        _AFTER_SEP,
+        _QUOTE,
+    ),
+    _NOISE,
+    st.integers(-8, 40),
+)
+
+
+@settings(max_examples=300, deadline=None)
+@given(_LONG_LABELLED_TEXT)
+@example(_with_canaries(f"{_FILLER}password:\n{_SLOT} ok\n{_LINES}"))
+@example(_with_canaries(f"{_FILLER}password\n= {_SLOT} ok\n{_LINES}"))
+@example(_with_canaries(f"{_FILLER}token=\\n\n{_SLOT} password:\n{_SLOT} ok\n{_LINES}"))
+@example(_with_canaries(f"{'x ' * 1000}token:{' ' * 1300}\n{_SLOT} ok\n{_LINES}"))
+def test_each_labelled_value_of_a_long_text_is_redacted_or_cut_away(text: str) -> None:
+    labelled = _labelled_canaries(text)
+    for redact in _REDACTIONS.values():
+        out = redact(text)
+
+        assert [canary for canary in labelled if canary in out] == []
+        assert len(out) <= _CAP
+        assert redact(out) == out
+        assert list(scan_text(out)) == []
+
+
+@pytest.mark.parametrize(
+    "before",
+    ["error:", "token", "tokens =", "token = ab"],
+    ids=["no-key-name", "no-separator", "longer-word", "value-on-its-line"],
+)
+@pytest.mark.parametrize("redact", _REDACTIONS.values(), ids=_REDACTIONS)
+def test_a_cut_keeps_the_last_lines_from_a_line_break_that_no_label_runs_on_past(
+    redact: Callable[[str], str], before: str
+) -> None:
+    out = redact(f"{_FILLER}{before}\n{_OTHER_VALUE} ok\n{_LINES}")
+
+    assert out.endswith(f"{redaction._TRUNCATED}\n{_OTHER_VALUE} ok\n{_LINES}")
+
+
+#: A label whose whitespace runs to the end of a text, as the label rule reads one (a key name
+#: read anywhere), and a key name, a quote and whitespace (an escaped line break or tab reads as
+#: whitespace too) at the end of a text, which a separator on the next line makes a label.
+_LABEL_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?{redaction._LABEL_SPACE}\Z""")
+_NAME_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?(?:\s|\\[tnr])*+\Z""")
+#: Key names (in any case, either twin, in a longer word), separators, quotes, whitespace, escapes
+#: and other characters.
+_READ_BACK_PIECES = (
+    *("password", "Token", "x-api-key", "x_API_key", "set-cookie", "tokens", "my", "ab", "."),
+    *(":", "=", '"', "'", ",", " ", "\t", "\n", "\r\n", "\\n", "\\t", "\\R", "\\"),
+)
+_READ_BACK_TEXT = st.lists(st.sampled_from(_READ_BACK_PIECES), max_size=10).map("".join)
+
+
+@given(st.sampled_from(["", "x" * 1000]), _READ_BACK_TEXT, _READ_BACK_TEXT)
+@example("", "password", ": ab")
+@example("x" * 1000, 'x-api-key"\t=\\t', "ab")
+def test_a_label_is_read_back_from_a_line_break_as_the_label_rule_reads_it(
+    start: str, before: str, after: str
+) -> None:
+    head = start + before
+    expected = _LABEL_TO_END.search(head) is not None or (
+        _NAME_TO_END.search(head) is not None and re.match(r"\s*[:=]", "\n" + after) is not None
+    )
+
+    assert redaction._label_runs_on(f"{head}\n{after}", len(head)) is expected
+
+
+@pytest.mark.parametrize(
+    "before",
+    ["password:" + " " * 300, "password" + "\t" * 250 + "=", "token:" + "\\n" * 200, " " * 300],
+    ids=["whitespace-after", "whitespace-before-the-separator", "escapes-after", "whitespace"],
+)
+def test_the_end_of_a_label_that_runs_on_past_the_read_back_is_taken_to_be_one(
+    before: str,
+) -> None:
+    text = f"{'x' * 1000}{before}\nab"
+
+    assert len(before) > redaction._LABEL_REACH
+    assert redaction._label_runs_on(text, len(text) - 3)
 
 
 @pytest.mark.parametrize(
