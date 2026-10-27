@@ -114,10 +114,15 @@ _CHALLENGE_REFUSED = {
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Writes that must keep working in the downgrade (ending the session). `DELETE
 #: /auth/session/view-as` too (#3085, Q5): leaving view-as is one call that nothing refuses.
-#: And extend (#2300 D1): it acts on no data, and is the only activity a live session has.
-_WRITE_EXEMPT_PATHS = frozenset(
-    {"/auth/logout", "/auth/step-up", "/auth/session/view-as", "/auth/session/extend"}
-)
+_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up", "/auth/session/view-as"})
+#: Exempt by method and path: extend (#2300 D1) acts on no data and is the only activity a live
+#: session has. `POST` only, so a later handler on the same path inherits no exemption.
+_WRITE_EXEMPT_ROUTES = frozenset({("POST", "/auth/session/extend")})
+
+
+def write_exempt(method: str, path: str) -> bool:
+    """True for a write the read-only downgrade (and view-as) must never refuse."""
+    return path in _WRITE_EXEMPT_PATHS or (method.upper(), path) in _WRITE_EXEMPT_ROUTES
 
 
 class AuditRefused(Exception):
@@ -717,7 +722,7 @@ def make_read_only_guard(
         action_class = dangerous_action_class(request.method, path)
         if (
             (request.method in _SAFE_METHODS and action_class is None)
-            or path in _WRITE_EXEMPT_PATHS
+            or write_exempt(request.method, path)
             or not auth.sessions_is_active
         ):
             return await call_next(request)

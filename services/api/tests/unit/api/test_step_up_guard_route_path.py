@@ -85,6 +85,23 @@ async def test_guard_under_root_path_keeps_logout_and_extend_open_in_read_only_d
     assert rc.post(f"{_ROOT}{exempt}", headers=_H).status_code == 200  # exempt
 
 
+async def test_guard_exempts_extend_for_post_only_in_read_only_downgrade() -> None:
+    """#2300 fold (review Low #3): the extend exemption is `POST` only. A later non-`POST`
+    handler on the same path is an ordinary write and inherits no read-only exemption."""
+    c, *_ = await _build()
+
+    @cast(FastAPI, c.app).put("/auth/session/extend")
+    async def other() -> dict[str, bool]:
+        return {"ok": True}
+
+    rc = _rooted(c)
+    bad = {"code": "000000", "password": _PW, "action_class": "keys"}
+    tries = [rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=bad) for _ in range(3)]
+    assert [t.status_code for t in tries] == [401, 401, 403]
+    refused = rc.put(f"{_ROOT}/auth/session/extend", headers=_H)
+    assert refused.status_code == 403 and refused.json()["code"] == "session_read_only"
+
+
 class _Unwired:
     """The `AuthService` facade with nothing wired (the fake backend). Reading
     a service raises, as on the real facade, so a guard touching one 500s."""

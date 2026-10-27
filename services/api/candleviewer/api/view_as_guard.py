@@ -66,10 +66,10 @@ from candleviewer.api.audit_principal import _Identity, identity_snapshot
 from candleviewer.api.csrf import _compile_operations, bounded_method, match_operation, source_ip
 from candleviewer.api.step_up import (
     _SAFE_METHODS,
-    _WRITE_EXEMPT_PATHS,
     StepUpAuth,
     _bearer,
     readonly_problem,
+    write_exempt,
 )
 from candleviewer.api.view_as_policy import OWN_OPERATIONS, PROTECTIVE_WRITES, ProtectiveWrites
 from candleviewer.api.view_as_refusals import (
@@ -253,7 +253,7 @@ def make_view_as_guard(
             request.scope.setdefault("state", {})[STATE_KEY] = context
             with bound_view_as(context):
                 return await call_next(request)
-        if method not in _SAFE_METHODS and path not in _WRITE_EXEMPT_PATHS:
+        if method not in _SAFE_METHODS and not write_exempt(method, path):
             readonly = await _session_read_only(auth, record)
             if readonly is not None:
                 return readonly
