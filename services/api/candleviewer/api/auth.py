@@ -99,6 +99,7 @@ from candleviewer.auth.errors import (
     MfaEnrollmentNotFound,
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
+    SignInBusy,
     UserDisabled,
 )
 from candleviewer.auth.hashing import last_verify_ms
@@ -276,15 +277,27 @@ class AuditServiceLike(Protocol):
         ...
 
 
-def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
+def _problem(
+    status_code: int,
+    title: str,
+    detail: str,
+    *,
+    code: str | None = None,
+    retry_after_s: int | None = None,
+) -> JSONResponse:
     content: dict[str, Any] = {"type": "about:blank", "title": title, "status": status_code}
     if code is not None:  # the catalogue code (`x-error-codes`) and its type URI
         content.update(type=f"https://candleviewer.local/errors/{code}", code=code)
-    return JSONResponse(
+    if retry_after_s is not None:  # the `Problem` field and the `Retry-After` header agree
+        content["retry_after_seconds"] = retry_after_s
+    response = JSONResponse(
         status_code=status_code,
         content={**content, "detail": detail},
         media_type="application/problem+json",
     )
+    if retry_after_s is not None:
+        response.headers["Retry-After"] = str(retry_after_s)
+    return response
 
 
 def _client_ip(request: Request) -> str | None:
@@ -608,6 +621,23 @@ def make_auth_router(
             response = _problem(423, "Account locked", str(exc))
             response.headers["Retry-After"] = str(exc.retry_after_s)
             return response
+        except SignInBusy as exc:
+            # #4663: refused before the identifier was looked up or the password checked, so
+            # only the attempt itself is recorded; counted by `LoginService`.
+            await _audit_outcome(
+                "auth.login_failed",
+                actor_label=_redact_identifier(body.identifier),
+                actor_ip=audit_ip,
+                outcome=AuditOutcome.DENIED,
+                reason="verify_busy",
+            )
+            return _problem(
+                429,
+                "Too many requests",
+                str(exc),
+                code="rate_limited",
+                retry_after_s=exc.retry_after_s,
+            )
         except NotImplementedError:
             # CodeQL py/stack-trace-exposure: never forward an exception's
             # message (which may embed internal detail such as source

@@ -38,6 +38,16 @@ class AccountLocked(AuthError):
         self.retry_after_s = retry_after_s
 
 
+class SignInBusy(AuthError):
+    """#4663: sign-in verification is already running for as many attempts as it admits at a
+    time, so this attempt was refused at once, before its identifier was looked up or any
+    password was checked. Carries the seconds after which the client may try again."""
+
+    def __init__(self, retry_after_s: int) -> None:
+        super().__init__(f"sign-in is busy; retry in {retry_after_s}s")
+        self.retry_after_s = retry_after_s
+
+
 class AuthServiceUnavailable(AuthError):
     """The auth module has not been started with a real repository."""
 

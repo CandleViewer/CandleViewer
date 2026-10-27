@@ -17,7 +17,9 @@
 - a per-IP throttle independent of the per-account one (ticket "Scope /
   Deliverables": "one attacker cannot lock every account");
 - every failed sign-in (`InvalidCredentials`, `AccountLocked`, `AccountDisabled`)
-  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648).
+  returns no sooner than `LOGIN_FAILURE_FLOOR` after the attempt started (#4648);
+- sign-in verification runs for at most `LOGIN_VERIFY_CONCURRENCY` attempts at a time; an
+  attempt beyond that is refused at once with `SignInBusy` and a retry-after (#4663).
 
 Audit emissions (`auth.login`/`auth.login_failed`) are the caller's
 responsibility here: `LoginService` raises typed errors and returns typed
@@ -41,13 +43,22 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
-from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
+from candleviewer.auth.errors import (
+    AccountDisabled,
+    AccountLocked,
+    InvalidCredentials,
+    SignInBusy,
+)
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
-from candleviewer.auth.metrics import auth_lockouts_total, auth_login_failure_floor_missed_total
+from candleviewer.auth.metrics import (
+    auth_lockouts_total,
+    auth_login_failure_floor_missed_total,
+    auth_login_verify_refused_total,
+)
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.repository import UserRepository
-from candleviewer.auth.throttle import PerIpLoginThrottle
-from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MS
+from candleviewer.auth.throttle import PerIpLoginThrottle, VerifyAdmission
+from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MS, AUTH_LOGIN_VERIFY_CONCURRENCY
 
 if TYPE_CHECKING:
     from candleviewer.auth.mfa_repository import MfaRepository
@@ -67,6 +78,13 @@ MFA_CHALLENGE_TTL = timedelta(minutes=5)
 #: (`auth_login_failure_floor_missed_total`). A successful sign-in is never held. The
 #: default only: production passes `CV_AUTH_LOGIN_FAILURE_FLOOR_MS`, whose default this is.
 LOGIN_FAILURE_FLOOR = timedelta(milliseconds=AUTH_LOGIN_FAILURE_FLOOR_MS)
+
+#: #4663: sign-in verification runs for at most this many attempts at a time. The default only:
+#: production passes `CV_AUTH_LOGIN_VERIFY_CONCURRENCY`, whose default this is.
+LOGIN_VERIFY_CONCURRENCY = AUTH_LOGIN_VERIFY_CONCURRENCY
+#: #4663: the retry-after of an attempt refused because verification was at capacity. A sign-in
+#: verification normally completes well within it, so a place has usually freed by then.
+LOGIN_BUSY_RETRY_AFTER_S = 1
 
 Clock = Callable[[], datetime]
 MonotonicClock = Callable[[], float]
@@ -125,6 +143,8 @@ class LoginService:
         failure_floor: timedelta = LOGIN_FAILURE_FLOOR,
         monotonic: MonotonicClock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
+        verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
+        admission: VerifyAdmission | None = None,
     ) -> None:
         self._repository = repository
         self._hasher = hasher
@@ -135,6 +155,8 @@ class LoginService:
         self._failure_floor_s = max(failure_floor.total_seconds(), 0.0)
         self._monotonic = monotonic
         self._sleep = sleep
+        #: #4663: the bound on sign-in verifications in flight; `admission` is for tests.
+        self._admission = admission or VerifyAdmission(verify_concurrency)
 
     async def login(
         self, request: LoginRequest, *, source_ip: str
@@ -148,6 +170,10 @@ class LoginService:
 
         #4648: each of those three refusals returns no sooner than the failure floor after
         the attempt started (`_hold_failure`); a successful outcome is never held.
+
+        #4663: raises `SignInBusy` at once, before the identifier is looked up or any password
+        is checked, when verification is already running for as many attempts as it admits.
+        That refusal is not held to the failure floor: it is answered as soon as it is decided.
         """
         started = self._monotonic()
         try:
@@ -180,6 +206,19 @@ class LoginService:
             # failure reasons actually applied.
             raise InvalidCredentials("Username or password is incorrect")
 
+        # #4663: take a verification place without waiting, or refuse at once. The place is
+        # given back on every way out of the check, a cancellation included.
+        if not self._admission.try_enter():
+            auth_login_verify_refused_total.inc()
+            raise SignInBusy(LOGIN_BUSY_RETRY_AFTER_S)
+        try:
+            return await self._verify_admitted(request, source_ip=source_ip)
+        finally:
+            self._admission.leave()
+
+    async def _verify_admitted(
+        self, request: LoginRequest, *, source_ip: str
+    ) -> MfaChallengeResult | EnrolmentOnlyLogin:
         found = await self._repository.find_by_identifier(request.identifier)
         # Enumeration resistance: an unknown identifier (or, defensively, a record
         # carrying the placeholder's id) continues as `_ABSENT_USER` through the same
@@ -196,6 +235,10 @@ class LoginService:
             # must not become a cheap, fast-fail oracle that confirms the
             # account exists and is currently locked.
             await self._hasher.verify(user.password_hash, request.password)
+            # #4663: an attempt at a locked account is a failed attempt from this address, so
+            # repeated attempts from one address are refused by the throttle above and take
+            # no verification place.
+            self._per_ip_throttle.record_failure(source_ip)
             remaining = int((user.locked_until - self._clock()).total_seconds())
             raise AccountLocked(max(remaining, 1))
 

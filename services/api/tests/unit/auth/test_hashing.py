@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, Hasher, constant_time_eq
@@ -49,3 +52,25 @@ async def test_hasher_needs_rehash_true_for_stale_params() -> None:
 def test_constant_time_eq_true_and_false() -> None:
     assert constant_time_eq("abc", "abc") is True
     assert constant_time_eq("abc", "abd") is False
+
+
+class _ThreadRecordingHasher(Hasher):
+    """Records the name of the thread each verify's worker call runs on."""
+
+    def __init__(self, executor: ThreadPoolExecutor) -> None:
+        super().__init__(pepper="pepper-value", executor=executor)
+        self.threads: list[str] = []
+
+    def _timed_verify_sync(self, password_hash: str, peppered_password: str) -> tuple[bool, float]:
+        self.threads.append(threading.current_thread().name)
+        return super()._timed_verify_sync(password_hash, peppered_password)
+
+
+async def test_hasher_with_executor_runs_hash_and_verify_on_that_executor() -> None:
+    """#4663: a hasher given a pool runs its verify work there, never on the default pool."""
+    with ThreadPoolExecutor(max_workers=1, thread_name_prefix="cv-test-pool") as pool:
+        hasher = _ThreadRecordingHasher(pool)
+        digest = await hasher.hash("correct-horse-battery-staple")
+        assert await hasher.verify(digest, "correct-horse-battery-staple") is True
+
+    assert hasher.threads and all(name.startswith("cv-test-pool") for name in hasher.threads)

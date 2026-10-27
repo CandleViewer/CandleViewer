@@ -183,6 +183,18 @@ groups:
         annotations:
           summary: "Failed sign-ins took longer than the minimum failed sign-in time"
           runbook_url: "docs/plan/07-release-and-prr.md#alert-authloginfailurefloormissed"
+      - alert: AuthLoginVerifyRefused
+        # #4663: sign-in verification runs for at most CV_AUTH_LOGIN_VERIFY_CONCURRENCY attempts
+        # at a time; an attempt beyond that is refused at once with a retry-after, and counted.
+        # Any in 10m is a ticket: some sign-ins, correct passwords included, were turned away.
+        expr: sum by (env) (increase(auth_login_verify_refused_total[10m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          component: auth
+        annotations:
+          summary: "Sign-in attempts were refused because sign-in verification was at capacity"
+          runbook_url: "docs/plan/07-release-and-prr.md#alert-authloginverifyrefused"
       - alert: AuthDisabledUserSessionRevoked
         # #3029 (SR-029, SR-125): a live session of a disabled or deleted user that no disable
         # revoked, found and revoked on use: the counter moves once per revoked row. A ticket, not

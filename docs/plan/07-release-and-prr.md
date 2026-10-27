@@ -1125,6 +1125,27 @@ curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (met
 docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'login' | tail -20
 ```
 
+<a id="alert-authloginverifyrefused"></a>
+
+### AuthLoginVerifyRefused
+
+| Element               | Detail                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1. What fired         | Sign-in verification was already running for as many attempts as it admits at a time (`CV_AUTH_LOGIN_VERIFY_CONCURRENCY`), so at least one sign-in attempt was refused at once with `429` and `Retry-After` (`auth_login_verify_refused_total`, #4663). A place is held from the identifier lookup to the last sign-in write, so a user store that stops answering also fills every place: check the store alerts too. Ticket, so quiet hours hold it until morning; a refusal that persists overnight is seen then. |
+| 2. User impact        | A user signing in during the window, with a correct password too, may have been asked to try again a second later.                                                                                                                                                                                                                                                                                                                                                                                                   |
+| 3. What is still safe | Sessions already signed in, lockouts, the per-address throttle and trading are unaffected. Refused attempts were not checked and changed no account; each writes one `auth.login_failed` audit record. Attempts at a locked account count against their address, so one address cannot keep every place taken.                                                                                                                                                                                                       |
+| 5. Remediation        | Check the sign-in volume, the API host's load and the user store: a burst of sign-in attempts or a stalled store fills every place. Treat a burst of failures as `AuthLoginFailureSpike`. If the volume is legitimate, set `CV_AUTH_LOGIN_VERIFY_CONCURRENCY` (1-32) to about a quarter of the API container's CPUs and restart the API.                                                                                                                                                                             |
+| 6. Escalation         | Owner and security reviewer if it repeats without a matching burst of sign-ins.                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| 7. Verify recovery    | No new increase.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+**4. First three diagnostic commands** (run from the repo root; expected healthy result: increase 0.)
+
+```bash
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=increase(auth_login_verify_refused_total[10m])'
+curl -s 'http://127.0.0.1:9090/api/v1/query' --data-urlencode 'query=sum by (method)(increase(auth_login_failures_total[10m]))'
+docker compose -f infra/compose/docker-compose.yml --profile core --profile obs logs --since 15m api | grep -i 'login' | tail -20
+```
+
 <a id="alert-authdisabledusersessionrevoked"></a>
 
 ### AuthDisabledUserSessionRevoked

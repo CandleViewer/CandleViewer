@@ -1535,6 +1535,9 @@ export interface paths {
      *     Failures are deliberately uniform (`unauthenticated`) whether the user is unknown,
      *     the password is wrong, or the account is disabled — no user enumeration.
      *     Five consecutive failures lock the account for 15 minutes (`user_status = locked`).
+     *     Sign-in verification runs for at most `CV_AUTH_LOGIN_VERIFY_CONCURRENCY` attempts at a
+     *     time; an attempt beyond that is refused at once with `429` `rate_limited` and a
+     *     `Retry-After` of 1 second (#4663).
      */
     post: operations["authLogin"];
     delete?: never;
