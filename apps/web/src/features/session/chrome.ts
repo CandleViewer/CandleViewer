@@ -51,14 +51,24 @@ export const hidden: CSSProperties = {
 
 /**
  * Tab cycles inside `node`; Esc calls `onEscape`, or does nothing when it is absent (SCR-005: Esc
- * does not dismiss). Bound on the native element, as StepUpDialog does.
+ * does not dismiss). Bound on the native element, as StepUpDialog does. `guard` (SCR-005) also pulls
+ * focus that lands outside the dialog back to its first control, and a press on the scrim itself
+ * takes no focus.
  */
-export function useModalKeys(node: RefObject<HTMLElement>, onEscape?: () => void): void {
+export function useModalKeys(
+  node: RefObject<HTMLElement>,
+  onEscape?: () => void,
+  guard = false,
+): void {
   const escape = useRef(onEscape);
-  escape.current = onEscape;
+  useEffect(() => {
+    escape.current = onEscape;
+  });
   useEffect(() => {
     const el = node.current;
     if (el === null) return undefined;
+    const first = (): HTMLElement | undefined =>
+      el.querySelector<HTMLElement>(FOCUSABLE) ?? undefined;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         event.preventDefault();
@@ -67,16 +77,40 @@ export function useModalKeys(node: RefObject<HTMLElement>, onEscape?: () => void
       }
       if (event.key !== "Tab") return;
       const stops = Array.from(el.querySelectorAll<HTMLElement>(FOCUSABLE));
-      const first = stops[0];
+      const head = stops[0];
       const last = stops[stops.length - 1];
-      if (first === undefined || last === undefined) return;
-      const edge = event.shiftKey ? first : last;
-      if (document.activeElement === edge) {
+      if (head === undefined || last === undefined) return;
+      if (document.activeElement === (event.shiftKey ? head : last)) {
         event.preventDefault();
-        (event.shiftKey ? last : first).focus();
+        (event.shiftKey ? last : head).focus();
       }
     };
+    const onFocusIn = (event: FocusEvent): void => {
+      if (event.target instanceof Node && !el.contains(event.target)) first()?.focus();
+    };
+    const scrimEl = el.parentElement;
+    const onMouseDown = (event: MouseEvent): void => {
+      if (event.target === scrimEl) event.preventDefault();
+    };
     el.addEventListener("keydown", onKeyDown);
-    return () => el.removeEventListener("keydown", onKeyDown);
-  }, [node]);
+    if (guard) {
+      document.addEventListener("focusin", onFocusIn);
+      scrimEl?.addEventListener("mousedown", onMouseDown);
+    }
+    return () => {
+      el.removeEventListener("keydown", onKeyDown);
+      document.removeEventListener("focusin", onFocusIn);
+      scrimEl?.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [node, guard]);
+}
+
+/** Focus goes back to the element that had it when the dialog opened (E09-D06 §6). */
+export function useFocusReturn(): void {
+  useEffect(() => {
+    const opener = document.activeElement;
+    return () => {
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+    };
+  }, []);
 }

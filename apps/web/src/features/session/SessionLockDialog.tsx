@@ -1,13 +1,24 @@
 import { useEffect, useId, useRef, useState, type FormEvent, type JSX } from "react";
-import { actions, card, hidden, primary, scrim, title, useModalKeys } from "./chrome";
+import {
+  actions,
+  card,
+  hidden,
+  primary,
+  scrim,
+  title,
+  useFocusReturn,
+  useModalKeys,
+} from "./chrome";
 
 /** E09-D06 frames `locked-default`, `verifying`, `wrong-password` (and the other refusals). */
 export type LockPhase = "locked" | "verifying" | "error";
 
 export interface LockFailure {
   readonly message: string;
-  /** A new `seq` clears the password and refocuses it. */
+  /** A new `seq` of a refused password (`credentials`, the default) clears it and refocuses it. */
   readonly seq: number;
+  /** `false` for a throttle or no answer: what was typed stays, the field is not marked invalid. */
+  readonly credentials?: boolean;
 }
 
 export interface SessionLockDialogProps {
@@ -43,14 +54,17 @@ export function SessionLockDialog({
   const [password, setPassword] = useState("");
   const verifying = phase === "verifying";
   const seq = failure?.seq;
-  useModalKeys(dialog);
+  const refused = failure !== null && failure.credentials !== false;
+  // order matters: on unmount the focus guard goes before focus returns to the opener
+  useModalKeys(dialog, undefined, true);
+  useFocusReturn();
 
   useEffect(() => passwordField.current?.focus(), []);
   useEffect(() => {
-    if (seq === undefined) return;
+    if (seq === undefined || !refused) return;
     setPassword("");
     passwordField.current?.focus();
-  }, [seq]);
+  }, [seq, refused]);
 
   function submit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
@@ -64,7 +78,8 @@ export function SessionLockDialog({
         ? "Verifying your password..."
         : "Sign in again to continue.";
   return (
-    <div style={scrim}>
+    // `data-keymap-context="Locked"` stops global hotkeys (KeymapHost)
+    <div style={scrim} data-keymap-context="Locked">
       <div
         ref={dialog}
         role="alertdialog"
@@ -98,12 +113,10 @@ export function SessionLockDialog({
             placeholder="Enter your password"
             required
             readOnly={verifying}
-            aria-invalid={phase === "error" ? true : undefined}
+            aria-invalid={refused ? true : undefined}
             aria-describedby={failure === null ? undefined : `${id}-e`}
             style={
-              phase === "error"
-                ? { ...field, borderColor: "var(--color-status-warning-default)" }
-                : field
+              refused ? { ...field, borderColor: "var(--color-status-warning-default)" } : field
             }
             value={password}
             onChange={(event) => setPassword(event.target.value)}

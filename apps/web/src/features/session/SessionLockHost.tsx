@@ -6,8 +6,11 @@ import { sessionApi, type SessionApi, type SessionClock, type UnlockOutcome } fr
 
 /** CMP-098 shows this long before the server's idle deadline (E09-D06 §3). */
 export const WARN_MS = 60_000;
-/** A read that got no answer is tried again after this long: never a tight loop. */
+/** A read with no usable answer is tried again after 30, 60, then every 120 s: never a tight loop. */
 const RETRY_MS = 30_000;
+const RETRY_MAX_MS = 120_000;
+/** No re-read is ever scheduled sooner than this. */
+const MIN_DELAY_MS = 1_000;
 
 /** E09-D06 `wrong-password`; the other two are PROPOSED (#1640 copy-pending table). */
 const FAILURE_COPY: Partial<Record<UnlockOutcome["kind"], string>> = {
@@ -56,24 +59,45 @@ export function SessionLockHost({
     let warned: string | null = null;
     let dismissed: string | null = null;
     let failures = 0;
+    let retryMs = RETRY_MS;
+    let unlocking = false;
     const at = (ms: number, task: () => void): void => {
       clearTimeout(timer);
-      timer = setTimeout(task, Math.max(ms, 0));
+      timer = setTimeout(task, Math.max(ms, MIN_DELAY_MS));
     };
     const read = (): void => void api.read().then(apply);
+    const retry = (): void => {
+      at(retryMs, read);
+      retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
+    };
+    const fail = (kind: UnlockOutcome["kind"]): void => {
+      failures += 1;
+      const failure = {
+        message: FAILURE_COPY[kind] ?? "",
+        seq: failures,
+        credentials: kind === "invalid",
+      };
+      setView({ kind: "locked", phase: "error", failure });
+    };
     function apply(clock: SessionClock | null): void {
       if (!live) return;
-      if (clock === null) return at(RETRY_MS, read);
+      if (clock === null) return retry();
       const { session } = clock;
       setIdleMinutes(Math.round(session.idle_timeout_s / 60));
       if (session.locked) {
         clearTimeout(timer);
+        retryMs = RETRY_MS;
         setView((v) =>
-          v.kind === "locked" ? v : { kind: "locked", phase: "locked", failure: null },
+          v.kind === "locked" && v.phase !== "verifying"
+            ? v
+            : { kind: "locked", phase: "locked", failure: null },
         );
         return;
       }
       const left = Date.parse(session.idle_deadline) - Date.parse(clock.server_time);
+      // past its deadline but not locked yet (or no usable time): ask again later, not at once
+      if (!(left > 0)) return retry();
+      retryMs = RETRY_MS;
       if (left > WARN_MS || dismissed === session.idle_deadline) {
         setView({ kind: "none" });
         at(left > WARN_MS ? left - WARN_MS : left, read);
@@ -87,11 +111,12 @@ export function SessionLockHost({
     function settle(outcome: UnlockOutcome): void {
       if (!live) return;
       if (outcome.kind === "unlocked") return apply(outcome.clock);
-      if (outcome.kind === "revoked") return api.endSession();
-      if (outcome.kind === "not_locked") return read();
-      failures += 1;
-      const message = FAILURE_COPY[outcome.kind] ?? "";
-      setView({ kind: "locked", phase: "error", failure: { message, seq: failures } });
+      if (outcome.kind === "revoked") {
+        setView({ kind: "none" }); // the typed password goes with the dialog, before the route change
+        return api.endSession();
+      }
+      if (outcome.kind !== "not_locked") return fail(outcome.kind);
+      void api.read().then((clock) => (clock === null ? fail("unreachable") : apply(clock)));
     }
     actions.current = {
       extend: () => void api.extend().then((clock) => (clock === null ? read() : apply(clock))),
@@ -100,8 +125,13 @@ export function SessionLockHost({
         setView({ kind: "none" });
       },
       unlock: (password) => {
+        if (unlocking) return; // a double submit sends once
+        unlocking = true;
         setView({ kind: "locked", phase: "verifying", failure: null });
-        void api.unlock(password).then(settle);
+        void api.unlock(password).then((outcome) => {
+          unlocking = false;
+          settle(outcome);
+        });
       },
     };
     read();

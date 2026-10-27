@@ -11,6 +11,7 @@ import type { SessionApi, SessionClock } from "../../../src/features/session/ses
 import { SessionLockDialog } from "../../../src/features/session/SessionLockDialog";
 import { SessionLockHost } from "../../../src/features/session/SessionLockHost";
 import { SessionTimeoutWarning } from "../../../src/features/session/SessionTimeoutWarning";
+import { KeymapHost, registerCommand } from "../../../src/keymap/KeymapHost";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
@@ -215,5 +216,149 @@ describe("SessionLockHost", () => {
     }
     expect(unlock).toHaveBeenCalledTimes(5);
     expect(api.endSession).toHaveBeenCalledTimes(1);
+    expect(screen.queryByLabelText("Password")).not.toBeInTheDocument(); // the password goes first
+  });
+
+  const locked = (): SessionApi["read"] => vi.fn().mockResolvedValue(clock(0, true));
+  const submit = (value: string): void => {
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value } });
+    fireEvent.submit(screen.getByLabelText("Password"));
+  };
+
+  it("keeps focus and hotkeys behind the lock: scrim click, outside focus, Ctrl+K", async () => {
+    const palette = vi.fn();
+    const off = registerCommand("global.palette", palette);
+    render(
+      <>
+        <button type="button">outside</button>
+        <KeymapHost />
+        <SessionLockHost api={fakeApi({ read: locked() })} enabled />
+      </>,
+    );
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(palette).toHaveBeenCalledTimes(1); // control: unlocked, the hotkey runs
+    await tick(0);
+    const password = screen.getByLabelText("Password");
+    const scrim = screen.getByRole("alertdialog").parentElement as HTMLElement;
+    expect(fireEvent.mouseDown(scrim)).toBe(false);
+    expect(fireEvent.mouseDown(password)).toBe(true); // a press inside still focuses its target
+    screen.getByRole("button", { name: "outside" }).focus();
+    expect(password).toHaveFocus();
+    fireEvent.keyDown(password, { key: "Tab", shiftKey: true });
+    expect(screen.getByRole("button", { name: "Unlock" })).toHaveFocus();
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(palette).toHaveBeenCalledTimes(1);
+    off();
+  });
+
+  it("returns focus to the element focused before the lock once unlocked", async () => {
+    render(
+      <>
+        <button type="button">before</button>
+        <SessionLockHost api={fakeApi({ read: locked() })} enabled />
+      </>,
+    );
+    screen.getByRole("button", { name: "before" }).focus();
+    await tick(0);
+    submit("pw");
+    await tick(0);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "before" })).toHaveFocus();
+  });
+
+  it.each(["Stay signed in", "Escape"])("returns focus after the warning's %s", async (how) => {
+    render(
+      <>
+        <button type="button">before</button>
+        <SessionLockHost api={fakeApi({ read: vi.fn().mockResolvedValue(clock(60)) })} enabled />
+      </>,
+    );
+    screen.getByRole("button", { name: "before" }).focus();
+    await tick(0);
+    if (how === "Escape") fireEvent.keyDown(screen.getByRole("alertdialog"), { key: how });
+    else fireEvent.click(screen.getByRole("button", { name: how }));
+    await tick(0);
+    expect(screen.getByRole("button", { name: "before" })).toHaveFocus();
+  });
+
+  it("a 409 whose re-read finds the session locked returns to locked, not verifying", async () => {
+    const unlock = vi.fn().mockResolvedValue({ kind: "not_locked" });
+    render(<SessionLockHost api={fakeApi({ read: locked(), unlock })} enabled />);
+    await tick(0);
+    submit("pw");
+    await tick(0);
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "false");
+    expect(screen.getByRole("button", { name: "Unlock" })).toBeEnabled();
+  });
+
+  it.each([
+    ["throttled", "Too many attempts. Wait a minute, then try again.", locked()],
+    ["unreachable", "Couldn't reach the server. Try again.", locked()],
+    [
+      "not_locked",
+      "Couldn't reach the server. Try again.",
+      vi.fn().mockResolvedValueOnce(clock(0, true)).mockResolvedValue(null),
+    ],
+  ])("%s keeps the password and does not mark it invalid", async (kind, message, read) => {
+    render(
+      <SessionLockHost
+        api={fakeApi({ read, unlock: vi.fn().mockResolvedValue({ kind }) })}
+        enabled
+      />,
+    );
+    await tick(0);
+    submit("typed");
+    await tick(0);
+    expect(screen.getByRole("alert")).toHaveTextContent(message);
+    expect(screen.getByLabelText("Password")).toHaveValue("typed");
+    expect(screen.getByLabelText("Password")).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("a double submit sends one unlock", async () => {
+    const unlock = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SessionLockHost api={fakeApi({ read: locked(), unlock })} enabled />);
+    await tick(0);
+    submit("pw");
+    fireEvent.submit(screen.getByLabelText("Password"));
+    expect(unlock).toHaveBeenCalledTimes(1);
+  });
+
+  it("backs off an unreadable session: 30, 60, then 120 s", async () => {
+    const read = vi.fn().mockResolvedValue(null);
+    render(<SessionLockHost api={fakeApi({ read })} enabled />);
+    for (const [ms, calls] of [
+      [0, 1],
+      [29_999, 1],
+      [1, 2],
+      [60_000, 3],
+      [120_000, 4],
+      [120_000, 5],
+    ]) {
+      await tick(ms ?? 0);
+      expect(read).toHaveBeenCalledTimes(calls ?? 0);
+    }
+  });
+
+  it.each([
+    ["a past deadline, not locked", clock(-5)],
+    ["a NaN deadline", { ...clock(0), session: { ...clock(0).session, idle_deadline: "x" } }],
+  ])("%s never re-reads in a tight loop", async (_name, answer) => {
+    const read = vi.fn().mockResolvedValue(answer);
+    render(<SessionLockHost api={fakeApi({ read })} enabled />);
+    await tick(29_000);
+    expect(read).toHaveBeenCalledTimes(1);
+    await tick(1_000);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("an extend with no answer re-reads the session and shows the lock", async () => {
+    const read = vi.fn().mockResolvedValueOnce(clock(60)).mockResolvedValue(clock(0, true));
+    render(
+      <SessionLockHost api={fakeApi({ read, extend: vi.fn().mockResolvedValue(null) })} enabled />,
+    );
+    await tick(0);
+    fireEvent.click(screen.getByRole("button", { name: "Stay signed in" }));
+    await tick(0);
+    expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
   });
 });
