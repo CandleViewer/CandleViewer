@@ -53,26 +53,34 @@ export function focusFieldInput(
 
 /** Keys that edit while the field is gated: refused, and announced once per focus visit. Arrows, Home/End, copy stay free. */
 const REFUSED_KEYS = new Set(["Enter", "Backspace", "Delete"]);
-const isRefusedKey = (event: KeyboardEvent): boolean =>
-  REFUSED_KEYS.has(event.key) || (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
+const isRefusedKey = (event: KeyboardEvent, extra: ReadonlySet<string>): boolean =>
+  REFUSED_KEYS.has(event.key) ||
+  (event.key.length === 1 && !event.ctrlKey && !event.metaKey) ||
+  // A key that would act on a widget (a Select's arrows) is refused plain only: a chord is the host's.
+  (extra.has(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey);
 
-export interface RefusalCallers {
-  readonly onKeyDown?: ((event: KeyboardEvent<HTMLInputElement>) => void) | undefined;
-  readonly onBlur?: ((event: FocusEvent<HTMLInputElement>) => void) | undefined;
-  readonly onPaste?: ((event: ClipboardEvent<HTMLInputElement>) => void) | undefined;
-  readonly onCut?: ((event: ClipboardEvent<HTMLInputElement>) => void) | undefined;
+const NO_KEYS: ReadonlySet<string> = new Set();
+
+export interface RefusalCallers<E extends HTMLElement = HTMLInputElement> {
+  readonly onKeyDown?: ((event: KeyboardEvent<E>) => void) | undefined;
+  readonly onBlur?: ((event: FocusEvent<E>) => void) | undefined;
+  readonly onPaste?: ((event: ClipboardEvent<E>) => void) | undefined;
+  readonly onCut?: ((event: ClipboardEvent<E>) => void) | undefined;
 }
 
 /**
  * T2 refusal: while gated a refused key (and paste or cut) changes nothing, Enter never submits the host form, and
  * the reason is announced once per focus visit through a polite status node that exists only while gated.
- * Tab and Esc are never touched. The caller's handlers run first.
+ * Tab and Esc are never touched. The caller's handlers run first. `extraKeys` adds the keys a non-text widget
+ * refuses (a Select's arrows and Home/End); `refuse()` is the same refusal for a pointer press.
  */
-export function useRefusalAnnounce(
+export function useRefusalAnnounce<E extends HTMLElement = HTMLInputElement>(
   reason: DisabledReasonAttrs,
-  callers: RefusalCallers,
+  callers: RefusalCallers<E>,
+  extraKeys: ReadonlySet<string> = NO_KEYS,
 ): {
-  readonly handlers: Required<RefusalCallers>;
+  readonly handlers: Required<RefusalCallers<E>>;
+  readonly refuse: () => void;
   readonly status: JSX.Element | null;
 } {
   const [spoken, setSpoken] = useState(false);
@@ -81,7 +89,7 @@ export function useRefusalAnnounce(
     handlers: {
       onKeyDown: (event) => {
         callers.onKeyDown?.(event);
-        if (!gated || !isRefusedKey(event)) return;
+        if (!gated || !isRefusedKey(event, extraKeys)) return;
         // readonly stops the edit, not implicit form submission or an unlisted default: stop them here.
         event.preventDefault();
         setSpoken(true);
@@ -98,6 +106,9 @@ export function useRefusalAnnounce(
         callers.onCut?.(event);
         if (gated) setSpoken(true);
       },
+    },
+    refuse: () => {
+      if (gated) setSpoken(true);
     },
     status: gated ? (
       <span className="cv-visually-hidden" role="status">
