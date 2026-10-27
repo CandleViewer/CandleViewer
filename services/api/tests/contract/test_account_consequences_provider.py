@@ -14,17 +14,22 @@ route's own on any answer but a refusal (CR-04).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator
 from decimal import Decimal
 from typing import Any
 
 import pytest
 
 import candleviewer.app as appmod
-from candleviewer.accounts.consequences import AssignedUser, ConsequenceRead, StoreReadFailed
+from candleviewer.accounts.consequences import ConsequenceRead, StoreReadFailed
 from candleviewer.accounts.errors import AccountNotFoundError, AccountScopeDeniedError
 from candleviewer.accounts.exposure import ExposureRead, KeyExposure, KeyReadFailed
-from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, ExchangeEnv
+from candleviewer.accounts.models import (
+    ApiKeyMetadata,
+    AssignedUser,
+    ExchangeAccount,
+    ExchangeEnv,
+)
 from candleviewer.accounts.profile_repository import ArmedRule
 from candleviewer.api.deny_by_default import served_operations
 from candleviewer.audit.errors import AuditError
@@ -59,7 +64,8 @@ FLAT = _position(symbol="SOLUSDT", side="flat", size=Decimal("0"))
 
 class Ports:
     """The consequence read's ports. `answer` is the key's read; `gated` closes the owner gate
-    for the Owner too; `down` fails the grantee read; `calls` counts every port call."""
+    for the Owner too; `down` fails the grantee read; `calls` counts every port call, `reads`
+    the exchange reads (`read`) alone."""
 
     def __init__(self) -> None:
         self.rows = {i: ACCOUNT.model_copy(update={"id": i}) for i in (GRANTED, FOREIGN)} | {
@@ -69,7 +75,7 @@ class Ports:
 
     def reset(self) -> None:
         self.answer: KeyExposure | KeyReadFailed = KeyExposure((PROTECTED, TP_ONLY, FLAT), 4)
-        self.gated, self.down, self.keyless, self.calls = False, False, False, 0
+        self.gated, self.down, self.keyless, self.calls, self.reads = False, False, False, 0, 0
 
     def _owner(self, scope: OwnerScope) -> None:
         self.calls += 1
@@ -86,11 +92,15 @@ class Ports:
             raise AccountNotFoundError("account")
         return self.rows[account_id]
 
-    async def list_keys(self, scope: OwnerScope, account_id: uuid.UUID) -> Sequence[ApiKeyMetadata]:
+    async def list_keys(
+        self, scope: OwnerScope, account_id: uuid.UUID
+    ) -> tuple[ApiKeyMetadata, ...]:
         self._owner(scope)
         return () if self.keyless else (key(KEY, account=account_id),)
 
-    async def list_grantees(self, scope: OwnerScope, account_id: uuid.UUID) -> Any:
+    async def list_grantees(
+        self, scope: OwnerScope, account_id: uuid.UUID
+    ) -> tuple[AssignedUser, ...]:
         self._owner(scope)
         if self.down:
             raise StoreReadFailed("a store read hit its bound")
@@ -108,6 +118,7 @@ class Ports:
 
     async def read(self, account: ExchangeAccount, key_id: uuid.UUID) -> KeyExposure:
         self.calls += 1
+        self.reads += 1
         if isinstance(self.answer, KeyReadFailed):
             raise self.answer
         return self.answer
@@ -122,7 +133,7 @@ def _served() -> Iterator[Served]:
 
     def wired(*_args: Any, env: str) -> ConsequenceRead:
         exposure = ExposureRead(ports, env=env)
-        return ConsequenceRead(ports, exposure, ports, ports, env=env)  # type: ignore[arg-type]
+        return ConsequenceRead(ports, exposure, ports, ports, env=env)
 
     try:
         mp.setattr(appmod, "wire_consequence_read", wired)
@@ -193,7 +204,7 @@ def test_no_role_but_the_owner_reads_it_403_audited_naming_the_account(
     assert (resp.status_code, answer(resp)["required_permissions"]) == (403, ["accounts:write"])
     (record,) = world.audit.records
     assert (record["action"], record["object_id"]) == ("rbac.denied", str(account))
-    assert ports.calls == 0  # no store, no exchange call
+    assert (ports.calls, ports.reads) == (0, 0)  # no store, no exchange call
 
 
 def test_a_manager_foreign_and_absent_answers_are_byte_equal(served: Served) -> None:
@@ -223,7 +234,7 @@ def test_a_scoped_holder_of_accounts_write_reaches_only_its_granted_account(
 ) -> None:
     """vw2 decision 4: a non-Owner holding the permission (none does today, KV-E02) passes RBAC
     on its granted account only, and the store's owner gate refuses its owner-only reads."""
-    world, _ = served
+    world, ports = served
     grant = (AccountGrant(GRANTED, True, True, False),)
     holder = PrincipalSnapshot(
         user_id_of("manager_with_grant"), frozenset({"manager"}),
@@ -235,6 +246,7 @@ def test_a_scoped_holder_of_accounts_write_reaches_only_its_granted_account(
     (record,) = world.audit.records
     assert record["reason"] == "not_owner:accounts:write:granted_accounts"
     assert record["object_id"] == str(GRANTED)
+    assert ports.reads == 0  # the owner gate refused before any exchange call
     foreign = get(world, FOREIGN, "manager_with_grant")
     assert (foreign.status_code, foreign.content) == (
         403,
@@ -324,3 +336,13 @@ def test_a_store_read_that_fails_is_503_store_unavailable(served: Served) -> Non
     resp = get(world, GRANTED)
     assert (resp.status_code, answer(resp)["code"]) == (503, "store_unavailable")
     assert "Retry-After" in resp.headers and world.audit.records == []
+
+
+def test_a_store_read_that_fails_beats_an_unknown_exposure(served: Served) -> None:
+    """Q2: with the exposure unknown (a dead key) and the grantee read down, the answer is the
+    store's 503, never a 409 whose `remedy` rests on a partial picture."""
+    world, ports = served
+    ports.answer, ports.down = KeyReadFailed("auth_error"), True
+    resp = get(world, GRANTED)
+    assert (resp.status_code, answer(resp)["code"]) == (503, "store_unavailable")
+    assert "remedy" not in resp.json() and world.audit.records == []

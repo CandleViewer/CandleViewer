@@ -23,7 +23,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
-from typing import Final, Literal, Protocol
+from typing import Final, Protocol
 from uuid import UUID, uuid5
 
 from candleviewer.accounts.errors import (
@@ -39,17 +39,17 @@ from candleviewer.accounts.exposure import (
     ExposureOutcome,
     ExposureUnknown,
 )
-from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount
+from candleviewer.accounts.models import ApiKeyMetadata, AssignedUser, ExchangeAccount
 from candleviewer.accounts.profile_repository import ArmedRule, ArmedRules
 from candleviewer.observability import spawn_child
 from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
 
 __all__ = [
     "ARMED_LISTED",
+    "GRANTEES_LISTED",
     "POSITION_NAMESPACE",
     "STORE_BOUND_S",
     "AccountConsequences",
-    "AssignedUser",
     "ConsequenceRead",
     "ConsequenceStores",
     "RunningAlgos",
@@ -61,18 +61,12 @@ __all__ = [
 STORE_BOUND_S: Final = 0.25
 #: The armed rules listed at most; one more fails the read closed (no partial list, C-2.18).
 ARMED_LISTED: Final = 1000
+#: The grantees listed at most; the store reads one more (`LIMIT 501`), and that one fails the
+#: read closed as the armed rules do (no partial list).
+GRANTEES_LISTED: Final = 500
 #: `Position.id` here is derived, never stored: UUIDv5 of (account, symbol, `position_idx`) in
 #: this fixed namespace (24 §8.1).
 POSITION_NAMESPACE: Final = UUID("6f1c2a52-8e1b-5f0e-9a43-0c9e8d0b7a31")
-
-
-@dataclass(frozen=True, slots=True)
-class AssignedUser:
-    """A user granted the account (`user_account_access`): `trade` or `read`."""
-
-    user_id: UUID
-    username: str
-    level: Literal["read", "trade"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +83,7 @@ class AccountConsequences:
 
 
 class StoreReadFailed(AccountsError):
-    """A store read hit its bound, or the armed rules overflowed the listing: `503
+    """A store read hit its bound, or the armed rules or the grantees overflowed the listing: `503
     store_unavailable` (fail closed)."""
 
 
@@ -175,6 +169,10 @@ class ConsequenceRead:
     async def _exposure_of(
         self, account: ExchangeAccount, owner: OwnerScope, started: float
     ) -> ExposureOutcome:
+        """The keys, then the exposure read with what is left of the budget. When nothing is
+        left (`within_s <= 0`), `ExposureRead` sends no request and every key reads `timeout`:
+        503 `exchange_unavailable`, whose detail says the exchange could not be reached. No request
+        was sent; the store reads, not the exchange, spent the budget."""
         keys = await self._bounded(lambda: self._stores.list_keys(owner, account.id))
         left = self._budget_s - (self._clock() - started)
         return await self._exposure.read(account, keys, within_s=left)
@@ -183,6 +181,12 @@ class ConsequenceRead:
         listed = await self._rules.covering(account_id, limit=ARMED_LISTED + 1)
         if len(listed) > ARMED_LISTED:
             raise StoreReadFailed("more armed rules than the summary lists")
+        return listed
+
+    async def _grantees(self, owner: OwnerScope, account_id: UUID) -> tuple[AssignedUser, ...]:
+        listed = await self._stores.list_grantees(owner, account_id)
+        if len(listed) > GRANTEES_LISTED:
+            raise StoreReadFailed("more grantees than the summary lists")
         return listed
 
     async def read(
@@ -204,7 +208,7 @@ class ConsequenceRead:
                 )
                 users = spawn_child(
                     group,
-                    self._bounded(lambda: self._stores.list_grantees(owner, account.id)),
+                    self._bounded(lambda: self._grantees(owner, account.id)),
                     name="consequence-grantees",
                 )
                 rules = spawn_child(
@@ -216,7 +220,7 @@ class ConsequenceRead:
                     name="consequence-algos",
                 )
         except ExceptionGroup as failed:
-            raise _first(failed) from None
+            raise _first(failed) from failed
         read = exposure.result()
         if not isinstance(read, ExposureKnown):
             return read

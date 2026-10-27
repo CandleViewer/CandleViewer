@@ -188,6 +188,7 @@ _NO_COLUMN_COPY = {
     "_COUNT_KEYS",
     "_COUNT_PROFILES",
     "_LIST_GRANTEES",
+    "_GRANTEES_TIMEOUT",
 }
 
 
@@ -366,13 +367,16 @@ async def test_owner_methods_reject_grant_scope_without_sql() -> None:
 
 
 async def test_list_grantees_runs_the_gate_then_maps_each_grant() -> None:
-    """#898 B2b: the account's grantees, behind the owner gate, mapped from their rows."""
+    """#898 B2b: the account's grantees, behind the owner gate, under the read's 250 ms server
+    cap, mapped from their rows."""
     user, acct = uuid4(), uuid4()
-    rel = _Rel(_Result(), _Result([{"user_id": str(user), "username": "ann", "can_trade": True}]))
+    row = {"user_id": str(user), "username": "ann", "can_trade": True}
+    rel = _Rel(_Result(), _Result(), _Result([row]))
     got = await _store(rel).list_grantees(_OWNER, acct)
     assert got == (GranteeRow(user, "ann", True),) and rel.commits == 0
-    assert [c[0] for c in rel.calls] == [mod._OWNER_GATE, mod._LIST_GRANTEES]
-    assert rel.calls[1][1] == {"account": str(acct)}
+    stmts = [c[0] for c in rel.calls]
+    assert stmts == [mod._OWNER_GATE, mod._GRANTEES_TIMEOUT, mod._LIST_GRANTEES]
+    assert rel.calls[2][1] == {"account": str(acct)}
 
 
 async def test_empty_grant_scope_makes_no_sql_call() -> None:

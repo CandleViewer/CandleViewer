@@ -8,6 +8,7 @@ credential broker's internal row type reads them. `key_id_last4` is the only key
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -212,3 +213,13 @@ class ApiKeyRotation(BaseModel):
         if self.completed_at is not None and self.failed_at is not None:
             raise ValueError("a rotation cannot be both completed and failed")
         return self
+
+
+@dataclass(frozen=True, slots=True)
+class AssignedUser:
+    """A user granted an account (`user_account_access`): `trade` or `read`. A plain frozen
+    dataclass, not a pydantic model: built from store rows, never from input."""
+
+    user_id: UUID
+    username: str
+    level: Literal["read", "trade"]

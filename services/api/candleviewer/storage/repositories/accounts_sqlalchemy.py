@@ -310,14 +310,20 @@ _LIST_KEYS = sa.text(
     "ORDER BY k.created_at, k.id LIMIT 100"
 )
 #: The account's grantees (#898, the consequence read): a soft-revoked grant (`can_view` false)
-#: and a deleted user are left out, a frozen grant is listed (the user is still assigned).
+#: and a deleted user are left out, a frozen grant is listed (the user is still assigned). One
+#: row past the 500 the summary lists (`accounts.consequences.GRANTEES_LISTED`), which fails the
+#: read closed there.
 _LIST_GRANTEES = sa.text(
     "SELECT a.user_id::text AS user_id, u.username::text AS username, a.can_trade AS can_trade "
     "FROM user_account_access a JOIN users u ON u.id = a.user_id "
     "JOIN exchange_accounts ea ON ea.id = a.exchange_account_id "
     "WHERE ea.deleted_at IS NULL AND a.exchange_account_id = CAST(:account AS uuid) "
-    "AND a.can_view AND u.deleted_at IS NULL ORDER BY u.username, a.user_id LIMIT 500"
+    "AND a.can_view AND u.deleted_at IS NULL ORDER BY u.username, a.user_id LIMIT 501"
 )
+#: The grantee read's server-side cap, this transaction only: the consequence read's 250 ms store
+#: bound (`accounts.consequences.STORE_BOUND_S`), so a read the caller cancels at its bound also
+#: ends on the server (SQLSTATE 57014) instead of running to the 30 s default.
+_GRANTEES_TIMEOUT = sa.text("SELECT set_config('statement_timeout', '250', true)")
 _TRANSITION = sa.text(
     "UPDATE api_keys AS k SET status = CAST(:new AS key_status), "
     "updated_by = CAST(:caller AS uuid), updated_at = now() "
@@ -454,8 +460,8 @@ _COUNT_PROFILES = sa.text(
 OWNER_STATEMENTS = frozenset(
     {
         _CREATE, _LOCK_PARENT, _COUNT_SUBS, _GET_OWNER, _LIST_OWNER, _UPDATE, _SOFT_DELETE,
-        _GET_KEY, _LIST_KEYS, _LIST_GRANTEES, _TRANSITION, _START_ROT, _GET_ROT, _LIST_ROTS,
-        *_STEPS.values(),
+        _GET_KEY, _LIST_KEYS, _LIST_GRANTEES, _GRANTEES_TIMEOUT, _TRANSITION, _START_ROT,
+        _GET_ROT, _LIST_ROTS, *_STEPS.values(),
     }
 )  # fmt: skip
 GRANT_STATEMENTS = frozenset({_GET_GRANT, _LIST_GRANT})
@@ -754,6 +760,7 @@ class SqlAlchemyAccountsStore:
         owner = _require_owner(scope)
         async with self._relational.unit_of_work() as uow:
             await self._gate(uow, owner)
+            await uow.session.execute(_GRANTEES_TIMEOUT)
             res = await uow.session.execute(_LIST_GRANTEES, {"account": str(account_id)})
             return tuple(
                 GranteeRow(UUID(r["user_id"]), r["username"], bool(r["can_trade"]))

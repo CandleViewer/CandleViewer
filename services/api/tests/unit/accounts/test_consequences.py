@@ -3,8 +3,9 @@
 CR-05: the five store reads inside SCR-129's 1 s. The account is read first; then its keys (and
 with them the exposure read), its grantees, its armed rules and its running algos run at once,
 each under its store bound, and the exposure read gets what is left of the budget. A store read
-that hits its bound fails the read closed. No wall time: reads park on `asyncio.Event`
-barriers, the bound is a fake deadline the test fires, the clock a counter the fakes advance.
+that hits its bound fails the read closed, and cancels the reads still in flight. No wall
+time: reads park on `asyncio.Event` barriers, the bound is a fake deadline the test fires, the
+clock a counter the fakes advance.
 """
 
 from __future__ import annotations
@@ -19,12 +20,11 @@ import pytest
 
 from candleviewer.accounts.consequences import (
     ARMED_LISTED,
+    GRANTEES_LISTED,
     STORE_BOUND_S,
     AccountConsequences,
-    AssignedUser,
     ConsequenceRead,
     StoreReadFailed,
-    _first,
     position_id,
 )
 from candleviewer.accounts.errors import (
@@ -38,9 +38,15 @@ from candleviewer.accounts.exposure import (
     ExposureOutcome,
     ExposureUnknown,
 )
-from candleviewer.accounts.models import ApiKeyMetadata, ExchangeAccount, ExchangeEnv
+from candleviewer.accounts.models import (
+    ApiKeyMetadata,
+    AssignedUser,
+    ExchangeAccount,
+    ExchangeEnv,
+)
 from candleviewer.accounts.profile_repository import ArmedRule
 from candleviewer.accounts.repository import AccountsRepository
+from candleviewer.storage.repositories import accounts_sqlalchemy as store_sql
 from candleviewer.storage.repositories.accounts import (
     AccountsStoreScopeDeniedError,
     GranteeRow,
@@ -66,11 +72,12 @@ class Clock:
 
 
 class Fakes:
-    """Every port the read uses. `park` names reads that wait on their own `release` event;
-    each read sets its `started` event and advances the clock by `cost[name]`."""
+    """Every port the read uses. `park` names reads that wait on their own `release` event
+    (`exposure` too: the exposure read itself); each read sets its `started` event, records
+    the task it runs in and advances the clock by `cost[name]`."""
 
     def __init__(self, *park: str, outcome: ExposureOutcome = KNOWN) -> None:
-        names = ("account", "keys", "grantees", "rules", "algos")
+        names = ("account", "keys", "grantees", "rules", "algos", "exposure")
         self.started = {n: asyncio.Event() for n in names}
         self.release = {n: asyncio.Event() for n in names}
         for name in names:
@@ -79,12 +86,16 @@ class Fakes:
         self.clock, self.cost = Clock(), dict.fromkeys(names, 0.0)
         self.fail: dict[str, Exception] = {}
         self.calls: list[tuple[str, Any]] = []
+        self.tasks: dict[str, asyncio.Task[Any] | None] = {}
         self.within: list[float | None] = []
+        self.users: tuple[AssignedUser, ...] = USERS
         self.rules: tuple[ArmedRule, ...] = RULES
         self.outcome = outcome
+        self.exposure_returned = asyncio.Event()
 
     async def _step(self, name: str, arg: Any) -> None:
         self.calls.append((name, arg))
+        self.tasks[name] = asyncio.current_task()
         self.started[name].set()
         await self.release[name].wait()
         self.clock.now += self.cost[name]
@@ -101,7 +112,7 @@ class Fakes:
 
     async def list_grantees(self, scope: OwnerScope, account_id: UUID) -> tuple[AssignedUser, ...]:
         await self._step("grantees", scope)
-        return USERS
+        return self.users
 
     async def armed_on(self, account_id: UUID) -> tuple[ArmedRule, ...]:
         raise AssertionError("the summary lists through `covering`")
@@ -115,10 +126,18 @@ class Fakes:
         return 2
 
     async def read(
-        self, account: ExchangeAccount, keys: Sequence[ApiKeyMetadata], *, within_s: float | None
+        self,
+        account: ExchangeAccount,
+        keys: Sequence[ApiKeyMetadata],
+        *,
+        within_s: float | None = None,
     ) -> ExposureOutcome:
         assert [k.id for k in keys] == [K1]
         self.within.append(within_s)
+        self.tasks["exposure"] = asyncio.current_task()
+        self.started["exposure"].set()
+        await self.release["exposure"].wait()
+        self.exposure_returned.set()
         return self.outcome
 
     def consequences(self, deadline: Any = asyncio.timeout) -> ConsequenceRead:
@@ -223,10 +242,91 @@ async def test_read_more_armed_rules_than_listed_fails_closed() -> None:
         await _read(fakes)
 
 
-def test_first_prefers_the_owner_gates_refusal() -> None:
-    denied, down = AccountScopeDeniedError(), StoreReadFailed("bound")
-    assert _first(ExceptionGroup("g", [down, ExceptionGroup("h", [denied])])) is denied
-    assert _first(ExceptionGroup("g", [down, AccountsError("x")])) is down
+async def test_read_more_grantees_than_listed_fails_closed() -> None:
+    fakes = Fakes()
+    fakes.users = tuple(
+        AssignedUser(UUID(int=i + 1), f"u{i}", "read") for i in range(GRANTEES_LISTED + 1)
+    )
+    with pytest.raises(StoreReadFailed):
+        await _read(fakes)
+
+
+async def test_read_grantees_at_the_listing_are_all_listed() -> None:
+    fakes = Fakes()
+    fakes.users = tuple(
+        AssignedUser(UUID(int=i + 1), f"u{i}", "read") for i in range(GRANTEES_LISTED)
+    )
+    got = await _read(fakes)
+    assert isinstance(got, AccountConsequences) and got.assigned_users == fakes.users
+
+
+def test_grantee_statement_reads_one_past_the_listing_under_the_store_bound() -> None:
+    """The store cannot import M13's constants (C-3.1): its literals are pinned to them here."""
+    assert str(store_sql._LIST_GRANTEES).endswith(f" LIMIT {GRANTEES_LISTED + 1}")
+    cap = f"set_config('statement_timeout', '{round(STORE_BOUND_S * 1000)}', true)"
+    assert cap in str(store_sql._GRANTEES_TIMEOUT)
+
+
+async def test_read_owner_gates_refusal_raised_before_another_failure() -> None:
+    """Both fail in one group; the owner gate's refusal (a 403) is raised, chained to the
+    group, which keeps the other."""
+    fakes = Fakes()
+    down, denied = StoreReadFailed("bound"), AccountScopeDeniedError()
+    fakes.fail.update(grantees=down, algos=denied)
+    with pytest.raises(AccountScopeDeniedError) as raised:
+        await _read(fakes)
+    assert raised.value is denied
+    group = raised.value.__cause__
+    assert isinstance(group, ExceptionGroup) and set(group.exceptions) == {down, denied}
+
+
+async def test_read_first_failure_raised_when_no_owner_gate_refused() -> None:
+    fakes = Fakes()
+    down, other = StoreReadFailed("bound"), AccountsError("x")
+    fakes.fail.update(grantees=down, rules=other)
+    with pytest.raises(StoreReadFailed) as raised:
+        await _read(fakes)
+    assert raised.value is down
+
+
+async def test_read_store_failure_wins_over_an_unknown_exposure() -> None:
+    """Q2: the exposure decided `exposure_unknown` first; a grantee read failing after it still
+    fails the read (503 `store_unavailable`, never a 409 on a partial picture)."""
+    fakes = Fakes("grantees", outcome=ExposureUnknown("leave_positions", ((K1, "auth_error"),)))
+    fakes.fail["grantees"] = StoreReadFailed("bound")
+    task = asyncio.create_task(_read(fakes))
+    await fakes.started["grantees"].wait()
+    await fakes.exposure_returned.wait()
+    fakes.release["grantees"].set()
+    with pytest.raises(StoreReadFailed):
+        await task
+
+
+async def test_read_store_failure_cancels_the_in_flight_exposure_read() -> None:
+    fakes = Fakes("exposure", "grantees")
+    fakes.fail["grantees"] = StoreReadFailed("bound")
+    task = asyncio.create_task(_read(fakes))
+    await fakes.started["exposure"].wait()
+    await fakes.started["grantees"].wait()
+    fakes.release["grantees"].set()
+    with pytest.raises(StoreReadFailed):
+        await task
+    exposure = fakes.tasks["exposure"]
+    assert exposure is not None and exposure.cancelled()
+    assert not fakes.exposure_returned.is_set()
+
+
+async def test_read_cancelled_caller_cancels_every_child_and_none_outlives_it() -> None:
+    fakes = Fakes("exposure", "grantees", "rules", "algos")
+    task = asyncio.create_task(_read(fakes))
+    for name in ("exposure", "grantees", "rules", "algos"):
+        await fakes.started[name].wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    children = [fakes.tasks[n] for n in ("exposure", "grantees", "rules", "algos")]
+    assert len({id(c) for c in children}) == 4  # four child tasks, none the caller's
+    assert all(c is not None and c is not task and c.cancelled() for c in children)
 
 
 def test_position_id_stable_per_account_symbol_and_index() -> None:

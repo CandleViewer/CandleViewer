@@ -10,7 +10,6 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from uuid import UUID
 
-from candleviewer.accounts.consequences import AssignedUser
 from candleviewer.accounts.errors import (
     AccountConflictError,
     AccountNotFoundError,
@@ -23,6 +22,7 @@ from candleviewer.accounts.models import (
     AccountKind,
     ApiKeyMetadata,
     ApiKeyRotation,
+    AssignedUser,
     ExchangeAccount,
     ExchangeEnv,
     KeyStatus,
