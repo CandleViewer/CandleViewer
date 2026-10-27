@@ -113,10 +113,49 @@ describe("segmented.css contract", () => {
     expect(decl(NORMAL, `${F}[data-gated]`, "opacity")).toBeUndefined();
     expect(decl(NORMAL, `${F}[data-gated] ${OPT}`, "opacity")).toBeUndefined();
     expect(decl(NORMAL, `${OPT}[data-checked]::after`, "opacity")).toBeUndefined();
-    expect(decl(NORMAL, ".cv-segmented__lock", "color")).toBe("var(--color-text-primary)");
+    expect(decl(NORMAL, ".cv-segmented__lock", "color")).toBe("var(--color-text-secondary)");
     expect(decl(NORMAL, `${OPT}[data-checked]`, "color")).toBe("var(--color-text-primary)");
     // Plain disabled dims the whole track.
     expect(decl(NORMAL, `${F}[data-disabled]`, "opacity")).toBe("var(--opacity-disabled)");
+  });
+
+  it("gated: the track plate dims too (the track itself goes transparent), the labels never", () => {
+    const plate = `${F}[data-gated]::before`;
+    expect(decl(NORMAL, `${F}[data-gated]`, "background")).toBe("transparent");
+    expect(decl(NORMAL, `${F}[data-gated]`, "border-color")).toBe("transparent");
+    expect(decl(NORMAL, plate, "background")).toBe("var(--color-surface-raised)");
+    expect(decl(NORMAL, plate, "border-color")).toBe("var(--color-border-default)");
+    expect(decl(NORMAL, plate, "opacity")).toBe("var(--opacity-disabled)");
+    expect(decl(NORMAL, `${F}::before`, "z-index")).toBe("-1");
+    expect(decl(NORMAL, F, "isolation")).toBe("isolate");
+    expect(decl(NORMAL, F, "position")).toBe("relative");
+    // The forced plate is system colours at full strength.
+    expect(decl(FORCED, plate, "opacity")).toBe("1");
+    expect(decl(FORCED, plate, "background")).toBe("ButtonFace");
+    expect(decl(FORCED, plate, "border-color")).toBe("GrayText");
+    expect(decl(FORCED, `${F}[data-gated]`, "background")).toBe("ButtonFace");
+  });
+
+  it("the lock is text.secondary, a row item after the options with its own inline padding", () => {
+    expect(decl(NORMAL, ".cv-segmented__lock", "color")).toBe("var(--color-text-secondary)");
+    expect(decl(NORMAL, ".cv-segmented__lock", "padding-inline")).toBe("var(--space-inset-xs)");
+    expect(decl(NORMAL, ".cv-segmented__lock", "align-self")).toBe("center");
+  });
+
+  it("a focused segment is raised above a hovered neighbour so the ring is never painted over", () => {
+    expect(decl(NORMAL, `${OPT}:focus-visible`, "z-index")).toBe("1");
+    expect(decl(NORMAL, OPT, "position")).toBe("relative");
+  });
+
+  it("the selected label is body-strong and a hidden copy reserves that width", () => {
+    const strong = (v: string | undefined): boolean => (v ?? "").includes("--type-ui-body-strong-");
+    expect(strong(decl(NORMAL, `${OPT}[data-checked] .cv-segmented__label`, "font"))).toBe(true);
+    const copy = ".cv-segmented__label::after";
+    expect(decl(NORMAL, copy, "content")).toBe("attr(data-label)");
+    expect(decl(NORMAL, copy, "visibility")).toBe("hidden");
+    expect(decl(NORMAL, copy, "height")).toBe("0");
+    expect(strong(decl(NORMAL, copy, "font"))).toBe(true);
+    expect(decl(NORMAL, ".cv-segmented__label", "flex-direction")).toBe("column");
   });
 
   it("hover reaches only an unselected, enabled, ungated segment", () => {

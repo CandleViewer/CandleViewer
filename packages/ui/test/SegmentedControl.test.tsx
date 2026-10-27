@@ -268,9 +268,60 @@ describe("SegmentedControl (CMP-003)", () => {
     expect(onSubmit).not.toHaveBeenCalled();
     expect(checkedOf(host)).toEqual(["Bravo"]);
     expect(host.querySelectorAll("[data-checked]")).toHaveLength(1);
-    // One lock, on the checked segment.
+    // One lock, after the last option and inside the track: never inside a segment (catalogue 15:73).
     expect(host.querySelectorAll("svg")).toHaveLength(1);
-    expect(radio(host, "Bravo").querySelector("svg")).not.toBeNull();
+    const group = within(host).getByRole("radiogroup");
+    const lock = group.querySelector(".cv-segmented__lock");
+    expect(lock).not.toBeNull();
+    expect(lock?.parentElement).toBe(group);
+    expect(group.lastElementChild).toBe(lock);
+    expect(lock?.getAttribute("aria-hidden")).toBe("true");
+    for (const r of radios(host)) expect(r.querySelector("svg")).toBeNull();
+  });
+
+  it("the lock stays after the last option whichever segment is checked, and when none is", async () => {
+    for (const value of ["a", "c", undefined]) {
+      const host = await mount(
+        <SegmentedControl aria-label="x" options={OPTIONS} value={value} disabledReason={REASON} />,
+      );
+      const group = within(host).getByRole("radiogroup");
+      expect(group.lastElementChild?.classList.contains("cv-segmented__lock")).toBe(true);
+      expect(group.querySelectorAll(".cv-segmented__lock")).toHaveLength(1);
+    }
+  });
+
+  it("an ungated group draws no lock", async () => {
+    const host = await mount(<Host value="a" />);
+    expect(host.querySelector(".cv-segmented__lock")).toBeNull();
+  });
+
+  it("icon-only and gated: the name stays the label, the description is the reason, one lock", async () => {
+    const options: SegmentedOptions = [
+      { value: "asc", label: "Ascending", icon: "arrow-up" },
+      { value: "desc", label: "Descending", icon: "arrow-down" },
+    ];
+    const host = await mount(
+      <SegmentedControl
+        aria-label="Sort order"
+        options={options}
+        value="asc"
+        iconOnly
+        disabledReason={REASON}
+      />,
+    );
+    const asc = radio(host, "Ascending");
+    expect(asc).toHaveAccessibleDescription(REASON);
+    expect(asc.textContent).toBe("");
+    expect(within(host).getByRole("radiogroup")).toHaveAccessibleDescription(REASON);
+    expect(host.querySelectorAll(".cv-segmented__lock")).toHaveLength(1);
+    expect(host.querySelectorAll("svg")).toHaveLength(3);
+    expect(asc.querySelector(".cv-segmented__lock")).toBeNull();
+  });
+
+  it("each visible label carries a data-label copy source for the reserved bold width", async () => {
+    const host = await mount(<Host value="a" />);
+    const labels = [...host.querySelectorAll<HTMLElement>(".cv-segmented__label")];
+    expect(labels.map((l) => l.dataset["label"])).toEqual(["Alpha", "Bravo", "Charlie"]);
   });
 
   it("a pointer press on a refused segment of a gated group sends focus to the tab stop", async () => {

@@ -2,12 +2,25 @@
    Each segment draws its fill on ::before (so a gated control can dim the fill, never the label) and the selected
    2px outline on ::after (so the focus ring, which is the element's own outline, never fights it). */
 .cv-segmented {
+  position: relative;
+  isolation: isolate;
   box-sizing: border-box;
   display: inline-flex;
   align-items: stretch;
   border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
   border-radius: var(--radius-control);
   background: var(--color-surface-raised);
+}
+
+/* A plate behind the options carries the gated track look, so the track can dim without the labels dimming. */
+.cv-segmented::before {
+  content: "";
+  position: absolute;
+  inset: calc(var(--border-hairline) * -1px);
+  z-index: -1;
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 .cv-segmented[data-full-width] {
@@ -52,8 +65,33 @@
   height: var(--size-icon);
 }
 
+/* The T2 lock closes the row, after the last option and inside the track; never inside a segment. */
 .cv-segmented__lock {
-  color: var(--color-text-primary);
+  align-self: center;
+  box-sizing: content-box;
+  padding-inline: var(--space-inset-xs);
+  color: var(--color-text-secondary);
+}
+
+/* The selected label is body-strong; a hidden copy in that font reserves its width so a selection never shifts the row. */
+.cv-segmented__label {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.cv-segmented__label::after {
+  content: attr(data-label);
+  height: 0;
+  overflow: hidden;
+  visibility: hidden;
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-segmented__option[data-checked] .cv-segmented__label {
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
 }
 
 /* The fill plate and the selected outline sit behind and over the content; neither takes the pointer. */
@@ -102,6 +140,7 @@
 .cv-segmented__option:focus-visible {
   outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
   outline-offset: 2px;
+  z-index: 1;
 }
 
 /* Plain disabled: the whole control dims and leaves the Tab order. */
@@ -113,7 +152,18 @@
   cursor: not-allowed;
 }
 
-/* Disabled with a reason (T2): only the fill dims; the labels, the lock and the selected outline stay at full strength. */
+/* Disabled with a reason (T2): the track plate and the selected fill dim; the labels, the lock and the selected outline stay at full strength. */
+.cv-segmented[data-gated] {
+  border-color: transparent;
+  background: transparent;
+}
+
+.cv-segmented[data-gated]::before {
+  border-color: var(--color-border-default);
+  background: var(--color-surface-raised);
+  opacity: var(--opacity-disabled);
+}
+
 .cv-segmented[data-gated] .cv-segmented__option {
   cursor: not-allowed;
 }
@@ -183,6 +233,17 @@
 
   .cv-segmented[data-disabled] .cv-segmented__option[data-checked]::after {
     border-color: GrayText;
+  }
+
+  /* Gated: the plate is drawn at full strength in system colours (the track itself is transparent in normal mode). */
+  .cv-segmented[data-gated] {
+    background: ButtonFace;
+  }
+
+  .cv-segmented[data-gated]::before {
+    border-color: GrayText;
+    background: ButtonFace;
+    opacity: 1;
   }
 
   /* Gated: the track border greys; the selection stays at full strength as a 2px ButtonText border in place of the fill. */

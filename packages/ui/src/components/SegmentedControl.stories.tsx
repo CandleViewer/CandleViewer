@@ -68,7 +68,7 @@ export const IconAndText: Story = {
   render: controlled,
 };
 
-export const SixOptions: Story = { args: { options: SIX }, render: controlled };
+export const ManyOptions: Story = { args: { options: SIX }, render: controlled };
 
 export const FullWidth: Story = {
   args: { fullWidth: true },

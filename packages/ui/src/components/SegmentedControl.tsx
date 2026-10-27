@@ -5,6 +5,7 @@ import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
 
 export interface SegmentedOption {
+  /** Must be unique within the group (the roving focus and the checked state are keyed by it). */
   readonly value: string;
   /** The visible text; with `iconOnly` it is the radio's `aria-label` instead. */
   readonly label: string;
@@ -108,17 +109,19 @@ function Segment({
           <Icon name={option.icon} />
         </span>
       ) : null}
-      {nameOnly ? null : <span className="cv-segmented__label">{option.label}</span>}
-      {gated && isStop ? (
-        <span className="cv-segmented__icon cv-segmented__lock" aria-hidden="true">
-          <Icon name="lock" />
+      {nameOnly ? null : (
+        <span className="cv-segmented__label" data-label={option.label}>
+          {option.label}
         </span>
-      ) : null}
+      )}
     </div>
   );
 }
 
-/** CMP-003: a short either-or choice; APG radio group with a roving tabindex (arrows move and check). */
+/**
+ * CMP-003: a short either-or choice; APG radio group with a roving tabindex (arrows move and check).
+ * Arrow keys are not mirrored under `dir="rtl"` (Right/Down is always "next"), as for the Slider.
+ */
 export function SegmentedControl({
   options,
   value,
@@ -171,6 +174,11 @@ export function SegmentedControl({
             onPick={onPick}
           />
         ))}
+        {group.gated ? (
+          <span className="cv-segmented__icon cv-segmented__lock" aria-hidden="true">
+            <Icon name="lock" />
+          </span>
+        ) : null}
       </div>
       <ReasonText id={group.reasonId}>{group.reason}</ReasonText>
     </>
