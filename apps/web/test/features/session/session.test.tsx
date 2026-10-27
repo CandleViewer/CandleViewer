@@ -1,6 +1,7 @@
 /**
- * #1640 S1: SCR-005 (E09-D06), RTL + axe + keyboard. apps/web has no Storybook, so every drawn
- * state is rendered and axe-checked here: locked, verifying and wrong-password.
+ * #1640 S1: CMP-098 and SCR-005 (E09-D06), RTL + axe + keyboard. apps/web has no Storybook, so
+ * every drawn state is rendered and axe-checked here: CMP-098 warning, SCR-005 locked, verifying
+ * and wrong-password.
  */
 import { createRequire } from "node:module";
 import type { JSX } from "react";
@@ -9,6 +10,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import type { SessionApi, SessionClock } from "../../../src/features/session/sessionApi";
 import { SessionLockDialog } from "../../../src/features/session/SessionLockDialog";
 import { SessionLockHost } from "../../../src/features/session/SessionLockHost";
+import { SessionTimeoutWarning } from "../../../src/features/session/SessionTimeoutWarning";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
   "axe-core",
@@ -34,6 +36,7 @@ function clock(remainingS: number, locked = false): SessionClock {
 function fakeApi(over: Partial<SessionApi> = {}): SessionApi {
   return {
     read: vi.fn(() => Promise.resolve(clock(900))),
+    extend: vi.fn(() => Promise.resolve(clock(900))),
     unlock: vi.fn(() => Promise.resolve({ kind: "unlocked" as const, clock: clock(900) })),
     endSession: vi.fn(),
     ...over,
@@ -47,6 +50,10 @@ const tick = (ms: number): Promise<void> =>
 
 describe("session dialogs: axe per state", () => {
   const STATES: readonly [string, JSX.Element][] = [
+    [
+      "CMP-098 warning",
+      <SessionTimeoutWarning key="w" expiresInSec={60} onExtend={vi.fn()} onDismiss={vi.fn()} />,
+    ],
     [
       "SCR-005 locked",
       <SessionLockDialog key="l" idleMinutes={15} phase="locked" onUnlock={vi.fn()} />,
@@ -92,16 +99,53 @@ describe("SessionLockHost", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("reads the session only when the deadline falls due, then locks (no polling)", async () => {
-    const read = vi.fn().mockResolvedValueOnce(clock(120)).mockResolvedValue(clock(0, true));
+  it("reads only when due, warns 60 s before the deadline, focus on Stay signed in", async () => {
+    const read = vi.fn().mockResolvedValueOnce(clock(120)).mockResolvedValue(clock(60));
     render(<SessionLockHost api={fakeApi({ read })} enabled />);
-    await tick(0);
     fireEvent.keyDown(document.body, { key: "a" });
-    await tick(119_000);
-    expect(read).toHaveBeenCalledTimes(1);
+    await tick(59_000);
+    expect(read).toHaveBeenCalledTimes(1); // read when due, never polled
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await tick(1_000);
     expect(read).toHaveBeenCalledTimes(2);
+    const dialog = screen.getByRole("alertdialog", { name: "Your session will lock soon" });
+    expect(dialog).toHaveTextContent("Lock in 1:00");
+    expect(screen.getByRole("button", { name: "Stay signed in" })).toHaveFocus();
+    await tick(1_000);
+    expect(dialog).toHaveTextContent("Lock in 0:59");
+  });
+
+  it("extends only from Stay signed in: input and time never extend (#2300 scenario 5)", async () => {
+    const api = fakeApi({ read: vi.fn().mockResolvedValue(clock(60)) });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    fireEvent.keyDown(document.body, { key: "a" });
+    fireEvent.pointerDown(document.body);
+    await tick(5_000);
+    expect(api.extend).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Stay signed in" }));
+    await tick(0);
+    expect(api.extend).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+  });
+
+  it("Esc dismisses the warning without extending", async () => {
+    const api = fakeApi({ read: vi.fn().mockResolvedValue(clock(60)) });
+    render(<SessionLockHost api={api} enabled />);
+    await tick(0);
+    fireEvent.keyDown(screen.getByRole("alertdialog"), { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(api.extend).not.toHaveBeenCalled();
+  });
+
+  it("locks at the deadline once the server reports the session locked", async () => {
+    const read = vi.fn().mockResolvedValueOnce(clock(30)).mockResolvedValue(clock(0, true));
+    render(<SessionLockHost api={fakeApi({ read })} enabled />);
+    await tick(0);
+    expect(
+      screen.getByRole("alertdialog", { name: "Your session will lock soon" }),
+    ).toBeInTheDocument();
+    await tick(30_000);
     expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
     expect(screen.getByLabelText("Password")).toHaveFocus();
   });

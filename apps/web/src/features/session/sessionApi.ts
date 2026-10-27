@@ -1,6 +1,7 @@
 /**
  * #1640: the session-lifetime calls of the idle lock (`22-api-openapi.yaml` "Idle lock"):
- * `GET /auth/session` (read-only, never activity) and `POST /auth/unlock` (SCR-005, password only).
+ * `GET /auth/session` (read-only, never activity), `POST /auth/session/extend` (CMP-098 Extend, the
+ * only activity signal besides unlock) and `POST /auth/unlock` (SCR-005, password only).
  */
 import type { generated } from "@candleviewer/protocol";
 import { accessToken } from "../../lib/auth/accessToken";
@@ -25,6 +26,7 @@ export type UnlockOutcome =
 
 export interface SessionApi {
   read(): Promise<SessionClock | null>;
+  extend(): Promise<SessionClock | null>;
   unlock(password: string): Promise<UnlockOutcome>;
   /** Forgets the token in every tab and routes to SCR-001. */
   endSession(): void;
@@ -76,6 +78,7 @@ async function unlock(password: string): Promise<UnlockOutcome> {
 
 export const sessionApi: SessionApi = {
   read: () => clockOf(apiFetch(`${BASE}/session`)),
+  extend: () => clockOf(apiFetch(`${BASE}/session/extend`, { method: "POST" })),
   unlock,
   endSession: () => accessToken.endSession(),
 };

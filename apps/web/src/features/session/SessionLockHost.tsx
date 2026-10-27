@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState, type JSX } from "react";
 import { getMeClaims } from "../../lib/auth/meCache";
 import { SessionLockDialog, type LockFailure, type LockPhase } from "./SessionLockDialog";
+import { SessionTimeoutWarning } from "./SessionTimeoutWarning";
 import { sessionApi, type SessionApi, type SessionClock, type UnlockOutcome } from "./sessionApi";
 
+/** CMP-098 shows this long before the server's idle deadline (E09-D06 §3). */
+export const WARN_MS = 60_000;
 /** A read that got no answer is tried again after this long: never a tight loop. */
 const RETRY_MS = 30_000;
 
@@ -15,7 +18,14 @@ const FAILURE_COPY: Partial<Record<UnlockOutcome["kind"], string>> = {
 
 type View =
   | { readonly kind: "none" }
+  | { readonly kind: "warning"; readonly deadlineMs: number }
   | { readonly kind: "locked"; readonly phase: LockPhase; readonly failure: LockFailure | null };
+
+interface Actions {
+  extend(): void;
+  dismiss(): void;
+  unlock(password: string): void;
+}
 
 export interface SessionLockHostProps {
   readonly api?: SessionApi;
@@ -24,9 +34,10 @@ export interface SessionLockHostProps {
 }
 
 /**
- * #1640: shows SCR-005 from `GET /auth/session` (`idle_deadline` against `server_time`, never a
- * client clock). It reads the session when the deadline falls due, never on an interval; reads are
- * not activity (#2300 scenario 5). Only SCR-005's unlock lifts the lock.
+ * #1640: times CMP-098 and SCR-005 from `GET /auth/session` (`idle_deadline` against `server_time`,
+ * never a client clock). It reads the session when the warning and the deadline fall due, never on an
+ * interval, and records activity only through CMP-098's Stay signed in (`POST /auth/session/extend`)
+ * and SCR-005's unlock: input, WS traffic and reads never extend (#2300 scenario 5).
  */
 export function SessionLockHost({
   api = sessionApi,
@@ -34,12 +45,16 @@ export function SessionLockHost({
 }: SessionLockHostProps): JSX.Element | null {
   const [view, setView] = useState<View>({ kind: "none" });
   const [idleMinutes, setIdleMinutes] = useState(15);
-  const unlock = useRef<((password: string) => void) | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const actions = useRef<Actions | null>(null);
 
   useEffect(() => {
     if (!enabled) return undefined;
     let live = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    /** The deadline the warning on screen is for, and the one Esc dismissed. */
+    let warned: string | null = null;
+    let dismissed: string | null = null;
     let failures = 0;
     const at = (ms: number, task: () => void): void => {
       clearTimeout(timer);
@@ -58,8 +73,16 @@ export function SessionLockHost({
         );
         return;
       }
-      setView({ kind: "none" });
-      at(Date.parse(session.idle_deadline) - Date.parse(clock.server_time), read);
+      const left = Date.parse(session.idle_deadline) - Date.parse(clock.server_time);
+      if (left > WARN_MS || dismissed === session.idle_deadline) {
+        setView({ kind: "none" });
+        at(left > WARN_MS ? left - WARN_MS : left, read);
+        return;
+      }
+      warned = session.idle_deadline;
+      setNow(Date.now());
+      setView({ kind: "warning", deadlineMs: Date.now() + left });
+      at(left, read);
     }
     function settle(outcome: UnlockOutcome): void {
       if (!live) return;
@@ -70,9 +93,16 @@ export function SessionLockHost({
       const message = FAILURE_COPY[outcome.kind] ?? "";
       setView({ kind: "locked", phase: "error", failure: { message, seq: failures } });
     }
-    unlock.current = (password) => {
-      setView({ kind: "locked", phase: "verifying", failure: null });
-      void api.unlock(password).then(settle);
+    actions.current = {
+      extend: () => void api.extend().then((clock) => (clock === null ? read() : apply(clock))),
+      dismiss: () => {
+        dismissed = warned;
+        setView({ kind: "none" });
+      },
+      unlock: (password) => {
+        setView({ kind: "locked", phase: "verifying", failure: null });
+        void api.unlock(password).then(settle);
+      },
     };
     read();
     return () => {
@@ -81,13 +111,31 @@ export function SessionLockHost({
     };
   }, [enabled, api]);
 
-  if (view.kind !== "locked") return null;
-  return (
-    <SessionLockDialog
-      idleMinutes={idleMinutes}
-      phase={view.phase}
-      failure={view.failure}
-      onUnlock={(password) => unlock.current?.(password)}
-    />
-  );
+  const warning = view.kind === "warning";
+  useEffect(() => {
+    if (!warning) return undefined;
+    const tick = setInterval(() => setNow(Date.now()), 1_000);
+    return () => clearInterval(tick);
+  }, [warning]);
+
+  if (view.kind === "warning") {
+    return (
+      <SessionTimeoutWarning
+        expiresInSec={(view.deadlineMs - now) / 1000}
+        onExtend={() => actions.current?.extend()}
+        onDismiss={() => actions.current?.dismiss()}
+      />
+    );
+  }
+  if (view.kind === "locked") {
+    return (
+      <SessionLockDialog
+        idleMinutes={idleMinutes}
+        phase={view.phase}
+        failure={view.failure}
+        onUnlock={(password) => actions.current?.unlock(password)}
+      />
+    );
+  }
+  return null;
 }
