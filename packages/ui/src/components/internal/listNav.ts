@@ -30,6 +30,23 @@ export function stepIndex<T>(
   return found === -1 ? from : found;
 }
 
+/** Up to `count` reachable steps from `from`; it stops at the end and never wraps. */
+export function pageIndex<T>(
+  items: readonly T[],
+  from: number,
+  dir: 1 | -1,
+  count: number,
+  skip: Skip<T>,
+): number {
+  let at = from;
+  for (let i = 0; i < count; i += 1) {
+    const next = stepIndex(items, at, dir, skip);
+    if (next === at) break;
+    at = next;
+  }
+  return at;
+}
+
 /** Where an open list starts: the chosen option when it is reachable, else the first reachable one. */
 export function openIndex<T>(items: readonly T[], chosen: number, skip: Skip<T>): number {
   const item = items[chosen];

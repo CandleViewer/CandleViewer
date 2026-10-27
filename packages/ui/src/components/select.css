@@ -48,6 +48,11 @@
   height: var(--size-icon);
 }
 
+/* Open: the chevron points up (the registry has no chevron-up glyph, so the down one turns). */
+.cv-select__trigger[aria-expanded="true"] .cv-select__chevron {
+  transform: rotate(180deg);
+}
+
 .cv-select__lock {
   color: var(--color-text-tertiary);
 }
@@ -69,9 +74,14 @@
   box-sizing: border-box;
   min-inline-size: 100%;
   inline-size: max-content;
-  max-inline-size: 100vw;
-  max-block-size: calc(
-    10 * var(--size-row-height) + 2 * var(--space-inset-xs) + 2 * var(--cv-select-edge)
+  /* Never past the viewport's inline end; never taller than the room on its side (conv. 28), one row at least. */
+  max-inline-size: min(100vw, var(--cv-select-wide, 100vw));
+  max-block-size: min(
+    calc(10 * var(--size-row-height) + 2 * var(--space-inset-xs) + 2 * var(--cv-select-edge)),
+    max(
+      var(--size-row-height),
+      calc(var(--cv-select-room, 100vh) - var(--cv-select-gap) - var(--space-inset-xs))
+    )
   );
   padding-block: var(--space-inset-xs);
   overflow-y: auto;
@@ -122,6 +132,10 @@
     animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
   }
+}
+
+.cv-select__option > span:last-child {
+  overflow-wrap: anywhere;
 }
 
 .cv-select__option {
