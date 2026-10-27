@@ -308,15 +308,16 @@ def _doc_enums() -> str:
 
 def _doc_ddl() -> tuple[str, str]:
     """The enums, then the six fences in dependency order (definitions first, as `trade_groups`
-    references them); and apart, the account guard, whose trigger sits on `exchange_accounts`,
-    outside the scratch schema."""
-    groups, group_triggers = _doc_blocks("3.3.2 `trade_groups`")
+    references them) and Sec.3.3.2's third, which replaces `tg_write_once()`; and apart, the account
+    guard, whose trigger sits on `exchange_accounts`, outside the scratch schema."""
+    groups, group_triggers, frozen = _doc_blocks("3.3.2 `trade_groups`")
     legs, leg_triggers = _doc_blocks("3.3.3 `trade_group_legs`")
     definitions, guards = _doc_blocks(
         "3.3.3a `trade_group_definitions` and `trade_group_definition_members`"
     )
     own_guards, account_guard = guards.split("CREATE FUNCTION ea_env_in_use_check()", 1)
     blocks = [_doc_enums(), definitions, groups, legs, group_triggers, leg_triggers, own_guards]
+    blocks.append(frozen)  # Sec.3.3.2's third block, `0053_tg_frozen_after_draft`'s: head holds it
     return "\n".join(blocks), "CREATE FUNCTION ea_env_in_use_check()" + account_guard
 
 

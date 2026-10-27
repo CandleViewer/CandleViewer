@@ -1811,10 +1811,10 @@ CREATE INDEX ix_tg_env_time   ON trade_groups (env, created_at DESC);
 CREATE INDEX ix_tg_definition ON trade_groups (definition_id) WHERE definition_id IS NOT NULL;
 ```
 
-`tg_limit_px` and `tg_cond_px` are NULL-safe (`IS TRUE`): a bare CHECK passes a NULL result, so a Limit group without its price would be stored. `tg_finite` keeps NaN out of the prices, as `ap_finite` does for profiles (§3.2.4). `tg_ref_fmt` settles one format for the anchor, the canonical lower-case UUID text (any version, so a server-minted ref of a rule, alert or replay origin fits too); the service stores `str(UUID(header))`, never the header as received. There is no index or lookup on `client_group_ref` alone. `leg_failure_policy` is the group's failure policy (24 §9.5, `tg_policy`), stored so that B2's unwind and a restart read it from the row, never from a machine snapshot. The column default is 24 §9.5's manual-ticket default; every writer names the policy (`TradeGroupDraft` requires it), and 24 §9.5's per-origin default (`abort_on_first` for a rule-originated group) is the fan-out's to apply; 22's and 23's two-value `atomicity` is its projection until SR-E28-25 settles one vocabulary. Groups are entry fan-outs only (`ux_tgl_group_account`: one leg per account), so every leg opens a position and `tgl_sl_px` is C-2.6 as written: a take-profit or an unwind is a reduce-only `orders` row on the entry leg, never a leg. `ix_tg_rule_run` serves the `ON DELETE SET NULL` of `origin_rule_run_id` when the run retention (§7) prunes `rule_runs`. `symbol`, `side`, `entry_type`, `origin`, `origin_rule_id`, `is_paper` and `algo_params` are written when the group is created; the trade-group store (`storage/repositories/trade_groups_sqlalchemy.py`) never updates them, and freezing them in the schema once a group leaves `draft` is left to E28-T05 (#909, where both deferrals are recorded). Two triggers, both `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value:
+`tg_limit_px` and `tg_cond_px` are NULL-safe (`IS TRUE`): a bare CHECK passes a NULL result, so a Limit group without its price would be stored. `tg_finite` keeps NaN out of the prices, as `ap_finite` does for profiles (§3.2.4). `tg_ref_fmt` settles one format for the anchor, the canonical lower-case UUID text (any version, so a server-minted ref of a rule, alert or replay origin fits too); the service stores `str(UUID(header))`, never the header as received. There is no index or lookup on `client_group_ref` alone. `leg_failure_policy` is the group's failure policy (24 §9.5, `tg_policy`), stored so that B2's unwind and a restart read it from the row, never from a machine snapshot. The column default is 24 §9.5's manual-ticket default; every writer names the policy (`TradeGroupDraft` requires it), and 24 §9.5's per-origin default (`abort_on_first` for a rule-originated group) is the fan-out's to apply; 22's and 23's two-value `atomicity` is its projection until SR-E28-25 settles one vocabulary. Groups are entry fan-outs only (`ux_tgl_group_account`: one leg per account), so every leg opens a position and `tgl_sl_px` is C-2.6 as written: a take-profit or an unwind is a reduce-only `orders` row on the entry leg, never a leg. `ix_tg_rule_run` serves the `ON DELETE SET NULL` of `origin_rule_run_id` when the run retention (§7) prunes `rule_runs`. `symbol`, `side`, `entry_type`, `origin`, `origin_rule_id`, `is_paper` and `algo_params` are written when the group is created; the trade-group store (`storage/repositories/trade_groups_sqlalchemy.py`) never updates them, and since revision `0053_tg_frozen_after_draft` (E28-T05, #909) the schema freezes them once a group leaves `draft`, which closes SEC-2-04 of E28-T01's review (below). Two triggers, both `ENABLE ALWAYS`, refuse with SQLSTATE 23514 naming themselves as the constraint and never a value:
 
 - `trg_tg_env` (BEFORE INSERT): a group fired from a definition is in the definition's environment.
-- `trg_tg_write_once` (BEFORE UPDATE): `id`, `env`, `created_by`, `client_group_ref`, `client_body_sha256`, `definition_id` and `leg_failure_policy` never change.
+- `trg_tg_write_once` (BEFORE UPDATE): `id`, `env`, `created_by`, `client_group_ref`, `client_body_sha256`, `definition_id` and `leg_failure_policy` never change. Since 0053, once `status` has left `draft`, `symbol`, `side`, `entry_type`, `origin`, `is_paper` and `algo_params` never change either, and neither does `origin_rule_id`, except to NULL once its rule row is gone (the foreign key's `ON DELETE SET NULL`, as for a leg's `account_profile_id`, §3.3.3).
 
 `trg_trade_groups_touch` (BEFORE UPDATE) is `set_updated_at()` (§1.4).
 
@@ -1860,6 +1860,44 @@ ALTER TABLE trade_groups ENABLE ALWAYS TRIGGER trg_tg_write_once;
 CREATE TRIGGER trg_trade_groups_touch BEFORE UPDATE ON trade_groups
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 ```
+
+**A fired group's create-only columns are frozen (E28-T05, #909; revision `0053_tg_frozen_after_draft`).** SEC-2-04 of E28-T01's security review found `symbol`, `side`, `entry_type`, `origin`, `is_paper`, `algo_params` and `origin_rule_id` mutable after the insert, so any writer but the store could rewrite what a group that had already placed orders was fired as. 0039 left the choice between a trigger and prose to E28-T05; a trigger matches the other write-once guards (`trg_tgl_write_once`, `trg_tgd_write_once`), so `tg_write_once()` is replaced in place and `trg_tg_write_once` stays `ENABLE ALWAYS`. 0039's seven columns stay frozen from the insert. Once `OLD.status` is not `draft` the seven above are frozen too, compared with `IS DISTINCT FROM` (a write over the same value passes), and a refusal reads `trg_tg_write_once: trade_groups.<column> is write-once`: the column, never a value. `origin_rule_id` may still become NULL once its rule row is gone, because the foreign key's `ON DELETE SET NULL` is an UPDATE this trigger sees and a rule's delete must not fail; NULL while the rule stands, another rule, or a rule given to a group that had none is refused. `status`, the three times and the request columns (`algo`, `origin_rule_run_id`, `requested_qty_*`, `entry_price`, `trigger_*`, `sl_price_hint`, `tp_price_hint`, `intent_note`) stay writable: the OMS moves `status` and the times by compare-and-set, and E34-S03 amends the request. The freeze reads the row as it was, so the statement that fires a draft is the last to take a change. What it does not cover: a status written back to `draft` re-opens the window (B2 has no transition into `draft` and the store never writes one; a transition guard is not part of this revision); UPDATE only (`cv_app` holds no DELETE on groups); the owner role and superusers can still disable or drop the trigger.
+
+```sql
+CREATE OR REPLACE FUNCTION tg_write_once() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp AS $BODY$
+DECLARE changed text;
+BEGIN
+  changed := CASE
+    WHEN NEW.id IS DISTINCT FROM OLD.id THEN 'id'
+    WHEN NEW.env IS DISTINCT FROM OLD.env THEN 'env'
+    WHEN NEW.created_by IS DISTINCT FROM OLD.created_by THEN 'created_by'
+    WHEN NEW.client_group_ref IS DISTINCT FROM OLD.client_group_ref THEN 'client_group_ref'
+    WHEN NEW.client_body_sha256 IS DISTINCT FROM OLD.client_body_sha256 THEN 'client_body_sha256'
+    WHEN NEW.definition_id IS DISTINCT FROM OLD.definition_id THEN 'definition_id'
+    WHEN NEW.leg_failure_policy IS DISTINCT FROM OLD.leg_failure_policy THEN 'leg_failure_policy'
+    WHEN OLD.status <> 'draft' THEN CASE
+      WHEN NEW.symbol IS DISTINCT FROM OLD.symbol THEN 'symbol'
+      WHEN NEW.side IS DISTINCT FROM OLD.side THEN 'side'
+      WHEN NEW.entry_type IS DISTINCT FROM OLD.entry_type THEN 'entry_type'
+      WHEN NEW.origin IS DISTINCT FROM OLD.origin THEN 'origin'
+      WHEN NEW.is_paper IS DISTINCT FROM OLD.is_paper THEN 'is_paper'
+      WHEN NEW.algo_params IS DISTINCT FROM OLD.algo_params THEN 'algo_params'
+      WHEN NEW.origin_rule_id IS DISTINCT FROM OLD.origin_rule_id
+        AND (NEW.origin_rule_id IS NOT NULL
+          OR EXISTS (SELECT FROM public.rules r WHERE r.id = OLD.origin_rule_id))
+        THEN 'origin_rule_id'
+    END
+  END;
+  IF changed IS NOT NULL THEN
+    RAISE EXCEPTION 'trg_tg_write_once: trade_groups.% is write-once', changed
+      USING ERRCODE = 'check_violation', CONSTRAINT = 'trg_tg_write_once';
+  END IF;
+  RETURN NEW;
+END $BODY$;
+```
+
+> **Landed:** `0053_tg_frozen_after_draft` (#909). `lock_timeout` (5 s) brackets both directions; `CREATE OR REPLACE FUNCTION` takes no table lock. The downgrade restores 0039's function verbatim, which lets a fired group's columns change again: use it only to roll back.
 
 #### 3.3.3 `trade_group_legs`
 
@@ -4783,6 +4821,7 @@ NAMING_CONVENTION = {
 | `0049_ea_env_parent_always`     | trigger `trg_ea_env_parent` (§3.2.1) fires under the replica role (`ENABLE ALWAYS`), its function pins `search_path` and names itself on a refusal — **#3962**; the downgrade (rollback only) restores 0017's function and the plain `ENABLE`                                                                                           |
 | `0050_ea_identity_write_once`   | trigger `trg_ea_identity_write_once` (§3.2.1): `exchange_accounts.id`, `exchange_uid` and `kind` are write-once — **#3968** (SR-E27-13); the downgrade (rollback only) drops the trigger and its function                                                                                                                               |
 | `0051_replay_symbols_streams`   | `replay_sessions.symbols`, `streams` and CHECKs `rps_symbols`, `rps_streams` (§3.6.4): every symbol and stream a session replays, what the retention guard reads; existing rows backfilled — **#2674** (E26 G7); the downgrade refuses while a row holds a list the backfill cannot rebuild                                             |
+| `0053_tg_frozen_after_draft`    | trigger `trg_tg_write_once` (§3.3.2): a fired group's `symbol`, `side`, `entry_type`, `origin`, `is_paper`, `algo_params` and `origin_rule_id` are frozen once it leaves `draft` — **E28-T05 #909** (SEC-2-04); the downgrade (rollback only) restores 0039's function                                                                  |
 
 ---
 

@@ -237,12 +237,13 @@ def test_upgrade_creates_each_enum_as_the_plan_doc_and_the_model_declare_it(
     assert enum.name == name and enum.create_type is False  # the migration creates and drops it
 
 
-@pytest.mark.parametrize("heading", [_GROUPS, _LEGS, _DEFINITIONS])
-def test_each_plan_doc_section_has_exactly_the_two_sql_fences_the_revision_ships(
-    heading: str,
+@pytest.mark.parametrize(("heading", "count"), [(_GROUPS, 3), (_LEGS, 2), (_DEFINITIONS, 2)])
+def test_each_plan_doc_section_has_exactly_the_sql_fences_the_revision_ships(
+    heading: str, count: int
 ) -> None:
-    """The verbatim test below walks the fences by index: a third one would go unchecked."""
-    assert _section(heading).count("```sql") == 2
+    """The verbatim test below walks the fences by index: one more would go unchecked. Sec.3.3.2's
+    third is `0053_tg_frozen_after_draft`'s (`test_0053_tg_frozen_after_draft.py`)."""
+    assert _section(heading).count("```sql") == count
 
 
 @pytest.mark.parametrize(("heading", "index"), _BLOCKS, ids=_BLOCK_IDS)
