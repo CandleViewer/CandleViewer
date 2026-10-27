@@ -158,7 +158,7 @@ dark · [`img/E05-D02-08-feedback-states.png`](img/E05-D02-08-feedback-states.pn
 
 ### 09 overlays
 
-`E05-D02 / 09 overlays` · slice 4 page · board id `006e12a1-d0c6-803c-8008-da93e7177891` · 5400 × 2764 · dark ·
+`E05-D02 / 09 overlays` · slice 4 page · board id `006e12a1-d0c6-803c-8008-da93e7177891` · 5480 × 2764 · dark ·
 [`img/E05-D02-09-overlays.png`](img/E05-D02-09-overlays.png)
 
 - **Components:** CMP-016 Tooltip, CMP-017 Popover, CMP-041 Menu, CMP-043 Dialog, CMP-044 ConfirmDialog, CMP-046
@@ -169,6 +169,11 @@ dark · [`img/E05-D02-08-feedback-states.png`](img/E05-D02-08-feedback-states.pn
   named cells and comfortable density; the CMP-041 scale-mode radio group; the host-owned titles and rows of CMP-043,
   CMP-044 and CMP-046.
 - **Live check:** met; lint 0 findings.
+- **Live fix (boards round 1b):** the two money-moving CMP-044 Confirm labels clipped at the card edge (slice 4
+  conventions 39: a full-intent label never truncates). The armed hold card is widened 560 → 608 (footer 512 → 560;
+  hold ring + armed button need 557) and the order confirm 560 → 592 (footer and header 512 → 544; countdown + buttons
+  need 540); the block, grid and root grow by 80 (root 5400 → 5480). Every one of the block's 21 button labels reads
+  back with ≥ 12 px padding and no clipping ancestor. The "timed out" inset under the order card stays 560 wide.
 
 ### 10 light-composite
 
@@ -194,9 +199,10 @@ included, is not drawn — the text is binding.
 ## 5. Open defects and sheet drift
 
 - **03:** the lint's 5 overlaps in the CMP-025 stack are intended (§3). A later lint could skip a stack group. Open.
-- **Sheet drift (06, 10):** the two live fixes above were made on the boards, not in the sheets. The committed sheets
-  are the ones rendered, so a re-render from them needs the same two fixes: the CMP-047 T2 well at 170 (content 134)
-  and the scrim fill `palette.black`. The optional widening of the 06 T2 reason text to 170 was not made.
+- **Sheet drift (06, 09, 10):** the three live fixes above were made on the boards, not in the sheets. The committed sheets
+  are the ones rendered, so a re-render from them needs the same two fixes: the CMP-047 T2 well at 170 (content 134),
+  board 09's two CMP-044 card widths (a confirm card's footer must be at least the sum of its children's widths) and
+  the scrim fill `palette.black`. The optional widening of the 06 T2 reason text to 170 was not made.
 - **Driver:** the first pass on 06 left texts unmeasured; a second pass from the touch step fixed it (timing, not
   the sheet).
 
