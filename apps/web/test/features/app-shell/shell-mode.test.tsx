@@ -301,3 +301,37 @@ describe("the shell in each mode (D03 §4; D02 :59)", () => {
     expect(document.querySelectorAll('[aria-live="assertive"] p')).toHaveLength(0);
   });
 });
+
+/** The state × role matrix (#304 test plan: axe on every state × role; S9). */
+const STATES: readonly [ShellMode, Parameters<typeof setShellState>[0]][] = [
+  ["normal", {}],
+  ["disconnected", { connection: retry(1) }],
+  ["degraded", { degraded: FEED_DOWN }],
+];
+const MATRIX = STATES.flatMap(([mode, patch]) =>
+  (["owner", "manager", "viewer"] as const).map((role) => [mode, role, patch] as const),
+);
+
+describe("the shell matrix: every reachable state × role (S9)", () => {
+  beforeEach(() => resetMeClaims());
+
+  it.each(MATRIX)(
+    "%s × %s: the badge shows, Admin only for the owner, the read-only overlay for a viewer, axe-clean",
+    async (mode, role, patch) => {
+      await renderShell(role);
+      set({ environment: "live", ...patch });
+      // A viewer's normal shell is read-only; under any other mode the overlay rides along.
+      const expected = role === "viewer" && mode === "normal" ? "read-only" : mode;
+      expect(probe()).toBe(`${expected}:${role === "viewer" ? "role" : "-"}`);
+      const bar = screen.getByRole("banner");
+      expect(within(bar).getByRole("img", { name: "Trading environment: Live" })).toBeVisible();
+      const nav = screen.getByRole("navigation", { name: "Primary" });
+      expect(within(nav).queryByRole("link", { name: "Admin" }) !== null).toBe(role === "owner");
+      expect(screen.getAllByRole("main")).toHaveLength(1);
+      const res = await axe.run(document.body, { rules: { "color-contrast": { enabled: false } } });
+      expect(
+        res.violations.filter((v) => v.impact === "serious" || v.impact === "critical"),
+      ).toEqual([]);
+    },
+  );
+});

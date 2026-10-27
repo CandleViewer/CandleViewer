@@ -61,6 +61,7 @@ describe("the a11y gate's axe tags (#3700)", () => {
       "auth/stepup.spec.ts", // SCR-006 with the step-up dialog open (#2725)
       "e09-auth-a11y.spec.ts",
       "e09-auth-a11y.spec.ts",
+      "shell-chrome.spec.ts", // the shell chrome per theme and role (#304)
     ]);
   });
 
