@@ -66,6 +66,14 @@ const stateOf = (host: HTMLElement): string => root(host).dataset["state"] ?? ""
 const expectValueAbsent = (): void => {
   expect(document.documentElement.outerHTML).not.toContain(VALUE);
   expect(document.title).not.toContain(VALUE);
+  expect(location.href).not.toContain(VALUE);
+  for (const store of [localStorage, sessionStorage]) {
+    for (let i = 0; i < store.length; i += 1) {
+      const key = store.key(i) ?? "";
+      expect(key).not.toContain(VALUE);
+      expect(store.getItem(key) ?? "").not.toContain(VALUE);
+    }
+  }
   for (const el of document.querySelectorAll("*")) {
     for (const attr of el.attributes) expect(attr.value).not.toContain(VALUE);
     expect(el.textContent ?? "").not.toContain(VALUE);
@@ -85,6 +93,25 @@ const expectMasked = (host: HTMLElement): void => {
   expect(host.querySelector(".cv-masked-value__countdown")).toBeNull();
   expectValueAbsent();
 };
+
+/** Every text node of the document holding the value. */
+const textNodesWithValue = (): Text[] => {
+  const found: Text[] = [];
+  const walker = document.createTreeWalker(document.documentElement, NodeFilter.SHOW_TEXT);
+  for (let node = walker.nextNode(); node !== null; node = walker.nextNode())
+    if ((node.nodeValue ?? "").includes(VALUE)) found.push(node as Text);
+  return found;
+};
+
+/** The re-mask listener types: none may be attached while masked. */
+const REMASK_EVENTS = [
+  "blur",
+  "pagehide",
+  "beforeprint",
+  "popstate",
+  "hashchange",
+  "visibilitychange",
+];
 
 describe("MaskedValue (CMP-034)", () => {
   it("Scenario: Masked value never leaks by default", async () => {
@@ -260,8 +287,16 @@ describe("MaskedValue (CMP-034)", () => {
   });
 
   it("the host's revealed={false} masks at once and a later true does not re-reveal", async () => {
+    const onToggleReveal = fn();
     function Host({ revealed }: { revealed: boolean }): JSX.Element {
-      return <MaskedValue value={VALUE} label={LABEL} revealed={revealed} />;
+      return (
+        <MaskedValue
+          value={VALUE}
+          label={LABEL}
+          revealed={revealed}
+          onToggleReveal={onToggleReveal}
+        />
+      );
     }
     const host = document.body.appendChild(document.createElement("div"));
     const r = createRoot(host);
@@ -272,21 +307,25 @@ describe("MaskedValue (CMP-034)", () => {
     expectMasked(host);
     await act(async () => r.render(<Host revealed />));
     expectMasked(host);
-    // A press under a standing veto reveals nothing.
+    // The veto itself is the host's: it emits nothing.
+    expect(onToggleReveal.mock.calls).toEqual([[true]]);
+    // A press under a standing veto reveals nothing and emits nothing (M2).
     await act(async () => r.render(<Host revealed={false} />));
+    onToggleReveal.mockClear();
     await press(toggle(host));
     expectMasked(host);
+    expect(onToggleReveal).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
     await act(async () => r.unmount());
   });
 
-  it("a controlled host that mirrors onToggleReveal reveals and masks in step", async () => {
+  it("a host that mirrors onToggleReveal and vetoes only when it must stays in step", async () => {
     const seen: boolean[] = [];
     function Host(): JSX.Element {
       const [revealed, setRevealed] = useState(false);
       seen.push(revealed);
-      return (
-        <MaskedValue value={VALUE} label={LABEL} revealed={revealed} onToggleReveal={setRevealed} />
-      );
+      // `revealed` is a veto, not a mirror: the host passes `false` only to force the mask.
+      return <MaskedValue value={VALUE} label={LABEL} onToggleReveal={setRevealed} />;
     }
     const host = await mount(<Host />);
     await press(toggle(host));
@@ -295,6 +334,82 @@ describe("MaskedValue (CMP-034)", () => {
     await advance(MASKED_VALUE_AUTO_HIDE_MS);
     expect(seen.at(-1)).toBe(false);
     expectMasked(host);
+  });
+
+  it("N1: while revealed the value is in exactly one text node and in no attribute, name or title", async () => {
+    const host = await render({ copyable: true });
+    await press(toggle(host));
+    const nodes = textNodesWithValue();
+    expect(nodes).toHaveLength(1);
+    expect(nodes[0]?.parentElement?.closest(".cv-masked-value__value")).not.toBeNull();
+    expect(document.title).not.toContain(VALUE);
+    expect(location.href).not.toContain(VALUE);
+    for (const el of document.querySelectorAll("*")) {
+      for (const attr of el.attributes) expect(attr.value).not.toContain(VALUE);
+      expect(el).not.toHaveAccessibleDescription(escaped);
+      // The group and the buttons are named by `label`; nothing is named by the value.
+      if (el.matches("[role], button, [aria-label]")) expect(el).not.toHaveAccessibleName(escaped);
+    }
+    for (const status of within(host).getAllByRole("status"))
+      expect(status.textContent).not.toContain(VALUE);
+  });
+
+  it.each(["pagehide", "beforeprint", "blur"])(
+    "M1: the window's %s masks synchronously, outside act, before dispatchEvent returns",
+    async (type) => {
+      const host = await render();
+      await press(toggle(host));
+      const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+      env.IS_REACT_ACT_ENVIRONMENT = false;
+      try {
+        window.dispatchEvent(new Event(type));
+        // No act, no await: the commit already happened.
+        expect(stateOf(host)).toBe("masked");
+        expect(document.documentElement.outerHTML).not.toContain(VALUE);
+        // A second trigger on an already-masked value is a no-op.
+        window.dispatchEvent(new Event(type));
+        expect(stateOf(host)).toBe("masked");
+      } finally {
+        env.IS_REACT_ACT_ENVIRONMENT = true;
+      }
+      expectMasked(host);
+    },
+  );
+
+  it("M1: a hidden tab masks synchronously, outside act", async () => {
+    const host = await render();
+    await press(toggle(host));
+    Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+    const env = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
+    env.IS_REACT_ACT_ENVIRONMENT = false;
+    try {
+      document.dispatchEvent(new Event("visibilitychange"));
+      expect(stateOf(host)).toBe("masked");
+    } finally {
+      env.IS_REACT_ACT_ENVIRONMENT = true;
+    }
+  });
+
+  it("N4: no re-mask listener is attached while masked, and none is left after a re-mask", async () => {
+    const added = [vi.spyOn(window, "addEventListener"), vi.spyOn(document, "addEventListener")];
+    const removed = [
+      vi.spyOn(window, "removeEventListener"),
+      vi.spyOn(document, "removeEventListener"),
+    ];
+    const types = (spies: typeof added): string[] =>
+      spies.flatMap((spy) => spy.mock.calls.map(([type]) => String(type)));
+    const remask = (list: string[]): string[] => list.filter((t) => REMASK_EVENTS.includes(t));
+    const host = await render({ copyable: true });
+    expect(remask(types(added))).toEqual([]);
+    await press(toggle(host));
+    expect(remask(types(added)).sort()).toEqual([...REMASK_EVENTS].sort());
+    await press(toggle(host));
+    expect(remask(types(removed)).sort()).toEqual([...REMASK_EVENTS].sort());
+    added.forEach((spy) => spy.mockClear());
+    await advance(MASKED_VALUE_AUTO_HIDE_MS * 2);
+    await fire(window, "blur");
+    expect(remask(types(added))).toEqual([]);
+    [...added, ...removed].forEach((spy) => spy.mockRestore());
   });
 
   it("S7: unmounting while revealed drops the value, its timers, listeners and registry slot", async () => {
@@ -345,6 +460,44 @@ describe("MaskedValue (CMP-034)", () => {
       expect(copyButton(host)).toBeDisabled();
       await press(copyButton(host));
       expect(writeText).toHaveBeenCalledTimes(1);
+    });
+
+    it("N3: a re-mask mid-copy masks at once; the pending write lands once and says at most Copied", async () => {
+      let resolve: () => void = () => undefined;
+      writeText.mockImplementation(
+        () =>
+          new Promise<void>((r) => {
+            resolve = r;
+          }),
+      );
+      const host = await render({ copyable: true });
+      await press(toggle(host));
+      await press(copyButton(host));
+      await fire(window, "blur");
+      expectMasked(host);
+      await act(async () => {
+        resolve();
+      });
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText).toHaveBeenCalledWith(VALUE);
+      expectMasked(host);
+      expect(copyButton(host)).toBeDisabled();
+      for (const status of within(host).getAllByRole("status"))
+        expect(["", "Copied"]).toContain(status.textContent);
+    });
+
+    it("N5: the copy status resets with the mask", async () => {
+      const host = await render({ copyable: true });
+      await press(toggle(host));
+      await press(copyButton(host));
+      const copied = (): boolean =>
+        within(host)
+          .getAllByRole("status")
+          .some((s) => s.textContent === "Copied");
+      expect(copied()).toBe(true);
+      await press(toggle(host));
+      expect(copied()).toBe(false);
+      expect(host.querySelector(".cv-copy-button")?.getAttribute("data-state")).toBe("idle");
     });
 
     it("density reaches both buttons", async () => {
