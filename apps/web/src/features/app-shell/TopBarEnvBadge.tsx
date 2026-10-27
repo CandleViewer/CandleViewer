@@ -18,6 +18,18 @@ const LOOK: Record<BadgeEnvironment, Look> = {
   unknown: ["ENV UNKNOWN", "unknown", null, "status-warning-default", "bold"],
 };
 
+/**
+ * Whether `unknown` renders its ENV UNKNOWN pill (#304 plan, S2) or nothing (E10-D03 §1.2 / §3.5: "no
+ * badge is shown rather than a default one"). Pending the coordinator's ruling; either way it is
+ * never a defaulted DEMO.
+ */
+export const SHOW_UNKNOWN_ENV = true;
+
+/** The look for `env`, or `null` when nothing renders (only `unknown`, when not shown). */
+export function badgeLook(env: BadgeEnvironment, showUnknown = SHOW_UNKNOWN_ENV): Look | null {
+  return env === "unknown" && !showUnknown ? null : LOOK[env];
+}
+
 const PILL: CSSProperties = {
   display: "inline-flex",
   alignItems: "center",
@@ -36,12 +48,17 @@ export const envBadgeName = (env: BadgeEnvironment): string =>
   `Trading environment: ${LOOK[env][1]}`;
 
 /**
- * CMP-075 EnvBadgeLocal (#304 S2): read-only, `role="img"` with a static name so a re-render is
- * never re-announced (`15` CMP-075). It takes no prop, class or style that could hide it: the
- * environment is its only input, and every value renders a visible word.
+ * The TopBar's environment badge (#304 S2). Deviation: merged E10-D02 :67 and E10-D03 :78 / :344
+ * place CMP-074 EnvBanner, `role="status"`, here; this renders CMP-075's read-only contract instead
+ * (plan gap 6: no switch flow), `role="img"` with a static name, because a status region would be
+ * read again beside the route-change announcement the shell makes (a double announcement). S4's
+ * StatusBar badge is a separate component. It takes no prop, class or style that could hide it:
+ * the environment is its only input, and every shown value renders a visible word.
  */
-export function EnvBadge({ env }: { readonly env: BadgeEnvironment }): JSX.Element {
-  const [word, , dot, border, weight] = LOOK[env];
+export function TopBarEnvBadge({ env }: { readonly env: BadgeEnvironment }): JSX.Element | null {
+  const look = badgeLook(env);
+  if (look === null) return null;
+  const [word, , dot, border, weight] = look;
   return (
     <span
       role="img"

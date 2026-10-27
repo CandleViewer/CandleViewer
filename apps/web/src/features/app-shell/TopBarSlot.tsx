@@ -3,10 +3,10 @@ import { useLocation } from "react-router";
 import type { Me } from "../../shell/bootstrap/store.js";
 import { useShellSelector } from "../../shell/useShellSelector.js";
 import { bindingFor } from "../../keymap/keymap";
-import { sessionApi, type SessionApi } from "../session/sessionApi";
+import { sessionApi, SIGN_OUT_FAILED, type SessionApi } from "../session/sessionApi";
 import { announce, forget } from "./announcer";
-import { envBadgeName } from "./EnvBadge";
-import { SIGN_OUT_FAILED, TopBar } from "./TopBar";
+import { envBadgeName } from "./TopBarEnvBadge";
+import { TopBar } from "./TopBar";
 
 const ENV_ROUTE_KEY = "env:route"; // one message per navigation
 

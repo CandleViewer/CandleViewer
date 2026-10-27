@@ -9,8 +9,12 @@ import { buildRoutes } from "../../../src/routes/tree";
 import { resetMeClaims, setMeClaims } from "../../../src/lib/auth/meCache";
 import type { Role } from "../../../src/routes/rbac";
 import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
-import { EnvBadge, type BadgeEnvironment } from "../../../src/features/app-shell/EnvBadge";
-import { TopBar } from "../../../src/features/app-shell/TopBar";
+import { ariaKeys, TopBar } from "../../../src/features/app-shell/TopBar";
+import {
+  badgeLook,
+  TopBarEnvBadge,
+  type BadgeEnvironment,
+} from "../../../src/features/app-shell/TopBarEnvBadge";
 import { TopBarSlot } from "../../../src/features/app-shell/TopBarSlot";
 import { resetShellState, setShellState, type Me } from "../../../src/shell/bootstrap/store.js";
 
@@ -40,7 +44,12 @@ async function shellAt(path: string, env: BadgeEnvironment, role: Role) {
   await screen.findByRole("heading", { level: 1 });
   return { router, view, bar: screen.getByRole("banner") };
 }
-const live = (p: "polite" | "assertive") => document.querySelector(`[aria-live="${p}"]`);
+// every region of that politeness: the degraded banner (#4763) mounts its own pair before the shell's
+const live = (p: "polite" | "assertive") => ({
+  textContent: [...document.querySelectorAll(`[aria-live="${p}"]`)]
+    .map((n) => n.textContent)
+    .join(""),
+});
 beforeEach(() => {
   resetMeClaims();
   resetShellState();
@@ -65,7 +74,7 @@ describe("E10-S01 S2: the env badge (CMP-075) in the top bar", () => {
 
   it("has no hide path: no prop, class, preference or shipped stylesheet rule removes it", () => {
     // @ts-expect-error the environment is the badge's only prop
-    render(<EnvBadge env="live" hidden className="sr-only" style={{ display: "none" }} />);
+    render(<TopBarEnvBadge env="live" hidden className="sr-only" style={{ display: "none" }} />);
     const lone = screen.getByRole("img", { name: "Trading environment: Live" });
     expect(lone.getAttributeNames().sort().join()).toBe("aria-label,data-cmp,data-env,role,style");
     expect(lone.style.display).toBe("inline-flex");
@@ -84,8 +93,18 @@ describe("E10-S01 S2: the env badge (CMP-075) in the top bar", () => {
     const repo = resolve(import.meta.dirname, "../../../../..");
     for (const dir of ["packages/ui/src", "apps/web/src"])
       for (const f of readdirSync(join(repo, dir), { recursive: true, encoding: "utf8" }))
-        if (f.endsWith(".css"))
-          expect(readFileSync(join(repo, dir, f), "utf8")).not.toMatch(/CMP-075|data-env|EnvBadge/);
+        if (f.endsWith(".css")) {
+          // selectors only: a stylesheet comment naming the badge is not a hide path
+          const css = readFileSync(join(repo, dir, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+          for (const sel of css.match(/[^{}]+(?=\{)/g) ?? [])
+            expect(sel, f).not.toMatch(/CMP-07[45]|data-env|EnvBadge/);
+        }
+  });
+
+  it("switches unknown between ENV UNKNOWN and no badge in one constant, never DEMO", () => {
+    expect(badgeLook("unknown")?.[0]).toBe("ENV UNKNOWN"); // SHOW_UNKNOWN_ENV, pending the ruling
+    expect(badgeLook("unknown", false)).toBeNull();
+    expect(badgeLook("live", false)?.[0]).toBe("LIVE");
   });
 
   it("announces the badge politely on a route change, not on first load", async () => {
@@ -113,7 +132,7 @@ describe("E10-S01 S2: the top bar's controls", () => {
     }
     expect(within(bar).getByText("Pickers: not available in this build.")).toBeVisible();
     const search = within(bar).getByRole("button", { name: "Search commands Ctrl+K" });
-    expect(search).toHaveAttribute("aria-keyshortcuts", "Control+K");
+    expect(search).not.toHaveAttribute("aria-keyshortcuts"); // only while it does something
     expect(search).toHaveAccessibleDescription(
       "The command palette is not available in this build.",
     );
@@ -130,6 +149,9 @@ describe("E10-S01 S2: the top bar's controls", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Search commands Ctrl+K" }));
     expect(onSearch).toHaveBeenCalledTimes(1);
+    const enabled = screen.getByRole("button", { name: "Search commands Ctrl+K" });
+    expect(enabled).toHaveAttribute("aria-keyshortcuts", "Control+K");
+    expect([ariaKeys("Cmd+K"), ariaKeys("Meta+Shift+P")]).toEqual(["Meta+K", "Meta+Shift+P"]);
   });
 });
 

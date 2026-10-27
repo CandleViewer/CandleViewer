@@ -1,7 +1,8 @@
 import type { CSSProperties, JSX, ReactNode } from "react";
 import { Button } from "@candleviewer/ui";
 import type { generated } from "@candleviewer/protocol";
-import { EnvBadge, type BadgeEnvironment } from "./EnvBadge";
+import { SIGN_OUT_FAILED } from "../session/sessionApi";
+import { TopBarEnvBadge, type BadgeEnvironment } from "./TopBarEnvBadge";
 
 type RoleName = generated.rest.components["schemas"]["RoleName"];
 
@@ -20,8 +21,12 @@ export interface TopBarProps {
 
 /** PROPOSED copy: no merged text names these placeholders' reasons. */
 export const PICKER_REASON = "Not available in this build.";
+export const PICKER_NOTE = "Pickers: not available in this build.";
 export const SEARCH_REASON = "The command palette is not available in this build.";
-export const SIGN_OUT_FAILED = "Couldn't reach the server. Try again."; // SCR-005's sign-out failure line
+
+/** `aria-keyshortcuts` syntax for a hint: "Ctrl+K" -> "Control+K", "Cmd+K" -> "Meta+K". */
+export const ariaKeys = (hint: string): string =>
+  hint.replace(/\bCtrl\b/g, "Control").replace(/\b(Cmd|Meta)\b/g, "Meta");
 
 const ROW: CSSProperties = {
   display: "flex",
@@ -47,6 +52,7 @@ const roleWord = (role: RoleName): string => role.charAt(0).toUpperCase() + role
  * Stand-ins until their atoms land: T2 picker placeholders (CMP-105/219/220), a plain `<kbd>`
  * (CMP-022), name and role as text plus Sign out (CMP-061). Visible reason lines are `aria-hidden`:
  * each control carries its reason as its description. Deferred: CMP-073, CMP-211 (S7), CMP-210 (S4).
+ * Deferred: unconfirmed badge state (E10-D03 §3.4), owner slice S8 (modes).
  */
 export function TopBar(props: TopBarProps): JSX.Element {
   const { user, onSearch, signingOut } = props;
@@ -60,14 +66,17 @@ export function TopBar(props: TopBarProps): JSX.Element {
       <span style={{ fontWeight: "var(--font-weight-semibold)", fontSize: "var(--font-size-md)" }}>
         CandleViewer
       </span>
-      <EnvBadge env={props.env} />
+      <TopBarEnvBadge env={props.env} />
       {pickers}
-      <span aria-hidden style={NOTE}>{`Pickers: ${PICKER_REASON.toLowerCase()}`}</span>
+      <span aria-hidden style={NOTE}>
+        {PICKER_NOTE}
+      </span>
       <Button
         variant="ghost"
         size="sm"
-        aria-keyshortcuts={props.searchHint.replace("Ctrl", "Control")}
-        {...(onSearch === undefined ? { disabledReason: SEARCH_REASON } : { onClick: onSearch })}
+        {...(onSearch === undefined
+          ? { disabledReason: SEARCH_REASON }
+          : { onClick: onSearch, "aria-keyshortcuts": ariaKeys(props.searchHint) })}
         data-cmp="CMP-084"
       >
         Search commands <kbd style={KBD}>{props.searchHint}</kbd>
