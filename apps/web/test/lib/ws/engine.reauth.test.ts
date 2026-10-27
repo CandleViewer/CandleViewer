@@ -1,7 +1,6 @@
 // E17-T04 S4 (23 4.1, 4.3): the token is renewed in place, on the same socket.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TokenResult } from "../../../src/lib/ws/api";
-import { onWsError } from "../../../src/lib/ws/errorHandler";
 import { assertEngineOrder } from "./support/engineEvents";
 import { connectionHarness, tokenOf } from "./support/connectionHarness";
 
@@ -101,11 +100,9 @@ describe("in-place re-auth (4.1)", () => {
 describe("a refused auth (4.3)", () => {
   it("a refused first auth drops the token and reconnects with a fresh one", async () => {
     const t = connectionHarness({ refuseAuths: 1 });
-    const errors: string[] = [];
-    const off = onWsError((code) => errors.push(code));
     await t.connect();
-    off();
-    expect(errors).toEqual(["auth_failed"]); // through the one mapping (10.3)
+    // on to the engine, whose host relays it to the tabs' one mapping (10.3)
+    expect(t.frames.flatMap((f) => (f.t === "err" ? [f.p.code] : []))).toEqual(["auth_failed"]);
     expect(t.tokens.invalidate).toHaveBeenCalledTimes(1);
     expect(t.gateway.latest.closedByClient).toEqual({ code: 4401, reason: "auth_refused" });
     expect(t.types().at(-1)).toBe("reconnecting");

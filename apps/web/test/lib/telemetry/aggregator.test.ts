@@ -5,6 +5,7 @@ import {
   PUSH_INTERVAL_MS,
   TelemetryAggregator,
   fetchTransport,
+  recordDecode,
   type TelemetryPayload,
   TELEMETRY_PATH,
   startTelemetry,
@@ -160,5 +161,21 @@ describe("startTelemetry", () => {
     expect(sent).toHaveLength(1);
     expect(TELEMETRY_PATH).toBe("/telemetry/frontend");
     vi.useRealTimers();
+  });
+
+  it("recordDecode feeds the started aggregator, the latest one, and none once it is stopped", () => {
+    const decoded = (a: TelemetryAggregator) => a.drain()?.fe_ws_decode_ms.counts ?? [];
+    recordDecode(1); // none started: dropped
+    const first = startTelemetry(async () => undefined);
+    const second = startTelemetry(async () => undefined);
+    recordDecode(1);
+    expect(decoded(first.aggregator)).toEqual([]);
+    expect(decoded(second.aggregator)).toEqual([0, 0, 0, 1, 0, 0, 0, 0, 0]); // the 1 ms bucket
+    first.stop(); // not the one fed: the feed stays
+    recordDecode(1);
+    expect(decoded(second.aggregator)).toEqual([0, 0, 0, 1, 0, 0, 0, 0, 0]);
+    second.stop();
+    recordDecode(1);
+    expect(decoded(second.aggregator)).toEqual([]);
   });
 });

@@ -138,8 +138,17 @@ export interface DiagMessage {
   readonly t: "diag";
   readonly diag: WsDiagnostics;
 }
+/**
+ * An `err` frame of the gateway (23 10.1), as the tab's error mapping reads it (10.3): its code and message, no other field
+ * (an id, a `request_id`, a `field` stay in the worker). Posted to every tab in the task the frame arrives in.
+ */
+export interface ErrMessage {
+  readonly t: "err";
+  readonly code: string;
+  readonly message?: string;
+}
 export type WorkerMessage =
-  StateMessage | DataMessage | SystemMessage | TokenRequestMessage | DiagMessage;
+  StateMessage | DataMessage | SystemMessage | TokenRequestMessage | DiagMessage | ErrMessage;
 
 // Checks.
 
@@ -173,6 +182,9 @@ const MAX_URL = 512;
 const MAX_OPTS_JSON = 4096;
 const MAX_PANE_PX = 100_000;
 const MAX_DPR = 16;
+/** 23 10.1: an error code is a short registry name; `message` is at most 1 000 characters (the `err` schema). */
+const MAX_ERR_CODE = 64;
+const MAX_ERR_MESSAGE = 1000;
 /**
  * The members of a closed union, each named once: `Record<T, true>` needs every key and refuses any
  * other, so a member added to `T` stops compiling here instead of being refused at run time.
@@ -334,6 +346,14 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
       // cast: the host builds `WsDiagnostics`; the tab refuses what is not a record holding the two counter records
       return isRec(diag) && isRec(diag["engine"]) && isRec(diag["host"])
         ? { t: "diag", diag: diag as unknown as WsDiagnostics }
+        : undefined;
+    }
+    case "err": {
+      const { code, message } = data;
+      if (!isText(code, MAX_ERR_CODE)) return undefined;
+      if (message === undefined) return { t: "err", code };
+      return typeof message === "string" && message.length <= MAX_ERR_MESSAGE
+        ? { t: "err", code, message }
         : undefined;
     }
     default:

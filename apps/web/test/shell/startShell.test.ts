@@ -3,7 +3,10 @@
 // The last test is the real path: the shell, the client, the worker's host and a gateway, which says `hello`, then `auth`,
 // before any `sub`.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { startTelemetry } from "../../src/lib/telemetry/aggregator.js";
 import { getActiveClient } from "../../src/lib/ws/client/activeClient.js";
+import { onWsError } from "../../src/lib/ws/errorHandler.js";
+import type { ErrorUiClass } from "../../src/lib/ws/errorMapping.js";
 import type { WsState } from "../../src/lib/ws/state/types.js";
 import { INITIAL_WS_STATE } from "../../src/lib/ws/state/reducer.js";
 import { getShellState, resetShellState, setShellState } from "../../src/shell/bootstrap/store.js";
@@ -288,6 +291,27 @@ describe("startShell", () => {
   });
 });
 
+/** The shell over the worker's host and the fake gateway, through a real message port, once it reads live. */
+async function liveShell() {
+  const { gateway, attach, posted } = shim();
+  const handle = startShell({
+    wsUrl: URL,
+    fetchImpl: vi.fn().mockResolvedValue(jsonResponse({})),
+    tokens: {
+      getToken: async () => ({
+        kind: "ok",
+        accessToken: tokenOf(1),
+        expiresAtMs: Date.now() + 600_000,
+      }),
+      invalidate: () => undefined,
+    },
+    port: attach().port,
+  });
+  await handle.ready;
+  await vi.waitFor(() => expect(getShellState().connection).toEqual({ kind: "live" }), WAIT);
+  return { gateway, posted, handle };
+}
+
 describe("startShell on the real path", () => {
   it("says hello, then auth, before any sub: the shell reads live, and a system update reaches the store", async () => {
     const { gateway, attach } = shim();
@@ -319,6 +343,54 @@ describe("startShell on the real path", () => {
       () => expect(getShellState().systemByKind.health).toMatchObject({ health: "degraded" }),
       WAIT,
     );
+    handle.stop();
+  });
+
+  it("a fatal, a transient and a client-bug err reach the listeners of WsErrorHost, with the code and the message only (23 10.3)", async () => {
+    const { gateway, posted, handle } = await liveShell();
+    const heard: [string, ErrorUiClass][] = [];
+    const off = onWsError((code, treatment) => heard.push([code, treatment.uiClass]));
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const extra = { retryable: false, field: "min_stack", request_id: "urn:cv:req:1" };
+    for (const code of ["forbidden", "degraded_data", "invalid_options"])
+      gateway.latest.send({
+        t: "err",
+        id: "c-9999",
+        ch: BOOK,
+        p: { code, message: "no", ...extra },
+      });
+    await vi.waitFor(() => expect(heard).toHaveLength(3), WAIT);
+    off();
+    expect(heard).toEqual([
+      ["forbidden", "fatal"], // the modal
+      ["degraded_data", "transient"], // the staleness badge
+      ["invalid_options", "clientBug"], // the console and the toast, in the page
+    ]);
+    expect(logged).toHaveBeenCalledWith("[ws] client-bug error", "invalid_options", "no");
+    const relayed = posted.filter((p) => p.message.t === "err").map((p) => p.message);
+    expect(relayed).toEqual([
+      { t: "err", code: "forbidden", message: "no" },
+      { t: "err", code: "degraded_data", message: "no" },
+      { t: "err", code: "invalid_options", message: "no" },
+    ]); // no id, topic, field or request id leaves the worker
+    logged.mockRestore();
+    handle.stop();
+  });
+
+  it("feeds fe_ws_decode_ms to the app's aggregator and the latency indicator to the store (D8, budget #3)", async () => {
+    const telemetry = startTelemetry(async () => undefined);
+    const { handle } = await liveShell();
+    expect(getShellState().latency.state).toBe("unavailable");
+    const book = getActiveClient()?.consume({ ch: BOOK, paneId: "p1", priority: "focused" });
+    await vi.waitFor(() => expect(getShellState().latency.valueMs).not.toBeNull(), WAIT); // the snapshot was rendered
+    expect(getShellState().latency).toMatchObject({
+      unit: "ms",
+      label: expect.stringMatching(/^WS latency: /),
+    });
+    const decoded = telemetry.aggregator.drain()?.fe_ws_decode_ms.counts ?? [];
+    expect(decoded.reduce((a, b) => a + b, 0)).toBeGreaterThan(0);
+    telemetry.stop();
+    book?.release();
     handle.stop();
   });
 });

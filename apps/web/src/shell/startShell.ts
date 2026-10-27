@@ -6,6 +6,7 @@
  * just the REST half without needing a live WS in tests.
  */
 import { accessToken } from "../lib/auth/accessToken.js";
+import { recordDecode } from "../lib/telemetry/aggregator.js";
 import type { TokenSource } from "../lib/ws/api.js";
 import { setActiveClient } from "../lib/ws/client/activeClient.js";
 import { createWsClient } from "../lib/ws/client/createWsClient.js";
@@ -72,6 +73,8 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     clientVersion: CLIENT_VERSION,
     port,
     onSystem: (update) => applySystemUpdate(update),
+    telemetry: { recordDecode }, // `fe_ws_decode_ms` (D8), into the app's aggregator
+    onLatency: (latency) => setShellState({ latency }), // budget #3: the client throttles it to once a second
   });
   const forward = (): void => setShellState({ connection: toConnectionState(client.getState()) });
   client.subscribe(forward); // `client.stop()` drops it
