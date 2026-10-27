@@ -7,13 +7,16 @@ before any registry exists is refused by the first one, and a key one registry c
 refused by every other; `reopen_private_streams` needs no registry. `close_key` tombstones the key
 itself before it awaits a close, and returns within `CLOSE_TIMEOUT_S` plus 1 s: past that it pages
 and raises `PrivateStreamCloseOverran`, naming the streams still closing (`accounts`) and those it
-closed in time (`closed`), while the close runs on; the adapter's call raises it as is, and a retry
-names none of them. The registry serves the loop of the `open` that creates its first stream, so a
-refused one binds no loop; another loop's `open` or `close_key` is refused before anything is
-signed, dialled or closed, the first refusal of each window pages, and a revoke from another loop
-still tombstones the key first. `ready()` counts what `__anext__` returns with no wait. RC-G8B-04: a
-stream B13 ended is not named by a later `close_key`, and three refusals mark the key even when a
-close queued first.
+closed in time (`closed`), while the close runs on; the adapter's call raises it as is. A retry's
+return and its `closed` name none of them; a retry that overruns again names the streams still
+closing in its `accounts` again, as does a revoke held by a close the consumer began, so no call
+answers as a completed close while a socket is open. A stream whose close another caller began is
+waited for, never named in `closed`. The registry serves the loop of the `open` that creates its
+first stream, so a refused one binds no loop; another loop's `open` or `close_key` is refused
+(`PrivateStreamsWrongLoop`, a `RuntimeError`) before anything is signed, dialled or closed, the
+first refusal of each 5 s window pages, and a revoke from another loop still tombstones the key
+first. `ready()` counts what `__anext__` returns with no wait. RC-G8B-04: a stream B13 ended is not
+named by a later `close_key`, and three refusals mark the key even when a close queued first.
 """
 
 from __future__ import annotations
@@ -149,9 +152,10 @@ async def test_a_revoke_whose_close_overruns_pages_raises_and_still_closes() -> 
     `cv_page`, ids only), and the adapter's `close_private_streams` raises
     `PrivateStreamCloseOverran` to its caller as raised, unwrapped: a bare `TimeoutError` with a
     fixed text, no `ExchangeError`, naming the account still closing and none closed in time.
-    The close runs on: a retry waits for the same close and names no account, so the overrun's
-    `accounts` is the audit's source for it;
-    once the close finishes the socket is closed and `closed(key_revoked)` is the last item."""
+    The close runs on: a retry waits for the same close, and once that close ends within the
+    retry's bound the retry returns no account, so the overrun's `accounts` is the audit's source
+    for it; once the close finishes the socket is closed and `closed(key_revoked)` is the last
+    item."""
     clock = VirtualClock()
     venue = _StuckVenue(clock)
     adapter = _adapter(venue)
@@ -200,9 +204,9 @@ async def test_a_revoke_whose_close_overruns_pages_raises_and_still_closes() -> 
 async def test_an_overrun_names_the_stream_it_closed_in_time_beside_the_one_still_closing() -> None:
     """24 §14.2 rule 13: the overrun's `accounts` names the streams still closing and its `closed`
     the ones the call closed in time, so together they name every stream whose close the call
-    started. The call returns none of them and a retry names none, so the audit reads both: a
-    stream closed in time is named there or nowhere. Production keeps one stream per key; the
-    rule does not lean on it."""
+    started. The call returns none of them, and a retry's return and its `closed` name none of
+    them, so the audit reads both: a stream closed in time is named there or nowhere. Production
+    keeps one stream per key; the rule does not lean on it."""
     clock = VirtualClock()
     venue = _StuckVenue(clock)
     streams = make_streams(venue)
@@ -225,6 +229,109 @@ async def test_an_overrun_names_the_stream_it_closed_in_time_beside_the_one_stil
     held.release.set()
     await clock.advance(ps.CLOSE_TIMEOUT_S)
     assert retry.done() and retry.result() == ()
+    assert held.closed and second.statuses()[-1] == "closed:key_revoked:1"
+    await streams.aclose()
+
+
+async def test_a_retry_that_overruns_again_names_the_stream_still_closing_again() -> None:
+    """24 §14.2 rule 13 (B1b): a retry waits for the same close under a bound of its own, so
+    while the stream is still closing the retry is not done either. It is not done before that
+    bound, then raises `PrivateStreamCloseOverran` naming the account in its `accounts` again,
+    with no `closed`, and pages again, the socket still open: it never answers as a completed
+    close. Once the close ends, a further call returns no account and the socket is closed."""
+    clock = VirtualClock()
+    venue = _StuckVenue(clock)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    sock = venue.sockets[0]
+    assert isinstance(sock, _StuckSocket)
+    sock.stuck = True
+    revoke = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="revoke")
+    await clock.advance(BOUND_S + 0.1)
+    with pytest.raises(PrivateStreamCloseOverran):
+        revoke.result()
+    with capture_logs() as logs:
+        retry = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="retry")
+        await clock.advance(BOUND_S - 0.1)
+        assert not retry.done()
+        await clock.advance(0.2)
+        assert retry.done()
+    with pytest.raises(PrivateStreamCloseOverran) as overran:
+        retry.result()
+    assert (overran.value.accounts, overran.value.closed) == ((ACCOUNT_A,), ())
+    pages = [e for e in logs if e["event"] == "bybit_private_key_close_overran"]
+    assert [(e["log_level"], e["cv_page"], e["accounts"]) for e in pages] == [
+        ("critical", True, [str(ACCOUNT_A)])
+    ]
+    assert not sock.closed
+    sock.release.set()
+    later = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="later")
+    await clock.advance(ps.CLOSE_TIMEOUT_S)
+    assert later.done() and later.result() == ()
+    assert sock.closed and consumer.statuses()[-1] == "closed:key_revoked:1"
+    await streams.aclose()
+
+
+async def test_a_stuck_consumer_close_holds_a_revoke_whose_overrun_names_it() -> None:
+    """24 §14.2 rule 13 (B1b): a stream whose consumer began closing it is waited for, not closed
+    again. While that close is stuck the revoke is not done: past its bound it raises
+    `PrivateStreamCloseOverran` naming the account in `accounts`, with no `closed` and the socket
+    still open, and never answers as a completed close."""
+    clock = VirtualClock()
+    venue = _StuckVenue(clock)
+    streams = make_streams(venue)
+    consumer = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(consumer.statuses()) == 2, within_s=5, what="live")
+    sock = venue.sockets[0]
+    assert isinstance(sock, _StuckSocket)
+    sock.stuck = True
+    closing = spawn(consumer.stream.aclose(), name="consumer-close")
+    await clock.settle()
+    assert not closing.done()
+    revoke = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="revoke")
+    await clock.advance(BOUND_S - 0.1)
+    assert not revoke.done()
+    await clock.advance(0.2)
+    assert revoke.done()
+    with pytest.raises(PrivateStreamCloseOverran) as overran:
+        revoke.result()
+    assert (overran.value.accounts, overran.value.closed) == ((ACCOUNT_A,), ())
+    assert not sock.closed
+    sock.release.set()
+    await clock.advance(ps.CLOSE_TIMEOUT_S)
+    assert closing.done() and sock.closed
+    await streams.aclose()
+
+
+async def test_an_overrun_names_no_stream_whose_consumer_closed_it_in_time() -> None:
+    """24 §14.2 rule 13: `closed` names only the streams whose close the call started. A stream
+    its consumer was closing when the revoke came is waited for, not named: once that close ends
+    within the bound it is in neither field, while the stream the revoke began closing, still
+    closing, is in `accounts`. Production keeps one stream per key; the rule does not lean on
+    it."""
+    clock = VirtualClock()
+    venue = _StuckVenue(clock)
+    streams = make_streams(venue)
+    first = Consumer(await streams.open(account()))
+    await until(clock, lambda: len(first.statuses()) == 2, within_s=5, what="first live")
+    second = Consumer(await streams.open(account(ACCOUNT_B)))  # the same key
+    await until(clock, lambda: len(second.statuses()) == 2, within_s=5, what="second live")
+    venue.sockets[0].stall_close = True  # its close is let go at `CLOSE_TIMEOUT_S`, in time
+    held = venue.sockets[1]
+    assert isinstance(held, _StuckSocket)
+    held.stuck = True
+    closing = spawn(first.stream.aclose(), name="consumer-close")
+    await clock.settle()
+    assert not closing.done()
+    revoke = spawn(streams.close_key(account().key_ref, reason="key_revoked"), name="revoke")
+    await clock.advance(BOUND_S + 0.1)
+    assert closing.done() and revoke.done()
+    with pytest.raises(PrivateStreamCloseOverran) as overran:
+        revoke.result()
+    assert (overran.value.accounts, overran.value.closed) == ((ACCOUNT_B,), ())
+    held.release.set()
+    await clock.advance(ps.CLOSE_TIMEOUT_S)
     assert held.closed and second.statuses()[-1] == "closed:key_revoked:1"
     await streams.aclose()
 
@@ -264,9 +371,10 @@ async def _elsewhere(work: Callable[[], Awaitable[Any]]) -> None:
 
 async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is_signed() -> None:
     """Q5 (D6): the registry serves the loop of the `open` that created its first stream. An `open`
-    or a `close_key` from any other loop is refused (`RuntimeError`) before anything is signed,
-    dialled, built or closed, so a mis-wiring never reaches M2's binding (whose refusal would mark
-    the key) and never leaves a stream half closed; the first refusal of the window pages."""
+    or a `close_key` from any other loop is refused (`PrivateStreamsWrongLoop`, a `RuntimeError`
+    as 24 §14.1 states) before anything is signed, dialled, built or closed, so a mis-wiring never
+    reaches M2's binding (whose refusal would mark the key) and never leaves a stream half closed;
+    the first refusal of the window pages."""
     clock, calls = VirtualClock(), list[Call]()
     venue = PrivateVenue(clock)
     streams = make_streams(venue, calls=calls)
@@ -278,6 +386,7 @@ async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is
             await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
         with pytest.raises(ps.PrivateStreamsWrongLoop):
             await _elsewhere(lambda: streams.close_key(account().key_ref, reason="key_revoked"))
+    assert issubclass(ps.PrivateStreamsWrongLoop, RuntimeError)
     assert (len(calls), venue.dialled, streams.count()) == before
     assert not venue.sockets[0].closed and not streams.tombstones.refuses(account().key_ref)
     assert [(e["event"], e["log_level"], e.get("cv_page")) for e in logs] == [
@@ -287,21 +396,30 @@ async def test_the_registry_refuses_an_open_from_another_loop_before_anything_is
     await streams.aclose()
 
 
-async def test_the_registry_pages_the_first_wrong_loop_refusal_of_each_window() -> None:
+@pytest.mark.parametrize(
+    ("times", "pages"),
+    [((0.0, 4.0, 6.0, 10.0, 1.0), [1, 0, 1, 0, 1]), ((0.0, 4.999, 5.0), [1, 0, 1])],
+    ids=["windows", "edge"],
+)
+async def test_the_registry_pages_the_first_wrong_loop_refusal_of_each_window(
+    times: tuple[float, ...], pages: list[int]
+) -> None:
     """D6, as L2a-1's writer (CR-S3L2-08): every call from another loop is refused, and only the
     first refusal of each `WRONG_LOOP_PAGE_S` window on the registry's clock pages. A window opens
-    at the refusal that paged, and a clock stepped back reads as expired."""
+    at the refusal that paged and holds 5 s: a refusal 4.999 s on pages nothing and one 5.0 s on
+    pages, the edge L2a-1 pins (`tests/unit/audit/test_loop_bound.py`). A clock stepped back reads
+    as expired."""
     clock = VirtualClock()
     venue = PrivateVenue(clock)
     streams = make_streams(venue)
     stream = await streams.open(account())  # binds this loop
-    pages = list[int]()
-    for at in (0.0, 4.0, 6.0, 10.0, 1.0):
+    paged = list[int]()
+    for at in times:
         clock.now = at
         with capture_logs() as logs, pytest.raises(ps.PrivateStreamsWrongLoop):
             await _elsewhere(lambda: streams.open(account(ACCOUNT_B, key_ref=NEW_KEY)))
-        pages.append(len([e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]))
-    assert pages == [1, 0, 1, 0, 1]
+        paged.append(len([e for e in logs if e["event"] == "bybit_private_streams_wrong_loop"]))
+    assert paged == pages
     await stream.aclose()
     await streams.aclose()
 
