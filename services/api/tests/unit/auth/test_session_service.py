@@ -4,6 +4,7 @@ E09-S03 (US-ONB-004/009). Each test name maps to a ticket Gherkin scenario.
 
 from __future__ import annotations
 
+import inspect
 import os
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,13 @@ def _hasher() -> Hasher:
 
 def _service(repo: FakeSessionRepository, clock: _MutableClock) -> SessionService:
     return SessionService(repo, _hasher(), clock=clock)
+
+
+def test_authentication_takes_no_activity_switch() -> None:
+    """#2300 slice 2f-B: no request is activity, so `authenticate_access_token` has no `touch`
+    switch to turn one into it; `touch()` (extend) and `unlock()` are the only re-stamps."""
+    params = inspect.signature(SessionService.authenticate_access_token).parameters
+    assert list(params) == ["self", "raw_access_token", "allow_locked"]
 
 
 # -- mint --------------------------------------------------------------
@@ -348,9 +356,9 @@ async def test_refresh_preserves_the_original_absolute_expiry() -> None:
     clock.advance(timedelta(minutes=30))
     outcome = await service.refresh(minted.refresh_token)
     assert outcome.minted.expires_at == original_expires_at
-    # #4012: a refresh is no activity, so the user acts with the new token; the session stays
-    # unlocked and only the absolute cap ends it.
-    await service.authenticate_access_token(outcome.minted.access_token, touch=True)
+    # #4012: a refresh is no activity, so the user extends with the new token (#2300: the only
+    # activity on a live session); the session stays unlocked and only the absolute cap ends it.
+    await service.touch(str(outcome.minted.session_id))
 
     clock.advance(timedelta(minutes=30))
     outcome2 = await service.refresh(outcome.minted.refresh_token)

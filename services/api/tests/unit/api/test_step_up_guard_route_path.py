@@ -65,11 +65,16 @@ async def test_guard_under_root_path_admits_the_session_once_elevated() -> None:
     assert rc.post(f"{_ROOT}/orders", headers=_H).status_code == 200  # ordinary write
 
 
-async def test_guard_under_root_path_keeps_logout_open_in_read_only_downgrade() -> None:
+@pytest.mark.parametrize("exempt", ["/auth/logout", "/auth/session/extend"])
+async def test_guard_under_root_path_keeps_logout_and_extend_open_in_read_only_downgrade(
+    exempt: str,
+) -> None:
+    """Ending the session, and Extend (#2300 D1: it acts on no data, so a downgraded session can
+    still record activity), pass the read-only guard; every other write is refused."""
     c, *_ = await _build()
 
-    @cast(FastAPI, c.app).post("/auth/logout")
-    async def logout() -> dict[str, bool]:
+    @cast(FastAPI, c.app).post(exempt)
+    async def kept() -> dict[str, bool]:
         return {"ok": True}
 
     rc = _rooted(c)
@@ -77,7 +82,7 @@ async def test_guard_under_root_path_keeps_logout_open_in_read_only_downgrade() 
     tries = [rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=bad) for _ in range(3)]
     assert [t.status_code for t in tries] == [401, 401, 403]
     assert rc.post(f"{_ROOT}/orders", headers=_H).json()["code"] == "session_read_only"
-    assert rc.post(f"{_ROOT}/auth/logout", headers=_H).status_code == 200  # exempt
+    assert rc.post(f"{_ROOT}{exempt}", headers=_H).status_code == 200  # exempt
 
 
 class _Unwired:
