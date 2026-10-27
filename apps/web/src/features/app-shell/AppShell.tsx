@@ -1,5 +1,5 @@
 import type { CSSProperties, JSX, ReactNode, Ref } from "react";
-import { SkipLink } from "./SkipLink";
+import { SKIP_LINK_COPY, SkipLink } from "@candleviewer/ui";
 
 /**
  * CMP-070 AppShell frame (E10-S01 S1, #304): props only, no router or store. It lives in apps/web
@@ -62,7 +62,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
   const { rightRail, rightRailLabel } = props;
   return (
     <div style={FRAME}>
-      <SkipLink targetId={mainId} />
+      <SkipLink targets={[{ id: mainId, label: SKIP_LINK_COPY.main }]} />
       <header style={{ ...CHROME, gridArea: "header" }}>
         {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
         {panic}

@@ -66,6 +66,9 @@ export type { SkeletonProps } from "./Skeleton.js";
 export { SkeletonChart } from "./SkeletonChart.js";
 export type { SkeletonChartProps } from "./SkeletonChart.js";
 
+export { SkipLink, SKIP_LINK_COPY } from "./SkipLink.js";
+export type { SkipLinkProps, SkipLinkTarget } from "./SkipLink.js";
+
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
 
