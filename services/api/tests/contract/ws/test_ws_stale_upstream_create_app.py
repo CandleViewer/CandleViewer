@@ -8,8 +8,9 @@ on a fake monotonic clock, fed the recorded BTCUSDT corpus (C-13.5). Per family:
 the `snap` is fresh; the clock passes the watchdog's limit (`STALENESS_S`, the freshness SLO of
 `23-ws-protocol.md` §6) with no frame, and the next `snap` carries `meta.stale: true` while
 `cv_ws_stale_topics_in_use` counts the topic; frames resume and both clear. No sleeps (C-13.7):
-the stall is the clock, the next `snap` a client `resync` (§7.5). The gauge is process-global, so
-each test reads it against its own baseline."""
+the stall is the clock, the next `snap` a client `resync` (§7.5). The gauge is set absolutely to
+the size of this app's own stale set on each snapshot it builds, so every read here follows one of
+this app's snapshots and is asserted as an absolute count, whatever ran before."""
 
 from __future__ import annotations
 
@@ -118,23 +119,23 @@ def test_book_snap_goes_stale_when_the_book_stalls_past_the_watchdog_limit_and_c
     """`book`: `stale` is `BookStream.is_stale`, the REST book's own verdict, so a book that
     applied no frame for `STALENESS_S["book"]` is served flagged until the next frame lands."""
     up = _Upstream(tmp_path, monkeypatch)
-    limit, base = STALENESS_S["book"], _gauge()
+    limit = STALENESS_S["book"]
     with up.stack.client:
         up.books.acquire("test", h.SYM)  # held before any socket: the book is LIVE at sub
         up.book_frame(BOOK[0])
         with up.stack.connect(offer) as c:
             first = _sub(c, BOOK_CH, encoding)
-            fresh = (_stale(first), _payload_stale(first, encoding), _gauge() - base)
+            fresh = (_stale(first), _payload_stale(first, encoding), _gauge())
             up.t += limit / 2
             up.book_frame(BOOK[1])  # a delta inside the limit: still fresh
             up.t += limit / 2
             within = _resync(c, BOOK_CH, first["s"])
             up.t += limit  # stalled: no frame for the whole limit
             stalled = _resync(c, BOOK_CH, within["s"])
-            flagged = (_stale(stalled), _payload_stale(stalled, encoding), _gauge() - base)
+            flagged = (_stale(stalled), _payload_stale(stalled, encoding), _gauge())
             up.book_frame(BOOK[2])  # the feed resumes
             resumed = _resync(c, BOOK_CH, stalled["s"])
-            cleared = (_stale(resumed), _payload_stale(resumed, encoding), _gauge() - base)
+            cleared = (_stale(resumed), _payload_stale(resumed, encoding), _gauge())
     structured = encoding == "structured"
     assert fresh == (False, False if structured else None, 0) and _stale(within) is False
     assert flagged == (True, True if structured else None, 1)
@@ -150,23 +151,23 @@ def test_bars_snap_goes_stale_when_the_trade_feed_stalls_past_the_watchdog_limit
     `STALENESS_S["trade"]` (`series_stale`). It fails closed: stored bars served before the tape's
     first frame are flagged (fresh only from a frame), and each frame for the symbol restarts it."""
     up = _Upstream(tmp_path, monkeypatch)
-    limit, base = STALENESS_S["trade"], _gauge()
+    limit = STALENESS_S["trade"]
     with up.stack.client, up.stack.connect(offer) as c:
         first = _sub(c, BARS_CH)  # stored bars; its trades lease demands the tape, no frame yet
-        unfed = (_stale(first), _gauge() - base)
+        unfed = (_stale(first), _gauge())
         up.trade_frame(TRADES[0])
         fed = _resync(c, BARS_CH, first["s"])
-        fresh = (_stale(fed), _gauge() - base)
+        fresh = (_stale(fed), _gauge())
         up.t += limit / 2
         up.trade_frame(TRADES[1])
         up.t += limit / 2
         within = _resync(c, BARS_CH, fed["s"])
         up.t += limit  # stalled: no trade frame for the whole limit
         stalled = _resync(c, BARS_CH, within["s"])
-        flagged = (_stale(stalled), _gauge() - base)
+        flagged = (_stale(stalled), _gauge())
         up.trade_frame(TRADES[2])  # the tape resumes
         resumed = _resync(c, BARS_CH, stalled["s"])
-        cleared = (_stale(resumed), _gauge() - base)
+        cleared = (_stale(resumed), _gauge())
     assert unfed == (True, 1)
     assert fresh == (False, 0) and _stale(within) is False
     assert flagged == (True, 1)
