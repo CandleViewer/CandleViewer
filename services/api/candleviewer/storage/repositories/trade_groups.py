@@ -119,7 +119,7 @@ NO_STOP_LEG_STATUSES: Final[frozenset[LegStatus]] = frozenset({"rejected", "canc
 CREATE_ONLY_GROUP_COLUMNS: Final = frozenset(
     {"symbol", "side", "entry_type", "origin", "origin_rule_id", "is_paper", "algo_params"}
 )
-#: The columns `trg_tg_write_once` freezes (21 Sec.3.3.2).
+#: The columns `trg_tg_write_once` freezes from the insert (21 Sec.3.3.2; more after `draft`, 0053).
 WRITE_ONCE_GROUP_COLUMNS: Final = frozenset(
     {"id", "env", "created_by", "client_group_ref", "client_body_sha256", "definition_id",
      "leg_failure_policy"}

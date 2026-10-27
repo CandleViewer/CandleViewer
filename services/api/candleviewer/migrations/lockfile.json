@@ -256,6 +256,11 @@
       "path": "services/api/candleviewer/migrations/versions/0052_ia_purge_anchor.py",
       "sha256": "5b343993d4b0c61d7088960ebd726762e895148f8fa75e3f4d2b065a981ac852",
       "down_revision": "0051_replay_symbols_streams"
+    },
+    "0053_tg_frozen_after_draft": {
+      "path": "services/api/candleviewer/migrations/versions/0053_tg_frozen_after_draft.py",
+      "sha256": "12040e541f3da00de45c4565daa56fb3e8419b1a1883ec58415fd28976330b11",
+      "down_revision": "0052_ia_purge_anchor"
     }
   }
 }
