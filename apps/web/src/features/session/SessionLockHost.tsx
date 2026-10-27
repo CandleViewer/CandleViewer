@@ -84,10 +84,12 @@ export function SessionLockHost({
     const read = (): void => {
       if (reading) return; // a burst of lock reports makes one read
       reading = true;
-      void api.read().then((clock) => {
-        reading = false;
-        apply(clock);
-      });
+      void api
+        .read()
+        .then(apply, () => apply(null))
+        .finally(() => {
+          reading = false;
+        });
     };
     const finish = (): void => {
       ended = true;

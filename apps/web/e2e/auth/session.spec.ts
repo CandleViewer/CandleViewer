@@ -91,11 +91,19 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
     },
   });
   await stubSession(page, { role: "owner" });
-  // registered after stubSession, so these answer first while the session is locked
+  // Registered after stubSession, so these answer first, as the server does (22 "Idle lock"): a locked
+  // session's refresh is refused and mints nothing; /me knows a locked session only by its bearer, and
+  // without a bearer (a reload) it answers unauthenticated, never session_idle_locked.
   await page.route("**/api/v1/auth/refresh", (r) =>
     locked ? r.fulfill(lockedProblem) : r.fallback(),
   );
-  await page.route("**/api/v1/me", (r) => (locked ? r.fulfill(lockedProblem) : r.fallback()));
+  const meCalls: { auth: string | undefined; locked: boolean }[] = [];
+  await page.route("**/api/v1/me", (r) => {
+    const auth = r.request().headers()["authorization"];
+    meCalls.push({ auth, locked });
+    if (auth === undefined) return r.fulfill(json({ status: 401, code: "unauthenticated" }, 401));
+    return locked ? r.fulfill(lockedProblem) : r.fallback();
+  });
   await page.route("**/api/v1/auth/session", (r) => r.fulfill(json(session())));
   const unlocks: unknown[] = [];
   await page.route("**/api/v1/auth/unlock", (r) => {
@@ -117,6 +125,14 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
   await expect(page.getByRole("heading", { name: /R-101/u })).toBeVisible(); // the app booted
   await expect(page).toHaveURL(/\/terminal\/last$/u);
   expect(unlocks).toEqual([{ password: "pw-lock-1" }]); // the password only, once
+  // no /me while locked (the refresh's lock is what showed SCR-005); the app booted on a bearer
+  expect(meCalls.filter((call) => call.locked)).toEqual([]);
+  expect(meCalls.at(-1)?.auth).toMatch(/^Bearer /u);
+  await expect(page.getByText("pw-lock-1")).toHaveCount(0);
+  const typed = await page
+    .locator("input[type=password]")
+    .evaluateAll((inputs) => inputs.map((i) => (i as HTMLInputElement).value));
+  expect(typed.filter((v) => v !== "")).toEqual([]);
   await assertNoClientSecrets(page, ["pw-lock-1"]);
   await guard.flush();
 });

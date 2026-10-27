@@ -61,7 +61,15 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
   });
   // ADR-0020: a page load re-derives the access token from the refresh cookie, once, before the bootstrap's first call.
   // `refresh` stops waiting after REFRESH_WAIT_MS (another tab may hold the lock), so the first paint does too.
-  const ready = accessToken.refresh().then(() => runBootstrap(options));
+  // #1640: a refresh answered `session_idle_locked` is a reload into a locked session. It mints no token, so the
+  // bootstrap's `/me` would go cookie-only and answer `unauthenticated` (sign-in): SCR-005 comes first instead.
+  const ready = accessToken
+    .refresh()
+    .then((outcome) =>
+      outcome === "locked"
+        ? setShellState({ bootstrap: { kind: "locked" } })
+        : runBootstrap(options),
+    );
 
   let port: PortLike;
   try {

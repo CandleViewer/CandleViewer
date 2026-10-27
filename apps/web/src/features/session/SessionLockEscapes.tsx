@@ -34,7 +34,8 @@ export function SignOutConfirm({
   const dialog = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
   useModalKeys(dialog, busy ? undefined : onBack, true);
-  useEffect(() => back.current?.focus(), []);
+  // while both actions wait, focus rests on the dialog itself, never on a disabled button
+  useEffect(() => (busy ? dialog : back).current?.focus(), [busy]);
   return (
     <div style={scrim} data-keymap-context="Locked">
       <div
@@ -44,6 +45,7 @@ export function SignOutConfirm({
         aria-labelledby={`${id}-t`}
         aria-describedby={`${id}-d`}
         aria-busy={busy}
+        tabIndex={-1}
         style={card}
       >
         <h2 id={`${id}-t`} style={title}>

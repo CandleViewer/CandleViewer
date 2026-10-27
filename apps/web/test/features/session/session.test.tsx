@@ -437,6 +437,17 @@ describe("SessionLockHost: S2 (#1640)", () => {
     expect(lock.size()).toBe(0); // the subscription goes with the host
   });
 
+  it("a read that rejects lets the next read go: retried after 30 s, and a lock report reads again", async () => {
+    const lock = seam();
+    const read = vi.fn().mockRejectedValueOnce(new Error("api")).mockResolvedValue(clock(0, true));
+    render(<SessionLockHost api={fakeApi({ read, onLocked: lock.onLocked })} enabled />);
+    await tick(0);
+    lock.fire();
+    await tick(0);
+    expect(read).toHaveBeenCalledTimes(2); // the flag did not stick
+    expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
+  });
+
   it("a lock report while an unlock is on the wire reads nothing", async () => {
     const lock = seam();
     const read = lockedRead();
@@ -487,8 +498,10 @@ describe("SessionLockHost: S2 (#1640)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign out" }));
     expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("button", { name: "Sign out" })).toBeDisabled();
+    expect(screen.getByRole("alertdialog")).toHaveFocus(); // not stranded on a disabled button
     await act(async () => answer(false));
     expect(screen.getByRole("alert")).toHaveTextContent("Couldn't reach the server. Try again.");
+    expect(screen.getByRole("button", { name: "Back to unlock" })).toHaveFocus();
     expect(screen.getByRole("button", { name: "Sign out" })).toBeEnabled();
     expect(api.endSession).not.toHaveBeenCalled();
   });

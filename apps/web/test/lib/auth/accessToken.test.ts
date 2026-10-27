@@ -1034,6 +1034,47 @@ describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
   });
 });
 
+describe("the calls allowed while locked fall back to the cookie (#1640)", () => {
+  it("a logout whose bearer the server refuses, and no renewal cures, goes once more cookie-only and signs out", async () => {
+    holder.set(bundle(1));
+    fetchMock.mockImplementation(async () => refused("session_idle_locked")); // the renewal: locked
+    transport.mockImplementation(async (init: RequestInit) =>
+      authOf(init) === null ? noContent() : refused("unauthenticated"),
+    );
+    expect((await holder.send("/api/v1/auth/logout", { method: "POST" }, transport)).status).toBe(
+      204,
+    );
+    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), null]);
+    await expect(holder.getToken()).resolves.toEqual({ kind: "unavailable" }); // the logout cleared it
+  });
+
+  it("an unlock refused unauthenticated (no password judged) goes once more cookie-only", async () => {
+    holder.set(bundle(1));
+    transport
+      .mockResolvedValueOnce(refused("unauthenticated"))
+      .mockResolvedValueOnce(json(200, {}));
+    expect((await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport)).status).toBe(
+      200,
+    );
+    expect(transport.mock.calls.map(([init]) => authOf(init))).toEqual([bearer(1), null]);
+    expect(fetchMock).not.toHaveBeenCalled(); // no renewal on the unlock path
+  });
+
+  it.each([
+    ["/api/v1/auth/unlock", "unlock_invalid", true],
+    ["/api/v1/x", "unauthenticated", true],
+    ["/api/v1/auth/logout", "unauthenticated", false],
+  ])("%s refused %s (bearer sent: %s) is not repeated cookie-only", async (path, code, held) => {
+    if (held) holder.set(bundle(1));
+    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
+    transport.mockResolvedValue(refused(code));
+    await holder.send(path, { method: "POST" }, transport);
+    expect(transport.mock.calls.filter(([init]) => authOf(init) === null)).toHaveLength(
+      held ? 0 : 1,
+    );
+  });
+});
+
 describe("the test setup takes BroadcastChannel away for the token holder alone", () => {
   it("no other src module uses one, so none runs channel-less in its tests unnoticed (it would stub its own)", () => {
     const src = resolve(import.meta.dirname, "../../../src");

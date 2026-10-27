@@ -77,6 +77,13 @@ const API_PREFIX = "/api/v1/";
 const AUTH_PREFIX = "/api/v1/auth/";
 const IDLE_LOCKED: ErrorCode = "session_idle_locked";
 const CSRF_REFUSED: ErrorCode = "csrf_token_invalid";
+const UNAUTHENTICATED: ErrorCode = "unauthenticated";
+/**
+ * The calls allowed while idle-locked, which the `cv_refresh` cookie identifies when no live bearer does
+ * (`22` "Idle lock"). A bearer the server does not know as live (rotated away, never issued) is refused
+ * before the cookie is read, so such a call refused `unauthenticated` goes once more without it.
+ */
+const COOKIE_IDENTIFIED: ReadonlySet<string> = new Set([SESSION_PATH, LOGOUT_PATH, UNLOCK_PATH]);
 /** A short-lived token never makes a hot loop, and a timer past 2^31 ms would fire at once. */
 const MIN_DELAY_MS = 5_000;
 const MAX_DELAY_MS = 2 ** 31 - 1;
@@ -562,6 +569,7 @@ export function createAccessTokenHolder(
         );
       }
       const sent = token?.value;
+      let bearer = sent;
       let res = await attempt(sent);
       // a 401, or a CSRF refusal of a bearer a sibling's rotation revoked, means the server did nothing:
       // one renewal, then the call once more
@@ -569,7 +577,14 @@ export function createAccessTokenHolder(
       if (repeatable && (await renewable(res, sent !== undefined))) {
         const next = await renewAfter(sent, init.signal);
         init.signal?.throwIfAborted(); // the caller stopped waiting: as `fetch` would, it is told so
-        if (next !== null) res = await attempt(next);
+        if (next !== null) res = await attempt((bearer = next));
+      }
+      // no password or code was judged: `unauthenticated` means the bearer identified no session
+      if (bearer !== undefined && COOKIE_IDENTIFIED.has(path) && res.status === 401) {
+        if ((await codeOf(res)) === UNAUTHENTICATED) {
+          init.signal?.throwIfAborted();
+          res = await attempt(undefined);
+        }
       }
       if (res.status === 401 && (await codeOf(res)) === IDLE_LOCKED) reportLocked();
       if (path === LOGOUT_PATH && res.ok) clear(); // the session ended: the caller routes

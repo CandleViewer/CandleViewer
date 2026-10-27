@@ -113,7 +113,10 @@ describe("LoginScreen (SCR-001)", () => {
     render(<LoginScreen />);
     const status = screen.queryByText(/Signed out|any text/u);
     expect(status?.textContent ?? null).toBe(line);
-    if (line !== null) expect(screen.getByRole("status")).toHaveTextContent(line);
+    if (line !== null) {
+      expect(screen.getByRole("alert")).toHaveTextContent(line); // in the summary, read on arrival
+      expect(screen.getByRole("alert")).toHaveFocus();
+    } else expect(screen.getByRole("alert")).toBeEmptyDOMElement();
     expect(await serious()).toEqual([]);
     window.history.replaceState(null, "", "/");
   });

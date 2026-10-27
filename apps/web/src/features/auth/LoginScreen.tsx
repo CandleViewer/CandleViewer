@@ -52,6 +52,10 @@ export function LoginScreen(): JSX.Element {
       summary.current?.focus();
     }
   }, [state, fieldError]);
+  // the reason a session ended is read on arrival: focus moves to the summary that holds it
+  useEffect(() => {
+    if (reason !== undefined) summary.current?.focus();
+  }, [reason]);
 
   async function onSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -93,10 +97,9 @@ export function LoginScreen(): JSX.Element {
   return (
     <main>
       <h1>Sign in to CandleViewer</h1>
-      {reason === undefined ? null : <p role="status">{reason}</p>}
       <form onSubmit={(e) => void onSubmit(e)} noValidate aria-busy={busy}>
         <div ref={summary} tabIndex={-1} role="alert" id="login-error">
-          {message}
+          {message ?? reason}
         </div>
         {locked ? (
           <p role="status" aria-live="polite">
