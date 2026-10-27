@@ -5,6 +5,7 @@ import { AppShell } from "./AppShell";
 import { NavRail } from "./NavRail";
 import { InShellProvider } from "./ScreenRoot";
 import { ShellBannerSlot, ShellCanvasOverlaySlot, ShellConnectionSlot } from "./slots";
+import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
 
 /** id of the shell's one `main` landmark. */
@@ -24,6 +25,7 @@ export function ShellLayout(): JSX.Element {
         mainRef={mainRef}
         nav={<NavRail />}
         connection={<ShellConnectionSlot />}
+        topBar={(connection) => <TopBarSlot connection={connection} />}
         banner={<ShellBannerSlot />}
         canvasOverlay={<ShellCanvasOverlaySlot />}
       >

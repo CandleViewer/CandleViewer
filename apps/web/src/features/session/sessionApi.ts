@@ -38,6 +38,9 @@ export interface SessionApi {
 
 const BASE = "/api/v1/auth";
 
+/** The sign-out failure line (SCR-005 `sign-out-instead`, PROPOSED `lock.unreachable`; the TopBar's Sign out). */
+export const SIGN_OUT_FAILED = "Couldn't reach the server. Try again.";
+
 const finiteTime = (value: unknown): boolean =>
   typeof value === "string" && Number.isFinite(Date.parse(value));
 

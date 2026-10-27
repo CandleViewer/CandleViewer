@@ -1,7 +1,18 @@
 - link "Skip to main content":
   - /url: "#cv-main"
 - banner:
+  - text: CandleViewer
+  - 'img "Trading environment: Demo"': ○ DEMO
+  - button "Account" [disabled]
+  - text: Not available in this build.
+  - button "Symbol" [disabled]
+  - text: Not available in this build.
+  - button "Interval" [disabled]
+  - text: Not available in this build.
+  - button "Search commands Ctrl+K" [disabled]
+  - text: The command palette is not available in this build.
   - 'button "Connection: Reconnecting"': Reconnecting
+  - button "Sign out"
 - navigation "Primary":
   - list:
     - listitem:

@@ -10,6 +10,7 @@ import {
   useFocusReturn,
   useModalKeys,
 } from "./chrome";
+import { SIGN_OUT_FAILED } from "./sessionApi";
 
 export interface SignOutConfirmProps {
   /** `POST /auth/logout` is on the wire: both actions wait. */
@@ -57,7 +58,7 @@ export function SignOutConfirm({
         </p>
         {failed ? (
           <p role="alert" style={{ margin: 0, color: "var(--color-status-warning-default)" }}>
-            Couldn&apos;t reach the server. Try again.
+            {SIGN_OUT_FAILED}
           </p>
         ) : null}
         <div style={actions}>

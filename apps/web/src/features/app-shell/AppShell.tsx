@@ -18,6 +18,8 @@ export interface AppShellProps {
   /** The CMP-071 rail, inside the `nav` "Primary" landmark. */
   readonly nav?: ReactNode;
   readonly connection?: ReactNode;
+  /** CMP-072 (S2): renders the header row around the connection slot; absent, the bare slot. */
+  readonly topBar?: (connection: JSX.Element) => ReactNode;
   readonly banner?: ReactNode;
   readonly canvasOverlay?: ReactNode;
   /** The route outlet. */
@@ -50,7 +52,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
     <div style={FRAME}>
       <SkipLink targetId={mainId} />
       <header style={{ ...CHROME, gridArea: "header" }}>
-        <div data-shell-slot="connection">{connection}</div>
+        {(props.topBar ?? ((slot) => slot))(<div data-shell-slot="connection">{connection}</div>)}
       </header>
       <nav aria-label="Primary" style={{ ...CHROME, gridArea: "nav" }}>
         {nav}

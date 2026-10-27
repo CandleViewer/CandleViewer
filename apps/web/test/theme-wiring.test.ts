@@ -93,12 +93,13 @@ describe("the app entry imports the theme CSS by export name", () => {
     (match) => match[1],
   );
 
-  it("imports the three token files, then theme.css, so the runtime styles override the tokens", () => {
+  it("imports the three token files, then theme.css and the component CSS (the shell's Button)", () => {
     expect(cssImports).toStrictEqual([
       "@candleviewer/ui/tokens.dark.css",
       "@candleviewer/ui/tokens.light.css",
       "@candleviewer/ui/tokens.high-contrast.css",
       "@candleviewer/ui/theme.css",
+      "@candleviewer/ui/components.css",
     ]);
   });
 

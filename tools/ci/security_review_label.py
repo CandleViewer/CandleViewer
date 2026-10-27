@@ -54,6 +54,8 @@ WEB_AUTH_PATHS = (
     "apps/web/src/features/auth/",  # login, password change, the auth REST client
     "apps/web/src/features/app-shell/NavRail.tsx",  # filters the rail by the session claims
     "apps/web/src/features/invites/",  # invite redemption: password and TOTP enrolment
+    "apps/web/src/features/app-shell/TopBarSlot.tsx",  # the TopBar's Sign out: drives
+    # `POST /auth/logout` and `endSession()`
     "apps/web/src/features/stepUp/",  # the step-up dialog and challenge gate: answers the
     # server's challenge, holds and re-sends the refused request
     "apps/web/src/lib/auth/",  # the session claims cache
