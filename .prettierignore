@@ -79,3 +79,7 @@ services/api/candleviewer/statechart/machines/*.machine.json
 # E28-T03 (#907): the sizer's golden vectors, one vector per line (the e28 fixture's schema);
 # prettier would reflow each into a dozen lines
 services/api/tests/unit/accounts/golden/e28_sizer_vectors.json
+
+# docs/design/_tools/sheets/lib: vendored Penpot plugin libraries (cvlib, cvsheet), kept byte-identical to
+# the copies the boards were drawn with; docs/design/_tools/sheets/MANIFEST.sha256 pins their sha256
+docs/design/_tools/sheets/lib/
