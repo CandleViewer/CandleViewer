@@ -24,3 +24,7 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+export { RbacGate } from "./RbacGate.js";
+export type { RbacGateChild, RbacGateProps } from "./RbacGate.js";
+export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
+export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
