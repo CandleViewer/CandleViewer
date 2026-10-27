@@ -6,7 +6,8 @@ Sec.8.4, 8.10): in-memory reads only (C-2.21). It fails closed, and the first re
 composed (the fake backend), the account row switched off, the order-entry gate's refusal (only its
 reason is read, never its `detail`; a reason the table does not hold is `trading_disabled`), the
 B18 kill switch, the live gate for a live account (the `CV_TRADING_LIVE_ENABLED` setting and the
-`trading.live_enabled` flag; only demo and testnet are not live), then a lockout.
+`trading.live_enabled` flag, read for a live account alone; only demo and testnet are not live),
+then a lockout.
 
 `NoLockouts` stands in for the lockout source until E39-S02. `GateReadiness.announce` says so at
 startup, as the OMS does for its interims (a WARNING; no gauge, for `oms_interim_ports` is the
@@ -83,8 +84,8 @@ class GateReadiness:
             return GATE_REASONS.get(refusal.reason, "trading_disabled")
         if self._kill_switch(AccountId(account_id)) is not None:
             return "kill_switch_engaged"
-        live_open = self._live_enabled is True and self._live_flag() is True
-        if environment not in _NOT_LIVE and not live_open:
+        live = environment not in _NOT_LIVE  # the flag is read for a live account alone
+        if live and not (self._live_enabled is True and self._live_flag() is True):
             return "trading_disabled"
         if self._lockouts.locked(account_id) is not False:
             return "account_locked"

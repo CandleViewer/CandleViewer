@@ -1,11 +1,11 @@
-"""Trade-group member readiness (E28-T05 S2a, #909; US-PROF-005 "2 of 3 ready"; 22
-`TradeGroupReadiness`): whether each member's account can trade now and, if not, why. Derived on
-every read from in-memory state (C-2.21), synchronous, one `ReadinessSource.reason` ask per enabled
-member; the sources are the composition root's (`trade_groups_wiring`), `accounts` imports none.
-Fail closed (KV-T12): ready only when the source answers exactly `None`; a source that raises, or
-answers outside the closed set, leaves the member `trading_disabled`, logged by account and error
-class alone (C-12.6). A member switched off in the definition is listed as `member_disabled`,
-never asked and never counted.
+"""Trade-group member readiness (E28-T05 S2a, #909; US-PROF-005 "2 of 3 ready"; 22's
+`TradeGroupReadiness`, which S0 adds): whether each member's account can trade now and, if not,
+why. Derived on every read from in-memory state (C-2.21), synchronous, one `ReadinessSource.reason`
+ask per enabled member; the sources are the composition root's (`trade_groups_wiring`), `accounts`
+imports none. Fail closed (KV-T12): ready only when the source answers exactly `None`; a source
+that raises, or answers outside the closed set, leaves the member `trading_disabled`, logged by
+account and error class alone (C-12.6). A member switched off in the definition is listed as
+`member_disabled`, never asked and never counted.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import structlog
 
 from candleviewer.domain.primitives import Environment
 
-#: 22 `TradeGroupReadiness.members[].reason`, closed.
+#: The reasons of 22's `TradeGroupReadiness.members[]` (added by S0), closed.
 ReadinessReason = Literal[
     "member_disabled",
     "account_disabled",
@@ -76,15 +76,18 @@ def readiness(
             rows.append(MemberReadiness(member.account_id, False, "member_disabled"))
             continue
         total += 1
-        reason = _answer(source, member, environment)
+        reason = member_reason(source, member, environment)
         ready += reason is None
         rows.append(MemberReadiness(member.account_id, reason is None, reason))
     return Readiness(ready, total, tuple(rows))
 
 
-def _answer(
+def member_reason(
     source: ReadinessSource, member: ReadinessMember, environment: Environment
 ) -> ReadinessReason | None:
+    """One member's reason, `None` when ready: what `readiness` asks of each enabled member. Whoever
+    needs one account's reason asks here, never the source direct, so a faulting source fails
+    closed the same way."""
     try:
         reason = source.reason(
             member.account_id, environment, account_enabled=member.account_enabled
