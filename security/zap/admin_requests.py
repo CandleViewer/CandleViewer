@@ -17,7 +17,7 @@ For each synthetic role (`manager`, `viewer`) this writes, from the template
   its nesting limit, so the scan imports only what it scans.
 
 The Owner's plan is fixed, not drawn from the matrix, which allows the Owner (E16-X02, #494): an
-Owner signed in with password and TOTP holds no `recorder` step-up, so each purge in
+Owner signed in with password and TOTP holds no `recorder_purge` step-up, so each purge in
 `security/zap/owner-purge-denials.yaml` is refused 403 and audited as a `retention.purge` denial
 (its `action`, which `check_admin_denials.py` then requires). It writes `owner-denials.yaml` and
 `owner-requests.json` only: the Owner never scans.
@@ -148,7 +148,9 @@ def denial_requests(matrix: dict[str, Any], role: str, target: str) -> list[dict
 
 def fixed_requests(plan: dict[str, Any], target: str) -> list[dict[str, Any]]:
     """A fixed plan's requests, as `denial_requests` writes them, each with the audit `action`
-    its denial record must name, and a fresh correlation id each."""
+    its denial record must name, a fresh correlation id each, and a fresh `Idempotency-Key`
+    each: the purge refuses a missing key (400) before its step-up check (#4622), so without
+    one the probe would never reach the refusal it is for."""
     found: list[dict[str, Any]] = []
     for entry in plan["requests"]:
         method, path = str(entry["operation"]).split(" ", 1)
@@ -163,6 +165,7 @@ def fixed_requests(plan: dict[str, Any], target: str) -> list[dict[str, Any]]:
                 "action": entry["action"],
                 "body": json.dumps(entry["json"]),
                 "correlation_id": str(uuid.uuid4()),
+                "idempotency_key": str(uuid.uuid4()),
             }
         )
     return found
@@ -183,6 +186,8 @@ def denial_plan(
             "headers": [f"X-{name}: {item['correlation_id']}" for name in _ID_HEADERS],
             "responseCode": item["expected"],
         }
+        if item.get("idempotency_key"):
+            entry["headers"].append(f"Idempotency-Key: {item['idempotency_key']}")
         if item["body"] is not None:
             entry["headers"].append("Content-Type: application/json")
             entry["data"] = item["body"]
