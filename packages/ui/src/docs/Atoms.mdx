@@ -30,6 +30,23 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.              |
 | Esc (reason echo)            | Dismisses the reason tooltip once CMP-016 lands; until then the description is always available. |
 
+### Toggle (CMP-004, APG Switch)
+
+| Keys                         | Action                                                                                        |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                         |
+| Space, Enter                 | Emits the opposite value (`onChange(checked)`); a critical switch only emits, never confirms. |
+| Space, Enter (with a reason) | No change; the switch stays focusable and its reason is the accessible description.           |
+
+### Checkbox (CMP-005, APG Checkbox, with a mixed state)
+
+| Keys                  | Action                                                                                                   |
+| --------------------- | -------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab       | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                    |
+| Space                 | Toggles and emits a boolean; from indeterminate it emits `true` and the consumer clears `indeterminate`. |
+| Enter                 | Not handled: it is the enclosing form's implicit submission, as for a native checkbox.                   |
+| Space (with a reason) | No change, even when mixed; the box stays focusable and its reason is the accessible description.        |
+
 ### RadioGroup (CMP-006, APG Radio Group)
 
 | Keys                          | Action                                                                                                                     |
