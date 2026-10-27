@@ -17,12 +17,14 @@ const blocks = (css: string): Array<{ selectors: string[]; body: string }> =>
   }));
 
 describe("typography.css contract", () => {
-  it("sets tabular-nums on the MonoText base rule", () => {
-    const base = blocks(normal).find((b) => b.selectors.includes(".cv-mono"));
+  // The AC "tabular numerics enforced centrally": the component's own class sets them for every size.
+  it("sets tabular-nums on the NumericText and MonoText base rule", () => {
+    const base = blocks(normal).find((b) => b.selectors.includes(".cv-num"));
+    expect(base?.selectors).toContain(".cv-mono");
     expect(base?.body).toMatch(/font-variant-numeric:\s*tabular-nums/);
   });
 
-  it("never uses the font shorthand on mono text, which would reset font-variant-numeric", () => {
+  it("never uses the font shorthand on numbers, which would reset font-variant-numeric", () => {
     for (const b of blocks(normal).filter((x) =>
       x.selectors.some((s) => /cv-(num|mono)/.test(s)),
     )) {
@@ -41,6 +43,12 @@ describe("typography.css contract", () => {
     for (const role of ["heading-sm", "heading-md", "heading-lg", "display"]) {
       expect(normal).toContain(`--type-ui-${role}-font-size`);
     }
+  });
+
+  it("colours by sign with the .default tokens (E1 interim)", () => {
+    expect(normal).toMatch(/\[data-sign="positive"\]\s*\{\s*color:\s*var\(--color-buy-default\)/);
+    expect(normal).toMatch(/\[data-sign="negative"\]\s*\{\s*color:\s*var\(--color-sell-default\)/);
+    expect(normal).toMatch(/\[data-sign="zero"\]\s*\{\s*color:\s*var\(--color-neutral-default\)/);
   });
 
   it("uses tokens only: no raw colour or pixel values", () => {

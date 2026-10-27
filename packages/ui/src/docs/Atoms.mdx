@@ -134,12 +134,16 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 
 ### Typography: Text, Heading, MonoText (CMP-020, static text)
 
+### Typography: Text, Heading, MonoText, NumericText (CMP-020, static text)
+
 | Keys            | Action                                                                                                         |
 | --------------- | -------------------------------------------------------------------------------------------------------------- |
 | Tab / Shift+Tab | Skipped: static text is never focusable. Headings are reached by screen-reader heading navigation, not by Tab. |
 
-| Element  | Role                         | Name                                                |
-| -------- | ---------------------------- | --------------------------------------------------- |
-| Text     | none (span, or `p`)          | Its text.                                           |
-| Heading  | heading, `h1`..`h6` by level | Its text; the level never follows the visual style. |
-| MonoText | none (span, or `code`)       | Its text.                                           |
+| Element                 | Role                         | Name                                                                                          |
+| ----------------------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Text                    | none (span, or `p`)          | Its text.                                                                                     |
+| Heading                 | heading, `h1`..`h6` by level | Its text; the level never follows the visual style.                                           |
+| MonoText                | none (span, or `code`)       | Its text.                                                                                     |
+| NumericText             | none (span)                  | The value as shown: "+420.00", "-420.00", or an unsigned "0.00". No `aria-label` on the span. |
+| NumericText abbreviated | none (span)                  | The visible "1.2M" is `aria-hidden`; a visually hidden "1,200,000" is read instead.           |

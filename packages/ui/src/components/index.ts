@@ -52,12 +52,16 @@ export type { AvatarProps, AvatarSize } from "./Avatar.js";
 export { AvatarGroup } from "./AvatarGroup.js";
 export type { AvatarGroupItem, AvatarGroupProps } from "./AvatarGroup.js";
 export { Text, Heading, MonoText } from "./Typography.js";
+export { Text, Heading, MonoText, NumericText } from "./Typography.js";
 export type {
   HeadingLevel,
   HeadingProps,
   HeadingVariant,
   MonoTextProps,
+  NumericFormat,
+  NumericTextProps,
   NumSize,
+  SignDisplay,
   TextProps,
   TextVariant,
 } from "./Typography.js";
