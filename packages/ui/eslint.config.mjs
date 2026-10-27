@@ -2,12 +2,17 @@ import tseslint from "typescript-eslint";
 import reactPlugin from "eslint-plugin-react";
 import reactHooksPlugin from "eslint-plugin-react-hooks";
 import baseConfig from "@candleviewer/config/eslint";
+import { iconLabelRequired } from "./eslint-rules/icon-a11y.mjs";
 import noRawDesignValues from "./eslint-rules/no-raw-design-values.mjs";
 import storyTitleBands from "./eslint-rules/story-title-bands.mjs";
 
 /** The package's own rules, one plugin object for every block that uses them. */
 const candleviewer = {
-  rules: { "no-raw-design-values": noRawDesignValues, "story-title-bands": storyTitleBands },
+  rules: {
+    "icon-label-required": iconLabelRequired,
+    "no-raw-design-values": noRawDesignValues,
+    "story-title-bands": storyTitleBands,
+  },
 };
 
 /** @type {import("eslint").Linter.Config[]} */
@@ -55,6 +60,7 @@ export default tseslint.config(
     plugins: { candleviewer },
     rules: {
       "candleviewer/no-raw-design-values": "error",
+      "candleviewer/icon-label-required": "error",
     },
   },
   {
