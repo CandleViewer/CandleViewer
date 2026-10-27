@@ -86,6 +86,11 @@ def _defect_table() -> tuple[list[tuple[str, str, list[Citation]]], list[str], s
     return rows, unparsed, body
 
 
+# #4777: the module fixtures collect the whole tree in a child pytest (about 240 s on CI), which
+# the suite's 120 s per-test default would cut short; 900 s keeps a bound with headroom.
+pytestmark = pytest.mark.timeout(900)
+
+
 @pytest.fixture(scope="module")
 def selected_by_marker() -> frozenset[str]:
     """What the pack's QA command, `pytest -m e08_regression` with no paths, selects in the tree."""
