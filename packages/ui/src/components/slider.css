@@ -1,0 +1,189 @@
+/* CMP-010 Slider. State lives in data-* attributes set by Slider.tsx; colours are tokens only.
+   --cv-slider-pos is the value's 0..1 position (data, not style); thumbs and marks are centred on it. */
+.cv-slider {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-field-gap);
+}
+
+/* LTR only (declared): the pointer maths reads clientX - left, so the rail is never mirrored. */
+.cv-slider__body {
+  direction: ltr;
+}
+
+/* The body is inset by half a thumb so the thumb at min or max stays inside the box. */
+.cv-slider__body {
+  flex: 1;
+  min-width: 0;
+  margin-inline: calc(var(--size-icon) / 2);
+}
+
+/* Hit target: the whole rail (full width, control height) takes the pointer, not just the thumb. */
+.cv-slider__rail {
+  position: relative;
+  box-sizing: border-box;
+  height: var(--size-control-height);
+  touch-action: none;
+  cursor: pointer;
+}
+
+.cv-slider__track {
+  position: absolute;
+  inset-inline: 0;
+  /* 8 px: twice space.inset.xs (D02 B4, CMP-010), under the 16 px thumb. */
+  top: calc(50% - var(--space-inset-xs));
+  height: calc(var(--space-inset-xs) * 2);
+  border-radius: var(--radius-badge);
+  background: var(--color-text-tertiary);
+}
+
+.cv-slider__fill {
+  display: block;
+  width: calc(var(--cv-slider-pos) * 100%);
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-action-primary-default);
+}
+
+.cv-slider__thumb {
+  position: absolute;
+  top: calc(50% - var(--size-icon) / 2);
+  inset-inline-start: calc(var(--cv-slider-pos) * 100%);
+  box-sizing: border-box;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  margin-inline-start: calc(var(--size-icon) / -2);
+  border-radius: 50%;
+  background: var(--color-action-primary-default);
+}
+
+.cv-slider__thumb:focus-visible,
+.cv-slider__thumb[data-key-ring]:focus {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Hover steps the unfilled track up; the thumb does not change. Never on a gated or disabled slider. */
+.cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track {
+  background: var(--color-text-secondary);
+}
+
+.cv-slider__marks {
+  position: relative;
+  margin-block-start: var(--space-stack-xs);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+}
+
+.cv-slider__mark {
+  position: absolute;
+  inset-inline-start: calc(var(--cv-slider-pos) * 100%);
+  transform: translateX(-50%);
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.cv-slider__glyph {
+  display: inline-flex;
+  align-items: center;
+  height: var(--size-control-height);
+  color: var(--color-text-secondary);
+}
+
+.cv-slider__glyph > * {
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+/* Disabled with a reason (T2): only the two tracks dim; the thumb stays at full strength, marks stay readable. */
+.cv-slider[data-gated] .cv-slider__track {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-slider[data-gated] .cv-slider__thumb {
+  background: var(--color-text-primary);
+}
+
+.cv-slider[data-gated] .cv-slider__rail {
+  cursor: not-allowed;
+}
+
+/* Plain disabled: the whole control dims (out of the Tab order). */
+.cv-slider[data-disabled] {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-slider[data-disabled] .cv-slider__rail {
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  .cv-slider__track,
+  .cv-slider__thumb,
+  .cv-slider__fill {
+    forced-color-adjust: none;
+  }
+
+  /* The empty track is a 1 px CanvasText border on Canvas (the border sits inside the 8 px). */
+  .cv-slider__track {
+    box-sizing: border-box;
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .cv-slider:not([data-gated], [data-disabled]) .cv-slider__rail:hover .cv-slider__track {
+    background: Canvas;
+    border-color: Highlight;
+  }
+
+  .cv-slider__fill {
+    background: Highlight;
+  }
+
+  .cv-slider__thumb {
+    background: CanvasText;
+  }
+
+  .cv-slider__thumb:focus-visible,
+  .cv-slider__thumb[data-key-ring]:focus {
+    outline-color: Highlight;
+  }
+
+  .cv-slider__mark,
+  .cv-slider__glyph {
+    color: CanvasText;
+  }
+
+  /* Gated: the tracks grey, the thumb, marks and lock keep full strength. */
+  .cv-slider[data-gated] .cv-slider__track {
+    border-color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-slider[data-gated] .cv-slider__fill {
+    background: GrayText;
+    opacity: 1;
+  }
+
+  .cv-slider[data-gated] .cv-slider__thumb {
+    background: CanvasText;
+  }
+
+  /* Disabled wins: last, and not weaker than any rule above. */
+  .cv-slider[data-disabled] {
+    opacity: 1;
+  }
+
+  .cv-slider[data-disabled] .cv-slider__track {
+    border-color: GrayText;
+  }
+
+  .cv-slider[data-disabled] .cv-slider__fill,
+  .cv-slider[data-disabled] .cv-slider__thumb {
+    background: GrayText;
+  }
+
+  .cv-slider[data-disabled] .cv-slider__mark {
+    color: GrayText;
+  }
+}

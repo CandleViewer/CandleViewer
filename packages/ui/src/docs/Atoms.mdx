@@ -41,3 +41,16 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Space                         | Checks the focused radio; nothing on a radio with a reason.                                                                |
 | Arrows (radio with a reason)  | Focus lands on it and its reason is the description; it is never checked. A plain-disabled radio is skipped.               |
 | Any key (group with a reason) | No action: focus stays on the checked radio, the value never changes, no form is submitted; the reason is its description. |
+
+### Slider (CMP-010, APG Slider)
+
+| Keys                             | Action                                                                                                                                               |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                  | Moves focus to the thumb. Plain disabled is skipped; with a reason it stays focusable.                                                               |
+| Right Arrow, Up Arrow            | Increases the value by one step.                                                                                                                     |
+| Left Arrow, Down Arrow           | Decreases the value by one step.                                                                                                                     |
+| Page Up, Page Down               | Increases or decreases by 10 x step.                                                                                                                 |
+| Home, End                        | Sets the value to min or max.                                                                                                                        |
+| Any of these (with a reason)     | No change; focus stays and the reason is the accessible description.                                                                                 |
+| Alt, Ctrl or Meta with any key   | Not handled; the browser and assistive technology keep their chords.                                                                                 |
+| Pointer down or drag on the rail | Jumps to the pointer, then follows it, snapped to the step. While gated a press focuses the thumb, which announces the reason; nothing else changes. |

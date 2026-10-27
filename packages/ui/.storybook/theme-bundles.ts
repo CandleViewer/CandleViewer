@@ -11,3 +11,4 @@ import "../src/components/iconbutton.css";
 import "../src/components/choice.css";
 import "../src/components/toggle.css";
 import "../src/components/radio.css";
+import "../src/components/slider.css";
