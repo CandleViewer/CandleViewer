@@ -5,10 +5,12 @@ The account fixture transport lives in `cvdev`, a sibling of `candleviewer` that
 `infra/images/Dockerfile.api` stage carries. `candleviewer.account_fixture_wiring` imports it
 lazily, only when `CV_ACCOUNT_FIXTURE` is set, and refuses boot when it is absent. This checks a
 built image, run the way the trivy job's boot smoke runs it (`--pull never --network none
---read-only --tmpfs /tmp`, `python` in `WORKDIR /app`), twice:
+--read-only --tmpfs /tmp`, `python` in `WORKDIR /app`), three times:
 
 1. `importlib.util.find_spec("cvdev")` is None: the package cannot be imported.
-2. A boot (`import candleviewer.server, candleviewer.main`, which runs `Settings()` and
+2. #4814: `find_spec` is None for each of `TEST_ONLY_MODULES`, the test dependency group's tools.
+   The image syncs no dependency group (`uv sync --no-default-groups`), so none is installed.
+3. A boot (`import candleviewer.server, candleviewer.main`, which runs `Settings()` and
    `create_app()`) with the dev/test values (`CV_ENVIRONMENT=demo`, `CV_FEED=synthetic`, no
    `CV_BYBIT_API_*`) and `CV_ACCOUNT_FIXTURE=compliant` exits non-zero, and the last line of its
    stderr is exactly the package-absent refusal. Anything else fails: a boot that succeeds, and
@@ -17,7 +19,7 @@ built image, run the way the trivy job's boot smoke runs it (`--pull never --net
 Only the variables named here reach the container, each as `NAME=value`, never a host value.
 `.github/workflows/main.yml` builds the image and passes its local tag with `--image`.
 
-Exit codes: 0 both hold, 1 otherwise (a docker failure included). Stdlib only; runs `docker`.
+Exit codes: 0 all three hold, 1 otherwise (a docker failure included). Stdlib only; runs `docker`.
 """
 
 from __future__ import annotations
@@ -35,6 +37,27 @@ REFUSAL = (
 )
 FIND_SPEC = f"import importlib.util; print('find_spec:', importlib.util.find_spec('{DEV_PACKAGE}'))"
 ABSENT = "find_spec: None"
+#: #4814: the top-level modules of the test dependency group's tools, none of which the runtime
+#: imports. A test-group package that is also a runtime dependency belongs in
+#: `[project.dependencies]` and stays out of this tuple; none of these is one, which
+#: `services/api/tests/unit/architecture/test_image_dependency_groups.py` checks against the lock.
+TEST_ONLY_MODULES = (
+    "pytest",
+    "_pytest",
+    "hypothesis",
+    "pytest_asyncio",
+    "pytest_cov",
+    "pytest_timeout",
+    "testcontainers",
+    "respx",
+    "openapi_spec_validator",
+)
+#: Top-level names only, so `find_spec` imports nothing: it prints those the image can import.
+TEST_ONLY_PROBE = (
+    "import importlib.util; print('importable:', "
+    f"[m for m in {TEST_ONLY_MODULES!r} if importlib.util.find_spec(m) is not None])"
+)
+NONE_IMPORTABLE = "importable: []"
 #: What the boot smoke imports: the ENTRYPOINT module and the ASGI app it serves.
 BOOT = "import candleviewer.server, candleviewer.main"
 #: #2893 ruling 2's structural dev/test values, and the switch.
@@ -64,13 +87,20 @@ def _tail(text: str) -> str:
 
 
 def check(image: str) -> list[str]:
-    """What is wrong with `image`: empty when both runs hold."""
+    """What is wrong with `image`: empty when all three runs hold."""
     problems: list[str] = []
     spec = _python(image, FIND_SPEC)
     if spec.returncode != 0 or ABSENT not in spec.stdout.splitlines():
         problems.append(
             f"`{DEV_PACKAGE}` must not be importable in the image; the probe exited "
             f"{spec.returncode}:\n{_tail(spec.stdout + spec.stderr)}"
+        )
+    test_only = _python(image, TEST_ONLY_PROBE)
+    if test_only.returncode != 0 or NONE_IMPORTABLE not in test_only.stdout.splitlines():
+        problems.append(
+            "no test-only module may be importable in the image, which syncs no dependency "
+            f"group; the probe exited {test_only.returncode}:\n"
+            f"{_tail(test_only.stdout + test_only.stderr)}"
         )
     boot = _python(image, BOOT, BOOT_ENV)
     if boot.returncode == 0 or boot.stderr.strip().splitlines()[-1:] != [REFUSAL]:
@@ -93,7 +123,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"CI-IMG-006: {problem}", file=sys.stderr)
     if problems:
         return 1
-    print(f"{args.image}: `{DEV_PACKAGE}` is absent, and CV_ACCOUNT_FIXTURE refuses boot")
+    print(
+        f"{args.image}: `{DEV_PACKAGE}` and the test-only modules are absent, "
+        "and CV_ACCOUNT_FIXTURE refuses boot"
+    )
     return 0
 
 

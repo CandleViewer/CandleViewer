@@ -31,6 +31,14 @@ dependencies = [
   "jsonschema>=4.23",
   "argon2-cffi>=25.1.0",
   "cryptography>=43.0",
+  # #4814: the image installs no dependency group, and the runtime package imports these:
+  # asyncpg (the Postgres and QuestDB connections), psycopg 3 with its bundled libpq (Alembic's
+  # sync driver; the slim base image has no libpq), psutil (the bind self-check and the
+  # recorder) and the OpenTelemetry API (its no-op tracer; the SDK stays in `test`).
+  "asyncpg>=0.29",
+  "opentelemetry-api",
+  "psutil",
+  "psycopg[binary]>=3.2",
 ]
 
 [dependency-groups]
@@ -53,12 +61,8 @@ test = [
   "pytest-timeout>=2.3",
   "hypothesis>=6.108",
   "testcontainers[postgres]>=4.8",
-  "psycopg[binary]>=3.2",
-  "asyncpg>=0.29",
   "openapi-spec-validator>=0.9.0",
   "opentelemetry-sdk",
-  "opentelemetry-api",
-  "psutil",
   "respx==0.23.1",
 ]
 

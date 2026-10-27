@@ -977,7 +977,12 @@ index alone, removing nothing.
   `COPY` may name `services/api/cvdev` or a directory above it. A `Settings`
   refusal means the boot never reached the fence: check the image's `ENV`
   (a `CV_BYBIT_API_*` or `CV_TEST_CLOCK`) and the gate in `settings.py`. The
-  step log shows the last lines of the boot.
+  step log shows the last lines of the boot. The same code covers a test-only
+  module (pytest, hypothesis, testcontainers, respx and the pytest plugins)
+  importable in the image (#4814): every `uv sync` in the Dockerfile passes
+  `--no-default-groups`, and a runtime dependency must not pull a test tool in.
+  `services/api/tests/unit/architecture/test_image_dependency_groups.py` checks
+  both statically.
 - **CI-IMG-007** (pin ledger drift, #3571; PR `pin-check`): a row of
   `infra/images/PINS.md` and the image pins scanned by
   `tools/ci/resolve_image_digests.py --check` (Dockerfiles, compose files,
