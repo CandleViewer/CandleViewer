@@ -83,6 +83,12 @@ raw `px` length — use a token from `build/ts/tokens.ts` instead
 (`eslint.config.mjs`'s `candleviewer/no-raw-design-values` rule; the token
 source files themselves are exempt).
 
+**Icon lint** (E05-T06, `16-design-system-brief.md` §5): `candleviewer/no-raw-svg` fails a raw
+`<svg>` in any file of the package outside `src/icons/`, the registry. On `src/**`, stories included,
+`candleviewer/icon-label-required`, `candleviewer/icon-only-control-label` and
+`candleviewer/icon-beside-text-hidden` (CMP-019's ids) enforce decorative vs meaningful. Tests are
+exempt from those three: they write unnamed cases on purpose to pin the types.
+
 ## Changing a token (contributing)
 
 Every token change, in either direction, follows the runbook in
