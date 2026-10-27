@@ -41,8 +41,8 @@ export interface ErrorStateProps {
   /** The title's level; default 3, so it fits a panel's outline. */
   headingLevel?: HeadingLevel;
   /**
-   * The title heading's id. The heading takes `tabindex="-1"`, so an error summary's host moves focus to it
-   * after a failed submit (`document.getElementById(headingId)?.focus()`, E30-D02 D16).
+   * The title heading's id. Given, the heading also takes `tabindex="-1"`, so an error summary's host moves
+   * focus to it after a failed submit (`document.getElementById(headingId)?.focus()`, E30-D02 D16).
    */
   headingId?: string;
   /** An error summary's links, one per field, in document order (E30-D02 D16). */
@@ -77,13 +77,27 @@ const SEVERITY_LIVE: Readonly<Record<ErrorSeverity, Exclude<ErrorStateLive, "off
 const roleOf = (live: ErrorStateLive): "status" | "alert" | undefined =>
   live === "off" ? undefined : live === "polite" ? "status" : "alert";
 
-/** An in-page `#id` link moves focus to its field (as GOV.UK's error summary does); anything else navigates. */
+/**
+ * An in-page `#id` link moves focus to its field (as GOV.UK's error summary does). Anything else keeps the
+ * browser's default: a modified or non-primary click, an href that is not `#id` or does not decode, no such
+ * element, or an element that does not take focus.
+ */
 function focusField(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
+    return;
   if (!href.startsWith("#") || href.length < 2) return;
-  const field = document.getElementById(decodeURIComponent(href.slice(1)));
+  let id: string;
+  try {
+    id = decodeURIComponent(href.slice(1));
+  } catch {
+    return;
+  }
+  const field = document.getElementById(id);
   if (field === null) return;
-  event.preventDefault();
   field.focus();
+  // Only a focus that landed replaces the navigation; otherwise the fragment link still scrolls to it.
+  if (document.activeElement !== field) return;
+  event.preventDefault();
   field.scrollIntoView?.({ block: "center" });
 }
 
@@ -145,7 +159,7 @@ export function ErrorState({
           id={headingId}
           level={headingLevel}
           variant="heading-sm"
-          tabIndex={-1}
+          tabIndex={headingId === undefined ? undefined : -1}
           className="cv-error-state__title"
         >
           {title}

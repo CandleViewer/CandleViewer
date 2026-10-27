@@ -35,6 +35,8 @@ export type { DividerLabelProps, DividerProps } from "./Divider.js";
 export { EmptyState } from "./EmptyState.js";
 export type {
   EmptyStateCta,
+  EmptyStateEmptyProps,
+  EmptyStateErrorProps,
   EmptyStateLink,
   EmptyStateProps,
   EmptyStateVariant,

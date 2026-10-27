@@ -16,6 +16,13 @@ describe("emptystate.css contract", () => {
     expect(find(css.normal, '.cv-error-state[data-form="panel"]', "padding")).toBe(block);
   });
 
+  it("the 480 px column cap is 30rem, the one deliberate raw length (no layout token yet)", () => {
+    expect(find(css.normal, ".cv-empty-state", "max-inline-size")).toContain(
+      "max-inline-size: 30rem",
+    );
+    expect(css.all.match(/\d+(\.\d+)?rem\b/g)).toEqual(["30rem"]);
+  });
+
   it("glyph size.icon.lg in text.tertiary", () => {
     const glyph = find(css.normal, ".cv-empty-state__glyph", "color");
     expect(glyph).toContain("width: var(--size-icon-lg)");

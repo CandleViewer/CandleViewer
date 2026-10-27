@@ -32,7 +32,10 @@ export const find = (css: string, selector: string, prop: string): string => {
 };
 
 /**
- * The static-atom baseline: tokens only and no motion. Outside forced colours px appears only as a token
+ * The static-atom baseline: tokens only and no motion. Its raw-length check reads px only: a rem length
+ * passes it. The one deliberate exception is `emptystate.css`'s 30rem column cap (E05-D02's 480 px, which has
+ * no layout token yet); `emptystate-css.test.ts` pins that value and fails on any other rem, so a new rem
+ * cannot slip through here silently. Outside forced colours px appears only as a token
  * multiplier; inside, the literal 1px / 2px system-colour edges are allowed, as in the merged atoms.
  */
 export const itIsTokenOnlyAndStatic = (css: Stylesheet): void => {

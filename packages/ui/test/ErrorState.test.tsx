@@ -3,9 +3,10 @@ import { composeStories } from "@storybook/react-vite";
 import { act, useLayoutEffect } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { ErrorState, InlineError } from "../src/components/index.js";
+import { Callout, ErrorState, InlineError } from "../src/components/index.js";
 import { Icon } from "../src/icons/Icon.js";
 import * as stories from "../src/components/ErrorState.stories.js";
+import { loadCss } from "./css-contract.js";
 import { mount } from "./theme/mount.js";
 
 const root = (host: HTMLElement): HTMLElement => {
@@ -170,6 +171,13 @@ describe("ErrorState / InlineError (CMP-027)", () => {
     expect(toggle).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("the heading takes tabindex -1 only with a headingId", async () => {
+    const host = await mount(<ErrorState title="Can't load" message="m" live="off" />);
+    expect(within(host).getByRole("heading", { name: "Can't load" })).not.toHaveAttribute(
+      "tabindex",
+    );
+  });
+
   it("title is a heading at headingLevel (default 3) with tabindex -1, inside the alert", async () => {
     const host = await mount(
       <ErrorState title="Can't submit" headingId="sum" message="Fix these" />,
@@ -237,6 +245,119 @@ describe("ErrorState / InlineError (CMP-027)", () => {
     }
     window.removeEventListener("click", record);
     expect(seen).toEqual([false, false]);
+  });
+
+  /** Clicks `name` and reports whether the component kept the default; the window then stops jsdom navigating. */
+  const clickKeepsDefault = (
+    host: HTMLElement,
+    name: string,
+    init: MouseEventInit = {},
+  ): boolean => {
+    let prevented: boolean | undefined;
+    const record = (event: Event): void => {
+      prevented = event.defaultPrevented;
+      event.preventDefault();
+    };
+    window.addEventListener("click", record);
+    act(() => {
+      within(host)
+        .getByRole("link", { name })
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ...init }));
+    });
+    window.removeEventListener("click", record);
+    return prevented === false;
+  };
+
+  it("a malformed href falls through to the default", async () => {
+    const host = await mount(
+      <ErrorState live="off" message="m" items={[{ label: "Bad", href: "#%E0%A4%A" }]} />,
+    );
+    expect(clickKeepsDefault(host, "Bad")).toBe(true);
+  });
+
+  it.each([
+    ["ctrl", { ctrlKey: true }],
+    ["meta", { metaKey: true }],
+    ["shift", { shiftKey: true }],
+    ["alt", { altKey: true }],
+    ["middle-button", { button: 1 }],
+  ] as const)("a %s click keeps the default and leaves focus alone", async (_, init) => {
+    const host = await mount(
+      <>
+        <ErrorState live="off" message="m" items={[{ label: "Qty", href: "#qty" }]} />
+        <input id="qty" aria-label="Quantity" />
+      </>,
+    );
+    expect(clickKeepsDefault(host, "Qty", init)).toBe(true);
+    expect(within(host).getByLabelText("Quantity")).not.toHaveFocus();
+  });
+
+  it("a target that does not take focus keeps the default", async () => {
+    const host = await mount(
+      <>
+        <ErrorState live="off" message="m" items={[{ label: "Note", href: "#note" }]} />
+        <div id="note">Not focusable</div>
+      </>,
+    );
+    expect(clickKeepsDefault(host, "Note")).toBe(true);
+    expect(document.getElementById("note")).not.toHaveFocus();
+  });
+
+  it("only a #id href moves focus: /qty navigates even with an id=qty field present", async () => {
+    const host = await mount(
+      <>
+        <ErrorState live="off" message="m" items={[{ label: "Qty page", href: "/qty" }]} />
+        <input id="qty" aria-label="Quantity" />
+      </>,
+    );
+    expect(clickKeepsDefault(host, "Qty page")).toBe(true);
+    expect(within(host).getByLabelText("Quantity")).not.toHaveFocus();
+  });
+
+  it("a plain click on a #id link prevents the navigation and focuses the field", async () => {
+    const host = await mount(
+      <>
+        <ErrorState live="off" message="m" items={[{ label: "Qty", href: "#qty" }]} />
+        <input id="qty" aria-label="Quantity" />
+      </>,
+    );
+    expect(clickKeepsDefault(host, "Qty")).toBe(false);
+    expect(within(host).getByLabelText("Quantity")).toHaveFocus();
+  });
+
+  it("the banner's CMP-028 class names exist on a rendered Callout", async () => {
+    const banner = await mount(
+      <ErrorState
+        form="banner"
+        live="polite"
+        message="Off-tick"
+        retry={{ label: "Retry", onClick: fn() }}
+      />,
+    );
+    const used = new Set(
+      [...banner.querySelectorAll("*")].flatMap((el) =>
+        [...el.classList].filter((c) => c.startsWith("cv-callout")),
+      ),
+    );
+    expect([...used].sort()).toEqual([
+      "cv-callout",
+      "cv-callout__actions",
+      "cv-callout__glyph",
+      "cv-callout__main",
+      "cv-callout__message",
+      "cv-callout__title",
+    ]);
+    const callout = await mount(
+      <Callout tone="danger" title="t" live="polite" retry={{ label: "Retry", onClick: fn() }} />,
+    );
+    for (const name of used) expect(callout.querySelector(`.${name}`)).not.toBeNull();
+    // The two tones the banner sets are ones callout.css draws.
+    const calloutCss = loadCss("callout.css").normal;
+    for (const severity of ["error", "warning"] as const) {
+      const tone = root(await mount(<ErrorState form="banner" severity={severity} message="m" />))
+        .dataset["tone"];
+      expect(calloutCss).toContain(`.cv-callout[data-tone="${tone ?? ""}"]`);
+    }
   });
 
   it("composes every story", async () => {
