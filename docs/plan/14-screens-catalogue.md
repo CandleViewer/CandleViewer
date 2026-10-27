@@ -1796,6 +1796,7 @@ Drag preview                Drop zones
 - **Performance:** The list is a virtualised table over `GET /api/v1/rules`; armed-state changes arrive on `rules` and update in place; 500 rules render without exceeding 4 ms scripting per frame.
 - **Design sign-off acceptance checklist:** [ ] columns (name, scope, trigger summary, armed state, environment, last fired, author, version) drawn [ ] armed/disarmed/error states are text plus icon [ ] filters by scope, account, environment and armed state [ ] bulk disarm with confirmation [ ] empty state with a link to the templates gallery [ ] rules depending on estimated detectors are flagged in the list
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §2–§4 · [E36-D03-handoff.md](../design/E36/E36-D03-handoff.md) (E36-D03; owner approval pending; the eight columns, the status words as text + glyph with the per-state table PROPOSED, the per-row detail plan, the conflict and engine-down banners, bulk disarm with per-row results, the system-rule row variant, the CMP-155 / CMP-159 contracts; Penpot page by name + id in the spec).
+- **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
 
 ### SCR-081 — Rule editor — form mode
 
@@ -1842,6 +1843,7 @@ Drag preview                Drop zones
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) (E36-D01; heuristic, pending owner approval; the sentence grammar G1–G13 with the §5.6 field → phrase map, the seven PROPOSED picker categories with "(estimated)" as a tag, the two-level grouping model DECIDED by the shipped form subset with its graph-only list, the twelve badge surfaces; design change requests DCR-1..DCR-12 against E36-D02).
 - **Design (wireframe → hi-fi):** [E36-D02.md](../design/E36/E36-D02.md) · [E36-D02-handoff.md](../design/E36/E36-D02-handoff.md) (E36-D02; owner approval pending; the six states and the four round-trip states as frames, the CMP-140 / 141 / 142 / 145 / 157 / 233 / 234 / 235 contracts with their `15` amendments PROPOSED for E36-D03, the copy deck; Penpot page by name + id in the spec).
 - **A11y review:** [E36-D04.md](../design/E36/E36-D04.md) (E36-D04; a desk review of E36-D02 and E36-D03 as merged against 05 §3–§7; owner approval pending; the acceptance list E36-Q03 audits against 1:1 is its §16; every needed change to 14 / 15 is an A-row there; Penpot page by name + id in the review; boards pending).
+- **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
 
 ### SCR-082 — Rule editor — node-graph mode
 
@@ -1896,6 +1898,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [ ] all listed templates drawn as cards with plain-language behaviour text [ ] the metrics each needs and its recorded-history requirement stated [ ] estimated-detector dependency badged [ ] which editor it opens in is stated [ ] search/filter [ ] preview-before-instantiate
 - **UX research:** [e36-rules-in-words.md](../design/research/e36-rules-in-words.md) §2 (E36-D01; heuristic, pending owner approval; the twelve templates read back in the PROPOSED grammar; the liquidity-cluster template's direction is its C11, an owner decision under C-2.6 — tightening is the only direction a manager can express, and as worded the template needs a stop-relative metric the vocabulary lacks, its G13 gap).
 - **Design (wireframe → hi-fi):** [E36-D02.md](../design/E36/E36-D02.md) §10 (E36-D02; owner approval pending; the twelve cards with the E36-D01 §2 sentences, T9 tightening-only per the #872 decision, the badge as a card state, preview-before-instantiate, empty / no-results).
+- **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
 
 ### SCR-084 — Rule simulation / backtest panel
 
@@ -1988,6 +1991,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [ ] canonical IR shown read-only with a copy control [ ] the diff view used by the round-trip check drawn [ ] version and compiler-version stamps shown [ ] it is clearly labelled advanced/diagnostic [ ] error state when compilation fails, naming the offending node/row
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §5–§6 (E36-D03; owner approval pending; the compiled IR as stored (not the canonical hash form `22` promises — a contract gap, PROPOSED) with copy / export and its described-by note, the tree alternative (CMP-240 PROPOSED per E13-D02), the round-trip diff as a path table, the version / compiler / IR / hash stamps, the compile-failure and quarantined states; the >100 KB pending treatment).
 - **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §7 (E35-D03; owner approval pending; adds to E36-D03 §5–§6 the drawn CMP-240 tree, account ids masked for display with the copy and the hash left as stored, the downloadable round-trip diff and the graph-node compile-failure inset).
+- **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
 
 ### SCR-089 — Rule import / export
 
@@ -2001,6 +2005,7 @@ Drag preview                Drop zones
 - **Design sign-off acceptance checklist:** [ ] export selection (single / selected / all) with a scope-stripping note [ ] the exported bundle never contains account ids, keys or armed state - stated and verified [ ] import preview with per-rule accept/skip [ ] version-mismatch handling [ ] imported rules always land disarmed - stated and verified [ ] validation failure list
 - **Design (hi-fi):** [E36-D03.md](../design/E36/E36-D03.md) §7–§8 (E36-D03; owner approval pending; export as one `cv-rule-bundle/1` per rule with the privacy note in the UI and the verifying tests named, an import pre-check with the shipped accept / skip reasons keyed by code and an Import results list, "imported rules always land disarmed, on demo"; the export / import operations and a dry run are a contract gap, PROPOSED).
 - **Design (hi-fi, E35-D03 delta):** [E35-D03.md](../design/E35/E35-D03.md) §8 (E35-D03; owner approval pending; adds to E36-D03 §7–§8 the export verification strip computed from the returned bundle, the per-file import checkbox, version-mismatch rows, the results list's landing word per rule (DRAFT · not armed · on DEMO — the API's projection) and CMP-234 as the validation-failure list).
+- **Hand-off pack:** [E36-D05.md](../design/E36/E36-D05.md) v1 (E36-D05; owner approval pending)
 
 ---
 

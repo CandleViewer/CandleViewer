@@ -1,0 +1,2783 @@
+{
+  "pack": "E36-D05",
+  "version": "v1",
+  "base": "927794a8ba",
+  "strings": {
+    "rules.list.header.title": {
+      "text": "Rules",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none"
+    },
+    "rules.list.header.count": {
+      "text": "12 rules · 3 armed",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.header.new": {
+      "text": "+ New rule",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none"
+    },
+    "rules.list.header.import": {
+      "text": "Import",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none"
+    },
+    "rules.list.header.search": {
+      "text": "Search rules",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none"
+    },
+    "rules.list.header.filters": {
+      "text": "Active filters",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none"
+    },
+    "rules.list.header.caption": {
+      "text": "Rules — 12",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:101, :103",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.status.draft": {
+      "text": "DRAFT",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.simulating": {
+      "text": "SIMULATING",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.armed_demo": {
+      "text": "ARMED-DEMO",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.armed_live": {
+      "text": "ARMED-LIVE",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.disarmed": {
+      "text": "DISARMED",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.paused": {
+      "text": "PAUSED",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.off": {
+      "text": "OFF",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.done": {
+      "text": "DONE",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.status.error": {
+      "text": "ERROR",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03 (D03-C8)",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.draft": {
+      "text": "draft",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.simulating": {
+      "text": "simulating",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.armed_demo": {
+      "text": "armed on demo",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.armed_live": {
+      "text": "armed on live",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.disarmed": {
+      "text": "disarmed",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.paused": {
+      "text": "paused, feed degraded",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.off": {
+      "text": "off, 5 errors in a row",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.spoken.done": {
+      "text": "done, fired once",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.spoken.error": {
+      "text": "error, last run failed",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.reason.paused": {
+      "text": "feed degraded",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.reason.off": {
+      "text": "5 errors in a row — re-arm",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.reason.done": {
+      "text": "fired once · 13:42:10 UTC",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.reason.quarantined": {
+      "text": "stored in a format the engine cannot read",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.reason.above_cap": {
+      "text": "action budget above the cap",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.reason.cooling": {
+      "text": "cooling down until 13:42:10 UTC",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.cell.never": {
+      "text": "never",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.cell.stale": {
+      "text": "—",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.cell.system": {
+      "text": "System · always on",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.cell.pending": {
+      "text": "ARMED",
+      "screen": "SCR-080",
+      "kind": "word",
+      "owner": "D03",
+      "source": "D03:206",
+      "announce": "none"
+    },
+    "rules.list.hover.simulating": {
+      "text": "Simulating — no orders are sent.",
+      "screen": "SCR-080",
+      "kind": "tooltip",
+      "owner": "D03",
+      "source": "D03:118, :120",
+      "announce": "none"
+    },
+    "rules.list.hover.live": {
+      "text": "Runs on LIVE.",
+      "screen": "SCR-080",
+      "kind": "tooltip",
+      "owner": "D03",
+      "source": "D03:118, :120",
+      "announce": "none"
+    },
+    "rules.list.banner.engine_down": {
+      "text": "The rule engine is not running — armed rules are not evaluating. Native stops are unaffected.",
+      "screen": "SCR-080",
+      "kind": "banner",
+      "owner": "`14` (verbatim)",
+      "source": "D03:207",
+      "announce": "assertive"
+    },
+    "rules.list.banner.as_of": {
+      "text": "as of 13:42:10 UTC",
+      "screen": "SCR-080",
+      "kind": "banner",
+      "owner": "`14` (verbatim)",
+      "source": "D03:207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.banner.conflict": {
+      "text": "2 rules target the same position — resolve precedence",
+      "screen": "SCR-080",
+      "kind": "banner",
+      "owner": "`14`; D03 (D03-C25)",
+      "source": "D03:207",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.list.banner.conflict_line": {
+      "text": "BE after 1R and ATR trail 2x both move the BTCUSDT stop on Main.",
+      "screen": "SCR-080",
+      "kind": "banner",
+      "owner": "`14`; D03 (D03-C25)",
+      "source": "D03:207",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.list.banner.set_priority": {
+      "text": "Set priority",
+      "screen": "SCR-080",
+      "kind": "banner",
+      "owner": "`14`; D03 (D03-C25)",
+      "source": "D03:207",
+      "announce": "none"
+    },
+    "rules.list.empty.none": {
+      "text": "No rules yet — start from a template",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "`14`; D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.empty.browse": {
+      "text": "Browse templates",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "`14`; D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.empty.viewer": {
+      "text": "No rules yet. Your role can't change rules.",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "`14`; D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.empty.filtered": {
+      "text": "No rules match these filters",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "`14`; D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.empty.clear": {
+      "text": "Clear filters",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "`14`; D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.loading.loading": {
+      "text": "Loading…",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.loading.details": {
+      "text": "Loading rule details…",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.loading.failed": {
+      "text": "Details could not be loaded — retry",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:208",
+      "announce": "none"
+    },
+    "rules.list.menu.edit_form": {
+      "text": "Edit (form)",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.edit_graph": {
+      "text": "Edit (graph)",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.duplicate": {
+      "text": "Duplicate",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.simulate": {
+      "text": "Run simulation…",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.arm": {
+      "text": "Arm",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.disarm": {
+      "text": "Disarm",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.export": {
+      "text": "Export",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.delete": {
+      "text": "Delete",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.history": {
+      "text": "Fire history",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none"
+    },
+    "rules.list.menu.name": {
+      "text": "Actions for BE after 1R",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209, :103",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.note.node_editor": {
+      "text": "The node editor is off for this workspace.",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03",
+      "source": "D03:209",
+      "announce": "none"
+    },
+    "engine.down": {
+      "text": "The rule engine is not running",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03; the rule-engine owner registers",
+      "source": "D03:209",
+      "announce": "polite"
+    },
+    "rule.disarm.not_armed": {
+      "text": "Not armed — nothing to disarm",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03; the rule-engine owner registers",
+      "source": "D03:209",
+      "announce": "polite"
+    },
+    "rule.delete.armed": {
+      "text": "Disarm first — an armed rule can't be deleted. Versions and run history are kept for audit.",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03; the rule-engine owner registers",
+      "source": "D03:209",
+      "announce": "polite"
+    },
+    "rule.quarantined": {
+      "text": "This rule cannot be read by the engine. Export it and repair it first.",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03; the rule-engine owner registers",
+      "source": "D03:209",
+      "announce": "polite"
+    },
+    "rule.system_protected": {
+      "text": "System rules cannot be changed.",
+      "screen": "SCR-080",
+      "kind": "reason",
+      "owner": "D03; the rule-engine owner registers",
+      "source": "D03:209",
+      "announce": "polite"
+    },
+    "rules.list.confirm.disarm_one": {
+      "text": "Disarm BE after 1R? Native stops are unaffected.",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.confirm.disarm_many": {
+      "text": "Disarm 3 rules?",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.confirm.disarm_body": {
+      "text": "Each rule stops evaluating; its versions and history are kept. Native stops are unaffected.",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none"
+    },
+    "rules.list.confirm.skipped": {
+      "text": "sys.native_sl_watchdog — skipped: System rules cannot be changed.",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none"
+    },
+    "rules.list.confirm.result_ok": {
+      "text": "BE after 1R — disarmed",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.confirm.result_fail": {
+      "text": "Daily lockout — still armed: Could not change the rule's mode. Try again.",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none"
+    },
+    "rules.list.confirm.delete_title": {
+      "text": "Delete BE after 1R? Its versions and run history are kept for audit.",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.confirm.delete": {
+      "text": "Delete",
+      "screen": "SCR-080",
+      "kind": "confirm",
+      "owner": "D03",
+      "source": "D03:210",
+      "announce": "none"
+    },
+    "rules.list.copy_name.first": {
+      "text": "Copy of BE after 1R",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.copy_name.next": {
+      "text": "Copy of BE after 1R (2)",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:209",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.list.bulk.count": {
+      "text": "3 selected",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:105",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.list.bulk.disarm": {
+      "text": "Disarm",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:105",
+      "announce": "none"
+    },
+    "rules.list.bulk.export": {
+      "text": "Export",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:105",
+      "announce": "none"
+    },
+    "rules.list.bulk.clear": {
+      "text": "Clear",
+      "screen": "SCR-080",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:105",
+      "announce": "none"
+    },
+    "rules.list.announce.sorted": {
+      "text": "Sorted by last fired, newest first",
+      "screen": "SCR-080",
+      "kind": "announce",
+      "owner": "D03; E36-D04 F-06",
+      "source": "D03:214; D04:533",
+      "announce": "polite"
+    },
+    "rules.list.announce.flip": {
+      "text": "BE after 1R: armed on demo",
+      "screen": "SCR-080",
+      "kind": "announce",
+      "owner": "D03; E36-D04 F-06",
+      "source": "D03:214; D04:533",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.list.announce.filtered": {
+      "text": "Showing 6 of 12 rules — filtered by scope: position",
+      "screen": "SCR-080",
+      "kind": "announce",
+      "owner": "D03; E36-D04 F-06",
+      "source": "D03:214; D04:533",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.list.filter.chip": {
+      "text": "Scope: position, remove",
+      "screen": "SCR-080",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:327",
+      "announce": "none"
+    },
+    "rules.editor.header.saved": {
+      "text": "v{n} · Last saved {HH:MM:SS} UTC",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02 (D02-C19)",
+      "source": "D02:262",
+      "announce": "none"
+    },
+    "rules.editor.header.scope": {
+      "text": "2 accounts · BTCUSDT · new positions",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02 (D02-C19)",
+      "source": "D02:262",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.name.editor": {
+      "text": "Rule editor — {name}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:242, :243, :97",
+      "announce": "none"
+    },
+    "rules.editor.name.conditions": {
+      "text": "Conditions — all of",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:242, :243, :97",
+      "announce": "none"
+    },
+    "rules.editor.name.rule_actions": {
+      "text": "Rule actions",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:242, :243, :97",
+      "announce": "none"
+    },
+    "rules.editor.name.condition": {
+      "text": "Condition {N} of {M}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.name.group": {
+      "text": "Condition group — either {A} or {B}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.name.metric": {
+      "text": "Metric",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.name.estimated": {
+      "text": "Estimated, {display name}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.name.roundtrip": {
+      "text": "Round-trip: {word}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.name.action": {
+      "text": "Action {N} of {M}",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:244–248; D02H:181",
+      "announce": "none"
+    },
+    "rules.editor.bar.add_condition": {
+      "text": "+ condition",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.add_group": {
+      "text": "+ any-of group",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.add_action": {
+      "text": "+ action",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.arm": {
+      "text": "Arm…",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.save": {
+      "text": "Save draft",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.validate": {
+      "text": "Validate",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.simulate": {
+      "text": "Simulate",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.bar.lock": {
+      "text": "Not available",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:93, :94, :252",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.identical": {
+      "text": "Round-trips ✓",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "polite"
+    },
+    "rules.editor.roundtrip.graph_only": {
+      "text": "Graph-only construct — read-only here",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "polite"
+    },
+    "rules.editor.roundtrip.mismatch": {
+      "text": "Round-trip mismatch",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "assertive"
+    },
+    "rules.editor.roundtrip.unverified": {
+      "text": "Not verified",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "polite"
+    },
+    "rules.editor.roundtrip.checking": {
+      "text": "Checking…",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.stale": {
+      "text": "· since your last save",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "`14`; D02",
+      "source": "D02:263",
+      "announce": "polite"
+    },
+    "rules.editor.roundtrip.tip.identical": {
+      "text": "This rule is fully editable in both the form and the graph editor.",
+      "screen": "SCR-081",
+      "kind": "tooltip",
+      "owner": "`14`; D02",
+      "source": "D02:122–125",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.tip.graph_only": {
+      "text": "Authored in the graph editor: {sentence}. Open in the graph editor to change this.",
+      "screen": "SCR-081",
+      "kind": "tooltip",
+      "owner": "`14`; D02",
+      "source": "D02:122–125",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.tip.mismatch": {
+      "text": "The form and the graph compile to different rules. Saving is blocked until you choose which version to keep.",
+      "screen": "SCR-081",
+      "kind": "tooltip",
+      "owner": "`14`; D02",
+      "source": "D02:122–125",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.tip.unverified": {
+      "text": "Not verified — the compile service is unreachable. You can save a draft; arming is blocked until the rule is verified.",
+      "screen": "SCR-081",
+      "kind": "tooltip",
+      "owner": "`14`; D02",
+      "source": "D02:122–125",
+      "announce": "none"
+    },
+    "rules.editor.roundtrip.tip.view_as": {
+      "text": "Not verified — round-trip checks don't run while viewing as another user.",
+      "screen": "SCR-081",
+      "kind": "tooltip",
+      "owner": "`14`; D02",
+      "source": "D02:122–125",
+      "announce": "none"
+    },
+    "rules.editor.mismatch.keep_form": {
+      "text": "Keep the form version — the graph's {diverging node} is replaced by this form's Row {n}.",
+      "screen": "SCR-081",
+      "kind": "confirm",
+      "owner": "D02",
+      "source": "D02:264",
+      "announce": "none"
+    },
+    "rules.editor.mismatch.keep_graph": {
+      "text": "Keep the graph version — your form edits since the last save are discarded.",
+      "screen": "SCR-081",
+      "kind": "confirm",
+      "owner": "D02",
+      "source": "D02:264",
+      "announce": "none"
+    },
+    "rules.editor.mismatch.view_diff": {
+      "text": "View diff",
+      "screen": "SCR-081",
+      "kind": "confirm",
+      "owner": "D02",
+      "source": "D02:264",
+      "announce": "none"
+    },
+    "rules.editor.card.none_of": {
+      "text": "none of: {A}, {B}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.n_of": {
+      "text": "at least {n} of: …",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.nested": {
+      "text": "either ({A} and {B}) or {C}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.arithmetic": {
+      "text": "{A} minus {B} is above {x}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.within": {
+      "text": "{A} happened within the last {w}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.count": {
+      "text": "{A} happened at least {n} times in {w}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.stable": {
+      "text": "{A} has not changed for {w}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.card.fan_out": {
+      "text": "shared condition {A}, used by {n} actions",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:123",
+      "announce": "none"
+    },
+    "rules.editor.verb.gt": {
+      "text": "is above",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.gte": {
+      "text": "is at least",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.lt": {
+      "text": "is below",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.lte": {
+      "text": "is at most",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.eq": {
+      "text": "is",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.neq": {
+      "text": "is not",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.between": {
+      "text": "is between {a} and {b}",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.outside": {
+      "text": "is outside {a} to {b}",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.crosses_above": {
+      "text": "crosses above",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.crosses_below": {
+      "text": "crosses below",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.changed": {
+      "text": "changes",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.in_set": {
+      "text": "is one of {a}, {b}",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.not_in_set": {
+      "text": "is none of {a}, {b}",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.verb.sustained": {
+      "text": "{comparison} for at least {w}",
+      "screen": "SCR-081",
+      "kind": "word",
+      "owner": "D02 (D02-G4)",
+      "source": "D02:137–144",
+      "announce": "none"
+    },
+    "rules.editor.row.estimated": {
+      "text": "(estimated)",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none"
+    },
+    "rules.editor.row.unavailable": {
+      "text": "(not available — {reason} · Start recording)",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none"
+    },
+    "rules.editor.row.start_recording": {
+      "text": "Start recording",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none"
+    },
+    "rules.editor.row.menu": {
+      "text": "Row 2 actions",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.row.moves": {
+      "text": "Move up · Move down · Duplicate · Remove",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none"
+    },
+    "rules.editor.row.verified_at": {
+      "text": " Last verified 13:42:10 UTC.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:266, :133, :224, :127",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.announce.removed": {
+      "text": "Condition 2 removed; 3 conditions",
+      "screen": "SCR-081",
+      "kind": "announce",
+      "owner": "D03; D02",
+      "source": "D03:188, :189; D02:108, :154",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.editor.announce.moved": {
+      "text": "Condition 2 of 4 moved up",
+      "screen": "SCR-081",
+      "kind": "announce",
+      "owner": "D03; D02",
+      "source": "D03:188, :189; D02:108, :154",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.editor.announce.count": {
+      "text": "2 errors, 0 warnings",
+      "screen": "SCR-081",
+      "kind": "announce",
+      "owner": "D03; D02",
+      "source": "D03:188, :189; D02:108, :154",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.editor.announce.metrics": {
+      "text": "41 metrics",
+      "screen": "SCR-081",
+      "kind": "announce",
+      "owner": "D03; D02",
+      "source": "D03:188, :189; D02:108, :154",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.editor.action.phrase.order": {
+      "text": "buy 0.25 at market with a native stop at 63,900",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.action.phrase.tighten": {
+      "text": "tighten the stop to 2.0 × ATR(14) from the close",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.action.phrase.breakeven": {
+      "text": "move the stop to break-even (your average entry) plus 2 ticks",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.action.phrase.scale_out": {
+      "text": "scale out 33 % at market",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.action.phrase.flatten": {
+      "text": "flatten every position",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none"
+    },
+    "rules.editor.action.phrase.halt": {
+      "text": "halt new orders on this account until the next UTC day",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none"
+    },
+    "rules.editor.action.phrase.notify": {
+      "text": "notify me (push, high)",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none"
+    },
+    "rules.editor.action.phrase.tag": {
+      "text": "tag the journal {tag}",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:267",
+      "announce": "none"
+    },
+    "rules.editor.action.simulate_only": {
+      "text": "simulate only",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.action.places_orders": {
+      "text": "places orders",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.action.flattens": {
+      "text": "flattens",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.action.reduce_only": {
+      "text": "Reduce-only.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.action.halt_note": {
+      "text": "for {d} — duration not yet in the contract (G6)",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.action.on_error": {
+      "text": "If an action fails, the rest are skipped.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:158, :165, :167, :169",
+      "announce": "none"
+    },
+    "rules.editor.stop.kept": {
+      "text": "Kept at 63,900.0 — every position keeps a native stop. Move it instead.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "E32-D01; D02",
+      "source": "D02:268",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.editor.limit.once": {
+      "text": "Once.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:177",
+      "announce": "none"
+    },
+    "rules.editor.limit.once_position": {
+      "text": "Once per position.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:177",
+      "announce": "none"
+    },
+    "rules.editor.limit.once_day": {
+      "text": "Once per day.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:177",
+      "announce": "none"
+    },
+    "rules.editor.limit.once_group": {
+      "text": "Once per group.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:177",
+      "announce": "none"
+    },
+    "rules.editor.limit.once_lifetime": {
+      "text": "Once in this rule's lifetime.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:177",
+      "announce": "none"
+    },
+    "rules.editor.limit.cooldown": {
+      "text": "At most every 60 s.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.limit.per_hour": {
+      "text": "Up to 10 times an hour.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.limit.per_day": {
+      "text": "Up to 500 times a day.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.limit.per_fire": {
+      "text": "Only the first {n} actions run per firing.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none"
+    },
+    "rules.editor.limit.notional_fire": {
+      "text": "At most {x} USDT per firing.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none"
+    },
+    "rules.editor.limit.notional_day": {
+      "text": "At most {x} USDT a day.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none"
+    },
+    "rules.editor.limit.timeout": {
+      "text": "Each check may take up to {n} ms.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:178–183",
+      "announce": "none"
+    },
+    "rules.editor.limit.no_cap": {
+      "text": "No rule notional cap — your account's risk caps still apply.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02 BQ-6 RULED; #4118",
+      "source": "D02:269",
+      "announce": "none"
+    },
+    "rules.editor.limit.confirm": {
+      "text": "Asks before acting (skipped if unanswered in 60 s).",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02 BQ-6 RULED; #4118",
+      "source": "D02:269",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.limit.kill_switch": {
+      "text": "Turns itself off after 5 errors in a row — you re-arm it.",
+      "screen": "SCR-081",
+      "kind": "label",
+      "owner": "D02 BQ-6 RULED; #4118",
+      "source": "D02:269",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.validation.missing": {
+      "text": "Row 2 is missing a value.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "D02 BQ-4 RULED (D02-C3)",
+      "source": "D02:270",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.validation.side": {
+      "text": "Position side compares to long / short, not a number.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "D02 BQ-4 RULED (D02-C3)",
+      "source": "D02:270",
+      "announce": "none"
+    },
+    "rules.editor.validation.no_action": {
+      "text": "A rule needs at least one action — add one to save.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "D02 BQ-4 RULED (D02-C3)",
+      "source": "D02:270",
+      "announce": "none"
+    },
+    "rules.editor.validation.native_stop": {
+      "text": "Action 1 would leave a position without its native exchange stop-loss, which is never allowed.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "the validator",
+      "source": "D02:270",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.editor.validation.no_cooldown": {
+      "text": "No cooldown set; rule may fire on every update.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "the validator",
+      "source": "D02:270",
+      "announce": "none"
+    },
+    "rules.editor.validation.high_frequency": {
+      "text": "This rule would evaluate about {n} times a minute.",
+      "screen": "SCR-081",
+      "kind": "validation",
+      "owner": "the validator",
+      "source": "D02:270",
+      "announce": "none"
+    },
+    "rules.editor.validity.arm": {
+      "text": "Fix the errors first.",
+      "screen": "SCR-081",
+      "kind": "reason",
+      "owner": "D02",
+      "source": "D02:272",
+      "announce": "none"
+    },
+    "rules.editor.validity.save": {
+      "text": "Fix the errors to save.",
+      "screen": "SCR-081",
+      "kind": "reason",
+      "owner": "D02",
+      "source": "D02:272",
+      "announce": "none"
+    },
+    "rules.editor.validity.no_action": {
+      "text": "Add an action to save.",
+      "screen": "SCR-081",
+      "kind": "reason",
+      "owner": "D02",
+      "source": "D02:272",
+      "announce": "none"
+    },
+    "rules.editor.validity.flatten": {
+      "text": "Tick ‘I understand’ on Flatten all positions first.",
+      "screen": "SCR-081",
+      "kind": "reason",
+      "owner": "D02",
+      "source": "D02:272",
+      "announce": "none"
+    },
+    "rules.editor.validation.heading": {
+      "text": "Validation — {n} errors, {m} warnings",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:250, :273",
+      "announce": "none"
+    },
+    "rules.editor.validation.heading_view_as": {
+      "text": "Validation — not run while viewing as",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:250, :273",
+      "announce": "none"
+    },
+    "rules.editor.armed.notice": {
+      "text": "This version is armed and cannot change under the engine. Disarm to edit, or edit as a new draft version.",
+      "screen": "SCR-081",
+      "kind": "banner",
+      "owner": "D02",
+      "source": "D02:109",
+      "announce": "polite"
+    },
+    "rules.editor.armed.disarm": {
+      "text": "Disarm to edit",
+      "screen": "SCR-081",
+      "kind": "banner",
+      "owner": "D02",
+      "source": "D02:109",
+      "announce": "none"
+    },
+    "rules.editor.armed.new_version": {
+      "text": "Edit as a new draft version",
+      "screen": "SCR-081",
+      "kind": "banner",
+      "owner": "D02",
+      "source": "D02:109",
+      "announce": "none"
+    },
+    "rules.editor.reassure.paused": {
+      "text": "Rules are paused — {cause}. Your native stops are held by the exchange and are unaffected.",
+      "screen": "SCR-081",
+      "kind": "banner",
+      "owner": "memo; D02 (D02-C21)",
+      "source": "D02:271",
+      "announce": "none"
+    },
+    "rules.editor.mode.name": {
+      "text": "Editor",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02H:186",
+      "announce": "none"
+    },
+    "rules.editor.mode.form": {
+      "text": "Form",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02H:186",
+      "announce": "none"
+    },
+    "rules.editor.mode.graph": {
+      "text": "Graph",
+      "screen": "SCR-081",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02H:186",
+      "announce": "none"
+    },
+    "rules.templates.dialog.title": {
+      "text": "Start from a template",
+      "screen": "SCR-083",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:192, :256",
+      "announce": "none"
+    },
+    "rules.templates.dialog.list": {
+      "text": "Rule templates — 12",
+      "screen": "SCR-083",
+      "kind": "name",
+      "owner": "D02",
+      "source": "D02:192, :256",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.card.estimated": {
+      "text": "Uses an estimated detector",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.recorded_filter": {
+      "text": "Needs recorded data",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.needs": {
+      "text": "Needs:",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.opens": {
+      "text": "Opens in the form editor",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.creates": {
+      "text": "Creates 3 rules",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.card.preview": {
+      "text": "Preview",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.create": {
+      "text": "Create draft",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.card.create_three": {
+      "text": "Create 3 drafts",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.card.recorded": {
+      "text": "needs BTCUSDT on the recorded-symbol list ({inputs})",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:192, :274",
+      "announce": "none"
+    },
+    "rules.templates.title.t1": {
+      "text": "Move SL to break-even after 1R",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.title.t2": {
+      "text": "ATR trailing stop (ratchet)",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t3": {
+      "text": "Structure (swing) trailing stop",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t4": {
+      "text": "Partial TP ladder at 1R/2R/3R",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.title.t5": {
+      "text": "Time stop (close after N minutes)",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t6": {
+      "text": "Cancel working orders when spread > N bps",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t7": {
+      "text": "Daily loss lockout",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t8": {
+      "text": "Halt on tape-speed spike",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t9": {
+      "text": "Avoid stops inside a detected liquidity cluster",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t10": {
+      "text": "Reduce leverage when funding exceeds a threshold",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t11": {
+      "text": "Flatten before funding settlement",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.title.t12": {
+      "text": "Re-arm chase when the book thins",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "`14`; D02",
+      "source": "D02:196–207",
+      "announce": "none"
+    },
+    "rules.templates.sentence.t1": {
+      "text": "When the position changes on BTCUSDT (Main), if unrealised R is at least 1.0: move the stop to break-even (your average entry) plus 2 ticks. Once per position. The stop only ever tightens.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t2": {
+      "text": "When a 1m bar closes on BTCUSDT (Main), if a position is open: tighten the stop to 2.0 × ATR(14) from the close. The stop only ever tightens.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t3": {
+      "text": "When a 5m bar closes on BTCUSDT (Main), if the position is long: tighten the stop to 10 ticks below the last swing low. The stop only ever tightens.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t4": {
+      "text": "Three rules, one per rung: When the position changes on BTCUSDT (Main), if unrealised R is at least 1.0: scale out 33 % at market. Once per position.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t5": {
+      "text": "Every 60 s on BTCUSDT (Main), if the position is older than 30 min and unrealised R is below 0.2: flatten the position and tag the journal time-stop. Once per position.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t6": {
+      "text": "When the book updates on BTCUSDT (Main), if the spread is above 8 bps: cancel every working entry order. At most every 60 s.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t7": {
+      "text": "When a position closes on Main, if today's loss is at least 2 % of equity: halt new orders on this account until the next UTC day and notify me (push, high).",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t8": {
+      "text": "When a trade prints on BTCUSDT (Main), if tape speed is above 3 sigma: halt new orders on this account for 5 min — illustrative: the duration has no field yet (G6). At most every 5 min.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t9": {
+      "text": "When a 1m bar closes on BTCUSDT (Main), if the nearest liquidity cluster is at most 5 ticks from the price and the position is long: tighten the stop to 10 ticks from the price. The stop only ever tightens.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t10": {
+      "text": "When the funding rate changes on BTCUSDT (Main), if funding is above 0.05 %: reduce leverage to 5×. Once per day.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t11": {
+      "text": "Every 60 s on BTCUSDT (Main), if funding settles within 5 min and a position is open: flatten the position. Once per day.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.sentence.t12": {
+      "text": "When the book updates on BTCUSDT (Main), if either book pressure is below −0.5 or liquidity was pulled: arm the chase limit. At most every 30 s.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "memo; D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t1": {
+      "text": "at 64,000 entry and 63,900 stop, 1R is reached at 64,100 — the stop moves to 64,000.20",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t2": {
+      "text": "close 64,200, ATR(14) 45 → the stop moves to 64,110 if that is tighter",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t3": {
+      "text": "swing low 63,950 → the stop moves to 63,949",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t4": {
+      "text": "0.30 BTC → 0.10 out at 1R, 0.10 at 2R, 0.10 at 3R",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t5": {
+      "text": "opened 13:10 UTC, at 13:41 UTC with unrealised R 0.1 the position is flattened",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t6": {
+      "text": "spread 9 bps → every working entry order is cancelled",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t7": {
+      "text": "equity 10,000 USDT, today's loss 210 USDT → new orders halted until 00:00 UTC",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t8": {
+      "text": "tape speed 3.4 sigma at 13:42:10 UTC → halted until 13:47:10 UTC",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t9": {
+      "text": "price 64,000, cluster 4 ticks below → the stop moves to 63,999 if that is tighter",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t10": {
+      "text": "funding 0.06 % → leverage set to 5×",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t11": {
+      "text": "funding at 16:00 UTC → the position is flattened from 15:55 UTC",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.example.t12": {
+      "text": "book pressure −0.6 → the chase limit is armed",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:196–207",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.templates.state.no_results": {
+      "text": "No templates match — clear the search or the filters.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:274",
+      "announce": "none"
+    },
+    "rules.templates.state.empty": {
+      "text": "Templates are not available — the rule engine is not running.",
+      "screen": "SCR-083",
+      "kind": "label",
+      "owner": "D02",
+      "source": "D02:274",
+      "announce": "none"
+    },
+    "rules.ir.header.title": {
+      "text": "IR inspector",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:135, :211",
+      "announce": "none"
+    },
+    "rules.ir.header.pill": {
+      "text": "Advanced · diagnostic",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:135, :211",
+      "announce": "none"
+    },
+    "rules.ir.header.close": {
+      "text": "Close inspector",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:135, :211",
+      "announce": "none"
+    },
+    "rules.ir.header.stamp": {
+      "text": "version 3 · compiler 1.0.0 · IR v1 · hash v1 · `a1b2c3d4e5f6`",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:135, :211",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.segment.name": {
+      "text": "Inspector view",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:333",
+      "announce": "none"
+    },
+    "rules.ir.segment.ir": {
+      "text": "Compiled IR",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:333",
+      "announce": "none"
+    },
+    "rules.ir.segment.tree": {
+      "text": "Tree",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:333",
+      "announce": "none"
+    },
+    "rules.ir.segment.diff": {
+      "text": "Diff",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:333",
+      "announce": "none"
+    },
+    "rules.ir.segment.issues": {
+      "text": "Issues",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:333",
+      "announce": "none"
+    },
+    "rules.ir.copy.hash": {
+      "text": "Copy hash",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "none"
+    },
+    "rules.ir.copy.ir": {
+      "text": "Copy IR",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "none"
+    },
+    "rules.ir.copy.ir_line": {
+      "text": "Includes account ids — use Export JSON to share. A copy does not hash to the stamp — the hash covers the canonical form.",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "none"
+    },
+    "rules.ir.copy.export": {
+      "text": "Export JSON",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "none"
+    },
+    "rules.ir.copy.path": {
+      "text": "Copy path",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "none"
+    },
+    "rules.ir.copy.copied": {
+      "text": "Copied",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:211, :214",
+      "announce": "polite"
+    },
+    "rules.ir.note": {
+      "text": "Read-only compiled IR, as stored — not the canonical hash form. The hash covers its canonical form: node ids renumbered, keys sorted, layout dropped (24 §11.4).",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03 (D03-C26)",
+      "source": "D03:211",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.name.pre": {
+      "text": "Compiled rule IR, read-only",
+      "screen": "SCR-088",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:334–337",
+      "announce": "none"
+    },
+    "rules.ir.name.tree": {
+      "text": "IR tree",
+      "screen": "SCR-088",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:334–337",
+      "announce": "none"
+    },
+    "rules.ir.name.diff": {
+      "text": "Round-trip diff — 1 difference",
+      "screen": "SCR-088",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:334–337",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.name.issues": {
+      "text": "Issues — 1 error, 0 warnings",
+      "screen": "SCR-088",
+      "kind": "name",
+      "owner": "D03",
+      "source": "D03:334–337",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.state.large": {
+      "text": "Formatting 143 KB in the background…",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03; the manager",
+      "source": "D03:211, :146",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.state.stored": {
+      "text": "Showing the stored IR (version 3).",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03; the manager",
+      "source": "D03:211, :146",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.state.quarantined": {
+      "text": "This rule is stored in a format the engine cannot read (problem at conditions.children[2]). It is read-only and disarmed. Export it as JSON to repair it.",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03; the manager",
+      "source": "D03:211, :146",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.ir.state.loosen": {
+      "text": "Not available — rules never loosen a stop.",
+      "screen": "SCR-088",
+      "kind": "label",
+      "owner": "D03; the manager",
+      "source": "D03:211, :146",
+      "announce": "none"
+    },
+    "rules.ir.announce.count": {
+      "text": "1 error, 0 warnings",
+      "screen": "SCR-088",
+      "kind": "announce",
+      "owner": "D03",
+      "source": "D03:214",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.io.dialog.title": {
+      "text": "Export and import rules",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.dialog.export": {
+      "text": "Export",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.dialog.import": {
+      "text": "Import",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.export.this": {
+      "text": "This rule",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.export.selected": {
+      "text": "Selected (3)",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.io.export.all": {
+      "text": "All (12)",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.io.export.inside": {
+      "text": "What's inside",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.export.copy": {
+      "text": "Copy",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.export.download": {
+      "text": "Download",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:151",
+      "announce": "none"
+    },
+    "rules.io.export.privacy": {
+      "text": "This file holds the rule's logic only — no account ids, no keys, no armed state. Imported rules always start disarmed, on demo.",
+      "screen": "SCR-089",
+      "kind": "banner",
+      "owner": "D03 BQ-D03-5 RULED",
+      "source": "D03:212",
+      "announce": "none"
+    },
+    "rules.io.import.choose": {
+      "text": "Choose files",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:339",
+      "announce": "none"
+    },
+    "rules.io.import.drop": {
+      "text": "or drop files here",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:339",
+      "announce": "none"
+    },
+    "rules.io.import.preview": {
+      "text": "Import preview — 12 files · checked before import",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.io.import.checked": {
+      "text": "Checked — 2 to import, 10 to skip",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.io.import.accept": {
+      "text": "Accept",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.skip": {
+      "text": "Skip",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.rename": {
+      "text": "Rename",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.retry": {
+      "text": "Retry",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.run": {
+      "text": "Import 2 rules",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.io.import.progress": {
+      "text": "7 of 100 checked",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "polite",
+      "has_figures": true
+    },
+    "rules.io.import.results": {
+      "text": "Import results — 2 imported · 10 skipped",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "has_figures": true
+    },
+    "rules.io.import.open": {
+      "text": "Open rules",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.col_rule": {
+      "text": "rule name",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.col_result": {
+      "text": "result",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.col_reason": {
+      "text": "reason",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.import.col_field": {
+      "text": "field",
+      "screen": "SCR-089",
+      "kind": "label",
+      "owner": "D03",
+      "source": "D03:212, :155",
+      "announce": "none"
+    },
+    "rules.io.reason.account": {
+      "text": "The bundle references an account you cannot access.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "client"
+    },
+    "rules.io.reason.metric": {
+      "text": "Metric 'spread_bpz' is not in the vocabulary.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "server"
+    },
+    "rules.io.reason.action": {
+      "text": "Unknown action 'foo'.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "server"
+    },
+    "rules.io.reason.format": {
+      "text": "This file is a `cv-rule-bundle/2` bundle; this version reads `cv-rule-bundle/1`.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "client",
+      "has_figures": true
+    },
+    "rules.io.reason.name": {
+      "text": "A rule named 'BE after 1R' already exists.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "client",
+      "has_figures": true
+    },
+    "rules.io.reason.prefix": {
+      "text": "The 'sys.' name prefix is reserved.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "client"
+    },
+    "rules.io.reason.budget": {
+      "text": "Only the Owner can raise a rule's action budget above the default.",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "the manager; D03",
+      "source": "D03:212",
+      "announce": "none",
+      "check": "client"
+    },
+    "rules.io.reason.accepted": {
+      "text": "Accepted — account references dropped; bind accounts after import",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "D03; the routes",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "check": "client"
+    },
+    "rules.io.reason.too_large": {
+      "text": "Request body or batch exceeds the operation's size ceiling",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "D03; the routes",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "check": "server"
+    },
+    "rules.io.reason.not_checked": {
+      "text": "Not checked — Service unavailable · rule engine vocabulary unavailable",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "D03; the routes",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "check": "server"
+    },
+    "rules.io.reason.predicted": {
+      "text": "predicted — the server decides at import",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "D03; the routes",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "check": "client"
+    },
+    "rules.io.reason.field": {
+      "text": "Row 2 — metric",
+      "screen": "SCR-089",
+      "kind": "validation",
+      "owner": "D03; the routes",
+      "source": "D03:212, :155",
+      "announce": "none",
+      "check": "server",
+      "has_figures": true
+    },
+    "rules.io.import.statement": {
+      "text": "Imported rules always land as drafts — disarmed, on demo.",
+      "screen": "SCR-089",
+      "kind": "banner",
+      "owner": "D03",
+      "source": "D03:212",
+      "announce": "none"
+    },
+    "rbac.view_as": {
+      "text": "Read-only while viewing as {user}.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "source": "D02:280",
+      "announce": "polite"
+    },
+    "rbac.owner_only.arm_live": {
+      "text": "Only the owner can arm rules against live.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09; D02",
+      "source": "D02:281–283",
+      "announce": "polite"
+    },
+    "rbac.owner_only.start_recording": {
+      "text": "Only the owner can start recording.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09; D02",
+      "source": "D02:281–283",
+      "announce": "polite"
+    },
+    "rbac.owner_only.raise_limits": {
+      "text": "Only the owner can raise a rule's fire limits.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09; D02",
+      "source": "D02:281–283",
+      "announce": "polite"
+    },
+    "rbac.permission.place_orders": {
+      "text": "Your role can't place orders.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "source": "D02:284; D03:209",
+      "announce": "polite"
+    },
+    "rbac.permission.change_rules": {
+      "text": "Your role can't change rules.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "source": "D02:284; D03:209",
+      "announce": "polite"
+    },
+    "rbac.account": {
+      "text": "This account isn't assigned to you.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "source": "D02:285, :286",
+      "announce": "polite"
+    },
+    "rbac.account_read_only": {
+      "text": "You can view this account, not trade it.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "E09-D09",
+      "source": "D02:285, :286",
+      "announce": "polite"
+    },
+    "rule.arm.simulate_first": {
+      "text": "Simulate first — {fires} fires or {hours} h.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "D02 (PROPOSED key)",
+      "source": "D02:287",
+      "announce": "polite"
+    },
+    "rule.arm.unverified": {
+      "text": "Not verified — arming is blocked.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "D02 (PROPOSED key)",
+      "source": "D02:288",
+      "announce": "polite"
+    },
+    "rule.save.mismatch": {
+      "text": "Saving is blocked until the mismatch is resolved.",
+      "screen": "shared",
+      "kind": "reason",
+      "owner": "D02 (PROPOSED key)",
+      "source": "D02:289",
+      "announce": "polite"
+    },
+    "rules.editor.notice.native_stop_1": {
+      "text": "Every position keeps a native stop — you can move it, not delete it.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string merged (E32-D01 `sl.note`, D02:96); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:268",
+      "announce": "none"
+    },
+    "rules.editor.notice.native_stop_2": {
+      "text": "Rules can tighten it, never remove it — the stop is held by the exchange, not by this app.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string PROPOSED (D02:268); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:268",
+      "announce": "none"
+    },
+    "rules.editor.stop.never_loosen": {
+      "text": "Rules never loosen a stop.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string RULED (#4137); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:268",
+      "announce": "none"
+    },
+    "rules.editor.stop.tightens": {
+      "text": "The stop only ever tightens.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string RULED (memo Q2); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:268",
+      "announce": "none"
+    },
+    "rules.editor.banner.estimated": {
+      "text": "This rule depends on an estimated detector — behaviour is heuristic.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string RULED (D02 BQ-4); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:270",
+      "announce": "polite"
+    },
+    "rules.editor.summary.estimated": {
+      "text": "Uses an estimated detector — behaviour is heuristic.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string PROPOSED (D02:186; memo G8); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:186",
+      "announce": "none"
+    },
+    "rules.editor.flatten.ack": {
+      "text": "I understand this flattens every open position on the accounts in scope.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string RULED (D02 BQ-4); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:270",
+      "announce": "none"
+    },
+    "rules.editor.banner.engine_down": {
+      "text": "The rule engine is not running — armed rules are not evaluating. Your native stops are held by the exchange and are unaffected.",
+      "screen": "SCR-081",
+      "owner": "D02",
+      "status": "string PROPOSED (an addition to T Sec); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D02:271",
+      "announce": "assertive"
+    },
+    "rules.list.confirm.kill_switch": {
+      "text": "This is not the kill switch — nothing is cancelled or flattened.",
+      "screen": "SCR-080",
+      "owner": "D03",
+      "status": "string PROPOSED (an addition to T Sec); freeze PROPOSED, owner approval pending (#2701)",
+      "frozen": true,
+      "source": "D03:210",
+      "announce": "none"
+    }
+  },
+  "carried_by_cite": [
+    {
+      "key": "rules.ir.ready",
+      "owner": "D02 (P2)",
+      "source": "D03:142"
+    },
+    {
+      "key": "rules.ir.e35",
+      "owner": "E35-D05 (#940)",
+      "source": "`14`:1990"
+    },
+    {
+      "key": "rules.io.footnote",
+      "owner": "D03",
+      "source": "D03:151"
+    },
+    {
+      "key": "rules.io.e35",
+      "owner": "E35-D05 (#940)",
+      "source": "`14`:2003"
+    }
+  ]
+}
