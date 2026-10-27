@@ -24,3 +24,5 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+export { Badge } from "./Badge.js";
+export type { BadgeProps, BadgeTone } from "./Badge.js";

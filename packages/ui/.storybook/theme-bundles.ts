@@ -13,3 +13,4 @@ import "../src/components/toggle.css";
 import "../src/components/radio.css";
 import "../src/components/slider.css";
 import "../src/components/fields.css";
+import "../src/components/badge.css";

@@ -65,3 +65,9 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Esc                                                          | Not handled: it bubbles to the host.                                                          |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+
+### Badge (CMP-012, static; the `img` role when a count stands alone)
+
+| Keys | Action                                                                                                                                                                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. A standalone count is `role="img"` named `{value} {label}` (the full number, past the "99+" cap); on a labelled control, and always as a dot, it is `aria-hidden`. |
