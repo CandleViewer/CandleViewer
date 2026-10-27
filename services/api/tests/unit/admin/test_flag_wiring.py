@@ -362,7 +362,7 @@ async def test_a_view_poll_loop_ends_on_cancellation_not_unseen() -> None:
 
 
 async def test_a_view_warns_when_it_turns_unread_and_logs_at_debug_while_it_stays_so() -> None:
-    """CR-S3B1-05: through an outage two views would warn 24 times a minute. The warning is the
+    """CR-S3B1-05: through an outage three views would warn 36 times a minute. The warning is the
     transition to unread; a read ends the run, so the next outage warns again."""
     store = FakeFlagStore()
     store.rows[_OMS] = StoredFlag(True)
@@ -376,9 +376,9 @@ async def test_a_view_warns_when_it_turns_unread_and_logs_at_debug_while_it_stay
         assert view() is not down  # read: on; unread: off
 
 
-async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_both_views_poll() -> None:
-    """Q3: a restart's `ensure` leaves the Owner's `false`; `start()` reads both OMS views and
-    `stop()` cancels their polls."""
+async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_every_view_polls() -> None:
+    """Q3: a restart's `ensure` leaves the Owner's `false`; `start()` reads the three views (the
+    OMS's two and E28-T05's) and `stop()` cancels their polls."""
     runtime = _runtime()
     row = await runtime.service.stored(runtime.registry[_OMS])
     assert row is not None and row.value is True
@@ -388,12 +388,26 @@ async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_both_vie
     await runtime.start()
     polls = runtime._view_polls
     try:
-        both = (runtime.oms_enabled.first_read(), runtime.live_enabled.first_read())
-        await asyncio.wait_for(asyncio.gather(*both), 5)
-        assert (runtime.oms_enabled(), runtime.live_enabled()) == (False, False)
+        views = (runtime.oms_enabled, runtime.live_enabled, runtime.trade_groups)
+        await asyncio.wait_for(asyncio.gather(*(view.first_read() for view in views)), 5)
+        assert [view() for view in views] == [False, False, False]
     finally:
         await runtime.stop()
-    assert len(polls) == 2 and all(poll.done() for poll in polls) and runtime._view_polls == []
+    assert len(polls) == 3 and all(poll.done() for poll in polls) and runtime._view_polls == []
+
+
+async def test_a_write_to_the_trade_groups_flag_reaches_its_view_before_it_returns() -> None:
+    """E28-T05 (#909), as SEC-S3A-03 for the OMS flag: the writer's hook covers this view too, so
+    an Owner's write is read by the process that made it, on or off, with no wait for a poll."""
+    runtime, key, seen = _runtime(), "trading.trade_groups", list[bool]()  # demo: no seed
+    row = await runtime.service.stored(runtime.registry[key])
+    assert row is not None and runtime.trade_groups() is False
+    for value in (True, False):
+        row = await runtime.writer.set(
+            key, _OWNER, value=value, reason="hold", expected_updated_at=row.updated_at
+        )
+        seen.append(runtime.trade_groups())
+    assert seen == [True, False]
 
 
 def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:

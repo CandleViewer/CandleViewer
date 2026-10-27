@@ -18,7 +18,7 @@ or its seed for the process environment (`ENVIRONMENT_SEEDS`, #913 slice 3). `st
 `flags.read_budget_ms` (500 ms when unset or unreadable; anything but a whole number of ms from 50
 to 2000 refuses boot), ensures every flag's row, reads `desktop.backend_connection`
 (`BackendConnectionFlag`) once and starts the maintenance poll and the polls of the OMS's two
-flag views (`FlagView`: `oms_enabled`, `live_enabled`); `stop()` cancels the polls and the flag's
+flag views and the `trade_groups` one (`FlagView`); `stop()` cancels the polls and the flag's
 refresh.
 """
 
@@ -40,6 +40,7 @@ from candleviewer.admin.flags.catalogue import (
     ENVIRONMENT_SEEDS,
     LIVE_ENABLED,
     TRADING_OMS_ENABLED,
+    TRADING_TRADE_GROUPS,
     default_registry,
 )
 from candleviewer.admin.flags.maintenance import MaintenanceController, MaintenanceGate, chain_hooks
@@ -275,9 +276,11 @@ class FeatureFlagsRuntime:
         self._audit, self._step_up, self._users, self._sessions = audit, step_up, users, sessions
         self._poll: asyncio.Task[None] | None = None
         self._view_polls: list[asyncio.Task[None]] = []
-        # #913 slice 3: the OMS's process-wide reads, built before the writer that takes their hook.
+        # Process-wide reads (#913 slice 3, E28-T05), built before the writer that takes their hook.
         self.oms_enabled = FlagView(self, TRADING_OMS_ENABLED)
         self.live_enabled = FlagView(self, LIVE_ENABLED)
+        self.trade_groups = FlagView(self, TRADING_TRADE_GROUPS)  # E28-T05 (#909)
+        self._views = (self.oms_enabled, self.live_enabled, self.trade_groups)
         self._build(DEFAULT_READ_BUDGET_MS)
         self.backend_connection = BackendConnectionFlag(self)
 
@@ -312,7 +315,7 @@ class FeatureFlagsRuntime:
             self.service, self.gate, notify=push.notify_maintenance, audit=self._audit
         )
         gate, effects = self.controller.gate_hook, self.controller.effects_hook
-        views = (self.oms_enabled.on_change, self.live_enabled.on_change)
+        views = [view.on_change for view in self._views]
         self.writer = FlagWriter(
             self.service,
             self._audit,
@@ -331,8 +334,7 @@ class FeatureFlagsRuntime:
         if self._poll is None:
             self._poll = spawn(self.controller.run(), name="feature-flag-maintenance-poll")
             self._view_polls = [
-                spawn(view.run(), name=f"feature-flag-view-{view.key}")
-                for view in (self.oms_enabled, self.live_enabled)
+                spawn(view.run(), name=f"feature-flag-view-{view.key}") for view in self._views
             ]
 
     async def stop(self) -> None:
@@ -462,7 +464,7 @@ class FlagView:
 
     def _lost(self, event: str, exc: Exception) -> None:
         """A poll left the flag unread: a warning when the view turns unread, debug while it stays
-        so (two views, twelve polls a minute each, through an outage); the error's class alone."""
+        so (three views, twelve polls a minute each, through an outage); the error's class alone."""
         log = _log().debug if self._failing else _log().warning
         log(event, key=self.key, error=type(exc).__name__)
         self._failing = True
