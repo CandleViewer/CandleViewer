@@ -60,6 +60,9 @@ const PAGE = 10;
 /** The keys a gated trigger refuses: those that would open it or move through it (printables are always refused). */
 const GATED_KEYS: ReadonlySet<string> = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
 
+/** No measurement yet: below, uncapped. One shared object, so setting it again does not re-render. */
+const UNFIT: Fit = { placement: "below", room: undefined, wide: undefined };
+
 const fitStyle = (fit: Fit): CSSProperties | undefined =>
   fit.room === undefined
     ? undefined
@@ -93,7 +96,7 @@ export function Select({
   const popupRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const [fit, setFit] = useState<Fit>({ placement: "below", room: undefined, wide: undefined });
+  const [fit, setFit] = useState<Fit>(UNFIT);
 
   const chosen = options.findIndex((option) => option.value === value);
   // `options` may change while open: an index that no longer names a reachable option falls back to the start.
@@ -120,7 +123,11 @@ export function Select({
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     const popup = popupRef.current;
-    if (!open || anchor === null || popup === null) return;
+    if (!open || anchor === null || popup === null) {
+      // Closed: forget the last cap, so a reopen measures the natural height and picks the roomier side.
+      setFit(UNFIT);
+      return;
+    }
     const rect = anchor.getBoundingClientRect();
     const need = popup.getBoundingClientRect().height;
     const below = window.innerHeight - rect.bottom;

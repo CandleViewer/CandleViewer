@@ -66,6 +66,8 @@ describe("select.css forced-colours cascade", () => {
     const active = twins(".cv-select__option[data-active]")[0] as Block;
     expect(prop(active, "background")).toBe("Highlight");
     expect(prop(active, "color")).toBe("HighlightText");
+    // The ring is a colour too: it takes the system pair, so it never fades into the Highlight fill.
+    expect(prop(active, "outline-color")).toBe("HighlightText");
     const off = twins('.cv-select__option[aria-disabled="true"]')[0] as Block;
     expect(prop(off, "color")).toBe("GrayText");
     expect(prop(off, "opacity")).toBe("1");
@@ -146,6 +148,25 @@ describe("select.css popup", () => {
     expect(raw).toMatch(
       /prefers-reduced-motion: no-preference\)\s*\{[^@]*var\(--motion-duration-fast\)/,
     );
+  });
+
+  it("the active option carries CMP-039's inset ring (H8): 2px focus ring drawn 2px inside, control radius", () => {
+    const active = rule(normal, ".cv-select__option[data-active]");
+    expect(prop(active, "background")).toBe("var(--color-surface-hover)");
+    expect(prop(active, "outline")).toBe(
+      "calc(var(--border-focus) * 1px) solid var(--color-focus-ring)",
+    );
+    expect(prop(active, "outline-offset")).toBe("calc(var(--border-focus) * -1px)");
+    expect(prop(active, "border-radius")).toBe("var(--radius-control)");
+  });
+
+  it("the ring is on the active option only: no other option state sets an outline", () => {
+    const rings = normal.filter(
+      (b) =>
+        b.selectors.some((x) => x.startsWith(".cv-select__option")) &&
+        prop(b, "outline") !== undefined,
+    );
+    expect(rings.map((b) => b.selectors)).toEqual([[".cv-select__option[data-active]"]]);
   });
 
   it("no hover rule exists: the pointer moves the active option, so the highlight and aria agree", () => {

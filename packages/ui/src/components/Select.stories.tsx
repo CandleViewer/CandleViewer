@@ -60,7 +60,7 @@ export const FocusVisible: Story = {
   },
 };
 
-/** Open: the listbox under the trigger, the chosen option checked, the active one on the hover surface. */
+/** Open: the listbox under the trigger, the chosen option checked, the active one on the hover surface with CMP-039's inset ring. */
 export const Open: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.tab();
@@ -71,7 +71,15 @@ export const Open: Story = {
     await waitFor(() =>
       expect(within(canvasElement).getByRole("listbox", { name: "Account" })).toBeVisible(),
     );
-    await expect(box).toHaveAttribute("aria-activedescendant");
+    const id = box.getAttribute("aria-activedescendant");
+    await expect(id).not.toBeNull();
+    // The ring (2px focus ring, drawn 2px inside) marks the active option; its 3:1 is held in test/contrast.
+    const ring = getComputedStyle(
+      canvasElement.ownerDocument.getElementById(id as string) as Element,
+    );
+    await expect(ring.outlineStyle).toBe("solid");
+    await expect(parseFloat(ring.outlineWidth)).toBe(2);
+    await expect(parseFloat(ring.outlineOffset)).toBe(-2);
   },
 };
 
