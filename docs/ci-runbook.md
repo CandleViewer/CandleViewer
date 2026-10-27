@@ -208,12 +208,12 @@ Two runs of one signal that finish together queue on the report job's `nightly-i
 concurrency group, so the second comments on the issue the first opened. The workflows have no
 workflow-level group, which would let a manual run replace a pending scheduled run (#3449). Only
 the report jobs can write (`issues: write`, no checkout, no action), and a malformed input fails the
-job and files nothing. The Sunday `rest_k6` run reports Budget #13's per-route p95s without gating
-them until #2825's slice 2 decides the budget, because a known-red weekly job trains everyone to
-ignore red: a warning names the routes over 150 ms and nothing is filed. A dispatch still gates
-them, and any other failure of the Sunday run's pack step (a refused k6 run, an app that never
-started, another failed check) files as before. The first read (`klines_cold_first`), always
-reported and never gated (#2523), is left out of the Sunday warning, but stays in the report and
+job and files nothing. The Sunday `rest_k6` run gates Budget #13's per-route p95s as a dispatch
+does (#2523): a route over 150 ms fails the pack step and files `perf-e08-q04-full`, as any other
+failure of that step does (a refused k6 run, an app that never started, another failed check). Retry
+a red Sunday run with a dispatch (`profile=full`, `scenario=rest_k6`): "Re-run failed jobs" skips
+the pack. Never clear it by moving the 150 ms budget or recording a baseline under
+`bench/baselines/e08`. The first read (`klines_cold_first`), always reported and never gated (#2523), stays in the report and
 the runner's `warn` lines. It runs in a k6 scenario of its own, at a fixed arrival rate, and in a
 pool of its own in the nightly smoke, so the 7 budget routes run the request mix their recorded
 p95 series was read from. A failure before the pack (the `bench-free` guard, the k6 install,
