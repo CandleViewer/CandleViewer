@@ -1,15 +1,18 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
 Pure (no I/O, no clock), apart from the drivers' tests, which fake k6, the two fixture apps and
 their servers, and write to `tmp_path` (the weekly run's tests start the runner, whose reports go
-there too), and the k6 script's tests, which read the script."""
+there too), and the k6 script's tests, which read the script or run it under node over stubbed
+k6 modules."""
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import functools
 import json
 import math
 import re
+import shutil
 import statistics
 import subprocess
 import tempfile
@@ -18,7 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, quote, urlencode
 
 import pytest
 
@@ -336,6 +339,56 @@ async def test_drive_inprocess_sends_the_first_read_to_its_own_app(
     assert Counter(seen) == want
 
 
+@pytest.mark.parametrize("concurrency", [1, 2])
+async def test_drive_inprocess_runs_the_first_read_in_a_pool_of_its_own(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, concurrency: int
+) -> None:
+    """#2523: the 7 routes run `iterations` rounds on the driver's `concurrency` slots, the mix
+    recorded before the first-read leg, and the first read as many rounds beside them, in a pool
+    of its own (`FIRST_READ_POOL`, one at a time). The first-read app holds each timed first read
+    until the mix's last request is answered: a first read on one of the mix's slots, or a mix
+    request waiting on the first read's pool, would leave the mix waiting on it, and time out."""
+    mix_left, mix_done = 7 * (1 + 3), asyncio.Event()  # each route warmed once, then timed 3 times
+    busy, peak = {"app": 0, "first": 0}, {"app": 0, "first": 0}
+    firsts: list[bool] = []  # at each first read, whether the mix was done
+
+    def fake(name: str) -> Callable[[Path], Any]:
+        async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+            nonlocal mix_left
+            busy[name] += 1
+            peak[name] = max(peak[name], busy[name])
+            if name == "first":
+                firsts.append(mix_done.is_set())
+                if len(firsts) > 1:  # its warm-up is answered at once
+                    await mix_done.wait()
+            await asyncio.sleep(0)  # a read yields to the loop, as a real one does
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"{}"})
+            busy[name] -= 1
+            if name == "app":
+                mix_left -= 1
+                if mix_left == 0:
+                    mix_done.set()
+
+        async def build(_: Path) -> Any:
+            return app
+
+        return build
+
+    temp = functools.partial(tempfile.TemporaryDirectory, dir=tmp_path)
+    monkeypatch.setattr("bench.ingestion.rest_load.tempfile.TemporaryDirectory", temp)
+    monkeypatch.setattr(rest_load, "write_cold_lake", lambda _: 0)
+    monkeypatch.setattr(rest_load, "build_app", fake("app"))
+    monkeypatch.setattr(rest_load, "build_first_read_app", fake("first"))
+
+    async with asyncio.timeout(10):  # a bound on a failure, never the pass condition
+        lat = await rest_load.drive_inprocess(iterations=3, concurrency=concurrency)
+
+    assert {r: len(x) for r, x in lat.items()} == dict.fromkeys(requests_plan(), 3)
+    assert rest_load.FIRST_READ_POOL == 1 and peak == {"app": concurrency, "first": 1}
+    assert firsts == [False, False, True, True]  # warmed, then timed beside the mix, one at a time
+
+
 #: A canned `--summary-export` (#2825), with the stats the script asks k6 for (`summaryTrendStats`)
 #: and no failed check: a route sampled, one sampled under a millisecond, one with no samples, one
 #: from an export with no `count` and a 0.0 p95, one with no `count` and a real p95, and one whose
@@ -520,6 +573,19 @@ def test_drive_k6_serves_the_first_read_from_its_own_loopback_server(
     env = [faked_k6.argv[i + 1] for i, arg in enumerate(faked_k6.argv) if arg == "-e"]
     assert env[:2] == ["BASE_URL=http://127.0.0.1:8123", "BASE_URL_FIRST=http://127.0.0.1:8124"]
     assert [s.should_exit for s in faked_k6.servers] == [True, True]
+
+
+def test_drive_k6_sets_the_load_with_e_never_with_k6s_own_load_flags(
+    faked_k6: SimpleNamespace,
+) -> None:
+    """#2523: the duration and the VUs reach the script as `-e` DURATION and VUS, and none of
+    k6's own load flags, long or short: --vus and --duration would replace both scenarios with
+    one that runs the default export, which the script lacks (the node run below)."""
+    assert rest_load.drive_k6("7s", 3) == _K6_READ
+    env = [faked_k6.argv[i + 1] for i, arg in enumerate(faked_k6.argv) if arg == "-e"]
+    assert {"DURATION=7s", "VUS=3"} <= set(env)
+    k6_load = {"--vus", "-u", "--duration", "-d", "--iterations", "-i", "--stage", "-s"}
+    assert k6_load.isdisjoint(arg.partition("=")[0] for arg in faked_k6.argv)
 
 
 def test_free_ports_binds_every_socket_before_it_closes_any(
@@ -769,14 +835,117 @@ def test_k6_script_arms_only_checks_and_each_gated_routes_budget_13_p95() -> Non
 
 
 def test_k6_script_sends_the_first_read_to_its_own_loopback_server() -> None:
-    """#2523: the route the plan marks `FIRST_READ` goes to BASE_URL_FIRST, which must be set and
-    pass BASE_URL's own loopback check, or the script fails; only `params` reach the query."""
+    """#2523: BASE_URL_FIRST, where the first read goes (its own scenario, run under node below),
+    must be set and pass BASE_URL's own loopback check, or the script fails; only `params` reach
+    the query."""
     src = rest_load.K6_SCRIPT.read_text(encoding="utf-8")
     assert re.search(r'^const BASE_FIRST = __ENV\.BASE_URL_FIRST \|\| "";$', src, re.M)
     for base in ("BASE", "BASE_FIRST"):
         assert re.search(rf"^if \(!LOOPBACK\.test\({base}\)\) \{{\n  fail\(`refusing ", src, re.M)
-    assert re.search(rf"^    const base = spec\.{FIRST_READ} \? BASE_FIRST : BASE;$", src, re.M)
     assert "http.get(`${base}${spec.path}?${qs(spec.params)}`" in src
+
+
+#: `k6`, `k6/http` and `k6/metrics` for node, so that the k6 script runs outside k6 (#2523): each
+#: request, the trend it adds to and its check are noted in `globalThis.did`, in order, and every
+#: response is a 200.
+_K6_STUB = (
+    "export default { get(url, params) { globalThis.did.push(['get', params.tags.route, url]); "
+    "return { status: 200, timings: { duration: 1 } }; } }; "
+    "export class Trend { constructor(name) { this.name = name; } "
+    "add() { globalThis.did.push(['add', this.name]); } } "
+    "export function check(res, sets) { for (const [name, ok] of Object.entries(sets)) "
+    "globalThis.did.push(['check', name, ok(res)]); } "
+    "export function fail(why) { throw new Error(why); }"
+)
+_BASE, _BASE_FIRST = "http://127.0.0.1:8123", "http://127.0.0.1:8124"
+#: What `encodeURIComponent` leaves as it is beyond `quote`'s own: `quote` then encodes as it does.
+_URI_SAFE = "!*'()"
+
+
+def _k6_iteration(tmp_path: Path, **k6_env: str) -> dict[str, Any]:
+    """The k6 script, run by node over `_K6_STUB` with `drive_k6`'s two base URLs and `k6_env` in
+    its `__ENV` (#2523): the names it exports, its `options`, and what one iteration of each
+    scenario's `exec` did."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is not on PATH: the k6 script runs under it here")
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps(requests_plan()), encoding="utf-8")
+    env = {"BASE_URL": _BASE, "BASE_URL_FIRST": _BASE_FIRST, "PLAN": str(plan), **k6_env}
+    hook = (
+        "export async function resolve(s, c, next) { return s === 'k6' || s.startsWith('k6/') ? "
+        f"{{ url: 'data:text/javascript,' + encodeURIComponent({json.dumps(_K6_STUB)}), "
+        "shortCircuit: true } : next(s, c); }"
+    )
+    script = f"""
+    import {{ register }} from 'node:module';
+    import {{ readFileSync }} from 'node:fs';
+    register('data:text/javascript,' + encodeURIComponent({json.dumps(hook)}));
+    Object.assign(globalThis, {{ __ENV: {json.dumps(env)}, open: (p) => readFileSync(p, 'utf8') }});
+    const k6 = await import({json.dumps(rest_load.K6_SCRIPT.as_uri())});
+    const did = {{}};
+    for (const [name, scenario] of Object.entries(k6.options.scenarios)) {{
+      globalThis.did = did[name] = [];
+      k6[scenario.exec ?? 'default']();
+    }}
+    console.log(JSON.stringify({{ exports: Object.keys(k6), options: k6.options, did }}));
+    """
+    done = subprocess.run(  # noqa: S603 - node, over a script of this test's own
+        [node, "--no-warnings", "--input-type=module", "-e", script],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
+    got: dict[str, Any] = json.loads(done.stdout)
+    return got
+
+
+@pytest.mark.parametrize(
+    ("k6_env", "vus", "duration"),
+    [({}, 5, "60s"), ({"VUS": "3", "DURATION": "7s"}, 3, "7s")],
+    ids=["default-env", "vus-3-duration-7s"],
+)
+def test_k6_script_runs_the_first_read_in_a_scenario_of_its_own(
+    tmp_path: Path, k6_env: dict[str, str], vus: int, duration: str
+) -> None:
+    """#2523: `reads`, VUS users (5 by default), sends the 7 budget routes to BASE_URL, the mix
+    recorded before the first-read leg; `first_read` sends the marked route alone to
+    BASE_URL_FIRST, at a fixed arrival rate of its own, so its latency sets neither its own load
+    nor the 7 routes' pace. Both run for DURATION, so the first read spans the pack's 10 minutes.
+    Each request adds to its route's trend and is checked; only the 7 routes arm Budget #13. No
+    default export: the one scenario k6's own --vus and --duration would make runs it, so such a
+    run fails rather than send a mix of its own."""
+    got, plan = _k6_iteration(tmp_path, **k6_env), requests_plan()
+    assert got["exports"] == ["firstRead", "options", "reads"]  # a namespace lists them sorted
+    mix = [r for r, spec in plan.items() if not spec.get(FIRST_READ)]
+    assert got["options"]["scenarios"] == {
+        "reads": {"executor": "constant-vus", "exec": "reads", "vus": vus, "duration": duration},
+        "first_read": {
+            "executor": "constant-arrival-rate",
+            "exec": "firstRead",
+            "rate": 1,
+            "timeUnit": "1s",
+            "duration": duration,
+            "preAllocatedVUs": 2,
+        },
+    }
+    budget = {f"route_{r}_ms": [f"p(95)<{b.B13_READ_P95_MS:g}"] for r in mix}
+    assert got["options"]["thresholds"] == {"checks": ["rate>0.99"], **budget}
+
+    def iteration(base: str, routes: list[str]) -> list[list[Any]]:
+        out: list[list[Any]] = []
+        for r in routes:
+            query = urlencode(plan[r]["params"], safe=_URI_SAFE, quote_via=quote)
+            out += [["get", r, f"{base}{plan[r]['path']}?{query}"], ["add", f"route_{r}_ms"]]
+            out.append(["check", f"{r} 200", True])
+        return out
+
+    assert got["did"] == {
+        "reads": iteration(_BASE, mix),
+        "first_read": iteration(_BASE_FIRST, ["klines_cold_first"]),
+    }
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:
