@@ -36,9 +36,15 @@ let active: Entry | null = null;
 /**
  * Masks the revealed value on the page, if any. The app calls it on a route change, the idle lock and
  * sign-out (S1): `packages/ui` imports no router. Unmounting masks too, by dropping the state.
+ *
+ * The mask lands after the caller returns, in a microtask, committed synchronously there: the timing is
+ * the same from an event handler, an effect or plain code, and no in-effect `flushSync` warning appears.
  */
 export function maskAllValues(): void {
-  active?.mask();
+  queueMicrotask(() => {
+    const current = active;
+    if (current !== null) flushSync(() => current.mask());
+  });
 }
 
 export interface MaskedValueProps {
@@ -102,10 +108,17 @@ export function MaskedValue({
   });
   // Set synchronously, so two re-mask events in one tick notify the host once.
   const live = useRef(false);
+  const actions = useRef<HTMLSpanElement>(null);
 
   const mask = useCallback((notify: boolean): void => {
     if (!live.current) return;
     live.current = false;
+    // Copy is disabled by the mask: focus inside the actions moves to the toggle, never to <body>.
+    const area = actions.current;
+    const toggleEl = area?.querySelector<HTMLButtonElement>(":scope > button");
+    const focused = document.activeElement;
+    if (area && toggleEl && focused !== toggleEl && focused !== null && area.contains(focused))
+      toggleEl.focus();
     setRevealedAt(null);
     setExpiring(false);
     if (notify) latest.current?.(false);
@@ -154,6 +167,8 @@ export function MaskedValue({
       mask(true);
       return;
     }
+    // The handoff happens here, in this event's commit, so no frame paints two values (S1).
+    if (active !== null && active !== entry.current) active.mask();
     live.current = true;
     setExpiring(false);
     setRevealedAt(Date.now());
@@ -185,7 +200,7 @@ export function MaskedValue({
             </>
           )}
         </div>
-        <span className="cv-masked-value__actions">
+        <span className="cv-masked-value__actions" ref={actions}>
           <IconButton
             icon={shown ? "hide" : "show"}
             label={`${shown ? "Hide" : "Show"} ${label}`}

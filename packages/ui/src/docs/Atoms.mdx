@@ -296,13 +296,13 @@ and status.
 
 ### MaskedValue (CMP-034, a named group; the toggle and Copy follow APG Button through CMP-002 and CMP-033)
 
-| Keys                        | Action                                                                                                                       |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab             | The toggle, then Copy (when `copyable`); the box is not focusable. Copy is disabled, and skipped, while masked.              |
-| Enter, Space on the toggle  | Reveals (the name becomes "Hide {label}"; focus stays) or masks at once. Only a press reveals: never hover, focus or a prop. |
-| Enter, Space on Copy        | Copies the revealed value; CMP-033's `check` and "Copied" for 2 s.                                                           |
-| (none; at `autoHideMs`)     | Re-masks, focus kept on the toggle; spoken once 2 s before ("{label} will hide in 2 seconds"), silent at the moment.         |
-| (none; blur, hidden, print) | The window losing focus, a hidden tab, print, history navigation or another value's reveal re-masks at once.                 |
+| Keys                        | Action                                                                                                                                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab             | The toggle, then Copy (when `copyable`); the box is not focusable. Copy is disabled, and skipped, while masked.                                    |
+| Enter, Space on the toggle  | Reveals (the name becomes "Hide {label}"; focus stays) or masks at once. Only a press reveals: never hover, focus or a prop.                       |
+| Enter, Space on Copy        | Copies the revealed value; CMP-033's `check` and "Copied" for 2 s.                                                                                 |
+| (none; at `autoHideMs`)     | Re-masks; focus on the toggle stays, on Copy moves to the toggle; spoken once 2 s before ("{label} will hide in 2 seconds"), silent at the moment. |
+| (none; blur, hidden, print) | The window losing focus, a hidden tab, print, history navigation or another value's reveal re-masks at once.                                       |
 
 | Element     | Role   | Name                            | Notes                                                                                                            |
 | ----------- | ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -316,11 +316,12 @@ and status.
 While masked the value is in no text node, attribute, `title`, `data-*`, accessible name or description; it reaches
 no log and no callback (`onToggleReveal` gets the new state only). While revealed it is in exactly one text node.
 `revealed={false}` masks at once, and while it stands a press does nothing and emits nothing; `true` never reveals by
-itself. The window losing focus, a hidden tab, `pagehide`, `beforeprint` and the auto-hide commit the mask
-synchronously, before the event returns; print never lays the value out. `autoHideMs` defaults to 10 s and is
-clamped to 3–30 s (the G19 cap). The app calls `maskAllValues()` on a route change, the idle lock and sign-out
-(`packages/ui` imports no router); unmounting drops the value from component state. Server rendering is safe: the
-initial render is always masked, so the value never reaches server HTML.
+itself. Revealing a second value masks the first in the same commit. The window losing focus, a hidden tab,
+`pagehide`, `beforeprint` and the auto-hide commit the mask synchronously, before the event returns; print never lays
+the value out. `autoHideMs` defaults to 10 s and is clamped to 3–30 s (the G19 cap). The app calls `maskAllValues()`
+on a route change, the idle lock and sign-out (`packages/ui` imports no router); that mask lands after the call
+returns, in a microtask. Unmounting drops its references to the value. Server rendering is safe: the initial render
+is always masked, so the value never reaches server HTML.
 
 Known residuals (G19's defaults, ruling 12; E05-X02 signs off):
 
@@ -333,7 +334,9 @@ Known residuals (G19's defaults, ruling 12; E05-X02 signs off):
 - Manual selection, copy or drag of the revealed text bypasses `copyable`.
 - Memory: JavaScript strings cannot be zeroed, so "leaves component state" does not mean "leaves memory"; the value
   stays in the heap until the host drops every reference and the collector runs.
-- Browser developer tools (React DevTools) show the `value` prop at any time, masked or not.
+- Any script on the page can reach `value` through React's fiber props (`__reactProps$*` on the DOM nodes and
+  the component tree), masked or not; browser developer tools (React DevTools) are one such reader. The mitigation
+  is the strict CSP (C-12.10), which keeps foreign script off the page.
 
 ### Countdown (CMP-035, text with a threshold announcer)
 
