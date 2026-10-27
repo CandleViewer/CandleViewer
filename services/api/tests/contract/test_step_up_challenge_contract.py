@@ -560,13 +560,12 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
     "rule",
     [
         "Required whenever the session has a live challenge, whatever its class, grace classes "
-        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
-        "`sl_loosen`, `accounts` or `recorder_purge`, named by the live challenge or by "
-        "`action_class`)",
+        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups` "
+        "or `recorder_purge`; and `sl_loosen` and `accounts` once their routes are mounted), "
+        "named by the live challenge or by `action_class`",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
-        "Only a grace class named by `action_class` while no challenge is live elevates without "
-        "it",
+        "Only a grace class named by `action_class` while no challenge is live elevates without it",
         "This ends the transitional grace-class optionality that #2725 was to end (the web client "
         "sends `challenge_id` on every step-up): a tightening this contract announced before any "
         "client relied on the optionality",
@@ -581,6 +580,15 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
 def test_step_up_challenge_id_states_when_it_is_required(spec: dict[str, Any], rule: str) -> None:
     """AC "Challenge expiry" (contract half) and the no-grace `challenge_id` requirement."""
     assert rule in _challenge_id_text(spec)
+
+
+def test_the_no_grace_classes_the_server_knows_are_the_ones_the_contract_names_now(
+    spec: dict[str, Any],
+) -> None:
+    """The contract's mounted no-grace list is the server's set, no more and no fewer."""
+    text = _challenge_id_text(spec)
+    named = text.split("always for a no-grace class (", 1)[1].split(";", 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", named)) == set(NO_GRACE_ACTION_CLASSES)
 
 
 @pytest.mark.parametrize("rule", ["challenge_required", "challenge_expired"])

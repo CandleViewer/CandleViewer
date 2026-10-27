@@ -12238,16 +12238,16 @@ paths:
                     The `challenge_id` of the `403 step_up_required` being answered (#2304).
                     Required whenever the session has a live challenge, whatever its class,
                     grace classes included, and always for a no-grace class
-                    (`live_enablement`, `killswitch`, `backups`, `sl_loosen`, `accounts` or
-                    `recorder_purge`, named by the live challenge or by `action_class`):
-                    omitting it is `400 validation_failed` with
+                    (`live_enablement`, `killswitch`, `backups` or `recorder_purge`; and
+                    `sl_loosen` and `accounts` once their routes are mounted), named by the
+                    live challenge or by `action_class`: omitting it is `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_required}]`. Only a grace
                     class named by `action_class` while no challenge is live elevates without
                     it. This ends the transitional grace-class optionality that #2725 was to
                     end (the web client sends `challenge_id` on every step-up): a tightening
-                    this contract announced before any client relied on the optionality. A value that does not name the live
-                    challenge (expired, superseded, already used or unknown), or that is sent
-                    when there is none, gets `400 validation_failed` with
+                    this contract announced before any client relied on the optionality. A
+                    value that does not name the live challenge (expired, superseded, already
+                    used or unknown), or that is sent when there is none, gets `400 validation_failed` with
                     `errors: [{field: challenge_id, rule: challenge_expired}]`. Either `400` is
                     decided before the password and code are checked: no factor is verified, no
                     failure is counted and nothing is elevated. The client then drops the held
@@ -12319,8 +12319,8 @@ paths:
                       The `challenge_id` of the challenge this step-up consumed (#2304, additive,
                       C-6.3). Present when the step-up answered a live challenge, which is always
                       the case for a no-grace class and for a grace class with a live challenge
-                      (whose step-up must send its `challenge_id`). A client uses it to tell which refused request the
-                      grant answers. Absent when no challenge was consumed (a grace class named by
+                      (whose step-up must send its `challenge_id`). A client uses it to tell
+                      which refused request the grant answers. Absent when no challenge was consumed (a grace class named by
                       `action_class` with no live challenge); the server never echoes a challenge
                       the grant did not consume.
                   tokens: { $ref: "#/components/schemas/TokenBundle" }
