@@ -19,8 +19,11 @@ import yaml
 from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 
+from candleviewer.accounts.sizer import FailReason, SkipReason
 from candleviewer.api._generated import openapi_models as rest
 from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.risk.models import RiskRefusal
 from tests.contract._admin_support import ROOT, capability_rows, grants
 from tests.openapi_helpers import deref
 
@@ -38,6 +41,8 @@ _ADR = (ROOT / "docs/plan/27-adrs/ADR-0008-trade-group-fanout.md").read_text(enc
 _SCHEMA_DOC = (ROOT / "docs/plan/21-database-schema.md").read_text(encoding="utf-8")
 _TABLES = _SCHEMA_DOC.split("#### 3.3.3a", 1)[1].split("#### 3.3.4", 1)[0]  # E28-T01's tables
 _INTERNAL_DOC = (ROOT / "docs/plan/24-internal-schemas.md").read_text(encoding="utf-8")
+_WS_DOC = (ROOT / "docs/plan/23-ws-protocol.md").read_text(encoding="utf-8")
+_SCREENS = (ROOT / "docs/plan/14-screens-catalogue.md").read_text(encoding="utf-8")
 _CODES: dict[str, Any] = {entry["code"]: entry for entry in _SPEC["x-error-codes"]}
 _DEFINITIONS = {
     "GET /trade-group-definitions": "listTradeGroupDefinitions",
@@ -48,14 +53,30 @@ _DEFINITIONS = {
 }
 _ACTORS = ("owner", "manager_with_grant", "manager_without_grant", "viewer")
 _WRITES = {  # route -> (its responses, its x-idempotency)
-    "POST /trade-group-definitions": ({"201", "400", "403", "409", "422", "503"}, "recommended"),
+    "POST /trade-group-definitions": (
+        {"201", "400", "401", "403", "409", "422", "503"},
+        "recommended",
+    ),
     "PUT /trade-group-definitions/{definitionId}": (
-        {"200", "400", "403", "404", "409", "412", "422", "503"},
+        {"200", "400", "401", "403", "404", "409", "412", "422", "503"},
         "optional",
     ),
-    "DELETE /trade-group-definitions/{definitionId}": ({"204", "403", "404", "503"}, "optional"),
+    "DELETE /trade-group-definitions/{definitionId}": (
+        {"204", "401", "403", "404", "503"},
+        "optional",
+    ),
 }
 _READS = ("GET /trade-group-definitions", "GET /trade-group-definitions/{definitionId}")
+#: The routes whose `401` E28-T05 S0 declares (`listTradeGroups` already did).
+_SIGNED_IN = (*_DEFINITIONS, "GET /trade-groups/{tradeGroupId}", "POST /trade-groups/preview")
+#: What the `trading.trade_groups` flag refuses while off (C-4.13): the writes and the preview.
+_FLAGGED = {f"{verb}TradeGroupDefinition" for verb in ("create", "update", "delete")}
+_FLAGGED.add("previewTradeGroup")
+#: S2a's `ReadinessReason`: whichever of S0 and S2a merges second reads it from there instead.
+_READINESS_REASONS = (
+    "member_disabled account_disabled key_invalid account_unhealthy account_locked "
+    "kill_switch_engaged trading_disabled"
+).split()
 
 
 def _words(text: str) -> str:
@@ -178,7 +199,7 @@ def test_a_definition_body_is_closed_stored_and_in_one_environment() -> None:
     stored = _SCHEMAS["TradeGroupDefinition"]["properties"]  # no `created_by` (SR-E28-21)
     assert set(body) == {"name", "environment", "members"}
     assert set(member) == {"exchange_account_id", "enabled"}
-    assert set(stored) == {"id", "created_at", "updated_at", "definition"}
+    assert set(stored) == {"id", "created_at", "updated_at", "definition", "readiness"}
     assert _SCHEMAS["TradeGroupDefinitionInput"]["required"] == ["name", "environment", "members"]
     assert _SCHEMAS["TradeGroupDefinitionMember"]["required"] == ["exchange_account_id"]
     assert _SCHEMAS["TradeGroupDefinition"]["required"] == list(stored)
@@ -549,3 +570,191 @@ def test_adr_0008_records_p1b() -> None:
         "This breaks the `/v1` contract (C-6.3) before any route serves it",
     ):
         assert decision in amendment, decision
+
+
+@pytest.mark.parametrize("route", _SIGNED_IN)
+def test_each_route_declares_the_401_it_answers_without_a_session(route: str) -> None:
+    """The matrix's reviewed outcome with no session is `401`, and a provider test checks every
+    answer against a declared status, so each route declares the shared `Unauthorized`."""
+    assert _MATRIX["operations"][route]["outcomes"]["unauthenticated"] == "401"
+    assert _ROUTES[route]["responses"]["401"] == _ref("responses", "Unauthorized")
+
+
+def test_the_preview_is_rate_limited_per_user_and_never_idempotency_keyed() -> None:
+    """SR-E28-22, AC 8: one per-user rate, `429` with `Retry-After` past it, and no key read; it
+    reads cached figures only, so a leg whose figures are cold is blocked, never fetched (F-09)."""
+    preview = _OPS["previewTradeGroup"]
+    assert preview["responses"]["429"] == _ref("responses", "RateLimited")
+    assert "Retry-After" in _SPEC["components"]["responses"]["RateLimited"]["headers"]
+    assert _CODES["rate_limited"]["status"] == 429
+    assert not [param for param in preview["parameters"] if "Idempotency" in str(param)]
+    text = _words(preview["description"])
+    for sentence in (
+        "Rate-limited per user by a token bucket "
+        "(`CV_TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND`, default 20 a second, a burst of the "
+        "same size): past it `429 rate_limited` with `Retry-After`. No `Idempotency-Key` is read.",
+        "It reads cached figures only and never refreshes one (SR-E28-22): a leg whose account "
+        "figures are not cached is `blocked` with `figure_unknown`.",
+    ):
+        assert sentence in text, sentence
+
+
+def test_a_preview_leg_states_its_status_and_a_closed_reason() -> None:
+    """SCR-061 (a row's state in text; an excluded row always states its reason), AC 6, #904's
+    C-37: each leg's `status`, and a code for every outcome of the sizer, the request's own skip,
+    the risk gate's interim and each readiness reason a targeted member can have (a ticket never
+    targets a disabled member). The code's enums are read, never a copied list (C-16.5)."""
+    preview = _SCHEMAS["TradeGroupPreview"]
+    leg = preview["properties"]["legs"]["items"]
+    assert leg["required"] == ["exchange_account_id", "would_submit", "status"]
+    status = leg["properties"]["status"]
+    assert status["enum"] == ["ready", "warn", "skipped", "blocked"]
+    assert "`would_submit` is true exactly for `ready` and `warn`" in _words(status["description"])
+    assert leg["properties"]["warnings"]["items"]["enum"] == ["stop_fallback"]
+    rung = leg["properties"]["take_profits"]["items"]
+    assert (rung["required"], rung["properties"]) == (
+        ["price", "qty"],
+        {"price": _ref("schemas", "Decimal"), "qty": _ref("schemas", "Decimal")},
+    )
+    fee = preview["properties"]["totals"]["properties"]["total_estimated_fee_usd"]
+    assert fee["$ref"] == "#/components/schemas/Decimal"
+    codes = set(leg["properties"]["rejection"]["properties"]["code"]["enum"])
+    sizer = {reason.value for reason in (*SkipReason, *FailReason)}
+    readiness = set(_READINESS_REASONS) - {"member_disabled"}
+    assert sizer | readiness | {"skipped", RiskRefusal.RISK_STATE_UNAVAILABLE.value} <= codes
+    skips = (SkipReason.SYMBOL_NOT_ALLOWED, SkipReason.BELOW_MIN_NOTIONAL)  # AC 6's two skips
+    legs = [{"would_submit": False, "status": "skipped", "rejection": {"code": s}} for s in skips]
+    legs.append({"would_submit": True, "status": "ready"})
+    for n, item in enumerate(legs):
+        item["exchange_account_id"] = str(uuid.UUID(int=n + 1))
+    document = {"legs": legs, "totals": {"total_estimated_fee_usd": "1.9"}}
+    validator = Draft202012Validator(deref(_SPEC, _ref("schemas", "TradeGroupPreview")))
+    assert list(validator.iter_errors(document)) == []
+    rest.TradeGroupPreview.model_validate(document)
+    legs[2]["status"] = "sent"
+    assert not validator.is_valid(document)
+    with pytest.raises(ValidationError):
+        rest.TradeGroupPreview.model_validate(document)
+
+
+def test_definition_readiness_is_read_only_and_outside_the_etag() -> None:
+    """AC 4 ("2 of 3 ready", each member's reason): derived on each read and never stored, so no
+    write body and no `ETag` carries it, and a member's health never fails an `If-Match`. Closed,
+    as the definition is (SR-E28-21)."""
+    readiness = _SCHEMAS["TradeGroupDefinition"]["properties"]["readiness"]
+    assert readiness["readOnly"] is True and readiness["$ref"].endswith("/TradeGroupReadiness")
+    described = readiness["description"]
+    assert "as of the read; never stored; the `ETag` does not version it" in described
+    assert "readiness" not in _SCHEMAS["TradeGroupDefinitionInput"]["properties"]
+    assert "readiness" not in rest.TradeGroupDefinitionInput.model_fields
+    assert rest.TradeGroupDefinition.model_fields["readiness"].is_required()
+    etag = _words(_OPS["getTradeGroupDefinition"]["description"])
+    assert "`ETag` versions the definition, members included;" in etag and "readiness" not in etag
+    schema = _SCHEMAS["TradeGroupReadiness"]
+    member = schema["properties"]["members"]["items"]
+    assert (schema["required"], member["required"]) == (
+        ["ready", "total", "members"],
+        ["exchange_account_id", "ready", "reason"],
+    )
+    assert schema["additionalProperties"] is False and member["additionalProperties"] is False
+    assert member["properties"]["reason"]["enum"] == [*_READINESS_REASONS, None]
+    ready, b_failing = {"ready": True, "reason": None}, {"ready": False, "reason": "key_invalid"}
+    members: list[dict[str, Any]] = [dict(ready), b_failing, dict(ready)]  # E28-B's check failed
+    for n, item in enumerate(members):
+        item["exchange_account_id"] = str(uuid.UUID(int=n + 1))
+    core3 = {"ready": 2, "total": 3, "members": members}
+    validator = Draft202012Validator(deref(_SPEC, _ref("schemas", "TradeGroupReadiness")))
+    assert list(validator.iter_errors(core3)) == []
+    rest.TradeGroupReadiness.model_validate(core3)
+
+
+def test_no_common_symbol_is_refused_with_scr_062s_sentence() -> None:
+    """AC 3: SCR-062's own sentence, read from the screen catalogue with its em dash (the ticket's
+    ASCII copy has a hyphen); a replace refuses it under the create's rules."""
+    (sentence,) = re.findall(r'share at least one allowed symbol \("([^"]+)"\)', _SCREENS)
+    create = _words(_OPS["createTradeGroupDefinition"]["description"])
+    assert (
+        "Members whose bound profiles share no allowed symbol are refused with "
+        f'`400 validation_failed`, `rule: no_common_symbol`, and `detail` "{sentence}"' in create
+    )
+    assert "A member with no bound profile allows none, and disabled members count." in create
+    update = _words(_OPS["updateTradeGroupDefinition"]["description"])
+    assert update.startswith("Under `createTradeGroupDefinition`'s rules")
+
+
+@pytest.mark.parametrize("operation", ["previewTradeGroup", "createTradeGroup"])
+def test_a_leg_outside_the_servers_environment_refuses_the_whole_request(operation: str) -> None:
+    """SR-E28-16, C-2.11: the process environment is checked again at the preview and the send,
+    one `errors[]` entry per offending leg, as a definition's members are."""
+    text = _words(_OPS[operation]["description"])
+    assert (
+        "A leg whose account is outside this server's environment, or legs in two environments, "
+        "refuse the whole request with `400 validation_failed`, one `errors[]` entry per such "
+        "leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the account-scope "
+        "check." in text
+    )
+    assert _OPS[operation]["responses"]["400"] == _ref("responses", "BadRequest")
+    assert _CODES["validation_failed"]["status"] == 400
+
+
+@pytest.mark.parametrize("operation", ["listTradeGroupDefinitions", "listTradeGroups"])
+def test_both_trade_group_lists_answer_a_bad_cursor_with_400(operation: str) -> None:
+    """A cursor is opaque and bound to its request; only the group list takes a time range."""
+    op = _OPS[operation]
+    assert op["responses"]["400"] == _ref("responses", "BadRequest")
+    text = _words(op["description"])
+    assert "A malformed, foreign or expired `cursor` is `400 invalid_cursor`" in text
+    ranged = _ref("parameters", "From") in op["parameters"]
+    assert ranged == (operation == "listTradeGroups")
+    assert ("`from` after `to` is `400 invalid_time_range`" in text) == ranged
+    assert {_CODES[code]["status"] for code in ("invalid_cursor", "invalid_time_range")} == {400}
+
+
+def test_the_trade_groups_flag_refuses_the_writes_and_the_preview_and_no_read() -> None:
+    """C-4.13 (plan question 4; S2b adds the flag): while `trading.trade_groups` is off, each write
+    and the preview refuse as `placeOrder` does with its own flag off. The reads stay open: they
+    show what was written while it was on, and `placeOrder`'s one-leg groups."""
+    sentence = (
+        "While the `trading.trade_groups` flag is off this operation answers "
+        "`403 trading_disabled` with no `reason`, as `placeOrder` does while "
+        "`trading.oms_enabled` is off."
+    )
+    flagged = {name for name, op in _OPS.items() if sentence in _words(op.get("description", ""))}
+    assert flagged == _FLAGGED
+    assert all(_OPS[name]["responses"]["403"] == _ref("responses", "Forbidden") for name in flagged)
+    assert _CODES["trading_disabled"]["status"] == 403
+
+
+def test_the_definition_and_preview_audit_names_wait_for_their_slices() -> None:
+    """24 section 15.5 (plan GEN item 8): the definition writes' names and the preview's are this
+    ticket's, listed as not registered yet until S1b and S3b register them in `audit/actions.py`,
+    which flips both halves; the fired group's `trade_group.created` stays E34's."""
+    vocabulary = _words(_INTERNAL_DOC.split("### 15.5 ", 1)[1].split("### 15.6 ", 1)[0])
+    verbs = ("created", "updated", "deleted")
+    for name in (*(f"trade_group_definition.{verb}" for verb in verbs), "trade_group.previewed"):
+        assert f"`{name}` (not registered yet, E28-T05)" in vocabulary, name
+        assert name not in AUDIT_ACTIONS, name
+    assert "`trade_group.created` (not registered yet, E34)" in vocabulary
+
+
+def test_trade_groups_frames_cover_every_leg_or_none() -> None:
+    """SR-E28-21, AC 9 (23 section 15.5): a frame carries a group only when the subscription's
+    effective accounts hold every leg's, never in part and never with its `client_group_ref`."""
+    section = _WS_DOC.split("### 15.5 `TradeGroupUpdate`", 1)[1].split("### 15.6 ", 1)[0]
+    prose = _words(section.rsplit("```", 1)[1])  # after the schema
+    for phrase in (
+        "A group reaches a subscription only when its effective `exchange_account_ids` hold every "
+        "leg's account (SR-E28-21).",
+        "It is never sent in part: a group the caller may not see whole is never sent, as if it "
+        "did not exist.",
+        "`client_group_ref` is not sent on this topic (SR-E28-21); `getTradeGroup` serves it to "
+        "the Owner and the creator.",
+        "a value outside `TradeGroupStatus` matches nothing",
+        "The snapshot holds the active groups (`submitting`, `partially_open`, `open`, `closing`) "
+        "with every leg.",
+        "A delta holds `id`, `status`, `updated_at_ms`, `totals` and the changed legs only.",
+        "A terminal status is the group's last frame.",
+        "One delta per committed change, released through the 100 ms window, never merged "
+        "(§8.2, #412).",
+    ):
+        assert phrase in prose, phrase

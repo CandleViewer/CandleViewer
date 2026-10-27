@@ -5481,7 +5481,7 @@ export interface paths {
     };
     /**
      * List trade-group definitions (named sets of accounts)
-     * @description A definition is listed only when every member account is in the caller's grants; any other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed. `meta.total`, when present, counts only the definitions the caller may read.
+     * @description A definition is listed only when every member account is in the caller's grants; any other is left out as if it did not exist (SR-E28-21). Soft-deleted ones are never listed. `meta.total`, when present, counts only the definitions the caller may read. A malformed, foreign or expired `cursor` is `400 invalid_cursor`.
      */
     get: operations["listTradeGroupDefinitions"];
     put?: never;
@@ -5502,6 +5502,16 @@ export interface paths {
      *     `403 account_scope_denied` (SR-E29-13). A name that a live definition holds, compared
      *     case-insensitively, is `409 conflict`. The write is audited with the membership before and
      *     after (E28 threat model section 8.1, SR-E28-20).
+     *
+     *     Members whose bound profiles share no allowed symbol are refused with
+     *     `400 validation_failed`, `rule: no_common_symbol`, and `detail`
+     *     "These accounts have no symbol in common — the group can't trade anything." (SCR-062).
+     *     The allowed symbols are each member's bound profile's `allowed_symbols` (every listed
+     *     symbol under `all_symbols`) less its `blocked_symbols`, among the listed USDT linear
+     *     perpetuals. A member with no bound profile allows none, and disabled members count.
+     *
+     *     While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled`
+     *     with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
      */
     post: operations["createTradeGroupDefinition"];
     delete?: never;
@@ -5528,12 +5538,14 @@ export interface paths {
     /**
      * Replace a trade-group definition's name and members (Owner, step-up)
      * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. `environment` is write-once (`trg_tgd_write_once`): another value is `400 validation_failed` with `rule: write_once`. The body replaces the whole member set, so a client sends the `ETag` of its read as `If-Match`: a definition changed since is `412 version_conflict`, and a stale session cannot put back a member the Owner removed (absent `If-Match`, the last write wins).
+     *     While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
      */
     put: operations["updateTradeGroupDefinition"];
     post?: never;
     /**
      * Delete a trade-group definition (Owner, step-up)
      * @description Under `createTradeGroupDefinition`'s rules: Owner-only with a `risk_caps` step-up (D8), audited. A soft delete: it is no longer listed or read, and stays as its groups' history.
+     *     While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
      */
     delete: operations["deleteTradeGroupDefinition"];
     options?: never;
@@ -5548,7 +5560,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** List trade groups (multi-account fan-outs) */
+    /**
+     * List trade groups (multi-account fan-outs)
+     * @description A malformed, foreign or expired `cursor` is `400 invalid_cursor`, and `from` after `to` is `400 invalid_time_range`.
+     */
     get: operations["listTradeGroups"];
     put?: never;
     /**
@@ -5625,6 +5640,11 @@ export interface paths {
      *     `intent_mismatch`, and so are the server-assigned `reverse` and `algo_child`. That refusal
      *     is the whole request's, before any leg is sent, whatever `atomicity` says; it is never a
      *     per-leg failure.
+     *
+     *     **Environment.** A leg whose account is outside this server's environment, or legs in two
+     *     environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry
+     *     per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the
+     *     account-scope check.
      *
      *     **Idempotency.** The group keeps the request's `Idempotency-Key` as its `client_group_ref`
      *     with the request's fingerprint, unique per creator (24-internal-schemas.md section 8.3
@@ -5758,6 +5778,7 @@ export interface paths {
     /**
      * Dry-run a fan-out - resolved per-account sizing, risk and rejections
      * @description Runs the full fan-out pipeline (24-internal-schemas.md section 9.3 sizing, 9.4 fan-out) **without submitting anything**, returning exactly what each leg would send. Legs that would be rejected (cap breach, symbol not allowed, insufficient margin, rate budget exhausted) are returned with their reason so the ticket can show them before the user commits. Never mutates state and is therefore safe to call on every keystroke; it is rate-limited rather than idempotency-keyed. It takes `createTradeGroup`'s permission, `orders:write`, and no other (SR-E28-22; E28 threat model PF-I03, AC-30): it is that submit's dry run (section 9.4 rule 1), so a caller who cannot submit, a Viewer included, gets `403 forbidden`. It needs no arm token. It takes `createTradeGroup`'s body under the same rules and answers as that submit would. A `legs[].exchange_account_id` outside the caller's grants, or one that does not exist, refuses the whole request alike with `403 account_scope_denied` (SR-E28-21, SR-E29-13), so the answer never tells whether the account exists. A request whose submitted values would widen a leg past its bound profile's caps and risk budget is refused whole with `403 risk_limit_breached` and one `errors[]` entry per offending leg, as on the submit (C-12.5, E28 threat model D6), never a leg returned with `would_submit: false`; an account-state cap the request does not move still marks that leg alone (`would_submit: false`, `rejection.code: cap_breached`). An `overrides.profile_id` that is not one of its leg's account's own profiles is `404 not_found`, decided at validation, after the account-scope check and before any leg is sized, as on the submit; a body the submit refuses whole with `400` (`intent_mismatch`, with any `native_stop_required` it lists) answers `400` here too.
+     *     Rate-limited per user by a token bucket (`CV_TRADEGROUPS_PREVIEW_RATE_PER_USER_PER_SECOND`, default 20 a second, a burst of the same size): past it `429 rate_limited` with `Retry-After`. No `Idempotency-Key` is read. It reads cached figures only and never refreshes one (SR-E28-22): a leg whose account figures are not cached is `blocked` with `figure_unknown`. A leg whose account is outside this server's environment, or legs in two environments, refuse the whole request with `400 validation_failed`, one `errors[]` entry per such leg, `rule: environment_mismatch` (SR-E28-16, C-2.11), decided after the account-scope check. While the `trading.trade_groups` flag is off this operation answers `403 trading_disabled` with no `reason`, as `placeOrder` does while `trading.oms_enabled` is off.
      */
     post: operations["previewTradeGroup"];
     delete?: never;
@@ -10801,6 +10822,8 @@ export interface components {
       definition: components["schemas"]["TradeGroupDefinitionInput"];
       /** Format: uuid */
       id: string;
+      /** @description Its members' readiness, as of the read; never stored; the `ETag` does not version it. */
+      readonly readiness: components["schemas"]["TradeGroupReadiness"];
       /** Format: date-time */
       updated_at: string;
     };
@@ -10903,7 +10926,24 @@ export interface components {
         /** Format: uuid */
         exchange_account_id: string;
         rejection?: {
-          /** @enum {string} */
+          /**
+           * @description `skipped` and the sizer's skips (24-internal-schemas.md section 9.3.4)
+           *     mark a `skipped` leg, and every other code a `blocked` one, a member's
+           *     readiness reason (`TradeGroupReadiness`) included. Among them:
+           *     - `skipped`: the request's `overrides.skip` leaves the leg out.
+           *     - `profile_disabled`: its profile is disabled or does not trade.
+           *     - `symbol_denied`: its profile's `blocked_symbols` holds the symbol.
+           *     - `below_min_notional`: it sizes under the minimum quantity or notional.
+           *     - `no_reference_price`: no mid or last price to size a market leg from.
+           *     - `invalid_stop_distance`: its stop is not above 0 or not on the loss side.
+           *     - `figure_unknown`: a figure its sizing needs is not cached.
+           *     - `stop_beyond_liquidation`: its stop would not fire before liquidation.
+           *     - `account_disabled`: its account is disabled.
+           *     - `account_unhealthy`: its account fails the health check.
+           *     - `trading_disabled`: order entry is closed for its account.
+           *     - `risk_state_unavailable`: the risk gate has no state to judge it by.
+           * @enum {string}
+           */
           code?:
             | "cap_breached"
             | "symbol_not_allowed"
@@ -10912,19 +10952,71 @@ export interface components {
             | "account_locked"
             | "key_invalid"
             | "leverage_unavailable"
-            | "kill_switch_engaged";
+            | "kill_switch_engaged"
+            | "profile_disabled"
+            | "symbol_denied"
+            | "below_min_notional"
+            | "skipped"
+            | "no_reference_price"
+            | "invalid_stop_distance"
+            | "figure_unknown"
+            | "stop_beyond_liquidation"
+            | "account_disabled"
+            | "account_unhealthy"
+            | "trading_disabled"
+            | "risk_state_unavailable";
           message?: string;
         } | null;
         resolved?: components["schemas"]["ResolvedLegParams"];
+        /**
+         * @description The leg's state as text (SCR-061): `would_submit` is true exactly for `ready` and `warn`. A `warn` leg carries `warnings`; a `skipped` or `blocked` one carries `rejection`, whose `code` says why.
+         * @enum {string}
+         */
+        status: "ready" | "warn" | "skipped" | "blocked";
+        /** @description The leg's take-profits as the sizer resolves them, one per rung, each a price and the quantity it closes (24-internal-schemas.md section 9.3.3). */
+        take_profits?: {
+          price: components["schemas"]["Decimal"];
+          qty: components["schemas"]["Decimal"];
+        }[];
+        /** @description A `warn` leg's caveats. `stop_fallback`: its stop uses the profile's `fallback_sl_offset_pct`, as no ATR reading served (SR-E28-12). */
+        warnings?: "stop_fallback"[];
         would_submit: boolean;
       }[];
       totals: {
         accounts_submittable?: number;
         accounts_targeted?: number;
+        /** @description The `resolved.estimated_fee_usd` of the legs that would be submitted, summed (SCR-061's "est. fee"). */
+        total_estimated_fee_usd?: components["schemas"]["Decimal"];
         total_notional_usd?: components["schemas"]["Decimal"];
         total_qty?: components["schemas"]["Decimal"];
         total_risk_usd?: components["schemas"]["Decimal"];
       };
+    };
+    /** @description How many of a definition's enabled members could take a leg now ("2 of 3 ready", US-PROF-005), derived on each read from the state the server holds, with no exchange call. */
+    TradeGroupReadiness: {
+      /** @description Every member, a disabled one included. */
+      members: {
+        /** Format: uuid */
+        exchange_account_id: string;
+        ready: boolean;
+        /**
+         * @description Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count.
+         * @enum {string|null}
+         */
+        reason:
+          | "member_disabled"
+          | "account_disabled"
+          | "key_invalid"
+          | "account_unhealthy"
+          | "account_locked"
+          | "kill_switch_engaged"
+          | "trading_disabled"
+          | null;
+      }[];
+      /** @description The enabled members that are ready. */
+      ready: number;
+      /** @description The enabled members. */
+      total: number;
     };
     /** @enum {string} */
     TradeGroupStatus:
@@ -20144,6 +20236,8 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       503: components["responses"]["ServiceUnavailable"];
     };
@@ -20183,6 +20277,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       409: components["responses"]["Conflict"];
       422: components["responses"]["UnprocessableEntity"];
@@ -20211,6 +20306,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroupDefinition"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20256,6 +20352,7 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       409: components["responses"]["Conflict"];
@@ -20294,6 +20391,7 @@ export interface operations {
         };
         content?: never;
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20330,6 +20428,7 @@ export interface operations {
           };
         };
       };
+      400: components["responses"]["BadRequest"];
       401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
@@ -20431,6 +20530,7 @@ export interface operations {
           "application/json": components["schemas"]["TradeGroup"];
         };
       };
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       503: components["responses"]["ServiceUnavailable"];
@@ -20589,9 +20689,11 @@ export interface operations {
         };
       };
       400: components["responses"]["BadRequest"];
+      401: components["responses"]["Unauthorized"];
       403: components["responses"]["Forbidden"];
       404: components["responses"]["NotFound"];
       422: components["responses"]["UnprocessableEntity"];
+      429: components["responses"]["RateLimited"];
       503: components["responses"]["ServiceUnavailable"];
     };
   };
