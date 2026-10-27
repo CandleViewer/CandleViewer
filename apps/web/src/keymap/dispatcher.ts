@@ -1,4 +1,4 @@
-import { KEYMAP, eventBinding, type KeyEventLike, type KeymapCommand } from "./keymap";
+import { KEYMAP, eventBinding, rangeDigit, type KeyEventLike, type KeymapCommand } from "./keymap";
 
 export const INERT_NOTICE_WINDOW_MS = 5000;
 
@@ -10,7 +10,8 @@ export type DispatchResult =
 export interface DispatcherDeps {
   /** Is the command's `validWhen` satisfied in the current focus/context? */
   readonly isValid: (cmd: KeymapCommand) => boolean;
-  readonly execute: (cmd: KeymapCommand) => void;
+  /** `digit` is the pressed digit of a range binding (`Alt+1..9`), else undefined. */
+  readonly execute: (cmd: KeymapCommand, digit?: number) => void;
   /** Non-modal polite notice (toast host, role="status"); must not steal focus. */
   readonly notify: (message: string) => void;
   readonly now: () => number;
@@ -33,12 +34,20 @@ export function createDispatcher(deps: DispatcherDeps) {
   const bound = (c: KeymapCommand): string => deps.bindings?.get(c.id) ?? c.defaultBinding;
   return (e: KeyEventLike, activeContexts: ReadonlySet<string>): DispatchResult => {
     const got = eventBinding(e);
-    const cmd = KEYMAP.find((c) => activeContexts.has(c.context) && bound(c) === got);
-    if (cmd && deps.isValid(cmd)) {
-      deps.execute(cmd);
-      return { status: "executed", commandId: cmd.id };
+    const active = KEYMAP.filter((c) => activeContexts.has(c.context));
+    const exact = active.find((c) => bound(c) === got);
+    if (exact && deps.isValid(exact)) {
+      deps.execute(exact);
+      return { status: "executed", commandId: exact.id };
     }
-    const target = cmd ?? KEYMAP.find((c) => bound(c) === got);
+    // A range binding (`Alt+1..9`, E10-S01 S5) runs only when its handler is valid. It is never
+    // inert: a bare-digit range (`1..9`, Chart) would otherwise explain itself on every digit typed.
+    const ranged = exact ? undefined : active.find((c) => rangeDigit(bound(c), got) !== null);
+    if (ranged && deps.isValid(ranged)) {
+      deps.execute(ranged, rangeDigit(bound(ranged), got) ?? undefined);
+      return { status: "executed", commandId: ranged.id };
+    }
+    const target = exact ?? KEYMAP.find((c) => bound(c) === got);
     if (!target) return { status: "unbound" };
     deps.countInert?.(target.id);
     const t = deps.now();

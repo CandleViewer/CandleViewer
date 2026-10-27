@@ -79,14 +79,19 @@ export function eventBinding(e: KeyEventLike): string {
   return [...mods, k].join("+");
 }
 
+/** The digit a binding string supplies to a range binding (`Alt+1..9`); null when it is not one. */
+export function rangeDigit(binding: string, got: string): number | null {
+  const m = /^(.*?)(\d)\.\.(\d)$/.exec(binding);
+  if (!m) return null;
+  const [, prefix = "", lo = "0", hi = "0"] = m;
+  if (!got.startsWith(prefix)) return null;
+  const d = got.slice(prefix.length);
+  return /^\d$/.test(d) && Number(d) >= Number(lo) && Number(d) <= Number(hi) ? Number(d) : null;
+}
+
 /** True when the event matches the command's default binding (digit ranges `1..9` supported). */
 export function matchesCommand(id: string, e: KeyEventLike): boolean {
   const binding = bindingFor(id);
   const got = eventBinding(e);
-  const m = /^(.*?)(\d)\.\.(\d)$/.exec(binding);
-  if (!m) return got === binding;
-  const [, prefix = "", lo = "0", hi = "0"] = m;
-  if (!got.startsWith(prefix)) return false;
-  const d = got.slice(prefix.length);
-  return /^\d$/.test(d) && Number(d) >= Number(lo) && Number(d) <= Number(hi);
+  return got === binding || rangeDigit(binding, got) !== null;
 }
