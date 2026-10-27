@@ -35,3 +35,5 @@ export type { TextInputProps } from "./TextInput.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
+export { Tag } from "./Tag.js";
+export type { TagProps } from "./Tag.js";
