@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, KeyboardEvent, PointerEvent } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
@@ -78,8 +78,11 @@ export function Slider({
   const drag = useRef<{ left: number; width: number; id: number } | null>(null);
   // True after a mouse press focused the thumb without the ring; the next key press brings the ring back.
   const pressFocused = useRef(false);
+  // The ring after a mouse press: Chromium ignores a re-focus of the focused thumb, so a flag draws it (CSS).
+  const [keyRing, setKeyRing] = useState(false);
   // A gate engaging ends the drag; lifting it again does not resume it (a new press is required).
-  useEffect(() => {
+  // A layout effect runs inside the commit, so no move can arrive between the gate and the cleared drag.
+  useLayoutEffect(() => {
     if (locked) drag.current = null;
   }, [locked]);
   // Plain disabled has no tabindex at all (out of the Tab order); a gated thumb stays in it.
@@ -98,7 +101,7 @@ export function Slider({
     if (pressFocused.current) {
       // As on native controls, the first key press after a mouse press shows the focus ring.
       pressFocused.current = false;
-      thumb.current?.focus({ focusVisible: true } as FocusOptions);
+      setKeyRing(true);
     }
     // Chords belong to the browser and assistive tech; the slider keeps plain keys only.
     if (event.altKey || event.ctrlKey || event.metaKey) return;
@@ -137,6 +140,7 @@ export function Slider({
     // A press focuses the thumb without the keyboard ring where the browser supports the option.
     thumb.current?.focus({ focusVisible: false } as FocusOptions);
     pressFocused.current = true;
+    setKeyRing(false);
     if (locked) return;
     // A second press while a drag is live is ignored until the first pointer is released or cancelled.
     if (drag.current !== null) return;
@@ -147,7 +151,7 @@ export function Slider({
     commit(valueAt(event.clientX, drag.current));
   };
   const handlePointerMove = (event: PointerEvent<HTMLDivElement>): void => {
-    if (locked || drag.current === null || drag.current.id !== event.pointerId) return;
+    if (drag.current === null || drag.current.id !== event.pointerId) return;
     event.preventDefault();
     commit(valueAt(event.clientX, drag.current));
   };
@@ -187,7 +191,12 @@ export function Slider({
             aria-valuetext={valueText(shown, places, suffix)}
             aria-disabled={locked ? true : undefined}
             aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
+            data-key-ring={keyRing ? "" : undefined}
             onKeyDown={handleKeyDown}
+            onBlur={() => {
+              pressFocused.current = false;
+              setKeyRing(false);
+            }}
           />
         </div>
         {shownMarks.length > 0 ? (

@@ -305,17 +305,45 @@ describe("Slider pointer", () => {
     expect(now(host)).toBe("75");
   });
 
-  it("the first key after a mouse press brings the focus ring back, once", async () => {
+  it("data-key-ring: set by the first key after a press, cleared by blur and by the next press", async () => {
+    stubLayout();
+    const host = await mount(<Host />);
+    const ring = (): boolean => slider(host).hasAttribute("data-key-ring");
+    expect(ring()).toBe(false);
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    expect(ring()).toBe(false);
+    key(slider(host), { key: "ArrowRight" });
+    expect(ring()).toBe(true);
+    key(slider(host), { key: "ArrowRight" });
+    expect(ring()).toBe(true);
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    expect(ring()).toBe(false);
+    key(slider(host), { key: "x" });
+    expect(ring()).toBe(true);
+    act(() => slider(host).blur());
+    expect(ring()).toBe(false);
+    // A key with no preceding press (Tab focus) leaves the native ring to :focus-visible.
+    act(() => slider(host).focus());
+    key(slider(host), { key: "ArrowRight" });
+    expect(ring()).toBe(false);
+    // A blur clears a pending press, so a later key does not set it.
+    pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
+    act(() => slider(host).blur());
+    act(() => slider(host).focus());
+    key(slider(host), { key: "ArrowRight" });
+    expect(ring()).toBe(false);
+  });
+
+  it("does not call blur or a focus-visible re-focus (consumers see no extra focus events)", async () => {
     stubLayout();
     const host = await mount(<Host />);
     const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    const blur = vi.spyOn(HTMLElement.prototype, "blur");
     pointer("pointerdown", rail(host), { pointerId: 1, button: 0, clientX: 150 });
     expect(focus).toHaveBeenLastCalledWith({ focusVisible: false });
     key(slider(host), { key: "ArrowRight" });
-    expect(focus).toHaveBeenLastCalledWith({ focusVisible: true });
-    focus.mockClear();
-    key(slider(host), { key: "ArrowRight" });
-    expect(focus).not.toHaveBeenCalled();
+    expect(focus).toHaveBeenCalledTimes(1);
+    expect(blur).not.toHaveBeenCalled();
   });
 
   it("drags, snaps to the step, clamps past either end and stops on release", async () => {

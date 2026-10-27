@@ -57,7 +57,8 @@
   background: var(--color-action-primary-default);
 }
 
-.cv-slider__thumb:focus-visible {
+.cv-slider__thumb:focus-visible,
+.cv-slider__thumb[data-key-ring]:focus {
   outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
   outline-offset: 2px;
 }
@@ -143,7 +144,8 @@
     background: CanvasText;
   }
 
-  .cv-slider__thumb:focus-visible {
+  .cv-slider__thumb:focus-visible,
+  .cv-slider__thumb[data-key-ring]:focus {
     outline-color: Highlight;
   }
 

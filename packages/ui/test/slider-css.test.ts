@@ -103,6 +103,23 @@ describe("slider.css contract", () => {
     expect(thumb?.body).toContain("background: CanvasText");
   });
 
+  it("the key ring is drawn exactly like :focus-visible, in both modes", () => {
+    const ring = (css: string, sel: string): string =>
+      blocks(css)
+        .filter((b) => b.selectors.includes(sel))
+        .map((b) => b.body.replace(/\s+/g, " ").trim())
+        .join("|");
+    for (const css of [normal, forced]) {
+      const visible = blocks(css).find((b) =>
+        b.selectors.includes(".cv-slider__thumb:focus-visible"),
+      );
+      expect(visible, "no :focus-visible rule").toBeDefined();
+      // One block, so the two selectors cannot drift apart.
+      expect(visible?.selectors).toContain(".cv-slider__thumb[data-key-ring]:focus");
+      expect(ring(css, ".cv-slider__thumb[data-key-ring]:focus")).toMatch(/outline(-color)?:/);
+    }
+  });
+
   it("the track is 8 px, twice space.inset.xs, centred on the rail", () => {
     const track = blocks(normal).find((b) => b.selectors.includes(".cv-slider__track"));
     expect(track?.body).toContain("height: calc(var(--space-inset-xs) * 2)");
@@ -124,7 +141,7 @@ describe("slider.css contract", () => {
     );
     expect(hover).toContain("border-color: Highlight");
     // The normal hover rule paints the track with a token; the forced one must put Canvas back.
-    expect(hover).toContain("background: Canvas");
+    expect(hover).toMatch(/background:\s*Canvas;/);
     expect(rule(".cv-slider__thumb")).toContain("background: CanvasText");
     expect(forced).not.toContain("ButtonText");
   });
