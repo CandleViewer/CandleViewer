@@ -19,6 +19,7 @@ from candleviewer.api.trade_group_definitions import make_trade_group_definition
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.order_entry import OrderEntryRefusal
+from candleviewer.domain.primitives import Environment
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories import trade_group_definitions as port
 from candleviewer.storage.repositories.accounts import AccountScope, OwnerScope
@@ -26,7 +27,7 @@ from candleviewer.trade_groups_wiring import GateReadiness, NoLockouts
 
 _E28 = "e28f0000-0000-4000-8000-{:0>12}"
 OWNER_ID, A, B, C, CORE3, PAIR = (UUID(_E28.format(t)) for t in "1 d1 d2 d3 a1 a2".split())
-MANAGER_ID, MISSING = UUID(int=7), UUID(int=404)
+MANAGER_ID, MISSING, LIVE = UUID(int=7), UUID(int=404), UUID(int=9)
 _AT, NOW = datetime(2026, 10, 27, 9, tzinfo=UTC), datetime(2026, 10, 27, 12, tzinfo=UTC)
 _LIST = "listTradeGroupDefinitions"
 
@@ -37,10 +38,13 @@ def principal(role: str, *granted: UUID, read: bool = True) -> PrincipalSnapshot
     return PrincipalSnapshot(OWNER_ID if role == "owner" else user, frozenset({role}), held, grants)
 
 
-def record(key: UUID, name: str, *members: UUID, off: UUID | None = None) -> port.DefinitionRecord:
-    """A live demo definition as the store reads it, by account id; `off`'s row is switched off."""
-    held = tuple(port.MemberRow(m, True, "demo", m != off) for m in members)
-    return port.DefinitionRecord(port.DefinitionRow(key, name, "demo", None, None, _AT, _AT), held)
+def record(
+    key: UUID, name: str, *members: UUID, off: UUID | None = None, paused: UUID | None = None,
+    env: Environment = "demo",
+) -> port.DefinitionRecord:  # fmt: skip
+    """As the store reads it, by account id: `off`'s account row and `paused`'s switch are off."""
+    held = tuple(port.MemberRow(m, m != paused, env, m != off) for m in members)
+    return port.DefinitionRecord(port.DefinitionRow(key, name, env, None, None, _AT, _AT), held)
 
 
 class Store:
@@ -159,6 +163,23 @@ def test_a_deleted_definition_is_neither_listed_nor_read(world: World) -> None:
     assert world.ids() == [str(PAIR)] and (gone.status_code, gone.text) == (404, missing.text)
 
 
+def test_a_page_has_more_only_past_its_limit_and_its_limit_is_1_to_500(world: World) -> None:
+    meta = {"next_cursor": None, "has_more": False, "count": 2}  # `limit` 2 over exactly two
+    assert world.read(limit=2).json()["meta"] == meta
+    assert [world.read(limit=n).status_code for n in (0, 501, 500)] == [422, 422, 200]
+
+
+def test_a_paused_member_reads_disabled_and_a_live_one_meets_the_live_gate(world: World) -> None:
+    """`member_disabled` is outside `total`; the live gate (off here) asks the environment."""
+    world.store.records[LIVE] = record(LIVE, "Live", A, B, C, paused=B, env="live")
+    got = world.read(LIVE).json()
+    assert [m["enabled"] for m in got["definition"]["members"]] == [True, False, True]
+    off = "trading_disabled"
+    assert got["readiness"] == {"ready": 0, "total": 2, "members": [
+        _state(A, off), _state(B, "member_disabled"), _state(C, off),
+    ]}  # fmt: skip
+
+
 def test_a_bad_or_foreign_cursor_is_400_invalid_cursor(world: World) -> None:
     """A cursor names the last one read, bound to operation, caller and filters for an hour."""
     issued, key = int(NOW.timestamp()), CORE3.bytes + b"Core3"
@@ -214,8 +235,11 @@ def test_faults_are_refused_or_503_logged_by_class_and_sqlstate_or_500(world: Wo
         defect = world.read()
     sent = [r.status_code for r in (gated, bare, timeout, unreadable, defect)]
     assert (sent, "defect" in defect.text) == ([403, 403, 503, 503, 500], False)
-    logged = [(e["error"], e.get("sqlstate")) for e in logs if "definition_" in e["event"]]
-    assert logged == [
+    events = [e for e in logs if "definition_" in e["event"]]
+    assert [(e["error"], e.get("sqlstate")) for e in events] == [
         ("RuntimeError", None), ("RuntimeError", None), ("StorageQueryFailed", "57014"),
         ("AccountsError", None),
     ]  # fmt: skip
+    denial = ["error", "event", "log_level", "principal_user_id"]  # a class, an id: no value
+    unavailable = ["error", "event", "log_level", "sqlstate"]
+    assert [sorted(e) for e in events] == [denial, denial, unavailable, unavailable]

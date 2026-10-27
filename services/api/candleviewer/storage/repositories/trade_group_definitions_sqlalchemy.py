@@ -154,7 +154,7 @@ class SqlAlchemyDefinitionStore:
     async def _with_members(
         uow: SqlAlchemyUnitOfWork, scope: AccountScope, rows: Any
     ) -> tuple[port.DefinitionRecord, ...]:
-        """With their members, in one statement: all or none for a grant (`get`'s rule)."""
+        """With their members, in one statement; a read drops one that read none (`page`)."""
         read: dict[UUID, tuple[port.DefinitionRow, list[port.MemberRow]]] = {
             d.id: (d, []) for d in (port.DefinitionRow(*r) for r in rows)
         }
@@ -162,14 +162,13 @@ class SqlAlchemyDefinitionStore:
             stmt = members_statement(scope, *read)
             for definition_id, *member in await uow.session.execute(stmt):
                 read[definition_id][1].append(port.MemberRow(*member))
-        grant = isinstance(scope, GrantScope)
-        return tuple(port.DefinitionRecord(d, tuple(m)) for d, m in read.values() if m or not grant)
+        return tuple(port.DefinitionRecord(d, tuple(m)) for d, m in read.values())
 
     @classmethod
     async def _scoped_record(
         cls, uow: SqlAlchemyUnitOfWork, scope: AccountScope, definition_id: UUID
     ) -> tuple[port.DefinitionRecord, ...]:
-        """The definition with its members, or nothing (`_with_members`)."""
+        """The definition with its members (maybe none: `get` drops it), or nothing."""
         row = (await uow.session.execute(definition_statement(scope, definition_id))).first()
         return await cls._with_members(uow, scope, () if row is None else (row,))
 
@@ -258,13 +257,15 @@ class SqlAlchemyDefinitionStore:
             return None  # an empty grant sees nothing and runs no SQL
         async with self._unit_of_work(scope) as uow:
             found = await self._scoped_record(uow, scope, definition_id)
-        return found[0] if found else None
+        return found[0] if found and found[0].members else None  # as `page`
 
     async def page(
         self, scope: AccountScope, *, after: tuple[str, UUID] | None, limit: int
     ) -> tuple[port.DefinitionRecord, ...]:
+        """One that read no member is left out, for every scope: a grant lost the accounts, or a
+        soft delete came between the two statements. The page is then short; a re-list reads it."""
         if isinstance(scope, GrantScope) and not scope.account_ids:
             return ()  # as `get`
         async with self._unit_of_work(scope) as uow:
             rows = await uow.session.execute(page_statement(scope, after, limit))
-            return await self._with_members(uow, scope, rows)
+            return tuple(r for r in await self._with_members(uow, scope, rows) if r.members)

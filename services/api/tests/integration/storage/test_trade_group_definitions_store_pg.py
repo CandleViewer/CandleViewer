@@ -308,6 +308,7 @@ async def test_a_page_is_keyset_by_name_then_id(store: Store, pg_dsn: str) -> No
     for account in (x, y):
         tg._grant(pg_dsn, reader, account)
     made = {"Kz delta": (x,), "kz Bravo": (x, y), "KZ alpha": (y,), "kz charlie": (x, A)}
+    made["kz echo"] = (y,)  # after the hidden one: it takes no slot of page 2
     for name, members in made.items():  # A is not granted: "kz charlie" is not the grant's
         await store.create(ME, _new(name, *members), write_ahead=_Hook())
     gone = await store.create(ME, _new("kz bravo 2", x), write_ahead=_Hook())
@@ -315,10 +316,13 @@ async def test_a_page_is_keyset_by_name_then_id(store: Store, pg_dsn: str) -> No
     grant = GrantScope(reader, frozenset({x, y}))
     pages = await _pages(store, grant)
     names = [[r.definition.name for r in p] for p in pages]
-    assert names == [["KZ alpha", "kz Bravo"], ["Kz delta"]]  # not C's order: K, Z, then k
+    assert names == [["KZ alpha", "kz Bravo"], ["Kz delta", "kz echo"]]  # not C's: K, Z, then k
     read = [r for p in pages for r in p]
     assert read == [await store.get(grant, r.definition.id) for r in read]
-    assert [len(r.members) for r in read] == [1, 2, 1]
-    live = "SELECT id FROM trade_group_definitions WHERE deleted_at IS NULL"
+    assert [len(r.members) for r in read] == [1, 2, 1, 1]
+    live = (  # a member-less one (the grant test's "Empty") is read by no one
+        "SELECT id FROM trade_group_definitions d WHERE deleted_at IS NULL AND EXISTS "
+        "(SELECT 1 FROM trade_group_definition_members WHERE definition_id = d.id)"
+    )
     owned = [r.definition.id for p in await _pages(store, ME) for r in p]
     assert owned == [row[0] for row in tg._sql(pg_dsn, live + " ORDER BY lower(name), id")]

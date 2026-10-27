@@ -58,7 +58,7 @@ def _forbidden(principal: PrincipalSnapshot, unwritten: Exception | None = None)
     if unwritten is not None:  # a module-level logger pins a stale processor chain (#2008)
         error, actor = type(unwritten).__name__, str(principal.user_id)
         log = structlog.get_logger(__name__)
-        log.warning("trade_group_definition_denial_unaudited", actor_user_id=actor, error=error)
+        log.warning("trade_group_definition_denial_unaudited", principal_user_id=actor, error=error)
     return problem("forbidden", f"Requires {_READ.value}.", required_permissions=[_READ.value])
 
 

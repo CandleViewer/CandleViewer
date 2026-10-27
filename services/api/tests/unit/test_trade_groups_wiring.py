@@ -11,6 +11,7 @@ from unittest.mock import Mock
 from uuid import UUID
 
 import pytest
+from fastapi.testclient import TestClient
 from structlog.testing import capture_logs
 
 from candleviewer import app as appmod
@@ -18,9 +19,11 @@ from candleviewer import trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
+from candleviewer.oms_wiring import InterimKillSwitch
 from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
 from tests.unit.accounts._fakes import ACC
+from tests.unit.api.test_trade_group_definition_reads import CORE3, World
 
 NOT_A_BOOL = cast(bool, 1)  # truthy, and not the bool the type promises
 
@@ -128,12 +131,23 @@ def test_no_lockout_is_reported_until_e39() -> None:
     assert logs == []
 
 
-def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_once() -> None:
+def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     assert trade_groups_wiring.definition_store(Settings(storage_backend="fake")) is None
-    store = trade_groups_wiring.definition_store(Settings(storage_backend="real"))
-    assert store is not None and (store._timeout, store._audit_timeout_s) == ("2000", 5.0)
+    real = Settings(storage_backend="real", oms_statement_timeout_ms=3000)  # not the 2000 default
+    store = trade_groups_wiring.definition_store(real)
+    assert store is not None and (store._timeout, store._audit_timeout_s) == ("3000", 5.0)
+    world = World()  # the reads' store, and an owner who may read
+    monkeypatch.setattr(appmod, "definition_store", lambda _settings: world.store)
     with capture_logs() as logs:
-        app = appmod.create_app()
+        app = appmod.create_app(principal_resolver=world)
     source = app.state.trade_group_readiness
     assert source._gate is app.state.order_entry_gate and isinstance(source._lockouts, NoLockouts)
     assert [log["event"] for log in logs].count("trade_groups_interim_port") == 1
+    assert source._live_enabled is False  # the setting's default
+    assert source._live_flag is app.state.feature_flags.live_enabled  # the OMS's view of the flag
+    assert isinstance(getattr(source._kill_switch, "__self__", None), InterimKillSwitch)
+    # a router given no store or no readiness answers 503, not this
+    got = TestClient(app, client=("127.0.0.1", 50000)).get(f"/trade-group-definitions/{CORE3}")
+    assert got.status_code == 200 and got.json()["readiness"]["total"] == 3

@@ -27,7 +27,6 @@ from candleviewer.domain.order_entry import OrderEntryCheck, RefusalReason
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.settings import Settings
 from candleviewer.storage.repositories import trade_group_definitions_sqlalchemy as pg
-from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
 from candleviewer.storage.repositories.user_roles_sqlalchemy import WRITE_AHEAD_TIMEOUT_S
 
@@ -110,9 +109,10 @@ class GateReadiness:
 
 
 def definition_store(settings: Settings) -> pg.SqlAlchemyDefinitionStore | None:
-    """On a pool of its own, at the trade-group store's caps; `None` on the fake backend (503)."""
+    """On a pool of its own, at the OMS stores' cap (`CV_OMS_STATEMENT_TIMEOUT_MS`); `None` on the
+    fake backend (503)."""
     if settings.storage_backend != "real":
         return None
     pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "group-definitions")
-    cap, bound = OMS_STATEMENT_TIMEOUT_MS, WRITE_AHEAD_TIMEOUT_S
+    cap, bound = settings.oms_statement_timeout_ms, WRITE_AHEAD_TIMEOUT_S
     return pg.SqlAlchemyDefinitionStore(pool, statement_timeout_ms=cap, audit_timeout_s=bound)

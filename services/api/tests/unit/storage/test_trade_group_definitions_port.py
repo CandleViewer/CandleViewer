@@ -3,8 +3,8 @@
 The port imports the stdlib and two driver-free sibling ports only (whose own imports
 `test_trade_groups_port.py` pins), each error carries a name and nothing else (C-12.6), and the
 grant predicate is the trade-group store's SR-E28-21 predicate over a definition's members. On
-that store's fake unit of work: both read statements carry the scope, a read is capped and an
-Owner's gated first, a grant reads all or nothing, and an empty read-back denies a write.
+that store's fake unit of work: every read statement carries the scope, a read is capped and an
+Owner's gated first, a read leaves out one with no member, an empty read-back denies a write.
 """
 
 from __future__ import annotations
@@ -35,6 +35,9 @@ _GRANT, _OWNER = GrantScope(_CALLER, frozenset({_ACCOUNT})), OwnerScope(_CALLER)
 _AT = datetime(2026, 10, 1, tzinfo=UTC)
 _ROW: Any = (_ID, "Core3", "demo", None, None, _AT, _AT)
 _NEW = port.NewDefinition(id=_ID, name="Core3", env="demo", members=())
+_OTHER: Any = (UUID(int=4), "Pair", "demo", None, None, _AT, _AT)
+_MEMBER: Any = (_ID, _ACCOUNT, True, "demo", False)
+_FIRST = port.DefinitionRecord(port.DefinitionRow(*_ROW), (port.MemberRow(*_MEMBER[1:]),))
 
 
 def _store(rel: _Rel, **caps: Any) -> pg.SqlAlchemyDefinitionStore:
@@ -72,8 +75,11 @@ def test_the_grant_predicate_is_the_group_stores_over_a_definitions_members() ->
     assert pg.DEFINITION_VISIBLE.text == over_members != groups._GRANT_VISIBLE
 
 
-@pytest.mark.parametrize("build", [pg.definition_statement, pg.members_statement])
-def test_both_read_statements_carry_the_scope_and_bind_the_caller(build: Any) -> None:
+@pytest.mark.parametrize(
+    "build",
+    [pg.definition_statement, pg.members_statement, lambda s, _id: pg.page_statement(s, None, 10)],
+)
+def test_every_read_statement_carries_the_scope_and_binds_the_caller(build: Any) -> None:
     grant, owner = build(_GRANT, _ID), build(_OWNER, _ID)
     assert _marked(pg.DEFINITION_VISIBLE.text) in _marked(_sql(grant))
     assert (_params(grant)["caller"], _params(grant)["granted"]) == (str(_CALLER), [str(_ACCOUNT)])
@@ -118,23 +124,27 @@ async def test_the_store_runs_under_the_caps_it_is_given() -> None:
     rel, late = _Rel(_Result([])), _Rel(_Result(), _Result(), _Result([_ROW]), _Result([]))
     assert await _store(rel, statement_timeout_ms=750).get(_GRANT, _ID) is None
     store = _store(late, audit_timeout_s=0.01)
+
+    async def hang(*_: object) -> None:  # only the bound ends it
+        await asyncio.Event().wait()
+
     with pytest.raises(WriteAheadTimeout):  # its 0.01 s bound, never the 5 s default
         async with asyncio.timeout(1):
-            await store.create(_OWNER, _NEW, write_ahead=lambda *_: asyncio.sleep(10))
+            await store.create(_OWNER, _NEW, write_ahead=hang)
     assert (rel.caps, late.commits, late.rollbacks) == ([{"timeout": "750"}], 0, 1)
 
 
-async def test_a_page_reads_its_members_in_one_statement_all_or_nothing() -> None:
-    """In one statement: a grant reads one whose members it lost in between as nothing."""
-    other: Any = (UUID(int=4), "Pair", "demo", None, None, _AT, _AT)
-    member: Any = (_ID, _ACCOUNT, True, "demo", False)
-    first = port.DefinitionRecord(port.DefinitionRow(*_ROW), (port.MemberRow(*member[1:]),))
-    grant = _Rel(_Result([_ROW, other]), _Result([member]))
-    assert await _store(grant).page(_GRANT, after=("Core", _ID), limit=2) == (first,)
+async def test_a_page_reads_its_members_in_one_statement_and_drops_one_that_lost_them() -> None:
+    """A grant reads one whose members it lost in between as nothing. A definition always has a
+    member, so an Owner's page drops one that reads none (a soft delete came between) and answers
+    the others, where the record would 503 it; its get is a 404. A write's read-back keeps it."""
+    grant = _Rel(_Result([_ROW, _OTHER]), _Result([_MEMBER]))
+    assert await _store(grant).page(_GRANT, after=("Core", _ID), limit=2) == (_FIRST,)
     assert "trade_group_definitions.id IN ($3::UUID, $4::UUID)" in _sql(grant.calls[1])
-    owner = _Rel(_Result(), _Result([_ROW, other]), _Result([member]))  # the owner gate first
-    lone = port.DefinitionRecord(port.DefinitionRow(*other), ())
-    assert await _store(owner).page(_OWNER, after=None, limit=2) == (first, lone)
+    owner = _Rel(_Result(), _Result([_ROW, _OTHER]), _Result([_MEMBER]))  # the owner gate first
+    assert await _store(owner).page(_OWNER, after=None, limit=2) == (_FIRST,)
+    gone = _Rel(_Result(), _Result([_ROW]), _Result([]))
+    assert await _store(gone).get(_OWNER, _ID) is None
     empty = _Rel()  # an empty grant runs no SQL
     assert await _store(empty).page(GrantScope(_CALLER, frozenset()), after=None, limit=2) == ()
     assert empty.calls == empty.caps == []
