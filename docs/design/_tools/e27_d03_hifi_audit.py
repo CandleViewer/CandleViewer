@@ -177,6 +177,12 @@ slash, "Disabled: Cancel", a closing verb's condition and parenthesis, "That" / 
 lower, Title and UPPER case in section 11's SCR-126 edit row, section 7's prose, the hand-off's
 prose and its Table 2 (``exit-state``, with ``k9.exit`` where K9's word is the state; a neutral
 edit at the two new sites stays quiet), and M2's four load forms and six of its own to 7g's list.
+r8 adds round 8's fixed sets at section 11's SCR-126 edit row, section 7's prose and a section 2.1
+bullet: M1‴'s ten (a state before any separator, "Inert · Cancel", "Disabled -> Cancel"; a time
+word in a closing verb's tail; a leading condition, "Until the summary loads, nothing answers the
+Cancel", ``exit-state``) and M2′'s seven (a load named by a spinner, skeleton rows, a progress bar,
+placeholder or still-blank counts, "before the server answers", ``load-state``); a neutral edit at
+the section 2.1 bullet stays quiet.
 
 Usage: python3 -I -B docs/design/_tools/e27_d03_hifi_audit.py [--json] [--check] [--self-test]
        [--repin-security] [--repin-confirm-look] [--repin-exit-state] [--repin-load-state]
@@ -2757,7 +2763,14 @@ EXIT_CITE = r"(?:`[\w.-]+:\d+(?:-\d+)?`|§[\d.]+|D\d+|CMP-\d+)"
 # r7: a colon, a dash, an arrow, a middle dot or a slash no longer ends the exit's clause: what
 # follows it must itself be a non-state (EXIT_FOLLOW: the clause's end, another exit, a next
 # control by its label, "the primary", "the confirm", "focus return" or a cite)
-EXIT_SEP = re.compile(r"\s*(?:->|[:—–·→/]|\s-\s)\s*")
+# r8 (round 8's M1‴): one shared separator set, read in both orders: after an exit (exit_clear:
+# "Cancel · inert") and before it (exit_state_before: "Inert · Cancel", "Disabled -> Cancel")
+EXIT_SEPARATORS = frozenset([":", "—", "–", "·", "→", "/", "->", " - "])
+EXIT_SEP_ALT = "|".join(
+    r"\s-\s" if sep == " - " else re.escape(sep)
+    for sep in sorted(EXIT_SEPARATORS, key=lambda sep: (-len(sep), sep))
+)
+EXIT_SEP = re.compile(rf"\s*(?:{EXIT_SEP_ALT})\s*")
 EXIT_END = re.compile(r"\s*(?:$|[.;)\]\"”|])")
 EXIT_LABEL = (
     r"(?:Verify|Save|Register|Confirm|Next|Run|Change|Skip|Continue|Copy|Details|Actions|Add"
@@ -2782,7 +2795,10 @@ EXIT_ASIDE = re.compile(
 # disabled", "once enabled"), a parenthesis of anything but cites and a ruling marker, or a
 # separator not followed by a non-state
 EXIT_COND = re.compile(
-    r"\b(?:while|whilst|once|when|whenever|until|unless|if|though|although|except)\b",
+    # r8: and the time words "during", "after", "before" ("only after"): "Cancel closes nothing
+    # during the read", "Cancel dismisses the dialog only after the read"
+    r"\b(?:while|whilst|once|when|whenever|until|unless|if|though|although|except|during|after"
+    r"|before)\b",
     re.IGNORECASE,
 )
 EXIT_TAIL_SEP = re.compile(r":(?!\d)|->|[—–·→]|\s/(?:\s|$)|\s-\s")
@@ -2902,16 +2918,46 @@ def exit_state_before(text: str, start: int) -> bool:
     """The word right before an exit (spaces only between) is not one of EXIT_BEFORE's function
     words: "a frozen Cancel", "the dormant `Esc`"; a word ending in "'s" ("stage 5's Close") is a
     place, not a look, and so is "footer" ("Footer [Cancel]"). r7: so is the word before a colon
-    or a dash ahead of the exit ("Disabled: Cancel" pairs; "Focus: Cancel" does not)."""
-    m = re.search(r"(?:^|[\s(\"“])([A-Za-z][\w'-]*) +$", text[:start])
+    or a dash ahead of the exit ("Disabled: Cancel" pairs; "Focus: Cancel" does not). r8: before
+    any separator of EXIT_SEPARATORS ("Inert · Cancel", "Disabled -> Cancel", "Inert → back"),
+    unless what stands before the separator is a non-state (EXIT_PRE_CLEAR: another exit, a next
+    control by its label, the primary, the confirm or a cite, as EXIT_FOLLOW reads it after)."""
+    head = text[:start]
+    m = re.search(r"(?:^|[\s(\"“])([A-Za-z][\w'-]*) +$", head)
     if m:
         word = m[1]
         return word.lower() not in EXIT_BEFORE and not word.endswith("'s")
-    m = re.search(r"(?:^|[\s(\"“*])([A-Za-z][\w'-]*)\**\s*(?::|—|–)[\s\"“*]*$", text[:start])
+    sep = EXIT_BEFORE_SEP.search(head)
+    if not sep:
+        return False
+    pre = head[: sep.start()]
+    if EXIT_PRE_CLEAR.search(pre):
+        return False
+    # an arrow with another arrow after the exit is a sequence (a Tab order), not a state
+    if re.search(r"→|->", sep[0]) and re.match(r"[^.;|]*(?:→|->)", text[start:]):
+        return False
+    m = re.search(r"(?:^|[\s(\"“*])([A-Za-z][\w'-]*)\**$", pre)
     if not m:
         return False
     word = m[1].lower()
     return word not in EXIT_BEFORE and word not in EXIT_LABEL_BEFORE
+
+
+# r8: the separator that ends the text before an exit ("Inert · ", "Disabled -> ", "Unavailable /
+# ["), and what before it is a non-state, not a state
+EXIT_BEFORE_SEP = re.compile(rf"\s*(?:{EXIT_SEP_ALT})[\s\"“*\[`]*$")
+EXIT_PRE_CLEAR = re.compile(
+    r"(?:\[(?i:cancel|close(?: card)?|back)\]|`(?i:esc)`|\b(?i:esc)"
+    r"|\b(?:Close card|CLOSE CARD|Cancel|CANCEL|Close|CLOSE|Back|BACK)"
+    rf"|\b{EXIT_LABEL}|the primary|\bconfirm|focus return|{EXIT_CITE})[\]`\"”*]*$"
+)
+# r8: a condition that leads the part an exit stands in ("Until the summary loads, nothing answers
+# the Cancel", after a bold lead-in too): the exit and its verb are read anywhere in the part, not
+# only by the word before
+EXIT_COND_LEAD = re.compile(
+    rf"[\s(\"'`*]*(?:\*\*[^*]*\*\*\s*)?(?:only\s+)?(?:{EXIT_COND.pattern})[^,;]*,",
+    re.IGNORECASE,
+)
 
 
 def exit_state_hits(text: str, carry: bool = False) -> tuple[list[str], bool]:
@@ -2936,7 +2982,9 @@ def exit_state_hits(text: str, carry: bool = False) -> tuple[list[str], bool]:
         hits += [
             text[max(0, a - 20) : b + 30]
             for a, b in spans
-            if exit_state_after(text, b) or exit_state_before(text, a)
+            if exit_state_after(text, b)
+            or exit_state_before(text, a)
+            or EXIT_COND_LEAD.match(text, off, a) is not None
         ]
         prev = bool(spans)
     return hits, prev
@@ -3011,7 +3059,13 @@ LOAD_NAME = re.compile(
     # consequences come back", "the summary is computed")
     rf"|\b{LOAD_TIME}\s+(?:the|its|a|their)\s+(?:[\w-]+\s+)?{LOAD_NOUN}"
     r"|\b(?:the|its|a|one) read\b(?!-)|\bin[- ]flight\b"
-    rf"|{LOAD_SUBJECT}(?:\s+[\w'-]+){{0,3}}?\s+{LOAD_VERB}",
+    rf"|{LOAD_SUBJECT}(?:\s+[\w'-]+){{0,3}}?\s+{LOAD_VERB}"
+    # r8 (round 8's M2'): the load named by what it draws - a spinner, skeleton rows, a progress
+    # bar, placeholder counts, blank or empty counts ("the counts are still blank") - and "before
+    # the server answers"; a negated noun draws nothing ("no progress bar", BQ-12's stepper)
+    r"|(?<!\bno )\b(?:spinners?|skeletons?|progress bars?|placeholders?)\b"
+    r"|\b(?:blank|empty) counts?\b|\bcounts? (?:are |is )?(?:still )?(?:blank|empty)\b"
+    r"|\bstill blank\b|\bbefore the server answers\b",
     re.IGNORECASE,
 )
 # r6c: the confirm is named by CONFIRM_NOUN or by what it is: a bracketed destructive label
@@ -5446,6 +5500,30 @@ EXIT_SEP_FORMS: tuple[tuple[str, frozenset[str]], ...] = (
     ("Inert: back", _STATE_K9),
 )
 ROW11_EDIT = "SCR-126 edit"
+# r8: round 8's fixed sets (M1‴ and M2′), each at section 11's SCR-126 edit row, section 7's prose
+# and a section 2.1 bullet; each must FAIL by its own code (the pins beside it allowed)
+S21_BULLET = "- No keyboard of its own: the actions are its row's (§2.2)."
+EXIT_R8_FORMS = (
+    "Inert · Cancel.",
+    "Disabled → Back.",
+    "Unavailable / [Cancel].",
+    "Disabled -> Cancel.",
+    "Inert → back.",
+    "Cancel closes nothing during the read.",
+    "Cancel dismisses the dialog only after the read.",
+    "Cancel leaves the dialog after the read only.",
+    "Cancel returns focus only after the consequences arrive.",
+    "Until the summary loads, nothing answers the Cancel.",
+)
+LOAD_R8_FORMS = (
+    "The confirm is enabled over the skeleton rows.",
+    "The confirm is enabled while the spinner shows.",
+    "The confirm is enabled while the counts are still blank.",
+    "The confirm renders beside a progress bar.",
+    "The confirm shows next to placeholder counts.",
+    "During the spinner, the confirm is live.",
+    "The confirm is pressable before the server answers.",
+)
 H_TABLE2 = "no roving tabindex (D22)"
 
 
@@ -5459,6 +5537,16 @@ def exit_sep_sites(text: str) -> tuple[tuple[str, str, Mutation], ...]:
         ("section 7's prose", "spec", sec_sub("7", S7_PARA, f"{S7_PARA}{sent} ")),
         ("the hand-off's prose", "hand-off", hand_sub(H_ENTRIES, f"{sent} {H_ENTRIES}")),
         ("the hand-off's Table 2", "hand-off", hand_sub(H_TABLE2, f"{H_TABLE2}; {cell}")),
+    )
+
+
+def r8_sites(text: str) -> tuple[tuple[str, str, Mutation], ...]:
+    """(where, the document it edits, the edit) for ``text`` at round 8's three sites."""
+    cell = text.rstrip(".")
+    return (
+        ("section 11's SCR-126 edit row", "spec", table_add("11", ROW11_EDIT, cell)),
+        ("section 7's prose", "spec", sec_sub("7", S7_PARA, f"{S7_PARA}{text} ")),
+        ("a section 2.1 bullet", "spec", sec_sub("2.1", S21_BULLET, f"{S21_BULLET} {text}")),
     )
 
 
@@ -5564,6 +5652,9 @@ def exit_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
                 out.append(
                     (f"ES{i}{case[0]}{j}", f'"{fn(form)}" ({case}) in {where}', need, doc, edit)
                 )
+    for i, form in enumerate(EXIT_R8_FORMS, 1):
+        for j, (where, doc, edit) in enumerate(r8_sites(form), 1):
+            out.append((f"EX{i}.{j}", f'"{form}" in {where}', frozenset({"exit-state"}), doc, edit))
     loading = frozenset({"k4.loading"})
     out += [
         (
@@ -5600,6 +5691,8 @@ def exit_controls() -> tuple[tuple[str, str, Mutation], ...]:
         # r7's two new sites
         ("section 11's SCR-126 edit row", "spec", table_add("11", ROW11_EDIT, n)),
         ("the hand-off's Table 2", "hand-off", hand_sub(H_TABLE2, f"{H_TABLE2}; {n}")),
+        # r8's new site
+        ("a section 2.1 bullet", "spec", sec_sub("2.1", S21_BULLET, f"{S21_BULLET} {n}.")),
     )
 
 
@@ -5761,6 +5854,9 @@ def load_mutations() -> tuple[tuple[str, str, frozenset[str], str, Mutation], ..
                         edit,
                     )
                 )
+    for i, form in enumerate(LOAD_R8_FORMS, 1):
+        for j, (where, doc, edit) in enumerate(r8_sites(form), 1):
+            out.append((f"GX{i}.{j}", f'"{form}" in {where}', frozenset({"load-state"}), doc, edit))
     for j, (where, doc, edit) in enumerate(cancel_sites(CANCEL_SUBJECT), 1):
         out.append(
             (f"GC{j}", f'"{CANCEL_SUBJECT}" in {where}', frozenset({"exit-state"}), doc, edit)
@@ -10340,6 +10436,17 @@ SEC_PIN_TXT = r"""
 @ row CMP-035 · Tier and Purpose (`15:383`) ‖ New
   `- **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, the
   key-rotation overlap (SCR-127 stage 4: the served end time first, the time left second).`
+@ row CMP-035 · A11y (`15:385`) ‖ Old (verbatim)
+  ``- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete
+  polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused
+  wherever a countdown appears, except countdowns in a grid column, which announce nothing
+  (SCR-100 "Funding in", E08-D07 D22, §4.5).``
+@ row CMP-035 · A11y (`15:385`) ‖ New
+  ``- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete
+  polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused
+  wherever a countdown appears, except countdowns in a grid column, which announce nothing
+  (SCR-100 "Funding in", E08-D07 D22, §4.5); each announcement carries the absolute time when
+  `showUntil` is set, and reaching 0 changes nothing by itself.``
 @ row CMP-035 · Tokens (`15:386`) ‖ Entry · field
   CMP-035 · Tokens (`15:386`)
 @ row CMP-035 · Tokens (`15:386`) ‖ Old (verbatim)
