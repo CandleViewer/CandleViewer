@@ -120,6 +120,8 @@ API surface for this domain: `GET /instruments`, `GET /instruments/{symbol}`, `P
 | **US-MKT-008** Historical OHLCV backfill         | Must | SCR-151                   | CMP-001, CMP-019, CMP-021, CMP-026                                                                                                    | —       | FM#31, FM#41, FM#44    |
 | **US-MKT-009** Clock sync and server-time offset | Must | SCR-147                   | CMP-023, CMP-024, CMP-036, CMP-049, CMP-087, CMP-178                                                                                  | —       | FM#369                 |
 
+Build tickets for the MKT screens (E08-Q05's gap): US-MKT-001 → E08-S09 (#4703, search and delisted symbols), E08-S10 (#4704), E08-S11 (#4705); US-MKT-002 → E08-S09; US-MKT-003 → E08-S08 (#4702), E08-T07 (#4706, `/watchlists` persistence); US-MKT-004 → E08-S10 (display half; the rule source stays E08-S02); US-MKT-005 → E08-S08, E08-S10, E08-S11, E08-T08 (#4707, server side of the `ticker` topic). By screen: SCR-041 → E08-S09 (symbol half; E12-S11 chart re-bind; E16-S02 recording dot); SCR-100 and SCR-101 → E08-S08 (E16-S02 REC indicator); SCR-102 → E08-S09; SCR-103 → E08-S10 (E16-S02 recording rows); SCR-104 → E08-S11, E08-T09 (#4708, `/scanner` server and presets).
+
 ### 2.5 CHART — Charting core (custom WebGL engine) (14 stories)
 
 API surface for this domain: `GET /market/klines`, `GET /market/bars`, `GET /chart-templates`, `POST /chart-templates`, `PUT /chart-templates/{templateId}`, `GET /workspaces/{workspaceId}/layouts`.

@@ -67,11 +67,11 @@ The org described in `00-planning-brief.md` has a large design organisation, 2 Q
 | **S01** | 2026-09-25 -> 2026-10-01 | R0 | 90 | 90 | +0 | 63 | 1 | 8 | 162 | DES +3 |
 | **S02** | 2026-10-02 -> 2026-10-08 | R0 | 90 | 90 | +0 | 98 | 6 | 15 | 209 | DES +38 |
 | **S03** | 2026-10-09 -> 2026-10-15 | R0 | 87 | 90 | +3 | 49 | 17 | 7 | 160 | ok |
-| **S04** | 2026-10-16 -> 2026-10-22 | R0 | 88 | 90 | +2 | 81 | 70 | 26 | 265 | DES +21, **QA +25**, SEC +6 |
+| **S04** | 2026-10-16 -> 2026-10-22 | R0 | 88 | 90 | +2 | 81 | 62 | 26 | 257 | DES +21, **QA +17**, SEC +6 |
 | **S05** | 2026-10-23 -> 2026-10-29 | R1 | 90 | 90 | +0 | 80 | 0 | 9 | 179 | DES +20 |
 | **S06** | 2026-10-30 -> 2026-11-05 | R1 | 90 | 90 | +0 | 10 | 17 | 8 | 125 | ok |
 | **S07** | 2026-11-06 -> 2026-11-12 | R1 | 47 | 45 | -2 | 18 | 32 | 9 | 106 | **ENG -2** |
-| **S08** | 2026-11-13 -> 2026-11-19 | R1 | 90 | 90 | +0 | 59 | 51 | 18 | 218 | **QA +6** |
+| **S08** | 2026-11-13 -> 2026-11-19 | R1 | 90 | 90 | +0 | 59 | 59 | 18 | 226 | **QA +14** |
 | **S09** | 2026-11-20 -> 2026-11-26 | R1 | 90 | 90 | +0 | 25 | 69 | 19 | 203 | **QA +24** |
 | **S10** | 2026-11-27 -> 2026-12-03 | R2 | 89 | 90 | +1 | 23 | 2 | 16 | 130 | ok |
 | **S11** | 2026-12-04 -> 2026-12-10 | R2 | 89 | 90 | +1 | 24 | 13 | 8 | 134 | ok |
@@ -92,7 +92,7 @@ The org described in `00-planning-brief.md` has a large design organisation, 2 Q
 | **S26** | 2027-03-19 -> 2027-03-25 | R5 | 5 | 90 | +85 | 6 | 16 | 11 | 38 | ok |
 | | | **Total** | **1963** | **2295** | **+332** | **918** | **802** | **353** | **4036** | |
 
-Unscheduled (`Backlog`, section 32.2): **4** tickets, 8 pts - not in any row above.
+Unscheduled (`Backlog`, section 32.2): **11** tickets, 46 pts - not in any row above.
 
 **Three structural observations, all of which drive section 31:**
 
@@ -743,15 +743,15 @@ Design total: **49 pts** across 15 tickets.
 |---|---|---|---|---|
 | Engineering (S/T/K/C) | 88 | 90 | +2 | ok |
 | Design (D) | 81 | 60 | -21 | **OVER** |
-| QA (Q) | 70 | 45 | -25 | **OVER** |
+| QA (Q) | 62 | 45 | -17 | **OVER** |
 | Security (X) | 26 | 20 | -6 | **OVER** |
-| **Total** | **265** | **215** | **-50** | |
+| **Total** | **257** | **215** | **-42** | |
 
 ### 6.3 Epic mix
 
 | Epic | Title | Lane | Pts | Tickets |
 |---|---|---|---|---|
-| **E08** | Bybit adapter & ingestion skeleton | Data & Feeds (BE-Feeds) | 57 | 14 |
+| **E08** | Bybit adapter & ingestion skeleton | Data & Feeds (BE-Feeds) | 49 | 12 |
 | **E05** | Design system v0 - tokens, primitives, Storybook | Design System | 47 | 14 |
 | **E09** | Auth, sessions, 2FA & RBAC | Accounts & Security (BE-Sec) | 35 | 10 |
 | **E50** | xstate-statemachine adoption: factory, persistence, plugins, contract suite, catalogue | Platform & DevSecOps | 26 | 5 |
@@ -769,7 +769,7 @@ Design total: **49 pts** across 15 tickets.
 
 **Statechart lane:** E08 (`E08-S05`, `E08-T04`); E16 (`E16-D01`, `E16-D02`, `E16-D03`); E17 (`E17-D02`); E50 (`E50-S01`, `E50-S02`, `E50-T04`, `E50-T15`, `E50-T31`) — built on `cv.statechart.factory` over `xstate-statemachine==0.9.1` (ADR-0016 Accepted); each must stay green in the BLOCKING `tests/xstate_contract` suite.
 
-### 6.4 Tickets (74)
+### 6.4 Tickets (72)
 
 | Key | Title | Kind | Est | Component | blocked_by |
 |---|---|---|---|---|---|
@@ -798,8 +798,6 @@ Design total: **49 pts** across 15 tickets.
 | `E08-Q02` | Contract & integration test pack for the adapter against recorded Bybit fixtures | Task | 5 | data-feeds | `E08-Q01`, `E08-T05`, `E08-S05`, `E08-S06` |
 | `E08-Q03` | Chaos & failure-injection scenarios for the exchange boundary | Task | 5 | data-feeds | `E08-Q02`, `E08-T04`, `E08-S05`, `E08-S07` |
 | `E08-Q04` | Ingestion performance pack: 24h soak, 5x burst injector and k6 REST load | Task | 5 | data-feeds | `E08-Q02`, `E08-T06` |
-| `E08-Q05` | E2E and a11y audit: watchlist, symbol search, data-confidence states | Task | 5 | web | `E08-Q01`, `E08-S03`, `E08-D03`, `E08-D07` |
-| `E08-Q06` | Exploratory charters, E08 regression pack and epic QA sign-off for R0 exit | Task | 3 | data-feeds | `E08-Q02`, `E08-Q03`, `E08-Q04`, `E08-Q05` |
 | `E08-S03` | Live ticker stream: subscribe once, fan out, delta-merge and reconnect | Story | 3 | data-feeds | `E08-T04`, `E08-S01` |
 | `E08-S04` | Trade (tape) stream ingestion: normalise, dedupe by tradeId and backfill gaps | Story | 5 | data-feeds | `E08-S03` |
 | `E08-S05` | Order-book reconstruction: snapshot+delta, gap resync, atomic depth-tier change | Story | 5 | data-feeds | `E08-T04`, `E08-K01`, `E50-T59`, `E50-S01` |
@@ -889,7 +887,7 @@ Design total: **81 pts** across 22 tickets.
 - sec: SAST/SCA/secrets continuous (s02, S01-S26)
 - qa: Test framework build-out (q01, S01-S04)
 
-**QA tickets (70 pts, 21 tickets):**
+**QA tickets (62 pts, 19 tickets):**
 
 | Key | Title | Est | blocked_by |
 |---|---|---|---|
@@ -904,8 +902,6 @@ Design total: **81 pts** across 22 tickets.
 | `E08-Q02` | Contract & integration test pack for the adapter against recorded Bybit fixtures | 5 | `E08-Q01`, `E08-T05`, `E08-S05`, `E08-S06` |
 | `E08-Q03` | Chaos & failure-injection scenarios for the exchange boundary | 5 | `E08-Q02`, `E08-T04`, `E08-S05`, `E08-S07` |
 | `E08-Q04` | Ingestion performance pack: 24h soak, 5x burst injector and k6 REST load | 5 | `E08-Q02`, `E08-T06` |
-| `E08-Q05` | E2E and a11y audit: watchlist, symbol search, data-confidence states | 5 | `E08-Q01`, `E08-S03`, `E08-D03`, `E08-D07` |
-| `E08-Q06` | Exploratory charters, E08 regression pack and epic QA sign-off for R0 exit | 3 | `E08-Q02`, `E08-Q03`, `E08-Q04`, `E08-Q05` |
 | `E09-Q02` | Playwright E2E suite for login, TOTP, idle lock, step-up and onboarding | 5 | `E09-Q01`, `E09-S03`, `E09-S05` |
 | `E09-Q03` | RBAC allow/deny matrix regression pack across every route and WS topic | 5 | `E09-T03`, `E09-S03` |
 | `E09-Q04` | Accessibility audit of the auth, onboarding and settings surfaces | 3 | `E09-S02`, `E09-S05` |
@@ -1509,9 +1505,9 @@ Design total: **18 pts** across 5 tickets.
 |---|---|---|---|---|
 | Engineering (S/T/K/C) | 90 | 90 | +0 | ok |
 | Design (D) | 59 | 60 | +1 | ok |
-| QA (Q) | 51 | 45 | -6 | **OVER** |
+| QA (Q) | 59 | 45 | -14 | **OVER** |
 | Security (X) | 18 | 20 | +2 | ok |
-| **Total** | **218** | **215** | **-3** | |
+| **Total** | **226** | **215** | **-11** | |
 
 ### 10.3 Epic mix
 
@@ -1526,16 +1522,19 @@ Design total: **18 pts** across 5 tickets.
 | **E18** | Footprint: cell aggregation, imbalance detection and cell rendering | Order Flow (BE-Flow + FE-Engine) | 12 | 5 |
 | **E15** | Layouts & workspaces | App & Charting UI (FE-App) | 11 | 3 |
 | **E21** | DOM ladder & liquidity heatmap | Order Flow (BE-Flow + FE-Engine) | 10 | 4 |
+| **E08** | Bybit adapter & ingestion skeleton | Data & Feeds (BE-Feeds) | 8 | 2 |
 | **E19** | Volume / delta / TPO profiles | Order Flow (BE-Flow + FE-Engine) | 7 | 3 |
 | **E22** | Big trades & bubbles: tape, thresholds, clustering and the bubble overlay | Order Flow (BE-Flow + FE-Engine) | 6 | 2 |
 
 
 **Statechart lane:** E16 (`E16-K01`, `E16-Q02`, `E16-Q03`, `E16-Q04`, `E16-Q05`, `E16-Q06`, `E16-S01`, `E16-S03`, `E16-S04`, `E16-S05`, `E16-T04`, `E16-T05`, `E16-T06`, `E16-T07`, `E16-T08`, `E16-T10`, `E16-X02`); E18 (`E18-D01`, `E18-D02`, `E18-D03`, `E18-D04`, `E18-D05`); E19 (`E19-D05`, `E19-D06`, `E19-D07`) — built on `cv.statechart.factory` over `xstate-statemachine==0.9.1` (ADR-0016 Accepted); each must stay green in the BLOCKING `tests/xstate_contract` suite.
 
-### 10.4 Tickets (71)
+### 10.4 Tickets (73)
 
 | Key | Title | Kind | Est | Component | blocked_by |
 |---|---|---|---|---|---|
+| `E08-Q05` | E2E and a11y audit: watchlist, symbol search, data-confidence states | Task | 5 | web | `E08-Q01`, `E08-S03`, `E08-D03`, `E08-D07`, `E08-S08`, `E08-S09`, `E08-S10`, `E08-S11` |
+| `E08-Q06` | Exploratory charters, E08 regression pack and epic QA sign-off for R0 exit | Task | 3 | data-feeds | `E08-Q02`, `E08-Q03`, `E08-Q04`, `E08-Q05` |
 | `E11-Q02` | Build the Playwright E2E suite for chart interaction, multi-pane and sync | Task | 5 | chart-engine | `E11-S09`, `E11-Q01` |
 | `E11-Q03` | Establish and sign off the engine performance baselines against the budgets | Task | 3 | chart-engine | `E11-T06`, `E11-S15` |
 | `E11-S09` | Stack panes on a shared time axis and sync range, crosshair and levels | Story | 3 | chart-engine | `E11-S01`, `E11-S07` |
@@ -1651,10 +1650,12 @@ Design total: **59 pts** across 22 tickets.
 - qa: Golden-fixture corpus (q03, S06-S09)
 - qa: E2E suite (web + Electron) (q04, S05-S10)
 
-**QA tickets (51 pts, 16 tickets):**
+**QA tickets (59 pts, 18 tickets):**
 
 | Key | Title | Est | blocked_by |
 |---|---|---|---|
+| `E08-Q05` | E2E and a11y audit: watchlist, symbol search, data-confidence states | 5 | `E08-Q01`, `E08-S03`, `E08-D03`, `E08-D07`, `E08-S08`, `E08-S09`, `E08-S10`, `E08-S11` |
+| `E08-Q06` | Exploratory charters, E08 regression pack and epic QA sign-off for R0 exit | 3 | `E08-Q02`, `E08-Q03`, `E08-Q04`, `E08-Q05` |
 | `E11-Q02` | Build the Playwright E2E suite for chart interaction, multi-pane and sync | 5 | `E11-S09`, `E11-Q01` |
 | `E11-Q03` | Establish and sign off the engine performance baselines against the budgets | 3 | `E11-T06`, `E11-S15` |
 | `E13-Q02` | Playwright E2E suite additions for indicators (web and Electron) | 3 | `E13-S01`, `E13-S03`, `E13-S08` |
@@ -5502,7 +5503,7 @@ Absorbed from the R1 train buffer per roadmap §12. The secondary gates `E50-T05
 
 ## 32.3 Unscheduled tickets
 
-4 tickets (8 pts) sit in `Backlog` with no sprint. They are small and non-blocking, but "Backlog" is not a decision - each must be scheduled or explicitly deferred at the next refinement.
+11 tickets (46 pts) sit in `Backlog` with no sprint. The four older ones are small and non-blocking; the seven E08 build tickets wait on a capacity re-plan. Either way, "Backlog" is not a decision - each must be scheduled or explicitly deferred at the next refinement.
 
 | Key | Title | Kind | Est | Parent epic | Suggested disposition |
 |---|---|---|---|---|---|
@@ -5510,6 +5511,13 @@ Absorbed from the R1 train buffer per roadmap §12. The secondary gates `E50-T05
 | `E22-S06` | Big-trade (whale) alerts with flood control | Story | 2 | E22 | Fold into E40 alerts in R3, or defer to R5 with ladder item #6. |
 | `E23-S06` | Composite normalised CVD across up to five symbols | Story | 2 | E23 | Descoping-ladder item #4 (multi-symbol CVD) - defer to R5 by default. |
 | `E40-S03` | Ship HMAC-signed webhook alert delivery with allow-listed egress | Story | 1 | E40 | Descoping-ladder item #6 (webhook delivery) - defer to R5 by default. |
+| `E08-S08` | Build the SCR-100 watchlist panel and SCR-101 manager with live and stale states | Story | 8 | E08 | Planned for Sprint 06; held in `Backlog` because S06 is at 90/90 eng pts and R1 at 407/405. Schedule once capacity is re-planned. |
+| `E08-S09` | Build SCR-102 symbol search and the SCR-041 quick-switcher on one ranking rule | Story | 5 | E08 | Planned for Sprint 06; held in `Backlog` because S06 is at 90/90 eng pts and R1 at 407/405. Schedule once capacity is re-planned. |
+| `E08-S10` | Build the SCR-103 symbol info drawer: contract rules, live market, coverage | Story | 5 | E08 | Planned for Sprint 07; held in `Backlog` because S07 is at 47/45 eng pts (holiday sprint) and R1 at 407/405. Schedule once capacity is re-planned. Ready only when E08-D06 (#174) is Done. |
+| `E08-S11` | Build the SCR-104 scanner panel: live criteria, result cap, estimated flags | Story | 5 | E08 | Planned for Sprint 07; held in `Backlog` because S07 is at 47/45 eng pts (holiday sprint) and R1 at 407/405. Schedule once capacity is re-planned. Ready only when E08-D08 (#176) is Done. |
+| `E08-T07` | /watchlists persistence: migration, routes, RBAC, audit key and version | Task | 5 | E08 | Planned for Sprint 06; held in `Backlog` because S06 is at 90/90 eng pts and R1 at 407/405. Schedule once capacity is re-planned. |
+| `E08-T08` | Server side of the ticker WS topic, bulk ticker snapshot and 24 h high/low | Task | 5 | E08 | Planned for Sprint 06; held in `Backlog` because S06 is at 90/90 eng pts and R1 at 407/405. Schedule once capacity is re-planned. |
+| `E08-T09` | GET /scanner server and saved scanner presets endpoint | Task | 5 | E08 | Planned for Sprint 07; held in `Backlog` because S07 is at 47/45 eng pts (holiday sprint) and R1 at 407/405. Schedule once capacity is re-planned. |
 
 ---
 
