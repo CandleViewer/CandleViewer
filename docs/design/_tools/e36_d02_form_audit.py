@@ -13,13 +13,22 @@ boards quote; (5) the string gates — the #4118 string, the RULED lines, the tw
 #4137 supersedes (they must be absent), private paths; (6) the counts. Exit 1 on a gated FAIL or a
 failed gate.
 
+``--check SPEC`` runs the audit with SPEC as the spec under test and adds the section 0 gate:
+"Boards as drawn", the page id, the ten drawn board ids with their export paths and PNG header
+sizes, and the three not-drawn boards (03, 08, 11), each stated once; it prints ``N problem(s)``
+and exits 1 on any. ``--self-test SPEC`` applies the gate's frame-level mutations to SPEC in
+memory (the file is never written): each must raise exactly one new problem, and the clean spec
+must pass before and after.
+
 Usage: python3 -I docs/design/_tools/e36_d02_form_audit.py [--json] [--extra FILE ...]
+       [--check SPEC] [--self-test SPEC]
 """
 
 from __future__ import annotations
 
 import json
 import re
+import struct
 import sys
 from pathlib import Path
 from typing import TypedDict
@@ -378,6 +387,147 @@ def vocabulary() -> Vocab:
     )
 
 
+# Section 0 gate: the ten boards of the cap of ten, their ids, and the three not drawn.
+PAGE_ID = "a3e246e9-1c1d-806b-8008-da9df49a8b99"
+DRAWN = {
+    "01": "a3e246e9-1c1d-806b-8008-da9e3717228c",
+    "02": "8bea9290-daa1-806c-8008-da9ecf9475d9",
+    "04": "2816592d-1b32-804f-8008-da9fa1ac9250",
+    "05": "761d762c-1e4d-80a6-8008-daa049a2dea5",
+    "06": "662e5072-b589-8072-8008-daa0e25ce682",
+    "07": "8aa80863-d01a-80b6-8008-daa178a95404",
+    "09": "44b0d201-b3b5-806e-8008-daa2137aa57a",
+    "10": "e5e21895-0fbc-80a7-8008-daa2afe14f41",
+    "12": "cc9877da-ad62-8019-8008-daa447ebc82d",
+    "13": "78465431-b6e8-80c7-8008-daa34500470f",
+}
+NOT_DRAWN = ("03", "08", "11")
+BOARD_LINE = re.compile(
+    r"^- `E36-D02-(\d\d)-([a-z0-9-]+)` — board id `([0-9a-f-]{36})` — `([^`]+)` \((\d+) × (\d+)\)$",
+    MULTI,
+)
+
+
+def png_size(path: Path) -> tuple[int, int] | None:
+    try:
+        head = path.read_bytes()[:24]
+    except OSError:
+        return None
+    if head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return w, h
+
+
+def boards_problems(spec: str, handoff: str | None = None, root: Path = ROOT) -> list[str]:
+    """Section 0 gate on the spec text (and the hand-off ids); PNG header sizes come from disk."""
+    bad: list[str] = []
+    if "## 0." not in spec or "## 1." not in spec:
+        return ["FAIL section 0 not found"]
+    sec = spec[spec.index("## 0.") : spec.index("## 1.")]
+    if "Boards as drawn (exported" not in sec:
+        bad.append("FAIL section 0 does not list the boards as drawn")
+    if sec.count(PAGE_ID) != 1:
+        bad.append("FAIL section 0 does not name the page id exactly once")
+    found = {m[1]: m for m in BOARD_LINE.finditer(sec)}
+    for n, bid in DRAWN.items():
+        m = found.get(n)
+        if m is None:
+            bad.append(f"FAIL board {n} is not listed as drawn")
+            continue
+        if m[3] != bid:
+            bad.append(f"FAIL board {n} id differs from the drawn id")
+        size = png_size(root / m[4])
+        if size is None:
+            bad.append(f"FAIL board {n} export {m[4]} is missing or not a PNG")
+        elif size != (int(m[5]), int(m[6])):
+            bad.append(f"FAIL board {n} size {m[5]} x {m[6]} differs from the PNG header {size}")
+    for n in NOT_DRAWN:
+        if n in found:
+            bad.append(f"FAIL board {n} is listed as drawn")
+    para = re.search(r"^\*\*Not drawn \(capped\):\*\*.*$", sec, MULTI)
+    text = para[0] if para else ""
+    if not all(f"{n} `" in text for n in NOT_DRAWN) or "boards 03" not in text:
+        bad.append("FAIL the not-drawn paragraph does not name boards 03, 08 and 11 (capped)")
+    if handoff is not None:
+        ids = set(
+            re.findall(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", handoff)
+        )
+        if PAGE_ID not in ids:
+            bad.append("FAIL the hand-off does not name the page id")
+        stray = sorted(ids - set(DRAWN.values()) - {PAGE_ID})
+        if stray:
+            bad.append(f"FAIL the hand-off names ids that are not drawn boards: {', '.join(stray)}")
+    return bad
+
+
+# name -> (old, new): each must raise exactly one new problem.
+MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "section 0 no longer records the boards as drawn",
+        "Boards as drawn (exported",
+        "Boards as planned (exported",
+    ),
+    ("board 12 dropped from the drawn list", "- `E36-D02-12-themes", "- `E36-D02-XX-themes"),
+    (
+        "board 07 id altered",
+        "board id `8aa80863-d01a-80b6-8008-daa178a95404`",
+        "board id `8aa80863-d01a-80b6-8008-daa178a95405`",
+    ),
+    ("board 01 size altered", "(1984 × 1930)", "(1984 × 1931)"),
+    ("the page id removed", f"page id `{PAGE_ID}`; boards 01", "boards 01"),
+    ("not-drawn (capped) mark removed", "**Not drawn (capped):**", "**Not drawn:**"),
+    (
+        "board 11 dropped from the not-drawn paragraph",
+        " and 11 `long-content-200pct`",
+        "",
+    ),
+)
+# Hand-off mutations: name -> (old, new) on the hand-off text; each must raise one new problem.
+HANDOFF_MUTATIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "the hand-off page id altered",
+        f"page id `{PAGE_ID}` (spec §0; page name and id only), `CMP-140",
+        "page id `a3e246e9-1c1d-806b-8008-da9df49a8b98` (spec §0; page name and id only), `CMP-140",
+    ),
+    (
+        "a hand-off board id altered",
+        "board id `662e5072-b589-8072-8008-daa0e25ce682`",
+        "board id `662e5072-b589-8072-8008-daa0e25ce683`",
+    ),
+)
+
+
+def self_test(spec_path: Path) -> int:
+    spec = spec_path.read_text(encoding="utf-8")
+    hand = (spec_path.parent / HANDOFF.name).read_text(encoding="utf-8")
+    before = len(boards_problems(spec, hand))
+    ok = before == 0
+    print(f"clean spec before: {before} problem(s)")
+    for name, old, new in MUTATIONS:
+        if spec.count(old) != 1:
+            print(f"FAIL mutation `{name}`: the needle occurs {spec.count(old)} times")
+            ok = False
+            continue
+        n = len(boards_problems(spec.replace(old, new), hand))
+        print(f"{'ok' if n == 1 else 'FAIL'} mutation `{name}`: {n} new problem(s)")
+        ok = ok and n == 1
+    for name, old, new in HANDOFF_MUTATIONS:
+        if hand.count(old) != 1:
+            print(f"FAIL mutation `{name}`: the needle occurs {hand.count(old)} times")
+            ok = False
+            continue
+        n = len(boards_problems(spec, hand.replace(old, new)))
+        print(f"{'ok' if n == 1 else 'FAIL'} mutation `{name}`: {n} new problem(s)")
+        ok = ok and n == 1
+    after = len(boards_problems(spec_path.read_text(encoding="utf-8"), hand))
+    print(f"clean spec after: {after} problem(s)")
+    print(
+        f"--self-test: {'ok' if ok and after == 0 else 'FAILED'} - {len(MUTATIONS) + len(HANDOFF_MUTATIONS)} mutations"
+    )
+    return 0 if ok and after == 0 else 1
+
+
 def gates(files: list[Path]) -> list[str]:
     bad: list[str] = []
     constitution = (ROOT / "CONSTITUTION.md").read_text(encoding="utf-8")
@@ -400,6 +550,19 @@ def gates(files: list[Path]) -> list[str]:
 
 
 def main(argv: list[str]) -> int:
+    global SPEC, HANDOFF
+    for flag in ("--self-test", "--check"):
+        if flag in argv and (
+            argv.index(flag) + 1 >= len(argv) or argv[argv.index(flag) + 1].startswith("--")
+        ):
+            print(f"usage: e36_d02_form_audit.py {flag} SPEC", file=sys.stderr)
+            return 2
+    if "--self-test" in argv:
+        return self_test(Path(argv[argv.index("--self-test") + 1]))
+    checking = "--check" in argv
+    if checking:
+        SPEC = Path(argv[argv.index("--check") + 1])
+        HANDOFF = SPEC.parent / HANDOFF.name
     extra = [Path(a) for a in argv[argv.index("--extra") + 1 :]] if "--extra" in argv else []
     themes = {k: load_theme(k) for k in THEMES}
     pairs_text = (ROOT / "tools" / "contrast" / "pairs.mjs").read_text(encoding="utf-8")
@@ -520,13 +683,17 @@ def main(argv: list[str]) -> int:
         "summary_words": [w for _s, w, _n in words],
     }
     out.append("\n## 6. Counts: " + json.dumps(numbers))
+    board_bad = boards_problems(spec, hand) if checking else []
+    if checking:
+        out.extend(board_bad)
+        out.append(f"\n--check: {len(bad) + len(board_bad)} problem(s)")
     if "--json" in argv:
         voc_json = {k: v for k, v in voc.items() if k != "actions"}
         payload = {"numbers": numbers, "matrix": matrix, "missing": missing, "vocabulary": voc_json}
         print(json.dumps(payload, ensure_ascii=False, indent=1))
     else:
         print("\n".join(out))
-    return 1 if fails or bad or blank else 0
+    return 1 if fails or bad or blank or board_bad else 0
 
 
 if __name__ == "__main__":
