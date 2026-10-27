@@ -1,0 +1,274 @@
+/*
+ * Select (E05-S01, CMP-009): the trigger sits in the shared `.cv-field` well (fields.css), the popup is a sibling
+ * under the same relative anchor. State lives in data-* attributes. Colours are tokens only; every rule that sets
+ * a colour, border or background has a forced-colours twin with the same selector, later in the file.
+ */
+.cv-select__anchor {
+  position: relative;
+}
+
+.cv-select__trigger {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  align-self: stretch;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+  padding-inline: var(--cv-field-pad);
+  outline: 0;
+  border-radius: inherit;
+  cursor: pointer;
+}
+
+.cv-field[data-gated] .cv-select__trigger,
+.cv-field[data-disabled] .cv-select__trigger {
+  cursor: not-allowed;
+}
+
+/* The value truncates with an ellipsis; the full text stays the accessible value. */
+.cv-select__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-select__value[data-placeholder] {
+  color: var(--color-text-tertiary);
+}
+
+.cv-select__lock,
+.cv-select__chevron,
+.cv-select__check,
+.cv-select__optlock {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+/* Open: the chevron points up (the registry has no chevron-up glyph, so the down one turns). */
+.cv-select__trigger[aria-expanded="true"] .cv-select__chevron {
+  transform: rotate(180deg);
+}
+
+.cv-select__lock {
+  color: var(--color-text-tertiary);
+}
+
+.cv-select__chevron {
+  color: var(--color-text-secondary);
+}
+
+/*
+ * The popup: overlay surface, popover shadow, a hairline edge, at least the field's width, ten rows then it
+ * scrolls. The gap clears the focus ring (width + 2px offset) so the ring is never painted over.
+ */
+.cv-select__popup {
+  --cv-select-gap: calc(var(--space-inset-xs) + (var(--border-focus) + 2) * 1px);
+  --cv-select-edge: calc(var(--border-hairline) * 1px);
+  position: absolute;
+  z-index: 1;
+  inset-inline-start: 0;
+  box-sizing: border-box;
+  min-inline-size: 100%;
+  inline-size: max-content;
+  /* Never past the viewport's inline end; never taller than the room on its side (conv. 28), one row at least. */
+  max-inline-size: min(100vw, var(--cv-select-wide, 100vw));
+  max-block-size: min(
+    calc(10 * var(--size-row-height) + 2 * var(--space-inset-xs) + 2 * var(--cv-select-edge)),
+    max(
+      var(--size-row-height),
+      calc(var(--cv-select-room, 100vh) - var(--cv-select-gap) - var(--space-inset-xs))
+    )
+  );
+  padding-block: var(--space-inset-xs);
+  overflow-y: auto;
+  border: var(--cv-select-edge) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-select__popup[data-placement="below"] {
+  top: calc(100% + var(--cv-select-gap));
+}
+
+.cv-select__popup[data-placement="above"] {
+  bottom: calc(100% + var(--cv-select-gap));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cv-select__popup {
+    animation: cv-select-fade var(--motion-duration-fast)
+      cubic-bezier(var(--motion-easing-decelerate));
+  }
+}
+
+@keyframes cv-select-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The reduce pair for the fade (the same override `theme.css` applies; the motion gate wants it in each file). */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+.cv-select__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The label line: the T2 lock leads the label here, so label and reason share one column on every row. */
+.cv-select__line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+/* Options wrap to two lines, then truncate; the full text stays in the accessible name. */
+.cv-select__label {
+  display: -webkit-box;
+  min-width: 0;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cv-select__row {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-block-size: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+  cursor: pointer;
+}
+
+/*
+ * The active option (keyboard or pointer) sits on the hover surface, which alone is near-invisible on the overlay
+ * (conv. 26), so it also carries CMP-039's inset ring (H8): 2px `color.focus.ring`, drawn 2px inside the option,
+ * i.e. its outer edge 2px in from the row edge (offset = -(2px gap + 2px width); #264 issuecomment-6445255406).
+ * The ring is on the active descendant only, so it follows the pointer; there is no :hover rule.
+ */
+.cv-select__row[data-active] {
+  background: var(--color-surface-hover);
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: calc(var(--border-focus) * -2px);
+  border-radius: var(--radius-control);
+}
+
+/* A row with a reason line is two lines tall: block padding keeps the inset ring off the text. */
+.cv-select__row[data-lines] {
+  padding-block: var(--space-inset-xs);
+}
+
+/* Plain disabled: dimmed, passed over by the arrows, never chosen. Later than active, so it wins. */
+.cv-select__row[data-kind="disabled"] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/*
+ * Unavailable (the validity look) and T2: reachable, never chosen. The reason line stays at full opacity; only the
+ * label dims (unavailable) or turns tertiary with the lock (T2). The active row keeps its hover fill and ring.
+ */
+.cv-select__row[data-kind="unavailable"],
+.cv-select__row[data-kind="locked"] {
+  cursor: not-allowed;
+}
+
+.cv-select__row[data-kind="unavailable"] .cv-select__label {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-select__row[data-kind="locked"] .cv-select__label,
+.cv-select__row[data-kind="locked"] .cv-select__optlock {
+  color: var(--color-text-tertiary);
+}
+
+.cv-select__reason {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+@media (forced-colors: active) {
+  .cv-select__value[data-placeholder] {
+    color: GrayText;
+  }
+
+  .cv-select__lock,
+  .cv-select__chevron {
+    color: FieldText;
+  }
+
+  .cv-field[data-disabled] .cv-select__chevron {
+    color: GrayText;
+  }
+
+  .cv-select__popup {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+    forced-color-adjust: none;
+  }
+
+  .cv-select__row[data-active] {
+    background: Highlight;
+    color: HighlightText;
+    outline-color: HighlightText;
+  }
+
+  .cv-select__row[data-kind="disabled"] {
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-select__row[data-kind="unavailable"] .cv-select__label {
+    color: GrayText;
+    opacity: 1;
+  }
+
+  /* T2 is not greyed: its lock and label stay CanvasText (conventions 29), so it still reads apart from plain disabled. */
+  .cv-select__row[data-kind="locked"] .cv-select__label,
+  .cv-select__row[data-kind="locked"] .cv-select__optlock {
+    color: CanvasText;
+  }
+
+  .cv-select__reason {
+    color: CanvasText;
+  }
+
+  /* After the kind twins, at equal weight: the Highlight fill needs HighlightText on every line, reason included. */
+  .cv-select__row[data-active] .cv-select__label,
+  .cv-select__row[data-active] .cv-select__optlock,
+  .cv-select__row[data-active] .cv-select__reason {
+    color: HighlightText;
+    opacity: 1;
+  }
+}
