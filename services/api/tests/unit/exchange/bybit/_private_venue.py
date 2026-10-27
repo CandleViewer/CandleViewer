@@ -23,7 +23,7 @@ from candleviewer.exchange.base.reconnect import ConnectionBudget, ReconnectPoli
 from candleviewer.exchange.bybit.errors import FrameTooLarge
 
 # nosemgrep: cv-adapter-isolation reason=G-8b-harness owner=@CandleViewer/security review=2027-03-25
-from candleviewer.exchange.bybit.private_stream import MAX_STREAMS, PrivateStreams
+from candleviewer.exchange.bybit.private_stream import MAX_STREAMS, KeyTombstones, PrivateStreams
 from candleviewer.observability.context import spawn
 from candleviewer.secrets import CredentialBorrower
 from tests._signing import Call, fake_capability
@@ -153,8 +153,10 @@ def make_streams(
     environment: Any = "demo",
     max_streams: int = MAX_STREAMS,
     seed: int = 7,
+    tombstones: KeyTombstones | None = None,
 ) -> PrivateStreams:
-    """The registry over `venue`, signed by the M2 double, on `venue.clock`."""
+    """The registry over `venue`, signed by the M2 double, on `venue.clock`, over `tombstones`
+    (the adapter's table, shared by reference) when given."""
     clock = venue.clock
     rng = random.Random(seed)  # noqa: S311 -- seeded test jitter, not a security primitive
     return PrivateStreams(
@@ -168,6 +170,7 @@ def make_streams(
         wall_ms=lambda: round(clock.wall_s() * 1000),
         now_us=clock.now_us,
         max_streams=max_streams,
+        tombstones=tombstones,
     )
 
 

@@ -1,13 +1,16 @@
 """The exchange's private stream (G-8b, #3963; 24 §14.2 rule 13): one socket per account, on B13.
 
 `PrivateStreams` is the adapter's registry of private streams, one per account, at most
-`MAX_STREAMS`, all drawing on the adapter's one `ConnectionBudget` (C-12.7). `open(account)`
-refuses before anything is signed, dialled or built: another environment's account, a `key_ref`
-that is no `api_keys` id, a key `close_key` closed or three `auth` refusals marked, an account
-that has a stream, and a stream past the cap (`RateBudgetExceededError`, `reason` `stream_cap`).
-Then it builds the account's B13 `ws_conn` chart through the factory (lane `platform`) and
-returns the stream, which raises nothing more: it yields events and `PrivateStreamStatus`es in
-arrival order and ends after its `closed` status.
+`MAX_STREAMS`, all drawing on the adapter's one `ConnectionBudget` (C-12.7). It serves the loop of
+its first stream's `open` (#913 L1d-2a, D6). `open(account)` refuses before anything is signed,
+dialled or built: a call from any other loop, another environment's account, a `key_ref` that is no
+`api_keys` id, a key its `KeyTombstones` holds (closed by a revoke or rotation, or marked by three
+`auth` refusals; the adapter shares one table with every registry it builds), an account that has
+a stream, and a stream past the cap (`RateBudgetExceededError`, `reason` `stream_cap`). Then it
+builds the account's B13 `ws_conn` chart through the factory (lane `platform`) and returns the
+stream, which raises nothing more: it yields events and `PrivateStreamStatus`es in arrival order
+and ends after its `closed` status. `close_key` returns within `KEY_CLOSE_BOUND_S`; past that it
+pages and raises `PrivateStreamCloseOverran` while the close runs on.
 
 `_PrivateConn` is B13's runtime for one stream. The chart drives its hooks on lifecycle edges
 only (dial, `auth`, subscribe, live, back off, close); frames, pings and the watchdog are plain
@@ -23,9 +26,10 @@ while the clock offset is measured, or M2's refusal to sign end the stream: the 
 B13 `SHUTDOWN` instead of `BACKOFF_DUE`, and B13's close queues `closed`.
 
 What leaves: the open's refusals, which are bare taxonomy errors (no cause, context or
-traceback, SR-E29-08), and the stream's items. The hooks B13 invokes raise only fixed texts with
-no cause or context, so the library's failure log (`Service ... failed`, with its traceback)
-holds no frame, reply or key. No log line holds a frame, a reply's text, a key id or a signature.
+traceback, SR-E29-08), a revoke's overrun (`PrivateStreamCloseOverran`, as bare), and the
+stream's items. The hooks B13 invokes raise only fixed texts with no cause or context, so the
+library's failure log (`Service ... failed`, with its traceback) holds no frame, reply or key. No
+log line holds a frame, a reply's text, a key id or a signature.
 """
 
 from __future__ import annotations
@@ -34,6 +38,7 @@ import asyncio
 import contextlib
 import itertools
 import json
+import threading
 import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Coroutine
@@ -44,7 +49,12 @@ import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment, TsUs
 from candleviewer.exchange.base.boundary import exchange_errors_total
-from candleviewer.exchange.base.errors import AuthError, ExchangeError, RateBudgetExceededError
+from candleviewer.exchange.base.errors import (
+    AuthError,
+    ExchangeError,
+    PrivateStreamCloseOverran,
+    RateBudgetExceededError,
+)
 from candleviewer.exchange.base.guards import check_key_ref, key_ref_id
 from candleviewer.exchange.base.models import (
     AccountRef,
@@ -92,6 +102,7 @@ __all__ = [
     "AUTH_TIMEOUT_S",
     "DATA_SLOTS",
     "FRAME_BYTES",
+    "KEY_CLOSE_BOUND_S",
     "MAX_AUTH_REFUSALS",
     "MAX_STREAMS",
     "OPTIONAL_OPS",
@@ -100,8 +111,11 @@ __all__ = [
     "STABLE_RESET_S",
     "STATUS_SLOTS",
     "WATCHDOG_S",
+    "KeyTombstones",
     "PrivateStreams",
+    "PrivateStreamsWrongLoop",
     "StreamConnect",
+    "StreamOpener",
     "StreamSocket",
 ]
 
@@ -120,6 +134,11 @@ AUTH_TIMEOUT_S: Final = 5.0
 SUBSCRIBE_TIMEOUT_S: Final = 5.0
 #: A socket's close, so a stalled peer cannot hold a revoke (SR-E27-17: within 1 s).
 CLOSE_TIMEOUT_S: Final = 1.0
+#: How long `close_key` waits for its closes (#913 L1d-2a, ruling Q6): past it the revoke pages
+#: and raises while the closes run on.
+KEY_CLOSE_BOUND_S: Final = CLOSE_TIMEOUT_S + 1.0
+#: A call from another loop pages at most once a window (D6's, #913 L2).
+WRONG_LOOP_PAGE_S: Final = 5.0
 #: The attempt count resets once an epoch has stayed live this long (ruling 4).
 STABLE_RESET_S: Final = 30.0
 #: How long `budget_blocked` waits before B13 asks the budget again.
@@ -178,8 +197,60 @@ class StreamSocket(Protocol):
 StreamConnect = Callable[[str], Awaitable[StreamSocket]]
 
 
+class StreamOpener(Protocol):
+    """What opens an account's private stream for a trading port (#913 L1d-2a): the adapter's
+    registry, `PrivateStreams`, or the stream source the order lane's composition root gives its
+    port (L1d-2b's bridge to the registry)."""
+
+    async def open(
+        self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
+    ) -> PrivateStream: ...
+
+
 class _Closing(Exception):
     """The stream began closing while an `auth` was being signed: nothing is sent."""
+
+
+class PrivateStreamsWrongLoop(RuntimeError):
+    """An `open` or a `close_key` from an event loop other than the registry's own: refused
+    before anything is signed, dialled, built or closed (D6, fail closed), a wiring defect that
+    pages."""
+
+
+class KeyTombstones:
+    """The keys a revoke or a rotation closed, with the reason, and the keys three `auth` refusals
+    marked, each remembered up to `KEYS_REMEMBERED`, oldest dropped first (M2 refuses a destroyed
+    key either way). The adapter holds one and shares it, by reference, with every registry it
+    builds (RC-G8B-03): a key closed before any registry existed, or through another one, is
+    refused by all of them. Only an operator's `reopen` clears a mark; a closed key stays
+    closed. It takes no lock: the serving loop owns it, as it owns the registries over it, and
+    makes every write but one, a mis-wired `close_private_streams` from another loop, which still
+    records its key here, fail-safe, before the registry refuses the call and pages."""
+
+    def __init__(self) -> None:
+        self._closed: OrderedDict[str, ClosedReason] = OrderedDict()
+        self._refused: OrderedDict[str, None] = OrderedDict()
+
+    def close(self, key_ref: str, reason: Literal["key_revoked", "key_rotated"]) -> None:
+        """Tombstone the key; a `key_ref` that is no `api_keys` id is refused (`ValueError`) before
+        anything is recorded."""
+        key_ref_id(key_ref)
+        _remember(self._closed, key_ref, reason)
+
+    def mark_refused(self, key_ref: str) -> None:
+        _remember(self._refused, key_ref, None)
+
+    def reopen(self, key_ref: str) -> bool:
+        """An operator's action (ruling 10): `True` when three refusals had marked the key, which
+        may open streams again."""
+        if key_ref not in self._refused:
+            return False
+        del self._refused[key_ref]
+        logger().warning("bybit_private_key_reopened")
+        return True
+
+    def refuses(self, key_ref: str) -> bool:
+        return key_ref in self._closed or key_ref in self._refused
 
 
 def _wall_ms() -> int:
@@ -216,6 +287,10 @@ class _Queue:
         self.heartbeat_pending = False
         self.rejected_pending = False
         self._ended = False
+
+    def pending(self) -> int:
+        """Items queued now: `get` returns that many with no wait."""
+        return len(self._items)
 
     def fits(self, count: int) -> bool:
         return self._events + count <= DATA_SLOTS
@@ -331,7 +406,9 @@ class _PrivateConn:
 
     @property
     def stopping(self) -> bool:
-        return self._stop
+        """A close began (`halt`), or B13's own end queued `closed` (RC-G8B-04): either way a
+        later `close_key` waits for the stream and does not name it."""
+        return self._stop or self._closed
 
     def bind(self, interp: Any) -> None:
         self._interp = interp
@@ -385,7 +462,9 @@ class _PrivateConn:
 
     async def authenticate(self) -> None:
         """One `auth`, signed by M2 for this dial (ruling 10's count applied); anything but a grant
-        raises one fixed text, and the chart backs off, or closes the stream when it is over."""
+        raises one fixed text, and the chart backs off, or closes the stream when it is over. The
+        third refusal marks the key at once, until an operator reopens it or the account takes a
+        new key, whatever close queues first (RC-G8B-04)."""
         sock = self._sock
         if sock is None or self._stop:
             raise _bare(ConnectionError("the private stream is closing"))
@@ -402,6 +481,7 @@ class _PrivateConn:
             self._refusals += 1
             if self._refusals >= MAX_AUTH_REFUSALS:
                 self._terminal = "auth_refused"
+                self._owner.mark_refused(self.key_ref)
         elif result == "key_unusable":
             self._terminal = "key_unusable"
         logger().warning(
@@ -585,16 +665,13 @@ class _PrivateConn:
         unregister_runtime(self.conn_key)
 
     def _end(self, reason: ClosedReason) -> None:
-        """Queue `closed` once, last; count and log it; a stream three refusals ended marks its
-        key until an operator reopens it or the account takes a new key (ruling 10)."""
+        """Queue `closed` once, last; count and log it."""
         if self._closed:
             return
         self._closed = True
         self._phase = "closed"
         if reason != "consumer_closed":
             self._status("closed", reason)
-        if reason == "auth_refused":
-            self._owner.mark_refused(self.key_ref)
         bybit_private_ws_disconnects_total.labels(reason=reason).inc()
         logger().warning(
             "bybit_private_stream_closed",
@@ -817,6 +894,11 @@ class _Stream:
             self._owner.release(self._conn)
         return item
 
+    def ready(self) -> int:
+        """How many items `__anext__` returns now, each with no wait, in arrival order: the batch
+        the order lane's bridge takes in one hop (#913 L1d-2b); 0 once the stream is done."""
+        return 0 if self._done else self._conn.queue.pending()
+
     async def aclose(self) -> None:
         """Close the stream; idempotent. Returns once the socket is closed; should this call be
         cancelled first, the registry's task still finishes the close and frees the account."""
@@ -842,9 +924,10 @@ class _Stream:
 
 class PrivateStreams:
     """The adapter's private streams, one per account (24 §14.2 rule 13), built by
-    `ExchangeBybitService` for its environment, on its connector and its connection budget. It
-    owns the tasks it hands off (a closed stream's B13 stop), and remembers a bounded number of
-    keys it closed (`close_key`) or three refusals marked, refusing a stream on them."""
+    `ExchangeBybitService` for its environment, on its connector and its connection budget, over
+    its `KeyTombstones` (else a table of its own), refusing a stream on a key the table holds. It
+    owns the tasks it hands off (a closed stream's B13 stop), and serves the loop of the `open`
+    that creates its first stream (D6, #913 L1d-2a)."""
 
     def __init__(
         self,
@@ -859,6 +942,7 @@ class PrivateStreams:
         wall_ms: Callable[[], int] = _wall_ms,
         now_us: Callable[[], TsUs] = _wall_us,
         max_streams: int = MAX_STREAMS,
+        tombstones: KeyTombstones | None = None,
     ) -> None:
         if environment not in PRIVATE_WS_URLS:
             raise ValueError("unknown environment")
@@ -874,10 +958,15 @@ class PrivateStreams:
         self._url = PRIVATE_WS_URLS[environment]
         self._max = max_streams
         self._conns: dict[AccountId, _PrivateConn] = {}
-        self._closed_keys: OrderedDict[str, ClosedReason] = OrderedDict()
-        self._refused_keys: OrderedDict[str, None] = OrderedDict()
+        #: The keys it refuses: the adapter's table, shared by reference (RC-G8B-03).
+        self.tombstones = tombstones if tombstones is not None else KeyTombstones()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._shut = False
+        #: D6: the loop of its first stream's `open`, taken under the lock so two loops never both
+        #: take it, and when a refusal from another loop last paged (`_on_its_loop`).
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._loop_lock = threading.Lock()
+        self._wrong_loop_paged_at: float | None = None
 
     def count(self) -> int:
         """Streams open now (released once their consumer read `closed` or closed them)."""
@@ -886,15 +975,19 @@ class PrivateStreams:
     async def open(
         self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
     ) -> PrivateStream:
-        """The account's stream; every refusal comes before anything is signed, dialled or built.
-        `clock_offset_ms` is the exchange clock's offset (exchange minus host, ms), `None` while
-        unmeasured, as `auth` signs on it and ruling 10 counts only on a measured one."""
+        """The account's stream. Every refusal comes before anything is signed, dialled or built,
+        and a call from any loop but the registry's own is refused first (`_on_its_loop`). The
+        open that creates the registry's first stream binds its loop, after every refusal, so a
+        refused one binds none. `clock_offset_ms` is the exchange clock's offset (exchange minus
+        host, ms), `None` while unmeasured, as `auth` signs on it and ruling 10 counts only on a
+        measured one."""
+        self._on_its_loop()
         if self._shut:
             raise RuntimeError("the private streams are shut down")
         if account.environment != self.environment:
             raise ValueError("the account belongs to another environment")
         key_id = check_key_ref(account)
-        if account.key_ref in self._closed_keys or account.key_ref in self._refused_keys:
+        if self.tombstones.refuses(account.key_ref):
             raise self._refused(AuthError("the account's key may not open a private stream"))
         if account.account_id in self._conns:
             raise ValueError("the account already has a private stream")
@@ -904,6 +997,7 @@ class PrivateStreams:
                 "the private stream cap is reached; nothing was opened", reason="stream_cap"
             )
             raise self._refused(capped)
+        self._on_its_loop(binds=True)  # a loop that took it meanwhile refuses this one here
         conn = _PrivateConn(self, account, key_id, clock_offset_ms)
         self._conns[account.account_id] = conn
         bybit_private_ws_streams.set(len(self._conns))
@@ -932,7 +1026,7 @@ class PrivateStreams:
             self.spawn(conn.stop_machine(), "private-ws-release")
 
     def mark_refused(self, key_ref: str) -> None:
-        _remember(self._refused_keys, key_ref, None)
+        self.tombstones.mark_refused(key_ref)
 
     async def close_key(
         self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"]
@@ -943,15 +1037,31 @@ class PrivateStreams:
         once, its socket closes within `CLOSE_TIMEOUT_S`, `closed(reason)` is its last item, and
         B13's stop is a task this registry owns (it is not awaited here). Each close runs in a
         task this registry owns, so a caller cancelled meanwhile leaves no stream stopped with its
-        socket open, and a stream already closing for another reason is waited for, not named. A
-        `key_ref` that is no `api_keys` id is refused (`ValueError`) before anything is done."""
-        key_ref_id(key_ref)
-        _remember(self._closed_keys, key_ref, reason)
+        socket open, and a stream already closing for another reason, or ended, is waited for,
+        not named. Past `KEY_CLOSE_BOUND_S` it pages and raises `PrivateStreamCloseOverran` while
+        the closes run on (ruling Q6; the retry is 24 §14.2 rule 13's). A call from another loop,
+        and a `key_ref` that is no `api_keys` id (`ValueError`), are refused before anything is
+        done."""
+        self._on_its_loop()
+        self.tombstones.close(key_ref, reason)
         conns = [c for c in self._conns.values() if c.key_ref == key_ref]
         started = [c for c in conns if not c.stopping]
-        closes = [c.close_soon(reason) for c in conns]  # each stops before any close is awaited
+        closes = {c: c.close_soon(reason) for c in conns}  # each stops before any is awaited
+        still: tuple[AccountId, ...] = ()
         if closes:
-            await asyncio.wait(closes)
+            try:  # past the bound only this wait is cancelled, never the closes
+                await self.bounded(asyncio.wait(closes.values()), KEY_CLOSE_BOUND_S)
+            except TimeoutError:
+                still = tuple(c.account.account_id for c, task in closes.items() if not task.done())
+        if still:
+            closed = tuple(c.account.account_id for c in started if closes[c].done())
+            logger().critical(
+                "bybit_private_key_close_overran",
+                cv_page=True,
+                reason=reason,
+                accounts=[str(account_id) for account_id in still],
+            )
+            raise _bare(PrivateStreamCloseOverran(still, closed=closed))
         if started:
             logger().warning("bybit_private_key_closed", reason=reason, streams=len(started))
         return tuple(conn.account.account_id for conn in started)
@@ -959,11 +1069,30 @@ class PrivateStreams:
     def reopen(self, key_ref: str) -> bool:
         """An operator's action (ruling 10): a key three `auth` refusals marked may open streams
         again. `True` when it was marked. A key `close_key` closed stays closed."""
-        if key_ref not in self._refused_keys:
-            return False
-        del self._refused_keys[key_ref]
-        logger().warning("bybit_private_key_reopened")
-        return True
+        return self.tombstones.reopen(key_ref)
+
+    def _on_its_loop(self, *, binds: bool = False) -> None:
+        """D6 (#913 L2; ruling Q5): the registry serves the loop of the `open` that creates its
+        first stream, which `binds` it under the lock, after every refusal, so two loops never
+        both take it and a refused `open` takes none. An `open` or a `close_key` from any other
+        loop is refused (`PrivateStreamsWrongLoop`) before anything is signed, dialled, built or
+        closed: M2's binding would refuse that loop's `auth` as the key's own fault
+        (`key_unusable`). The first refusal of each `WRONG_LOOP_PAGE_S` window, on the injected
+        clock, pages: a wiring defect."""
+        running = asyncio.get_running_loop()
+        with self._loop_lock:
+            if binds and self._loop is None:
+                self._loop = running
+            foreign = self._loop is not None and running is not self._loop
+            page = False
+            if foreign:
+                now, paged = self.monotonic(), self._wrong_loop_paged_at
+                if paged is None or not 0 <= now - paged < WRONG_LOOP_PAGE_S:
+                    self._wrong_loop_paged_at, page = now, True
+        if page:
+            logger().critical("bybit_private_streams_wrong_loop", cv_page=True)
+        if foreign:
+            raise PrivateStreamsWrongLoop("the private streams serve another event loop")
 
     async def aclose(self) -> None:
         """Shut down: every stream closes with `closed(shutdown)`, later opens are refused, and

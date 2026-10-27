@@ -18,7 +18,7 @@ from uuid import UUID
 import httpx
 import structlog
 
-from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.domain.primitives import AccountId
 from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.base.reconnect import ConnectionBudget
@@ -46,7 +46,12 @@ from candleviewer.exchange.bybit.key_ws_probe import (
 )
 from candleviewer.exchange.bybit.klines import BybitKlineFetcher, TickSizeFor
 from candleviewer.exchange.bybit.orderbook import book_topic, parse_book_frame
-from candleviewer.exchange.bybit.private_stream import PrivateStreams, StreamConnect
+from candleviewer.exchange.bybit.private_stream import (
+    KeyTombstones,
+    PrivateStreams,
+    StreamConnect,
+    StreamOpener,
+)
 from candleviewer.exchange.bybit.public_ws import (
     PublicSocket,
     frame_route,
@@ -74,6 +79,8 @@ from candleviewer.secrets import SecretsError, WithdrawPermissionRejected
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
+    from candleviewer.exchange.base.models import AccountRef
+    from candleviewer.exchange.base.ports import PrivateStream
     from candleviewer.secrets import CandidateSigner, CredentialBorrower, SigningCapability
 
 
@@ -149,8 +156,12 @@ class ExchangeBybitService:
         )
         self._monotonic = monotonic
         #: G-8b: this environment's private streams, one registry per adapter (one per account,
-        #: at most 64, on the one connection budget), built with the first trading port.
+        #: at most 64, on the one connection budget), built on first use (`_streams`).
         self._private_streams: PrivateStreams | None = None
+        #: #913 L1d-2a (RC-G8B-03): the keys a revoke or rotation closed and the keys three `auth`
+        #: refusals marked, held here, so a close records its key before any registry exists,
+        #: and shared by reference with every registry the adapter builds.
+        self._tombstones = KeyTombstones()
 
     #: E08-T06: venue name for the `exchange` metric label (owned here, C-2.2).
     venue = "bybit"
@@ -309,7 +320,7 @@ class ExchangeBybitService:
             raise RuntimeError("no signing capability is wired")
         if env != self._environment:
             raise ValueError("not this process's environment")
-        streams = self._streams(capabilities_for(env).environment, self._credentials)
+        streams = self._streams()
         return BybitTradingPort(
             environment=env,
             credentials=self._credentials,
@@ -329,15 +340,19 @@ class ExchangeBybitService:
         transport: httpx.AsyncBaseTransport | None = None,
         clock_offset_ms: Callable[[], int | None] | None = None,
         entry_wait_s: float = DEFAULT_ENTRY_WAIT_S,
+        private_streams: StreamOpener | None = None,
     ) -> BybitTradingPort:
         """#913 L3b: `trading_port` for the order lane's loop, signed by M2's borrower for that
-        loop, with no private stream; refused as `trading_port` is, and for the adapter's own.
-        `transport` is the lane's, never the adapter's: no transport is shared across loops. With
-        the dev-only account fixture the composition root (L1b) builds one on the lane's loop and
-        closes it there; without one, a fixture-mode lane is refused, never dialling the host.
-        `clock_offset_ms` is called on the lane's loop, so it must be a side-effect-free read:
-        never the serving clock guard's reader, whose host-step check can change the guard and
-        spawn its resync on the calling loop."""
+        loop; refused as `trading_port` is, and for the adapter's own. It has no stream registry
+        of its own: its `subscribe_private` refuses another environment's account, then opens
+        through `private_streams`, the stream source the composition root gives it (#913
+        L1d-2a; L1d-2b's bridge to `open_private_stream` on the serving loop), and with none it
+        refuses every account (`RuntimeError`). `transport` is the lane's, never the adapter's:
+        no transport is shared across loops. With the dev-only account fixture the composition
+        root (L1b) builds one on the lane's loop and closes it there; without one, a fixture-mode
+        lane is refused, never dialling the host. `clock_offset_ms` is called on the lane's loop,
+        so it must be a side-effect-free read: never the serving clock guard's reader, whose
+        host-step check can change the guard and spawn its resync on the calling loop."""
         if credentials is self._credentials:
             raise ValueError("the lane signs through its own loop's borrower")
         if env != self._environment:
@@ -354,6 +369,7 @@ class ExchangeBybitService:
             transport=None if transport is None else _NonClosingTransport(transport),
             clock_offset_ms=clock_offset_ms,
             entry_wait_s=entry_wait_s,
+            private_streams=private_streams,
         )
 
     @staticmethod
@@ -368,32 +384,57 @@ class ExchangeBybitService:
         }
         return MappingProxyType(waits)
 
+    async def open_private_stream(
+        self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
+    ) -> PrivateStream:
+        """#913 L1d-2a: the account's private stream (24 §14.1, §14.2 rule 13) from the adapter's
+        one registry, which serves the loop its first stream opens on: the serving loop, whose M2
+        binding signs each dial's `auth` (ruling Q2 (b)). The order lane's bridge (L1d-2b) calls
+        it there. Refused with no signing capability wired (`RuntimeError`), as `trading_port` is;
+        the registry's own refusals come before anything is signed, dialled or built.
+        `clock_offset_ms` is the measured offset, `None` while unmeasured."""
+        return await self._streams().open(account, clock_offset_ms=clock_offset_ms)
+
     async def close_private_streams(
         self, key_ref: str, *, reason: Literal["key_revoked", "key_rotated"] = "key_revoked"
     ) -> tuple[AccountId, ...]:
         """G-8b (SR-E27-17, KV-E13, AC-28): close every private stream on `key_ref` before
         returning, and return their accounts. E27-S04 (#898) calls it before a revoke,
         force-disable, mark-compromised or account-disable returns, and with `key_rotated` at the
-        start of a rotation's overlap (the consumer then subscribes with the new key). A key it
-        closed opens no stream again. Before any trading port exists there is none to close, and
-        M2 refuses a destroyed key's next `auth` borrow either way (24 §14.2 rule 13)."""
+        start of a rotation's overlap (the consumer then subscribes with the new key). The key is
+        tombstoned first, here, whether or not a registry exists yet, so every registry the
+        adapter builds refuses it (RC-G8B-03). Past `KEY_CLOSE_BOUND_S` it pages and raises
+        `PrivateStreamCloseOverran` (`exchange.base.errors`) while the close runs on. Any
+        exception means the close is not done; what its caller answers and audits, and what a
+        retry names, are 24 §14.2 rule 13's. M2 refuses a destroyed key's next `auth` borrow
+        either way."""
+        self._tombstones.close(key_ref, reason)
         streams = self._private_streams
         return () if streams is None else await streams.close_key(key_ref, reason=reason)
 
     def reopen_private_streams(self, key_ref: str) -> bool:
         """G-8b ruling 10: an operator lets a key that three `auth` refusals closed open streams
-        again; `True` when it was so marked. A revoked or rotated key stays closed."""
-        streams = self._private_streams
-        return False if streams is None else streams.reopen(key_ref)
+        again, whether or not a registry exists; `True` when it was so marked. A revoked or
+        rotated key stays closed."""
+        return self._tombstones.reopen(key_ref)
 
-    def _streams(self, environment: Environment, credentials: CredentialBorrower) -> PrivateStreams:
+    def _streams(self) -> PrivateStreams:
+        """The adapter's one registry, built on first use for the process's environment (none, or
+        testnet, which has no capability record, is refused) with the adapter's own signing
+        capability, never a borrower a caller passes, over the adapter's tombstones."""
         if self._private_streams is None:
+            credentials, env = self._credentials, self._environment
+            if credentials is None:
+                raise RuntimeError("no signing capability is wired")
+            if env is None:
+                raise ValueError("not this process's environment")
             self._private_streams = PrivateStreams(
-                environment=environment,
+                environment=capabilities_for(env).environment,
                 credentials=credentials,
                 connect=self._stream_connect,
                 budget=self._ws_budget,
                 monotonic=self._monotonic,
+                tombstones=self._tombstones,
             )
         return self._private_streams
 

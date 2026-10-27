@@ -121,7 +121,7 @@ from candleviewer.secrets import KekUnavailable, SecretsError
 
 if TYPE_CHECKING:
     from candleviewer.exchange.base.ports import PrivateStream, RateHeadroomPort, TradingPort
-    from candleviewer.exchange.bybit.private_stream import PrivateStreams
+    from candleviewer.exchange.bybit.private_stream import StreamOpener
     from candleviewer.secrets import SigningCapability
 
 __all__ = [
@@ -300,7 +300,8 @@ class BybitTradingPort:
     before a client exists, a token is taken or anything is signed (C-2.11). `clock_offset_ms`
     is the exchange clock's measured offset, `None` while unmeasured: REST signs on the host's
     clock then, and the private stream counts no `auth` refusal (G-8b OQ-4). Its
-    `lane_trading_port` builds one for the order lane's loop, with no private stream (#913 L3b).
+    `lane_trading_port` builds one for the order lane's loop (#913 L3b), which opens a private
+    stream only through the stream source its composition root gives it (#913 L1d-2a).
     """
 
     def __init__(
@@ -316,7 +317,7 @@ class BybitTradingPort:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
         now_us: Callable[[], TsUs] = _wall_us,
-        private_streams: PrivateStreams | None = None,
+        private_streams: StreamOpener | None = None,
         on_failure: Callable[[Exception], None] | None = None,
     ) -> None:
         self.capabilities: ExchangeCapabilities = capabilities_for(environment)
@@ -853,9 +854,11 @@ class BybitTradingPort:
 
     async def subscribe_private(self, account: AccountRef) -> PrivateStream:
         """G-8b (#3963): the account's private stream (24 §14.1, §14.2 rule 13), from the
-        adapter's one registry. Another environment's account is refused first, a port built
-        with no registry refuses every account; the registry's own refusals come before anything
-        is signed, dialled or built, and once returned the stream raises nothing."""
+        adapter's one registry, or the lane port's stream source (#913 L1d-2a), which is given
+        the port's offset reader. Another environment's account is refused first, before
+        anything reaches either; a port built with neither refuses every account. The registry's
+        own refusals come before anything is signed, dialled or built, and once returned the
+        stream raises nothing."""
         self._check_environment(account)
         if self._streams is None:
             raise RuntimeError("no private stream is wired")
