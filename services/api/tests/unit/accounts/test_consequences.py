@@ -294,7 +294,7 @@ async def test_read_store_failure_wins_over_an_unknown_exposure() -> None:
     fails the read (503 `store_unavailable`, never a 409 on a partial picture)."""
     fakes = Fakes("grantees", outcome=ExposureUnknown("leave_positions", ((K1, "auth_error"),)))
     fakes.fail["grantees"] = StoreReadFailed("bound")
-    task = asyncio.create_task(_read(fakes))
+    task = asyncio.create_task(_read(fakes, deadline=FakeDeadline()))  # never fired: no wall time
     await fakes.started["grantees"].wait()
     await fakes.exposure_returned.wait()
     fakes.release["grantees"].set()
@@ -305,7 +305,7 @@ async def test_read_store_failure_wins_over_an_unknown_exposure() -> None:
 async def test_read_store_failure_cancels_the_in_flight_exposure_read() -> None:
     fakes = Fakes("exposure", "grantees")
     fakes.fail["grantees"] = StoreReadFailed("bound")
-    task = asyncio.create_task(_read(fakes))
+    task = asyncio.create_task(_read(fakes, deadline=FakeDeadline()))  # never fired: no wall time
     await fakes.started["exposure"].wait()
     await fakes.started["grantees"].wait()
     fakes.release["grantees"].set()
@@ -318,7 +318,7 @@ async def test_read_store_failure_cancels_the_in_flight_exposure_read() -> None:
 
 async def test_read_cancelled_caller_cancels_every_child_and_none_outlives_it() -> None:
     fakes = Fakes("exposure", "grantees", "rules", "algos")
-    task = asyncio.create_task(_read(fakes))
+    task = asyncio.create_task(_read(fakes, deadline=FakeDeadline()))  # never fired: no wall time
     for name in ("exposure", "grantees", "rules", "algos"):
         await fakes.started[name].wait()
     task.cancel()
