@@ -41,6 +41,10 @@ describe("errorstate.css contract", () => {
     expect(css.all).not.toMatch(/\.cv-error-state\[data-form="banner"\] \.cv-error-state__text/);
   });
 
+  it("no raw rem length (the column cap is emptystate.css's)", () => {
+    expect(css.all).not.toMatch(/\d+(\.\d+)?rem\b/);
+  });
+
   it("the banner draws no box of its own: CMP-028's callout.css owns it", () => {
     expect(css.all).not.toMatch(/border-inline-start|status-danger-subtle|status-warning-subtle/);
   });

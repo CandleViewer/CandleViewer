@@ -19,27 +19,44 @@ export interface EmptyStateLink {
   href: string;
 }
 
-export interface EmptyStateProps {
-  /** Default `no-data`. `error` renders CMP-027's panel form, polite (E05-D02 H13). */
-  variant?: EmptyStateVariant;
+interface EmptyStateBase {
   /** A registered glyph replacing the variant's (decorative, `size="lg"`). */
   icon?: IconName;
-  /** The fact, as a heading at `headingLevel`. */
+  /** The fact, as a heading at `headingLevel`. Under `variant="error"` it is CMP-027's title. */
   title: string;
   /**
    * The sentence under it. The sentence form (E09-D09 §8): when the sole CTA is gated, omit `cta` and put the
-   * host's reason here; no button renders.
+   * host's reason here; no button renders. Under `variant="error"` it is CMP-027's message; without it the
+   * title becomes the message and no heading renders, even when `headingLevel` is set.
    */
   description?: string;
   /** The one primary action, a CMP-001 `primary`; under `variant="error"` it is CMP-027's `retry`. */
   cta?: EmptyStateCta;
-  /** One secondary CMP-021 link after the CTA. Not drawn under `variant="error"` (CMP-027 has no link). */
-  link?: EmptyStateLink;
-  /** The heading's level; default 3, so it fits its panel's outline. */
+  /**
+   * The heading's level; default 3, so it fits its panel's outline. `variant="error"` without a description
+   * renders no heading, even when `headingLevel` is set.
+   */
   headingLevel?: HeadingLevel;
+}
+
+/** The empty variants: one secondary link, and the host's progress under backfill. */
+export interface EmptyStateEmptyProps extends EmptyStateBase {
+  /** Default `no-data`. */
+  variant?: Exclude<EmptyStateVariant, "error">;
+  /** One secondary CMP-021 link after the CTA. */
+  link?: EmptyStateLink;
   /** Backfill only: the host's CMP-023 ProgressBar, or CMP-038 when the total is unknown. */
   progress?: ReactNode;
 }
+
+/** `variant="error"` renders CMP-027's panel form, polite (E05-D02 H13): CMP-027 has no link and no progress. */
+export interface EmptyStateErrorProps extends EmptyStateBase {
+  variant: "error";
+  link?: never;
+  progress?: never;
+}
+
+export type EmptyStateProps = EmptyStateEmptyProps | EmptyStateErrorProps;
 
 /** Each variant's decorative glyph. `filtered-empty` is the registry's `search`: nothing matched the query. */
 const VARIANT_GLYPH: Readonly<Record<Exclude<EmptyStateVariant, "error">, IconName>> = {

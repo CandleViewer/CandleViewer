@@ -2,7 +2,12 @@
 import { composeStories } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { EmptyState, ProgressBar, type EmptyStateVariant } from "../src/components/index.js";
+import {
+  EmptyState,
+  ProgressBar,
+  type EmptyStateProps,
+  type EmptyStateVariant,
+} from "../src/components/index.js";
 import { Icon } from "../src/icons/Icon.js";
 import * as stories from "../src/components/EmptyState.stories.js";
 import { mount } from "./theme/mount.js";
@@ -99,15 +104,15 @@ describe("EmptyState (CMP-026)", () => {
 
   it("variant=error renders CMP-027's panel, polite, with the CTA as Retry and no link", async () => {
     const retry = fn();
-    const host = await mount(
-      <EmptyState
-        variant="error"
-        title="Couldn't load users"
-        description="The store is unavailable."
-        cta={{ label: "Retry", onClick: retry }}
-        link={{ label: "Status page", href: "#status" }}
-      />,
-    );
+    // A JavaScript or spread caller can still pass a link (the types forbid it): it never renders.
+    const props = {
+      variant: "error",
+      title: "Couldn't load users",
+      description: "The store is unavailable.",
+      cta: { label: "Retry", onClick: retry },
+      link: { label: "Status page", href: "#status" },
+    } as unknown as EmptyStateProps;
+    const host = await mount(<EmptyState {...props} />);
     const panel = host.querySelector<HTMLElement>(".cv-error-state");
     expect(panel?.dataset["cmp"]).toBe("CMP-027");
     expect(panel?.dataset["form"]).toBe("panel");
@@ -122,6 +127,17 @@ describe("EmptyState (CMP-026)", () => {
     expect(within(host).queryByRole("link")).toBeNull();
     await userEvent.click(within(host).getByRole("button", { name: "Retry" }));
     expect(retry).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps link and progress off variant=error at the type level", () => {
+    // @ts-expect-error CMP-027 has no link
+    const linked = <EmptyState variant="error" title="x" link={{ label: "l", href: "#l" }} />;
+    // @ts-expect-error CMP-027 has no progress
+    const progressing = <EmptyState variant="error" title="x" progress={<span />} />;
+    const allowed = (
+      <EmptyState variant="filtered-empty" title="x" link={{ label: "l", href: "#l" }} />
+    );
+    expect([linked, progressing, allowed]).toHaveLength(3);
   });
 
   it("variant=error without a description speaks the title as its message", async () => {
