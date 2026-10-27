@@ -217,9 +217,10 @@ describe("Select (CMP-009)", () => {
 
   it("modifier chords and unhandled keys do nothing and are not consumed", async () => {
     const host = await mount(<Host value="a" />);
+    // Alt+Down is the one chord that opens (Select Alt chords, select-options.test.tsx).
     for (const init of [
       { ctrlKey: true },
-      { altKey: true },
+      { altKey: true, shiftKey: true },
       { metaKey: true },
       { shiftKey: true },
     ]) {
@@ -377,7 +378,7 @@ describe("Select (CMP-009)", () => {
     expect(status).toHaveTextContent("");
     expect(key(host, "Escape")).toBe(true);
     expect(key(host, "Tab")).toBe(true);
-    expect(key(host, "ArrowDown", { altKey: true })).toBe(true);
+    expect(key(host, "ArrowLeft", { altKey: true })).toBe(true);
     expect(key(host, "c", { ctrlKey: true })).toBe(true);
     expect(status).toHaveTextContent("");
     await act(async () => void key(host, "ArrowDown"));

@@ -57,7 +57,12 @@ const isRefusedKey = (event: KeyboardEvent, extra: ReadonlySet<string>): boolean
   REFUSED_KEYS.has(event.key) ||
   (event.key.length === 1 && !event.ctrlKey && !event.metaKey) ||
   // A key that would act on a widget (a Select's arrows) is refused plain only: a chord is the host's.
-  (extra.has(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey);
+  (extra.has(event.key) &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.shiftKey &&
+    // Alt+Down would open a Select (Alt+Up only chooses), so a gated one refuses Alt+Down too.
+    (!event.altKey || event.key === "ArrowDown"));
 
 const NO_KEYS: ReadonlySet<string> = new Set();
 

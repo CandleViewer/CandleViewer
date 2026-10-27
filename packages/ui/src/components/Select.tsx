@@ -88,6 +88,13 @@ const fitStyle = (fit: Fit): CSSProperties | undefined =>
         "--cv-select-wide": `${String(fit.wide)}px`,
       } as CSSProperties);
 
+interface Recall {
+  readonly index: number;
+  readonly count: number;
+}
+
+const NONE: SelectOption = { value: "", label: "" };
+
 type Kind = "disabled" | "unavailable" | "locked";
 
 const trimmed = (text: string | undefined): string | undefined => {
@@ -135,9 +142,12 @@ export function Select({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [fit, setFit] = useState<Fit>(UNFIT);
-  // The option whose reason Enter or a press re-showed (announced politely while it stays active).
-  const [recalled, setRecalled] = useState(-1);
+  // The option whose reason Enter or a press re-showed, and how many times (the count re-keys the status node, so
+  // a repeat press is announced again). Any move of the active option clears the index: arrows stay silent.
+  const [recall, setRecall] = useState<Recall>({ index: -1, count: 0 });
   const typed = useRef<Typed>({ text: "", at: 0 });
+  // Only a keyboard move (or an open) scrolls the active row into view; a hover must not move the list under the pointer.
+  const scrollActive = useRef(true);
 
   const chosen = options.findIndex((option) => option.value === value);
   // `options` may change while open: an index that no longer names a reachable option falls back to the start.
@@ -148,20 +158,33 @@ export function Select({
       : openIndex(options, chosen, skipped);
   const shown = options[chosen]?.label ?? placeholder;
   const optionId = (index: number): string => `${listId}-${String(index)}`;
+  // Stable per option: the name and the description both point at these two nodes.
+  const labelId = (index: number): string => `${optionId(index)}-label`;
+  const reasonId = (index: number): string => `${optionId(index)}-reason`;
 
+  const endTyping = (): void => {
+    typed.current = { text: "", at: 0 };
+  };
   const choose = (index: number): void => {
     const option = options[index];
     if (option !== undefined && blocked(option)) {
-      // An unavailable or T2 option is never chosen; its reason is shown again. Plain disabled says nothing.
-      if (look(option).reason !== undefined) setRecalled(index);
+      // An unavailable or T2 option is never chosen; its reason is shown again, every time. Plain disabled says nothing.
+      if (look(option).reason !== undefined) {
+        setActive(index); // a tap or an AT click with no prior pointer move: the pressed row is the active one
+        setRecall((prev) => ({ index, count: prev.count + 1 }));
+      }
       return;
     }
     if (option !== undefined && option.value !== value) onChange(option.value);
+    endTyping();
     setOpen(false);
   };
-  const openAt = (index: number): void => {
-    setRecalled(-1);
+  const moveTo = (index: number): void => {
+    setRecall((prev) => ({ index: -1, count: prev.count }));
     setActive(index);
+  };
+  const openAt = (index: number): void => {
+    moveTo(index);
     setOpen(true);
   };
 
@@ -188,9 +211,10 @@ export function Select({
 
   // The active option stays in view in a long list.
   useEffect(() => {
-    if (open && current >= 0) {
+    if (open && current >= 0 && scrollActive.current) {
       document.getElementById(optionId(current))?.scrollIntoView({ block: "nearest" });
     }
+    scrollActive.current = true;
     // `optionId` is derived from `listId`, which is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, current]);
@@ -198,31 +222,52 @@ export function Select({
   const handleKey = (event: KeyboardEvent<HTMLDivElement>): void => {
     if (reason.gated || reason.disabled) return;
     const { key } = event;
-    // A chord belongs to the host (Shift+Tab is focus movement, not a chord of ours).
+    scrollActive.current = true;
+    // Alt+Down opens and Alt+Up chooses (APG); every other chord belongs to the host (Shift+Tab is focus movement).
+    if (event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      if (key === "ArrowDown" && !open) {
+        event.preventDefault();
+        openAt(openIndex(options, chosen, skipped)); // opens without moving the active option
+      } else if (key === "ArrowUp" && open) {
+        event.preventDefault();
+        choose(current); // never a reason option: that re-shows its reason
+      }
+      return;
+    }
     if (event.ctrlKey || event.altKey || event.metaKey) return;
     if (event.shiftKey && key !== "Tab" && (key.length > 1 || key === " ")) return;
     if (key === "Tab") {
-      if (open) choose(current); // no preventDefault: focus moves on (APG)
+      // No preventDefault: focus moves on (APG). A reason option is never chosen and never announced as focus leaves.
+      if (open) {
+        const leaving = options[current];
+        if (leaving !== undefined && blocked(leaving)) setOpen(false);
+        else choose(current);
+      }
       return;
     }
     // Type-ahead (APG): printables extend a short-lived string; the next label that starts with it becomes active.
-    // A Space inside a typed string continues it (APG), so "sub account" works; a lone Space opens or chooses.
+    // A Space inside a typed string continues it while the longer string still matches ("sub account"); otherwise it
+    // does its own job (opens, or chooses) and is always consumed, so it never scrolls the page.
     const now = performance.now();
     const typing = typed.current.text !== "" && now - typed.current.at <= TYPE_AHEAD_MS;
-    if (key.length === 1 && (key !== " " || typing)) {
-      typed.current = extendTyped(typed.current, key, now);
-      const found = matchIndex(
-        options,
-        open ? current : chosen,
-        typed.current.text,
-        labelOf,
-        skipped,
-      );
-      if (found >= 0) {
-        event.preventDefault(); // a key that did something is ours; one that matched nothing stays the host's
-        openAt(found);
+    if (key.length === 1) {
+      const next = extendTyped(typed.current, key, now);
+      const found = matchIndex(options, open ? current : chosen, next.text, labelOf, skipped);
+      if (key !== " ") {
+        typed.current = next;
+        if (found >= 0) {
+          event.preventDefault(); // a printable that did something is ours; one that matched nothing stays the host's
+          openAt(found);
+        }
+        return;
       }
-      return;
+      if (typing && found >= 0) {
+        typed.current = next;
+        event.preventDefault();
+        openAt(found);
+        return;
+      }
+      endTyping();
     }
     const consume = (): void => event.preventDefault();
     if (!open) {
@@ -239,17 +284,17 @@ export function Select({
       case "ArrowDown":
       case "ArrowUp":
         consume();
-        setActive(stepIndex(options, current, key === "ArrowDown" ? 1 : -1, skipped));
+        moveTo(stepIndex(options, current, key === "ArrowDown" ? 1 : -1, skipped));
         break;
       case "PageDown":
       case "PageUp":
         consume();
-        setActive(pageIndex(options, current, key === "PageDown" ? 1 : -1, PAGE, skipped));
+        moveTo(pageIndex(options, current, key === "PageDown" ? 1 : -1, PAGE, skipped));
         break;
       case "Home":
       case "End":
         consume();
-        setActive((key === "Home" ? firstIndex : lastIndex)(options, skipped));
+        moveTo((key === "Home" ? firstIndex : lastIndex)(options, skipped));
         break;
       case "Enter":
       case " ": // APG select-only: Space chooses the active option; the spec's open rows are silent on it
@@ -261,6 +306,7 @@ export function Select({
         // also stops the native event, so a bubble-phase document listener never sees it (a capture one still does).
         consume();
         event.stopPropagation();
+        endTyping();
         setOpen(false);
         break;
       default:
@@ -281,6 +327,8 @@ export function Select({
   // Keep focus on the trigger when the popup is pressed (also a press on its padding or scrollbar).
   const keepFocus = (event: MouseEvent<HTMLElement>): void => event.preventDefault();
 
+  // Announced politely: only a press on the active reason option (Enter, Space, Alt+Up or a click), never an arrival.
+  const said = open && recall.index === current ? look(options[current] ?? NONE).reason : undefined;
   const description = reason.gated ? reason.ariaDescribedBy : cx(errorId, describedBy) || undefined;
   const unavailable = reason.gated || reason.disabled;
   // A plain-disabled trigger is not focusable at all (a press never focuses it), like a native disabled control.
@@ -314,6 +362,7 @@ export function Select({
             onKeyDown={refusal.handlers.onKeyDown}
             onBlur={(event) => {
               refusal.handlers.onBlur?.(event);
+              endTyping();
               setOpen(false);
             }}
           >
@@ -355,29 +404,38 @@ export function Select({
                   role="option"
                   className="cv-select__option"
                   aria-selected={index === chosen}
-                  aria-describedby={why === undefined ? undefined : `${optionId(index)}-reason`}
+                  aria-describedby={why === undefined ? undefined : reasonId(index)}
+                  data-lines={why === undefined ? undefined : 2}
                   aria-disabled={kind === undefined ? undefined : true}
                   data-kind={kind}
                   data-active={index === current ? "" : undefined}
                   onMouseMove={() => {
-                    if (kind !== "disabled" && index !== current) setActive(index);
+                    if (kind !== "disabled" && index !== current) {
+                      scrollActive.current = false;
+                      moveTo(index);
+                    }
                   }}
-                  onClick={() => choose(index)}
+                  onClick={() => {
+                    if (index !== current) scrollActive.current = false; // under the pointer already
+                    choose(index);
+                  }}
                 >
                   <span className="cv-select__check">
                     {index === chosen ? <Icon name="check" /> : null}
                   </span>
-                  {kind === "locked" ? (
-                    <span className="cv-select__optlock">
-                      <Icon name="lock" />
-                    </span>
-                  ) : null}
                   <span className="cv-select__body">
-                    <span id={`${optionId(index)}-label`} className="cv-select__label">
-                      {option.label}
+                    <span className="cv-select__line">
+                      {kind === "locked" ? (
+                        <span className="cv-select__optlock">
+                          <Icon name="lock" />
+                        </span>
+                      ) : null}
+                      <span id={labelId(index)} className="cv-select__label">
+                        {option.label}
+                      </span>
                     </span>
                     {why === undefined ? null : (
-                      <span id={`${optionId(index)}-reason`} className="cv-select__reason">
+                      <span id={reasonId(index)} className="cv-select__reason">
                         {why}
                       </span>
                     )}
@@ -393,7 +451,7 @@ export function Select({
       {refusal.status}
       {options.some((option) => look(option).reason !== undefined) ? (
         <span className="cv-visually-hidden" role="status">
-          {open && recalled === current ? look(options[current] as SelectOption).reason : ""}
+          {said === undefined ? null : <span key={recall.count}>{said}</span>}
         </span>
       ) : null}
     </div>
