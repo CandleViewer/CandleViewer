@@ -8,6 +8,7 @@ import {
   degradedIssues,
   handOverPrivateReconnect,
   reduceDegraded,
+  selectDegradedIssues,
   type DegradedFacts,
 } from "../../../src/features/system-states/degradedIssues";
 
@@ -16,6 +17,7 @@ const run = (...updates: unknown[]): DegradedFacts =>
     (facts, u) => reduceDegraded(facts, u as SystemUpdate),
     INITIAL_DEGRADED_FACTS,
   );
+const MAINTENANCE_ON = { kind: "notice", reason: "maintenance.enabled" };
 const ids = (facts: DegradedFacts): string[] => degradedIssues(facts).map((i) => i.id);
 
 const health = (components: unknown[], extra: object = {}): SystemUpdate =>
@@ -176,5 +178,14 @@ describe("degraded issues", () => {
       expect(row.message).toMatch(/\.$/);
       if (row.stillWorks !== null) expect(row.stillWorks).toMatch(/\.$/);
     }
+  });
+});
+
+describe("selectDegradedIssues", () => {
+  it("returns the same rows array until the facts change, so unrelated store changes rebuild nothing", () => {
+    const facts = run(MAINTENANCE_ON);
+    const rows = selectDegradedIssues(facts);
+    expect(selectDegradedIssues(facts)).toBe(rows);
+    expect(selectDegradedIssues(run(MAINTENANCE_ON, MAINTENANCE_ON))[0]?.assertedSeq).toBe(2);
   });
 });

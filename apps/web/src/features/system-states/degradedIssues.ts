@@ -163,3 +163,18 @@ export function degradedIssues(facts: DegradedFacts): readonly DegradedIssue[] {
   }
   return issues;
 }
+
+let lastFacts: DegradedFacts | null = null;
+let lastIssues: readonly DegradedIssue[] = [];
+
+/**
+ * `degradedIssues`, memoized on the facts' identity: the store keeps `degraded` by reference until a
+ * frame changes it, so an unrelated store change (latency, connection) returns the same rows array.
+ */
+export function selectDegradedIssues(facts: DegradedFacts): readonly DegradedIssue[] {
+  if (facts !== lastFacts) {
+    lastFacts = facts;
+    lastIssues = degradedIssues(facts);
+  }
+  return lastIssues;
+}

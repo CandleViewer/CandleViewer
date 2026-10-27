@@ -16,7 +16,12 @@ import type { WsState } from "../lib/ws/state/types.js";
 import { runBootstrap, type BootstrapDeps } from "./bootstrap/bootstrap.js";
 import { createBrowserShellAdapter } from "./BrowserShellAdapter.js";
 import { installCrashReporter } from "./crash/reportCrash.js";
-import { applySystemUpdate, setShellState, type ConnectionState } from "./bootstrap/store.js";
+import {
+  applySystemUpdate,
+  clearDegraded,
+  setShellState,
+  type ConnectionState,
+} from "./bootstrap/store.js";
 
 /** The version `hello` names (`apps/web/package.json`); nothing injects it at build time yet. */
 const CLIENT_VERSION = "0.1.0";
@@ -106,6 +111,7 @@ export function startShell(options: StartShellOptions): { stop(): void; ready: P
     if (stopActive === stop) {
       stopActive = null;
       setActiveClient(null);
+      clearDegraded(); // the facts and row 9's timer are this client's; nothing fires after stop()
     }
   };
   stopActive = stop;

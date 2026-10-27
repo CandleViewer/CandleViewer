@@ -113,6 +113,22 @@ describe("startShell", () => {
     }
   });
 
+  it("stop() drops the degraded facts and row 9's hand-over timer (E10-S04, #4723 review)", () => {
+    vi.useFakeTimers();
+    try {
+      const { port, handle } = started();
+      port.say({ t: "system", update: { kind: "exchange_state", private_ws: "connecting" } });
+      expect(getShellState().degraded.asserted).toEqual({ privateReconnect: 1 });
+      handle.stop();
+      expect(getShellState().degraded.asserted).toEqual({});
+      const before = getShellState();
+      vi.advanceTimersByTime(PRIVATE_HANDOVER_MS);
+      expect(getShellState()).toBe(before); // the dropped timer wrote nothing
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps the client's connection onto the shell's, and says it again on each transition", () => {
     setShellState({ connection: { kind: "live" } }); // what an earlier shell left
     const { port, handle } = started();

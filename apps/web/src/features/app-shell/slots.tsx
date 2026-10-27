@@ -16,11 +16,12 @@
  */
 import type { JSX } from "react";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
+import { DegradedBanner } from "../system-states/DegradedBanner";
 
 /** A shell slot: a prop-less component that renders its content or nothing. */
 export type ShellSlot = () => JSX.Element | null;
 
-export const ShellBannerSlot: ShellSlot = () => null;
+export const ShellBannerSlot: ShellSlot = DegradedBanner;
 
 export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
