@@ -1,12 +1,16 @@
 """#2523 lever 5: `ParquetKlineReader.page`'s byte-bounded LRU of cold pages.
 
 A page is cached under `(symbol, interval, lo_us, hi_us, max_rows)` plus the sorted
-`(path, size, mtime_ns)` of every Parquet file the read resolved. Roll-off, import, compaction
-and purge each add, rewrite or delete a file, so each is a new key: one test per path here and a
-hypothesis interleaving of writes and reads against a reader with no cache. Also pinned: the
-bound (`CV_COLD_KLINE_PAGE_CACHE_BYTES`, 0 = off), an entry's cost, the quarter-bound rule, LRU
-eviction, a hit taking no DuckDB slot, and no single-flight. The route golden, a miss then a hit,
-is `tests/unit/api/test_market_response_columnar.py`.
+`(path, size, mtime_ns, sha256)` of every Parquet file the read resolved, the sha256 its manifest
+entry's. Roll-off, import, compaction and purge each add, rewrite or delete a file, so each is a
+new key: one test per path here, one per part of a rewritten file's stamp, and a hypothesis
+interleaving of writes and reads against a reader with no cache. A quarantined, corrupt or
+missing part fails the read even with its page cached. Also pinned: the bound
+(`CV_COLD_KLINE_PAGE_CACHE_BYTES`: 0 = off, at most 1 GiB), an entry's cost (with the fixed
+allowance for what DuckDB's Arrow export holds), the quarter-bound rule, LRU eviction, empty
+pages never cached, `close()` dropping the pages, a hit taking no DuckDB slot, and no
+single-flight. The route golden, a miss then a hit, is
+`tests/unit/api/test_market_response_columnar.py`.
 """
 
 from __future__ import annotations
@@ -15,11 +19,12 @@ import asyncio
 import os
 import tempfile
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
@@ -29,15 +34,21 @@ from pydantic import ValidationError
 from candleviewer.ingestion.kline_coverage import Range
 from candleviewer.settings import Settings
 from candleviewer.storage.cold import kline_reader as kr
-from candleviewer.storage.cold.kline_reader import ColdKlinePage, ParquetKlineReader
-from candleviewer.storage.cold.layout import DatasetRegistry
-from candleviewer.storage.cold.manifest import ManifestStore
+from candleviewer.storage.cold.kline_reader import (
+    ColdKlinePage,
+    ColdKlineReadError,
+    ParquetKlineReader,
+)
+from candleviewer.storage.cold.layout import ColdPaths, DatasetRegistry
+from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
 from candleviewer.storage.models import StreamKind
 from tests.unit.storage.cold.test_kline_page import _table
 from tests.unit.storage.cold.test_kline_reader import MIN, H, _us, _write, _write_table
 
 E = _us(2026, 4)  # a month edge: partition 2026-03 holds the hours before it, 2026-04 the rest
-ON = 1 << 20
+ON = 64 << 20  # the app's default bound: no page here is refused or evicted under it
+ALLOWANCE = 384 * 1024  # `kr._PAGE_OVERHEAD_BYTES`: every page's fixed share of the bound
+T0 = 10**18  # an mtime_ns the rewrites set, so no test leans on the filesystem's clock
 
 
 def _series(name: str) -> float:
@@ -57,10 +68,16 @@ def _hours(lo: int, n: int) -> list[int]:
     return [lo + k * H for k in range(n)]
 
 
-def _hourly(values: list[float], lo: int) -> pa.Table:
+def _hourly(values: Sequence[float], lo: int) -> pa.Table:
     """`_table`'s bars (each price column a rotation of `values`), one an hour from `lo`."""
-    return _table(values, lo).set_column(
+    return _table([*values], lo).set_column(
         0, "ts", pa.array(_hours(lo, len(values)), pa.timestamp("us", tz="UTC"))
+    )
+
+
+def _paths(root: Path, ym: str) -> ColdPaths:
+    return DatasetRegistry(root).resolve_partition(
+        StreamKind.KLINES, partition_values={"symbol": "BTCUSDT", "interval": "60", "ym": ym}
     )
 
 
@@ -92,12 +109,16 @@ async def test_a_repeated_read_is_one_scan_and_the_same_page(
     reader.close()
 
 
-@pytest.mark.parametrize("bound", [{}, {"page_cache_bytes": 0}], ids=["default", "zero"])
+@pytest.mark.parametrize("bound", [None, 0], ids=["default", "zero"])
 async def test_the_reader_default_and_a_zero_bound_cache_nothing(
-    tmp_path: Path, scans: list[int], bound: dict[str, int]
+    tmp_path: Path, scans: list[int], bound: int | None
 ) -> None:
     _write(tmp_path, "2026-03", [E - H])
-    reader = ParquetKlineReader(DatasetRegistry(tmp_path), **bound)
+    registry = DatasetRegistry(tmp_path)
+    if bound is None:
+        reader = ParquetKlineReader(registry)
+    else:
+        reader = ParquetKlineReader(registry, page_cache_bytes=bound)
     counted = (_series("hits_total"), _series("misses_total"))
     for _ in range(2):
         assert isinstance(await _page(reader, Range(E - H, E)), ColdKlinePage)
@@ -125,13 +146,44 @@ async def test_rows_of_a_page_that_cannot_be_emitted_are_never_cached(
     reader.close()
 
 
+async def test_an_empty_page_is_never_cached(tmp_path: Path, scans: list[int]) -> None:
+    """A window its files hold no bar of reads a 0-row page: it would cost the allowance and
+    serve nothing, so every read of it scans."""
+    _write(tmp_path, "2026-03", _hours(E - 24 * H, 12))  # no bar in the last 12 hours
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), page_cache_bytes=ON)
+    for _ in range(2):
+        page = await _page(reader, Range(E - 6 * H, E))
+        assert isinstance(page, ColdKlinePage) and len(page) == 0
+    assert len(scans) == 2 and (reader._pages.held, len(reader._pages._entries)) == (0, 0)
+    reader.close()
+
+
 @pytest.mark.parametrize("bars", [0, 1, 7])
-async def test_an_entry_costs_its_table_plus_its_bar_json(tmp_path: Path, bars: int) -> None:
+async def test_an_entry_costs_its_table_its_bar_json_and_a_fixed_allowance(
+    tmp_path: Path, bars: int
+) -> None:
+    """The allowance covers what DuckDB's Arrow export holds beyond `table.nbytes` (337 to
+    378 KB a page on the fixture lake), so the bound caps what the pages really hold."""
     _write_table(tmp_path, "2026-03", _table([1.5, 1e-07, None, 2.25, 3.0, 4.5, 6.0], E - H))
     reader = ParquetKlineReader(DatasetRegistry(tmp_path))
     page = await _page(reader, Range(E - H + (7 - bars) * MIN, E))  # the newest `bars` bars
     assert isinstance(page, ColdKlinePage) and len(page) == bars
-    assert kr._page_cost(page) == page.table.nbytes + len(page.bars_json(b""))
+    assert kr._PAGE_OVERHEAD_BYTES == ALLOWANCE
+    assert kr._page_cost(page) == page.table.nbytes + len(page.bars_json(b"")) + ALLOWANCE
+    reader.close()
+
+
+async def test_one_bar_pages_hold_no_more_than_the_bound(tmp_path: Path) -> None:
+    """However small a page, it costs the allowance, so at most `bound // ALLOWANCE` pages are
+    held and their cost stays within the bound."""
+    _write(tmp_path, "2026-03", _hours(E - 24 * H, 24))
+    bound = 8 * ALLOWANCE
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), page_cache_bytes=bound)
+    gauge = _series("bytes")
+    for k in range(24):  # 24 one-bar windows, each its own key
+        assert len(await _page(reader, Range(E - (k + 1) * H, E - k * H))) == 1
+    assert 0 < len(reader._pages._entries) <= bound // ALLOWANCE
+    assert reader._pages.held == _series("bytes") - gauge <= bound
     reader.close()
 
 
@@ -158,8 +210,9 @@ async def test_a_file_added_to_the_window_is_read(tmp_path: Path) -> None:
 
 
 async def test_a_file_rewritten_in_place_is_read(tmp_path: Path) -> None:
-    """The rewrite lands later, as a write does (its mtime moves on); a rewrite that keeps both
-    size and `mtime_ns` is the design note's one blind spot."""
+    """The rewrite lands later, as a write does (its mtime moves on), with another size and
+    checksum; rewrites that keep part of that stamp are pinned below. One that keeps a file's
+    size, `mtime_ns` and manifest checksum is the one blind spot."""
     f = _write(tmp_path, "2026-03", _hours(E - 12 * H, 12))
 
     def rewrite() -> None:
@@ -170,11 +223,55 @@ async def test_a_file_rewritten_in_place_is_read(tmp_path: Path) -> None:
     await _assert_fresh_after(tmp_path, Range(E - 24 * H, E), rewrite)
 
 
+def _write_plain(root: Path, values: Sequence[float], mtime_ns: int) -> Path:
+    """2026-03's `part-0000`, the hours before `E`, with no compression or dictionary, so a
+    rewrite with as many other values keeps its size. Its manifest entry is recorded as the
+    exporter records it (the file's sha256), then its mtime is set to `mtime_ns`."""
+    paths = _paths(root, "2026-03")
+    paths.partition_dir.mkdir(parents=True, exist_ok=True)
+    f = paths.partition_dir / "part-0000.parquet"
+    table = _hourly(values, E - len(values) * H)
+    pq.write_table(table, f, compression="none", use_dictionary=False)
+    ManifestStore(paths.manifests_dir).append_reconciled(
+        paths.partition_dir,
+        paths.root,
+        ManifestEntry(
+            file=f.name,
+            sha256=sha256_of(f),
+            row_count=table.num_rows,
+            source_table="klines",
+            export_run_id="r",
+            exported_at_us=0,
+        ),
+    )
+    os.utime(f, ns=(mtime_ns, mtime_ns))
+    return f
+
+
+@pytest.mark.parametrize(
+    ("bars", "mtime_ns"),
+    [(12, T0 + 1_000_000_000), (13, T0), (12, T0)],
+    ids=["same-size", "same-mtime", "same-size-and-mtime"],
+)
+async def test_a_rewrite_keeping_part_of_the_files_stamp_is_read(
+    tmp_path: Path, bars: int, mtime_ns: int
+) -> None:
+    """Every part of a file's stamp is in the key: a rewrite that keeps the size is told by its
+    mtime, one that keeps the mtime by its size, one that keeps both by its manifest sha256."""
+    f = _write_plain(tmp_path, [1.5] * 12, T0)
+    size = f.stat().st_size
+
+    def rewrite() -> None:
+        _write_plain(tmp_path, [2.5] * bars, mtime_ns)
+        stamp = f.stat()
+        assert (stamp.st_size == size, stamp.st_mtime_ns) == (bars == 12, mtime_ns)
+
+    await _assert_fresh_after(tmp_path, Range(E - 24 * H, E), rewrite)
+
+
 def _delete(root: Path, ym: str, name: str) -> None:
     """What compaction and purge do to one part: drop its manifest entry, then the file."""
-    paths = DatasetRegistry(root).resolve_partition(
-        StreamKind.KLINES, partition_values={"symbol": "BTCUSDT", "interval": "60", "ym": ym}
-    )
+    paths = _paths(root, ym)
     store = ManifestStore(paths.manifests_dir)
     kept = [e for e in store.read(paths.partition_dir, paths.root) if e.file != name]
     store.write(paths.partition_dir, paths.root, kept)
@@ -196,6 +293,43 @@ async def test_a_roll_off_across_the_window_edge_is_read(tmp_path: Path) -> None
     await _assert_fresh_after(
         tmp_path, Range(E - 6 * H, E + 6 * H), lambda: _write(tmp_path, "2026-04", _hours(E, 12))
     )
+
+
+def _quarantine(root: Path, part: Path) -> None:
+    """A scrub, or another read's verification, took the part out (`ManifestStore.quarantine`)."""
+    paths = _paths(root, "2026-03")
+    ManifestStore(paths.manifests_dir).quarantine(paths.partition_dir, paths.root, part.name)
+
+
+def _corrupt(root: Path, part: Path) -> None:
+    """Its bytes change under its manifest entry, and its mtime moves on."""
+    mtime = part.stat().st_mtime_ns + 1_000_000_000
+    pq.write_table(_hourly([9.5], E - H), part)
+    os.utime(part, ns=(mtime, mtime))
+
+
+def _vanish(root: Path, part: Path) -> None:
+    """The manifest still names the part, but its file is gone."""
+    part.unlink()
+
+
+@pytest.mark.parametrize(
+    "damage", [_quarantine, _corrupt, _vanish], ids=["quarantined", "corrupt", "missing"]
+)
+async def test_a_cached_page_is_never_served_over_a_damaged_part(
+    tmp_path: Path, damage: Callable[[Path, Path], None]
+) -> None:
+    """The manifest and every file's stamp are read before the cache is, so a quarantined part,
+    a part whose checksum no longer matches, or a missing one fails the read (a 503)."""
+    _write(tmp_path, "2026-03", _hours(E - 24 * H, 12))
+    part = _write(tmp_path, "2026-03", _hours(E - 12 * H, 12), name="part-0001.parquet")
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), page_cache_bytes=ON)
+    page = await _page(reader, Range(E - 24 * H, E))
+    assert await _page(reader, Range(E - 24 * H, E)) is page
+    damage(tmp_path, part)
+    with pytest.raises(ColdKlineReadError):
+        await _page(reader, Range(E - 24 * H, E))
+    reader.close()
 
 
 async def test_a_page_over_a_quarter_of_the_bound_is_never_cached(tmp_path: Path) -> None:
@@ -230,6 +364,22 @@ async def test_the_bound_evicts_the_least_recently_used_page(
     assert len(scans) == 5
     await _page(reader, b)
     assert len(scans) == 6
+    reader.close()
+
+
+async def test_close_drops_the_pages_and_takes_their_cost_off_the_gauge(
+    tmp_path: Path, scans: list[int]
+) -> None:
+    _write(tmp_path, "2026-03", _hours(E - 24 * H, 24))
+    reader = ParquetKlineReader(DatasetRegistry(tmp_path), page_cache_bytes=ON)
+    gauge = _series("bytes")
+    for window in (Range(E - 24 * H, E - 12 * H), Range(E - 12 * H, E)):
+        await _page(reader, window)
+    assert _series("bytes") - gauge == reader._pages.held > 0
+    reader.close()
+    assert (reader._pages.held, len(reader._pages._entries), _series("bytes")) == (0, 0, gauge)
+    await _page(reader, Range(E - 12 * H, E))  # read again after `close()`: a miss, scanned
+    assert len(scans) == 3
     reader.close()
 
 
@@ -301,8 +451,8 @@ def test_an_interleaving_of_writes_and_reads_never_serves_a_stale_page(
 
 
 def _settings(**kw: int) -> Settings:
-    """No `.env` is read: `_env_file` is a pydantic-settings keyword its stubs do not declare."""
-    return Settings(_env_file=None, **kw)  # type: ignore[call-arg]
+    """No `.env` is read."""
+    return Settings(_env_file=None, **kw)  # type: ignore[call-arg, arg-type]  # pydantic-settings kwarg
 
 
 def test_the_bound_setting_defaults_to_64_mib_and_zero_turns_the_cache_off(
@@ -315,17 +465,23 @@ def test_the_bound_setting_defaults_to_64_mib_and_zero_turns_the_cache_off(
         _settings(cold_kline_page_cache_bytes=-1)
 
 
+def test_the_bound_setting_refuses_more_than_1_gib() -> None:
+    """A typo guard, as `CV_REPLAY_READAHEAD_BYTES` has: 1 GiB is accepted, a byte more is not."""
+    assert _settings(cold_kline_page_cache_bytes=1 << 30).cold_kline_page_cache_bytes == 1 << 30
+    with pytest.raises(ValidationError):
+        _settings(cold_kline_page_cache_bytes=(1 << 30) + 1)
+
+
 def test_the_composition_root_hands_the_bound_to_the_cold_reader(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from candleviewer import app as app_module
 
     seen: list[object] = []
-    real = app_module.ParquetKlineReader
 
     def spy(*a: Any, **k: Any) -> ParquetKlineReader:
         seen.append(k.get("page_cache_bytes"))
-        return real(*a, **k)
+        return ParquetKlineReader(*a, **k)  # the class `app` imports
 
     monkeypatch.setattr(app_module, "ParquetKlineReader", spy)
     app_module.wire_public_ws(
