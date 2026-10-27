@@ -2,7 +2,7 @@
 """E12-D04 (#240) audit: SCR-041's bar-mode half and the hotkey ladder (spec + hand-off).
 
 Standalone, offline, stdlib only; it executes no repo code and runs under `python3 -I`. It reads,
-AS TEXT at the pinned base `a1479b371d` (`git show`): the token JSON (`themes.json` layering:
+AS TEXT at the pinned base `d6597cbcf7` (`git show`): the token JSON (`themes.json` layering:
 dark = primitives + semantic-dark, light = + semantic-light, hc = + semantic-hc), the plan texts
 `05`, `11`, `13`, `14`, `15`, `16`, `22`, `23`, the merged design docs the spec cites, the shipped
 keymap files (`keymap.json`, `reserved-keys.json`, as JSON, never imported); then this ticket's
@@ -34,7 +34,10 @@ ticket's).
    synonyms), then the measured gates (the strip parity against D02 and D03, the key-conflict
    matrix over `KM` and `RK`, the reused-copy diff against E08-D05, the carry table, the frame
    register column by column, the contrast pairs, the boards, the budgets, G-UNTOUCHED against
-   `git merge-base HEAD origin/main`), then the pins. Each gate reports one FAIL line.
+   `git merge-base HEAD origin/main`; besides this ticket's four files it admits only the ten
+   board PNGs and the committed board script set `sheets/e12-d04/`), then the pins. Each gate
+   reports one FAIL line. The boards gate reads each §0 Status cell against its PNG's header and
+   the board script's sha256 against the file.
 5. **Pins (G-RULED-PIN).** A whole-document default-deny pin set over EVERY unit of both docs,
    in RULED_PIN_TXT (`e12_d04_ruled_pins.txt`): each heading, table row (by its lead cell), rule
    line, prose sentence (`s<k>`) and fenced block, by doc, region (heading path plus occurrence
@@ -69,9 +72,11 @@ import argparse
 import difflib
 import functools
 import hashlib
+import io
 import json
 import math
 import re
+import struct
 import subprocess
 import sys
 import unicodedata
@@ -82,7 +87,7 @@ from fractions import Fraction
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
-BASE = "a1479b371d"  # every cite was read here (the spec's Inputs line)
+BASE = "d6597cbcf7"  # every cite was read here (the spec's Inputs line; #4682 read a1479b371d)
 HEAD = "origin/main"  # drift is reported against this ref (WARN, never FAIL)
 MULTI = re.MULTILINE
 
@@ -99,7 +104,9 @@ OWN_PATHS = (
     "docs/design/_tools/e12_d04_switcher_audit.py",
     "docs/design/_tools/e12_d04_ruled_pins.txt",
 )
-OWN_IMG = re.compile(r"docs/design/E12/img/E12-D04-\d{2}-[a-z0-9-]+\.png")
+# the boards PR's committed board script set (`sheets/e12-d04/`: the `.js.txt` scripts, HANDOFF.md
+# and expect.txt), never read by this tool but the board script's sha256 (G-BOARDS)
+OWN_SHEETS = re.compile(r"docs/design/_tools/sheets/(?:e12-d04/[A-Za-z0-9._-]+|MANIFEST\.sha256)")
 CITE_FILES: dict[str, str] = {
     "D01": "docs/design/E12/E12-D01.md",
     "D02": "docs/design/E12/E12-D02.md",
@@ -173,7 +180,13 @@ PAIRS: dict[str, tuple[str, str, str]] = {
 # names a doc may cite that are not shipped tokens: proposals and routed names, each with its row
 NOT_SHIPPED = {"color.text.accent": "A-D05-3, routed to E12-D09 (#244)"}
 # §10.2's tab order (E08-D05:293; Record is T2 and focusable for others, E09-D09:228)
-TAB_ORDER = ("input", "strip", "More…", "Record (T2 for others)", "out, closing without commit")
+TAB_ORDER = (
+    "input",
+    "strip",
+    "More…",
+    "Record (when shown, T2 for others)",  # PR 2 ruling: only beside the not-recorded line
+    "out, closing without commit",
+)
 # the frames that draw a status-strip notice: D02's NC-1, never a CMP-028 callout (D02:406)
 STRIP_FRAMES = (
     "`fallback/strip-notice · dark`",
@@ -209,19 +222,20 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("05", 125, "≥4.5:1"),
     ("05", 126, "≥3:1"),
     ("15", 211, "in a non-modal popover Tab past its last control closes it"),
-    ("15", 258, "`font.mono`"),
-    ("15", 519, "500 ms after the last keystroke"),
-    ("15", 2583, "combobox pattern"),
-    ("15", 2592, "`favourites: Interval[]`"),
+    ("15", 259, "`font.mono`"),
+    ("15", 520, "500 ms after the last keystroke"),
+    ("15", 2586, "combobox pattern"),
+    ("15", 2595, "`favourites: Interval[]`"),
     ("16", 113, "Compact"),
     ("16", 114, "32px"),
     ("16", 210, "1280×800px"),
-    ("22", 3690, "maxLength: 32"),
-    ("22", 4737, "/market/data-coverage:"),
-    ("22", 11980, "settings:write"),
-    ("22", 17972, "funding_interval_minutes"),
-    ("22", 18007, "recording_started_at"),
-    ("22", 20850, "default_bar_type"),
+    ("22", 3787, "maxLength: 32"),
+    ("22", 4834, "/market/data-coverage:"),
+    ("22", 12122, "settings:write"),
+    ("22", 18213, "funding_interval_minutes"),
+    ("22", 18248, "recording_started_at"),
+    ("22", 18270, "turnover_24h"),  # the ticker field §8.2 cites beside D-8 (BQ-13)
+    ("22", 21136, "default_bar_type"),
     ("23", 593, "`topics`, `snapshot` and `replay_session_id`"),
     ("23", 685, "a key other than `topics`"),
     ("D02", 25, "after 600 ms the strip says both"),
@@ -247,9 +261,9 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("D03", 285, "the default ladder is read-only"),
     ("D03", 306, "in one commit (NC-10"),
     ("D03", 446, "No audit record"),
-    ("D05", 222, "never chart type or bar mode"),
-    ("D05", 239, "**Tick, Range and Renko** apply the same number everywhere"),
-    ("D06", 567, "Switch to time bars"),
+    ("D05", 220, "never chart type or bar mode"),
+    ("D05", 237, "**Tick, Range and Renko** apply the same number everywhere"),
+    ("D06", 565, "Switch to time bars"),
     ("E08-D05", 53, "E12-D04 amends the same frames for bar modes"),
     ("E08-D05", 71, '"—", name "not available"'),
     ("E08-D05", 89, "| T1   |"),
@@ -267,18 +281,18 @@ CITED: tuple[tuple[str, int, str], ...] = (
     ("D01", 39, "§3 (vocabulary)"),
     ("E09-D09", 115, '`settings:write` → "change settings"'),
     ("E11-D07", 343, "`rules.move_up/down`"),
-    ("E15-D06", 193, "**storage pending**"),
+    ("E15-D06", 218, "**storage pending**"),
     ("E16-D05", 107, "Only the owner can change recording."),
     ("KM", 197, '"defaultBinding": "1..9"'),
     ("KM", 198, '"destructive": false'),
     ("KM", 203, '"command": "ticket.qty_preset"'),
     ("KM", 84, '"defaultBinding": "Alt+1..9"'),
     ("RK", 18, '"Ctrl+1..9"'),
-    ("DSP", 36, "bound(c) === got"),
-    ("KMT", 86, r"(\d)\.\.(\d)$"),
+    ("DSP", 38, "bound(c) === got"),
+    ("KMT", 84, r"(\d)\.\.(\d)$"),
     ("PRF", 3, "Rebinds take effect without reload"),
     ("AUD", 35, "destructive"),
-    ("INS", 269, '"recording_started_at": None'),
+    ("INS", 302, '"recording_started_at": iso_us(started)'),  # #4691 (D04-G2)
     ("SEED", 239, '"viewer": ['),
 )
 # copy the spec quotes verbatim from a merged line: (cite id, line, text, the section quoting it)
@@ -465,19 +479,38 @@ def fenced(lines: list[str]) -> list[bool]:
 HEADING = re.compile(r"^(#{1,6}) (.*)$")
 
 
+SEC_NUM = re.compile(r"(§[A-Z]|\d+(?:\.\d+)*\.?)(?=\s|$)")
+
+
+def find_heading(lines: list[str], fence: list[bool], head: str) -> int:
+    """The index of the heading that starts with `head` (outside fences). A reworded or a
+    renumbered heading is still found (#4682 lens carry 4): failing the exact prefix, the one
+    heading with the same section number, else the one heading with the same words after its
+    number. So a gate keeps reading its section and only the pins report the new heading."""
+    heads = [(i, m[2]) for i, ln in enumerate(lines) if (m := HEADING.match(ln)) and not fence[i]]
+    hit = next((i for i, h in heads if h.startswith(head)), -1)
+    num = SEC_NUM.match(head)
+    if hit >= 0 or num is None:
+        return hit
+    same = [i for i, h in heads if (n := SEC_NUM.match(h)) and n[1] == num[1]]
+    rest = head[num.end() :].strip()
+    if len(same) != 1 and rest:
+        same = [
+            i for i, h in heads if (n := SEC_NUM.match(h)) and h[n.end() :].strip().startswith(rest)
+        ]
+    return same[0] if len(same) == 1 else -1
+
+
 def section(text: str, head: str) -> str:
-    """From the heading starting with `head` (outside fences) to the next heading of the same or a
-    higher level outside a fence."""
+    """From the heading starting with `head` (outside fences; `find_heading`) to the next heading
+    of the same or a higher level outside a fence."""
     lines = text.split("\n")
     fence = fenced(lines)
-    start, level = -1, 0
-    for i, ln in enumerate(lines):
-        m = HEADING.match(ln)
-        if m and not fence[i] and m[2].startswith(head):
-            start, level = i, len(m[1])
-            break
+    start = find_heading(lines, fence, head)
     if start < 0:
         return ""
+    m = HEADING.match(lines[start])
+    level = len(m[1]) if m else 0
     end = len(lines)
     for j in range(start + 1, len(lines)):
         m = HEADING.match(lines[j])
@@ -532,18 +565,10 @@ def sec_id(heading: str) -> str:
 
 def h2_of(text: str, head: str) -> str:
     """The `##` section key of the heading that starts with `head`."""
-    cur = "(top)"
     lines = text.split("\n")
     fence = fenced(lines)
-    for i, ln in enumerate(lines):
-        m = HEADING.match(ln)
-        if not m or fence[i]:
-            continue
-        if len(m[1]) <= 2:
-            cur = sec_id(m[2])
-        if m[2].startswith(head):
-            return cur
-    return "(top)"
+    at = find_heading(lines, fence, head)
+    return h2_at(text, at + 1) if at >= 0 else "(top)"
 
 
 def h2_at(text: str, line_no: int) -> str:
@@ -903,7 +928,7 @@ def budget_values() -> Values:
         "BUDGET:count.rest": grab(
             r"after a (\d+) ms rest", base_line("E08-D05", 130), "E08-D05:130"
         ),
-        "BUDGET:count.cmp048": grab(r"(\d+) ms after the last", base_line("15", 519), "15:519"),
+        "BUDGET:count.cmp048": grab(r"(\d+) ms after the last", base_line("15", 520), "15:519"),
         "BUDGET:width": grab(r"\| (\d+) px wide, clamped", base_line("E08-D05", 121), "E08:121"),
         "BUDGET:width.margin": grab(r"window − (\d+) px", base_line("E08-D05", 264), "E08:264"),
         "BUDGET:width.scr042": grab(r"\| (\d+) wide \(", base_line("D03", 129), "D03:129"),
@@ -924,6 +949,11 @@ def is_twin(row: list[str]) -> bool:
     return "twin of" in row[2]
 
 
+BOARD_SCRIPT = "docs/design/_tools/sheets/e12-d04/e12-d04-board.js.txt"  # the r2 script §0 names
+DRAWN_CELL = re.compile(
+    r"drawn \(r2\): board id `[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}`, "
+    r"`(?P<png>[^`]+)` \((?P<w>\d+) × (?P<h>\d+)\)"
+)
 FRAME_HEAD = "18.1 The frame register"
 FR_COLS = ("Frame", "Board", "Theme", "State", "Components", "Copy", "Tokens", "Status")
 
@@ -952,7 +982,7 @@ def count_values(spec: str) -> Values:
         "COUNT:pairs": str(len(PAIRS)),
         "COUNT:km.commands": str(len(km_commands())),
         "COUNT:rk.keys": str(len(rk_keys())),
-        "COUNT:query.max": grab(r"maxLength: (\d+)", base_line("22", 3690), "22:3690"),
+        "COUNT:query.max": grab(r"maxLength: (\d+)", base_line("22", 3787), "22:3690"),
         "COUNT:ranked": grab(r"≤ (\d+) ranked results", base_line("E08-D05", 45), "E08:45"),
         "COUNT:recent": grab(r"\*\*Recents\*\* \((\d+)\)", base_line("E08-D05", 50), "E08:50"),
         "COUNT:windowed": grab(r"above (\d+); ≤", base_line("E08-D05", 126), "E08:126"),
@@ -1337,9 +1367,50 @@ def g_boards(t: Texts) -> list[Finding]:
         bad.append(F("G-BOARDS", msg, "spec", spec_sec(t, "20.2 Deviations")))
     for r in rows:
         want = "light" if r[2].startswith("light") else "hc" if "high-contrast" in r[2] else "dark"
-        if len(r) < 5 or r[3] != want or not r[4].startswith("PENDING"):
+        if len(r) < 5 or r[3] != want or not drawn_cell_ok(r):
             bad.append(F("G-BOARDS", f"board {r[0]}: theme or status cell", "spec", sec))
+    script = ROOT / BOARD_SCRIPT
+    sha = hashlib.sha256(script.read_bytes()).hexdigest() if script.exists() else "missing"
+    if f"board script r2, sha256 `{sha}`" not in section(t.spec, "0. Status"):
+        bad.append(F("G-BOARDS", f"§0 does not name {BOARD_SCRIPT}'s sha256", "spec", sec))
+    # #4682 lens carry: a twin board draws one frame, "as NN" of its source board; no other frame
+    # is a twin (so no extra light, high-contrast or comfortable twin hides in the register)
+    fsec = spec_sec(t, FRAME_HEAD)
+    src = {r[0]: m[1] for r in twins if (m := re.search(r"twin of (\d{2})\b", r[2]))}
+    on: dict[str, list[dict[str, str]]] = {}
+    for fr in frames(t.spec):
+        on.setdefault(fr.get("Board", ""), []).append(fr)
+        as_of = re.fullmatch(r"as (\d{2})\b.*", fr.get("State", ""))
+        if as_of and src.get(fr.get("Board", "")) != as_of[1]:
+            msg = f"{fr['Frame']}: a twin frame off its twin board"
+            bad.append(F("G-BOARDS", msg, "spec", fsec))
+    for b, of in src.items():
+        got = [fr.get("State", "") for fr in on.get(b, [])]
+        if len(got) != 1 or not re.fullmatch(rf"as {of}\b.*", got[0]):
+            msg = f"twin board {b} draws {len(got)} frames, not one 'as {of}'"
+            bad.append(F("G-BOARDS", msg, "spec", fsec))
     return bad
+
+
+def png_size(rel: str) -> tuple[int, int] | None:
+    """Width and height from a working-tree PNG's IHDR, else None."""
+    path = ROOT / rel
+    head = path.read_bytes()[:24] if path.is_file() else b""
+    if head[:8] != b"\x89PNG\r\n\x1a\n" or head[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", head[16:24])
+    return int(w), int(h)
+
+
+def drawn_cell_ok(row: list[str]) -> bool:
+    """A §0 Status cell reads `drawn (r2): board id `<uuid>`, `<its export path>` (W × H)`, the
+    path the board's own slug names and W × H its PNG header (the boards PR)."""
+    slug = re.fullmatch(rf"`E12-D04 / {row[0]} ([a-z0-9-]+)`", row[1])
+    m = DRAWN_CELL.fullmatch(row[4])
+    if not slug or not m:
+        return False
+    want = f"docs/design/E12/img/E12-D04-{row[0]}-{slug[1]}.png"
+    return m["png"] == want and png_size(want) == (int(m["w"]), int(m["h"]))
 
 
 def g_penpot(t: Texts) -> list[Finding]:
@@ -1625,7 +1696,7 @@ def g_carry(t: Texts) -> list[Finding]:
     rows = {r[0]: r for r in table_rows(section(t.spec, "5. Carry"))}
     want = {
         "Time": ("the same interval", "D02:39"),
-        "Tick, Range, Renko": ("the same number", "D05:239"),
+        "Tick, Range, Renko": ("the same number", "D05:237"),
         "Volume, Delta": ("the new symbol's d3 11 value", "D03:56"),
     }
     bad: list[Finding] = []
@@ -1673,6 +1744,26 @@ g_probe = both(
         r"|\btime mode (?:charts?|commits?)\b[^.;]*\b(?:probe|wait\w*|delay\w*)\b",
         near=r"\bprobe\b|\bcoverage\b",
     ),
+    # #4682 lens carry: a time-mode chart claims "no recorded prints" (T2, C-24) with no answer
+    lexicon(
+        "G-PROBE",
+        "a missing-prints claim on a time-mode chart",
+        r"\btime mode\b[^.;]*\b(?:no recorded prints|missing prints|c 24|t2|unavailable"
+        r"|can'?t be built)\b|\b(?:no recorded prints|c 24|t2|unavailable)\b[^.;]*\btime mode\b",
+        near=r"\bslots?\b|\bprints\b|\bc 24\b|\bvolume\b|\bdelta\b|\bmode\b",
+        unless=r"\bsession cached?\b|\bunless\b|\bno t2 claim\b",
+    ),
+    # a slot reads unavailable at once, before the bounded probe answers
+    lexicon(
+        "G-PROBE",
+        "a slot unavailable before the probe answers",
+        r"\b(?:unavailable|greyed|grayed|disabled|dimmed|struck|marked)\b[^.;]*\b(?:straight away"
+        r"|immediately|at once|instantly|right away|without waiting)\b|\b(?:straight away"
+        r"|immediately|at once|instantly|right away)\b[^.;]*\b(?:unavailable|greyed|grayed"
+        r"|disabled)\b",
+        near=r"\bslots?\b|\bprobe\b|\bcoverage\b",
+        unless=r"\bsession cached?\b|\bunless\b|\bno t2 claim\b|\bnever\b",
+    ),
 )
 g_fallback = both(
     require(
@@ -1689,8 +1780,26 @@ g_fallback = both(
         "G-FALLBACK",
         "an automatic return to the mode",
         r"\b(?:restores?|returns? to|switch(?:es)? back to|brings? back|re ?applies) the "
-        r"(?:non time |\w+ )?mode\b|\bbrings? (?:the )?(?:\w+ )?mode back\b",
-        near=r"\brecorded symbol\b|\bswitching back\b|\breturn\b",
+        r"(?:non time |\w+ )?mode\b|\bbrings? (?:the )?(?:\w+ )?mode back\b"
+        # #4682 lens carry: the same return with other verbs, or naming the mode itself
+        r"|\b(?:restores?|returns?|switch(?:es)?|reverts?|goes|go|puts?|flips?|changes?|resumes?"
+        r"|brings?|re ?applies)(?: \w+){0,3}? (?:back )?(?:to )?(?:the )?(?:non time |previous "
+        r"|earlier |carried )?(?:mode|volume|delta|tick|range|renko)(?: bars| mode)?\b"
+        r"(?: \w+){0,3}? (?:back|again|on its own|by itself|automatically)\b"
+        r"|\b(?:reverts?|goes|go|switch(?:es)?|flips?) (?:\w+ ){0,2}?back to (?:the )?(?:\w+ )?"
+        r"(?:mode|volume|delta|tick|range|renko)\b"
+        r"|\breverts? (?:\w+ ){0,2}?to (?:the )?(?:\w+ )?(?:mode|volume|delta|tick|range|renko)\b"
+        r"|\bauto ?returns?\b",
+        near=r"\brecorded\b|\bswitching back\b|\breturn\b|\bback\b|\bagain\b",
+    ),
+    # the mode named after the verb, "again" before it or "without asking" after it
+    lexicon(
+        "G-FALLBACK",
+        "an automatic return to the mode",
+        r"\b(?:returns?|reverts?|reinstates?|restores?|resumes?)\b[^.;]*\b(?:volume|delta|tick"
+        r"|range|renko)(?: bars| mode)?\b",
+        near=r"\brecorded again\b|\bagain\b|\bwithout (?:the user |anyone )?ask\w*\b"
+        r"|\bon its own\b|\bautomatically\b",
     ),
     lexicon(
         "G-FALLBACK",
@@ -1746,6 +1855,9 @@ g_centre = require(
         "on a symbol change the same holds for time bars, by time (proposed",
     ),
 )
+# the verbs that end the old topics and start the new ones (G-SUBS, the #4682 lens carry)
+_END = r"(?:unsub\w*|releases?|drops?|leaves?|closes?|cancels?|ends?|stops?|tears? down)"
+_START = r"(?:sub(?:s|scribes?)?|requests?|joins?|opens?|adds?|starts?)"
 g_subs = both(
     require(
         "G-SUBS",
@@ -1763,6 +1875,16 @@ g_subs = both(
         r"|\b(?:swaps?|changes?|replaces?) (?:the )?subscriptions? (?:with|in) (?:one|a single) "
         r"(?:ws )?frame\b|\b(?:one|a single) (?:ws )?frame (?:swaps?|carries|does|holds) "
         r"(?:the |both )?(?:subscriptions?|sub and unsub|both)\b",
+    ),
+    # #4682 lens carry: the old topics end before the new ones start, in other words
+    lexicon(
+        "G-SUBS",
+        "the old topics ended before the new ones start",
+        rf"\b{_END}\b(?: \w+){{0,2}}? old (?:topics?|subscriptions?|streams?|ones)\b[^.;]*"
+        rf"\b(?:then|before|followed by|first|after which|and only then)\b[^.;]*\b{_START}\b"
+        rf"|\bbefore (?:it |the client |we )?{_START}\b[^.;]*\bnew\b[^.;]*\b{_END}\b[^.;]*\bold\b"
+        rf"|\b{_START}\b[^.;]*\bnew\b[^.;]*\b(?:after|once)\b(?: \w+){{0,3}}? {_END}\b"
+        rf"(?: \w+){{0,2}}? old\b",
     ),
 )
 g_keepchart = both(
@@ -1808,6 +1930,15 @@ g_preview = both(
         r"\b(?:ticker|instruments?\b|q=)",
         near=r"\bpreview\b|\bhighlight\w*\b|\bactive option\b|\bkeystroke\b",
         unless=r"\bnever\b|\blocal index\b|\bno network\b",
+    ),
+    # #4682 lens carry: `Instrument` holds only the funding interval, never a rate (D04-C8)
+    lexicon(
+        "G-PREVIEW",
+        "a funding rate in the preview",
+        r"\bfunding (?:rates?|%|percent\w*|fees?|amounts?|values?)\b"
+        r"|\b(?:current|predicted|next|live|estimated|latest) funding\b"
+        r"|\bfunding\b[^.;]*\b(?:rates?|%|percent\w*|bps|basis points)\b"
+        r"|\b(?:rates?|%|percent\w*)\b[^.;]*\bfunding\b",
     ),
 )
 
@@ -2053,6 +2184,9 @@ def g_budgets(t: Texts) -> list[Finding]:
     return bad
 
 
+# what a live region says, and what a user types (G-REGIONS, the #4682 lens carry)
+_SAY = r"(?:announced|announces?|spoken|speaks?|voiced|voices?|reads?(?: out| aloud)?|says?)"
+_TYPED = r"(?:keystrokes?|key ?press(?:es)?|keys?|letters?|characters?|chars?|glyphs?|inputs?)"
 g_regions = both(
     require(
         "G-REGIONS",
@@ -2071,7 +2205,12 @@ g_regions = both(
         r"\b(?:announced|spoken|speaks?|reads?)\b[^.;]*\b(?:every|each|per) "
         r"(?:keystroke|letter|highlight|arrow)"
         r"|\b(?:every|each|per) (?:keystroke|letter|highlight\w*|arrow\w*)\b[^.;]*"
-        r"\b(?:announced|spoken|read(?: out)?)\b",
+        r"\b(?:announced|spoken|read(?: out)?)\b"
+        # #4682 lens carry: the same with a character, a key press, voicing or as one types
+        rf"|\b{_SAY}\b[^.;]*\b(?:every|each|per) (?:typed )?{_TYPED}"
+        rf"|\b(?:every|each|per) (?:typed )?{_TYPED}\b[^.;]*\b{_SAY}\b"
+        rf"|\b{_SAY}\b[^.;]*\b(?:as|while|whenever) (?:the user|you|they|one|someone) types?\b"
+        rf"|\b(?:as|while|whenever) (?:the user|you|they|one|someone) types?\b[^.;]*\b{_SAY}\b",
     ),
 )
 g_density = both(
@@ -2088,6 +2227,21 @@ g_tokenuse = require(
     "16. Tokens",
     ("never font.mono", "never on the checked fill", "the offset, not the hue"),
 )
+
+
+def g_search_props(t: Texts) -> list[Finding]:
+    """#4682 lens carry: `symbol.searched` carries exactly `surface: "scr-041"`, never the query
+    under any property name (E08-D05:439-440)."""
+    sec = spec_sec(t, "17. Analytics")
+    for r in table_rows(section(t.spec, "17. Analytics")):
+        if "`symbol.searched`" in r[0] and len(r) > 1:
+            props = re.findall(r"`([^`]*)`", r[1].split(";")[0])
+            if props != ['surface: "scr-041"']:
+                return [F("G-EVENTS", f"symbol.searched carries {props}", "spec", sec)]
+            return []
+    return [F("G-EVENTS", "§17 has no `symbol.searched` row", "spec", sec)]
+
+
 g_events = both(
     require(
         "G-EVENTS",
@@ -2115,7 +2269,10 @@ g_events = both(
         near=r"\brebind\b|\bstore writes?\b|\bswitch\b|\bcommit\b|\bfavourite\b|\bview state\b",
         unless=r"\bdestructive\b",
     ),
+    g_search_props,
 )
+
+
 g_route = both(
     require(
         "G-ROUTE",
@@ -2136,6 +2293,17 @@ g_route = both(
         r"(?:changed|set|switched) (?:from|in|by)\b",
         near=r"\bscr 041\b|\bswitcher\b|\bstrip\b",
     ),
+    # #4682 lens carry: a chart-type control (a chip row, a picker) or a pick of a type in SCR-041
+    lexicon(
+        "G-ROUTE",
+        "a chart-type control in SCR-041",
+        r"\bchart types? (?:chips?|picker|radios?|radiogroup|buttons?|toggles?|controls?|selectors?"
+        r"|menus?|choices?|rows?|switch(?:es|er)?|segments?|tabs?|options?|slots?)\b"
+        r"|\b(?:picks?|chooses?|selects?|sets?|switch(?:es)?|changes?|toggles?)\b(?: \w+){0,3}? "
+        r"(?:to )?(?:line|candles?|hollow candles?|area|baseline|ohlc|columns?)"
+        r"(?: or (?:line|candles?|hollow candles?|area|baseline|ohlc|columns?))?\b",
+        near=r"\bscr 041\b|\bswitcher\b|\bstrip\b|\bpopover\b|\bpreview\b|\bslots?\b|\bchips?\b",
+    ),
 )
 
 
@@ -2153,7 +2321,30 @@ def g_owner(t: Texts) -> list[Finding]:
     for q in ("D04-Q1", "D04-Q2", "D04-G1"):
         if OWNER_PENDING not in row_segment(seg, q):
             bad.append(F("G-OWNER", f"{q} lacks {OWNER_PENDING!r}", "spec", spec_sec(t, "19.2")))
-    return bad
+    return bad + g_owner_granted(t)
+
+
+# #4682 lens carry: no clause says the owner approved BQ-9 (the fallback) or BQ-12 (the stores)
+_OWNER_NEAR = r"\bbq 9\b|\bbq 12\b|\bd04 q[12]\b|\b2701\b|\bfallback\b|\bstores?\b"
+g_owner_granted = both(
+    lexicon(
+        "G-OWNER",
+        "an owner item claimed approved",
+        r"\bcleared\b[^.;]*\bfinal\b|\bsign(?:ed|s)\b[^.;]*\boff\b|\bendors(?:ed|es?)\b"
+        r"|\baccepted\b",
+        near=_OWNER_NEAR + r"|\bowner\b",
+        unless=r"\bpending\b",
+    ),
+    lexicon(
+        "G-OWNER",
+        "an owner item claimed approved",
+        r"\b(?:owner )?approved\b|\bapprovals? (?:is |was |has been )?(?:granted|given|received"
+        r"|recorded|in hand|obtained)\b|\b(?:granted|given|received) (?:the )?(?:owner'?s? )?"
+        r"approval\b|\bsign(?:ed|s)? off\b|\bgo ahead\b|\bratified\b|\bconfirmed by the owner\b",
+        near=_OWNER_NEAR,
+        unless=r"\bpending\b",
+    ),
+)
 
 
 def row_segment(body: str, rid: str) -> str:
@@ -2172,7 +2363,7 @@ def g_grows(t: Texts) -> list[Finding]:
             if f"**D04-{kind}{i}**" not in body:
                 bad.append(F("G-GROWS", f"D04-{kind}{i} missing", "spec", sec))
     g3 = row_segment(body, "D04-G3")
-    if g3 and ("`DSP`:36" not in g3 or "not fixed here" not in g3):
+    if g3 and ("`DSP`:38" not in g3 or "not fixed here" not in g3):
         bad.append(F("G-GROWS", "D04-G3 is not the dispatcher defect, unfixed", "spec", sec))
     return bad
 
@@ -2188,8 +2379,8 @@ def g_crows(t: Texts) -> list[Finding]:
     if nums != list(range(1, len(nums) + 1)) or len(nums) < 23:
         bad.append(F("G-CROWS", f"the C-rows are {ids[:3]}…, not D04-C1 … C23", "spec", sec))
     c4 = next((r for r in rows if r[0] == "D04-C4"), None)
-    if c4 is None or "D05:239" not in c4[2] or "D03:56" not in c4[1]:
-        bad.append(F("G-CROWS", "D04-C4 does not record D3-11 vs D05:239", "spec", sec))
+    if c4 is None or "D05:237" not in c4[2] or "D03:56" not in c4[1]:
+        bad.append(F("G-CROWS", "D04-C4 does not record D3-11 vs D05:237", "spec", sec))
     c5 = next((r for r in rows if r[0] == "D04-C5"), None)
     if c5 is None or "#2701" not in c5[3]:
         bad.append(F("G-CROWS", "D04-C5 (F-BAR-5) is not routed to the owner", "spec", sec))
@@ -2260,7 +2451,7 @@ def g_marked(t: Texts) -> list[Finding]:
         ("7.2 Centre", "**Centre.**"),
         ("9.1 Keys", "| `Alt+↑`"),
         ("9.1 Keys", "| `Alt+↓`"),
-        ("9.2 Rebinding", "`VAL` has no range rule"),
+        ("9.2 Rebinding", "`VAL` had no range rule"),
         ("11. Sync", "sync A: 2 more panels follow"),
         ("15. Copy deck", "## 15."),
         ("17. Analytics", "`chart.bar_mode_fallback`"),
@@ -2328,8 +2519,15 @@ def g_frame(t: Texts) -> list[Finding]:
         for tok in re.findall(r"`([a-z][a-z0-9.*-]+)`", fr.get("Tokens", "")):
             if any(resolve(load_theme(th), tok) == "MISSING" for th in THEMES):
                 bad.append(F("G-FRAME", f"{fid}: {tok} does not resolve", "spec", sec))
-        if fr.get("Status") != "PENDING":
+        if fr.get("Status") != "drawn":
             bad.append(F("G-FRAME", f"{fid}: status {fr.get('Status')!r}", "spec", sec))
+        # PR 2 ruling (a): a frame on a recorded symbol never carries S-10, the not-recorded line
+        state = fr.get("State", "")
+        recorded = re.search(r"\brecorded symbol\b", state) and not re.search(
+            r"\b(?:not|no|never|un)[ -]?recorded\b", state
+        )
+        if recorded and "S-10" in re.findall(r"\bS-\d+\b", fr.get("Copy", "")):
+            bad.append(F("G-FRAME", f"{fid}: a recorded symbol with S-10's words", "spec", sec))
     need = {
         "`typing/unavailable · dark`",
         "`fallback/strip-notice · dark`",
@@ -2426,6 +2624,17 @@ def g_charset(t: Texts) -> list[Finding]:
     return bad
 
 
+def quoted_ids(cells: list[str]) -> list[str]:
+    """The comment ids a Table A row's Old cell quotes from its cited line at the base."""
+    if len(cells) < 4 or not (m := CITE_GROUP.search(cells[2])):
+        return []
+    rel = cite_path(m["a"] or m["b"])
+    src = (git_show(BASE, rel) or "").split("\n") if rel else []
+    first = int(re.split(r"[–-]", m["first"])[0])
+    at = src[first - 1] if 1 <= first <= len(src) else ""
+    return [x for x in COMMENT_ID.findall(cells[3]) if x in COMMENT_ID.findall(at)]
+
+
 def g_ruled(t: Texts) -> list[Finding]:
     """Ruling form: the RULED heading cites the ruling and the BQ list; its paragraph states the
     two confirmations, the two owner items and BQ-9's two additions; every comment id the docs name
@@ -2446,8 +2655,15 @@ def g_ruled(t: Texts) -> list[Finding]:
     ):
         if n not in body:
             bad.append(F("G-RULED", f"the RULED paragraph lacks {n!r}", "spec", sec))
+    # an id inside a Table A Old cell that its cited line holds at the base is quoted, not cited
+    # (#4719's "RULED 6438042003" in A-6's Old): only that cell is read without it
+    rows = a_rows(t.hand)
     for doc, text in (("spec", t.spec), ("hand", t.hand)):
         for i, line in enumerate(text.split("\n"), 1):
+            cells = split_row(line) if doc == "hand" and line.startswith("|") else []
+            if cells and cells[0] in rows and len(cells) > 3:
+                kept = [x for x in COMMENT_ID.findall(cells[3]) if x not in quoted_ids(cells)]
+                line = line.replace(cells[3], " ".join(kept), 1)
             for cid in COMMENT_ID.findall(line):
                 if cid not in RULED_IDS:
                     bad.append(F("G-RULED", f"{cid} is not a ruling comment", doc, h2_at(text, i)))
@@ -2466,15 +2682,45 @@ def fork_point() -> str:
     return merge_base() or BASE
 
 
+# levers for the self-test: paths pretended changed (never set outside `selftest`)
+EXTRA_PATHS: list[str] = []
+
+
 @functools.lru_cache(maxsize=1)
-def stray_paths() -> tuple[str, ...]:
-    """Paths changed against the fork point (committed, staged, working tree or untracked) that are
-    not this ticket's own."""
-    ref = fork_point()
-    names = git_out("diff", "--name-only", ref).split("\n")
+def own_pngs() -> frozenset[str]:
+    """The ten PNGs the spec's §0 board rows name (`E12-D04 / NN slug`), as `drawn_cell_ok` reads
+    them; any other `E12-D04-*.png` is not this ticket's."""
+    spec = (ROOT / SPEC_REL).read_bytes().decode("utf-8")
+    out = set()
+    for row in table_rows(section(spec, "0. Status")):
+        if len(row) < 2 or not re.fullmatch(r"\d\d", row[0]):
+            continue
+        slug = re.fullmatch(rf"`E12-D04 / {row[0]} ([a-z0-9-]+)`", row[1])
+        if slug:
+            out.add(f"docs/design/E12/img/E12-D04-{row[0]}-{slug[1]}.png")
+    return frozenset(out)
+
+
+@functools.lru_cache(maxsize=1)
+def changed_paths() -> tuple[str, ...]:
+    """Paths changed against the fork point: committed, staged, working tree or untracked."""
+    names = git_out("diff", "--name-only", fork_point()).split("\n")
     names += git_out("ls-files", "--others", "--exclude-standard").split("\n")
+    return tuple(names)
+
+
+def stray_paths() -> tuple[str, ...]:
+    """The changed paths that are not this ticket's own."""
+    names = (*changed_paths(), *EXTRA_PATHS)
+    own = own_pngs()
     return tuple(
-        sorted({n for n in names if n and n not in OWN_PATHS and not OWN_IMG.fullmatch(n)})
+        sorted(
+            {
+                n
+                for n in names
+                if n and n not in OWN_PATHS and n not in own and not OWN_SHEETS.fullmatch(n)
+            }
+        )
     )
 
 
@@ -2488,6 +2734,48 @@ def g_untouched(t: Texts) -> list[Finding]:
         if rel is None or text != (git_show(ref, rel) or at_base(rel)):
             bad.append(F("G-UNTOUCHED", f"`{nn}` differs from {ref[:10]}", None, None))
     bad += [F("G-UNTOUCHED", f"{p} is not this ticket's path", None, None) for p in stray_paths()]
+    return bad
+
+
+# a "§" reference: a section number or a hand-off letter (G-SECREF)
+SEC_REF = re.compile(r"(?<![\w§])§(\d+(?:\.\d+)*|[A-Z])\b")
+# what makes a "§" reference another document's: a doc id, a file, a code span right before it
+FOREIGN_REF = re.compile(r"(?:\bE\d\d-D\d\d|\bD0\dh?|\bfile's|`[^`]*`|\b\d\d)\s*$")
+OWN_REF = re.compile(r"(?:\bE12-D04|E12-D04\.md\)`|\bspec)\s*$")
+
+
+def g_secref(t: Texts) -> list[Finding]:
+    """#4682 lens carry 3: every "§" reference to this spec names one of its headings, and every
+    "§A" … "§E" one of the hand-off's; another document's "§" (after its id, its file or a code
+    span) is not read. Table A's Old cells are verbatim text at the base, so they are not read."""
+
+    def numbers(text: str) -> set[str]:
+        lines = text.split("\n")
+        fence = fenced(lines)
+        out = set()
+        for i, ln in enumerate(lines):
+            m = HEADING.match(ln)
+            if m and not fence[i] and (n := SEC_NUM.match(m[2])):
+                out.add(n[1].rstrip("."))
+        return out
+
+    own = numbers(t.spec) | numbers(t.hand)
+    rows = a_rows(t.hand)
+    bad: list[Finding] = []
+    for doc, text in (("spec", t.spec), ("hand", t.hand)):
+        for i, raw in enumerate(strip_comments(text).split("\n"), 1):
+            line = raw
+            cells = split_row(raw) if doc == "hand" and raw.startswith("|") else []
+            if cells and cells[0] in rows and len(cells) > 3:
+                line = raw.replace(cells[3], "", 1)
+            for m in SEC_REF.finditer(line):
+                before = line[: m.start()]
+                if FOREIGN_REF.search(before) and not OWN_REF.search(before):
+                    continue
+                ref = m[1] if m[1][0].isdigit() else "§" + m[1]
+                if ref not in own:
+                    msg = f"{doc}:{i} §{m[1]} names no heading"
+                    bad.append(F("G-SECREF", msg, doc, h2_at(text, i)))
     return bad
 
 
@@ -2564,6 +2852,7 @@ MEASURED_GATES: tuple[Callable[[Texts], list[Finding]], ...] = (
     g_token,
     g_contrast,
     g_untouched,
+    g_secref,
     g_budget,
 )
 
@@ -2897,6 +3186,14 @@ def fence_pin_probe() -> list[str]:
 # ---------------------------------------------------------------------------- the audit
 
 
+def demote_key(sec: str | None) -> str | None:
+    """The key NOTE demotion compares: a numbered `##` section by its number alone, so a pin
+    finding under a reworded `##` heading (its old key and its new one) still meets the gate that
+    fires in that section (#4682 lens carry 4); an unnumbered section by its whole key."""
+    m = SEC_NUM.match(sec or "")
+    return m[1] if m else sec
+
+
 def audit(t: Texts, fetch: Fetch) -> tuple[list[str], list[str], list[str], int]:
     """(FAIL lines, NOTE lines, WARN lines, cites checked). One FAIL line per gate; a pin finding
     in a section another gate already FAILs is demoted to a NOTE line."""
@@ -2913,10 +3210,12 @@ def audit(t: Texts, fetch: Fetch) -> tuple[list[str], list[str], list[str], int]
     found += cf
     for gate in MEASURED_GATES:
         found += gate(t)
-    flagged = {(f[2], f[3]) for f in found if f[2] is not None}
+    flagged = {(f[2], demote_key(f[3])) for f in found if f[2] is not None}
     pins = pin_findings(t)
-    notes = [f"NOTE [G-RULED-PIN] {p[1][:150]}" for p in pins if (p[2], p[3]) in flagged]
-    found += [p for p in pins if (p[2], p[3]) not in flagged]
+    notes = [
+        f"NOTE [G-RULED-PIN] {p[1][:150]}" for p in pins if (p[2], demote_key(p[3])) in flagged
+    ]
+    found += [p for p in pins if (p[2], demote_key(p[3])) not in flagged]
     merged: dict[str, list[str]] = {}
     for tag, msg, _d, _s in found:
         merged.setdefault(tag, []).append(msg)
@@ -3557,7 +3856,9 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-62",
         "G-GROWS",
         "BQ-14",
-        spec=sub_in("19.2", ": to E11-S13 (#520), not fixed here.", ": to E11-S13 (#520)."),
+        spec=sub_in(
+            "19.2", "confirms the ladder on it, not fixed here.", "confirms the ladder on it."
+        ),
     ),
     Mutation(
         "M-63",
@@ -3724,7 +4025,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "BQ-23",
         spec=reg("idle/preview · dark", "Tokens", to("`color.preview.line`")),
     ),
-    Mutation("M-91", "G-FRAME", "BQ-23", spec=reg("idle/preview · dark", "Status", to("drawn"))),
+    Mutation("M-91", "G-FRAME", "BQ-23", spec=reg("idle/preview · dark", "Status", to("PENDING"))),
     Mutation(
         "M-92",
         "G-FRAME",
@@ -3790,7 +4091,7 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-103",
         "G-ORDER",
         "BQ-16, BQ-18",
-        spec=sub_in("10.2 Order", "Record (T2 for others)", "Record (owner)"),
+        spec=sub_in("10.2 Order", "Record (when shown, T2 for others)", "Record (owner)"),
     ),
     Mutation("M-104", "G-CONTAIN", "BQ-16", spec=sub_in("10.2 Order", STRIP_ARROWS, "")),
     Mutation("M-105", "G-CARRY", "BQ-8, BQ-20", spec=sub_in("5. Carry", S5_TEXT, "")),
@@ -3984,6 +4285,199 @@ MUTATIONS: tuple[Mutation, ...] = (
         "#240 lens: U+1680 for a space in the hand-off",
         hand=sub_in("§E Owner", "Record `approved` on #240", "Record\u1680`approved` on #240"),
     ),
+    # the #4682 lens carry 1: ten ruled classes the pins alone stopped, each now a named gate
+    Mutation(
+        "X-25",
+        "G-ROUTE",
+        "#4682 lens: a chart-type chip row in SCR-041",
+        spec=say_in(
+            "2.2 Composition", "A row of chart-type chips (Candles, Hollow, Line) sits under it."
+        ),
+    ),
+    Mutation(
+        "X-26",
+        "G-PREVIEW",
+        "#4682 lens: a funding rate in the preview",
+        spec=sub_in(
+            "8.2 The preview",
+            'funding as the interval, "funding every 8 h", from',
+            "funding as the current rate per 8 h, from",
+        ),
+    ),
+    Mutation(
+        "X-27",
+        "G-EVENTS",
+        "#4682 lens: the query on `symbol.searched`",
+        spec=row_edit(
+            "17. Analytics",
+            "`symbol.searched`, `symbol.search_result_opened`",
+            1,
+            lambda c: c.replace('`surface: "scr-041"`', '`surface: "scr-041"`, `q`'),
+        ),
+    ),
+    Mutation(
+        "X-28",
+        "G-BOARDS",
+        "#4682 lens: an extra light twin",
+        spec=in_lines(
+            FRAME_HEAD,
+            lambda ls: [
+                (
+                    (
+                        "| `typing/carried · light` | 09 | light | as 02 | CMP-048, CMP-213 | S-5 |"
+                        " `color.text.secondary` | drawn |"
+                    )
+                    if x.startswith("| `typing/carried · dark`")
+                    else x
+                )
+                for x in ls
+            ],
+        ),
+    ),
+    Mutation(
+        "X-29",
+        "G-OWNER",
+        "#4682 lens: owner approval granted on BQ-9",
+        spec=say_in("6.4 The words", "The owner approved BQ-9's fallback on #2701."),
+    ),
+    Mutation(
+        "X-30",
+        "G-OWNER",
+        "#4682 lens: owner approval granted on BQ-12",
+        spec=sub_in(
+            "3.3 The stores",
+            "- **Until it lands:**",
+            "- **Owner-approved (BQ-12). Until it lands:**",
+        ),
+    ),
+    Mutation(
+        "X-31",
+        "G-FALLBACK",
+        "#4682 lens: an auto-return of the mode",
+        spec=sub_in(
+            "6.4 The words",
+            "does not restore the mode: that would be an unseen build (R-2).",
+            "reverts the chart to Volume on its own.",
+        ),
+    ),
+    Mutation(
+        "X-32",
+        "G-PROBE",
+        "#4682 lens: a time-mode no-recorded-prints claim",
+        spec=say_in(
+            "3.2 Units",
+            "On a time-mode chart a Volume slot for a symbol with no recorded prints is T2.",
+        ),
+    ),
+    Mutation(
+        "X-33",
+        "G-SUBS",
+        "#4682 lens: `unsub` before `sub`",
+        spec=say_in(
+            "7.2 Centre", "The client drops the old topics, then subscribes to the new ones."
+        ),
+    ),
+    Mutation(
+        "X-34",
+        "G-REGIONS",
+        "#4682 lens: a per-letter announcement",
+        spec=say_in("14. Accessibility", "Each typed character is voiced by the region."),
+    ),
+    # the #4682 lens carries 3 and 4, and the PR 2 board-script ruling (a)
+    Mutation(
+        "X-35",
+        "G-RULED-PIN",
+        "#4682 lens: a reworded heading is one FAIL (the gates still read its section)",
+        spec=sub_in("6.2 The probe", "### 6.2 The probe", "### 6.2 The coverage probe"),
+    ),
+    Mutation(
+        "X-36",
+        "G-SUBS",
+        "#4682 lens: a gate firing under a reworded `##` heading demotes its pins to NOTE",
+        spec=lambda text, v: sub_in(
+            "7.2 Centre", "- **Failure:** a", "- **Failure:** `unsub` the old topics at once; a"
+        )(text.replace("## 7. Switching behaviour", "## 7. Switch behaviour", 1), v),
+    ),
+    Mutation(
+        "X-37",
+        "G-SECREF",
+        "#4682 lens: a dangling § reference",
+        spec=sub_in("Acceptance-criteria", "| §14, §9.2 ", "| §14, §9.3 "),
+    ),
+    Mutation(
+        "X-38",
+        "G-FRAME",
+        "PR 2 ruling: the recorded `idle/preview` frame with S-10's words",
+        spec=reg("idle/preview · dark", "Copy", to("S-10")),
+    ),
+    Mutation(
+        "X-39",
+        "G-UNTOUCHED",
+        "an `E12-D04-NN` PNG no §0 board row names (committed or untracked)",
+        patch=pushed(EXTRA_PATHS, "docs/design/E12/img/E12-D04-11-extra.png"),
+    ),
+    Mutation(
+        "X-40",
+        "G-OWNER",
+        "owner clearance, final",
+        spec=say_in("6.4 The words", "The owner cleared BQ-9 and it is final."),
+    ),
+    Mutation(
+        "X-41",
+        "G-OWNER",
+        "owner accepted the stores",
+        spec=say_in("6.4 The words", "The owner has accepted the stores (BQ-12)."),
+    ),
+    Mutation(
+        "X-42",
+        "G-OWNER",
+        "owner signed the fallback off",
+        spec=say_in("6.4 The words", "The owner signed BQ-9's fallback off."),
+    ),
+    Mutation(
+        "X-43",
+        "G-OWNER",
+        "owner accepted on #2701",
+        spec=say_in("6.4 The words", "On #2701 the owner accepted the fallback."),
+    ),
+    Mutation(
+        "X-44",
+        "G-FALLBACK",
+        "a return to Volume when recorded again",
+        spec=say_in(
+            "6.4 The words", "When the symbol is recorded again, the chart returns to Volume."
+        ),
+    ),
+    Mutation(
+        "X-45",
+        "G-FALLBACK",
+        "Volume reinstated unasked",
+        spec=say_in("6.4 The words", "The chart reinstates Volume bars without the user asking."),
+    ),
+    Mutation(
+        "X-46",
+        "G-PROBE",
+        "a slot unavailable straight away",
+        spec=say_in(
+            "3.2 Units",
+            "On a 1m chart, a Volume slot for such a symbol reads as unavailable straight away.",
+        ),
+    ),
+    Mutation(
+        "X-47",
+        "G-PROBE",
+        "a slot greyed immediately",
+        spec=say_in(
+            "3.2 Units",
+            "A Range slot is greyed immediately when the symbol lacks any trade history.",
+        ),
+    ),
+    Mutation(
+        "X-48",
+        "G-SECREF",
+        "a hand-off letter that is no heading",
+        spec=say_in("6.4 The words", "See hand-off §F."),
+    ),
     # one per pin class (G-RULED-PIN only)
     Mutation(
         "P-1",
@@ -4151,9 +4645,10 @@ def ascii_only(line: str) -> str:
 
 
 def main(argv: list[str]) -> int:
-    reconfigure = getattr(sys.stdout, "reconfigure", None)
-    if callable(reconfigure):
-        reconfigure(encoding="utf-8", errors="backslashreplace")
+    # the reports print `→`, `§` and `…`: a cp1252 (or any non-UTF-8) console must not crash them,
+    # and `python3 -I` ignores PYTHONIOENCODING, so the tool sets the stream itself (as E12-D05's)
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="E12-D04 switcher audit (module docstring)")
     ap.add_argument(
         "--check",

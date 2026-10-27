@@ -1,0 +1,62 @@
+/* E12-D04 — DEDUPE / convergence follow-up (E29-D02 r7's helper, its constants changed for #240 r1, copied from #319 r1; r2: the TAG check).
+ *
+ * Several plugin instances may be connected and a "suspended" call can run later, so duplicates of a frame can
+ * exist (penpot-gotchas.md "More facts"). For every normalised frame name with this ticket's prefix on this
+ * ticket's page, keep ONE copy — the most complete (most descendants), then the highest `hpe1ver`, then the newest
+ * (largest last id segment) — and remove the rest. Touches only this ticket's own top-level frames on its own page: a frame
+ * whose plugin data TAG is not "v1" (not built by the board script) is reported as untagged and never removed (r2: the
+ * same check the build's clear applies).
+ * DRY_RUN = true lists what would be removed; set it to false to delete. Single writer; never retry after
+ * "tab suspended" — probe read-only first.
+ */
+"use strict";
+const WRITER = "SET-ME"; // storage.hpe1inst stamp of the writer instance (probe.js)
+const DRY_RUN = true;
+const FILE_ID = "SET-ME"; // the self-hosted CandleViewer file id, pasted locally before the run; never committed or posted
+const PAGE_ID = null;
+const PAGE_NAME = "E12-D04 SCR-041 bar modes";
+const TICKET = "E12-D04";
+const TAG = "cv:e12-d04"; // the board script's plugin-data key (value "v1" on every shape it makes)
+
+if (typeof storage === "undefined" || storage.hpe1inst !== WRITER) return { skip: typeof storage === "undefined" ? null : storage.hpe1inst, note: "not the writer instance" };
+if (!penpot.currentFile || penpot.currentFile.id !== FILE_ID) return { abort: "file", current: penpot.currentFile ? { name: penpot.currentFile.name } : null }; // the name only: an abort result is pasted into logs, so it never echoes a file id
+const pages = penpot.currentFile.pages || [];
+let page = PAGE_ID ? pages.find((p) => p.id === PAGE_ID) || null : null;
+// Duplicate same-name pages exist in the shared file (one empty, one an abandoned partial build): pick the page that holds only our
+// ticket-prefixed frames, preferring the one that already has some; never a page with foreign content; abort when none is clean.
+const normName = (s) => String(s || "").replace(/\s*\/\s*/g, "/");
+if (!page) {
+  const named = pages.filter((p) => p.name === PAGE_NAME).map((p) => { const c = { p, ours: 0, foreign: 0, unknown: false }; try { for (const s of (p.root && p.root.children) || []) { if (normName(s.name).startsWith(TICKET + "/")) c.ours++; else c.foreign++; } } catch (e) { c.unknown = true; } return c; });
+  const clean = named.filter((c) => !c.unknown && c.foreign === 0).sort((a, b) => b.ours - a.ours);
+  if (!named.length) return { abort: "page-not-found", pageName: PAGE_NAME };
+  if (!clean.length) return { abort: "all-candidate-pages-hold-foreign-content", pages: named.map((c) => ({ id: c.p.id, ours: c.ours, foreign: c.foreign, unknown: c.unknown })) };
+  page = clean[0].p;
+}
+if (!penpot.currentPage || penpot.currentPage.id !== page.id) { try { const r = penpot.openPage(page); if (r && typeof r.then === "function") await r; } catch (e) { /* re-check below */ } }
+if (!penpot.currentPage || penpot.currentPage.id !== page.id) return { retry: true, pageId: page.id, note: "page not current yet — run again" };
+// ---- synchronous from here ----
+const norm = (s) => String(s || "").replace(/\s*\/\s*/g, "/");
+const verNum = (s) => { try { const v = s.getPluginData("hpe1ver") || ""; const m = /r(\d+)/.exec(v); return m ? parseInt(m[1], 10) : 0; } catch (e) { return 0; } };
+const lastSeg = (id) => { const seg = String(id || "").split("-").pop() || "0"; try { return BigInt("0x" + seg); } catch (e) { return BigInt(0); } };
+const descendants = (s) => { let n = 0; const walk = (x) => { for (const c of x.children || []) { n++; walk(c); } }; try { walk(s); } catch (e) { /* leaf */ } return n; };
+const groups = new Map(), untagged = [];
+for (const s of (page.root.children || [])) {
+  if (s.type !== "board") continue;
+  const nm = norm(s.name);
+  if (!nm.startsWith(TICKET + "/")) continue;
+  let ours = false;
+  try { ours = s.getPluginData(TAG) === "v1"; } catch (e) { ours = false; }
+  if (!ours) { untagged.push({ name: s.name, id: s.id }); continue; } // never removed: not this script's (the build's clear keeps it too)
+  let g = groups.get(nm); if (!g) { g = []; groups.set(nm, g); }
+  g.push({ s, name: s.name, id: s.id, ver: verNum(s), desc: descendants(s), seg: lastSeg(s.id) });
+}
+const kept = [], removed = [];
+for (const [nm, g] of groups) {
+  g.sort((a, b) => (b.desc - a.desc) || (b.ver - a.ver) || (a.seg < b.seg ? 1 : a.seg > b.seg ? -1 : 0));
+  kept.push({ name: nm, id: g[0].id, hpe1ver: g[0].ver, descendants: g[0].desc, copies: g.length });
+  for (const dup of g.slice(1)) {
+    removed.push({ name: dup.name, id: dup.id, hpe1ver: dup.ver, descendants: dup.desc });
+    if (!DRY_RUN) { try { dup.s.remove(); } catch (e) { removed[removed.length - 1].error = String(e && e.message || e); } }
+  }
+}
+return { dryRun: DRY_RUN, page: { id: page.id, name: page.name }, kept, removed, untagged, note: removed.length ? (DRY_RUN ? "set DRY_RUN=false to delete the listed duplicates" : "duplicates removed; probe until every instance agrees, then export") : "no duplicates; probe until every instance agrees, then export" };
