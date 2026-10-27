@@ -34,7 +34,8 @@ With a reason, hover and keyboard focus show it in a CMP-016 echo; the reason no
 | Esc (name or reason echo)    | Hides the echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
 
 Hover and keyboard focus show the name in a CMP-016 echo (D10); with a reason, one echo shows the name, then the
-reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo.
+reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo. The echo joins
+the name and the reason with " · ", e.g. "Panel settings · Owner only: your role can't use this action."
 
 ### NumericStepperInput (CMP-008, APG Spin Button)
 
@@ -136,7 +137,7 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).                         |
 | Esc                                                          | Not handled: it bubbles to the host. With a reason, the first Esc hides the echo (CMP-016) and focus stays. |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                                  |
-| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                                          |
+| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab is never touched; Esc only hides a shown echo, and is untouched when none shows.    |
 
 ### Tag (CMP-011; the remove control follows APG Button through CMP-002)
 

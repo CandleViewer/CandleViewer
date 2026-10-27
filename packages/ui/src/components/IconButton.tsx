@@ -51,11 +51,12 @@ export function IconButton<N extends IconName>({
 }: IconButtonProps<N>): JSX.Element {
   const reason = useDisabledReason(disabled, disabledReason);
   const ring = useFocusRing();
+  // `reason.reason` is set exactly when gated: the name, then the reason, joined by " · ".
   const echo = reason.disabled
     ? undefined
-    : reason.gated
-      ? `${label} · ${reason.reason ?? ""}`
-      : label;
+    : reason.reason === undefined
+      ? label
+      : `${label} · ${reason.reason}`;
   const handleClick = (event: MouseEvent<HTMLButtonElement>): void => {
     // Enter and Space reach here as clicks: a gated button stays focusable but does nothing.
     if (reason.gated) {

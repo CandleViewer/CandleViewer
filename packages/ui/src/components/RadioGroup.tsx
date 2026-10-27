@@ -62,8 +62,11 @@ function RadioRow({
   const describedBy = cx(roving.tabIndex === 0 ? groupReasonId : undefined, reason.ariaDescribedBy);
   // One lock per gated group, after the tab-stop row (the checked one); an option's own reason always shows its lock.
   const showLock = gated && (reason.gated || roving.tabIndex === 0);
-  // The echo: the group's reason on every gated row (hover reaches any row), then the option's own; aria-hidden.
-  const echo = gated ? cx(groupReason, reason.reason) || undefined : undefined;
+  // The echo: the group's reason on every gated row (hover reaches any row), then the option's own, joined by
+  // " · " as CMP-002's name and reason are. Visual only (aria-hidden); the description keeps its two id refs.
+  const echo = gated
+    ? [groupReason, reason.reason].filter((r) => r !== undefined).join(" · ") || undefined
+    : undefined;
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // The whole row is the target. A refused row takes focus (to show its reason) and changes nothing.
     if (disabled || gated) return;

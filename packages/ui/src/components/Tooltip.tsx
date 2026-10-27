@@ -154,9 +154,11 @@ export function Tooltip({
   useEffect(() => {
     shown.current = open;
   }, [open]);
-  // The content emptied while shown (a gate lifted): it goes, with its Esc listener.
+  // The content emptied while shown (a gate lifted): it goes, with its Esc listener. Content that arrives while
+  // the trigger holds keyboard focus or the pointer (a gate engaging) shows at once.
   useEffect(() => {
     if (empty) hide();
+    else if ((focused.current || hovered.current) && !dismissed.current) setOpen(true);
   }, [empty, hide]);
 
   useEffect(() => {
@@ -183,8 +185,13 @@ export function Tooltip({
         : own["aria-describedby"],
     onPointerEnter: (event) => {
       own.onPointerEnter?.(event);
-      if (empty) return;
       const element = event.currentTarget;
+      if (empty) {
+        // Remembered, so content that arrives while the pointer is still here shows (the effect below).
+        trigger.current = element;
+        hovered.current = isFocusable(element);
+        return;
+      }
       if (!isFocusable(element)) {
         if (!warned.current) warnUnfocusable();
         warned.current = true;
