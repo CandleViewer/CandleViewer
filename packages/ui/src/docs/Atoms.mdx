@@ -294,6 +294,36 @@ A repeat press empties the status and re-announces "Copied"; the check glyph sta
 the DOM, an attribute, the status or the name. `useCopy()` gives hosts the same write
 and status.
 
+### MaskedValue (CMP-034, a named group; the toggle and Copy follow APG Button through CMP-002 and CMP-033)
+
+| Keys                        | Action                                                                                                                       |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab             | The toggle, then Copy (when `copyable`); the box is not focusable. Copy is disabled, and skipped, while masked.              |
+| Enter, Space on the toggle  | Reveals (the name becomes "Hide {label}"; focus stays) or masks at once. Only a press reveals: never hover, focus or a prop. |
+| Enter, Space on Copy        | Copies the revealed value; CMP-033's `check` and "Copied" for 2 s.                                                           |
+| (none; at `autoHideMs`)     | Re-masks, focus kept on the toggle; spoken once 2 s before ("{label} will hide in 2 seconds"), silent at the moment.         |
+| (none; blur, hidden, print) | The window losing focus, a hidden tab, print, history navigation or another value's reveal re-masks at once.                 |
+
+| Element     | Role   | Name                            | Notes                                                                                                            |
+| ----------- | ------ | ------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Container   | group  | `label` ("API secret")          | `data-state` is `masked`, `revealed` or `expiring`.                                                              |
+| Mask        | none   | none                            | 8 × "•" `aria-hidden`, whatever the value's length, beside a visually hidden "{label}, hidden".                  |
+| Value       | text   | none                            | Rendered only while revealed; read in browse mode, never in a live region.                                       |
+| Toggle      | button | "Show {label}" / "Hide {label}" | A ghost CMP-002 `show` / `hide`; `aria-controls` the box. The swapped name carries the state: no `aria-pressed`. |
+| Copy        | button | "Copy {label}"                  | CMP-033, enabled only while revealed.                                                                            |
+| Live region | status | none                            | CMP-035's one threshold sentence; never the value.                                                               |
+
+While masked the value is in no text node, attribute, `title`, `data-*`, accessible name or description; it reaches
+no log and no callback (`onToggleReveal` gets the new state only). `revealed={false}` masks at once; `true` never
+reveals by itself. `autoHideMs` defaults to 10 s and is clamped to 3–30 s (the G19 cap). The app calls
+`maskAllValues()` on a route change, the idle lock and sign-out (`packages/ui` imports no router); unmounting drops
+the value.
+
+Known residuals (G19's defaults, ruling 12; E05-X02 signs off): `copyable` copies only while revealed, and there is
+no clipboard-clearing promise, so a copied secret can stay in the OS clipboard, its history and any cloud sync. A
+screen capture or screen share while revealed records the value. Browser developer tools (React DevTools) show the
+`value` prop at any time, masked or not.
+
 ### Countdown (CMP-035, text with a threshold announcer)
 
 | Keys | Action                                                                                                                                                                                   |
