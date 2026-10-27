@@ -1,7 +1,7 @@
 """Print the exact execute_code body for one step of rendering a cvsheet v4 board sheet (compact or plain) in Penpot.
 
 Usage: python3 -I mkcall4.py <sheet.json> <step> [--page NAME]        (<sheet.json> "-" reads the sheet from stdin)
-  step = install   the cvsheet library in ../lib/cvsheet-v4.2.js (run once per plugin session, after cvlib v8 is installed);
+  step = install   the cvsheet library in ../lib/cvsheet-v4.3.js (run once per plugin session, after cvlib v8 is installed);
                    it returns { cvsheet: <version installed now>, was: <version installed before, or null> }
        = root      enter/create the page, find-or-create the root board, return its report
        = <i>       render section i (0-based) into the root (replaces the same-named child; idempotent); the section
@@ -13,9 +13,9 @@ Usage: python3 -I mkcall4.py <sheet.json> <step> [--page NAME]        (<sheet.js
        = lint      read-only sh.lint(root): { counts, findings (at most 40), shapes }  (after touch and relayout)
        = count     print the number of sections (no JS)
        = size <i>  print the byte size (UTF-8) of the call that step <i> prints (no JS); <i> may be any step above
-The GUARD requires the version that cvsheet-v4.2.js declares (`const S = { v: X }`, read here
+The GUARD requires the version that cvsheet-v4.3.js declares (`const S = { v: X }`, read here
 at run time, so the GUARD and the library cannot drift; a lower or missing version answers { needSheetLib: true }),
-`install` prints cvsheet-v4.2.js, and JSON in calls uses compact separators.
+`install` prints cvsheet-v4.3.js, and JSON in calls uses compact separators.
 Staleness (v4.1): a compact sheet carries compactOf {file, sha256} (stamped by compact.py). Every step except `install`
 exits with "stale compact sheet: ..." when that file is missing or its sha256 differs, and refuses a compact sheet
 without the stamp (or stamped from stdin); re-run compact.py on the original. A plain (original) sheet needs no stamp.
@@ -33,15 +33,15 @@ from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
-LIB = (HERE.parent / "lib" / "cvsheet-v4.2.js").read_text(
+LIB = (HERE.parent / "lib" / "cvsheet-v4.3.js").read_text(
     encoding="utf-8"
-)  # v4.2: one-sided paddings
+)  # v4.3: a node without x/y sits at its parent's origin
 _ver = re.search(r"const S = \{ v: ([0-9]+(?:\.[0-9]+)?) \}", LIB)
 if not _ver:
-    raise SystemExit("cvsheet-v4.2.js: no `const S = { v: <version> }` line")
+    raise SystemExit("cvsheet-v4.3.js: no `const S = { v: <version> }` line")
 V = _ver.group(1)
 if f"storage.cvsheet.v < {V}) {{" not in LIB:
-    raise SystemExit(f"cvsheet-v4.2.js: its install guard does not test `storage.cvsheet.v < {V}`")
+    raise SystemExit(f"cvsheet-v4.3.js: its install guard does not test `storage.cvsheet.v < {V}`")
 
 
 def js(x: object) -> str:

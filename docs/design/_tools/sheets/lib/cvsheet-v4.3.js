@@ -1,4 +1,4 @@
-// cvsheet v4.2 — render JSON "board sheets" with cvlib v8 (v4.2: one-sided paddings drawn, see below). v4 = v3.1
+// cvsheet v4.3 (v4.3, 2026-10-27: a node without x/y in a non-flex parent is placed at the parent's origin) — render JSON "board sheets" with cvlib v8 (v4.2: one-sided paddings drawn, see below). v4 = v3.1
 // (cvsheet-v1.js, 2026-10-22 20:17Z: padSides, S.put index by id) + section styles, clone nodes, a token-lookup cache
 // and a read-only lint. v4.1 (review of v4): clone nodes are resolved in JSON (Penpot applies token binds
 // asynchronously, so shape.clone() of a shape made in the same call copies it without its binds), the token cache
@@ -64,8 +64,8 @@
 // installed by running this file once per plugin session BEFORE the renders (each file's guard only installs over a
 // lower version: a later v4.1 install is a no-op). A tab reload empties storage, after which mkcall4 would install
 // v4.1 again: re-run this file after every reload.
-if (!storage.cvsheet || storage.cvsheet.v < 4.2) {
-  const S = { v: 4.2 };
+if (!storage.cvsheet || storage.cvsheet.v < 4.3) {
+  const S = { v: 4.3 };
   const KEYS = {
     board: ["t", "name", "o", "w", "h", "x", "y", "abs", "hs", "vs", "alignSelf", "kids", "note"],
     text: ["t", "name", "chars", "typo", "color", "w", "align", "x", "y", "abs", "hs", "vs", "alignSelf", "note"],
@@ -134,6 +134,9 @@ if (!storage.cvsheet || storage.cvsheet.v < 4.2) {
     if (n.x !== undefined || n.y !== undefined) {
       if (parent.flex && !n.abs) throw new Error("x/y without abs inside a flex parent: " + n.name);
       penpotUtils.setParentXY(s, n.x || 0, n.y || 0);
+    } else if (!parent.flex || n.abs) {
+      // v4.3: a node without x/y in a non-flex parent (or absolute) sits at the parent's origin, not the page's
+      penpotUtils.setParentXY(s, 0, 0);
     }
     if (parent.flex && !n.abs) {
       if (n.hs) s.layoutChild.horizontalSizing = n.hs;

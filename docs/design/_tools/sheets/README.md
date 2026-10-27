@@ -5,11 +5,11 @@ its own Penpot tab and MCP plugin can run it. Everything here is offline except 
 drivers send through [`penpot_exec.py`](../penpot_exec.py). The board rules in
 [`docs/design/README.md`](../../README.md) still apply.
 
-| Folder   | What                                                                                                                                                                                 |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `lib/`   | The plugin libraries the drawn boards use: `cvlib-v8.js` (v8.2) and `cvsheet-v4.2.js`. Byte-identical vendored copies: never edit or reformat them (`MANIFEST.sha256` pins them).    |
-| `tools/` | `validate_sheet.py` (sheet checks, with `token-sync.json` and `components.offline.json`), `compact.py` (smaller sheet, same rendering), `mkcall4.py` (the code of each plugin call). |
-| `run/`   | The drivers (`render_exec.py`, `export_exec.py`, `run_js.py`, `set_render.py`, `set_post_export.py`) and the plugin scripts they run.                                                |
+| Folder   | What                                                                                                                                                                                                                                                                                    |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lib/`   | The plugin libraries the drawn boards use: `cvlib-v8.js` (v8.2) and `cvsheet-v4.3.js` (v4.3 places a node without `x`/`y` at its non-flex parent's origin; v4.2 left it at the page origin). Byte-identical vendored copies: never edit or reformat them (`MANIFEST.sha256` pins them). |
+| `tools/` | `validate_sheet.py` (sheet checks, with `token-sync.json` and `components.offline.json`), `compact.py` (smaller sheet, same rendering), `mkcall4.py` (the code of each plugin call).                                                                                                    |
+| `run/`   | The drivers (`render_exec.py`, `export_exec.py`, `run_js.py`, `set_render.py`, `set_post_export.py`) and the plugin scripts they run.                                                                                                                                                   |
 
 `MANIFEST.sha256` lists every file's sha256: run `sha256sum -c MANIFEST.sha256` in this folder after
 any change, and regenerate it in the same commit.
