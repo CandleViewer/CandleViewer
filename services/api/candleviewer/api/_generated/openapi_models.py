@@ -2950,14 +2950,38 @@ class TradeGroupDefinitionInput(BaseModel):
     ]
 
 
-class TradeGroupDefinition(BaseModel):
+class Member(BaseModel):
     model_config = ConfigDict(
         extra="forbid",
     )
-    id: UUID
-    created_at: AwareDatetime
-    updated_at: AwareDatetime
-    definition: TradeGroupDefinitionInput
+    exchange_account_id: UUID
+    ready: StrictBool
+    reason: Annotated[
+        Literal[
+            "member_disabled",
+            "account_disabled",
+            "key_invalid",
+            "account_unhealthy",
+            "account_locked",
+            "kill_switch_engaged",
+            "trading_disabled",
+        ]
+        | None,
+        Field(
+            description="Null when the member is ready, else why it is not; `member_disabled` is a member the definition disables, which `total` does not count.\n"
+        ),
+    ]
+
+
+class TradeGroupReadiness(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    ready: Annotated[JsonInt, Field(description="The enabled members that are ready.", ge=0)]
+    total: Annotated[JsonInt, Field(description="The enabled members.", ge=0)]
+    members: Annotated[
+        list[Member], Field(description="Every member, a disabled one included.", max_length=20)
+    ]
 
 
 class Overrides(BaseModel):
@@ -5798,8 +5822,27 @@ class ExchangeRecordFields(BaseModel):
     is_maker: StrictBool | None = None
 
 
+class TakeProfit(BaseModel):
+    price: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+    qty: Annotated[
+        str,
+        Field(
+            description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ]
+
+
 class Rejection(BaseModel):
-    code: (
+    code: Annotated[
         Literal[
             "cap_breached",
             "symbol_not_allowed",
@@ -5809,9 +5852,24 @@ class Rejection(BaseModel):
             "key_invalid",
             "leverage_unavailable",
             "kill_switch_engaged",
+            "profile_disabled",
+            "symbol_denied",
+            "below_min_notional",
+            "skipped",
+            "no_reference_price",
+            "invalid_stop_distance",
+            "figure_unknown",
+            "stop_beyond_liquidation",
+            "account_disabled",
+            "account_unhealthy",
+            "trading_disabled",
+            "risk_state_unavailable",
         ]
-        | None
-    ) = None
+        | None,
+        Field(
+            description="`skipped` and the sizer's skips (24-internal-schemas.md section 9.3.4)\nmark a `skipped` leg, and every other code a `blocked` one, a member's\nreadiness reason (`TradeGroupReadiness`) included. Among them:\n- `skipped`: the request's `overrides.skip` leaves the leg out.\n- `profile_disabled`: its profile is disabled or does not trade.\n- `symbol_denied`: its profile's `blocked_symbols` holds the symbol.\n- `below_min_notional`: it sizes under the minimum quantity or notional.\n- `no_reference_price`: no mid or last price to size a market leg from.\n- `invalid_stop_distance`: its stop is not above 0 or not on the loss side.\n- `figure_unknown`: a figure its sizing needs is not cached.\n- `stop_beyond_liquidation`: its stop would not fire before liquidation.\n- `account_disabled`: its account is disabled.\n- `account_unhealthy`: its account fails the health check.\n- `trading_disabled`: order entry is closed for its account.\n- `risk_state_unavailable`: the risk gate has no state to judge it by.\n"
+        ),
+    ] = None
     message: str | None = None
 
 
@@ -5820,7 +5878,26 @@ class Leg1(BaseModel):
     account_label: str | None = None
     account_profile_id: UUID | None = None
     would_submit: StrictBool
+    status: Annotated[
+        Literal["ready", "warn", "skipped", "blocked"],
+        Field(
+            description="The leg's state as text (SCR-061): `would_submit` is true exactly for `ready` and `warn`. A `warn` leg carries `warnings`; a `skipped` or `blocked` one carries `rejection`, whose `code` says why.\n"
+        ),
+    ]
+    warnings: Annotated[
+        list[Literal["stop_fallback"]] | None,
+        Field(
+            description="A `warn` leg's caveats. `stop_fallback`: its stop uses the profile's `fallback_sl_offset_pct`, as no ATR reading served (SR-E28-12).\n"
+        ),
+    ] = None
     resolved: ResolvedLegParams | None = None
+    take_profits: Annotated[
+        list[TakeProfit] | None,
+        Field(
+            description="The leg's take-profits as the sizer resolves them, one per rung, each a price and the quantity it closes (24-internal-schemas.md section 9.3.3).\n",
+            max_length=10,
+        ),
+    ] = None
     estimated_margin_usd: Annotated[
         str | None,
         Field(
@@ -5863,6 +5940,14 @@ class Totals2(BaseModel):
         str | None,
         Field(
             description="Arbitrary-precision decimal transported as a string (convention C6).",
+            examples=["63120.50", "-0.0004", "0"],
+            pattern="^-?[0-9]+(\\.[0-9]+)?$",
+        ),
+    ] = None
+    total_estimated_fee_usd: Annotated[
+        str | None,
+        Field(
+            description='The `resolved.estimated_fee_usd` of the legs that would be submitted, summed (SCR-061\'s "est. fee").\n',
             examples=["63120.50", "-0.0004", "0"],
             pattern="^-?[0-9]+(\\.[0-9]+)?$",
         ),
@@ -6912,6 +6997,22 @@ class RecordingStatus(BaseModel):
 class OrderWithEvents(Order):
     events: list[OrderEvent] | None = None
     executions: list[Execution] | None = None
+
+
+class TradeGroupDefinition(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: UUID
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    definition: TradeGroupDefinitionInput
+    readiness: Annotated[
+        TradeGroupReadiness,
+        Field(
+            description="Its members' readiness, as of the read; never stored; the `ETag` does not version it.\n"
+        ),
+    ]
 
 
 class TradeGroupLeg(BaseModel):
