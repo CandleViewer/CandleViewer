@@ -1,9 +1,16 @@
 import { test, expect } from "@playwright/test";
-import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
+import {
+  assertNoClientSecrets,
+  json,
+  stubSession,
+  stubSessionsList,
+  watchForLeaks,
+} from "../support/api";
+import { installWsHarness } from "../support/wsHarness";
 
-// E09-Q02 (#293) session.spec. SCR-111/112 (sessions list, sign-out everywhere) are not built yet
-// (#1640 S3). Covered here: the unauthenticated redirect, cookie-stripped/401 handling, the
-// bootstrap session read, and SCR-005 idle lock -> unlock (#1640 S2). @electron tagged.
+// E09-Q02 (#293) session.spec. Covered here: the unauthenticated redirect, cookie-stripped/401
+// handling, the bootstrap session read, SCR-005 idle lock -> unlock (#1640 S2) and SCR-112 sign out
+// everywhere -> SCR-001, with the server's 4401 close honoured (#1640 S3). @electron tagged.
 
 test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron", async ({
   page,
@@ -135,4 +142,58 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
   expect(typed.filter((v) => v !== "")).toEqual([]);
   await assertNoClientSecrets(page, ["pw-lock-1"]);
   await guard.flush();
+});
+
+// What this proves: the confirm sends `{all_sessions: true}` once, and the tab reaches SCR-001 through
+// `endSession()` on the 204, not through the socket. The server's `bye session_revoked` + 4401 close
+// (sent before the 204, as the hub does) is honoured: the client never re-authenticates on it. A
+// revocation from another device (4401 alone, no in-tab logout) does not reach SCR-001 yet; the WS
+// client stops on it as a fatal close (`connectionRegion.ts`, G12), so that is not asserted here.
+test("#1640 SCR-112 sign out everywhere: logout all, SCR-001, the 4401 close honoured", async ({
+  page,
+}) => {
+  await stubSession(page, { role: "owner" });
+  const harness = await installWsHarness(page);
+  let revoked = false;
+  await stubSessionsList(page);
+  // services/api/candleviewer/api/sessions.py: after the logout the cleared cookie refreshes
+  // nothing (`_unauthorized("refresh_token_invalid")`)
+  await page.route("**/api/v1/auth/refresh", (r) =>
+    revoked
+      ? r.fulfill(
+          json(
+            {
+              type: "about:blank",
+              title: "Unauthorized",
+              status: 401,
+              detail: "refresh_token_invalid",
+            },
+            401,
+          ),
+        )
+      : r.fallback(),
+  );
+  const logouts: unknown[] = [];
+  await page.route("**/api/v1/auth/logout", (r) => {
+    logouts.push(r.request().postDataJSON());
+    revoked = true;
+    harness.revokeSession(); // the hub closes the session's sockets before the 204 (23 4.3)
+    return r.fulfill({ status: 204 });
+  });
+
+  await page.goto("/settings/profile");
+  await expect.poll(() => harness.authenticated()).toBe(1);
+  const table = page.getByRole("table", { name: "Signed-in sessions" });
+  await expect(table.getByRole("rowheader", { name: /This session/u })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out everywhere" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Sign out everywhere?" });
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
+  await expect(page.getByRole("heading", { name: "Sign in to CandleViewer" })).toBeVisible();
+  expect(logouts).toEqual([{ all_sessions: true }]);
+  expect(harness.sent.at(-1)).toMatchObject({ t: "bye", p: { code: 4401, reconnect: false } });
+  expect(harness.authenticated()).toBe(1); // bye.reconnect false: never re-authenticated
 });

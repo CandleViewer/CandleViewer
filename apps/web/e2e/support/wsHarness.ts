@@ -35,6 +35,8 @@ export interface WsHarness {
   resume(): void;
   /** A `system` delta that skips one `s` (3.3, 12.3): the client must `resync` (7.5). */
   desync(): void;
+  /** The session revoked (4.3, 9.5): the hub's `bye session_revoked`, then close 4401; no `auth_ok` after it. */
+  revokeSession(): void;
   /** The next fixture ticker (BTCUSDT) or `fields`, as a `snap` then `d`s on `ticker.<symbol>` (6.1, 14.8). */
   sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
 }
@@ -277,6 +279,20 @@ export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promi
       if (!current) throw new Error("desync: no live connection");
       const s = (current.seq.get("system") ?? 0) + 2; // s + 1 is never sent
       data(current, "d", "system", HEALTH, s);
+    },
+    revokeSession() {
+      if (!current) throw new Error("revokeSession: no live connection");
+      down = true; // a revoked session's next socket is refused (23 4.3: the hub remembers it)
+      // services/api/candleviewer/ws/revocation.py `bye_frame` (no `ts`), as `close_for` sends it
+      const bye = {
+        code: 4401,
+        reason: "session_revoked",
+        message: "session revoked",
+        reconnect: false,
+      };
+      send(current, { t: "bye", p: bye });
+      void current.route.close({ code: 4401, reason: "session_revoked" });
+      current = undefined;
     },
     sendTicker(symbol, fields = {}) {
       if (!current) throw new Error("sendTicker: no live connection");

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { AXE_GATE_TAGS } from "./a11y/tags";
+import { stubSessionsList } from "./support/api";
 
 // E09-Q04: axe-core over all twelve E09 audit screens (WCAG 2.2 AA tags).
 // Network is stubbed at the transport layer; no live calls. Screens whose real UI has not
@@ -54,14 +55,10 @@ export const E09_SCREENS: ReadonlyArray<{
     scr: "SCR-111",
     shipped: false,
     path: "/settings/profile",
-    reason: "profile settings screen not built",
+    reason: "profile section not built; R-201 now hosts SCR-112's sessions section (#1640 S3)",
   },
-  {
-    scr: "SCR-112",
-    shipped: false,
-    path: "/settings/profile",
-    reason: "security settings not built; no distinct route",
-  },
+  // SCR-112's sessions section is mounted on R-201 (#1640 S3); the list is stubbed in stub().
+  { scr: "SCR-112", path: "/settings/profile", marker: "Signed-in sessions" },
   { scr: "SCR-123", path: "/admin/users/new" },
   { scr: "SCR-154", path: "/403" },
 ];
@@ -84,6 +81,7 @@ async function stub(page: Page): Promise<void> {
   );
   await page.route("**/api/v1/me/preferences", (r) => r.fulfill(json({})));
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
+  await stubSessionsList(page);
   await page.route("**/api/v1/onboarding/checklist", (r) =>
     r.fulfill(
       json({
@@ -106,7 +104,11 @@ test("not-assessed screens are still placeholders (fails when one ships: audit i
   page,
 }) => {
   await stub(page);
-  for (const { path } of E09_SCREENS.filter((s) => s.shipped === false)) {
+  // A route a shipped screen also renders on (R-201: SCR-111 beside SCR-112) is no longer a placeholder.
+  const shippedPaths = new Set(E09_SCREENS.filter((s) => s.shipped !== false).map((s) => s.path));
+  for (const { path } of E09_SCREENS.filter(
+    (s) => s.shipped === false && !shippedPaths.has(s.path),
+  )) {
     await page.goto(path);
     await expect(page.getByText("This screen has not shipped yet.")).toBeVisible();
   }

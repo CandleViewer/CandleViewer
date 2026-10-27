@@ -44,6 +44,33 @@ export async function stubSession(page: Page, opts: MeOptions): Promise<void> {
   await page.route("**/api/v1/me/keymap", (r) => r.fulfill(json({ bindings: [] })));
 }
 
+/**
+ * `GET /auth/sessions` as services/api/candleviewer/api/sessions.py answers it: `_view_json` rows
+ * (every field, `current` on the caller's) in one page. The first row is the current session.
+ */
+export function sessionsPage(): unknown {
+  const view = (n: number, current: boolean, device: string | null) => ({
+    id: `00000000-0000-4000-8000-00000000000${n}`,
+    device_name: device,
+    ip: "100.64.0.7",
+    user_agent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0",
+    created_at: "2026-10-27T08:00:00+00:00",
+    last_seen_at: "2026-10-27T09:00:00+00:00",
+    expires_at: "2026-10-27T20:00:00+00:00",
+    current,
+  });
+  const items = [view(2, true, null), view(3, false, "Desktop app")];
+  return { items, meta: { next_cursor: null, has_more: false, count: items.length } };
+}
+
+/** Answers `GET /auth/sessions` (any cursor or limit) with `sessionsPage()`. */
+export async function stubSessionsList(page: Page): Promise<void> {
+  await page.route(
+    (url) => url.pathname === "/api/v1/auth/sessions",
+    (r) => r.fulfill(json(sessionsPage())),
+  );
+}
+
 export interface LeakGuard {
   /** Awaits every pending body check, then fails if any forbidden value was seen (SR-012). */
   readonly flush: () => Promise<void>;

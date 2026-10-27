@@ -24,8 +24,10 @@ import { AppearanceScreen } from "../features/appearance/AppearanceScreen";
 import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
+import { SessionsSection } from "../features/session/SessionsSection";
 import { getMeClaims } from "../lib/auth/meCache";
 import { ShellLayout } from "../features/app-shell/ShellLayout";
+import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
@@ -41,6 +43,14 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
         <AppearanceScreen />
         <AccessibilitySettingsScreen />
       </>
+    );
+  // R-201 /settings/profile hosts SCR-112; its sessions section ships first (#1640 S3), the rest is E11's.
+  if (routeId === "R-201")
+    return (
+      <ScreenRoot>
+        <h1>Security settings</h1>
+        <SessionsSection />
+      </ScreenRoot>
     );
   if (routeId === "R-303") return <AdminInviteScreen />;
   if (routeId === "R-101") {
