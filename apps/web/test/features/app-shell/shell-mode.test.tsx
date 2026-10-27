@@ -288,16 +288,16 @@ describe("the shell in each mode (D03 §4; D02 :59)", () => {
     },
   );
 
-  it("announces entering disconnected once (the chip's row 1), with no second node from the mode", async () => {
+  it("adds no announcement of its own on entering disconnected (row 1 belongs to the connection region)", async () => {
+    // Since #306 slice 4b the connection region (CMP-077) is the one writer of E17-D02 §11 row 1,
+    // driven by the WS layer's state and covered by its own tests; the chip and the mode say nothing.
     await renderShell("owner");
     expect(assertiveSeq()).toBeNull();
     set({ connection: retry(1) });
-    const first = assertiveSeq();
-    expect(first).not.toBeNull();
     set({ connection: retry(2) });
     set({ connection: retry(3) });
     set({ latency: toLatencyIndicator(40) });
-    expect(assertiveSeq()).toBe(first);
-    expect(document.querySelectorAll('[aria-live="assertive"] p')).toHaveLength(1);
+    expect(assertiveSeq()).toBeNull();
+    expect(document.querySelectorAll('[aria-live="assertive"] p')).toHaveLength(0);
   });
 });
