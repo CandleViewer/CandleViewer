@@ -131,7 +131,7 @@ export function NumericStepperInput({
       (event.key === "Home" && min !== undefined) ||
       (event.key === "End" && max !== undefined));
 
-  const refusal = useRefusalAnnounce(
+  const refusal = useRefusalAnnounce<HTMLInputElement>(
     reason,
     {
       onKeyDown: (event) => {
