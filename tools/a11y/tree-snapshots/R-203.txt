@@ -1,6 +1,7 @@
 - link "Skip to main content":
   - /url: "#cv-main"
-- banner
+- banner:
+  - 'button "Connection: Reconnecting"': Reconnecting
 - navigation "Primary"
 - main:
   - heading "Appearance" [level=1]
