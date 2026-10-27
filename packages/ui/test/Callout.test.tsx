@@ -2,7 +2,7 @@
 import { composeStories } from "@storybook/react-vite";
 import { act, useLayoutEffect } from "react";
 import { expect, fn, userEvent, within } from "storybook/test";
-import { describe, it } from "vitest";
+import { describe, it, vi } from "vitest";
 import { Callout, type CalloutTone } from "../src/components/index.js";
 import { Icon } from "../src/icons/Icon.js";
 import * as stories from "../src/components/Callout.stories.js";
@@ -141,7 +141,8 @@ describe("Callout (CMP-028)", () => {
     await act(async () => r.unmount());
   });
 
-  it("actions with the same label render as separate buttons", async () => {
+  it("actions with the same label render as separate buttons, with no duplicate-key warning", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const first = fn();
     const second = fn();
     const host = await mount(
@@ -158,6 +159,11 @@ describe("Callout (CMP-028)", () => {
     act(() => buttons[1]?.click());
     expect(second).toHaveBeenCalledTimes(1);
     expect(first).not.toHaveBeenCalled();
+    const keyWarnings = error.mock.calls.filter((args) =>
+      args.some((a) => typeof a === "string" && a.includes("same key")),
+    );
+    error.mockRestore();
+    expect(keyWarnings).toEqual([]);
   });
 
   it.each([

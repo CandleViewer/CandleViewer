@@ -43,7 +43,11 @@ interface CalloutBase {
   tone?: CalloutTone;
   /** The state's words, `type.ui.body-strong`. Never raw exchange error text: map it to a state label first. */
   title: string;
-  /** The body, `type.ui.body` in `color.text.secondary` (a sentence, or a sentence and a CMP-023). */
+  /**
+   * The body, `type.ui.body` in `color.text.secondary` (a sentence, or a sentence and a CMP-023). It is part of
+   * the announced message, so it must not be focusable: links and buttons go in `retry` / `actions`. A change of
+   * live role remounts the message region, the body included, so it re-announces.
+   */
   children?: ReactNode;
   /** A connection tone's caller-written details sentence, under the body; never a passthrough of a wire error. */
   details?: string;
