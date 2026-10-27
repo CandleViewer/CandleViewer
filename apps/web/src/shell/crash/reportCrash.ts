@@ -7,7 +7,7 @@
  */
 import { getShellState, type Settings } from "../bootstrap/store.js";
 import type { CrashEntry, ShellPort } from "../ShellPort.js";
-import { redactText, redactValue } from "./redact.js";
+import { readString, redactText, redactValue } from "./redact.js";
 
 export type CrashBoundary = "panel" | "route" | "app" | "window";
 export type CrashCounts = Readonly<Record<CrashBoundary, number>>;
@@ -42,14 +42,51 @@ const clip = (text: string): string => redactText(text).slice(0, 2048);
 /** The settings groups a diagnostics payload carries (allow-list): never `notifications` (a webhook URL, free-form quiet hours). */
 const SETTINGS_ALLOWED: ReadonlySet<string> = new Set(["appearance", "accessibility", "chart", "orderflow", "trading", "data"] satisfies (keyof Settings)[]); // prettier-ignore
 
-/** Allow-list: an error's name, message and stack only; a thrown non-Error gives its `message` or its type, never its fields. */
+const UNRENDERABLE = "<unrenderable>";
+
+/**
+ * Allow-list: an error's name, message and stack only; a thrown non-Error gives its `message` or its type, never its
+ * fields. This structural allow-list, not `redactValue`'s payload deny-list, is what keeps a payload out of the log.
+ * Each field is read in its own try and kept only as a string, so a throwing getter costs that field, not the report.
+ */
 function describe(error: unknown): { message: string; stack?: string | undefined } {
-  if (error instanceof Error)
-    return { message: `${error.name}: ${error.message}`, stack: error.stack };
+  if (error instanceof Error) {
+    const name = readString(() => error.name) ?? UNRENDERABLE;
+    const message = readString(() => error.message) ?? UNRENDERABLE;
+    let stack: string | undefined;
+    try {
+      const raw: unknown = error.stack;
+      stack = raw === undefined ? undefined : typeof raw === "string" ? raw : UNRENDERABLE;
+    } catch {
+      stack = UNRENDERABLE;
+    }
+    return { message: `${name}: ${message}`, stack };
+  }
   if (typeof error === "string") return { message: error };
-  const message: unknown =
-    typeof error === "object" && error !== null && "message" in error ? error.message : undefined;
-  return { message: typeof message === "string" ? message : `Non-Error thrown (${typeof error})` };
+  const message = readString(() =>
+    typeof error === "object" && error !== null && "message" in error ? error.message : undefined,
+  );
+  return { message: message ?? `Non-Error thrown (${typeof error})` };
+}
+
+/**
+ * The settings, redacted one level down. An allow-listed group is kept by its name even where the payload backstop
+ * would drop that name (`data`): the group allow-list is the structural control; its contents are still redacted.
+ */
+function redactSettings(settings: unknown): unknown {
+  const out = redactValue(settings, 1);
+  if (typeof settings !== "object" || settings === null || typeof out !== "object" || out === null)
+    return out;
+  for (const group of SETTINGS_ALLOWED) {
+    try {
+      if (Object.hasOwn(settings, group)) {
+        Reflect.set(out, group, redactValue(Reflect.get(settings, group), 2));
+      }
+    } catch {
+      // a hostile settings object: the backstop's result stands
+    }
+  }
+  return out;
 }
 
 export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter {
@@ -72,17 +109,27 @@ export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter
     if (known !== undefined) return known;
     const correlationId = newId();
     if (key !== null) seen.set(key, correlationId);
-    const { message, stack } = describe(error);
-    const entry: CrashEntry = {
-      timestampMs: now(),
-      message: clip(message),
-      ...(stack === undefined ? {} : { stack: clip(stack) }),
-      context: {
-        correlationId,
-        boundary,
-        ...(component === undefined ? {} : { component: clip(component) }),
-      },
-    };
+    let entry: CrashEntry;
+    try {
+      const { message, stack } = describe(error);
+      entry = {
+        timestampMs: now(),
+        message: clip(message),
+        ...(stack === undefined ? {} : { stack: clip(stack) }),
+        context: {
+          correlationId,
+          boundary,
+          ...(component === undefined ? {} : { component: clip(component) }),
+        },
+      };
+    } catch {
+      // a hostile error (a Proxy whose `getPrototypeOf` throws, …) still gets its id, its entry and its count
+      entry = {
+        timestampMs: now(),
+        message: `Crash report failed: ${typeof error}`,
+        context: { correlationId, boundary },
+      };
+    }
     log.push(entry);
     if (log.length > capacity) log.splice(0, log.length - capacity);
     counts.set(boundary, (counts.get(boundary) ?? 0) + 1);
@@ -100,14 +147,17 @@ export function createCrashReporter(deps: CrashReporterDeps = {}): CrashReporter
     const idOf = (e: CrashEntry): string => e.context?.["correlationId"] ?? "";
     const line = (e: CrashEntry): string =>
       `${new Date(e.timestampMs).toISOString()} crash ${e.context?.["boundary"] ?? ""} ${idOf(e)} ${e.message}`;
-    const payload: DiagnosticsPayload = {
-      ...meta,
+    const { settings, ...rest } = meta;
+    const payload: Omit<DiagnosticsPayload, "settings"> = {
+      ...rest,
       generatedAtMs: now(),
       correlationIds: log.map(idOf),
       recentLogLines: log.map(line),
       metrics: { shell_crash_total: countsOf() },
     };
-    return redactValue(payload) as DiagnosticsPayload; // SR-177: redacted at assembly, whatever passed before
+    // SR-177: redacted at assembly, whatever passed before
+    const redacted = redactValue(payload) as Omit<DiagnosticsPayload, "settings">;
+    return { ...redacted, settings: redactSettings(settings) };
   };
 
   return { report, diagnostics, entries: () => [...log], counts: countsOf };

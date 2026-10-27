@@ -106,3 +106,127 @@ describe("redactValue", () => {
     expect(JSON.stringify(redactValue(cyclic))).toContain("[redacted:depth]");
   });
 });
+
+describe("camelCase credential names (M2)", () => {
+  const CAMEL = [
+    "accessToken", "refreshToken", "apiKey", "apiSecret", "kekHandle", "csrfToken", "armToken", "sessionToken",
+  ]; // prettier-ignore
+
+  it.each(CAMEL)("redacts %s as an object key", (name) => {
+    expect(R.isRedactKey(name)).toBe(true);
+    const out = redactValue({ [name]: short, nested: { [name]: { deep: short } } });
+    expect(out).toEqual({ [name]: KEY_MARK, nested: { [name]: KEY_MARK } });
+  });
+
+  it.each(CAMEL)("redacts %s labelling a value in text, as name=value and name: value", (name) => {
+    expect(redactText(`${name}=${short}`)).toBe(`${name}=${KEY_MARK}`);
+    expect(redactText(`${name}: ${short}`)).toBe(`${name}: ${KEY_MARK}`);
+    expect(redactText(`{"${name}": "${short}"}`)).toBe(`{"${name}": "${KEY_MARK}"}`);
+  });
+
+  it("redacts the CSRF double-submit cookie by its exact name, as a key and as a label", () => {
+    const cookie = ["__Host", "cv_csrf"].join("-");
+    expect(redactValue({ [cookie]: short })).toEqual({ [cookie]: KEY_MARK });
+    expect(redactText(`sent ${cookie}=${short} next`)).toBe(`sent ${cookie}=${KEY_MARK} next`);
+  });
+
+  it("keeps camelCase names that are not credentials", () => {
+    expect(["tokenCount", "sessionId", "signalName", "apiKeyLabel"].filter(R.isRedactKey)).toEqual(
+      [],
+    );
+    expect(redactText(`sessionId=${short} tokenCount=3`)).toBe(`sessionId=${short} tokenCount=3`);
+  });
+
+  it("builds LABELLED from KEY_NAMES: longest first, each name with and without separators", () => {
+    const alts = (name: string): string[] => {
+      const words = name.toLowerCase().split(/[-_]+/).filter(Boolean);
+      const start = /^[-_]/.test(name) ? "(?<![\\w-])[-_]+" : "\\b";
+      const forms = words.length > 1 ? [words.join("[-_]"), words.join("")] : words;
+      return forms.map((form) => start + form);
+    };
+    const names = [...R.KEY_NAMES].sort((a, b) => b.length - a.length || (a < b ? -1 : 1));
+    const value = `("[^"\\n]*"?|'[^'\\n]*'?|[^\\s"',}\\]]+)`;
+    const source = `((?:${names.flatMap(alts).join("|")})["']?\\s*[:=]\\s*)(?![ \\t]*["']?\\[redacted:)${value}`;
+    expect(R.LABELLED.source).toBe(source);
+    expect(R.LABELLED.flags).toBe("gi");
+  });
+
+  it("matches a multi-word name with separators or with none", () => {
+    expect(redactText(`apikey=${short} API_KEY=${short}`)).toBe(
+      `apikey=${KEY_MARK} API_KEY=${KEY_MARK}`,
+    );
+  });
+});
+
+describe("the backup download path (L3)", () => {
+  it("becomes one marker, as the server's _DOWNLOAD_PATH_RE", () => {
+    const id = "b".repeat(8);
+    const tail = ["dl", "x9"].join("");
+    // the server's rule: the path runs to the next `/` or space, a query string included
+    expect(redactText(`GET /api/v1/admin/backups/${id}/download/${tail}?a=1 404`)).toBe(
+      "GET /api/v1[redacted:download-path] 404",
+    );
+    expect(redactText(`GET /admin/backups//download/${tail}/more`)).toBe(
+      "GET [redacted:download-path]/more",
+    );
+    expect(redactText("/admin/backups/x/download/")).toBe("/admin/backups/x/download/");
+  });
+});
+
+describe("redactValue on hostile and non-JSON values", () => {
+  const thrower = (): never => {
+    throw new Error(short);
+  };
+
+  it("turns a Proxy whose has / ownKeys / getPrototypeOf traps throw into a marker, never a throw (M1)", () => {
+    const trap = { has: thrower, ownKeys: thrower, getPrototypeOf: thrower };
+    const proxy = new Proxy({}, trap);
+    expect(redactValue(proxy)).toBe("[redacted:unrenderable]");
+    expect(redactValue({ ok: 1, inner: proxy })).toEqual({
+      ok: 1,
+      inner: "[redacted:unrenderable]",
+    });
+  });
+
+  it("keeps the other fields when one getter throws (M1)", () => {
+    const value = Object.defineProperty({ ok: "yes" }, "bad", { get: thrower, enumerable: true });
+    expect(redactValue(value)).toEqual({ ok: "yes", bad: "[redacted:unrenderable]" });
+  });
+
+  it("renders an Error whose name or message getter throws with a marker (M1)", () => {
+    const badMessage = Object.defineProperty(new Error("x"), "message", { get: thrower });
+    const badName = Object.defineProperty(new Error("y"), "name", { get: thrower });
+    const oddName = Object.assign(new Error("z"), { name: { toString: thrower } });
+    expect(redactValue(badMessage)).toBe("Error: [redacted:unrenderable]");
+    expect(redactValue(badName)).toBe("[redacted:unrenderable]: y");
+    expect(redactValue(oddName)).toBe("[redacted:unrenderable]: z");
+    expect(JSON.stringify([badMessage, badName].map((e) => redactValue(e)))).not.toContain(short);
+  });
+
+  it("marks bytes, maps and sets, and redacts a String object as text (L4)", () => {
+    const bytes = new TextEncoder().encode(short);
+    expect(redactValue(bytes)).toBe("[redacted:bytes]");
+    expect(redactValue(bytes.buffer)).toBe("[redacted:bytes]");
+    expect(redactValue(new DataView(bytes.buffer))).toBe("[redacted:bytes]");
+    expect(redactValue(new Map([["token", short]]))).toBe("[map]");
+    expect(redactValue(new Set([short]))).toBe("[set]");
+    expect(redactValue(new String(`token=${short} ${jwt}`))).toBe(
+      `token=${KEY_MARK} [redacted:jwt-shape]`,
+    );
+  });
+
+  it.each([
+    "p",
+    "data",
+    "params",
+    "args",
+    "rawFrame",
+    "wsFrame",
+    "userInput",
+    "inputText",
+    "raw_frame",
+  ])("drops the payload-carrying field %s (L6 backstop)", (key) => {
+    expect(R.isPayloadKey(key)).toBe(true);
+    expect(redactValue({ [key]: "zzyyy", kept: 1 })).toEqual({ kept: 1 });
+  });
+});
