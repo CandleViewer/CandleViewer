@@ -70,3 +70,6 @@ export type { SkeletonProps } from "./Skeleton.js";
 
 export { SkeletonChart } from "./SkeletonChart.js";
 export type { SkeletonChartProps } from "./SkeletonChart.js";
+
+export { ProgressBar } from "./ProgressBar.js";
+export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";

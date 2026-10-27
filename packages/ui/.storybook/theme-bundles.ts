@@ -23,3 +23,4 @@ import "../src/components/avatar.css";
 import "../src/components/avatargroup.css";
 import "../src/components/typography.css";
 import "../src/components/skeleton.css";
+import "../src/components/progress.css";

@@ -33,7 +33,7 @@ const forcedOf = (css: string): string =>
 const PAINT = /(^|[\s;])(background|color|border-color)\s*:/;
 const RAW = /#[0-9a-f]{3,8}\b|rgba?\(|hsla?\(|\b\d+(\.\d+)?px\b/i;
 
-describe.each(["skeleton.css"])("%s contract", (file) => {
+describe.each(["skeleton.css", "progress.css"])("%s contract", (file) => {
   const css = read(file);
   const normal = normalOf(css);
   const forced = forcedOf(css);
@@ -91,5 +91,39 @@ describe("skeleton.css motion", () => {
     const forced = forcedOf(css);
     expect(rule(forced, ".cv-skeleton__block")).toContain("background: Canvas");
     expect(rule(forced, band)).toContain("display: none");
+  });
+});
+
+describe("progress.css", () => {
+  const css = read("progress.css");
+
+  it("the track is 8 px (twice space.inset.xs) and the fill moves by transform only", () => {
+    expect(rule(css, ".cv-progress__track")).toContain("height: calc(var(--space-inset-xs) * 2)");
+    const fill = rule(normalOf(css), ".cv-progress__fill");
+    expect(fill).toContain("transform: scaleX(var(--cv-progress))");
+    expect(fill).toMatch(/transition: transform var\(--motion-duration-normal\)/);
+    expect(css).not.toMatch(/animation/);
+    expect(rule(css, '[dir="rtl"] .cv-progress__fill')).toContain("transform-origin: right");
+  });
+
+  it("tones bind the D02 H4 fills; warning uses .strong", () => {
+    const tone = (t: string): string => rule(css, `.cv-progress[data-tone="${t}"]`);
+    expect(tone("success")).toContain("var(--color-status-success-default)");
+    expect(tone("warning")).toContain("var(--color-status-warning-strong)");
+    expect(tone("danger")).toContain("var(--color-status-danger-default)");
+  });
+
+  it("forced colours: a Highlight fill kept by forced-color-adjust on a bordered Canvas track", () => {
+    const forced = forcedOf(css);
+    expect(rule(forced, ".cv-progress__fill")).toMatch(
+      /forced-color-adjust: none;[\s\S]*Highlight/,
+    );
+    expect(rule(forced, ".cv-progress__track")).toContain("border: 1px solid CanvasText");
+  });
+
+  it("reduced motion makes a new value a step", () => {
+    expect(rule(css, ':root[data-motion="reduce"] *')).toContain(
+      "transition-duration: 0.01ms !important",
+    );
   });
 });
