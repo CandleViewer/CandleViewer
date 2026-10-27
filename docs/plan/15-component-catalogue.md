@@ -229,6 +229,7 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 - **A11y**: `aria-hidden="true"` by default; when `decorative=false`, renders `role="img"` + `aria-label`.
 - **Tokens**: stroke = `currentColor` from the context's text token (`color.text.*`; on a filled action, the host label's token) or the tone's `color.status.*.strong` token (Penpot masters bind `color.text.primary`); 1.5 px stroke at every size, no fill; size `size.icon` by default, or `size.icon.sm` / `size.icon.md` / `size.icon.lg` (12/16/20 px as shipped) via `size`.
 - **Storybook**: FullSet (every registry icon; Penpot components `icon/{name}`, 47 base glyphs), SizeScale (sm / md / lg).
+- **Trading glyphs** (`docs/design/E05/E05-D02-rest.md` §7.12; §6 J22–J25, RULED 6438042003; drawn, registered and tested by E05-T06, #271): the registry adds 13 custom glyphs on the base set's 24-unit grid with the same 1.5 px stroke, registered as `icon/{name}` with §7.12's descriptions: `flatten-all`, `chase-limit`, `iceberg-order`, `twap`, `one-click-arm`, `native-sl-shield`, `estimated`, `node-trigger`, `node-condition`, `node-action`, `node-logic-gate`, `node-comment`, `heatmap-convention-swap` (J22); `one-click-arm` marks only the 1-click trading toggle and its armed indicator, never CMP-229 ArmToggle, which keeps `unlock` / `lock` (J23); each has one 24-unit master, and a glyph whose detail closes up at 12 px has a reduced 12 px form (`estimated`) or is 16 px minimum, per §7.12's table (J24); every one strokes in `currentColor` and never carries a category or side hue, so the node glyphs never take `color.node.*` (J25). Decorative beside a word; standalone, `decorative=false` with §7.12's name. FullSet and the completeness test grow by these 13.
 - **Tests**: unit (icon registry completeness), visual, axe (decorative-vs-labelled lint).
 
 ### CMP-020 Typography primitives (Text, Heading, NumericText, MonoText)
@@ -253,10 +254,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-022 Kbd (keyboard-shortcut glyph)
 
 - **Tier**: Atom · **Purpose**: render a hotkey combination consistently (menus, tooltips, shortcuts settings screen).
-- **Props**: `keys: string[]` (e.g. `["Ctrl","Shift","H"]`).
-- **A11y**: `<kbd>` semantic element, visually-hidden expansion text for screen readers ("Control plus Shift plus H").
-- **Tokens**: `color.surface.raised`, `radius.xs`, `font.mono`.
-- **Storybook**: SingleKey, Combo.
+- **Props**: `keys: string[]` (e.g. `["Ctrl","Shift","H"]`). `keys` holds the active keymap profile's display form of the binding: a digit range ("Alt+1..9") renders its two ends as caps with an en dash between them, a pointer chord ("Ctrl+click") its key caps and the pointer word as text; an unbound command renders nothing (`docs/design/E05/E05-D02-rest.md` §6 J5, RULED 6438042003).
+- **A11y**: `<kbd>` semantic element, visually-hidden expansion text for screen readers ("Control plus Shift plus H"). One `<kbd>` per key nested in an outer `<kbd>`, no visible "+"; the visible caps are `aria-hidden="true"` and the outer `<kbd>`'s visually hidden expansion takes its key words from the keymap's name table (E10/E49), never written per screen; inside a menu item the whole Kbd is hidden and the item's `aria-keyshortcuts` carries the keys (J5).
+- **Tokens**: cap `color.surface.raised` with a 1 px `color.border.strong` edge (`border.hairline`, decorative), `radius.xs`, padding `space.inset.xs` inline, at least square; key text `type.num.xs` in `color.text.secondary`; caps `space.inset.xs` apart (`docs/design/E05/E05-D02-rest.md` §6 J4, RULED 6438042003). (Replaces `font.mono`, which is not a shipped token.)
+- **Storybook**: SingleKey, Combo, Range, InMenuRow, Remapped (J4, J5).
 - **Tests**: unit, visual, axe.
 
 ### CMP-023 Progress Bar
@@ -381,19 +382,19 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-035 Countdown / Timer text
 
 - **Tier**: Atom · **Purpose**: bar-close countdown, admin re-auth token expiry countdown, secret auto-hide.
-- **Props**: `expiresAt: number` (epoch ms) · `format: "mm:ss"|"words"` · `onExpire?`.
-- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused wherever a countdown appears, except countdowns in a grid column, which announce nothing (SCR-100 "Funding in", E08-D07 D22, §4.5).
-- **Tokens**: `font.mono`, `color.text.warning` (under threshold).
-- **Storybook**: Default, UnderThreshold, Expired.
+- **Props**: `expiresAt: number` (epoch ms) · `format: "mm:ss"|"words"` · `onExpire?`. `format` adds `"hh:mm:ss"` and `"approx"` ("~4 s") (`docs/design/E05/E05-D02-rest.md` §6 J6, RULED 6438042003); `thresholds?: number[]` (seconds, default `[60, 10, 0]`) and `announce?: (s) => string`, the host's key for each threshold sentence (J7).
+- **A11y**: `aria-live="off"` visually (updates every second would flood SR) with a discrete polite announcement only at defined thresholds (e.g. 60s, 10s, 0s) — documented pattern reused wherever a countdown appears, except countdowns in a grid column, which announce nothing (SCR-100 "Funding in", E08-D07 D22, §4.5). The visible digits are `aria-hidden="true"` and a visually hidden twin holds the words; each threshold speaks once, politely, and a crossing of several at once speaks the latest only (J7); a running clock that is not a deadline is the host's `role="timer"` region, outside this component (J6).
+- **Tokens**: the digits `type.num.*` (`type.num.sm` by default), tabular, in the host sentence's colour; no colour change under the threshold. Under the threshold a CMP-019 `clock` glyph at `size.icon` in `color.status.warning.strong` leads the digits, `space.inset.xs` before them (J1 (c), PROPOSED, owner approval pending (#2701); until then the number alone carries the threshold). (Replaces `font.mono` and `color.text.warning`, which are not shipped tokens; J1.)
+- **Storybook**: Default, UnderThreshold, Expired, HhMmSs, Approx, InGrid (J6).
 - **Tests**: unit (threshold announcement logic), visual, axe.
 
 ### CMP-036 KeyValueRow
 
 - **Tier**: Atom · **Purpose**: label/value pair row used across summary cards (order review, position detail).
-- **Props**: `label` · `value: ReactNode` · `emphasis?: boolean` · `freshness?: DataConfidenceState` (renders CMP-239 FreshnessMarker beside `value` for live fields — see E08-D04).
-- **A11y**: renders as definition-list pair (`dt`/`dd`) semantics for screen-reader table-like traversal.
-- **Tokens**: `space.row.*`, `font.size.body/label`.
-- **Storybook**: Default, Emphasis, LiveFreshness.
+- **Props**: `label` · `value: ReactNode` · `emphasis?: boolean` · `freshness?: DataConfidenceState` (renders CMP-239 FreshnessMarker beside `value` for live fields — see E08-D04). `layout?: "inline" | "stacked"` (default `inline`; `stacked` puts the value under its label for a narrow host or 150 % text) (`docs/design/E05/E05-D02-rest.md` §6 J8 (a), RULED 6438042003).
+- **A11y**: renders as definition-list pair (`dt`/`dd`) semantics for screen-reader table-like traversal. Rows render `<div>` + `<dt>` + `<dd>` inside the host's `<dl>` (one per group; a single row is a `dl` of one), and an unavailable value "—" is read as the state word, never "dash" (J8 (a)); a live row's value keeps `color.text.primary` while disconnected or reconnecting and CMP-239's marker carries the state (J8 (c), a request to E08-D11 M25).
+- **Tokens**: row min-height `size.row.height`, gap `space.inset.sm`, rows `space.stack.xs` apart; label `type.ui.label` + `color.text.secondary`; value `color.text.primary`, a number `type.num.base` (or the host's `type.num.*`), any other value `type.ui.body`; a missing value "—" in `color.text.secondary` (J8). (Replaces `space.row.*` and `font.size.body/label`, which are not shipped tokens.)
+- **Storybook**: Default, Emphasis, LiveFreshness, Missing, Stale, Stacked (J8).
 - **Tests**: unit, visual, axe.
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; a live field settles once through CMP-239; no value-change emphasis while stale).
 
@@ -454,10 +455,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-042 Tabs
 
 - **Tier**: Molecule · **Purpose**: panel-local section switching (order ticket tabs: Market/Limit/Conditional; settings sections).
-- **Props**: `tabs: {id,label,icon?}[]` · `value` · `onChange` · `orientation`.
-- **A11y**: WAI-ARIA Tabs pattern (`role=tablist/tab/tabpanel`), arrow-key nav, `aria-selected`, lazy-mount tabpanels retain focus correctly on switch.
-- **Tokens**: `color.action.selected`, `space.tabs.*`.
-- **Storybook**: Default, Vertical, WithIcons.
+- **Props**: `tabs: {id,label,icon?}[]` · `value` · `onChange` · `orientation`. `activation?: "automatic" | "manual"` (default `automatic`; `manual` for a host whose switch re-shapes a form or costs a fetch) and a per-tab `disabledReason?`, rendered T2 through CMP-079 (`docs/design/E05/E05-D02-rest.md` §6 J9, RULED 6438042003).
+- **A11y**: WAI-ARIA Tabs pattern (`role=tablist/tab/tabpanel`), arrow-key nav, `aria-selected`, lazy-mount tabpanels retain focus correctly on switch. One `tabpanel` per tab, `aria-labelledby` its tab, the inactive panels `hidden` or not mounted; a panel with nothing focusable takes `tabindex="0"`; a switch never moves focus off the tab (J10). A gated tab keeps `role="tab"` with `aria-disabled="true"` and `aria-describedby` → its reason; an arrow, `Home` or `End` landing on it selects nothing and announces nothing beyond its name, "unavailable" and the reason; `Enter` / `Space` on it re-show the reason with one polite announcement (`docs/design/E09/E09-D09.md` §9.3; J9).
+- **Tokens**: selected tab a 2 px `color.border.selected` bottom rule (`border.thick`) with the label `color.text.primary`, no fill; unselected labels `color.text.secondary`; tab padding `space.inset.sm` inline (compact) / `space.inset.md` (comfortable), `type.ui.label`; a 1 px `color.border.default` line under the strip (J9). (Replaces `color.action.selected` and `space.tabs.*`.)
+- **Storybook**: Default, Vertical, WithIcons, ManualActivation, GatedTab (J9).
 - **Tests**: unit, visual, axe, keyboard.
 
 ### CMP-043 Dialog (Modal)
@@ -535,10 +536,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-050 Card
 
 - **Tier**: Molecule · **Purpose**: bordered content block (summary cards, dashboard tiles).
-- **Props**: `title?` · `actions?: ReactNode` · `padding` · `children`.
-- **A11y**: heading semantics if `title` present.
-- **Tokens**: `color.surface.raised`, `radius.lg`, `elevation.1`.
-- **Storybook**: Default, WithActions, NoPadding.
+- **Props**: `title?` · `actions?: ReactNode` · `padding` · `children`. `surface?: "elevated" | "flat"` (default `elevated`), `headingLevel?: 2 | 3 | 4 | 0` (0 renders the title as plain text inside a listbox option) and `region?: boolean` (a landmark tile labelled by its heading); actions sit in the header's trailing slot (`docs/design/E05/E05-D02-rest.md` §6 J11, RULED 6438042003).
+- **A11y**: heading semantics if `title` present. The title is a heading at `headingLevel`; with `region` the card is a `region` `aria-labelledby` its heading; inside a listbox option the title is plain text and the option owns the states (J11). A card is never clickable as a whole; its gated actions take T2 themselves.
+- **Tokens**: `color.surface.raised`, `radius.card`; `elevated` lifts by `elevation.card`, `flat` takes a 1 px `color.border.default` hairline (`border.hairline`); title `type.ui.heading-sm` + `color.text.primary`; body padding `space.panel.padding` (J11). (Replaces `radius.lg` and `elevation.1`, which are primitives.)
+- **Storybook**: Default, WithActions, NoPadding, Flat, RegionTile, InOption (J11).
 - **Tests**: unit, visual, axe.
 
 ### CMP-051 Accordion
@@ -617,10 +618,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-059 CommandPalette
 
 - **Tier**: Molecule · **Purpose**: global `Ctrl+K` fuzzy command/navigation launcher (design requirement: single global hotkey layer, `05-accessibility-standard.md` §3.1.2).
-- **Props**: `open` · `onOpenChange` · `commands: {id,label,group,shortcut?,onRun}[]`.
-- **A11y**: Combobox+Listbox pattern inside a modal Dialog; results grouped with `role="group"` + group labels; live region announces result count.
-- **Tokens**: `elevation.4`, `color.surface.overlay`.
-- **Storybook**: Default, Grouped, NoResults.
+- **Props**: `open` · `onOpenChange` · `commands: {id,label,group,shortcut?,onRun}[]`. Each command adds `disabledReason?` (the host's `docs/design/E09/E09-D09.md` key: a gated command renders T2 with the reason as its second line) and `destructive?` (the `warning` glyph and the tag "confirms"; running it opens its confirmation); `shortcut` renders the active keymap profile's binding through CMP-022; rows are 32 px compact and 40 px comfortable, E10-D03's host data (`docs/design/E05/E05-D02-rest.md` §6 J12, J3, RULED 6438042003).
+- **A11y**: Combobox+Listbox pattern inside a modal Dialog; results grouped with `role="group"` + group labels; live region announces result count. Focus stays in the input (`aria-activedescendant`); ↓ / ↑ skip group headers and wrap, and land on a gated option silently (its `aria-describedby` reason is read); `Enter` or `Ctrl+Enter` on it runs nothing and re-shows the reason once, politely; an option's name is its label then its tag; the count speaks once per settled query; the dialog title, the input label, the listbox name and the count sentence are E15's SCR-012 keys (J12).
+- **Tokens**: `color.surface.overlay`, `elevation.dialog`, `radius.dialog`, 640 px wide; rows `type.ui.body` + `color.text.primary`, the active row `color.surface.selected`; group headers and the placeholder `color.text.tertiary`; the footer hint `color.text.secondary` (J3, J12). (Replaces `elevation.4`, which is a primitive.)
+- **Storybook**: Default, Grouped, NoResults, EmptyQuery, RbacDisabled, Destructive (J12).
 - **Tests**: unit, visual, axe, keyboard, fuzzy-match unit tests.
 
 ### CMP-060 NotificationCenter (bell dropdown)
@@ -644,19 +645,21 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-062 ThemeSwitcher
 
 - **Tier**: Molecule · **Purpose**: dark/light/high-contrast theme selection control.
-- **Props**: `value: "dark"|"light"|"high-contrast"` · `onChange`.
-- **A11y**: CMP-003 SegmentedControl composition; changes announced via polite live region ("Theme changed to High Contrast").
+- **Props**: `value: "dark"|"light"|"high-contrast"` · `onChange`. A separate CMP-004 Toggle "match system" sits beside the three values, off by default; choosing a value turns it off (`docs/design/E05/E05-D02-rest.md` §6 J13, RULED 6438042003).
+- **A11y**: CMP-003 SegmentedControl composition; changes announced via polite live region ("Theme changed to High Contrast"). A committed change (a segment, the toggle, `Ctrl+Shift+H` from anywhere) speaks once; the initial load, a server-fed apply and a match-system flip speak nothing (J16). Every role, view-as included, changes the theme on this device; a session without `settings:write` skips the server save, with no T2 (J15 (a), PROPOSED, owner approval pending (#2701)).
+- **Analytics**: `appearance.theme_changed`, once per committed user change; never on the initial load, a server-fed apply or a match-system flip; the payload is the analytics owner's (#161 Observability; J16).
 - **Tokens**: n/a (meta-control).
-- **Storybook**: Default.
+- **Storybook**: Default, MatchSystem, Light, HighContrast (J13).
 - **Tests**: unit, visual, axe.
 
 ### CMP-063 DensityToggle
 
 - **Tier**: Molecule · **Purpose**: comfortable/compact density switch, global or per-panel override.
-- **Props**: `value: "comfortable"|"compact"` · `scope: "global"|"panel"` · `onChange`.
-- **A11y**: CMP-003 composition; per-panel override announced with scope context.
+- **Props**: `value: "comfortable"|"compact"` · `scope: "global"|"panel"` · `onChange`. `value` adds `"dense"`, offered only with `scope: "panel"` on a chart panel; `22`'s `spacious` is not offered and maps to Comfortable; `form?: "segmented" | "menu"` (the menu form is CMP-041 `menuitemradio` items) (`docs/design/E05/E05-D02-rest.md` §6 J14, RULED 6438042003).
+- **A11y**: CMP-003 composition; per-panel override announced with scope context. With `scope: "panel"` the group's name names the panel and the sentence the scope ("Chart panel density: dense"); a committed change speaks once, and the initial load or a server-fed apply speaks nothing (J16); every role changes it on this device, with no T2 (J15 (a), PROPOSED, owner approval pending (#2701)).
+- **Analytics**: `appearance.density_changed`, once per committed user change, global or per panel; never on the initial load or a server-fed apply; the payload, scope included, is the analytics owner's (#161 Observability; J16).
 - **Tokens**: n/a (meta-control).
-- **Storybook**: Global, PanelOverride.
+- **Storybook**: Global, PanelOverride, ChartPanelDense, MenuForm (J14).
 - **Tests**: unit, visual, axe.
 
 ### CMP-064 KeyboardShortcutRow ("Shortcuts" settings list item)
@@ -708,11 +711,11 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-069 InfoPanel ("i" expandable methodology note)
 
 - **Tier**: Molecule · **Purpose**: the linked methodology drawer referenced by every "(estimated)" chip (CMP-011 estimated variant) — explains heuristic detector logic in plain language.
-- **Props**: `title` · `content: ReactNode` · `relatedDetector?: string`.
-- **A11y**: opens as CMP-046 Drawer (non-modal), triggerable from the chip's tooltip via `Enter`.
+- **Props**: `title` · `content: ReactNode` · `relatedDetector?: string`. `variant?: "drawer" | "inline"` (default `drawer`; `inline` is an APG Disclosure inside its host that stays open while read) (`docs/design/E05/E05-D02-rest.md` §6 J17, RULED 6438042003).
+- **A11y**: opens as CMP-046 Drawer (non-modal), triggerable from the chip's tooltip via `Enter`. The trigger is the chip itself, not its tooltip: `Enter` / `Space` on the CMP-227 chip (a `button` with `aria-haspopup="dialog"`) opens it, focus moves to its heading (`tabindex="-1"`), and `Esc` returns focus to the chip; the body is `aria-busy="true"` while the parameter values load (J18).
 - **E25-D05**: the chip that references this panel is CMP-227 EstimatedBadge (CMP-011's `estimated` variant is its alias); every badge opens this drawer at its detector's section through the CMP-227 provider.
 - **Tokens**: inherits CMP-046.
-- **Storybook**: Default.
+- **Storybook**: Default, Inline, Loading, Error (J17).
 - **Tests**: unit, visual, axe.
 
 ---
@@ -866,10 +869,10 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 ### CMP-085 SkipLink
 
 - **Tier**: Atom (chrome) · **Purpose**: "Skip to main content" first-focusable link, WCAG 2.4.1.
-- **Props**: `targetId`.
-- **A11y**: visually hidden until focused, then visible at top-left.
-- **Tokens**: `color.action.primary`.
-- **Storybook**: Focused, Unfocused.
+- **Props**: `targetId`. `targets: { id, label }[]` supersedes it: "Skip to main content" always first, further links only for regions the route mounts (the order ticket, the chart), each its own link in DOM order before the TopBar (`docs/design/E05/E05-D02-rest.md` §6 J19, RULED 6438042003).
+- **A11y**: visually hidden until focused, then visible at top-left. Activation moves focus to the target, which takes `tabindex="-1"` (removed on blur) and shows the CMP-039 ring; the next Tab continues from it (J20).
+- **Tokens**: pill `color.action.primary.default` (hover `color.action.primary.hover`), `radius.control`, min-height `size.control.height`, padding `space.button.paddingX`; label `type.ui.label` + `color.text.on-action`; the `color.focus.ring` ring (E10-D03 A5; J19). (Replaces `color.action.primary`, read as `.default`.)
+- **Storybook**: Focused, Unfocused, Several (J19).
 - **Tests**: unit, visual, axe, keyboard-first-tab test.
 
 ### CMP-086 SettingsNav / SettingsLayout
@@ -2669,10 +2672,10 @@ This band was added during the cross-document traceability reconciliation (see `
 ### CMP-228 PreviewTile
 
 - **Tier**: Molecule · **Purpose**: the live miniature preview inside settings dialogs (footprint, heatmap, theme, density) showing the effect of the current settings on sample data.
-- **Props**: `kind: "footprint"|"heatmap"|"candles"|"theme"` · `settings: object` · `sampleData?: unknown`.
-- **A11y**: `role="img"` with a name describing the current configuration in words; it is decorative-adjacent, so the settings themselves always remain independently readable — the preview is never the only disclosure of a setting's effect.
-- **Tokens**: `radius.md`, `color.surface.sunken`.
-- **Storybook**: Footprint, Heatmap, ThemeDark, ThemeLight.
+- **Props**: `kind: "footprint"|"heatmap"|"candles"|"theme"` · `settings: object` · `sampleData?: unknown`. `kind` adds `"scales"` and `"ladder"`; `source?: "live" | "sample"`, `emptyText`, `errorText`, and `value` / `caption` for `ladder` (`docs/design/E05/E05-D02-rest.md` §6 J21, RULED 6438042003; E11-D03 D03-CR-3, E32-D04 D04-A2).
+- **A11y**: `role="img"` with a name describing the current configuration in words; it is decorative-adjacent, so the settings themselves always remain independently readable — the preview is never the only disclosure of a setting's effect. Five states — live, sample, empty, error and collapsed (ladder) — and never a spinner: a recomputing preview keeps its last frame; an empty or errored tile is named "Preview unavailable" (J21).
+- **Tokens**: `color.surface.sunken`, `radius.card`, a 1 px `color.border.default` hairline (decorative; it does not show in light, accepted: J2); empty and error text `type.ui.caption` + `color.text.secondary`; a ladder value `type.num.base` + `color.text.primary` (J21). (Replaces `radius.md`, a primitive.)
+- **Storybook**: Footprint, Heatmap, ThemeDark, ThemeLight, Sample, Empty, Error, Ladder, LadderCollapsed (J21).
 - **Tests**: unit, visual, axe.
 - **Design (usage spec):** [E32-D04.md](../design/E32/E32-D04.md) §8 (E32-D04; owner approval pending; the ladder builder's five glance tiles — total qty, average entry, total notional, projected risk vs cap, projected requests vs minute budget — as `role="img"` with one name, never the only disclosure: the pinned totals row repeats every figure; the `ladder` kind, `value` and `caption` props are a PROPOSED amendment routed to this catalogue's owner).
 
