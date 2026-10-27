@@ -6,7 +6,7 @@ These pin what the workflow's header claims: Python output is unbuffered, a disp
 file), and the reports are uploaded on a cancel too. The check and pack steps run under `bash -e`,
 each in its working directory, with a stand-in `uv`.
 #2825: the weekly cron's rest_k6, its guard (under `bash -e`, a stand-in `gh` whose answers go
-through the step's own jq filters) and k6's pin.
+through the step's own jq filters) and k6's pin. #2523: Budget #13 gated on it too.
 """
 
 from __future__ import annotations
@@ -33,8 +33,6 @@ DECOYS = ("-h", "--record-baseline", "a" * 65)
 #: #2825: the weekly cron, on which perf-pack-full runs rest_k6 alone.
 WEEKLY = "17 5 * * 0"
 SCENARIO = "${{ github.event_name == 'schedule' && 'rest_k6' || inputs.scenario }}"
-#: #2825: "1" on the weekly run alone, whose Budget #13 rows are reported, not gated.
-B13_WEEKLY = "${{ github.event_name == 'schedule' && '1' || '' }}"
 WS_LOAD = WORKFLOW.with_name("perf-ws-load.yml")
 #: What holds the bench runner, as the guard lists it: (workflow, job).
 HOLDERS = [
@@ -92,8 +90,8 @@ def test_unbuffered_output_and_the_scenario_input_through_env() -> None:
     assert "--out-dir bench/reports" in _step("pack")["run"]
     assert upload["with"]["path"] == "services/api/bench/reports/"
     export = "bench/reports/rest_k6-k6-summary.json"  # k6's own summary (#2825)
-    report_only = {"CV_BENCH_B13_REPORT_ONLY": B13_WEEKLY}
-    assert _step("pack")["env"] == {"CV_BENCH_K6_EXPORT": export, **report_only}
+    # the same on the schedule as on a dispatch: Budget #13 gated on both (#2523)
+    assert _step("pack")["env"] == {"CV_BENCH_K6_EXPORT": export}
 
 
 def _pack(
@@ -215,11 +213,11 @@ def test_perf_pack_full_rerun_is_skipped() -> None:
     assert _job()["if"] == f"{all_clear} && github.run_attempt == 1"
 
 
-def test_perf_pack_full_budget_13_reported_on_the_weekly_run_alone() -> None:
-    # "1" on the schedule, "" on a dispatch, which keeps the gate: until #2825's slice 2
-    # decides the budget (a known-red weekly job trains everyone to ignore red);
-    # services/api's test_e08_budgets runs the pack over both values
-    assert _step("pack")["env"]["CV_BENCH_B13_REPORT_ONLY"] == B13_WEEKLY
+def test_perf_pack_full_gates_budget_13_on_the_weekly_run_too() -> None:
+    # #2523: the weekly run gates Budget #13's 150 ms rows as a dispatch does, so the
+    # workflow names no report-only variable (#2825 set one on the schedule until then);
+    # services/api's test_e08_budgets fails the pack with it set, too
+    assert "CV_BENCH_B13_REPORT_ONLY" not in WORKFLOW.read_text(encoding="utf-8")
 
 
 def test_perf_pack_full_shares_the_bench_group_at_job_level_only() -> None:

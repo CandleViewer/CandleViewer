@@ -214,29 +214,21 @@ _SMOKE_SOFT = "reported, not gated, in the smoke profile (#399)"
 
 
 @pytest.mark.parametrize(
-    ("profile", "weekly", "note"),
-    [
-        ("smoke", False, _SMOKE_SOFT),
-        ("full", False, ""),
-        ("full", True, rest_load.B13_SOFT_WEEKLY),
-    ],
-    ids=["smoke", "full", "weekly"],
+    ("profile", "note"), [("smoke", _SMOKE_SOFT), ("full", "")], ids=["smoke", "full"]
 )
-def test_a_slow_first_read_fails_no_hard_check_in_any_profile(
-    profile: str, weekly: bool, note: str
-) -> None:
+def test_a_slow_first_read_fails_no_hard_check_in_any_profile(profile: str, note: str) -> None:
     """#2523: a first read at 400 ms is reported against 150 ms, under its own note, and gates
-    nothing in the smoke, the full profile or the weekly run; every other route's row is as
+    nothing in the smoke or the full profile (the weekly run's); every other route's row is as
     before (all at 20 ms here, the warm one at 10)."""
     lat = {r: [20.0] * 20 for r in requests_plan()}
     lat |= {"klines_cold_first": [400.0] * 20, "klines_warm": [10.0] * 20}
-    v = rest_load.verdict(_rest(profile), lat, b13_report_only=weekly)
+    v = rest_load.verdict(_rest(profile), lat)
     assert v.passed and [c.name for c in v.checks if c.hard and not c.passed] == []
     rows = {c.name: c for c in v.checks if c.name.startswith("rest_p95[")}
     first = rows.pop("rest_p95[klines_cold_first]")
     assert (first.passed, first.hard, first.note) == (False, False, b.B13_FIRST_READ)
     others = {(c.limit, c.passed, c.hard, c.note) for c in rows.values()}
-    assert others == {(150.0, True, profile == "full" and not weekly, note)}
+    assert others == {(150.0, True, profile == "full", note)}
     assert len(rows) == len(requests_plan()) - 1
 
 
@@ -728,13 +720,18 @@ def _every_route(**p95: float) -> str:
     return json.dumps({"metrics": {"checks": {"passes": 2100, "fails": 0}, **routes}})
 
 
+#: The variable the weekly run's pack step set until #2523's flip ("1" there, "" on a dispatch),
+#: which reported Budget #13's 150 ms rows on the schedule without gating them (#2825).
+_REPORT_ONLY = "CV_BENCH_B13_REPORT_ONLY"
+
+
 @pytest.fixture
 def weekly(faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """The full pack's rest_k6 as the weekly cron starts it (#2825), over the faked k6: cold
     klines at 527.5 ms cross their threshold (99), the first read is as slow (it has none,
-    #2523), and every other check passes."""
+    #2523), and every other check passes. A dispatch starts it the same way (#2523)."""
     monkeypatch.setenv("CV_BENCH_MACHINE_PROFILE", "unit-test")  # gated against no baseline
-    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "1")
+    monkeypatch.delenv(_REPORT_ONLY, raising=False)
     faked_k6.code, faked_k6.text = 99, _every_route(klines_cold=527.5, klines_cold_first=527.5)
     return faked_k6
 
@@ -744,34 +741,40 @@ def _pack(tmp_path: Path) -> int:
     return runner.main(["rest_k6", "--profile", "full", "--out-dir", str(tmp_path / "reports")])
 
 
-def test_runner_weekly_run_only_budget_13_over_warns_and_exits_0(
-    weekly: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """#2825: until slice 2 decides Budget #13, the weekly run names the routes over it, green,
-    so it files no issue. The first read is not one of them: it has no budget (#2523)."""
-    assert _pack(tmp_path) == 0
-    warned = [x for x in capsys.readouterr().out.splitlines() if x.startswith("::warning::")]
-    over = "over Budget #13's 150 ms: rest_p95[klines_cold] 527.5 ms"
-    assert warned == [f"::warning::rest_k6: {over}; {rest_load.B13_SOFT_WEEKLY}"]
+def _failed(out: str) -> list[str]:
+    """The checks the runner's output names as hard failures, in its order."""
+    fails = (x.removeprefix("  FAIL ") for x in out.splitlines() if x.startswith("  FAIL "))
+    return [x.split(":")[0] for x in fails]
 
 
-def test_runner_dispatch_budget_13_over_exits_1(
-    weekly: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """#2825: a dispatch sets the variable empty, so Budget #13 still gates it."""
-    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "")
-    assert _pack(tmp_path) == 1
-
-
-def test_runner_dispatch_only_the_first_read_over_150_ms_exits_0(
+@pytest.mark.parametrize(
+    "report_only", [None, "1", ""], ids=["unset", "was-weekly", "was-dispatch"]
+)
+def test_runner_weekly_run_budget_13_over_exits_1(
     weekly: SimpleNamespace,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
+    report_only: str | None,
 ) -> None:
-    """#2523: a dispatch gates Budget #13, and the first read has no budget: alone over 150 ms
-    (k6 exits 0, as no threshold is armed on it), it fails nothing and is in no annotation."""
-    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "")
+    """#2523: the weekly run gates Budget #13's 150 ms rows as a dispatch does: cold klines at
+    527.5 ms fail it, named, and no warning keeps it green, so its issue is filed. The variable
+    that reported those rows on the schedule until the flip softens nothing, at "1" or "": a
+    runner whose environment still holds it cannot turn the gate off."""
+    if report_only is not None:
+        monkeypatch.setenv(_REPORT_ONLY, report_only)
+    assert _pack(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert _failed(out) == ["rest_p95[klines_cold]"]
+    assert not [x for x in out.splitlines() if x.startswith("::warning::")]
+
+
+def test_runner_weekly_run_only_the_first_read_over_150_ms_exits_0(
+    weekly: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#2523: the weekly run gates Budget #13 as a dispatch does, and the first read has no
+    budget: alone over 150 ms (k6 exits 0, as no threshold is armed on it), it fails nothing and
+    is in no annotation."""
     weekly.code, weekly.text = 0, _every_route(klines_cold_first=527.5)
     assert _pack(tmp_path) == 0
     assert not [x for x in capsys.readouterr().out.splitlines() if x.startswith("::")]
@@ -796,7 +799,7 @@ def test_runner_weekly_run_invalid_k6_run_still_fails(
     starts: bool,
     match: str,
 ) -> None:
-    """#2825: report-only never masks a broken run: no reading, no report, and the step fails."""
+    """#2825: a broken run is no reading: no report, and the step fails."""
     weekly.code, weekly.text, weekly.starts = code, text, starts
     with pytest.raises(RuntimeError, match=match):
         _pack(tmp_path)
@@ -804,19 +807,28 @@ def test_runner_weekly_run_invalid_k6_run_still_fails(
 
 
 @pytest.mark.parametrize(
-    "p95",
-    [{"klines_warm": 0.0}, {"klines_warm": 400.0}, {"trades": 0.0}],
+    ("p95", "failed"),
+    [
+        ({"klines_warm": 0.0}, ["rest_measured[klines_warm]", "klines_cache_speedup"]),
+        ({"klines_cold_first": 270.0, "klines_warm": 140.0}, ["klines_cache_speedup"]),
+        ({"trades": 0.0}, ["rest_measured[trades]"]),
+    ],
     ids=["warm-no-reading", "no-speed-up", "trades-no-reading"],
 )
 def test_runner_weekly_run_another_failed_check_exits_1(
-    weekly: SimpleNamespace, tmp_path: Path, p95: dict[str, float]
+    weekly: SimpleNamespace,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    p95: dict[str, float],
+    failed: list[str],
 ) -> None:
-    """#2825: only the 150 ms rows are reported; every other hard check still fails the weekly run:
-    warm klines with no samples (no reading, so no speed-up either), warm klines at 400 ms (a 1.3x
-    speed-up from the first read's 527.5 ms, under the minimum, #2523) and a route with no
-    samples, each of the last two failing that one check alone."""
-    weekly.text = _every_route(klines_cold=527.5, klines_cold_first=527.5, **p95)
+    """#2825: every other hard check fails the weekly run on its own, with each budget route
+    under 150 ms (k6 exits 0): warm klines with no samples (no reading, so no speed-up either), a
+    first read of 270 ms over a warm read of 140 ms (1.9x, under the minimum, #2523) and a route
+    with no samples."""
+    weekly.code, weekly.text = 0, _every_route(**{"klines_cold_first": 527.5, **p95})
     assert _pack(tmp_path) == 1
+    assert _failed(capsys.readouterr().out) == failed
 
 
 def test_k6_script_arms_only_checks_and_each_gated_routes_budget_13_p95() -> None:
