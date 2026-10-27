@@ -327,9 +327,11 @@ async def test_peek_answers_only_a_kept_reading() -> None:
     await _read(figures)
     figures.invalidate(ACCOUNT)
     assert _peek(figures) is None
-    venue.fail.add("positions")
-    await _read(figures)
-    assert _peek(figures) is None  # the book was not kept
+    for failing in ("positions", "wallet", "closed_pnl"):  # a figure its read never kept
+        figures.invalidate(ACCOUNT)
+        venue.fail = {failing}
+        await _read(figures)
+        assert _peek(figures) is None
 
 
 def test_committed_risk_order_without_stop_uses_fallback_distance() -> None:

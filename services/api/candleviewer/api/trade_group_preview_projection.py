@@ -14,8 +14,8 @@ share the planner's totals sum. A figure the sizer never reached is left out, ne
 `plain`: every digit, no exponent, no trailing zero.
 
 `previewed_entry` is ruling 2's `trade_group.previewed` row for an answered preview, `200` or
-`403`: the request's symbol, side and account ids and its legs' outcome counts, never a figure. The
-route writes it ahead of its answer (S3c, C-2.9).
+`403`: the request's symbol, side and account ids, the actor's role and its legs' outcome counts,
+never a figure. The route writes it ahead of its answer (S3c, C-2.9).
 """
 
 from __future__ import annotations
@@ -158,7 +158,7 @@ def previewed_entry(
         severity=Severity.WARNING if refused else Severity.INFO,
         reason=Refused.problem if refused else None,
         after_state={
-            "symbol": request.symbol, "side": request.side,
+            "symbol": request.symbol, "side": request.side, "role": actor.role,
             "exchange_account_ids": [str(leg.account_id) for leg in request.legs],
             "outcomes": counts,
         },

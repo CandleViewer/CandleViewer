@@ -6,7 +6,7 @@ skipped or blocked one carries 22's code with CandleViewer's own sentence, never
 (SR-E29-09); `figure_unknown` says the figures are not available yet (ruling 1, #881). A leg the
 comparator admitted shows what it would send, its stop, its take-profit (the ladder's last rung),
 its risk with both taker fees and those fees, the figure the totals sum. Decimals are plain. The
-row holds ids, the symbol, the side and the legs' outcome counts, never a figure."""
+row holds ids, the symbol, the side, the role and the legs' outcome counts, never a figure."""
 
 from __future__ import annotations
 
@@ -43,7 +43,9 @@ from tests.unit.oms.submit_rig import figures, instrument, profile
 D = Decimal
 A, B, C, E, F, G = (AccountId(UUID(int=n)) for n in range(1, 7))
 LADDER = {"tp_ladder": [{"qty_pct": "0.5", "r": "1"}, {"qty_pct": "0.5", "r": "2"}]}
-ACTOR = RefusalActor(user_id=UUID(int=77), role="manager", env="demo", request_id=UUID(int=78))
+ACTOR = RefusalActor(
+    user_id=UUID(int=77), role="manager", env="demo", request_id=UUID(int=78), ip="203.0.113.7"
+)
 
 
 class _Ready:
@@ -131,11 +133,13 @@ def test_a_message_is_cvs_own_sentence_for_its_code_never_another_text() -> None
 
 
 def test_a_ready_leg_resolves_what_it_would_send_and_its_ladder() -> None:
-    """0.01 at 60000, its stop 5 % under, its take-profit the last of its two rungs; its risk is
-    1R (30) plus both taker fees (0.00055 of 60000 twice a unit: 0.66), plain."""
+    """0.01 at 60000, its stop 5 % under, its take-profit the last of its two rungs, or the one the
+    request names (64000) with the rungs still the profile's; its risk is 1R (30) plus both taker
+    fees (0.00055 of 60000 twice a unit: 0.66), plain."""
     plan = _scenario()[1]
     sized = plan.legs[0].sizing
     doc: Any = preview_document(plan, {A: "Main"})
+    rungs = [{"price": "63000", "qty": "0.005"}, {"price": "66000", "qty": "0.005"}]
     assert sized is not None and doc["legs"][0] == {
         "exchange_account_id": str(A), "account_label": "Main",
         "account_profile_id": str(profile(A).profile_id), "would_submit": True,
@@ -145,9 +149,12 @@ def test_a_ready_leg_resolves_what_it_would_send_and_its_ladder() -> None:
             "take_profit_price": "66000", "notional_usd": "600", "risk_usd": "30.66",
             "estimated_fee_usd": "0.66", "sizing_explanation": sized.render(),
         },
-        "take_profits": [{"price": "63000", "qty": "0.005"}, {"price": "66000", "qty": "0.005"}],
-        "estimated_margin_usd": "60", "estimated_risk_usd": "30.66",
+        "take_profits": rungs, "estimated_margin_usd": "60", "estimated_risk_usd": "30.66",
     }  # fmt: skip
+    near = LegRequest(A, LegTerms(take_profit=ports.StopOffset(unit="price", value=D(64000))))
+    named: Any = preview_document(_plan({A: profile(A, **LADDER)}, (near,), {})[1], {})
+    leg = named["legs"][0]
+    assert (leg["resolved"]["take_profit_price"], leg["take_profits"]) == ("64000", rungs)
 
 
 def test_the_totals_sum_the_submittable_legs_their_fees_exactly() -> None:
@@ -176,7 +183,7 @@ def test_the_previewed_row_holds_ids_symbol_side_and_counts_never_a_figure(
     row = previewed_entry(request, plan, actor=ACTOR)
     ids = [str(account) for account in (A, B, C, E, F, G)]
     assert row["after_state"] == {
-        "symbol": "BTCUSDT", "side": "buy", "exchange_account_ids": ids,
+        "symbol": "BTCUSDT", "side": "buy", "role": "manager", "exchange_account_ids": ids,
         "outcomes": {"ready": 1, "warn": 1, "skipped": 2, "blocked": 2},
     }  # fmt: skip
     assert (row["outcome"], row["severity"], row["reason"]) == ("success", "info", None)
@@ -184,11 +191,13 @@ def test_the_previewed_row_holds_ids_symbol_side_and_counts_never_a_figure(
     refused = GroupRefused((planner.RefusedLeg(0, profile(A), None, (wide,)),))
     denied = previewed_entry(request, refused, actor=ACTOR)
     assert denied["after_state"] == {
-        "symbol": "BTCUSDT", "side": "buy", "exchange_account_ids": ids,
+        "symbol": "BTCUSDT", "side": "buy", "role": "manager", "exchange_account_ids": ids,
         "outcomes": {"refused": 1},
     }  # fmt: skip
     assert (denied["outcome"], denied["severity"]) == ("denied", "warning")
     assert denied["reason"] == "risk_limit_breached"
+    for made in (row, denied):  # whose request it was, and what it was about
+        assert (made["actor_ip"], made["object_kind"]) == (ACTOR.ip, "trade_group_preview")
     assert PREVIEWED_ACTION == "trade_group.previewed" and PREVIEWED_ACTION in AUDIT_ACTIONS
     assert set(row) <= set(inspect.signature(AuditWriter.emit).parameters) - {"self", "action"}
     writer = AuditWriter(cast(AuditRepository, object()), str(tmp_path / "audit.wal"))

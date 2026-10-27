@@ -284,11 +284,19 @@ def test_a_term_asked_alone_past_the_profile_refuses_the_whole_request(
     assert _refused(_plan(_request(LegRequest(A), **terms), held)[0]) == [(0, [named])]
 
 
-def test_an_account_state_cap_blocks_its_leg_whatever_the_request_asked() -> None:
-    """R1C-04, 22 `previewTradeGroup`: with the `*_after` counts known (#881), 5 positions after
-    against R7's cap of 1 mark the leg `blocked: cap_breached`, asked a narrower leverage or not;
-    a further stop still refuses the whole request, for the stop and the take-profit it moves."""
-    known: dict[UUID, Any] = {A: figures(open_positions_after=5)}
+@pytest.mark.parametrize(
+    "counts",
+    [{"open_positions_after": 5}, {"open_orders_after": 6}, {"orders_in_minute_after": 61}],
+    ids=["open_positions", "open_orders", "orders_in_minute"],
+)
+def test_an_account_state_cap_blocks_its_leg_whatever_the_request_asked(
+    counts: dict[str, int],
+) -> None:
+    """R1C-04, 22 `previewTradeGroup`: with a `*_after` count known (#881), past R7's cap (1
+    position, 5 orders, 60 a minute) the leg is `blocked: cap_breached`, asked a narrower leverage
+    or not; a further stop still refuses the whole request, for the stop and the take-profit it
+    moves."""
+    known: dict[UUID, Any] = {A: figures(**counts)}
     for terms in ({}, {"leverage": D(5)}):
         plan, _, _ = _plan(_request(LegRequest(A), **terms), {A: profile(A)}, known=known)
         assert _rows(plan) == [("blocked", "cap_breached", D("0.01"))]
@@ -297,6 +305,16 @@ def test_an_account_state_cap_blocks_its_leg_whatever_the_request_asked() -> Non
     asked = [("sl_offset_value", "R4", "further_than_bound"),
              ("tp_offset_value", "narrow_only", "further_than_bound")]  # fmt: skip
     assert _refused(plan) == [(0, asked)]
+
+
+def test_a_known_count_against_no_cap_blocks_its_leg_and_the_request_goes_on() -> None:
+    """R1S-03: R7's `no_cap` (a count known, no cap) is no widening the request moved. The model
+    refuses a trading profile with no cap, so `model_copy` skips that check, and the term asked
+    (the time in force) is no overlay, which would validate the profile again."""
+    held = {A: profile(A).model_copy(update={"max_open_positions": None})}
+    known: dict[UUID, Any] = {A: figures(open_positions_after=0)}
+    plan, _, _ = _plan(_request(LegRequest(A), time_in_force="GTC"), held, known=known)
+    assert _rows(plan) == [("blocked", "cap_breached", D("0.01"))]
 
 
 def test_a_leg_with_no_native_stop_is_blocked(monkeypatch: pytest.MonkeyPatch) -> None:

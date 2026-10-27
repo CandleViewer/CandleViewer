@@ -448,9 +448,9 @@ class OrderFigures(Protocol):
     E39-T01 (#881). `account` is the one `TradingAccounts` resolved. A figure that cannot be
     read is None, never an invented value. `invalidate` is called on every accepted send or
     amend on the account, so the next entry is not sized against room a previous one took.
-    `peek` answers what `read` would from what is kept, or None when nothing fresh is: it is
-    synchronous and never reads the venue (SR-E28-22, F-09), so the preview, which may run on
-    every keystroke, costs no exchange call; a leg it cannot answer is `figure_unknown`."""
+    `peek` answers what `read` would from what is kept, or None unless every figure it needs is
+    kept and fresh: it is synchronous and never reads the venue (SR-E28-22, F-09), so a preview
+    on every keystroke costs no exchange call; a leg it cannot answer is `figure_unknown`."""
 
     async def read(
         self,

@@ -34,7 +34,7 @@ class PreviewLimiter:
         """None when `user` had a token, now taken; else the whole seconds until one is due."""
         now = self._clock()
         tokens, last = self._buckets.pop(user, (self._rate, now))
-        tokens = min(self._rate, tokens + (now - last) * self._rate)
+        tokens = min(self._rate, tokens + max(0.0, now - last) * self._rate)
         taken = tokens >= 1.0
         self._buckets[user] = (tokens - 1.0 if taken else tokens, now)  # the most recent last
         while len(self._buckets) > TRACKED_USERS:

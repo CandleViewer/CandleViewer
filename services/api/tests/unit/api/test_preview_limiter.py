@@ -67,6 +67,14 @@ def test_the_buckets_are_bounded_to_the_least_recently_used_1024_users() -> None
     assert limiter.try_take(kept) is None
 
 
+def test_a_clock_that_steps_back_neither_refills_nor_lengthens_the_wait() -> None:
+    clock = _Clock()
+    limiter = PreviewLimiter(1, clock=clock)
+    assert [limiter.try_take(A), limiter.try_take(A)] == [None, 1]
+    clock.t -= 5.0  # no token for the step, and not the six seconds it would add
+    assert limiter.try_take(A) == 1
+
+
 @pytest.fixture
 def _no_rate_env(monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
     monkeypatch.delenv(_ENV, raising=False)
