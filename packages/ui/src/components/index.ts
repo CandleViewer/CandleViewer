@@ -44,8 +44,14 @@ export type { BadgeProps, BadgeTone } from "./Badge.js";
 export { Button } from "./Button.js";
 export type { ButtonProps } from "./Button.js";
 
+export { Callout } from "./Callout.js";
+export type { CalloutAction, CalloutLive, CalloutProps, CalloutTone } from "./Callout.js";
+
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
+
+export { InlineSpinnerText } from "./InlineSpinnerText.js";
+export type { CancellableWait, InlineSpinnerTextProps } from "./InlineSpinnerText.js";
 
 export { Kbd } from "./Kbd.js";
 export type { KbdProps } from "./Kbd.js";

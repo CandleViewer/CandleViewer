@@ -1,0 +1,105 @@
+/*
+ * CMP-028 Callout / Banner. Tokens only: the tone's subtle fill, a 2px `border.thick` start edge and the glyph in
+ * its `.strong`; both connection tones on the danger pair (E05-D02 H5, E17-D02 C21). No motion: content appears
+ * at 0 ms and the host's removal is a cut until the E05-D03 dismissal fade lands. The hatched edge is deferred.
+ */
+.cv-callout {
+  --cv-callout-fill: var(--color-status-info-subtle);
+  --cv-callout-strong: var(--color-status-info-strong);
+  box-sizing: border-box;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-inset-sm);
+  padding-block: var(--space-inset-sm);
+  padding-inline: var(--space-inset-md);
+  border-inline-start: calc(var(--border-thick) * 1px) solid var(--cv-callout-strong);
+  border-radius: var(--radius-card);
+  background: var(--cv-callout-fill);
+  color: var(--color-text-primary);
+}
+
+.cv-callout[data-tone="success"] {
+  --cv-callout-fill: var(--color-status-success-subtle);
+  --cv-callout-strong: var(--color-status-success-strong);
+}
+
+.cv-callout[data-tone="warning"] {
+  --cv-callout-fill: var(--color-status-warning-subtle);
+  --cv-callout-strong: var(--color-status-warning-strong);
+}
+
+/* The connection tones' data-confidence accents measure 2.88:1 / 2.81:1 on this fill, so they stay off it. */
+.cv-callout[data-tone="danger"],
+.cv-callout[data-tone="connection-reconnecting"],
+.cv-callout[data-tone="connection-disconnected"] {
+  --cv-callout-fill: var(--color-status-danger-subtle);
+  --cv-callout-strong: var(--color-status-danger-strong);
+}
+
+/* The band: full width under the TopBar, square; its stacking order is the shell's. */
+.cv-callout[data-placement="band"] {
+  width: 100%;
+  border-radius: 0;
+}
+
+.cv-callout__glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--cv-callout-strong);
+}
+
+.cv-callout__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cv-callout__message > p {
+  margin: 0;
+}
+
+.cv-callout__title {
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-callout__body,
+.cv-callout__details {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* The actions wrap under the body, inset.sm apart. */
+.cv-callout__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+  margin-block-start: var(--space-inset-sm);
+}
+
+.cv-callout > .cv-icon-button {
+  flex: none;
+}
+
+@media (forced-colors: active) {
+  /* The fill drops; a 1px CanvasText border keeps the box and the edge turns CanvasText. The glyph's shape and
+     the title's words carry the tone. */
+  .cv-callout,
+  .cv-callout[data-tone] {
+    border: 1px solid CanvasText;
+    border-inline-start: 2px solid CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+
+  .cv-callout__glyph,
+  .cv-callout__title,
+  .cv-callout__body,
+  .cv-callout__details {
+    color: CanvasText;
+  }
+}

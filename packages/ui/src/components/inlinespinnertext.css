@@ -1,0 +1,39 @@
+/*
+ * CMP-038 InlineSpinnerText. Tokens only: a nested CMP-014 `sm` with its arc in `color.action.primary.default`,
+ * the words in `type.ui.body` + `color.text.secondary`, an inset.xs gap, and a ghost `sm` Cancel inset.sm after
+ * them. The rotation and its reduced-motion stop are CMP-014's (spinner.css); this file adds no motion.
+ */
+.cv-inline-spinner-text {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  max-width: 100%;
+}
+
+.cv-inline-spinner-text__status {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+  color: var(--color-text-secondary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-inline-spinner-text__status > .cv-spinner {
+  color: var(--color-action-primary-default);
+}
+
+/* The text wraps after the spinner. */
+.cv-inline-spinner-text__label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (forced-colors: active) {
+  .cv-inline-spinner-text__status,
+  .cv-inline-spinner-text__status > .cv-spinner {
+    color: CanvasText;
+  }
+}

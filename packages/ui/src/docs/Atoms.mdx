@@ -191,6 +191,19 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | ---- | --------------------------------------------------------------------------------------------- |
 | none | Not focusable. With `label`: a polite `role="status"`. Without: `aria-hidden` in a busy host. |
 
+### InlineSpinnerText (CMP-038, one polite status region; Cancel follows APG Button through CMP-001)
+
+| Keys                  | Action                                                                                                                  |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab       | Reaches Cancel, after the text, when a load, an export or a replay offers it from the 5 s slow path on; never a submit. |
+| Enter, Space (Cancel) | Fires `onCancel`. Focus never moves on its own: Cancel appears without taking focus.                                    |
+
+| Element   | Role   | Name                     | Notes                                                                                        |
+| --------- | ------ | ------------------------ | -------------------------------------------------------------------------------------------- |
+| Container | status | none                     | Polite and atomic; mounted empty, the label inserted after mount, the slow text once at 5 s. |
+| Spinner   | none   | none                     | CMP-014 `sm`, `aria-hidden` inside the status.                                               |
+| Cancel    | button | `cancelLabel` ("Cancel") | A ghost `sm` CMP-001 outside the status, so its name is not read with the words.             |
+
 ### Typography: Text, Heading, MonoText, NumericText (CMP-020, static text)
 
 | Keys            | Action                                                                                                         |
@@ -323,3 +336,20 @@ Known token dependency (E05-D02 A5): there is no user-pickable palette yet, and 
 `color.drawing.selected` (Amber) is 2.76:1 on `color.surface.overlay` and 3.00:1 on `color.surface.raised`,
 below WCAG 1.4.11 on a picker's own surface. Until the palette token pass lands, a light picker that offers
 it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
+
+### Callout / Banner (CMP-028, a status or alert region; its buttons follow APG Button)
+
+| Keys                   | Action                                                                                                                       |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab        | Moves through `retry`, then each of `actions`, then the dismiss button. A callout with none of them is not in the Tab order. |
+| Enter, Space           | Activates the focused button.                                                                                                |
+| Enter, Space (dismiss) | Fires `onDismiss`. The callout never moves focus: the host removes it and moves focus to its own next stop, never `<body>`.  |
+| Esc                    | Not handled: Esc never dismisses a lockout, freeze, disconnect or protection banner.                                         |
+
+| Element | Role                                                                          | Name              | Notes                                                                                        |
+| ------- | ----------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------- |
+| Message | status (info, success, reconnecting) or alert (warning, danger, disconnected) | none              | `live` overrides the tone's default; `off` renders no live role. Atomic, filled after mount. |
+| Glyph   | none                                                                          | none              | The tone's registry glyph, `aria-hidden`; the title's words carry the tone too.              |
+| Dismiss | button                                                                        | "Dismiss {title}" | A ghost CMP-002 `close`, after the actions.                                                  |
+
+The hatched `unprotected` edge is deferred until its PROPOSED pattern token lands; every callout draws the solid edge.
