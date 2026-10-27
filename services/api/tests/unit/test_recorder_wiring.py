@@ -214,7 +214,9 @@ async def test_build_recorder_bounds_the_policys_store_and_cuts_a_held_call(
     r.store.hold["upsert_manual"] = asyncio.Event()  # never set: only the bound ends it
     try:
         with pytest.raises(TimeoutError):
-            await asyncio.wait_for(_manual(r), 1)  # an unbounded store fails here, not hangs
+            # The store's own 0.01 s bound must end the held call. No outer wall-clock bound: it
+            # would raise the same TimeoutError and hide a missing store bound (C-13.7, #4769).
+            await _manual(r)
         assert not r.rec.writer.is_recording("ETHUSDT")
     finally:
         await r.rec.policy.stop()
@@ -224,11 +226,11 @@ async def test_a_sessions_failure_in_the_fan_out_still_records_and_publishes_the
     rig: Rig,
 ) -> None:
     rig.sess.fail = True
-    await asyncio.wait_for(_manual(rig), 1)  # the add happened: no 5xx for it
+    await _manual(rig)  # the add happened: no 5xx for it (no wall-clock bound, C-13.7, #4769)
     assert rig.rec.writer.is_recording("ETHUSDT") and len(rig.bus.events) == 1
     assert rig.rec.sessions.live_session("ETHUSDT") is None
     rig.sess.fail = False
-    await asyncio.wait_for(rig.rec.runtime._tick(), 1)
+    await rig.rec.runtime._tick()
     assert rig.rec.sessions.live_session("ETHUSDT") is not None
     assert [s["streams"] for s in rig.sess.sessions.values()] == [["trades", "tickers"]]
 
