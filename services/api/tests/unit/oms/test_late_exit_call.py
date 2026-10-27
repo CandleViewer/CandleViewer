@@ -9,13 +9,16 @@ registration of the same order and kind can be held meanwhile, its command waiti
 or about to be refused there. B1's call spends only a registration whose command the facade took
 (`OrderMachines.command`'s `on_taken`, `OmsCommandPort.take_exit`), and the facade takes an
 order's commands one at a time, refusing another while a step stands, so the late call names no
-request, never the other's, and the other exit's answer is its own.
+request, never the other's, and the other exit's answer is its own. A call that finds no
+registration says so: its records are marked `attribution: unregistered`, and it is logged once
+(`oms_exit_call_unregistered`, SEC-4662-01).
 
 The facade calls `on_taken` once its own gates (the version check included) admitted a command,
 under the order's lock and before the send: never for a command those gates refuse or whose order
 no machine here holds, and on a machine a resync rebuilt, for the attempt that sends. A send the
 gateway or B1 then refuses raises after it ran, and the exit forgets its registration; a hook
-that raises propagates with nothing sent. An `AMEND` B1 defers is #4711's.
+that raises propagates with nothing sent. The facade judges an exit on the state B1 settled in,
+so B1 takes it at once or it is refused, never held for later (#4711, `test_exit_settled_state`).
 """
 
 from __future__ import annotations
@@ -30,6 +33,7 @@ from typing import Any, Final
 from uuid import UUID
 
 import pytest
+from structlog.testing import capture_logs
 
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.exchange.base.fakes import FakeReject
@@ -39,6 +43,7 @@ from candleviewer.oms.exits import AmendTerms, ExitCaller, ExitCommands, ExitMac
 from candleviewer.oms.order_machine import CommandEvent, OrderMachines
 from candleviewer.oms.ports import KeyedRecord, StopOffset, SubmitActor
 from candleviewer.statechart.bindings import b01_order as b01
+from candleviewer.storage.errors import StorageError
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import NewOrder, OrderRow
 from tests.unit.oms import command_rig as cr
@@ -58,6 +63,8 @@ _TIGHTER = AmendTerms(sides={"stop_loss": StopOffset("price", Decimal("59000"))}
 _B1_TIGHTER = {"stop_loss": "58500"}
 #: The store's next commit lands, and its answer is lost: the step's outcome is unknown (S7).
 _CUT_OFF = "the commit's answer was cut off"
+#: What the port logs of B1's call that finds no registration (SEC-4662-01).
+_SAID = "oms_exit_call_unregistered"
 _NO_ONE = (None, None, None)
 
 type Named = tuple[UUID | None, str | None, UUID | None]
@@ -306,6 +313,49 @@ async def test_a_watch_no_longer_held_is_never_taken_again() -> None:
     answer = await _b1("amend", rig, order)
     assert answer["ok"] is True and gone.answered and await gone.answer() is None
     assert _named([r for r, _ in rig.audits.written]) == [_NO_ONE] * 2
+
+
+@pytest.mark.parametrize("kind", ["cancel", "amend"])
+async def test_b1s_call_that_finds_no_registration_says_so_once(kind: oc.ExitKind) -> None:
+    """SEC-4662-01: B1's call that finds no registration of its order and kind, its exit having
+    ended first, logs `oms_exit_call_unregistered` once with the order's id, and each record the
+    port writes for it (an amend's requests and, the venue refusing it, their voids) is marked
+    `attribution: unregistered`; the call that spends its registration logs nothing, and its
+    records carry no mark."""
+    rig = cr.build_rig()
+    order = await _resting(rig)
+    rig.demo.script(f"{kind}_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003))
+    with capture_logs() as logs:
+        await _b1(kind, rig, order)
+        cr.taken(rig.port, order.id, kind, request_id=_RID_A, actor=_A)
+        assert (await _b1(kind, rig, order))["ok"] is True
+    said = [log for log in logs if log["event"] == _SAID]
+    assert [(log["log_level"], log["order_id"], log["kind"]) for log in said] == [
+        ("warning", str(order.id), kind)
+    ]
+    marks = [record.detail.get("attribution") for record, _ in rig.audits.written]
+    assert marks == (["unregistered"] * 4 + [None] * 2 if kind == "amend" else [])
+
+
+@pytest.mark.parametrize("refusal", ["store_unavailable", "terms_not_staged"])
+async def test_the_ports_own_refusal_of_an_unregistered_amend_is_marked_too(
+    refusal: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SEC-4662-01: the port's own refusal of an amend B1 calls for with no registration, nothing
+    sent (its stored row unread, or terms it could not stage), is recorded marked so as well."""
+    rig = cr.build_rig()
+    order = await _resting(rig)
+    terms = {"leverage": "5"} if refusal == "terms_not_staged" else _B1_TIGHTER
+    if refusal == "store_unavailable":
+        monkeypatch.setattr(rig.orders, "get", _unreadable)
+    answer = await rig.port.amend(cr.command("amend", order, terms))
+    [(record, _)] = rig.audits.written
+    assert (answer["ok"], record.reason) == (False, refusal) and rig.demo.calls == []
+    assert record.detail["attribution"] == "unregistered"
+
+
+async def _unreadable(*_args: object, **_kwargs: object) -> None:
+    raise StorageError("the store is down")
 
 
 # --- the facade's `on_taken` (`OrderMachines.command`) ----------------------------------------
