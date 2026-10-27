@@ -1,5 +1,5 @@
 import type { ComponentPropsWithoutRef, JSX, MouseEvent, ReactNode } from "react";
-import { GatedGlyph } from "./internal/GatedGlyph.js";
+import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 
@@ -64,7 +64,11 @@ export function Button({
       >
         <span className="cv-button__label">{children}</span>
         {loading ? <span className="cv-spinner" aria-hidden="true" /> : null}
-        {reason.gated ? <GatedGlyph className="cv-button__glyph" /> : null}
+        {reason.gated ? (
+          <span className="cv-button__glyph">
+            <Icon name="lock" />
+          </span>
+        ) : null}
       </button>
       <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
     </>

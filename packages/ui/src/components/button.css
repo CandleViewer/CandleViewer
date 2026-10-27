@@ -102,6 +102,7 @@
 }
 
 .cv-button__glyph {
+  display: inline-flex;
   width: var(--size-icon);
   height: var(--size-icon);
   color: var(--color-text-secondary);
