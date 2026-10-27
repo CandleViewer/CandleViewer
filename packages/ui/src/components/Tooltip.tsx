@@ -27,7 +27,10 @@ export interface TooltipTriggerProps {
 }
 
 export interface TooltipProps {
-  /** Text only (H10): a link or a control belongs in CMP-017 Popover. */
+  /**
+   * Text only (H10): a link or a control belongs in CMP-017 Popover. Empty or whitespace-only renders no
+   * node and never shows, so a host can keep one stable tree while its echo comes and goes.
+   */
   content: string;
   /**
    * `describes` (default): the text is the trigger's description, linked by `aria-describedby`.
@@ -108,6 +111,7 @@ export function Tooltip({
   children,
 }: TooltipProps): JSX.Element {
   const id = useId();
+  const empty = content.trim() === "";
   const [open, setOpen] = useState(false);
   const trigger = useRef<HTMLElement | null>(null);
   const surface = useRef<HTMLDivElement | null>(null);
@@ -133,7 +137,7 @@ export function Tooltip({
   }, [clearTimers]);
   const show = (): void => {
     clearTimers();
-    if (!dismissed.current) setOpen(true);
+    if (!dismissed.current && !empty) setOpen(true);
   };
   const leave = (): void => {
     hovered.current = false;
@@ -150,6 +154,10 @@ export function Tooltip({
   useEffect(() => {
     shown.current = open;
   }, [open]);
+  // The content emptied while shown (a gate lifted): it goes, with its Esc listener.
+  useEffect(() => {
+    if (empty) hide();
+  }, [empty, hide]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -170,11 +178,12 @@ export function Tooltip({
   const own = children.props;
   const triggerProps: TooltipTriggerProps = {
     "aria-describedby":
-      mode === "describes"
+      mode === "describes" && !empty
         ? [own["aria-describedby"], id].filter((v) => v !== undefined && v !== "").join(" ")
         : own["aria-describedby"],
     onPointerEnter: (event) => {
       own.onPointerEnter?.(event);
+      if (empty) return;
       const element = event.currentTarget;
       if (!isFocusable(element)) {
         if (!warned.current) warnUnfocusable();
@@ -234,7 +243,7 @@ export function Tooltip({
   return (
     <>
       {cloneElement(children, triggerProps)}
-      {typeof document === "undefined" ? null : createPortal(tooltip, document.body)}
+      {empty || typeof document === "undefined" ? null : createPortal(tooltip, document.body)}
     </>
   );
 }

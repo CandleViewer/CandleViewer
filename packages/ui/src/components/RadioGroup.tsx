@@ -1,6 +1,7 @@
 import { useId, type JSX, type MouseEvent } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { useRoving, type RovingItemProps } from "./internal/useRoving.js";
 
@@ -38,6 +39,8 @@ interface RadioRowProps {
   readonly checked: boolean;
   readonly groupDisabled: boolean;
   readonly groupReasonId: string | undefined;
+  /** The group's reason text, echoed on every row of a gated group (hover reaches any row). */
+  readonly groupReason: string | undefined;
   readonly roving: RovingItemProps;
   readonly onPick: (value: string) => void;
 }
@@ -47,6 +50,7 @@ function RadioRow({
   checked,
   groupDisabled,
   groupReasonId,
+  groupReason,
   roving,
   onPick,
 }: RadioRowProps): JSX.Element {
@@ -58,6 +62,8 @@ function RadioRow({
   const describedBy = cx(roving.tabIndex === 0 ? groupReasonId : undefined, reason.ariaDescribedBy);
   // One lock per gated group, after the tab-stop row (the checked one); an option's own reason always shows its lock.
   const showLock = gated && (reason.gated || roving.tabIndex === 0);
+  // The echo: the group's reason on every gated row (hover reaches any row), then the option's own; aria-hidden.
+  const echo = gated ? cx(groupReason, reason.reason) || undefined : undefined;
   const handleClick = (event: MouseEvent<HTMLElement>): void => {
     // The whole row is the target. A refused row takes focus (to show its reason) and changes nothing.
     if (disabled || gated) return;
@@ -65,36 +71,38 @@ function RadioRow({
     onPick(option.value);
   };
   return (
-    <div
-      ref={roving.ref}
-      role="radio"
-      tabIndex={roving.tabIndex}
-      onKeyDown={roving.onKeyDown}
-      onFocus={roving.onFocus}
-      onBlur={roving.onBlur}
-      className="cv-radio cv-focus-ring-host"
-      aria-checked={checked}
-      aria-disabled={disabled || gated ? true : undefined}
-      aria-labelledby={labelId}
-      aria-describedby={describedBy || undefined}
-      data-checked={checked ? "" : undefined}
-      data-disabled={disabled ? "" : undefined}
-      data-gated={gated ? "" : undefined}
-      onClick={handleClick}
-    >
-      <span className="cv-radio__mark" aria-hidden="true">
-        <span className="cv-radio__ring cv-focus-ring-target" />
-      </span>
-      <span id={labelId} className="cv-radio__label">
-        {option.label}
-      </span>
-      {showLock ? (
-        <span className="cv-radio__mark cv-radio__lock" aria-hidden="true">
-          <Icon name="lock" />
+    <ReasonEcho text={echo}>
+      <div
+        ref={roving.ref}
+        role="radio"
+        tabIndex={roving.tabIndex}
+        onKeyDown={roving.onKeyDown}
+        onFocus={roving.onFocus}
+        onBlur={roving.onBlur}
+        className="cv-radio cv-focus-ring-host"
+        aria-checked={checked}
+        aria-disabled={disabled || gated ? true : undefined}
+        aria-labelledby={labelId}
+        aria-describedby={describedBy || undefined}
+        data-checked={checked ? "" : undefined}
+        data-disabled={disabled ? "" : undefined}
+        data-gated={gated ? "" : undefined}
+        onClick={handleClick}
+      >
+        <span className="cv-radio__mark" aria-hidden="true">
+          <span className="cv-radio__ring cv-focus-ring-target" />
         </span>
-      ) : null}
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
-    </div>
+        <span id={labelId} className="cv-radio__label">
+          {option.label}
+        </span>
+        {showLock ? (
+          <span className="cv-radio__mark cv-radio__lock" aria-hidden="true">
+            <Icon name="lock" />
+          </span>
+        ) : null}
+        <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      </div>
+    </ReasonEcho>
   );
 }
 
@@ -144,6 +152,7 @@ export function RadioGroup({
             checked={option.value === value}
             groupDisabled={groupDisabled}
             groupReasonId={group.gated ? group.reasonId : undefined}
+            groupReason={group.reason}
             roving={roving.itemProps(option.value)}
             onPick={onPick}
           />

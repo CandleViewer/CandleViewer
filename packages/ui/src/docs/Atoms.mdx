@@ -14,21 +14,27 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 
 ### Button (CMP-001, APG Button)
 
-| Keys                         | Action                                                                              |
-| ---------------------------- | ----------------------------------------------------------------------------------- |
-| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.               |
-| Enter, Space                 | Activates (`onClick`).                                                              |
-| Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                           |
-| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description. |
+| Keys                         | Action                                                                                                              |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                               |
+| Enter, Space                 | Activates (`onClick`).                                                                                              |
+| Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                                                           |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                                 |
+| Esc (reason echo)            | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
+
+With a reason, hover and keyboard focus show it in a CMP-016 echo; the reason node stays the description.
 
 ### IconButton (CMP-002, APG Button; toggle button when `pressed` is set)
 
-| Keys                         | Action                                                                                           |
-| ---------------------------- | ------------------------------------------------------------------------------------------------ |
-| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                            |
-| Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.        |
-| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.              |
-| Esc (reason echo)            | Dismisses the reason tooltip once CMP-016 lands; until then the description is always available. |
+| Keys                         | Action                                                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.                                        |
+| Enter, Space                 | Activates (`onClick`). Toggle mode: the consumer flips `pressed`; the name never changes.                    |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description.                          |
+| Esc (name or reason echo)    | Hides the echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host. |
+
+Hover and keyboard focus show the name in a CMP-016 echo (D10); with a reason, one echo shows the name, then the
+reason. The name stays the `aria-label` and the reason the description. Plain disabled has no echo.
 
 ### NumericStepperInput (CMP-008, APG Spin Button)
 
@@ -72,6 +78,7 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Space                         | Checks the focused radio; nothing on a radio with a reason.                                                                |
 | Arrows (radio with a reason)  | Focus lands on it and its reason is the description; it is never checked. A plain-disabled radio is skipped.               |
 | Any key (group with a reason) | No action: focus stays on the checked radio, the value never changes, no form is submitted; the reason is its description. |
+| Esc (reason echo)             | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host.        |
 
 ### SegmentedControl (CMP-003, APG Radio Group)
 
@@ -116,19 +123,20 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Page Up, Page Down               | Increases or decreases by 10 x step.                                                                                                                 |
 | Home, End                        | Sets the value to min or max.                                                                                                                        |
 | Any of these (with a reason)     | No change; focus stays and the reason is the accessible description.                                                                                 |
+| Esc (reason echo)                | Hides the reason echo (CMP-016, `aria-hidden`); focus stays and the key stops there. A second Esc reaches the host.                                  |
 | Alt, Ctrl or Meta with any key   | Not handled; the browser and assistive technology keep their chords.                                                                                 |
 | Pointer down or drag on the rail | Jumps to the pointer, then follows it, snapped to the step. While gated a press focuses the thumb, which announces the reason; nothing else changes. |
 
 ### TextInput (CMP-007, native text input)
 
-| Keys                                                         | Action                                                                                        |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                                              | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay. |
-| Typing, Backspace, Delete, arrows, Home                      | Native editing; read-only allows selection and copy only.                                     |
-| Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).           |
-| Esc                                                          | Not handled: it bubbles to the host.                                                          |
-| Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
-| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+| Keys                                                         | Action                                                                                                      |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                              | Moves focus; the ring wraps the well. Plain disabled is skipped; read-only and a reason stay.               |
+| Typing, Backspace, Delete, arrows, Home                      | Native editing; read-only allows selection and copy only.                                                   |
+| Enter                                                        | The enclosing form's implicit submission (not with a reason: nothing is submitted).                         |
+| Esc                                                          | Not handled: it bubbles to the host. With a reason, the first Esc hides the echo (CMP-016) and focus stays. |
+| Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                                  |
+| Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                                          |
 
 ### Tag (CMP-011; the remove control follows APG Button through CMP-002)
 
@@ -137,6 +145,7 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Tab / Shift+Tab              | Moves focus to the remove button of a removable chip; the nested CMP-002 draws the only ring. Static chips are not in the Tab order.                             |
 | Enter, Space (remove)        | Fires `onRemove`. The chip never moves focus: the owning group moves it to the next chip's remove button, else the previous one, else its input; never `<body>`. |
 | Enter, Space (with a reason) | No removal; the remove button stays focusable and its reason is the accessible description.                                                                      |
+| Esc (name or reason echo)    | Hides the remove button's CMP-016 echo ("Remove {label}", then the reason); focus stays. A second Esc reaches the host.                                          |
 
 | Element                | Role        | Name                                     | Notes                                                       |
 | ---------------------- | ----------- | ---------------------------------------- | ----------------------------------------------------------- |

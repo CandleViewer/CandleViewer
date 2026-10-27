@@ -2,6 +2,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, JSX, KeyboardEvent, PointerEvent } from "react";
 import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { ReasonEcho } from "./internal/ReasonEcho.js";
 import { cx } from "./internal/cx.js";
 import { formatNumeric, stepValue, valueText } from "./internal/numeric.js";
 
@@ -176,28 +177,30 @@ export function Slider({
           <span className="cv-slider__track" style={pos(fraction)}>
             <span className="cv-slider__fill" />
           </span>
-          {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus -- plain disabled is deliberately out of the Tab order (D02 a11y audit, CMP-010): no tabindex */}
-          <span
-            {...name}
-            ref={thumb}
-            role="slider"
-            className="cv-slider__thumb"
-            style={pos(fraction)}
-            {...focusable}
-            aria-orientation="horizontal"
-            aria-valuenow={shown}
-            aria-valuemin={min}
-            aria-valuemax={max}
-            aria-valuetext={valueText(shown, places, suffix)}
-            aria-disabled={locked ? true : undefined}
-            aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
-            data-key-ring={keyRing ? "" : undefined}
-            onKeyDown={handleKeyDown}
-            onBlur={() => {
-              pressFocused.current = false;
-              setKeyRing(false);
-            }}
-          />
+          <ReasonEcho text={reason.reason}>
+            {/* eslint-disable-next-line jsx-a11y/interactive-supports-focus -- plain disabled is deliberately out of the Tab order (D02 a11y audit, CMP-010): no tabindex */}
+            <span
+              {...name}
+              ref={thumb}
+              role="slider"
+              className="cv-slider__thumb"
+              style={pos(fraction)}
+              {...focusable}
+              aria-orientation="horizontal"
+              aria-valuenow={shown}
+              aria-valuemin={min}
+              aria-valuemax={max}
+              aria-valuetext={valueText(shown, places, suffix)}
+              aria-disabled={locked ? true : undefined}
+              aria-describedby={cx(describedBy, reason.ariaDescribedBy) || undefined}
+              data-key-ring={keyRing ? "" : undefined}
+              onKeyDown={handleKeyDown}
+              onBlur={() => {
+                pressFocused.current = false;
+                setKeyRing(false);
+              }}
+            />
+          </ReasonEcho>
         </div>
         {shownMarks.length > 0 ? (
           <div
