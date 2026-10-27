@@ -288,7 +288,7 @@ async def _remove(w: World, session_id: str) -> None:
 
 @pytest.mark.parametrize(
     ("meanwhile", "answer"),
-    [(_revoke, (401, "session_revoked", "revoked")), (_remove, (401, None, None))],
+    [(_revoke, (401, "session_revoked", "revoked")), (_remove, (401, "unauthenticated", None))],
     ids=["revoked", "gone"],
 )
 async def test_an_unlock_of_a_session_ended_meanwhile_checks_nothing_and_drops_the_chart(

@@ -37,6 +37,9 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
 
 from candleviewer.api.contract_conformance import load_openapi_spec
 from candleviewer.api.csrf import CsrfMiddleware
@@ -433,3 +436,40 @@ async def test_session_route_failure_answers_application_problem_json(
 ) -> None:
     response = await _answer(world, send)
     assert response.headers.get("content-type", "").startswith("application/problem+json")
+
+
+#: #4751: every 401 the session router serves is a full `Problem` (22 `Problem.required` includes
+#: `code`): the uniform `unauthenticated`, or `refresh_token_invalid` on refresh (no session
+#: oracle: one code for every cause), or a named lock refusal; each a catalogued 401 code.
+_401_CODES = frozenset(
+    {"unauthenticated", "refresh_token_invalid", "session_idle_locked", "session_revoked",
+     "unlock_invalid"}
+)  # fmt: skip
+_401_CASES = [
+    pytest.param(world, send, id=f"{operation}-{why}")
+    for operation, answers in _ANSWERS.items()
+    for status, why, world, send in answers
+    if status == 401
+]
+
+
+@pytest.mark.parametrize(("world", "send"), _401_CASES)
+async def test_session_route_401_is_a_problem_with_a_catalogued_code(
+    spec: dict[str, Any], world: Callable[[], _World], send: _Send
+) -> None:
+    response = await _answer(world, send)
+    body = response.json()
+    catalogue = {e["code"] for e in spec["x-error-codes"] if e["status"] == 401}
+    assert response.status_code == 401 and body.get("code") in _401_CODES <= catalogue
+    resource = Resource.from_contents(spec, default_specification=DRAFT202012)
+    Draft202012Validator(
+        {"$ref": "urn:cv-openapi#/components/schemas/Problem"},
+        registry=Registry().with_resource("urn:cv-openapi", resource),
+    ).validate(body)
+
+
+async def test_refresh_401_names_refresh_token_invalid() -> None:
+    """22 `authRefresh`: refresh's 401 is `refresh_token_invalid` (here with no token; the other
+    causes are pinned in `tests/unit/api/idle_lock/test_refresh.py` and the fixation tests)."""
+    response = await _answer(_OK, lambda w, c: w.post("/auth/refresh"))
+    assert (response.status_code, response.json()["code"]) == (401, "refresh_token_invalid")

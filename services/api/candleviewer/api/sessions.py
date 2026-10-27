@@ -315,17 +315,31 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
-def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
+def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
+    content: dict[str, object] = {
+        "type": "about:blank",
+        "title": title,
+        "status": status_code,
+        "detail": detail,
+    }
+    if code is not None:
+        content["code"] = code
     return JSONResponse(
-        status_code=status_code,
-        content={"type": "about:blank", "title": title, "status": status_code, "detail": detail},
-        media_type="application/problem+json",
+        status_code=status_code, content=content, media_type="application/problem+json"
     )
 
 
-def _unauthorized(detail: str = "authentication required") -> JSONResponse:
-    # One uniform 401 for unknown/expired/revoked tokens: no session oracle.
-    return _problem(401, "Unauthorized", detail)
+#: `POST /auth/refresh`'s one 401 code and detail, for every cause (22 `authRefresh`).
+_REFRESH_INVALID = "refresh_token_invalid"
+
+
+def _unauthorized(
+    detail: str = "authentication required", *, code: str = "unauthenticated"
+) -> JSONResponse:
+    # One uniform 401 for unknown/expired/revoked tokens: no session oracle. Its `code` is the
+    # catalogue's (22 `Problem.required`, #4751): `unauthenticated`, as `api/me.py` serves, and on
+    # `POST /auth/refresh` the one `refresh_token_invalid` its operation names for every cause.
+    return _problem(401, "Unauthorized", detail, code=code)
 
 
 #: SR-026: a self-service route answers only for the authenticated caller, so it takes only the
@@ -918,7 +932,7 @@ def make_session_router(
             session_id=str(record.id),
             user_id=str(record.user_id),
         )
-        return _unauthorized("refresh_token_invalid")
+        return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
 
     def _audit_down() -> JSONResponse:
         # Write-ahead audit failed: nothing has been mutated yet (C-2.9).
@@ -1128,7 +1142,7 @@ def make_session_router(
             return _problem(403, "Forbidden", "cross-origin refresh refused")
         presented = cookie_token or (body_token if isinstance(body_token, str) else None)
         if not presented:
-            return _unauthorized("refresh_token_invalid")
+            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
         ip = _source_ip(request)
         ip_key = ip or "(unknown)"
         if by_ip.is_blocked(ip_key):
@@ -1137,7 +1151,7 @@ def make_session_router(
         presented_record = await auth_service.sessions.peek_refresh(presented)
         if presented_record is None:
             await _fixation_attempt(request, "refresh_cookie" if cookie_token else "refresh_body")
-            return _unauthorized("refresh_token_invalid")
+            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
         session_key = str(presented_record.id)
         if by_session.is_blocked(session_key):
             return _throttled(by_session.retry_after_s(session_key))
@@ -1222,7 +1236,7 @@ def make_session_router(
                     session_ids=(presented_record.id,),
                 )
             # The service already closed every family member's sockets (#2272).
-            return _unauthorized("refresh_token_invalid")
+            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
         except UserDisabled:
             # #2911: the user is disabled (or deleted); nothing was minted. Read with the row
             # before the claim, the status made the service revoke the session as
@@ -1240,14 +1254,14 @@ def make_session_router(
                 reason="user_disabled",
                 session_ids=(presented_record.id,),
             )
-            return _unauthorized("refresh_token_invalid")
+            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
         except SessionIdleLocked as exc:
             # A lock that engaged after the check above: the intent record is written, and nothing
             # was rotated or revoked.
             auth_idle_locks_total.inc()
             return idle_lock.idle_locked_problem(exc.idle_locked_at)
         except (SessionNotFound, SessionRevoked):
-            return _unauthorized("refresh_token_invalid")
+            return _unauthorized(_REFRESH_INVALID, code=_REFRESH_INVALID)
         except asyncio.CancelledError:
             # The service commits a family's revocation before it publishes it to the sockets, so
             # a request cancelled in there (a shutdown) may have ended the family of a token the

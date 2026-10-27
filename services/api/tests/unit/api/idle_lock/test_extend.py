@@ -104,7 +104,7 @@ async def test_an_extend_of_a_session_ended_after_its_record_is_the_uniform_401(
 
     monkeypatch.setattr(w.sessions, "touch", ended_first)
     r = await _extend(w, minted)
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
     assert w.audit.writer.actions() == ["auth.session_extended"]
 
 

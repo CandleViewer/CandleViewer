@@ -239,7 +239,7 @@ async def test_a_session_gone_before_the_backstop_re_reads_it_is_unauthenticated
 
     monkeypatch.setattr(w.sessions, "peek_access_token", then_gone)
     r = await _unlock(w, _bearer(minted))
-    assert r.status_code == 401 and r.json().get("code") is None
+    assert r.status_code == 401 and r.json().get("code") == "unauthenticated"
     assert w.audit.writer.records == [] and w.b16.calls == []
 
 
