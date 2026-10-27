@@ -31,7 +31,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
 
 import structlog
 from fastapi import APIRouter, Query, Request
@@ -69,7 +69,10 @@ class _Unknown:
 
 _UNKNOWN = _Unknown()
 
-_log = structlog.get_logger(__name__)
+
+def _log() -> Any:
+    """Resolved per call, never bound at import (`cv-module-level-structlog-logger`)."""
+    return structlog.get_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,7 +201,7 @@ def make_instruments_router(
             async with asyncio.timeout(recording_timeout_s):
                 return await recording_started_at_us(symbol)
         except Exception:
-            _log.warning("instrument_recording_start_unavailable", symbol=symbol, exc_info=True)
+            _log().warning("instrument_recording_start_unavailable", symbol=symbol, exc_info=True)
             return _UNKNOWN
 
     async def _authorize(request: Request) -> JSONResponse | None:
