@@ -315,17 +315,24 @@ def _iso(value: datetime | None) -> str | None:
     return None if value is None else value.isoformat()
 
 
-def _problem(status_code: int, title: str, detail: str) -> JSONResponse:
+def _problem(status_code: int, title: str, detail: str, *, code: str | None = None) -> JSONResponse:
+    content: dict[str, object] = {
+        "type": "about:blank",
+        "title": title,
+        "status": status_code,
+        "detail": detail,
+    }
+    if code is not None:
+        content["code"] = code
     return JSONResponse(
-        status_code=status_code,
-        content={"type": "about:blank", "title": title, "status": status_code, "detail": detail},
-        media_type="application/problem+json",
+        status_code=status_code, content=content, media_type="application/problem+json"
     )
 
 
 def _unauthorized(detail: str = "authentication required") -> JSONResponse:
-    # One uniform 401 for unknown/expired/revoked tokens: no session oracle.
-    return _problem(401, "Unauthorized", detail)
+    # One uniform 401 for unknown/expired/revoked tokens: no session oracle. Its `code` is the
+    # catalogue's uniform `unauthenticated` (22 `Problem.required`, #4751), as `api/me.py` serves.
+    return _problem(401, "Unauthorized", detail, code="unauthenticated")
 
 
 #: SR-026: a self-service route answers only for the authenticated caller, so it takes only the
