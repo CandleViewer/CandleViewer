@@ -39,6 +39,8 @@ and every leg account is live, in the scope and under a live `can_view` grant th
 each statement under the predicate: a grant frozen or revoked, or a leg account soft-deleted,
 between the two leaves no leg to read, and a `GrantScope` then reads the group as missing, never as
 a group without legs.
+`list_groups` is that scope over a keyset page (`created_at DESC, id DESC`) and again over its
+legs, in one unit of work; `leg_order_ids` reads a leg's orders under it too (`ix_orders_leg`).
 
 Every unit of work caps each of its statements, lock waits included, at the store's
 `statement_timeout` (`OMS_STATEMENT_TIMEOUT_MS` unless given: the store is on the order submit
@@ -54,9 +56,10 @@ database's own. Cancellation passes through.
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Iterable, Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import fields
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -68,6 +71,7 @@ from sqlalchemy.exc import DBAPIError
 from candleviewer.db.models import (
     account_profiles,
     exchange_accounts,
+    orders,
     trade_group_definitions,
     trade_group_legs,
     trade_groups,
@@ -88,6 +92,7 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
 from candleviewer.storage.repositories.trade_groups import (
     ACCOUNT_NOT_LIVE,
     DEFINITION_NOT_LIVE,
+    MAX_GROUP_PAGE,
     OPEN_GROUP_STATUSES,
     PROFILE_CHANGED,
     TRADE_GROUP_CONFLICTS,
@@ -127,6 +132,7 @@ _L = trade_group_legs.c
 _EA = exchange_accounts.c
 _P = account_profiles.c
 _D = trade_group_definitions.c
+_O = orders.c
 
 #: The row dataclasses' fields, which are the read allow-lists' names in table order.
 GROUP_FIELDS: Final = tuple(f.name for f in fields(TradeGroupRow))
@@ -146,7 +152,12 @@ SET_ONCE_GROUP_COLUMNS: Final = frozenset({"submitted_at", "opened_at"})
 
 #: The builders whose SQL carries `group_visible(scope)`; every other one is a system statement,
 #: reached only through `TradeGroupStore` (unit-pinned, with the module's `*_statement` names).
-SCOPED_STATEMENTS: Final = frozenset({"scoped_group_statement", "scoped_legs_statement"})
+SCOPED_STATEMENTS: Final = frozenset(
+    {
+        "scoped_group_statement", "scoped_legs_statement", "scoped_page_statement",
+        "scoped_page_legs_statement", "scoped_leg_orders_statement",
+    }
+)  # fmt: skip
 SYSTEM_STATEMENTS: Final = frozenset(
     {
         "anchor_statement", "insert_group_statement", "lock_definition_statement",
@@ -386,6 +397,47 @@ def scoped_legs_statement(scope: AccountScope, group_id: UUID) -> sa.Select[Any]
     stmt = sa.select(*LEG_COLUMNS).select_from(joined)
     stmt = stmt.where(_G.id == group_id, group_visible(scope))
     return stmt.order_by(_L.sequence_no, _L.id)
+
+
+def scoped_page_statement(
+    scope: AccountScope, *, symbol: str | None, statuses: Collection[TradeGroupStatus],
+    created_from: datetime | None, created_to: datetime | None,
+    after: tuple[datetime, UUID] | None, limit: int,
+) -> sa.Select[Any]:  # fmt: skip
+    """One page of the groups in `scope`, newest first, strictly past the `after` cursor."""
+    stmt = sa.select(*GROUP_COLUMNS).where(group_visible(scope))
+    if symbol is not None:
+        stmt = stmt.where(sa.type_coerce(_G.symbol, sa.Text) == symbol)  # no DOMAIN operator class
+    if statuses:
+        stmt = stmt.where(_G.status.in_(sorted(statuses)))
+    if created_from is not None:
+        stmt = stmt.where(_G.created_at >= created_from)
+    if created_to is not None:
+        stmt = stmt.where(_G.created_at < created_to)
+    if after is not None:
+        stmt = stmt.where(sa.tuple_(_G.created_at, _G.id) < after)
+    return stmt.order_by(_G.created_at.desc(), _G.id.desc()).limit(limit)
+
+
+def scoped_page_legs_statement(scope: AccountScope, group_ids: Iterable[UUID]) -> sa.Select[Any]:
+    """The legs of a page's groups under the same predicate: all of a group's, or none."""
+    joined = trade_group_legs.join(trade_groups, _G.id == _L.trade_group_id)
+    stmt = sa.select(*LEG_COLUMNS).select_from(joined)
+    stmt = stmt.where(_G.id == sa.any_(_uuid_array("group_ids", group_ids)), group_visible(scope))
+    return stmt.order_by(_L.trade_group_id, _L.sequence_no, _L.id)
+
+
+def scoped_leg_orders_statement(scope: AccountScope, leg_ids: Iterable[UUID]) -> sa.Select[Any]:
+    """The ids of these legs' orders, oldest first, for legs of groups in `scope`."""
+    joined = orders.join(trade_group_legs, _L.id == _O.trade_group_leg_id)
+    joined = joined.join(trade_groups, _G.id == _L.trade_group_id)
+    stmt = sa.select(_O.trade_group_leg_id, _O.id).select_from(joined)
+    stmt = stmt.where(
+        _O.trade_group_leg_id == sa.any_(_uuid_array("leg_ids", leg_ids)),
+        _O.exchange_account_id == _L.exchange_account_id,
+        group_visible(scope),
+    )
+    return stmt.order_by(_O.trade_group_leg_id, _O.created_ts, _O.id)
 
 
 # -- rows ----------------------------------------------------------------------------------------
@@ -687,6 +739,47 @@ class SqlAlchemyTradeGroupStore:
             return None
         return _records((group,), legs)[0]
 
+    async def list_groups(
+        self, scope: AccountScope, *, symbol: str | None, statuses: Collection[TradeGroupStatus],
+        created_from: datetime | None, created_to: datetime | None,
+        after: tuple[datetime, UUID] | None, limit: int,
+    ) -> tuple[TradeGroupRecord, ...]:  # fmt: skip
+        if isinstance(limit, bool) or not 1 <= limit <= MAX_GROUP_PAGE:
+            raise ValueError(f"limit must be 1 to {MAX_GROUP_PAGE}")
+        times = (created_from, created_to, None if after is None else after[0])
+        if any(t is not None and t.utcoffset() is None for t in times):
+            raise ValueError("a time must be timezone-aware")
+        if self._fails_closed(scope):
+            return ()
+        page = scoped_page_statement(
+            scope, symbol=symbol, statuses=statuses, created_from=created_from,
+            created_to=created_to, after=after, limit=limit,
+        )  # fmt: skip
+        async with self._unit_of_work(scope) as uow:
+            groups = list((await uow.session.execute(page)).mappings())
+            if not groups:
+                return ()
+            scoped = scoped_page_legs_statement(scope, (_uuid(m["id"]) for m in groups))
+            legs = list((await uow.session.execute(scoped)).mappings())
+        records = _records(groups, legs)
+        if isinstance(scope, GrantScope):  # all or none: a group left without legs is dropped
+            return tuple(record for record in records if record.legs)
+        return records
+
+    async def leg_order_ids(
+        self, scope: AccountScope, leg_ids: Collection[UUID]
+    ) -> Mapping[UUID, tuple[UUID, ...]]:
+        ids = frozenset(leg_ids)
+        if not ids or self._fails_closed(scope):
+            return {}
+        async with self._unit_of_work(scope) as uow:
+            stmt = scoped_leg_orders_statement(scope, ids)
+            rows = list((await uow.session.execute(stmt)).mappings())
+        found: dict[UUID, list[UUID]] = {}
+        for m in rows:
+            found.setdefault(_uuid(m["trade_group_leg_id"]), []).append(_uuid(m["id"]))
+        return {leg: tuple(order_ids) for leg, order_ids in found.items()}
+
 
 __all__ = [
     "GROUP_COLUMNS", "GROUP_FIELDS", "LEG_COLUMNS", "LEG_FIELDS", "SCOPED_STATEMENTS",
@@ -696,6 +789,7 @@ __all__ = [
     "insert_legs_statement", "leg_row", "leg_statement", "legs_statement",
     "lock_accounts_statement", "lock_definition_statement", "lock_group_statement",
     "lock_leg_statement", "lock_profiles_statement", "open_groups_statement", "require_live",
-    "scoped_group_statement", "scoped_legs_statement", "unprotected_legs_statement",
+    "scoped_group_statement", "scoped_leg_orders_statement", "scoped_legs_statement",
+    "scoped_page_legs_statement", "scoped_page_statement", "unprotected_legs_statement",
     "update_group_statement", "update_leg_statement",
 ]  # fmt: skip

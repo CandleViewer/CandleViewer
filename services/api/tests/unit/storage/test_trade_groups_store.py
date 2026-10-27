@@ -47,6 +47,7 @@ from candleviewer.storage.repositories.trade_groups import (
     DEFINITION_NOT_LIVE,
     GROUP_PATCH_COLUMNS,
     LEG_PATCH_COLUMNS,
+    MAX_GROUP_PAGE,
     OPEN_GROUP_STATUSES,
     PROFILE_CHANGED,
     TRADE_GROUP_CONFLICTS,
@@ -194,6 +195,11 @@ _FULL_LEG_PATCH = LegPatch(
 )  # fmt: skip
 _FULL_GROUP_PATCH = GroupPatch(status="closed", submitted_at=_T, opened_at=_T, closed_at=_T)
 
+#: A page's filters, all given (a fake unit of work answers whatever they say).
+_FILTERS: dict[str, Any] = {
+    "symbol": "BTCUSDT", "statuses": ("open",), "created_from": _T, "created_to": _T,
+    "after": (_T, _GROUP),
+}  # fmt: skip
 #: Every builder, built: the scoped ones under a grant scope (the owner variant is tested apart).
 _STATEMENTS: dict[str, Any] = {
     "anchor_statement": mod.anchor_statement(_CALLER, _REF, _BODY),
@@ -213,6 +219,9 @@ _STATEMENTS: dict[str, Any] = {
     "unprotected_legs_statement": mod.unprotected_legs_statement(),
     "scoped_group_statement": mod.scoped_group_statement(_GRANT, _GROUP),
     "scoped_legs_statement": mod.scoped_legs_statement(_GRANT, _GROUP),
+    "scoped_page_statement": mod.scoped_page_statement(_GRANT, limit=50, **_FILTERS),
+    "scoped_page_legs_statement": mod.scoped_page_legs_statement(_GRANT, [_GROUP, _GROUP]),
+    "scoped_leg_orders_statement": mod.scoped_leg_orders_statement(_GRANT, [_LEG_A, _LEG_B]),
 }
 
 
@@ -304,7 +313,10 @@ def test_every_statement_builder_is_scoped_or_system() -> None:
     builders = {n for n in vars(mod) if n.endswith("_statement")}
     assert builders == mod.SCOPED_STATEMENTS | mod.SYSTEM_STATEMENTS == set(_STATEMENTS)
     assert not mod.SCOPED_STATEMENTS & mod.SYSTEM_STATEMENTS
-    assert mod.SCOPED_STATEMENTS == {"scoped_group_statement", "scoped_legs_statement"}
+    assert mod.SCOPED_STATEMENTS == {
+        "scoped_group_statement", "scoped_legs_statement", "scoped_page_statement",
+        "scoped_page_legs_statement", "scoped_leg_orders_statement",
+    }  # fmt: skip
 
 
 @pytest.mark.parametrize("name", sorted(_STATEMENTS))
@@ -457,7 +469,7 @@ def test_an_update_sets_only_the_columns_its_patch_names() -> None:
 
 _GROUP_READS = (
     "insert_group_statement", "update_group_statement", "group_statement", "open_groups_statement",
-    "scoped_group_statement",
+    "scoped_group_statement", "scoped_page_statement",
 )  # fmt: skip
 
 
@@ -764,6 +776,50 @@ async def test_a_grant_read_is_all_or_nothing_across_its_two_statements() -> Non
     owner = _Rel(_GATE_OK, _Result([_group_mapping()]), _Result([]))
     kept = await _store(owner).get_group(_OWNER, _GROUP)
     assert kept is not None and kept.group.id == _GROUP and kept.legs == ()
+
+
+async def test_list_groups_reads_a_page_then_its_legs_and_a_grant_loses_a_bare_group() -> None:
+    """SR-E28-21, as `get_group`: the legs are read under the scope again, so a group whose legs
+    vanished in between is dropped for a grant and kept, as the Owner sees it, otherwise."""
+    other = UUID(int=0x2002)
+    page = [_group_mapping(), _group_mapping(id=str(other))]
+    rel = _Rel(_Result(page), _Result([_leg_mapping()]))
+    shown = await _store(rel).list_groups(_GRANT, limit=2, **_FILTERS)
+    assert [r.group.id for r in shown] == [_GROUP] and len(rel.calls) == 2 and rel.commits == 0
+    owner = _Rel(_GATE_OK, _Result(page), _Result([_leg_mapping()]))
+    seen = await _store(owner).list_groups(_OWNER, limit=2, **_FILTERS)
+    assert [r.group.id for r in seen] == [_GROUP, other] and seen[1].legs == ()
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        {"limit": 0}, {"limit": MAX_GROUP_PAGE + 1}, {"limit": True},
+        {"created_from": datetime(2026, 10, 20)}, {"created_to": datetime(2026, 10, 20)},
+        {"after": (datetime(2026, 10, 20), _GROUP)},
+    ],
+)  # fmt: skip
+async def test_list_groups_is_bounded_and_aware_before_any_sql_and_an_empty_scope_reads_none(
+    bad: dict[str, Any],
+) -> None:
+    rel, empty = _Rel(), GrantScope(_CALLER, frozenset())
+    with pytest.raises(ValueError, match=r"limit must be|timezone-aware"):
+        await _store(rel).list_groups(_GRANT, **{"limit": 1, **_FILTERS, **bad})
+    assert await _store(rel).list_groups(empty, limit=1, **_FILTERS) == ()
+    assert await _store(rel).leg_order_ids(empty, [_LEG_A]) == {}
+    assert await _store(rel).leg_order_ids(_GRANT, []) == {} and rel.calls == [] and rel.caps == []
+
+
+async def test_a_non_owner_holding_an_owner_scope_is_refused_on_list_and_order_ids() -> None:
+    reads: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = [
+        ("list_groups", (_OWNER,), {"limit": 2, **_FILTERS}),
+        ("leg_order_ids", (_OWNER, [_LEG_A]), {}),
+    ]
+    for name, args, kwargs in reads:
+        denied = _Rel(_Result(scalar=False))
+        with pytest.raises(TradeGroupStoreScopeDeniedError):
+            await getattr(_store(denied), name)(*args, **kwargs)
+        assert len(denied.calls) == 1 and denied.calls[0] is mod._OWNER_GATE
 
 
 async def test_find_anchor_answers_the_group_and_whether_the_body_matches() -> None:

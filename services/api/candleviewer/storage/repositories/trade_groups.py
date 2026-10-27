@@ -37,7 +37,7 @@ on these tables: groups and legs are history.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, fields
 from datetime import datetime
 from decimal import Decimal
@@ -60,7 +60,7 @@ from candleviewer.storage.repositories.orders import (
 
 __all__ = [
     "ACCOUNT_NOT_LIVE", "CREATE_ONLY_GROUP_COLUMNS", "DEFINITION_NOT_LIVE", "GROUP_PATCH_COLUMNS",
-    "LEG_PATCH_COLUMNS", "MAX_CODE_CHARS", "MAX_DEPTH", "MAX_PAYLOAD_CHARS",
+    "LEG_PATCH_COLUMNS", "MAX_CODE_CHARS", "MAX_DEPTH", "MAX_GROUP_PAGE", "MAX_PAYLOAD_CHARS",
     "NO_STOP_LEG_STATUSES", "OPEN_GROUP_STATUSES", "PROFILE_CHANGED", "TRADE_GROUP_CONFLICTS",
     "TRADE_GROUP_RULES", "UNPROTECTED_LEG_STATUSES", "WRITE_ONCE_GROUP_COLUMNS",
     "WRITE_ONCE_LEG_COLUMNS", "AccountScope", "AlgoKind", "EntryType", "ExchangeEnv",
@@ -115,6 +115,9 @@ UNPROTECTED_LEG_STATUSES: Final[frozenset[LegStatus]] = frozenset(
 #: The statuses `tgl_sl_px` lets go without a stop (SR-E28-08): every other leg holds a
 #: `resolved_sl_price` above zero.
 NO_STOP_LEG_STATUSES: Final[frozenset[LegStatus]] = frozenset({"rejected", "cancelled", "error"})
+#: The most rows one `list_groups` call returns: 22's `Limit` (500) and the one more row that
+#: tells a route another page follows.
+MAX_GROUP_PAGE: Final = 501
 #: Written when the group is created and never updated by this store (21 Sec.3.3.2).
 CREATE_ONLY_GROUP_COLUMNS: Final = frozenset(
     {"symbol", "side", "entry_type", "origin", "origin_rule_id", "is_paper", "algo_params"}
@@ -675,4 +678,23 @@ class TradeGroupReads(Protocol):
         read never yields a record without legs: the legs read is all or none (SR-E28-21), so a
         scope that changes between the group and its legs reads as `None`. An empty `GrantScope`
         runs no SQL."""
+        ...
+
+    async def list_groups(
+        self, scope: AccountScope, *, symbol: str | None, statuses: Collection[TradeGroupStatus],
+        created_from: datetime | None, created_to: datetime | None,
+        after: tuple[datetime, UUID] | None, limit: int,
+    ) -> tuple[TradeGroupRecord, ...]:  # fmt: skip
+        """One page of the groups `get_group` shows, newest first (`created_at DESC, id DESC`), with
+        their legs. `after` is the last row's `(created_at, id)`: the page starts strictly past it.
+        An empty or `None` filter is not applied; `created_from` is inclusive, `created_to`
+        exclusive. `ValueError`, before any SQL, for a `limit` outside 1 to `MAX_GROUP_PAGE` and
+        for a naive time. As in `get_group`, a grant drops a group whose legs vanished."""
+        ...
+
+    async def leg_order_ids(
+        self, scope: AccountScope, leg_ids: Collection[UUID]
+    ) -> Mapping[UUID, tuple[UUID, ...]]:
+        """The ids of these legs' orders, oldest first, by leg (a leg with none is absent), read
+        only for legs of groups the scope sees: any other id reads nothing."""
         ...

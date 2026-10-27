@@ -976,9 +976,12 @@ async def test_a_filled_leg_without_a_confirmed_stop_is_listed_even_on_a_soft_de
 
 # -- scope and IDOR (SR-E28-21) --------------------------------------------------------------------
 
-#: A Manager granted A and B, each cell changing one thing; the Owner sees every group.
+#: A Manager granted A and B, each cell changing one thing; the Owner sees every group. The E28
+#: world's G-CORE3 (A, B, C) and G-PAIR (A, C) are the cells `legs-a-b-and-c` and
+#: `a-leg-on-ungranted-c`: hidden from a manager missing E28-C, on `get_group` and the list alike.
 _CELLS = {
     "legs-a-and-b": True,
+    "legs-a-b-and-c": False,
     "a-leg-on-ungranted-c": False,
     "the-a-grant-frozen": False,
     "the-a-grant-soft-revoked": False,
@@ -1011,7 +1014,7 @@ async def test_group_with_ungranted_leg_is_invisible(
         )  # fmt: skip
     else:
         on_c = cell in {"a-leg-on-ungranted-c", "the-scope-lists-c-without-a-grant"}
-        accounts = (a, c) if on_c else (a, b)
+        accounts = (a, b, c) if cell == "legs-a-b-and-c" else (a, c) if on_c else (a, b)
         legs = [_new_leg(pg_dsn, acct, seq=i) for i, acct in enumerate(accounts)]
         assert isinstance(await store.create_group(group, legs), GroupCreated)
     if cell == "the-a-grant-frozen":
@@ -1034,12 +1037,15 @@ async def test_group_with_ungranted_leg_is_invisible(
         _sql(pg_dsn, "UPDATE exchange_accounts SET deleted_at = now() WHERE id = %s", b)
     seen = await store.get_group(scope, group.id)
     assert (seen is not None) is visible
+    page = await TradeGroupReader(store).list(scope, limit=100)  # the same predicate, on a page
+    listed, gid = {s.record.group.group_id: s for s in page}, GroupId(group.id)
+    assert (gid in listed) is visible
     as_owner = await store.get_group(OwnerScope(owner), group.id)
     assert as_owner is not None and as_owner.group.id == group.id
     if seen is not None:
         assert seen == as_owner
-        shown = await TradeGroupReader(store).get(scope, GroupId(group.id))
-        assert shown.shows_private_fields is (creator == manager)
+        shown = await TradeGroupReader(store).get(scope, gid)
+        assert shown.shows_private_fields is (creator == manager) and listed[gid] == shown
 
 
 async def test_a_non_owner_holding_an_owner_scope_is_refused(
@@ -1075,6 +1081,81 @@ async def test_an_empty_grant_scope_sees_nothing(
 ) -> None:
     group, _ = await _created(store, pg_dsn)
     assert await store.get_group(GrantScope(_user(pg_dsn), frozenset()), group.id) is None
+
+
+# -- the list and a leg's orders (E28-T05 S2e) ----------------------------------------------------
+
+
+def _page(**over: Any) -> dict[str, Any]:
+    """`list_groups`' arguments: no filter and no cursor, ten rows, unless given."""
+    nothing: dict[str, Any] = {"symbol": None, "statuses": (), "created_from": None}
+    return nothing | {"created_to": None, "after": None, "limit": 10} | over
+
+
+async def test_the_list_filters_and_its_keyset_is_stable_across_equal_creation_times(
+    store: SqlAlchemyTradeGroupStore, pg_dsn: str
+) -> None:
+    """Newest first by `(created_at, id)`: pages of two over five groups, three made in one
+    instant, repeat none and skip none; each filter narrows the page and only it."""
+    symbol, elsewhere = (f"T{uuid.uuid4().hex[:10].upper()}" for _ in range(2))
+    t1, t2 = _T0 + timedelta(seconds=1), _T0 + timedelta(seconds=2)
+    stamps, statuses = [_T0, _T0, _T0, t1, t2], ["open", "closed", "open", "closed", "open"]
+    made: list[uuid.UUID] = []
+    for at, status in zip(stamps, statuses, strict=True):
+        group, _ = await _created(store, pg_dsn, symbol=symbol, status="draft")
+        update = "UPDATE trade_groups SET created_at = %s, status = %s WHERE id = %s"
+        _sql(pg_dsn, update, at, status, group.id)  # 0053 freezes `created_at` after `draft`
+        made.append(group.id)
+    foreign, _ = await _created(store, pg_dsn, symbol=elsewhere)
+    scope, seen = OwnerScope(_user(pg_dsn, "owner")), []
+    after: tuple[datetime, uuid.UUID] | None = None
+    for _ in range(3):
+        page = await store.list_groups(scope, **_page(symbol=symbol, after=after, limit=2))
+        seen += [r.group.id for r in page]
+        after = (page[-1].group.created_at, page[-1].group.id)
+    assert seen == [i for _, i in sorted(zip(stamps, made, strict=True), reverse=True)]
+    cases: list[tuple[dict[str, Any], set[int]]] = [
+        ({"statuses": ("open",)}, {0, 2, 4}), ({"created_from": t1}, {3, 4}),
+        ({"created_to": t1}, {0, 1, 2}),  # the start is in, the end is out
+        ({"statuses": ("closed",), "created_from": t1, "created_to": t2}, {3}),
+    ]  # fmt: skip
+    for filters, wanted in cases:
+        got = await store.list_groups(scope, **_page(symbol=symbol, **filters))
+        assert {r.group.id for r in got} == {made[i] for i in wanted}, filters
+    only = await store.list_groups(scope, **_page(symbol=elsewhere))
+    assert [r.group.id for r in only] == [foreign.id]
+
+
+async def test_leg_order_ids_are_those_of_a_visible_group_oldest_first(
+    store: SqlAlchemyTradeGroupStore, pg_dsn: str
+) -> None:
+    """A leg's orders are read under its group's predicate: a granted leg in a group that also
+    has a leg on C reads none, whoever asks for its id; an order of the leg on another account
+    (C) is not its own."""
+    from candleviewer.accounts.trade_group_repository import TradeGroupReader
+
+    owner, manager = _user(pg_dsn, "owner"), _user(pg_dsn, "manager")
+    a, c = _account(pg_dsn), _account(pg_dsn)
+    _grant(pg_dsn, manager, a)
+    mine, hidden = _new_leg(pg_dsn, a), _new_leg(pg_dsn, a)
+    await store.create_group(_new_group(manager), [mine])
+    await store.create_group(_new_group(manager), [hidden, _new_leg(pg_dsn, c, seq=1)])
+    later, earlier = sorted((uuid.uuid4(), uuid.uuid4()))  # the older order has the higher id
+    stray, t = uuid.uuid4(), _T0 + timedelta(seconds=1)
+    placed = [(later, mine, a, t), (earlier, mine, a, _T0), (stray, hidden, a, t)]
+    for order, leg, account, at in [*placed, (uuid.uuid4(), mine, c, t)]:  # the last: on C
+        _sql(
+            pg_dsn,
+            "INSERT INTO orders (id, trade_group_leg_id, exchange_account_id, order_link_id, "
+            "symbol, side, intent, order_type, qty, created_ts) VALUES (%s, %s, %s, "
+            "'ext-' || md5(%s::text), 'BTCUSDT', 'Buy', 'entry', 'Market', 1, %s)",
+            order, leg.id, account, order.hex, at,
+        )  # fmt: skip
+    asked, reader = [mine.id, hidden.id], TradeGroupReader(store)
+    granted = await reader.order_ids(GrantScope(manager, frozenset({a})), asked)
+    assert granted == {mine.id: (earlier, later)}  # by `created_ts`, whatever the ids
+    everything = await reader.order_ids(OwnerScope(owner), asked)
+    assert everything == {mine.id: (earlier, later), hidden.id: (stray,)}
 
 
 # -- the catalog -----------------------------------------------------------------------------------
