@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copies the CSS that apps import into `dist/`, next to the JS entry, so the package `exports` point at
-// built files (`./theme.css`, `./tokens.*.css`) and never at `src/` (the deep-import ban, CONSTITUTION §9 #18).
+// built files (`./theme.css`, `./components.css`, `./tokens.*.css`) and never at `src/` (the deep-import ban, CONSTITUTION §9 #18).
 //
 // Run by tsup's `onSuccess` after every build (`pnpm --filter @candleviewer/ui build`), which first runs
 // `build:tokens`, so the generated `build/css/tokens.*.css` exist. It throws when one of them is missing
@@ -9,7 +9,7 @@
 //
 // A plain script with no entry-point guard: it always runs, so it cannot turn into a silent no-op (exit 0,
 // nothing copied) when it is started through a symlink or junction path.
-import { copyFile, mkdir, readdir } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -30,4 +30,18 @@ if (!process.argv.includes("--no-tokens")) {
 const dist = path.join(UI_ROOT, "dist");
 await mkdir(dist, { recursive: true });
 for (const source of sources) await copyFile(source, path.join(dist, path.basename(source)));
-console.log(`[copy-css] dist/: ${sources.map((source) => path.basename(source)).join(", ")}`);
+// Component CSS (`src/components/*.css`) ships as one `components.css`: the shared `controls.css` first, then
+// each component's file in name order, so the foundation never depends on import order.
+const componentDir = path.join(UI_ROOT, "src/components");
+const componentFiles = (await readdir(componentDir).catch(() => []))
+  .filter((name) => name.endsWith(".css"))
+  .sort((a, b) =>
+    a === "controls.css" ? -1 : b === "controls.css" ? 1 : a < b ? -1 : a > b ? 1 : 0,
+  );
+const written = sources.map((source) => path.basename(source));
+if (componentFiles.length > 0) {
+  const parts = await Promise.all(componentFiles.map((n) => readFile(path.join(componentDir, n))));
+  await writeFile(path.join(dist, "components.css"), parts.join("\n"));
+  written.push("components.css");
+}
+console.log(`[copy-css] dist/: ${written.join(", ")}`);

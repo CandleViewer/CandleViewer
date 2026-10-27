@@ -13,6 +13,7 @@
       "import": "./dist/index.js"
     },
     "./theme.css": "./dist/theme.css",
+    "./components.css": "./dist/components.css",
     "./tokens.*.css": "./dist/tokens.*.css"
   },
   "scripts": {

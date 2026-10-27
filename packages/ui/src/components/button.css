@@ -1,0 +1,162 @@
+/* CMP-001 Button. State lives in data-* attributes set by Button.tsx; colours are tokens only. */
+.cv-button {
+  --cv-button-bg: var(--color-action-secondary-default);
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-inset-xs);
+  padding-inline: var(--space-button-paddingX);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--cv-button-bg);
+  color: var(--color-text-primary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  cursor: pointer;
+}
+
+.cv-button__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cv-button[data-size="sm"] {
+  padding-inline: var(--space-inset-sm);
+}
+
+.cv-button[data-size="lg"] {
+  gap: var(--space-inset-sm);
+  padding-inline: var(--space-inset-lg);
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-button[data-full-width] {
+  display: flex;
+  width: 100%;
+}
+
+.cv-button[data-variant="primary"] {
+  --cv-button-bg: var(--color-action-primary-default);
+  color: var(--color-text-on-action);
+}
+
+.cv-button[data-variant="danger"] {
+  --cv-button-bg: var(--color-status-danger-default);
+  color: var(--color-text-on-action);
+}
+
+.cv-button[data-variant="ghost"] {
+  --cv-button-bg: transparent;
+}
+
+/* Hover and active swap tokens instantly (no transition). Absent tokens keep the rest fill (D02 open Qs). */
+.cv-button[data-variant="primary"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-action-primary-hover);
+}
+
+.cv-button[data-variant="primary"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-action-primary-active);
+}
+
+.cv-button[data-variant="secondary"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-action-secondary-hover);
+}
+
+.cv-button[data-variant="secondary"]:active:not(:disabled, [aria-disabled], [aria-busy]),
+.cv-button[data-variant="ghost"]:active:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-surface-selected);
+}
+
+.cv-button[data-variant="ghost"]:hover:not(:disabled, [aria-disabled], [aria-busy]) {
+  --cv-button-bg: var(--color-surface-hover);
+}
+
+/* Plain disabled: the whole control dims (native attribute, out of the Tab order). */
+.cv-button:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): only the fill dims on a plate, the label stays at full strength. The plate is
+   dimmed, so the label uses text.primary on every variant (D02 token note); the selector out-specifies the variants. */
+.cv-button[data-gated],
+.cv-button[data-gated][data-variant] {
+  background: transparent;
+  color: var(--color-text-primary);
+  cursor: not-allowed;
+}
+
+.cv-button[data-gated]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--cv-button-bg);
+  opacity: var(--opacity-disabled);
+}
+
+.cv-button__glyph {
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--color-text-secondary);
+}
+
+/* Loading: the label stays in the DOM (name and width) at opacity 0; the spinner overlays it (EXC-CMP-001-1). */
+.cv-button[aria-busy="true"] {
+  cursor: progress;
+}
+
+.cv-button[aria-busy="true"] > .cv-button__label {
+  opacity: 0;
+}
+
+.cv-button[aria-busy="true"] > .cv-spinner {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+}
+
+@media (forced-colors: active) {
+  .cv-button,
+  .cv-button[data-variant] {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .cv-button:hover,
+  .cv-button:active {
+    border-color: Highlight;
+  }
+
+  .cv-button:disabled,
+  .cv-button[data-variant]:disabled {
+    border-color: GrayText;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  /* Gated keeps ButtonText: the reason is the message, only the border greys. */
+  .cv-button[data-gated],
+  .cv-button[data-gated][data-variant] {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .cv-button[data-gated]::before {
+    content: none;
+  }
+
+  .cv-button__glyph {
+    color: ButtonText;
+  }
+}
