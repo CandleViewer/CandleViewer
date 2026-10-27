@@ -9,6 +9,8 @@ vi.mock("electron", () => ({
     on: vi.fn(),
     whenReady: vi.fn().mockResolvedValue(undefined),
     emit: vi.fn(),
+    // The crash log's directory is resolved at wiring; nothing is written without an append.
+    getPath: vi.fn().mockReturnValue("/nonexistent-userdata"),
     requestSingleInstanceLock: vi.fn().mockReturnValue(true),
     commandLine: { appendSwitch: vi.fn() },
     isPackaged: false,

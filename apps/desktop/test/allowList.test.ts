@@ -2,11 +2,12 @@ import { describe, expect, it } from "vitest";
 import { ALLOWED_IPC_CHANNELS, buildAllowList, isChannelAllowed } from "../src/preload/allowList";
 
 describe("preload allow-list builder", () => {
-  it("has exactly the three named channels this ticket's ShellPort surface needs (SR-111)", () => {
+  it("has exactly the named channels the ShellPort surface needs (SR-111)", () => {
     expect(ALLOWED_IPC_CHANNELS).toEqual([
       "cv:gpu:info",
       "cv:keychain:getKekHandle",
       "cv:updates:check",
+      "cv:crashLog:append",
     ]);
   });
 

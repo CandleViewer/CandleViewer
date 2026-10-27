@@ -5,6 +5,7 @@ import { app, BrowserWindow, ipcMain, protocol, session, type IpcMainInvokeEvent
 import { buildCsp } from "../src/main/csp";
 import { resolveDevServerUrl, type DevServerUrl } from "../src/main/devServer";
 import { logAuditEvent } from "../src/main/logger";
+import { CrashLogRefusedError } from "../src/main/crashLog";
 
 // src/main/index.ts calls app.on(...) / app.whenReady() at module scope, so
 // the real "electron" module (unavailable under vitest's node environment)
@@ -408,9 +409,14 @@ describe("redirects and <webview> (SR-113, #3608)", () => {
   });
 });
 
-type IpcListener = (event: IpcMainInvokeEvent) => unknown;
+type IpcListener = (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown;
 
-const IPC_CHANNELS = ["cv:gpu:info", "cv:keychain:getKekHandle", "cv:updates:check"] as const;
+const IPC_CHANNELS = [
+  "cv:gpu:info",
+  "cv:keychain:getKekHandle",
+  "cv:updates:check",
+  "cv:crashLog:append",
+] as const;
 
 /** The listener the shell registered for `channel` at startup (no dev server set). */
 function ipcListener(channel: string): IpcListener {
@@ -512,6 +518,23 @@ describe("ipcMain handlers answer only the shell's own page (SR-111, #3608)", ()
       }
     },
   );
+
+  it("cv:crashLog:append re-checks the entry in main: a refused one rejects, nothing is written", async () => {
+    const from = invokeFrom("app://candleviewer/terminal", "main");
+    vi.mocked(logAuditEvent).mockClear();
+    const refused = ipcListener("cv:crashLog:append")(from, { timestampMs: 1, message: "m", x: 1 });
+    await expect(refused).rejects.toThrow(CrashLogRefusedError);
+    expect(vi.mocked(logAuditEvent).mock.calls).toEqual([
+      ["crash-log-entry-refused", { reason: "schema" }],
+    ]);
+  });
+
+  it("cv:crashLog:append refuses a wrong sender before reading the entry", () => {
+    const entry = { timestampMs: 1, message: "m" };
+    const call = () =>
+      ipcListener("cv:crashLog:append")(invokeFrom("https://evil.test/", "main"), entry);
+    expect(call).toThrow(IpcSenderRefusedError);
+  });
 
   it("the renderer sees the error's name and a fixed message, nothing about the sender", () => {
     const shown = String(new IpcSenderRefusedError());

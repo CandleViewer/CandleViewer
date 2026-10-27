@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import { ALLOWED_IPC_CHANNELS, isChannelAllowed } from "./allowList.js";
+import { parseCrashEntry } from "../shared/crashEntry.js";
 
 /**
  * Exposes exactly one namespaced object, `window.cv`, as a fixed set of
@@ -22,6 +23,14 @@ const cv = Object.freeze({
   gpuInfo: () => invokeAllowed("cv:gpu:info"),
   keychainGetKekHandle: () => invokeAllowed("cv:keychain:getKekHandle"),
   updatesCheck: () => invokeAllowed("cv:updates:check"),
+  // Only a fresh, schema-checked copy crosses to main; main checks it again (SR-111).
+  crashLogAppend: (entry: unknown) => {
+    const checked = parseCrashEntry(entry);
+    if (checked === undefined) {
+      return Promise.reject(new Error("Crash log entry refused"));
+    }
+    return invokeAllowed("cv:crashLog:append", checked);
+  },
 });
 
 contextBridge.exposeInMainWorld("cv", cv);
