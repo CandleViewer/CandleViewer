@@ -2,7 +2,7 @@
 import type { JSX } from "react";
 import { expect, fireEvent, fn, userEvent, within } from "storybook/test";
 import { describe, it } from "vitest";
-import { Link, type LinkProps, type LinkSlotProps } from "../src/components/index.js";
+import { Link, type LinkProps, type LinkRouteProps } from "../src/components/index.js";
 import { EXTERNAL_LINK_TEXT } from "../src/components/Link.js";
 import { mount } from "./theme/mount.js";
 
@@ -10,7 +10,7 @@ const DOCS = "https://example.com/api-docs";
 
 /** A minimal router link: what the app's router component does with `to`. */
 const navigate = fn();
-function RouterLink({ to, onClick, children, ...rest }: LinkSlotProps): JSX.Element {
+function RouterLink({ to, onClick, children, ...rest }: LinkRouteProps): JSX.Element {
   return (
     <a
       {...rest}

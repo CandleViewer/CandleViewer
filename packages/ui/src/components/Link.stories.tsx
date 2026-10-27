@@ -1,13 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import type { JSX } from "react";
 import { expect, fn, userEvent, waitFor, within } from "storybook/test";
-import { Link, type LinkSlotProps } from "./Link.js";
+import { Link, type LinkRouteProps } from "./Link.js";
 
 const DOCS = "https://example.com/api-docs";
 const onNavigate = fn();
 
 /** A stand-in for the app's router link: it renders the `<a>` and navigates in-app (here: records it). */
-function RouterLink({ to, onClick, children, ...rest }: LinkSlotProps): JSX.Element {
+function RouterLink({ to, onClick, children, ...rest }: LinkRouteProps): JSX.Element {
   return (
     <a
       {...rest}
