@@ -11308,7 +11308,7 @@ export interface components {
           components["schemas"]["Problem"] | components["schemas"]["TradingDisabledProblem"];
       };
     };
-    /** @description `internal_error`, retryable (the error-code registry): a fault the server raised and did not answer otherwise. The problem names no internals and carries no `instance`, which no order route sets: the request's correlation id rides the `X-Correlation-Id` response header, which finds the fault in the logs. On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the exit service raised, which also pages the operator: every exit `500` pages, one page for the fault's class, never its text (#913 slice 4, the orchestrator's rulings of 2026-10-24 21:47Z and of 2026-10-25 00:27Z (3), 00:36Z and 02:50Z (2)). */
+    /** @description `internal_error`, retryable (the error-code registry): a fault the server raised and did not answer otherwise. The problem names no internals. Its `instance` is `urn:cv:req:{id}`, the request's correlation id, the one the `X-Correlation-Id` response header echoes, which finds the fault in the logs (#913 S4-G2d, CG11; `instance` on every problem answer is a post-GA improvement, the orchestrator's ruling of 2026-10-26 19:24Z). A fault that escapes the route is answered by the app's unhandled-exception handler, whose `500` carries neither `instance` nor the `X-Correlation-Id` header: it never passes the correlation middleware. On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the exit service raised, which also pages the operator: every exit `500` pages, one page for the fault's class, never its text (#913 slice 4, the orchestrator's rulings of 2026-10-24 21:47Z and of 2026-10-25 00:27Z (3), 00:36Z and 02:50Z (2)). */
     InternalError: {
       headers: {
         [name: string]: unknown;
@@ -17721,7 +17721,7 @@ export interface operations {
           "application/problem+json": components["schemas"]["Problem"];
         };
       };
-      /** @description `internal_error`. On this route it is also an `orderLinkId` allocation that spent its bound (`OrderLinkIdExhausted`, 24-internal-schemas.md section 8.3 rule 5): nothing was sent, and the condition pages the operator. */
+      /** @description `internal_error`, its `instance` the request's, as `InternalError` gives it (#913 S4-G2d, CG11). On this route it is also an `orderLinkId` allocation that spent its bound (`OrderLinkIdExhausted`, 24-internal-schemas.md section 8.3 rule 5): nothing was sent, and the condition pages the operator. */
       500: {
         headers: {
           [name: string]: unknown;

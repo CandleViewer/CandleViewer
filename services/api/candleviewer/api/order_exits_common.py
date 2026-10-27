@@ -46,7 +46,7 @@ from fastapi.responses import JSONResponse, Response
 from candleviewer.api.order_acceptance import order_body
 from candleviewer.api.order_admission import submit_actor
 from candleviewer.api.order_principal import TradingPrincipal
-from candleviewer.api.order_problems import order_problem
+from candleviewer.api.order_problems import internal_instance, order_problem
 from candleviewer.auth.scopes import account_scope
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.context import current_request_uuid
@@ -69,7 +69,8 @@ EXIT_REFUSED_METRIC: Final = "oms_exit_refused_total"
 EXIT_FAULT_PAGE: Final = "oms_exit_unexpected_failure"
 _STORED: Final = cast(Mapping[str, str], ORDER_STATE_OF)
 _MEDIA: Final = "application/problem+json"
-#: The redacted `500` (22 `InternalError`): its code and its title alone.
+#: The redacted `500` (22 `InternalError`): its code and its title, and within a request its
+#: `instance` (`exit_problem`).
 _FAULT: Final = ExitOutcome(kind="refused", status=INTERNAL_ERROR.status, code=INTERNAL_ERROR.code)
 
 
@@ -158,14 +159,15 @@ async def _fault_answered(
 def exit_problem(outcome: ExitOutcome) -> JSONResponse:
     """A refused exit's 22 problem, in `api.order_problems`' shape: its code's title, the
     service's own `detail` and `errors[]`, `retry_after_seconds` with `Retry-After` where the
-    outcome holds one, the order-entry gate's `reason`, and a venue refusal's `exchange.ret_code`
-    alone, never its text (SR-E29-09)."""
+    outcome holds one, the order-entry gate's `reason`, a venue refusal's `exchange.ret_code`
+    alone, never its text (SR-E29-09), and a `500 internal_error`'s `instance`, its request's
+    (`internal_instance`, CG11)."""
     code, ret = outcome.code or "internal_error", outcome.exchange_ret_code
     errors = [{"field": e.field, "rule": e.rule, "message": e.message} for e in outcome.errors]
     members: dict[str, object] = {
         "type": f"https://candleviewer.local/errors/{code}",
         "title": ERROR_META[ErrorCode(code)].title, "status": outcome.status, "code": code,
-        "detail": outcome.detail, "errors": errors or None,
+        "instance": internal_instance(code), "detail": outcome.detail, "errors": errors or None,
         "retry_after_seconds": outcome.retry_after_s, "reason": outcome.reason,
         "exchange": None if ret is None else {"ret_code": ret},
     }  # fmt: skip
