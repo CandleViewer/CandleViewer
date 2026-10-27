@@ -11,6 +11,12 @@ export type {
   LegendPalette,
 } from "./ColorConventionLegend.js";
 
+export { ConfidenceDots } from "./ConfidenceDots.js";
+export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
+
+export { Countdown } from "./Countdown.js";
+export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
+
 export { Divider, DividerLabel } from "./Divider.js";
 export type { DividerLabelProps, DividerProps } from "./Divider.js";
 
@@ -92,6 +98,9 @@ export type { SkipLinkProps, SkipLinkTarget } from "./SkipLink.js";
 
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
+
+export { Sparkline } from "./Sparkline.js";
+export type { SparklineProps, SparklineTrend } from "./Sparkline.js";
 
 export { Spinner } from "./Spinner.js";
 export type { SpinnerProps } from "./Spinner.js";
