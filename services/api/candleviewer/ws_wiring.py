@@ -247,13 +247,14 @@ def series_stale(
     """#2487: `stale` of a `bars` or `indicators` series (§7.2): its builder is quarantined, or
     the symbol's trade feed, which builds its bars from the tape, is past the watchdog's `trade`
     limit (`TradeStream.is_stale`, resolved per call). Without a trade stream (the public WS is
-    not wired) there is no live upstream to fall behind, so only the quarantine counts."""
+    not wired) nothing can be fresh, so every series is stale (25 §3), as `book_snapshot_source`'s
+    `stale` is without a `BookStream`: both fail closed when their upstream is missing."""
 
     def stale(symbol: str, spec_hash: str) -> bool:
         if quarantined(symbol, spec_hash):
             return True
         trades = ctx.ingestion.trades
-        return trades is not None and trades.is_stale(symbol)
+        return trades is None or trades.is_stale(symbol)
 
     return stale
 

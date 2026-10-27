@@ -203,8 +203,8 @@ class TradeStream:
         self._writer, self._cap, self._bf_timeout = writer, dedupe_capacity, backfill_timeout_s
         self._rings: dict[str, DedupeRing] = {}
         self._last_ts: dict[str, int] = {}  # last published ts_event per symbol
-        #: #2487: monotonic time of the symbol's last frame (the watchdog's touch), else of its
-        #: first demand, as the watchdog's `watch`: what `is_stale` ages.
+        #: #2487: monotonic time of the symbol's last frame (the watchdog's touch): what
+        #: `is_stale` ages. No entry until a frame lands, so a silent new demand is stale.
         self._frame_at: dict[str, float] = {}
         self._seq: dict[str, int] = {}
         self._gap_open: dict[str, tuple[int, str]] = {}  # symbol -> (start_us, reason)
@@ -241,7 +241,6 @@ class TradeStream:
         if not self._is_listed(symbol):
             raise UnknownSymbolError(symbol)
         self._demand.acquire(consumer, symbol)
-        self._frame_at.setdefault(symbol, self._clock())
         self.sync()
 
     def release(self, consumer: str, symbol: str) -> None:
@@ -276,9 +275,11 @@ class TradeStream:
         return self._tick_size(symbol)
 
     def is_stale(self, symbol: str) -> bool:
-        """#2487: True unless `symbol` is demanded and its tape had a frame (or, none yet, its
-        demand began) within `TRADE_STALE_AFTER_S`: the watchdog's `trade` limit, aged from the
-        moment the watchdog is touched, on this stream's monotonic clock. A read, no side effect."""
+        """#2487: True unless `symbol` is demanded and its tape had a frame within
+        `TRADE_STALE_AFTER_S`: the watchdog's `trade` limit, aged from the moment the watchdog is
+        touched, on this stream's monotonic clock. Fails closed: a demanded symbol with no frame
+        yet is stale (no grace window with no upstream), and a reconnect does not restart the
+        age, only a frame does (the watchdog's `reset` does; this errs stale). A read only."""
         at = self._frame_at.get(symbol)
         return at is None or self._clock() - at >= TRADE_STALE_AFTER_S
 

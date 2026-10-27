@@ -152,8 +152,12 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert isinstance(source, BarsSnapshotSource) and source._store is svc.series
     assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
     # #2487: `ws_wiring.series_stale`, one predicate for bars and indicators. No trade stream is
-    # wired here, so only D3's quarantine counts: a quarantined builder is `stale`.
+    # wired here (no public WS), so no series can be fresh: every one is `stale` (25 §3).
     assert source._stale is svc.snapshots._sources["indicators"]._stale
+    assert source._stale("BTCUSDT", "h") is True
+    # D3: with a fresh tape, a quarantined builder alone is `stale`.
+    fresh = SimpleNamespace(is_stale=lambda _symbol: False)
+    monkeypatch.setattr(app.state.app_context.ingestion, "trades", fresh)
     assert source._stale("BTCUSDT", "h") is False
     monkeypatch.setattr(svc.bars._leases, "quarantined", lambda key: key == ("BTCUSDT", "h"))
     assert source._stale("BTCUSDT", "h") is True

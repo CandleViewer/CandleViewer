@@ -8,7 +8,8 @@ on a fake monotonic clock, fed the recorded BTCUSDT corpus (C-13.5). Per family:
 the `snap` is fresh; the clock passes the watchdog's limit (`STALENESS_S`, the freshness SLO of
 `23-ws-protocol.md` §6) with no frame, and the next `snap` carries `meta.stale: true` while
 `cv_ws_stale_topics_in_use` counts the topic; frames resume and both clear. No sleeps (C-13.7):
-the stall is the clock, the next `snap` a client `resync` (§7.5)."""
+the stall is the clock, the next `snap` a client `resync` (§7.5). The gauge is process-global, so
+each test reads it against its own baseline."""
 
 from __future__ import annotations
 
@@ -106,23 +107,23 @@ def test_book_snap_goes_stale_when_the_book_stalls_past_the_watchdog_limit_and_c
     """`book`: `stale` is `BookStream.is_stale`, the REST book's own verdict, so a book that
     applied no frame for `STALENESS_S["book"]` is served flagged until the next frame lands."""
     up = _Upstream(tmp_path, monkeypatch)
-    limit = STALENESS_S["book"]
+    limit, base = STALENESS_S["book"], _gauge()
     with up.stack.client:
         up.books.acquire("test", h.SYM)  # held before any socket: the book is LIVE at sub
         up.book_frame(BOOK[0])
         with up.stack.connect(offer) as c:
             first = _sub(c, BOOK_CH)
-            fresh = (_stale(first), first["p"]["stale"], _gauge())
+            fresh = (_stale(first), first["p"]["stale"], _gauge() - base)
             up.t += limit / 2
             up.book_frame(BOOK[1])  # a delta inside the limit: still fresh
             up.t += limit / 2
             within = _resync(c, BOOK_CH, first["s"])
             up.t += limit  # stalled: no frame for the whole limit
             stalled = _resync(c, BOOK_CH, within["s"])
-            flagged = (_stale(stalled), stalled["p"]["stale"], _gauge())
+            flagged = (_stale(stalled), stalled["p"]["stale"], _gauge() - base)
             up.book_frame(BOOK[2])  # the feed resumes
             resumed = _resync(c, BOOK_CH, stalled["s"])
-            cleared = (_stale(resumed), resumed["p"]["stale"], _gauge())
+            cleared = (_stale(resumed), resumed["p"]["stale"], _gauge() - base)
     assert fresh == (False, False, 0) and _stale(within) is False
     assert flagged == (True, True, 1)
     assert cleared == (False, False, 0)
@@ -134,23 +135,27 @@ def test_bars_snap_goes_stale_when_the_trade_feed_stalls_past_the_watchdog_limit
     offer: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`bars` are tape-built: with no quarantine, `stale` is the symbol's trade feed past
-    `STALENESS_S["trade"]` (`series_stale`); the subscription's own demand starts the clock, as
-    the watchdog's `watch` does, and a frame for the symbol restarts it."""
+    `STALENESS_S["trade"]` (`series_stale`). It fails closed: stored bars served before the tape's
+    first frame are flagged (fresh only from a frame), and each frame for the symbol restarts it."""
     up = _Upstream(tmp_path, monkeypatch)
-    limit = STALENESS_S["trade"]
+    limit, base = STALENESS_S["trade"], _gauge()
     with up.stack.client, up.stack.connect(offer) as c:
-        first = _sub(c, BARS_CH)  # its trades lease demands the tape at t=0
-        fresh = (_stale(first), _gauge())
-        up.t += limit / 2
+        first = _sub(c, BARS_CH)  # stored bars; its trades lease demands the tape, no frame yet
+        unfed = (_stale(first), _gauge() - base)
         up.trade_frame(TRADES[0])
+        fed = _resync(c, BARS_CH, first["s"])
+        fresh = (_stale(fed), _gauge() - base)
         up.t += limit / 2
-        within = _resync(c, BARS_CH, first["s"])
+        up.trade_frame(TRADES[1])
+        up.t += limit / 2
+        within = _resync(c, BARS_CH, fed["s"])
         up.t += limit  # stalled: no trade frame for the whole limit
         stalled = _resync(c, BARS_CH, within["s"])
-        flagged = (_stale(stalled), _gauge())
-        up.trade_frame(TRADES[1])  # the tape resumes
+        flagged = (_stale(stalled), _gauge() - base)
+        up.trade_frame(TRADES[2])  # the tape resumes
         resumed = _resync(c, BARS_CH, stalled["s"])
-        cleared = (_stale(resumed), _gauge())
+        cleared = (_stale(resumed), _gauge() - base)
+    assert unfed == (True, 1)
     assert fresh == (False, 0) and _stale(within) is False
     assert flagged == (True, 1)
     assert cleared == (False, 0)
@@ -167,6 +172,9 @@ def test_indicators_share_the_bars_verdict_from_the_trade_feed(
     bars, indicators = sources["bars"]._stale, sources["indicators"]._stale
     up.trades.acquire("test", h.SYM)
     spec_hash = "any"
+    assert (bars(h.SYM, spec_hash), indicators(h.SYM, spec_hash)) == (True, True)  # no frame yet
+    with up.stack.client:
+        up.trade_frame(TRADES[0])
     assert (bars(h.SYM, spec_hash), indicators(h.SYM, spec_hash)) == (False, False)
     up.t += STALENESS_S["trade"]
     assert (bars(h.SYM, spec_hash), indicators(h.SYM, spec_hash)) == (True, True)
