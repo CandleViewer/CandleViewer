@@ -6,7 +6,8 @@
  * A key is announced once, whoever writes it, until `forget(key)` or `clearAnnouncements()` (which
  * also empties both regions, so no stale text outlives the condition). The connection rows use
  * `CONNECTION_KEYS`; their one writer is CMP-077's container (`ConnectionRegionSlot`, #306 slice
- * 4b), which owns no second live region and clears at the end of the episode.
+ * 4b), which owns no second live region and ends its episode with
+ * `clearAnnouncements(CONNECTION_PREFIX)`, leaving other writers' keys and text alone.
  */
 import { useSyncExternalStore, type JSX } from "react";
 import { HIDDEN } from "./SkipLink";
@@ -18,8 +19,11 @@ export const CONNECTION_KEYS = {
   disconnected: "connection:disconnected",
   retryStopped: "connection:retry-stopped",
 } as const;
+/** Every connection key starts with this: `CONNECTION_KEYS` and the region's row 2 keys. */
+export const CONNECTION_PREFIX = "connection:";
 
-type Regions = Readonly<Record<Politeness, { readonly text: string; readonly seq: number } | null>>;
+type Message = { readonly text: string; readonly seq: number; readonly key: string };
+type Regions = Readonly<Record<Politeness, Message | null>>;
 const EMPTY: Regions = { polite: null, assertive: null };
 
 let regions: Regions = EMPTY;
@@ -33,7 +37,7 @@ export function announce(politeness: Politeness, text: string, key: string): boo
   if (said.has(key)) return false;
   said.add(key);
   seq += 1; // a new node per message, so the same words in a later episode are read again
-  regions = { ...regions, [politeness]: { text, seq } };
+  regions = { ...regions, [politeness]: { text, seq, key } };
   emit();
   return true;
 }
@@ -43,11 +47,17 @@ export function forget(key: string): void {
   said.delete(key);
 }
 
-/** Ends every episode: forgets the keys and empties both regions. */
-export function clearAnnouncements(): void {
-  said.clear();
-  if (regions === EMPTY) return;
-  regions = EMPTY;
+/**
+ * Ends an episode: forgets the keys and empties the regions. With `prefix`, only the keys that start
+ * with it, and a region only while its message is one of them; without, every key and both regions.
+ */
+export function clearAnnouncements(prefix?: string): void {
+  const ours = (key: string): boolean => prefix === undefined || key.startsWith(prefix);
+  for (const key of [...said]) if (ours(key)) said.delete(key);
+  const keep = (m: Message | null): Message | null => (m !== null && ours(m.key) ? null : m);
+  const next: Regions = { polite: keep(regions.polite), assertive: keep(regions.assertive) };
+  if (next.polite === regions.polite && next.assertive === regions.assertive) return;
+  regions = next.polite === null && next.assertive === null ? EMPTY : next;
   emit();
 }
 

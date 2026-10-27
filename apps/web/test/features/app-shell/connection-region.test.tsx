@@ -5,7 +5,11 @@ import { StrictMode, useEffect, type JSX } from "react";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell } from "../../../src/features/app-shell/AppShell";
-import { clearAnnouncements, ShellAnnouncer } from "../../../src/features/app-shell/announcer";
+import {
+  announce,
+  clearAnnouncements,
+  ShellAnnouncer,
+} from "../../../src/features/app-shell/announcer";
 import {
   ShellBannerSlot,
   ShellCanvasOverlaySlot,
@@ -69,11 +73,13 @@ const go = (next: WsState): void =>
     listeners.forEach((listener) => listener());
   });
 const region = (): HTMLElement => screen.getByRole("region", { name: "Connection" });
-const assertive = (): HTMLElement => {
-  const el = document.querySelector<HTMLElement>('[aria-live="assertive"]');
-  if (el === null) throw new Error("no assertive region");
+/** The shell announcer's region: rendered last, after CMP-092's own pair in the banner slot. */
+const announcerRegion = (live: "polite" | "assertive"): HTMLElement => {
+  const el = [...document.querySelectorAll<HTMLElement>(`[aria-live="${live}"]`)].at(-1);
+  if (el === undefined) throw new Error(`no ${live} region`);
   return el;
 };
+const assertive = (): HTMLElement => announcerRegion("assertive");
 
 /** Every message written into the assertive region from now on, a first render's included. */
 function watchAssertive(): Node[] {
@@ -108,10 +114,15 @@ afterEach(() => {
 });
 
 describe("CMP-077 region: one view per state", () => {
-  it("renders nothing while live, so the overlay slot stays empty", () => {
+  it("renders nothing while live: the banner slot holds only CMP-092's empty live regions", () => {
     const { container } = render(<ShellBannerSlot />);
-    expect(container).toBeEmptyDOMElement();
     expect(screen.queryByRole("region")).toBeNull();
+    expect(
+      [...container.children].map((c) => [c.getAttribute("aria-live"), c.textContent]),
+    ).toEqual([
+      ["polite", ""],
+      ["assertive", ""],
+    ]);
   });
 
   const CASES: readonly [string, () => void, string, readonly string[]][] = [
@@ -293,6 +304,16 @@ describe("CMP-077 region: announcements through the shell announcer (§11)", () 
     if (code === 4403) expect(assertive()).not.toHaveTextContent("Cancel and close still work");
   });
 
+  it("ends the episode for the connection keys only: another writer's message survives", () => {
+    mountBoth();
+    go(DROPPED);
+    act(() => void announce("polite", "Layout changed to 2 by 2", "layout:preset"));
+    go(UP);
+    expect(assertive()).toBeEmptyDOMElement();
+    expect(announcerRegion("polite")).toHaveTextContent("Layout changed to 2 by 2");
+    act(() => expect(announce("polite", "Layout changed to 2 by 2", "layout:preset")).toBe(false));
+  });
+
   it("says row 14 once per stop, and row 2 per read-only reason", async () => {
     const said = mountBoth();
     go(fatal(1002));
@@ -337,6 +358,9 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
     const banner = document.querySelector('[data-shell-slot="banner"]');
     const overlay = document.querySelector('[data-shell-slot="canvas-overlay"]');
     expect(banner?.contains(region())).toBe(true);
+    // E17-D02 §8: CMP-092 renders below the region (its live-region pair follows it).
+    expect(banner?.firstElementChild).toBe(region());
+    expect(region().nextElementSibling?.getAttribute("aria-live")).toBe("polite");
     expect(overlay).toBeEmptyDOMElement();
     expect(screen.getByRole("main").contains(region())).toBe(false);
   });
@@ -360,7 +384,7 @@ describe("CMP-077 region: focus, keyboard and the outlet", () => {
     act(() => vi.advanceTimersByTime(5_000));
     go(fatal(4403));
     go(UP);
-    expect(document.querySelector('[data-shell-slot="banner"]')).toBeEmptyDOMElement();
+    expect(screen.queryByRole("region", { name: "Connection" })).toBeNull();
     expect([mounts, renders]).toEqual([1, 1]);
   });
 });

@@ -42,12 +42,14 @@ function look(view: ConnectionRegionView): CSSProperties {
 
 /**
  * CMP-077 ReconnectOverlay, the SCR-152 connection region (#306 slice 4b; E17-D02 §6, §10 B / D /
- * F / R). TEMPORARY: it lives in apps/web until E05's packages/ui CMP-077 replaces it (ruling on
- * #306); props are the slice 4a view, not the catalogue props.
+ * F / R). An E10 shell organism (#306): apps/web is its home, moving to packages/ui only if a
+ * second feature consumes it; props are the slice 4a view, not the catalogue props.
  *
- * Non-modal `region` named "Connection": no focus trap, a state change never moves focus, and it
- * **owns no live region** — the container writes §11 through the shell announcer. The countdown
- * and ages are `aria-live="off"` (§11 row 10).
+ * It follows E17-D02 §6's non-modal region, not the earlier modal overlay reading (`14` §0 item 4
+ * still says "reconnect overlay"; a carry for the next catalogue touch). A `region` named
+ * "Connection": no focus trap, a state change never moves focus, and it **owns no live region** —
+ * the container writes §11 through the shell announcer. The countdown and ages are
+ * `aria-live="off"` (§11 row 10).
  *
  * In the banner slot below the TopBar (§4.1), so it never covers SCR-063's cancel / close or
  * CMP-211; it pushes the workspace down rather than overlaying it.
@@ -57,7 +59,7 @@ function look(view: ConnectionRegionView): CSSProperties {
  * on R1 (`WsState` keeps no notice time), and the long-outage outlined pill (no retry button).
  * Gap: the fatal L1 keeps §10 F's verbatim "Copy details and report a bug.", but no Details / Copy
  * details control exists until `Details` lands.
- * Visual deviations, deferred to the packages/ui CMP-077: the left border is `border.thick` (2 px),
+ * Visual deviations, deferred: the left border is `border.thick` (2 px),
  * not §4.1's 4 px (no 4 px border token); no 96 px min-height (§4.1, §13.2: no size token), so the
  * region is as tall as its text; the §4.1 pixel offsets and `color.text.secondary` body lines.
  */

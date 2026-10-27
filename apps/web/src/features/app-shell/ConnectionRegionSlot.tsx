@@ -8,7 +8,13 @@ import {
   type RegionReason,
 } from "../../lib/ws/state/connectionRegion";
 import { useShellSelector } from "../../shell/useShellSelector.js";
-import { announce, clearAnnouncements, CONNECTION_KEYS, forget } from "./announcer";
+import {
+  announce,
+  clearAnnouncements,
+  CONNECTION_KEYS,
+  CONNECTION_PREFIX,
+  forget,
+} from "./announcer";
 import { ConnectionRegion } from "./ConnectionRegion";
 
 /**
@@ -18,7 +24,7 @@ import { ConnectionRegion } from "./ConnectionRegion";
 function keyOf(reason: RegionReason): string {
   if (reason === "disconnected") return CONNECTION_KEYS.disconnected;
   if (reason === "fatal" || reason === "session") return CONNECTION_KEYS.retryStopped;
-  return `connection:read-only:${reason}`;
+  return `${CONNECTION_PREFIX}read-only:${reason}`;
 }
 
 const EPISODE: ReadonlySet<RegionReason> = new Set(["disconnected", "fatal", "session"]);
@@ -51,11 +57,12 @@ export function ConnectionRegionSlot(): JSX.Element | null {
     // Leaving a reason lets its next entry speak: row 14 once per entry, row 2 per reason; row 1's
     // key stays for the whole episode (a retry after a stop is no new episode).
     if (prev !== null && prev.reason !== "disconnected") forget(keyOf(prev.reason));
-    // The link is back: the episode ends. `clearAnnouncements` forgets every key — the row 2 keys
-    // too, which is safe as the next reason is said below — and empties both live regions, so no
-    // stale alert text outlives the outage.
+    // The link is back: the episode ends. Scoped to the connection keys: it forgets rows 1, 14
+    // and the row 2 keys (safe, as the next reason is said below) and empties a live region only
+    // while it holds a connection message, so no stale alert outlives the outage and another
+    // writer's announcement stays.
     if (prev !== null && EPISODE.has(prev.reason) && (view === null || !EPISODE.has(view.reason))) {
-      clearAnnouncements();
+      clearAnnouncements(CONNECTION_PREFIX);
     }
     const said = regionAnnouncement(prev, view);
     if (said !== null && view !== null) announce(said.politeness, said.text, keyOf(view.reason));
