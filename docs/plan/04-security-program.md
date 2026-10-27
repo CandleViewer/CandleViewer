@@ -233,10 +233,10 @@ Standing assumptions for all areas: no public listener exists; all human actors 
 | O11 | Elevation of privilege | XSS payload uses the live session to place orders silently                                  | L   | H   | **High**     | SR-112 CSP, SR-043 arm toggle + per-session live-trading confirmation, SR-025 step-up re-auth                                          | Low      |
 
 **E29 OMS core and order placement** (`docs/security/threat-models/E29-oms.md`, ticket E29-X01, Approved 2026-10-20)
-re-derives O1-O11 above for the E29 order path, mounted since #913 slices 3 and 4, live WS trade included: 54 rows (OM-S01..OM-E08;
+re-derives O1-O11 above for the E29 order path, mounted since #913 slices 3 and 4, live WS trade included: 55 rows (OM-S01..OM-E08;
 OM-E07, a KILL that stops nothing, added by E29-T03 after the approval, OM-D10 to OM-D12 and OM-E08, the order
-lane's, by #913 slice 3, and OM-T05b and OM-D13, the cancel-all fold's, by #913 slice 4), 6 inherent Critical and 25
-High. Main
+lane's, by #913 slice 3, OM-T05b and OM-D13, the cancel-all fold's, by #913 slice 4, and OM-D14, the order lane's
+own signing, by #913 L1d-1), 6 inherent Critical and 25 High. Main
 findings: the client's `intent` decides whether an opening order needs a native
 stop and which rate bucket pays; the shipped REST client resends an order create after a timeout or 5xx with no
 lookup; the `untracked` path and a mismatched duplicate-id lookup had no B1 contract (its contract half is on `main`
