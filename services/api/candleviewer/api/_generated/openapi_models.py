@@ -193,7 +193,7 @@ class Problem(BaseModel):
     challenge_id: Annotated[
         UUID | None,
         Field(
-            description="`step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`; a step-up for a no-grace class must send it.\n"
+            description="`step_up_required` only: the challenge this refusal issued (#2304), a random UUIDv4 scoped to the issuing session, so a value from another session is unknown. One challenge is live per session; a newer refusal supersedes it. Send it as `challenge_id` to `POST /auth/step-up`, which requires it while the challenge is live, whatever the class; a step-up for a no-grace class must send it.\n"
         ),
     ] = None
     challenge_expires_at: Annotated[
@@ -212,6 +212,20 @@ class Problem(BaseModel):
         str | None,
         Field(
             description="`step_up_required` only: the exact, case-sensitive text a typed confirmation must equal when the action asks for one (for example the account name), else null. Like `action_summary`, it is an identifier or a server-resolved label of the validated request, never free text or credential material. It is a label only when no other object of its kind that the caller can see has that label, compared case-insensitively, and the label is printable ASCII; otherwise it is the object's identifier.\n"
+        ),
+    ] = None
+    step_up_reason: Annotated[
+        str | None,
+        Field(
+            description='`step_up_required` only: the server-composed sentence saying why this action needs a fresh step-up, the line the step-up dialog (SCR-006, E09-D06) shows under the action, shown verbatim; the client adds no prefix and never composes its own. Present only when `action_class` is `live_enablement` or `killswitch`, carrying SCR-006\'s no-grace sentence verbatim: "Live enablement and kill-switch disable always need a fresh code, even right after a recent step-up." Omitted for every other class. Fixed text, never built from the request, so it carries no request value, label or credential material. Optional, additive (C-6.3).\n'
+        ),
+    ] = None
+    failures_remaining: Annotated[
+        JsonInt | None,
+        Field(
+            description="`mfa_invalid` from `POST /auth/step-up` only: how many more step-up attempts this session has before a failure downgrades it to read-only, 2 after its first consecutive failure and 1 after its second; the next failure is the third and answers `403 session_read_only` instead, without this member. It counts this session's own consecutive step-up failures only, the count stored on its session row: never another session's, never the account's sign-in lockout counter, so it reveals nothing beyond what this session has itself been told. A successful step-up starts the count again. Optional, additive (C-6.3).\n",
+            ge=1,
+            le=2,
         ),
     ] = None
 
