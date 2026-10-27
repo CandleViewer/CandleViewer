@@ -117,9 +117,12 @@ async def test_start_returns_before_the_startup_finishes_while_a_slow_wal_replay
 ) -> None:
     replay = asyncio.Event()
     rig.m.writer.start.side_effect = replay.wait  # the writer's start parks: the WAL replay
-    await asyncio.wait_for(rig.rt.start(), 1)  # `start_all` is not blocked
+    # `start_all` is not blocked: it finishes within a few loop turns while the writer parks.
+    # Yields, not a wall-clock bound (C-13.7, #4769): a loop-thread block cannot fail it.
+    started = asyncio.get_running_loop().create_task(rig.rt.start())
     for _ in range(20):
         await asyncio.sleep(0)  # the loop runs meanwhile
+    assert started.done() and started.exception() is None
     h = rig.rt.health()
     assert (rig.names, rig.rt.startup_complete, h.status, h.detail) == (
         ["writer.start"], False, HealthStatus.OK, "startup=pending")  # fmt: skip
@@ -230,7 +233,7 @@ async def test_a_wal_volume_refusal_never_fails_start_logs_critical_and_degrades
 ) -> None:
     rig.m.writer.start.side_effect = RecorderWalVolumeError("WAL dir shares a volume with 'data'")
     with capture_logs() as logs:
-        await asyncio.wait_for(rig.rt.start(), 1)
+        await rig.rt.start()  # no wall-clock bound (C-13.7, #4769)
         await rig.sleep.parked()
     h = rig.rt.health()
     assert (h.status, h.detail) == (
