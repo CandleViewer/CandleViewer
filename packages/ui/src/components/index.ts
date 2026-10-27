@@ -83,6 +83,9 @@ export type { KbdProps } from "./Kbd.js";
 export { KeyValueRow } from "./KeyValueRow.js";
 export type { KeyValueRowProps } from "./KeyValueRow.js";
 
+export { Link } from "./Link.js";
+export type { LinkProps, LinkSlot, LinkSlotProps } from "./Link.js";
+
 export { Popover } from "./Popover.js";
 export type {
   PopoverAnchorProps,
@@ -91,8 +94,6 @@ export type {
   PopoverPlacement,
   PopoverProps,
 } from "./Popover.js";
-export { Link } from "./Link.js";
-export type { LinkProps, LinkSlot, LinkSlotProps } from "./Link.js";
 
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";
