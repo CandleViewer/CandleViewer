@@ -130,7 +130,7 @@ class SqlAlchemyDefinitionStore:
                 yield uow
 
     @staticmethod
-    async def _record(
+    async def _scoped_record(
         uow: SqlAlchemyUnitOfWork, scope: AccountScope, definition_id: UUID
     ) -> tuple[port.DefinitionRecord, ...]:
         """The definition with its members, or nothing; a grant that reads none of its members
@@ -148,7 +148,7 @@ class SqlAlchemyDefinitionStore:
         self, uow: SqlAlchemyUnitOfWork, scope: OwnerScope, definition_id: UUID
     ) -> port.DefinitionRecord:
         """A write's record; none, under the owner predicate, means its role lapsed: denied."""
-        if not (found := await self._record(uow, scope, definition_id)):
+        if not (found := await self._scoped_record(uow, scope, definition_id)):
             raise port.DefinitionScopeDeniedError
         return found[0]
 
@@ -228,5 +228,5 @@ class SqlAlchemyDefinitionStore:
         if isinstance(scope, GrantScope) and not scope.account_ids:
             return None  # an empty grant sees nothing and runs no SQL
         async with self._unit_of_work(scope) as uow:
-            found = await self._record(uow, scope, definition_id)
+            found = await self._scoped_record(uow, scope, definition_id)
         return found[0] if found else None
