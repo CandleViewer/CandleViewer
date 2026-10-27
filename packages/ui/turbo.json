@@ -13,6 +13,7 @@
         "vitest.config.mjs",
         "package.json",
         "tsconfig.json",
+        "tsup.config.ts",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/apps/web/package.json",
@@ -33,6 +34,7 @@
         "vitest.config.mjs",
         "package.json",
         "tsconfig.json",
+        "tsup.config.ts",
         "$TURBO_ROOT$/packages/config/tsconfig.base.json",
         "$TURBO_ROOT$/packages/config/tsconfig.dom.json",
         "$TURBO_ROOT$/apps/web/package.json",
@@ -55,6 +57,7 @@
       "inputs": [
         "$TURBO_EXTENDS$",
         "eslint-rules/*.d.mts",
+        "scripts/*.d.mts",
         "package.json",
         "$TURBO_ROOT$/tools/style-dictionary/formats/*.d.ts"
       ]

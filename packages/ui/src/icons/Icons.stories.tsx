@@ -8,7 +8,7 @@ import { ICONS, type IconName } from "./registry.js";
 // Object.keys widens to string[]; ICONS' keys are exactly IconName, the type derived from them.
 const NAMES = Object.keys(ICONS) as IconName[];
 
-/** CMP-019 Icon: every registered glyph by name (a stub: the full catalogue joins in #271). */
+/** CMP-019 Icon: every registered glyph by name (the base set; trading glyphs join it later). */
 const meta: Meta = { title: "Atoms/Icon" };
 export default meta;
 type Story = StoryObj;

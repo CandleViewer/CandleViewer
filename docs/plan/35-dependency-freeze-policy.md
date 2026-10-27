@@ -110,9 +110,9 @@ scheduled build. Verified by `check_image_non_root.py`.
 
 ## 7. Vendored / forked third-party code (SR-139)
 
-| Source               | Version | Reason | Update owner |
-| -------------------- | ------- | ------ | ------------ |
-| _none at 2026-10-03_ |         |        |              |
+| Source                                                                                                                                                                                                       | Version                                                                                                        | Reason                                                                                                                                                                                               | Update owner                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| `lucide-static` icons: the SVGs in `packages/ui/src/icons/source/lucide/`, byte for byte (each file renamed to its registry name), with its LICENSE (ISC, plus the MIT notice of the Feather-derived glyphs) | 1.55.0 (npm `sha512-h18lunTFsIJWnY0FMRPjXeO9KcAtNi7fDqtqgWHOFbssfgUWsctn/pA7bpiyrd4g1DuBOJ24CsRnPfkYblwm/A==`) | E05-T06 base icon set: a reviewed subset, compiled to per-icon components by `packages/ui/scripts/build-icons.mjs` (an allowlist parser: geometry only); never fetched at runtime; no npm dependency | `/packages/ui/` CODEOWNERS (design-system, frontend) |
 
 Adding any vendored or forked code requires a row here in the same PR.
 
