@@ -722,6 +722,8 @@ Changing `depth`, `price_grouping`, `time_bucket_ms`, the `metrics` list or the 
 
 Topic names are dot-separated, lower-case, with symbols in Bybit's native upper-case form: `{family}.{symbol}[.{param}...]`.
 
+**Freshness SLO (`stale`, §7.2; #2487).** The SLO is the ingestion staleness watchdog's per-stream-kind threshold (`25-market-data-trust-contract.md` §3), with no WS-only limit: a `book` topic is behind it once its book has applied no frame for the book threshold (2 s; the verdict `GET /market/orderbook` serves as `stale`), and a `bars` or `indicators` series once its symbol's trade feed, from which the series is built, has had no frame for the trade threshold (10 s, counted from the symbol's first upstream demand until its first frame arrives).
+
 ### 6.1 Public market-data topics
 
 | Topic                                    | Options                                                                                                                                                             | Snapshot                                           | Default throttle                          | Binary     | Payload schema                                               |

@@ -83,7 +83,7 @@ async def test_live_book_builds_a_fresh_exact_snapshot_in_both_forms(
 
 async def test_only_a_live_book_is_served() -> None:
     """B14 tags only `live` consumable: a book held outside it is never served,
-    so `stale` stays false (no freshness signal exists yet). Each phase is a state of its own."""
+    so `stale` stays false (no `stale` predicate injected). Each phase is a state of its own."""
     eng = await _live()
     w = _World(eng)
     seen = [w.src.generation(_sub())]
@@ -123,6 +123,26 @@ async def test_replay_unknown_symbol_or_instrument_gets_no_live_book() -> None:
     assert w.src.generation(_sub(replay=RS)) == 0 and not w.src.continuity(_sub(replay=RS), 0)
     assert w.src.build(_sub("book.ETHUSDT.50")) is None
     assert _World(eng, None).src.build(_sub()) is None  # no instrument: no scales to announce
+
+
+async def test_stale_follows_the_injected_predicate_and_moves_the_generation() -> None:
+    """#2487: `stale` is the wiring's `stale(symbol)` (`BookStream.is_stale`); a stalled book
+    applies no frame, so only the flag can tell the render cache its verdict changed."""
+    eng = await _live()
+    stalled: set[str] = set()
+    src: BookSnapshotSource[SnapshotBody] = BookSnapshotSource(
+        {"BTCUSDT": eng}.get, lambda _s: STEPS, book_snapshot_body, stale=stalled.__contains__
+    )
+    sub = _sub()
+    fresh = (src.generation(sub), src.build(sub))
+    stalled.add("BTCUSDT")
+    flagged = (src.generation(sub), src.build(sub))
+    stalled.clear()
+    cleared = (src.generation(sub), src.build(sub))
+    assert all(body is not None for _, body in (fresh, flagged, cleared))
+    assert [b.stale for _, b in (fresh, flagged, cleared) if b is not None] == [False, True, False]
+    assert flagged[1] is not None and flagged[1].meta == {"stale": True}
+    assert fresh[0] < flagged[0] < cleared[0]  # never one value for two states
 
 
 async def test_generation_moves_with_every_book_change_and_never_goes_back() -> None:

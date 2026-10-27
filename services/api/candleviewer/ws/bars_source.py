@@ -13,11 +13,13 @@ reads no storage itself.
 - **Encodings.** Only the form the subscription receives is built. Binary: kind-4 frames at the
   `covering_scales` of the bars sent (no bars: one empty frame). The whole snapshot goes structured
   when the instrument scales are unknown or a value does not fit kind 4 (§3.4's trigger, logged).
-- **`stale`** (§7.2, #2195) while the series' builder is quarantined (`BarBuilderSet.quarantined`,
-  an O(1) bool), so `cv_ws_stale_topics_in_use` counts the topic and the snapshot carries
-  `meta.stale: true` (#3202): `SnapshotBody` derives the key from the flag, so it is the same in
-  either encoding and in every chunk, where `BarsBatch` (§14.3) has no field and kind 4 no flag
-  for it. `generation` is negated meanwhile, so the render cache refreshes on a quarantine.
+- **`stale`** (§7.2, #2195) while the injected `stale` holds: the series' builder is quarantined
+  (`BarBuilderSet.quarantined`, an O(1) bool) or, #2487, the symbol's trade feed is past the
+  watchdog's `trade` limit (`ws_wiring.series_stale`, an O(1) read). `cv_ws_stale_topics_in_use`
+  then counts the topic and the snapshot carries `meta.stale: true` (#3202): `SnapshotBody`
+  derives the key from the flag, so it is the same in either encoding and in every chunk, where
+  `BarsBatch` (§14.3) has no field and kind 4 no flag for it. `generation` is negated meanwhile,
+  so the render cache refreshes when the flag flips.
 - **Generation.** `generation` is the store's `version`, so the render cache refreshes on every
   change; `continuity` is False (§7.6). A build hands the generation it sent to `seed`
   (`BarsPublisher.note_generation`): it seeds an unseen series, and a baseline or seed in another
@@ -48,7 +50,7 @@ if TYPE_CHECKING:
 
 #: `(symbol, spec, generation)` of a built snapshot: `BarsPublisher.note_generation`.
 Seed = Callable[[str, BarSpec, int], None]
-#: `(symbol, spec_hash) -> bool`: `BarBuilderSet.quarantined`.
+#: `(symbol, spec_hash) -> bool`: `ws_wiring.series_stale` (quarantined, or the tape stalled).
 Stale = Callable[[str, str], bool]
 Item = dict[str, Any]
 

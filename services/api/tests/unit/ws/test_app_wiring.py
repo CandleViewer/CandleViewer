@@ -132,7 +132,7 @@ def test_bars_feature_on_lets_bars_topics_through() -> None:
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_source(
-    enabled: bool,
+    enabled: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """#2709-3: `bars_enabled` implies a `BarBuilderSet` lease service, `None` when off. #399 D2:
     store, publisher, then writer on the emit path; the store behind the snapshots and the hold.
@@ -151,7 +151,12 @@ def test_bars_feature_wires_the_lease_service_store_publisher_and_snapshot_sourc
     assert publisher._swap == "generation_swap"
     assert isinstance(source, BarsSnapshotSource) and source._store is svc.series
     assert (source._seed, source._scales) == (publisher.note_generation, publisher._scales)
-    assert source._stale == svc.bars.quarantined  # D3: a quarantined builder is `stale`
+    # #2487: `ws_wiring.series_stale`, one predicate for bars and indicators. No trade stream is
+    # wired here, so only D3's quarantine counts: a quarantined builder is `stale`.
+    assert source._stale is svc.snapshots._sources["indicators"]._stale
+    assert source._stale("BTCUSDT", "h") is False
+    monkeypatch.setattr(svc.bars._leases, "quarantined", lambda key: key == ("BTCUSDT", "h"))
+    assert source._stale("BTCUSDT", "h") is True
     assert isinstance(svc.snapshots._sources["book"], BookSnapshotSource)  # #2196's, kept
 
 
@@ -177,7 +182,7 @@ def test_bars_feature_wires_the_indicator_engine_fourth_with_its_publisher_and_s
     assert isinstance(engine._listener, IndicatorsPublisher)
     assert engine._listener._hub is svc.sequencing
     assert isinstance(source, IndicatorsSnapshotSource) and source._engine is engine
-    assert source._stale == svc.bars.quarantined
+    assert source._stale is svc.snapshots._sources["bars"]._stale  # #2487: `series_stale`
 
 
 def test_bar_emit_sink_errors_bound_and_help_cover_every_reason_the_wired_sinks_mint() -> None:

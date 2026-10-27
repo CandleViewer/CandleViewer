@@ -66,7 +66,7 @@ from candleviewer.ingestion.metrics import (
 from candleviewer.ingestion.planner import DEFAULT_GRACE_S, DemandTracker
 from candleviewer.ingestion.rejection import RejectionLog
 from candleviewer.ingestion.ticker_stream import UnknownSymbolError, uuid7
-from candleviewer.ingestion.watchdog import FeedHealthEvent, prune_unlisted
+from candleviewer.ingestion.watchdog import STALENESS_S, FeedHealthEvent, prune_unlisted
 from candleviewer.ingestion.write_behind import WriteBehindBuffer
 from candleviewer.observability.context import spawn
 
@@ -90,6 +90,8 @@ UNRECOVERED_WINDOWS_CAP = 16
 #: at the 60 s cap fit inside); a hole no page can reach would otherwise pin health for good.
 UNRECOVERED_RETENTION_S = 15 * GAP_RETRY_MAX_S
 _JITTER = random.SystemRandom().random
+#: #2487: the watchdog's trade limit, the freshness SLO of a symbol's tape (`is_stale`): no new one.
+TRADE_STALE_AFTER_S = STALENESS_S["trade"]
 
 
 class TradeWriter(Protocol):
@@ -201,6 +203,9 @@ class TradeStream:
         self._writer, self._cap, self._bf_timeout = writer, dedupe_capacity, backfill_timeout_s
         self._rings: dict[str, DedupeRing] = {}
         self._last_ts: dict[str, int] = {}  # last published ts_event per symbol
+        #: #2487: monotonic time of the symbol's last frame (the watchdog's touch), else of its
+        #: first demand, as the watchdog's `watch`: what `is_stale` ages.
+        self._frame_at: dict[str, float] = {}
         self._seq: dict[str, int] = {}
         self._gap_open: dict[str, tuple[int, str]] = {}  # symbol -> (start_us, reason)
         self._recent: dict[str, deque[TradeEvent]] = {}
@@ -236,6 +241,7 @@ class TradeStream:
         if not self._is_listed(symbol):
             raise UnknownSymbolError(symbol)
         self._demand.acquire(consumer, symbol)
+        self._frame_at.setdefault(symbol, self._clock())
         self.sync()
 
     def release(self, consumer: str, symbol: str) -> None:
@@ -248,6 +254,8 @@ class TradeStream:
         for gone in (set(self._rings) | set(self._unrecovered)) - wanted:
             for d in (self._rings, self._last_ts, self._gap_open, self._unrecovered):
                 d.pop(gone, None)  # a pending retry sees no windows and ends (#2715)
+        for gone in set(self._frame_at) - wanted:
+            del self._frame_at[gone]
 
     async def prune_unlisted(self) -> list[str]:
         """#1913: drop + unsubscribe symbols that left the catalogue."""
@@ -266,6 +274,13 @@ class TradeStream:
 
     def tick_size(self, symbol: str) -> Decimal | None:
         return self._tick_size(symbol)
+
+    def is_stale(self, symbol: str) -> bool:
+        """#2487: True unless `symbol` is demanded and its tape had a frame (or, none yet, its
+        demand began) within `TRADE_STALE_AFTER_S`: the watchdog's `trade` limit, aged from the
+        moment the watchdog is touched, on this stream's monotonic clock. A read, no side effect."""
+        at = self._frame_at.get(symbol)
+        return at is None or self._clock() - at >= TRADE_STALE_AFTER_S
 
     def recent(self, symbol: str) -> list[TradeEvent]:
         return list(self._recent.get(symbol, ()))
@@ -336,6 +351,7 @@ class TradeStream:
         if sym not in self._demand.desired():
             return
         self._touch(self._topic_for(sym))
+        self._frame_at[sym] = self._clock()
         ts_ingest = self._now_us()
         live = sorted(prints, key=lambda p: (p.ts_event_us, p.trade_id))
         if sym in self._hold:
