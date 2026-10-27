@@ -10,7 +10,7 @@ names (_A_'s `never` fields held at _B_'s), `defaults` then `overrides` laid ove
 `oms.sizing`'s overlay (ADR-0040), and judged beside _B_'s own leg (#2635) as `EntrySizer.judge`
 judges, but with `is_default` judged and unknown `*_after` counts left to the guard. A leg whose
 request values or alternate the comparator refuses, or whose overlay a cap clamped (sized, or
-failed `cap_breached`), is refused, never clamped; every leg is planned before `GroupRefused` names
+then failed), is refused, never clamped; every leg is planned before `GroupRefused` names
 each offending one (D6). Otherwise a leg is `blocked` by the first of its sizer's failure, a
 missing native stop (C-2.6), the comparator, its readiness and the guard (`guard.LegGuard`, handed
 the leg's profile with ADR-0040's cap rows 29 to 36 at `min(B, A)`; one that raises fails closed);
@@ -32,7 +32,7 @@ from pydantic import ValidationError
 
 from candleviewer.accounts import override_comparator as comparator
 from candleviewer.accounts.profiles import AccountProfile, TimeInForce
-from candleviewer.accounts.sizer import FailReason, LegSizing, SizingIntent, SizingMarket, size_leg
+from candleviewer.accounts.sizer import LegSizing, SizingIntent, SizingMarket, size_leg
 from candleviewer.accounts.sizer_metrics import SizerMetrics, size_leg_observed
 from candleviewer.accounts.trade_group_readiness import (
     ReadinessMember,
@@ -269,9 +269,9 @@ def _plan_leg(
         field = cap.cap if cap.cap in comparator.OVERRIDE_CLASS else "fixed_qty"  # R7's name
         found.append(comparator.Violation(field=field, rule="narrow_only", reason="above_limit",
                                           limit=cap.limit, requested=sized.raw_qty))  # fmt: skip
-    if sized.outcome != "ok":  # a clamp that failed the leg `cap_breached` refuses it too
+    if sized.outcome != "ok":  # a clamp that then failed the leg refuses it too
         status: LegStatus = "skipped" if sized.outcome == "skip" else "blocked"
-        clamped = tuple(found) if sized.reason is FailReason.CAP_BREACHED else ()
+        clamped = tuple(found)
         code = rejection_code(sized.reason, "figure_unknown")
         return replace(plan, status=status, reason=code), clamped
     stop, qty, ref = sized.stop, sized.qty, sized.ref_price
@@ -318,7 +318,7 @@ def _plan_leg(
         account_id=leg.account_id, environment=snapshot.environment, symbol=request.symbol,
         side=side, order_type=request.order_type, qty=qty, price=terms.price, trigger_price=None,
         reference_price=ref, reduce_only=False, intent="entry",
-        effect=ports.OrderEffect.ENTRY, stop_loss=stop.price, take_profit=tp,
+        effect=ports.OrderEffect.ENTRY, stop_loss=stop.price, take_profit=judged.take_profit_price,
     )  # fmt: skip
     sides = [p for p in (bound, alternate) if p is not None]  # ADR-0040 rows 29 to 36
     caps = {f: min((v for p in sides if (v := getattr(p, f)) is not None), default=None)

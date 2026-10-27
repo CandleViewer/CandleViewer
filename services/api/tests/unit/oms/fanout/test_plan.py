@@ -16,7 +16,7 @@ import pytest
 from structlog.testing import capture_logs
 
 import candleviewer.oms.fanout.plan as planner
-from candleviewer.accounts.override_comparator import ProfileNotFound, ResolvedLeg
+from candleviewer.accounts.override_comparator import OVERRIDE_CLASS, ProfileNotFound, ResolvedLeg
 from candleviewer.accounts.sizer_metrics import SizerMetrics, size_leg_observed
 from candleviewer.domain.primitives import AccountId, Environment
 from candleviewer.observability.metrics import Metrics
@@ -74,6 +74,7 @@ def _plan(
     unread: bool = False,
     off: tuple[UUID, ...] = (),
     guard: _Guard | None = None,
+    environment: Environment = "demo",
 ) -> tuple[GroupPlan | GroupRefused, list[UUID], _Ready]:
     reads: list[UUID] = []
 
@@ -84,7 +85,7 @@ def _plan(
     source = ready or _Ready()
     snapshot = planner.take_snapshot(
         [(leg.account_id, leg.account_id not in off) for leg in request.legs],
-        environment="demo", instrument=instrument(), mid=mid, last=None, figures=read,
+        environment=environment, instrument=instrument(), mid=mid, last=None, figures=read,
         readiness=source,
     )  # fmt: skip
     snapshot = replace(snapshot, readiness={}) if unread else snapshot  # no readiness was read
@@ -160,9 +161,10 @@ def test_skips_carry_their_reason_and_leave_other_legs_alone() -> None:
 def test_a_widening_refuses_the_whole_group_naming_every_offending_leg() -> None:
     """D6: A's 0.2 is clamped by the day's 500 USDT of loss, F's under the minimum by the 0.1 USDT
     left of it (its sizer fails `cap_breached`); C's stop and E's take-profit lie further than the
-    profile's: refused whole, naming all four (SR-E28-03/04). Unasked, a profile's own leg is only
-    blocked, by its comparator (B: an entry under `reduce_only_default`) or by a cap failing it
-    (F); a cap that clamps it is explained (C, ADR-0040: only the profile's own sizing clamps)."""
+    profile's: refused whole, naming all four (SR-E28-03/04); so is A's clamped size when it then
+    fails on margin. Unasked, a profile's own leg is only blocked, by its comparator (B: an entry
+    under `reduce_only_default`) or by a cap failing it (F); a cap that clamps it is explained (C,
+    ADR-0040: only the profile's own sizing clamps)."""
     big = LegTerms(sizing=ports.SizingRequest(mode="fixed_qty", qty=D("0.2")))
     further = LegTerms(stop_loss=ports.StopOffset(unit="price", value=D(56000)))
     far = LegTerms(take_profit=ports.StopOffset(unit="price", value=D(70000)))
@@ -177,6 +179,9 @@ def test_a_widening_refuses_the_whole_group_naming_every_offending_leg() -> None
     assert refused[2][1] == [("tp_offset_value", "narrow_only", "further_than_bound")]
     assert isinstance(plan, GroupRefused)
     assert [plan.legs[i].violations[0].requested for i in (0, 3)] == [D("0.2")] * 2
+    thin: dict[UUID, Any] = {A: figures(available_margin="500")}  # then fails on margin
+    margin, _, _ = _plan(_request(LegRequest(A, big)), {A: profile(A)}, known=thin)
+    assert _refused(margin) == [(0, [("max_daily_loss", "narrow_only", "above_limit")])]
     held = {A: profile(A), B: profile(B, reduce_only_default=True),
             C: profile(C, max_position_notional="300"), F: profile(F)}  # fmt: skip
     own, _, _ = _plan(_request(*map(LegRequest, held)), held, known=spent)
@@ -210,10 +215,17 @@ def test_an_alternate_profile_only_narrows(alternate: dict[str, Any], refused: A
     assert leg.profile is not None and leg.profile.fallback_sl_offset_pct == D("0.02")
 
 
+def test_an_alternates_held_fields_are_the_never_rows_but_its_identity() -> None:
+    """ADR-0040: _A_'s `never` rows, but its identity, are held at _B_'s (`enabled` among them)."""
+    identity = {"profile_id", "account_id", "name", "is_default", "version", "updated_at"}
+    assert planner._HELD == {f for f, row in OVERRIDE_CLASS.items() if row == "never"} - identity
+
+
 def test_the_guard_reads_the_legs_caps_at_the_tighter_of_bound_and_alternate() -> None:
     """ADR-0040 rows 29 to 36: _A_ only tightens _B_'s caps, a `None` being no value from its
     side, so the guard reads _B_'s cap where _A_'s is looser and _A_'s where it is tighter."""
-    looser = {"max_open_positions": 50, "max_leverage_cap": D(20)}
+    looser = {"max_open_positions": 50, "max_leverage_cap": D(20), "max_concurrent_orders": 50,
+              "max_position_notional": D(30000), "max_position_pct_equity": D("0.9")}  # fmt: skip
     tighter = {"max_daily_loss": D(400), "max_daily_loss_pct": D("0.01"),
                "max_orders_per_minute": 30}  # fmt: skip
     other = profile(A, profile_id=ALT, is_default=False, fixed_qty="0.005", **looser, **tighter)
@@ -222,14 +234,16 @@ def test_the_guard_reads_the_legs_caps_at_the_tighter_of_bound_and_alternate() -
     assert _rows(plan) == [("ready", None, D("0.005"))]
     [(_, seen)] = guard.seen
     assert (seen.profile_id, seen.fixed_qty) == (ALT, D("0.005"))
-    caps = {"max_open_positions": 1, "max_leverage_cap": D(10)} | tighter
-    assert {f: getattr(seen, f) for f in caps} == caps
+    caps = {"max_open_positions": 1, "max_leverage_cap": D(10), "max_concurrent_orders": 5,
+            "max_position_notional": D(20000), "max_position_pct_equity": D("0.5")}  # fmt: skip
+    assert {f: getattr(seen, f) for f in caps | tighter} == caps | tighter
 
 
 def test_a_legs_terms_are_its_side_type_layers_and_profiles() -> None:
     """A hedge sell is index 2, its stop above entry; a market buy is sized from the mid, the
-    guard seeing it so, its unnamed terms the profile's time-in-force, `Full` and one-way's index;
-    `overrides` win over `defaults` member by member, the guard handed each leg's own profile."""
+    guard seeing it so, on the snapshot's environment (live) and with the take-profit sent, its
+    unnamed terms the profile's time-in-force, `Full` and one-way's index; `overrides` win over
+    `defaults` member by member, the guard handed each leg's own profile."""
     sell, _, _ = _plan(replace(_request(LegRequest(A)), side="sell"),
                        {A: profile(A, position_mode="hedge")})  # fmt: skip
     [leg] = _sent(sell)
@@ -237,10 +251,11 @@ def test_a_legs_terms_are_its_side_type_layers_and_profiles() -> None:
     guard = _Guard()
     market = replace(_request(LegRequest(A), price=None), order_type="market")
     fok = {A: profile(A, time_in_force_default="FOK")}
-    plan, _, _ = _plan(market, fok, mid=D(60000), guard=guard)
+    plan, _, _ = _plan(market, fok, mid=D(60000), guard=guard, environment="live")
     assert _rows(plan) == [("ready", None, D("0.01"))]
     [(order, _)], [leg] = guard.seen, _sent(plan)
     assert (order.order_type, order.price, order.reference_price) == ("market", None, D(60000))
+    assert (order.environment, order.qty, order.take_profit) == ("live", D("0.01"), D(66000))
     assert (leg.time_in_force, leg.tpsl_mode, leg.position_idx) == ("FOK", "Full", 0)
     guard = _Guard()
     lower = LegRequest(B, LegTerms(leverage=D(3), time_in_force="IOC"))
