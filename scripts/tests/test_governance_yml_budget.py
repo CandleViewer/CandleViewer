@@ -10,8 +10,10 @@ time stays in each summary as an informational row. `governance-checks` is uncha
 are its job, and it still budgets the job wall time.
 
 The cases run the steps' own scripts as the runner does (`bash -e`), with the step outputs in the
-environment and a stand-in `python` first on PATH: provisioning latency passes, suite growth still
-fails with the E01-Q02 error, and a run that recorded no time fails instead of passing unmeasured.
+environment and stand-ins for `python` and `date` first on PATH; the stand-in clock replays fixed
+readings, so every time a step records or reports is exact. Provisioning latency passes, suite
+growth still fails with the E01-Q02 error, so does a time too large for bash's integers, and a run
+that recorded no time fails instead of passing unmeasured.
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import os
 import re
 import shutil
 import subprocess
-import time
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -62,6 +64,17 @@ case "$1 ${2-} ${3-}" in
 esac
 """
 
+# The steps' `date`, stood in: each `date +%s%N` prints the next of the clock's readings, in order.
+FAKE_DATE = r"""
+[ "$*" = "+%s%N" ] || { echo "unexpected date call: $*" >&2; exit 99; }
+reading=$(head -n 1 "$FAKE_CLOCK")
+[ -n "$reading" ] || { echo "the stand-in clock has no reading left" >&2; exit 99; }
+tail -n +2 "$FAKE_CLOCK" > "$FAKE_CLOCK.rest" && mv "$FAKE_CLOCK.rest" "$FAKE_CLOCK"
+printf '%s\n' "$reading"
+"""
+T0 = 1_793_000_000_000_000_000  # the clock's first reading, ns: 2026-10-26 07:33:20Z
+NS_PER_S = 1_000_000_000
+
 
 class Ran(NamedTuple):
     """A step's script, run: its exit code, its log, the outputs it wrote to $GITHUB_OUTPUT, the
@@ -86,12 +99,19 @@ def _step(job: str, step_id: str) -> dict[str, Any]:
 
 
 def _run(
-    tmp_path: Path, job: str, step: dict[str, Any], values: dict[str, str], **fake: str
+    tmp_path: Path,
+    job: str,
+    step: dict[str, Any],
+    values: Mapping[str, str | None],
+    *,
+    clock: tuple[int, ...],
+    **fake: str,
 ) -> Ran:
     """Run `step`'s script as the runner does (`bash -e`) in a new directory under `tmp_path`,
-    with the stand-in python first on PATH. The step's literal env values come from the workflow
-    and its `${{ }}` ones from `values`, which must name exactly those; a step output that was
-    never written reads ''."""
+    with the stand-in python and date first on PATH; the step's `date +%s%N` calls read `clock`.
+    The step's literal env values come from the workflow and its `${{ }}` ones from `values`,
+    which must name exactly those (None leaves one unset); a step output that was never written
+    reads ''."""
     bash = shutil.which("bash")
     if bash is None:  # CI must run these fail-closed proofs
         if os.environ.get("CI"):
@@ -102,18 +122,20 @@ def _run(
     assert sorted(values) == expressions, f"{step.get('name')}: feed exactly {expressions}"
     work = tmp_path / f"run{len(list(tmp_path.iterdir()))}"
     (work / "bin").mkdir(parents=True)
-    python = work / "bin" / "python"
-    python.write_text(f"#!{bash}{FAKE_PYTHON}", encoding="utf-8")
-    python.chmod(0o755)
+    for name, script in (("python", FAKE_PYTHON), ("date", FAKE_DATE)):
+        stand_in = work / "bin" / name
+        stand_in.write_text(f"#!{bash}{script}", encoding="utf-8")
+        stand_in.chmod(0o755)
+    (work / "clock").write_text("".join(f"{ns}\n" for ns in clock), encoding="utf-8")
     env = {
-        **declared,
-        **values,
+        **{key: value for key, value in {**declared, **values}.items() if value is not None},
         "PATH": f"{work / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
         "HOME": str(work),
         "GITHUB_JOB": job,
         "GITHUB_OUTPUT": str(work / "output"),
         "GITHUB_STEP_SUMMARY": str(work / "summary"),
         "FAKE_LOG": str(work / "calls"),
+        "FAKE_CLOCK": str(work / "clock"),
         **fake,
     }
     proc = subprocess.run(  # noqa: S603 - the workflow's own step text, in a scratch directory
@@ -140,12 +162,12 @@ def _budget(tmp_path: Path, job: str, *, job_s: int, measured: str = "") -> Ran:
     that recorded `measured` ms ('' when its step wrote no output)."""
     step = _steps(job)[-1]
     assert step["name"] == BUDGET, job
-    values = {"START_NS": str(time.time_ns() - job_s * 1_000_000_000)}
+    values = {"START_NS": str(T0)}
     if job == "governance-tests":
         values |= {"SHARD": "3", "TOTAL": "6", "TEST_FILES": "21"}
     if job in MEASURED:
         values[MEASURED[job].env] = measured
-    return _run(tmp_path, job, step, values)
+    return _run(tmp_path, job, step, values, clock=(T0 + job_s * NS_PER_S,))
 
 
 def _row(summary: str, metric: str) -> str:
@@ -158,6 +180,17 @@ def _errors(log: str) -> list[str]:
     return [line for line in log.splitlines() if line.startswith("::error")]
 
 
+def _notices(log: str) -> list[str]:
+    return [line for line in log.splitlines() if line.startswith("::notice")]
+
+
+def _notice(job: str, measured: str, job_s: int) -> str:
+    """The notice `_budget`'s run of `job` writes once its time is measured: both times."""
+    title = f"{job} shard 3/6 duration" if job == "governance-tests" else f"{job} duration"
+    budgeted = f"{MEASURED[job].noun} {measured}ms (budget 90000ms)"
+    return f"::notice title={title}::{budgeted}; job wall time {job_s * 1000}ms, not budgeted"
+
+
 @pytest.mark.parametrize("job", list(MEASURED))
 def test_budget_provisioning_latency_under_contention_passes_and_reports_both_times(
     tmp_path: Path, job: str
@@ -166,19 +199,26 @@ def test_budget_provisioning_latency_under_contention_passes_and_reports_both_ti
     ran = _budget(tmp_path, job, job_s=150, measured="60000")
     assert ran.code == 0, ran.log
     assert _errors(ran.log) == []
+    assert _notices(ran.log) == [_notice(job, "60000", job_s=150)]  # both times, on every run
     assert _row(ran.summary, MEASURED[job].row) == "60000"
-    assert 150_000 <= int(_row(ran.summary, JOB_WALL)) < 170_000  # reported, not judged
+    assert _row(ran.summary, JOB_WALL) == "150000"  # reported, not judged
     assert _row(ran.summary, "budget (ms)") == "90000"
 
 
 @pytest.mark.parametrize("job", list(MEASURED))
-def test_budget_run_past_budget_ms_fails_with_the_e01_q02_error(tmp_path: Path, job: str) -> None:
-    # Scenario 2, the canary: a run past the budget fails the job, as the job's own time did.
-    ran = _budget(tmp_path, job, job_s=95, measured="90001")
+@pytest.mark.parametrize("measured", ["90001", str(10**19)], ids=["just-past", "20-digits"])
+def test_budget_run_past_budget_ms_fails_with_the_e01_q02_error(
+    tmp_path: Path, job: str, measured: str
+) -> None:
+    # Scenario 2, the canary: a run past the budget fails the job, as the job's own time did. A
+    # 20-digit time is past bash's 64-bit integers, so `[` errors on it, and the budget must read
+    # that error as a fail: `if [ "$X" -gt "$BUDGET_MS" ]` reads it as false and passes the job.
+    ran = _budget(tmp_path, job, job_s=95, measured=measured)
     assert ran.code == 1, ran.log
+    assert _notices(ran.log) == [_notice(job, measured, job_s=95)]
     noun = MEASURED[job].noun
     assert _errors(ran.log) == [
-        f"::error title={job} job over budget::{noun} 90001ms exceeds 90000ms {E01_Q02}"
+        f"::error title={job} job over budget::{noun} {measured}ms exceeds 90000ms {E01_Q02}"
     ]
 
 
@@ -200,7 +240,7 @@ def test_budget_run_that_recorded_no_time_fails_instead_of_passing_unmeasured(
     ran = _budget(tmp_path, job, job_s=0, measured=measured)
     assert ran.code == 1, ran.log
     assert _row(ran.summary, MEASURED[job].row) == (measured or "n/a")  # still reported
-    assert int(_row(ran.summary, JOB_WALL)) >= 0
+    assert _row(ran.summary, JOB_WALL) == "0"
     (error,) = _errors(ran.log)
     assert error.startswith(f"::error title={job} budget not measured::") and E01_Q02 in error
 
@@ -220,19 +260,22 @@ def test_budget_aggregate_reads_the_combine_steps_own_time() -> None:
     assert [step.get("id") for step in steps].count("combine") == 1
     last = steps[-1]
     assert last["env"]["COMBINE_MS"] == "${{ steps.combine.outputs.combine_ms }}"
-    assert 'if [ "$COMBINE_MS" -gt "$BUDGET_MS" ]; then' in last["run"]
+    assert 'if ! [ "$COMBINE_MS" -le "$BUDGET_MS" ]; then' in last["run"]
 
 
 @pytest.mark.parametrize("pytest_exit", [0, 1], ids=["green", "red"])
 def test_pytest_step_records_its_wall_time_whether_or_not_the_tests_pass(
     tmp_path: Path, pytest_exit: int
 ) -> None:
-    # The shard budget's measurement, taken around the pytest call alone.
+    # The shard budget's measurement, taken around the pytest call alone: 14.25 s on the clock.
     step = _step("governance-tests", "pytest")
     values = {"COVERAGE_FILE": "coverage-shard-3", "SHARD": "3", "TOTAL": "6"}
-    ran = _run(tmp_path, "governance-tests", step, values, PYTEST_EXIT=str(pytest_exit))
+    clock = (T0, T0 + 14_250_000_000)
+    ran = _run(
+        tmp_path, "governance-tests", step, values, clock=clock, PYTEST_EXIT=str(pytest_exit)
+    )
     assert ran.code == pytest_exit, ran.log
-    assert re.fullmatch(r"\d+", ran.outputs["pytest_ms"]) and ran.outputs["test_files"] == "2"
+    assert ran.outputs == {"pytest_ms": "14250", "test_files": "2"}
     assert [call.split()[:2] for call in ran.calls] == [
         ["tools/ci/governance_shards.py", "3"],
         ["-m", "pytest"],
@@ -256,7 +299,8 @@ def test_combine_step_records_its_wall_time_on_every_exit_and_keeps_its_gate(
     code: int,
     verbs: list[str],
 ) -> None:
-    # The aggregate budget's measurement; the 85% gate's exit status passes through untouched.
+    # The aggregate budget's measurement, 1.951 s on the clock; the 85% gate's exit status passes
+    # through untouched.
     coverage = tmp_path / "coverage"
     coverage.mkdir()
     for shard in range(1, shard_files + 1):
@@ -266,9 +310,20 @@ def test_combine_step_records_its_wall_time_on_every_exit_and_keeps_its_gate(
         "governance",
         _step("governance", "combine"),
         {"COV_DIR": str(coverage)},
+        clock=(T0, T0 + 1_951_000_000),
         COMBINE_EXIT=str(combine_exit),
         REPORT_EXIT=str(report_exit),
     )
     assert ran.code == code, ran.log
-    assert re.fullmatch(r"\d+", ran.outputs.get("combine_ms", "")), ran.outputs
+    assert ran.outputs == {"combine_ms": "1951"}
     assert [call.split()[2] for call in ran.calls] == verbs
+
+
+def test_combine_step_stopped_by_set_u_still_records_its_wall_time(tmp_path: Path) -> None:
+    # A shell error stops the step before the gate runs (`set -u`, on an unset COV_DIR); the trap
+    # still records the time, and the step still fails.
+    step = _step("governance", "combine")
+    ran = _run(tmp_path, "governance", step, {"COV_DIR": None}, clock=(T0, T0 + 1_951_000_000))
+    assert (ran.code, ran.calls) == (1, []), ran.log
+    assert "COV_DIR: unbound variable" in ran.log
+    assert ran.outputs == {"combine_ms": "1951"}

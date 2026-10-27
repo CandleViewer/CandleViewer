@@ -284,7 +284,7 @@ def test_the_shard_job_summary_names_the_shard_and_the_pytest_wall_time() -> Non
     assert "| pytest wall time (ms), budgeted |" in last["run"]
     assert "shard ${SHARD}/${TOTAL}" in last["run"]
     # #4666: the budget judges the suite's own time, not the job's (test_governance_yml_budget.py)
-    assert 'if [ "$PYTEST_MS" -gt "$BUDGET_MS" ]; then' in last["run"]
+    assert 'if ! [ "$PYTEST_MS" -le "$BUDGET_MS" ]; then' in last["run"]
 
 
 def test_the_aggregate_combines_exactly_one_coverage_file_per_shard() -> None:
