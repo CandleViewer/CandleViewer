@@ -72,6 +72,8 @@ export interface ShellState {
   readonly latency: LatencyIndicator;
   /** The CMP-092 rows' facts; `degradedIssues(degraded)` lists the rows. */
   readonly degraded: DegradedFacts;
+  /** `connection` has been `live` this session; a later `connecting` is a loss, not the boot. */
+  readonly everLive: boolean;
 }
 
 const INITIAL_BOOTSTRAP: BootstrapPhase = { kind: "loading" };
@@ -89,6 +91,7 @@ export const INITIAL_SHELL_STATE: ShellState = Object.freeze({
   systemByKind: Object.freeze({}),
   latency: toLatencyIndicator(null),
   degraded: INITIAL_DEGRADED_FACTS,
+  everLive: false,
 });
 
 let state: ShellState = INITIAL_SHELL_STATE;
@@ -123,6 +126,8 @@ export function subscribeShellState(listener: () => void): () => void {
 
 export function setShellState(patch: Partial<ShellState>): void {
   state = { ...state, ...patch };
+  // Latched on the first live link; only `resetShellState` (logout, a stopped shell) clears it.
+  if (patch.connection?.kind === "live" && !state.everLive) state = { ...state, everLive: true };
   for (const listener of listeners) listener();
 }
 
