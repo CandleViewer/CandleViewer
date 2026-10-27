@@ -2524,7 +2524,9 @@ class OmsRuntime:
             tiers: TierRequests = NO_TIER_REQUESTS
             if catalogue is not None:
                 bridge = ServedTierRequests(catalogue, serving, metrics)
-                closers.append(("tier_requests", bridge.close))
+                # before the environment's lock, whose release the stop keeps last (#913 L2)
+                at_lock = [name for name, _ in closers].index("environment_lock")
+                closers.insert(at_lock, ("tier_requests", bridge.close))
                 tiers = bridge
             deps = SubmissionDeps(
                 accounts=accounts,
@@ -2572,7 +2574,8 @@ class OmsRuntime:
             beating = spawn(heartbeat.run(), name="oms-lane-heartbeat")
             beating.add_done_callback(functools.partial(_heartbeat_ended, self._pager))
             # it watches the lock until the lock's own closer, the last, releases it
-            closers.insert(len(closers) - 1, ("heartbeat", lambda: lane.call(_cancelled(beating))))
+            at_lock = [name for name, _ in closers].index("environment_lock")
+            closers.insert(at_lock, ("heartbeat", lambda: lane.call(_cancelled(beating))))
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
