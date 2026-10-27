@@ -6,8 +6,9 @@ compared the job's wall time, checkout, installs and artifact transfers included
 2026-10-26 (run 40398652820) shard 1/6 failed at 101 s of job wall time, 66 s of it checkout and
 14 s its pytest step. Each shard now budgets its pytest wall time (the pytest step's `pytest_ms`)
 and `governance` its combine step (the combine step's `combine_ms`); the job wall time stays in
-each summary as an informational row. `governance-checks` still budgets its job wall time, a
-known residual (#4693).
+each summary as an informational row. #4693: `governance-checks` budgets its checks' own span
+(the span step's `checks_ms`, from after its installs to its last report), not its job wall time,
+which on run 40330181950 was 191 s with 171 s of it checkout.
 
 The cases run the steps' own scripts as the runner does (`bash -e`), with the step outputs in the
 environment and stand-ins for `python` and `date` first on PATH; the stand-in clock replays fixed
@@ -50,6 +51,9 @@ MEASURED = {
         "PYTEST_MS", "pytest wall time (ms), budgeted", "pytest wall time"
     ),
     "governance": Measured("COMBINE_MS", "combine wall time (ms), budgeted", "combine wall time"),
+    "governance-checks": Measured(
+        "CHECKS_MS", "checks wall time (ms), budgeted", "checks wall time"
+    ),
 }
 
 # The steps' `python`, stood in: logs each call, lists a two-file shard, exits as the case says.
@@ -245,14 +249,45 @@ def test_budget_run_that_recorded_no_time_fails_instead_of_passing_unmeasured(
     assert error.startswith(f"::error title={job} budget not measured::") and E01_Q02 in error
 
 
-@pytest.mark.parametrize(("job_s", "fails"), [(0, False), (91, True)])
-def test_budget_checks_job_still_judges_its_job_wall_time(
-    tmp_path: Path, job_s: int, fails: bool
+def test_checks_span_runs_from_after_the_installs_to_the_last_report() -> None:
+    # #4693: the span opens once checkout, setup and the installs are done, and closes after the
+    # last report and before the reports' upload, so provisioning and transfers stay unjudged.
+    names = [str(step.get("name", step.get("uses", ""))) for step in _steps("governance-checks")]
+    ids = [step.get("id") for step in _steps("governance-checks")]
+    opened, closed = ids.index("checks_start"), ids.index("checks_span")
+    assert names[opened - 1].startswith("Install check dependencies")
+    assert names[closed - 1] == "Generate backlog per-epic summary (artefact)"
+    assert names[closed + 1].startswith("actions/upload-artifact@")
+    assert names[closed + 2 :] == [BUDGET]  # the budget step stays last
+    last = _steps("governance-checks")[-1]
+    assert last["env"]["CHECKS_MS"] == "${{ steps.checks_span.outputs.checks_ms }}"
+    assert 'if ! [ "$CHECKS_MS" -le "$BUDGET_MS" ]; then' in last["run"]
+
+
+@pytest.mark.parametrize(
+    ("start", "outputs"),
+    [
+        pytest.param(str(T0), {"checks_ms": "42500"}, id="measured"),
+        pytest.param(None, {}, id="never-started"),
+        pytest.param("n/a", {}, id="not-a-time"),
+    ],
+)
+def test_checks_span_step_records_its_wall_time_only_from_a_measured_start(
+    tmp_path: Path, start: str | None, outputs: dict[str, str]
 ) -> None:
-    # Unchanged by #4666: that job still budgets its job wall time, a known residual (#4693).
-    ran = _budget(tmp_path, "governance-checks", job_s=job_s)
-    assert ran.code == int(fails), ran.log
-    assert bool(_errors(ran.log)) == fails
+    # 42.5 s on the clock since the span opened; a span that never opened writes nothing, which
+    # the budget step then fails as unmeasured, and the span step itself never fails the job.
+    step = _step("governance-checks", "checks_span")
+    assert step["if"] == "always()"
+    ran = _run(
+        tmp_path,
+        "governance-checks",
+        step,
+        {"START_NS": start},
+        clock=(T0 + 42_500_000_000,),
+    )
+    assert ran.code == 0, ran.log
+    assert ran.outputs == outputs
 
 
 def test_budget_aggregate_reads_the_combine_steps_own_time() -> None:
