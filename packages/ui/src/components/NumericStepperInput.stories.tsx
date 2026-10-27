@@ -227,6 +227,26 @@ const cells = (
       onChange={fn()}
     />
     <Controlled
+      label="Invalid and read only"
+      value={1}
+      step={0.1}
+      precision={1}
+      invalid
+      errorMessage="Minimum 0.0"
+      readOnly
+      onChange={fn()}
+    />
+    <Controlled
+      label="Invalid and disabled"
+      value={1}
+      step={0.1}
+      precision={1}
+      invalid
+      errorMessage="Minimum 0.0"
+      disabled
+      onChange={fn()}
+    />
+    <Controlled
       label="Compact"
       value={1}
       step={0.1}

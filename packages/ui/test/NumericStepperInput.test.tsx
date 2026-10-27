@@ -268,6 +268,8 @@ describe("NumericStepperInput typed text", () => {
     expect(host.querySelector(".cv-field")).toHaveAttribute("data-invalid");
     expect(log).toEqual([]);
     await userEvent.type(el, "{Backspace}");
+    expect(el).toHaveAttribute("aria-invalid", "true");
+    await type(el, "2");
     expect(el).not.toHaveAttribute("aria-invalid");
   });
 
@@ -312,15 +314,141 @@ describe("NumericStepperInput typed text", () => {
     described(el, "");
   });
 
-  it("empty text reverts to the value without an error; Enter commits only an edit", async () => {
-    const host = await mount(<Stepper start={1} />);
+  it("empty text is invalid on blur (Enter a number.), never a silent revert; Enter commits only an edit", async () => {
+    const log: string[] = [];
+    const host = await mount(<Stepper start={1} log={log} />);
     const el = field(host);
-    await userEvent.clear(el);
-    await userEvent.tab();
-    expect(el).toHaveValue("1.0");
-    expect(el).not.toHaveAttribute("aria-invalid");
     await userEvent.click(el);
     await key(el, { key: "Enter" });
+    expect(el).not.toHaveAttribute("aria-invalid");
+    await userEvent.clear(el);
+    await userEvent.tab();
+    expect(el).toHaveValue("");
+    expect(el).toHaveAttribute("aria-invalid", "true");
+    described(el, "Enter a number.");
+    expect(log).toEqual([]);
+  });
+
+  it("an error stays, with the same words, while the text is still invalid, and is not spoken again on blur", async () => {
+    const host = await mount(<Stepper start={0.5} min={0} />);
+    const el = field(host);
+    const message = host.querySelector("[aria-live]") as HTMLElement;
+    const spoken: string[] = [];
+    const watch = new MutationObserver(() => spoken.push(message.textContent ?? ""));
+    watch.observe(message, { childList: true, characterData: true, subtree: true });
+    await userEvent.clear(el);
+    await userEvent.type(el, "-5");
+    await userEvent.tab();
+    described(el, "Minimum 0.0");
+    const heard = spoken.length;
+    await userEvent.click(el);
+    await userEvent.type(el, "6");
+    expect(el).toHaveValue("-56");
+    expect(el).toHaveAttribute("aria-invalid", "true");
+    described(el, "Minimum 0.0");
+    await userEvent.tab();
+    expect(el).toHaveAttribute("aria-invalid", "true");
+    described(el, "Minimum 0.0");
+    expect(spoken.length).toBe(heard);
+    await userEvent.click(el);
+    await type(el, "6");
+    expect(el).not.toHaveAttribute("aria-invalid");
+    described(el, "");
+    watch.disconnect();
+  });
+
+  it("while an error shows, the message follows the text (Minimum, then Enter a number.)", async () => {
+    const host = await mount(<Stepper start={1} min={0} max={9} />);
+    const el = field(host);
+    await type(el, "-1");
+    await userEvent.tab();
+    described(el, "Minimum 0.0");
+    await userEvent.click(el);
+    await userEvent.type(el, "{Backspace}{Backspace}{Backspace}");
+    described(el, "Enter a number.");
+    await userEvent.type(el, "-3");
+    described(el, "Minimum 0.0");
+  });
+
+  it("an off-grid bound is shown as given, an on-grid one at the precision", async () => {
+    const host = await mount(<Stepper start={1} min={0.05} />);
+    const el = field(host);
+    await type(el, "0");
+    await userEvent.tab();
+    described(el, "Minimum 0.05");
+  });
+
+  it("while a draft is pending Home and End are caret keys, not steps", async () => {
+    const log: string[] = [];
+    const host = await mount(<Stepper start={1} min={0.5} max={3} log={log} />);
+    const el = field(host);
+    await type(el, "12");
+    expect(await key(el, { key: "Home" })).toBe(true);
+    expect(await key(el, { key: "End", shiftKey: true })).toBe(true);
+    expect(el).toHaveValue("12");
+    expect(log).toEqual([]);
+  });
+
+  it("a caption earned by an old value does not come back when the host returns to it", async () => {
+    const Moves = (): JSX.Element => {
+      const [v, setV] = useState(1);
+      return (
+        <>
+          <NumericStepperInput label="Qty" step={0.1} precision={1} value={v} onChange={setV} />
+          <button type="button" onClick={() => setV((x) => (x === 1.1 ? 7 : 1.1))}>
+            swing
+          </button>
+        </>
+      );
+    };
+    const host = await mount(<Moves />);
+    const el = field(host);
+    await type(el, "1.14{Enter}");
+    described(el, "(rounded to nearest tick)");
+    await userEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("7.0");
+    described(el, "");
+    await userEvent.click(within(host).getByRole("button", { name: "swing" }));
+    expect(el).toHaveValue("1.1");
+    described(el, "");
+  });
+
+  it("aria-valuetext follows the shown text while an edit is pending, with the unit", async () => {
+    const host = await mount(<Stepper start={5} step={1} precision={0} suffix="%" />);
+    const el = field(host);
+    await type(el, "7");
+    expect(el).toHaveAttribute("aria-valuetext", "7 %");
+    expect(el).toHaveAttribute("aria-valuenow", "5");
+    const plain = await mount(<Stepper start={5} label="P" />);
+    const other = within(plain).getByRole("spinbutton", { name: "P" });
+    await type(other, "7");
+    expect(other).toHaveAttribute("aria-valuetext", "7");
+  });
+
+  it("a draft is discarded, not committed, when the field becomes gated mid-edit", async () => {
+    const log: string[] = [];
+    const Gates = (): JSX.Element => {
+      const [gated, setGated] = useState(false);
+      return (
+        <>
+          <Stepper log={log} start={1} {...(gated ? { disabledReason: REASON } : {})} />
+          <button type="button" onClick={() => setGated(true)}>
+            gate
+          </button>
+        </>
+      );
+    };
+    const host = await mount(<Gates />);
+    const el = field(host);
+    await type(el, "2");
+    await act(async () => {
+      within(host).getByRole("button", { name: "gate" }).click();
+    });
+    await act(async () => {
+      el.focus();
+      el.blur();
+    });
+    expect(log).toEqual([]);
     expect(el).toHaveValue("1.0");
   });
 
@@ -376,8 +504,8 @@ describe("NumericStepperInput states", () => {
     await userEvent.tab();
     expect(el).toHaveFocus();
     expect(status).toHaveTextContent("");
-    expect(await key(el, { key: "Home" })).toBe(true);
     expect(await key(el, { key: "ArrowUp", ctrlKey: true })).toBe(true);
+    expect(await key(el, { key: "Home", ctrlKey: true })).toBe(true);
     expect(status).toHaveTextContent("");
     for (const init of [
       { key: "ArrowUp" },
@@ -392,6 +520,29 @@ describe("NumericStepperInput states", () => {
     expect(log).toEqual([]);
     await userEvent.tab();
     expect(status).toHaveTextContent("");
+  });
+
+  it("T2: Home and End are refused and announced when their bound is set, free when it is not", async () => {
+    const host = await mount(
+      <>
+        <Stepper start={1} min={0.5} disabledReason={REASON} label="MinOnly" />
+        <Stepper start={1} max={3} disabledReason={REASON} label="MaxOnly" />
+        <Stepper start={1} disabledReason={REASON} label="None" />
+      </>,
+    );
+    const open = within(host).getAllByRole("status");
+    const pick = (n: string): HTMLElement => within(host).getByRole("spinbutton", { name: n });
+    expect(await key(pick("MinOnly"), { key: "End" })).toBe(true);
+    expect(open[0]).toHaveTextContent("");
+    expect(await key(pick("MinOnly"), { key: "Home" })).toBe(false);
+    expect(open[0]).toHaveTextContent(REASON);
+    expect(await key(pick("MaxOnly"), { key: "Home" })).toBe(true);
+    expect(await key(pick("MaxOnly"), { key: "End" })).toBe(false);
+    expect(open[1]).toHaveTextContent(REASON);
+    expect(await key(pick("None"), { key: "Home" })).toBe(true);
+    expect(await key(pick("None"), { key: "End" })).toBe(true);
+    expect(open[2]).toHaveTextContent("");
+    expect(pick("MinOnly")).toHaveValue("1.0");
   });
 
   it("T2: Enter and printable keys are refused and never submit the form", async () => {

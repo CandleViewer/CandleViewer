@@ -78,4 +78,4 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Ctrl, Alt or Meta with any of these                  | Not handled: the browser or the host keeps it.                                                              |
 | Typing                                               | Edits the text; parsed, rounded and range-checked on blur or Enter, never clamped (out of range = invalid). |
 | Enter                                                | Commits the typed text; the form's implicit submission is the host's (not with a reason).                   |
-| Up, Down, Page Up, Page Down, Enter, typing (reason) | Changes nothing; the first one of a focus visit announces the reason once. Home, End and copy stay free.    |
+| Up, Down, Page, Home, End, Enter, or typing (reason) | Changes nothing; the first of a focus visit announces the reason once. Home/End only if a bound is set.     |
