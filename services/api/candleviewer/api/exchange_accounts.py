@@ -243,7 +243,7 @@ def _unavailable(exc: Exception) -> JSONResponse:
     return problem("store_unavailable", "The account store is unavailable.")
 
 
-_NO_ACCOUNT: Final = "No such exchange account."  # one text: a 404 is no existence oracle
+_NO_ACCOUNT: Final = "No such exchange account."  # one text for absent and foreign
 
 
 def _number(value: Decimal) -> str:

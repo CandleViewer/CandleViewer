@@ -226,7 +226,7 @@ def test_absent_and_other_environment_accounts_are_one_404(served: Served) -> No
     world, _ = served
     absent, other = get(world, ABSENT), get(world, OTHER_ENV)
     assert (absent.status_code, answer(absent)["code"]) == (404, "not_found")
-    assert absent.content == other.content  # byte for byte: no existence oracle (C-2.11)
+    assert absent.content == other.content  # byte for byte (C-2.11)
 
 
 def test_a_scoped_holder_of_accounts_write_reaches_only_its_granted_account(
