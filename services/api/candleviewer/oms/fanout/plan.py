@@ -9,11 +9,12 @@ it out; else it is sized by its bound profile _B_ (the account's default) or the
 names (_A_'s `never` fields held at _B_'s), `defaults` then `overrides` laid over through
 `oms.sizing`'s overlay (ADR-0040), and judged beside _B_'s own leg (#2635) as `EntrySizer.judge`
 judges, but with `is_default` judged and unknown `*_after` counts left to the guard. A leg whose
-request values or alternate the comparator refuses, or whose overlay a cap clamped, is refused,
-never clamped; every leg is planned before `GroupRefused` names each offending one (D6).
-Otherwise a leg is `blocked` by the first of its sizer's failure, a missing native stop (C-2.6),
-the comparator, its readiness and the guard; else `ready`, or `warn` when its stop fell back. Logs
-carry ids and codes only (C-12.6).
+request values or alternate the comparator refuses, or whose overlay a cap clamped (sized, or
+failed `cap_breached`), is refused, never clamped; every leg is planned before `GroupRefused` names
+each offending one (D6). Otherwise a leg is `blocked` by the first of its sizer's failure, a
+missing native stop (C-2.6), the comparator, its readiness and the guard (`guard.LegGuard`, handed
+the leg's profile with ADR-0040's cap rows 29 to 36 at `min(B, A)`; one that raises fails closed);
+else `ready`, or `warn` when its stop fell back. Logs carry ids and codes only (C-12.6).
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, fields, replace
 from decimal import Context, Decimal, localcontext
 from types import MappingProxyType
-from typing import Any, Final, Literal, Protocol, cast, get_args
+from typing import Any, Final, Literal
 from uuid import UUID
 
 import structlog
@@ -31,7 +32,7 @@ from pydantic import ValidationError
 
 from candleviewer.accounts import override_comparator as comparator
 from candleviewer.accounts.profiles import AccountProfile, TimeInForce
-from candleviewer.accounts.sizer import LegSizing, SizingIntent, SizingMarket, size_leg
+from candleviewer.accounts.sizer import FailReason, LegSizing, SizingIntent, SizingMarket, size_leg
 from candleviewer.accounts.sizer_metrics import SizerMetrics, size_leg_observed
 from candleviewer.accounts.trade_group_readiness import (
     ReadinessMember,
@@ -43,25 +44,20 @@ from candleviewer.domain.events import Instrument
 from candleviewer.domain.primitives import AccountId, Environment, Px, Side, Symbol
 from candleviewer.oms import ports
 from candleviewer.oms import sizing as size_step
-from candleviewer.oms.errors import FieldError, OmsNotReady, OrderInvalid
-from candleviewer.risk.models import RiskRefusal
+from candleviewer.oms.errors import FieldError, OrderInvalid
+from candleviewer.oms.fanout.guard import LegGuard, RejectionCode, rejection_code
 
 LegStatus = Literal["ready", "warn", "skipped", "blocked"]
-#: 22 `TradeGroupPreview.legs[].rejection.code` (S0), closed; `rate_budget_exhausted` is E34's.
-RejectionCode = Literal[
-    "cap_breached", "symbol_not_allowed", "insufficient_margin", "rate_budget_exhausted",
-    "account_locked", "key_invalid", "leverage_unavailable", "kill_switch_engaged",
-    "profile_disabled", "symbol_denied", "below_min_notional", "skipped", "no_reference_price",
-    "invalid_stop_distance", "figure_unknown", "stop_beyond_liquidation", "account_disabled",
-    "account_unhealthy", "trading_disabled", "risk_state_unavailable",
-]  # fmt: skip
-_CODES: Final = frozenset(get_args(RejectionCode))
 _PROFILE: Final = ports.SizingRequest(mode="profile")
 _EXACT: Final = Context(prec=100)
 #: An alternate's `never` fields but its identity, held at _B_'s (ADR-0040 "alternates").
 _HELD: Final = frozenset({"enabled", "trading_enabled", "min_leg_notional", "qty_rounding",
                           "margin_mode", "position_mode", "require_native_sl",
                           "fallback_sl_offset_pct", "tp_ladder"})  # fmt: skip
+#: ADR-0040 rows 29 to 36, each `min(B, A)` for the guard: _A_ only ever tightens _B_'s cap.
+_CAPS: Final = ("max_position_notional", "max_position_pct_equity", "max_daily_loss",
+                "max_daily_loss_pct", "max_open_positions", "max_concurrent_orders",
+                "max_leverage_cap", "max_orders_per_minute")  # fmt: skip
 
 
 def _log() -> Any:
@@ -93,7 +89,7 @@ class LegRequest:
 
 @dataclass(frozen=True, slots=True)
 class GroupRequest:
-    """An entry on one symbol, one leg per account (the caller refuses a repeated account)."""
+    """An entry on one symbol, one leg per account (a repeated account is `OrderInvalid`)."""
 
     symbol: Symbol
     side: Side
@@ -125,7 +121,8 @@ class GroupSnapshot:
 @dataclass(frozen=True, slots=True)
 class LegPlan:
     """One leg of 22's `TradeGroupPreview`: what the sizer computed, the leg admitted (its native
-    stop sized to its whole quantity, rule 8: what E34 sends) and the profile that sized it."""
+    stop sized to its whole quantity, rule 8) and the profile that sized it. Only a `ready` or
+    `warn` leg's `admitted` may be sent; a blocked leg keeps it for the preview alone."""
 
     account_id: AccountId
     status: LegStatus
@@ -171,44 +168,6 @@ class GroupRefused:
     legs: tuple[RefusedLeg, ...]
 
 
-class LegGuard(Protocol):
-    """E28-T04's hook (#908): a ready leg's refusal, from memory (C-2.21); #908 rebinds it."""
-
-    def refusal(
-        self, order: ports.SizedOrder, *, profile: AccountProfile, instrument: Instrument
-    ) -> RejectionCode | None: ...
-
-
-class S4SGuard:
-    """`LegGuard` over #913 S4-S's order path: `max_mkt_order_qty` (the comparator's caller's),
-    the switches and fence, and `RiskGate` (interim: demo unevaluated, else no state); a port
-    that raises refuses the leg."""
-
-    def __init__(self, risk_gate: ports.RiskGate, switches: ports.TradingSwitches) -> None:
-        self._risk_gate, self._switches = risk_gate, switches
-
-    def refusal(
-        self, order: ports.SizedOrder, *, profile: AccountProfile, instrument: Instrument
-    ) -> RejectionCode | None:
-        if order.order_type == "market" and order.qty > instrument.max_mkt_order_qty:
-            return "cap_breached"
-        try:
-            if self._switches.refusal(order.account_id, order.environment) is not None:
-                return "trading_disabled"
-            decision = self._risk_gate.check(order, profile=profile)
-        except OmsNotReady:  # the runtime's fence: order entry is not open yet
-            return "trading_disabled"
-        except Exception as exc:  # fail closed, logged by its class alone (C-12.6)
-            account_id, error = str(order.account_id), type(exc).__name__
-            _log().error("trade_group_guard_failed", account_id=account_id, error=error)
-            return "risk_state_unavailable"
-        if decision.allowed is True:
-            return None
-        if decision.code is RiskRefusal.RISK_LIMIT_BREACHED:  # a cap breached, in 22's words
-            return "cap_breached"
-        return _code(decision.code, "risk_state_unavailable")  # none, or no state: unavailable
-
-
 def take_snapshot(
     accounts: Iterable[tuple[UUID, bool]],
     *,
@@ -240,14 +199,19 @@ def plan_group(
     stops: ports.StopResolver,
     observer: SizerMetrics,
 ) -> GroupPlan | GroupRefused:
-    """Every leg in request order (module docstring); a refusal names every offending leg."""
+    """Every leg in request order (module docstring); a refusal names every offending leg. A
+    repeated account is 22's `duplicate_account`; a leg with no resolved profiles is a 404."""
+    if len({leg.account_id for leg in request.legs}) < len(request.legs):
+        message = "Each account takes one leg at most."
+        raise OrderInvalid(message, errors=(FieldError("legs", "duplicate_account", message),))
     plans: list[LegPlan] = []
     refused: list[RefusedLeg] = []
     violations: tuple[comparator.Violation, ...]
     for index, leg in enumerate(request.legs):
         plan, violations = LegPlan(leg.account_id, "skipped", "skipped"), ()
         if not leg.skip:
-            chosen = profiles[leg.account_id]
+            if (chosen := profiles.get(leg.account_id)) is None:
+                raise comparator.ProfileNotFound
             plan, violations = _plan_leg(request, leg, chosen, snapshot, guard, stops, observer)
             if violations:
                 refused.append(RefusedLeg(index, chosen.bound, chosen.alternate, violations))
@@ -300,9 +264,16 @@ def _plan_leg(
     if sized.stop_fallback:
         _log().warning("trade_group_leg_stop_fallback", account_id=str(leg.account_id))
     plan = LegPlan(leg.account_id, "blocked", sizing=sized, profile=layered)
-    if sized.outcome != "ok":
+    found: list[comparator.Violation] = []
+    if overlaid and (cap := sized.binding) is not None:  # refused whole, never clamped
+        field = cap.cap if cap.cap in comparator.OVERRIDE_CLASS else "fixed_qty"  # R7's name
+        found.append(comparator.Violation(field=field, rule="narrow_only", reason="above_limit",
+                                          limit=cap.limit, requested=sized.raw_qty))  # fmt: skip
+    if sized.outcome != "ok":  # a clamp that failed the leg `cap_breached` refuses it too
         status: LegStatus = "skipped" if sized.outcome == "skip" else "blocked"
-        return replace(plan, status=status, reason=_code(sized.reason, "figure_unknown")), ()
+        clamped = tuple(found) if sized.reason is FailReason.CAP_BREACHED else ()
+        code = rejection_code(sized.reason, "figure_unknown")
+        return replace(plan, status=status, reason=code), clamped
     stop, qty, ref = sized.stop, sized.qty, sized.ref_price
     if stop is None or qty is None or ref is None or stop.price <= 0:  # C-2.6: no stop, no send
         return replace(plan, reason="invalid_stop_distance"), ()
@@ -330,12 +301,8 @@ def _plan_leg(
         raise OrderInvalid(message, errors=(error,)) from None
     verdict = comparator.judge_leg(bound, judged, baseline=own_leg, instrument=inst, figures=known,
                                    alternate=alternate, requested=layers)  # fmt: skip
-    found = list(verdict.violations) if isinstance(verdict, comparator.Refused) else []
-    found = [v for v in found if (v.rule, v.reason) != ("R7", "unknown_input")]  # the guard's
-    if overlaid and (cap := sized.binding) is not None:  # refused whole, never clamped
-        field = cap.cap if cap.cap in comparator.OVERRIDE_CLASS else "fixed_qty"  # R7's name
-        found.insert(0, comparator.Violation(field=field, rule="narrow_only", reason="above_limit",
-                                             limit=cap.limit, requested=sized.raw_qty))  # fmt: skip
+    said = verdict.violations if isinstance(verdict, comparator.Refused) else ()
+    found += (v for v in said if (v.rule, v.reason) != ("R7", "unknown_input"))  # the guard's
     wanted = (*named, intent.sizing.max_notional_usd, tp, terms.time_in_force, terms.position_idx)
     if found:  # what the request or _A_ asked refuses the request; _B_'s own leg is only blocked
         widened = any(value is not None for value in wanted)
@@ -346,16 +313,24 @@ def _plan_leg(
     plan = replace(plan, admitted=admitted)
     reason = snapshot.readiness.get(leg.account_id, "trading_disabled")
     if reason is not None:
-        return replace(plan, reason=_code(reason, "trading_disabled")), ()
+        return replace(plan, reason=rejection_code(reason, "trading_disabled")), ()
     order = ports.SizedOrder(
         account_id=leg.account_id, environment=snapshot.environment, symbol=request.symbol,
         side=side, order_type=request.order_type, qty=qty, price=terms.price, trigger_price=None,
         reference_price=ref, reduce_only=False, intent="entry",
         effect=ports.OrderEffect.ENTRY, stop_loss=stop.price, take_profit=tp,
     )  # fmt: skip
-    refusal = guard.refusal(order, profile=layered, instrument=inst)
+    sides = [p for p in (bound, alternate) if p is not None]  # ADR-0040 rows 29 to 36
+    caps = {f: min((v for p in sides if (v := getattr(p, f)) is not None), default=None)
+            for f in _CAPS}  # fmt: skip
+    try:  # a guard must not raise; one that does refuses the leg, as `S4SGuard` fails closed
+        refusal = guard.refusal(order, profile=layered.model_copy(update=caps), instrument=inst)
+    except Exception as exc:
+        error_class = type(exc).__name__  # its class alone, never its text (C-12.6)
+        _log().error("trade_group_guard_failed", account_id=str(leg.account_id), error=error_class)
+        refusal = "risk_state_unavailable"
     if refusal is not None:
-        return replace(plan, reason=_code(refusal, "risk_state_unavailable")), ()
+        return replace(plan, reason=rejection_code(refusal, "risk_state_unavailable")), ()
     warnings: tuple[Literal["stop_fallback"], ...] = ("stop_fallback",) if stop.fallback else ()
     return replace(plan, status="warn" if warnings else "ready", warnings=warnings), ()
 
@@ -379,11 +354,6 @@ def _profile(
         return AccountProfile.model_validate(base.model_dump() | kept | asked | stop)
     except ValidationError:
         raise size_step.out_of_range(base, asked) from None
-
-
-def _code(value: object, fallback: RejectionCode) -> RejectionCode:
-    """`value` as 22's code; one outside it (`member_disabled`) fails closed to `fallback`."""
-    return cast(RejectionCode, str(value)) if value in _CODES else fallback
 
 
 def _sum(values: Iterable[Decimal | None]) -> Decimal:
