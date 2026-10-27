@@ -302,7 +302,8 @@ READONLY_DOWNGRADE_US = 5 * 60 * 1_000_000
 #: Ticket "No-grace list": a fresh code is *always* required for these.
 #: `backups` (#2751): a restore, download-link issue or delete cannot be undone; nor can
 #: `recorder_purge`'s purge of recorded data (E16-T06).
-#: `accounts` (E27-S04, #898): an account's disable, re-enable or delete; no-grace.
+#: `accounts` (E27-S04, #898): an account's disable, re-enable or delete, and a revoke's
+#: `flatten_first`; no-grace.
 NO_GRACE_ACTION_CLASSES = frozenset(
     {"live_enablement", "killswitch", "backups", "recorder_purge", "accounts"}
 )

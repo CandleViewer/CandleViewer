@@ -379,7 +379,7 @@ _KEY_ACTIONS = [
 ]
 
 
-async def test_rotate_and_reveal_scope_need_step_up_then_share_grace_window() -> None:
+async def test_keys_actions_need_step_up_then_share_grace_window() -> None:
     """AC 1+2: each keys action is 403 without a fresh code; after one step-up
     a second keys action inside the window passes with no new code."""
     c, _em, seed, clock, _ = await _build()

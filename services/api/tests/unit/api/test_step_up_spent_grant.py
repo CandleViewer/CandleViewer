@@ -248,3 +248,14 @@ async def test_a_keys_grant_never_satisfies_an_accounts_demand() -> None:
     assert await w.auth.step_up.remaining_grace(sid, "keys") is not None
     refused = _problem(await _gate_as(w, "accounts", _HELD), 403)
     assert refused["action_class"] == "accounts"
+
+
+async def test_a_bound_grant_of_another_no_grace_class_never_satisfies_an_accounts_demand() -> None:
+    """Bound one-shot grants match by class too: a `backups` grant on the very same request
+    fingerprint leaves the `accounts` demand challenged, and stays unspent."""
+    w = await _world()
+    await _granted(w, _HELD, "backups")
+    refused = _problem(await _gate_as(w, "accounts", _HELD), 403)
+    assert refused["action_class"] == "accounts"
+    spent = await _gate_as(w, "backups", _HELD)
+    assert isinstance(spent, SpentGrant) and spent.action_class == "backups"
