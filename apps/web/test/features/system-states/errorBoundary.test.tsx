@@ -15,6 +15,7 @@ import {
 } from "../../../src/features/system-states/crashGuard";
 import { CRASH_COPY } from "../../../src/features/system-states/copy";
 import { RouteErrorElement } from "../../../src/routes/RouteErrorElement";
+import { ShellLayout } from "../../../src/features/app-shell/ShellLayout";
 import { buildDiagnostics, installCrashReporter } from "../../../src/shell/crash/reportCrash";
 
 const axe = createRequire(createRequire(import.meta.url).resolve("@axe-core/playwright"))(
@@ -195,5 +196,24 @@ describe("RouteErrorElement (route boundary)", () => {
     expect(await heading(CRASH_COPY.route.repeatedHeading)).toBeVisible();
     expect(screen.queryByRole("button", { name: CRASH_COPY.route.reload })).toBeNull();
     expect(button(CRASH_COPY.reloadApp)).toBeInTheDocument();
+  });
+
+  it("keeps one main when a child route crashes inside the shell layout", async () => {
+    const routes = [
+      {
+        element: <ShellLayout />,
+        errorElement: <RouteErrorElement />,
+        children: [
+          { id: "R-T5", path: "/t", element: <Bomb />, errorElement: <RouteErrorElement /> },
+        ],
+      },
+    ];
+    render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ["/t"] })} />);
+    expect(await heading(CRASH_COPY.route.heading)).toBeVisible();
+    const main = screen.getByRole("main");
+    expect(screen.getAllByRole("main")).toHaveLength(1);
+    expect(within(main).getByRole("heading", { name: CRASH_COPY.route.heading })).toBeVisible();
+    expect(screen.getByRole("banner")).toBeInTheDocument(); // the shell chrome survived
+    await expectCleanDom();
   });
 });
