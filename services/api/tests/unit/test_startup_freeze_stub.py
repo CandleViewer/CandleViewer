@@ -53,11 +53,23 @@ def test_the_stub_leaves_the_real_freeze_to_a_test_that_asks_for_it_or_measures(
     """Both call sites are stubbed, or neither: a `perf` test is the Budget #13 rig, which reads
     the heap the app serves from. (This test asks for the real freeze itself, so that nothing has
     patched the two modules before the stub's choice is made here.)"""
-    with pytest.MonkeyPatch.context() as patches:
-        stub_startup_freeze(_request(*fixtures, perf=perf), patches)
+    stub = stub_startup_freeze(_request(*fixtures, perf=perf))
+    next(stub)  # the test begins
+    try:
         for module in (main, fixture_app):
             real = module.freeze_startup_heap is metrics_runtime.freeze_startup_heap
             assert real is not stubbed
+    finally:
+        next(stub, None)  # the test ends
+    for module in (main, fixture_app):  # and the stub has put back what it patched
+        assert module.freeze_startup_heap is metrics_runtime.freeze_startup_heap
+
+
+def test_the_autouse_stub_does_not_set_monkeypatch_up_first(request: pytest.FixtureRequest) -> None:
+    """A test that asks for nothing gets no `monkeypatch`: an autouse fixture that requested it
+    would set it up before every other fixture, so it would undo a test's own patches only after a
+    module's guard had checked the shared state at teardown (`test_rbac_generator.py`'s)."""
+    assert "monkeypatch" not in request.fixturenames
 
 
 def test_the_leak_guard_unfreezes_what_a_test_left_frozen(clean_freeze: None) -> None:

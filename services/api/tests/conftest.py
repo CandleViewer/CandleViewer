@@ -11,6 +11,7 @@ import gc
 import sys
 from collections.abc import Generator, Iterator
 from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -96,7 +97,11 @@ def real_startup_freeze() -> None:
 _FREEZING_MODULES = ("candleviewer.main", "bench.ingestion.fixture_app")
 
 
-def stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_freeze() -> None:
+    """The stub's `freeze_startup_heap`: it freezes nothing."""
+
+
+def stub_startup_freeze(request: pytest.FixtureRequest) -> Iterator[None]:
     """Make the startup heap freeze a no-op in `main._lifespan` and the bench's `build_app`.
 
     A real one is a full collection of everything the pytest process holds so far, 0.2 to 1 s
@@ -111,24 +116,36 @@ def stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.Monk
     not make; a freeze through a module imported inside a test escapes the stub, and the guard
     undoes it. With the stub, the lifespan still sets `frozen = True`, so its teardown still runs
     the real `unfreeze_startup_heap()`: a `gc.unfreeze()` that finds nothing of its own to move.
+
+    It patches and restores by hand rather than through `monkeypatch`: an autouse fixture that
+    requests `monkeypatch` sets it up before every other fixture of the test, so it undoes the
+    test's own patches only after the other fixtures' teardowns, and a module's guard that checks
+    shared state at teardown (`tests/contract/test_rbac_generator.py`'s) would see them still in
+    place.
     """
     asked = "real_startup_freeze" in request.fixturenames
-    if asked or request.node.get_closest_marker("perf") is not None:
-        return
-    for name in _FREEZING_MODULES:
-        module = sys.modules.get(name)
-        if module is not None:
-            monkeypatch.setattr(module, "freeze_startup_heap", lambda: None)
+    patched: list[tuple[ModuleType, object]] = []
+    if not asked and request.node.get_closest_marker("perf") is None:
+        for name in _FREEZING_MODULES:
+            module = sys.modules.get(name)
+            if module is not None:
+                patched.append((module, vars(module)["freeze_startup_heap"]))
+                vars(module)["freeze_startup_heap"] = _no_freeze
+    try:
+        yield
+    finally:
+        for module, original in reversed(patched):
+            vars(module)["freeze_startup_heap"] = original
 
 
 @pytest.fixture(autouse=True)
-def _stub_startup_freeze(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _stub_startup_freeze(request: pytest.FixtureRequest) -> Iterator[None]:
     """#3641: `main._lifespan` and the bench's `build_app` collect, then freeze, the heap of the
     whole process. A test that does not check that runs a no-op; one that does asks for
     `real_startup_freeze`, and a `perf` test keeps the real one (`stub_startup_freeze` says why).
     The lifespan still sets `frozen = True` around the no-op, so its teardown still runs the real
     unfreeze."""
-    stub_startup_freeze(request, monkeypatch)
+    yield from stub_startup_freeze(request)
 
 
 def undo_a_leaked_freeze() -> Iterator[None]:
