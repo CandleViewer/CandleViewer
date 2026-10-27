@@ -194,6 +194,33 @@ describe.each(cases.filter((c) => c.text === undefined))("$name: not gated", ({ 
   });
 });
 
+describe("RadioGroup: a group reason and an option reason", () => {
+  it("a non-first row echoes the group reason, then its own, joined by ' · '", async () => {
+    const own = "Skip confirmation is unavailable for LIVE market orders.";
+    const host = await mount(
+      <RadioGroup
+        aria-label="Confirm"
+        value="a"
+        options={[
+          { value: "a", label: "Always" },
+          { value: "b", label: "Skip", disabledReason: own },
+        ]}
+        disabledReason={REASON}
+      />,
+    );
+    const row = within(host).getByRole("radio", { name: "Skip" });
+    await hover(row);
+    await advance(300);
+    const shownEcho = [...document.querySelectorAll<HTMLElement>(".cv-tooltip")].find(
+      (n) => !n.hidden,
+    );
+    expect(shownEcho).toHaveTextContent(`${REASON} · ${own}`);
+    expect(shownEcho).toHaveAttribute("aria-hidden", "true");
+    // The description wiring is unchanged: a non-first row reads its own reason only.
+    expect(row).toHaveAccessibleDescription(own);
+  });
+});
+
 describe("IconButton name echo (D10)", () => {
   it("an enabled button echoes its name only; plain disabled has none", async () => {
     const host = await mount(

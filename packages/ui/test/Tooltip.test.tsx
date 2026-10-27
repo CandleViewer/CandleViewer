@@ -168,6 +168,32 @@ describe("Tooltip (CMP-016)", () => {
     document.removeEventListener("keydown", onKey);
   });
 
+  it("content that arrives while the trigger holds keyboard focus or the pointer shows at once", async () => {
+    let setContent: (next: string) => void = () => undefined;
+    function Host(): JSX.Element {
+      const [content, set] = useState("");
+      setContent = set;
+      return (
+        <Tooltip content={content} mode="echo">
+          <Button>Save as</Button>
+        </Tooltip>
+      );
+    }
+    const host = await mount(<Host />);
+    const button = trigger(host);
+    await focus(button);
+    await act(async () => setContent(TEXT));
+    expect(shown()).toBe(true);
+    await act(async () => button.blur());
+    await act(async () => setContent(""));
+    await hover(button);
+    await act(async () => setContent(TEXT));
+    expect(shown()).toBe(true);
+    await unhover(button);
+    await advance(100);
+    expect(shown()).toBe(false);
+  });
+
   it("hover shows it after the 300 ms delay, not before", async () => {
     const host = await saveAs();
     await hover(trigger(host));

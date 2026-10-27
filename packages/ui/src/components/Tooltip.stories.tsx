@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { Icon } from "../icons/Icon.js";
 import { Button } from "./Button.js";
 import { IconButton } from "./IconButton.js";
 import { Tooltip } from "./Tooltip.js";
@@ -93,21 +94,24 @@ export const EscDismiss: Story = {
   },
 };
 
-/**
- * Echo · name: an icon-only button's name over its icon (D10); the name is the `aria-label`, read once. CMP-002
- * carries this echo itself, so the story renders the IconButton alone: wrapping it in a second Tooltip would show two.
- */
+/** Echo · name: a collapsed rail item's name over its icon; the name is the `aria-label`, read once. */
 export const EchoName: Story = {
-  render: () => (
-    <div style={stage}>
-      <IconButton icon="settings" label="Settings" variant="ghost" />
-    </div>
-  ),
+  args: {
+    content: "Settings",
+    mode: "echo",
+    side: "right",
+    // A plain icon trigger: CMP-002 carries its own name echo (D10), so wrapping it would show two tooltips.
+    children: (
+      <button type="button" aria-label="Settings">
+        <Icon name="settings" />
+      </button>
+    ),
+  },
   play: async ({ canvasElement }) => {
     const button = within(canvasElement).getByRole("button", { name: "Settings" });
     await showByKeyboard();
-    await expect(tooltip()).toHaveTextContent("Settings");
     await expect(tooltip()).toHaveAttribute("aria-hidden", "true");
+    await expect(tooltip()).toHaveAttribute("data-side", "right");
     await expect(button).not.toHaveAttribute("aria-describedby");
   },
 };
