@@ -1,0 +1,286 @@
+import {
+  useId,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type JSX,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
+import { Icon } from "../icons/Icon.js";
+import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
+import { cx } from "./internal/cx.js";
+import { FieldMessage, focusFieldInput, useRefusalAnnounce } from "./internal/fieldParts.js";
+import {
+  formatNumeric,
+  parseNumericInput,
+  stepValue,
+  validateNumeric,
+  valueText,
+} from "./internal/numeric.js";
+
+export type StepDirection = "up" | "down";
+
+export interface NumericStepperInputProps {
+  /** The accessible name; the step buttons are named "Decrease {label}" / "Increase {label}". */
+  label: string;
+  /** Names the field by an element instead; `label` still names the step buttons. */
+  "aria-labelledby"?: string;
+  "aria-describedby"?: string;
+  id?: string;
+  name?: string;
+  placeholder?: string;
+  value: number;
+  min?: number;
+  max?: number;
+  /** A positive multiple of 10^-precision (a finer step throws, as `stepValue`). */
+  step: number;
+  /** The Page Up / Page Down step; default 10 x `step`. */
+  largeStep?: number;
+  /** Decimal places shown and kept: explicit, "." separator, no grouping, no locale guessing. */
+  precision: number;
+  /** The unit, shown in the well and spoken in `aria-valuetext` ("5 %"). */
+  suffix?: string;
+  /** A committed value: a step, Home or End, or typed text that parsed and is in range. Never an invalid entry. */
+  onChange: (value: number) => void;
+  /** After `onChange`, once per step that moved the value (arrows, Shift, Page keys, the buttons). */
+  onStep?: (direction: StepDirection) => void;
+  /** The host's own verdict (CMP-040); typed text that is out of range is invalid here without it. */
+  invalid?: boolean;
+  errorMessage?: string;
+  disabled?: boolean;
+  /** The visible reason a control is denied (RBAC, environment, risk): disabled-with-reason (T2). */
+  disabledReason?: string;
+  readOnly?: boolean;
+  density?: "comfortable" | "compact";
+}
+
+/** The text the user typed and has not committed; `base` is the value it was typed against. */
+interface Edit {
+  readonly text: string;
+  readonly base: number;
+  readonly error: string | null;
+}
+
+const NOT_A_NUMBER = "Enter a number.";
+const ROUNDED = "(rounded to nearest tick)";
+const STEP_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown"]);
+const isChord = (event: KeyboardEvent): boolean => event.ctrlKey || event.metaKey || event.altKey;
+const isStepKey = (event: KeyboardEvent): boolean => STEP_KEYS.has(event.key) && !isChord(event);
+
+/**
+ * CMP-008: the numeric field with `[-]` `[+]` buttons (APG spin button). The value is a number, shown fixed to
+ * `precision`; typed text is parsed, rounded and range-checked on blur or Enter and is never clamped. All
+ * arithmetic goes through `stepValue` (scaled integers), never `x + step`.
+ */
+export function NumericStepperInput({
+  label,
+  "aria-labelledby": labelledBy,
+  "aria-describedby": describedBy,
+  id,
+  name,
+  placeholder,
+  value,
+  min,
+  max,
+  step,
+  largeStep,
+  precision,
+  suffix,
+  onChange,
+  onStep,
+  invalid = false,
+  errorMessage,
+  disabled,
+  disabledReason,
+  readOnly = false,
+  density,
+}: NumericStepperInputProps): JSX.Element {
+  const reason = useDisabledReason(disabled, disabledReason);
+  const errorId = useId();
+  const noteId = useId();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [typed, setTyped] = useState<Edit | null>(null);
+  const [roundedTo, setRoundedTo] = useState<number | null>(null);
+  // An edit belongs to the value it was typed against: a host that moves the value discards it.
+  const edit = typed !== null && typed.base === value ? typed : null;
+  const rounded = edit === null && roundedTo === value;
+  const frozen = reason.gated || readOnly;
+  const range = { ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) };
+
+  const refusal = useRefusalAnnounce(
+    reason,
+    {
+      onKeyDown: (event) => {
+        if (frozen || event.nativeEvent.isComposing) return;
+        // Enter commits the typed text; the form's implicit submission stays the host's.
+        if (event.key === "Enter" && edit !== null) commit(edit.text);
+        else keyStep(event);
+      },
+      onBlur: () => {
+        if (edit !== null) commit(edit.text);
+      },
+    },
+    isStepKey,
+  );
+
+  /** A step or jump: the typed text is dropped, the caption goes, and a moved value is reported. */
+  const apply = (next: number, direction?: StepDirection): void => {
+    setTyped(null);
+    setRoundedTo(null);
+    if (next === value) return;
+    onChange(next);
+    if (direction !== undefined) onStep?.(direction);
+  };
+
+  /** Steps start from clean typed text (as a native number field does), else from the committed value. */
+  const from = (): number => {
+    const parsed =
+      edit !== null && edit.error === null ? parseNumericInput(edit.text, { precision }) : null;
+    return parsed?.ok === true ? parsed.value : value;
+  };
+
+  const stepBy = (direction: StepDirection, size: number, times: number): void =>
+    apply(stepValue(from(), size, direction, times, precision, min, max), direction);
+
+  function keyStep(event: KeyboardEvent<HTMLInputElement>): void {
+    if (isChord(event)) return;
+    const direction = event.key === "ArrowUp" || event.key === "PageUp" ? "up" : "down";
+    if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+      stepBy(direction, step, event.shiftKey ? 10 : 1);
+    } else if (event.key === "PageUp" || event.key === "PageDown") {
+      // Without `largeStep` the multiplier keeps 10 x step exact (0.1 x 10 as a scaled integer, not a float).
+      stepBy(direction, largeStep ?? step, largeStep === undefined ? 10 : 1);
+    } else {
+      const bound = event.key === "Home" ? min : event.key === "End" ? max : undefined;
+      if (bound === undefined) return;
+      apply(bound);
+    }
+    event.preventDefault();
+  }
+
+  function commit(text: string): void {
+    const parsed = parseNumericInput(text, { precision });
+    if (!parsed.ok && parsed.reason === "empty") {
+      setTyped(null);
+      return;
+    }
+    const verdict = parsed.ok ? validateNumeric(parsed.value, range) : "not-a-number";
+    if (!parsed.ok || verdict !== "in-range") {
+      const bound = verdict === "below-min" ? min : verdict === "above-max" ? max : undefined;
+      const word = verdict === "below-min" ? "Minimum" : "Maximum";
+      const error =
+        bound === undefined ? NOT_A_NUMBER : `${word} ${formatNumeric(bound, precision)}`;
+      setTyped({ text, base: value, error });
+      return;
+    }
+    setTyped(null);
+    setRoundedTo(parsed.rounded ? parsed.value : null);
+    if (parsed.value !== value) onChange(parsed.value);
+  }
+
+  const onInput = (event: ChangeEvent<HTMLInputElement>): void => {
+    setTyped({ text: event.target.value, base: value, error: null });
+    setRoundedTo(null);
+  };
+
+  /** A press keeps the focus where it is (the buttons are not tab stops) and gives the field the focus. */
+  const press = (direction: StepDirection) => (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    inputRef.current?.focus();
+    if (reason.gated) refusal.announce();
+    else stepBy(direction, step, 1);
+  };
+
+  const typedError = edit?.error ?? null;
+  const shownInvalid = invalid || typedError !== null;
+  const message = typedError ?? errorMessage;
+  const hasSuffix = suffix !== undefined && suffix !== "";
+  const atMin = min !== undefined && value <= min;
+  const atMax = max !== undefined && value >= max;
+  const description = reason.gated
+    ? reason.ariaDescribedBy
+    : cx(errorId, noteId, describedBy) || undefined;
+  const button = (direction: StepDirection, atBound: boolean): JSX.Element => (
+    <button
+      type="button"
+      tabIndex={-1}
+      className="cv-control cv-stepper__btn"
+      aria-label={`${direction === "up" ? "Increase" : "Decrease"} ${label}`}
+      disabled={!reason.gated && (reason.disabled || readOnly || atBound)}
+      aria-disabled={reason.ariaDisabled}
+      aria-describedby={reason.ariaDescribedBy}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={press(direction)}
+    >
+      <span className="cv-stepper__glyph">
+        <Icon name={direction === "up" ? "plus" : "minus"} />
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="cv-field-root" data-cmp="CMP-008" data-density={density}>
+      <div className="cv-stepper">
+        {/* The mouse handler only forwards a press to the input; the input is the keyboard and AT target. */}
+        {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions -- see above: not a widget */}
+        <div
+          className="cv-field"
+          data-invalid={shownInvalid ? "" : undefined}
+          data-gated={reason.gated ? "" : undefined}
+          data-disabled={reason.disabled ? "" : undefined}
+          data-readonly={readOnly ? "" : undefined}
+          data-lead={reason.gated ? "" : undefined}
+          data-trail={hasSuffix ? "" : undefined}
+          onMouseDown={(event) => focusFieldInput(event, inputRef)}
+        >
+          {reason.gated ? (
+            <span className="cv-field__lead cv-field__lock">
+              <Icon name="lock" decorative={false} label="Not available" />
+            </span>
+          ) : null}
+          <input
+            ref={inputRef}
+            id={id}
+            name={name}
+            placeholder={placeholder}
+            type="text"
+            role="spinbutton"
+            inputMode="decimal"
+            autoComplete="off"
+            spellCheck={false}
+            className="cv-field__input cv-field__input--num"
+            value={edit?.text ?? formatNumeric(value, precision)}
+            disabled={reason.disabled}
+            readOnly={frozen}
+            aria-label={labelledBy === undefined ? label : undefined}
+            aria-labelledby={labelledBy}
+            aria-valuenow={value}
+            aria-valuemin={min}
+            aria-valuemax={max}
+            aria-valuetext={valueText(value, precision, suffix)}
+            aria-readonly={readOnly && !reason.gated ? true : undefined}
+            aria-disabled={reason.ariaDisabled}
+            aria-invalid={shownInvalid ? true : undefined}
+            aria-describedby={description}
+            onChange={onInput}
+            {...refusal.handlers}
+          />
+          {hasSuffix ? (
+            <span className="cv-field__trail cv-field__affix" aria-hidden="true">
+              {suffix}
+            </span>
+          ) : null}
+        </div>
+        {button("down", atMin)}
+        {button("up", atMax)}
+      </div>
+      <FieldMessage id={errorId} message={shownInvalid ? message : undefined} />
+      <div id={noteId} className="cv-field__caption" aria-live="polite">
+        {rounded ? ROUNDED : null}
+      </div>
+      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {refusal.status}
+    </div>
+  );
+}

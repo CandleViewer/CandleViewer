@@ -1,0 +1,104 @@
+/*
+ * CMP-008 NumericStepperInput (E05-S01): the field well from fields.css plus the numeric value look, the `[-]` `[+]`
+ * buttons outside the well (D02F conventions 21, 27; G22) and the "rounded" caption. Colours are tokens only; state
+ * lives in attributes. Source order is the cascade order: hover, then gated, then plain disabled. The forced-colors
+ * block repeats every painting selector (same selector, later), so no token colour survives there. Buttons inside
+ * the well set their own forced colours: `forced-color-adjust: none` is inherited from the well.
+ */
+.cv-stepper {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+}
+
+.cv-stepper > .cv-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* The value: mono, tabular, end-aligned. `font` resets the variant, so it comes after; two classes beat the well. */
+.cv-field__input.cv-field__input--num {
+  font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
+    var(--type-num-base-line-height) var(--type-num-base-font-family);
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+.cv-stepper__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.cv-stepper__glyph {
+  display: inline-flex;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-stepper__btn:hover:not(:disabled, [aria-disabled]) {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+/* T2: the glyph turns tertiary; the button stays focusable-by-script and re-shows the field's reason. */
+.cv-stepper__btn[aria-disabled] {
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+/* At a bound, read-only or plain disabled: availability, dimmed. */
+.cv-stepper__btn:disabled {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+.cv-field__caption {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-field__caption:not(:empty) {
+  padding-block-start: var(--space-inset-xs);
+}
+
+@media (forced-colors: active) {
+  .cv-stepper__btn {
+    border-color: ButtonText;
+    background: ButtonFace;
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .cv-stepper__btn:hover:not(:disabled, [aria-disabled]) {
+    border-color: Highlight;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  /* Gated keeps ButtonText: the reason is the message, only the border greys (as CMP-002). */
+  .cv-stepper__btn[aria-disabled] {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: ButtonText;
+  }
+
+  .cv-stepper__btn:disabled {
+    border-color: GrayText;
+    background: ButtonFace;
+    color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-field__caption {
+    color: CanvasText;
+  }
+}

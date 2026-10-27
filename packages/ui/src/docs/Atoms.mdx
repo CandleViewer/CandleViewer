@@ -165,3 +165,17 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Tab (first) | The first Tab on a page focuses the first skip link and shows it.                                                     |
 | Tab         | To the next skip link, then into the TopBar; each link hides again when it loses focus.                               |
 | Enter       | Moves focus to the target, which takes `tabindex="-1"` until blur and shows the ring; the next Tab continues from it. |
+
+### NumericStepperInput (CMP-008, APG Spin Button)
+
+| Keys                                                 | Action                                                                                                      |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                      | Moves focus to or from the field. The `[-]` `[+]` buttons are not tab stops.                                |
+| Up / Down                                            | Value +/- `step`; stops at `max` / `min`, never wraps.                                                      |
+| Shift+Up / Shift+Down                                | Value +/- 10 x `step`.                                                                                      |
+| Page Up / Page Down                                  | Value +/- `largeStep` (default 10 x `step`).                                                                |
+| Home / End                                           | `min` / `max`, when set.                                                                                    |
+| Ctrl, Alt or Meta with any of these                  | Not handled: the browser or the host keeps it.                                                              |
+| Typing                                               | Edits the text; parsed, rounded and range-checked on blur or Enter, never clamped (out of range = invalid). |
+| Enter                                                | Commits the typed text; the form's implicit submission is the host's (not with a reason).                   |
+| Up, Down, Page Up, Page Down, Enter, typing (reason) | Changes nothing; the first one of a focus visit announces the reason once. Home, End and copy stay free.    |

@@ -80,3 +80,6 @@ export type { TextInputProps } from "./TextInput.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
+
+export { NumericStepperInput } from "./NumericStepperInput.js";
+export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";

@@ -66,22 +66,26 @@ export interface RefusalCallers {
 /**
  * T2 refusal: while gated a refused key (and paste or cut) changes nothing, Enter never submits the host form, and
  * the reason is announced once per focus visit through a polite status node that exists only while gated.
- * Tab and Esc are never touched. The caller's handlers run first.
+ * Tab and Esc are never touched. The caller's handlers run first. `refuses` adds keys that are only refused
+ * for this field (the stepper's step keys); `announce` speaks the reason for a press that is not a key.
  */
 export function useRefusalAnnounce(
   reason: DisabledReasonAttrs,
   callers: RefusalCallers,
+  refuses?: (event: KeyboardEvent) => boolean,
 ): {
   readonly handlers: Required<RefusalCallers>;
   readonly status: JSX.Element | null;
+  readonly announce: () => void;
 } {
   const [spoken, setSpoken] = useState(false);
   const { gated } = reason;
   return {
+    announce: () => setSpoken(true),
     handlers: {
       onKeyDown: (event) => {
         callers.onKeyDown?.(event);
-        if (!gated || !isRefusedKey(event)) return;
+        if (!gated || !(isRefusedKey(event) || refuses?.(event))) return;
         // readonly stops the edit, not implicit form submission or an unlisted default: stop them here.
         event.preventDefault();
         setSpoken(true);
