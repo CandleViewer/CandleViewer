@@ -23,8 +23,8 @@ import {
   type ConnectionState,
 } from "./bootstrap/store.js";
 
-/** The version `hello` names (`apps/web/package.json`); nothing injects it at build time yet. */
-const CLIENT_VERSION = "0.1.0";
+/** The version `hello` names (`apps/web/package.json`, the build-time define the status bar shows). */
+const CLIENT_VERSION = __CV_APP_VERSION__;
 
 export interface StartShellOptions extends BootstrapDeps {
   readonly wsUrl: string;

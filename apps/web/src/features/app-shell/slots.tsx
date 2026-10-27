@@ -14,6 +14,8 @@
  *   E10-D03 C5) for the CMP-211 PanicButtons organism, which E39-S05 builds. `ShellPanicMount`
  *   below types what that organism resolves itself. Until it lands the slot renders nothing: no node, no Tab stop, no
  *   stand-in control (a Flatten / Cancel / Freeze button that does nothing is a false affordance).
+ * - `ShellStatusSlot`: inside the footer (`contentinfo`) landmark: S4's CMP-208 status bar.
+ * - `ShellBarCloseSlot`: the status bar's bar-close countdown; the chart features fill it.
  *
  * Each slot renders nothing until a later slice (#306 slices 3 and 4b) fills it by editing only
  * this file. A slot reads its own state; it takes no props from the layout, so filling one never
@@ -23,6 +25,7 @@ import type { JSX } from "react";
 import type { MeClaims } from "../../routes/rbac";
 import { ShellBanner } from "./banner";
 import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
+import { StatusBar } from "./StatusBar";
 
 /** A shell slot: a prop-less component that renders its content or nothing. */
 export type ShellSlot = () => JSX.Element | null;
@@ -121,3 +124,7 @@ export const PANIC_LEGS: ShellPanicMount["legs"] = {
 
 /** Empty until E39-S05 fills it with the CMP-211 organism; renders nothing, takes no focus. */
 export const ShellPanicSlot: ShellSlot = () => null;
+
+export const ShellBarCloseSlot: ShellSlot = () => null;
+
+export const ShellStatusSlot: ShellSlot = () => <StatusBar barClose={<ShellBarCloseSlot />} />;
