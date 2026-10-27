@@ -14,6 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from candleviewer.settings import Environment, FeedMode, Settings, get_settings
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
 
 
 def test_settings_environment_resolves_from_cv_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -165,6 +166,12 @@ def test_settings_oms_runtime_defaults_are_the_20_7_2_rows() -> None:
     assert s.oms_price_band_pct == Decimal("0.05")
 
 
+def test_settings_oms_statement_cap_defaults_to_the_stores_constant() -> None:
+    """#845, #913 S4-G2: `CV_OMS_STATEMENT_TIMEOUT_MS` defaults to the cap the OMS stores hold when
+    built without it (20 Sec.7.2's row: 2000)."""
+    assert get_settings().oms_statement_timeout_ms == OMS_STATEMENT_TIMEOUT_MS == 2000
+
+
 _OMS_ACCEPTED = [
     ({"CV_OMS_SUBMIT_TIMEOUT_MS": "1000"}, "oms_submit_timeout_ms", 1000),
     (
@@ -181,6 +188,8 @@ _OMS_ACCEPTED = [
     ({"CV_TRADING_LIVE_ENABLED": "true"}, "trading_live_enabled", True),
     ({"CV_OMS_PRICE_BAND_PCT": "0.005"}, "oms_price_band_pct", Decimal("0.005")),
     ({"CV_OMS_PRICE_BAND_PCT": "0.20"}, "oms_price_band_pct", Decimal("0.20")),
+    ({"CV_OMS_STATEMENT_TIMEOUT_MS": "1500"}, "oms_statement_timeout_ms", 1500),
+    ({"CV_OMS_STATEMENT_TIMEOUT_MS": "5000"}, "oms_statement_timeout_ms", 5000),
 ]
 
 
@@ -213,6 +222,12 @@ def test_settings_oms_runtime_bounds_take_each_value_in_range(
         ({"CV_OMS_PRICE_BAND_PCT": "0.21"}, "oms_price_band_pct"),
         ({"CV_OMS_PRICE_BAND_PCT": "0"}, "oms_price_band_pct"),  # no off value (C-4.14)
         ({"CV_OMS_PRICE_BAND_PCT": "nan"}, "oms_price_band_pct"),
+        # 20 Sec.7.2: above `CV_PERSIST_TIMEOUT` (1 s), as 24 Sec.8.2 S7 has it, and at most the
+        # default submit bound; Postgres reads 0 as no cap, so there is no off value (C-4.14)
+        ({"CV_OMS_STATEMENT_TIMEOUT_MS": "1499"}, "oms_statement_timeout_ms"),
+        ({"CV_OMS_STATEMENT_TIMEOUT_MS": "5001"}, "oms_statement_timeout_ms"),
+        ({"CV_OMS_STATEMENT_TIMEOUT_MS": "0"}, "oms_statement_timeout_ms"),
+        ({"CV_OMS_STATEMENT_TIMEOUT_MS": "2000.5"}, "oms_statement_timeout_ms"),
     ],
 )
 def test_settings_oms_runtime_bounds_refuse_each_value_out_of_range(

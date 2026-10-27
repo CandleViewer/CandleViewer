@@ -1,15 +1,16 @@
-"""The order routes' `ETag` (E29-T04 slice 4, ruling Q5; 22 `OrderETag` and `IfMatch`).
+"""The order routes' `ETag` (E29-T04 slice 4, ruling Q5; 22 `OrderETag` and `OrderIfMatch`).
 
 `order_etag(order_id, seq)` is the strong tag `"<orderId>:<seq>"` of an order at a version, the
 facade's `version()`: the `event_seq` of its last committed lifecycle row, which a final order, or
 one in a resync window, does not have. `expected_seq(if_match, order_id)` reads `amendOrder`'s
-`If-Match`: None when it is absent, so the exit service sends the version it read before the
-order's row (SEC-S4C2B-01) and a step the order took meanwhile is refused under the order's lock,
-`409 conflict`; the seq it names when it is one strong tag of this order, written as `order_etag`
-writes it; else `NO_VERSION`, which no version equals: `*`, a list, a weak or malformed tag and
-another order's tag alike, so the exit service answers it `412 version_conflict` where it compares
-the version, after the scope (404), the state (422) and the body (400), with nothing sent. A plain
-module with no router, as `api/order_acceptance.py` is.
+`If-Match`, its own parameter (`OrderIfMatch`, not the shared `IfMatch`): None when it is absent,
+so the exit service sends the version it read before the order's row (SEC-S4C2B-01) and a step the
+order took meanwhile is refused under the order's lock, `409 conflict`; the seq it names when it
+is one strong tag of this order, written as `order_etag` writes it; else `NO_VERSION`, which no
+version equals: `*`, a list, a weak or malformed tag and another order's tag alike, so the exit
+service answers it `412 version_conflict` where it compares the version, after the scope (404),
+the state (422) and the body (400), with nothing sent. A plain module with no router, as
+`api/order_acceptance.py` is.
 """
 
 from __future__ import annotations

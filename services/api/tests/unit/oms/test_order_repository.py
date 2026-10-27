@@ -50,6 +50,7 @@ from candleviewer.oms.repository import (
     RecordedStopRepository,
     SubmissionRepository,
 )
+from candleviewer.settings import OMS_STATEMENT_TIMEOUT_MAX_MS
 from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories.accounts import AccountScope
 from candleviewer.storage.repositories.executions import NewExecution
@@ -452,6 +453,13 @@ def test_the_catalogue_bounds_the_table_label_by_the_tables_written() -> None:
     assert spec.max_series == len(WRITE_TABLES) == len({table.split()[0] for table in _WRITES})
     cap = OMS_STATEMENT_TIMEOUT_MS / 1000  # a p99 near the store's statement cap shows apart
     assert {cap - 0.5, cap, cap + 0.5} <= set(OMS_WRITE_BUCKETS)
+
+
+def test_the_write_buckets_end_at_the_caps_ceiling() -> None:
+    """#913 S4-G2: `CV_OMS_STATEMENT_TIMEOUT_MS` may raise the stores' cap up to 5 s, its
+    ceiling, so the last edge is that ceiling: a write near a raised cap still falls in a
+    bucket, never in `+Inf` alone (the orchestrator's ruling of 2026-10-26)."""
+    assert max(OMS_WRITE_BUCKETS) == OMS_STATEMENT_TIMEOUT_MAX_MS / 1000
 
 
 @pytest.mark.parametrize(

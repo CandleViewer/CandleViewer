@@ -161,8 +161,9 @@ STORAGE_BUCKETS: Final = (
     1.0,
     5.0,
 )
-#: OMS Postgres writes (E29-T01): edges at and around the order store's 2 s statement cap.
-OMS_WRITE_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5)
+#: OMS Postgres writes (E29-T01): edges at and around the stores' default 2 s statement cap, and
+#: at 5 s, the ceiling `CV_OMS_STATEMENT_TIMEOUT_MS` may raise the cap to (#913 S4-G2).
+OMS_WRITE_BUCKETS: Final = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 1.5, 2.0, 2.5, 5.0)
 #: Members per cancel-all fold (#913 S4-F): a fold takes two or more, the venue's call at most its
 #: 500-order cap; an edge sits on the proposed cap of 32 (E29-oms.md section 12.2).
 CANCEL_ALL_FOLD_BUCKETS: Final = (2, 4, 8, 16, 32, 64, 128, 256, 500)
@@ -2893,7 +2894,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "OMS Postgres write time per table, failed writes included (orders: an order with its "
         "first event, or its first persist with its group, stops and anchor); recorded by the "
         "M14 repositories (E29-T01, E29-T04).",
-        "p99 near the store's 2 s statement cap: order writes at risk of refusal",
+        "p99 near the stores' statement cap (CV_OMS_STATEMENT_TIMEOUT_MS, 2 s by default): order "
+        "writes at risk of refusal",
         _P,
         "E29",
         OMS_WRITE_BUCKETS,

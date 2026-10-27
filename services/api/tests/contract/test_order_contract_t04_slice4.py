@@ -23,7 +23,8 @@ from candleviewer.observability.correlation import CORRELATION_HEADER
 from candleviewer.oms.errors import OmsError
 from candleviewer.oms.exits import ALREADY_FINAL, RECLASSIFIED, ExitStep
 from candleviewer.oms.recovery import FINALS
-from candleviewer.oms_wiring import ORDER_ALERTS
+from candleviewer.oms.stop_resolution import store_timeout_for
+from candleviewer.oms_wiring import ORDER_ALERTS, STOP_REQUEST_BOUND_S
 from candleviewer.statechart.bindings.b01_order import NATIVE_STOP_REQUIRED
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_KILL_CANCEL_TIMEOUT
 from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
@@ -1143,7 +1144,10 @@ def test_04_says_the_e29_order_path_is_mounted() -> None:
 def test_the_oms_stores_statement_cap_is_a_setting_that_defaults_to_their_constant() -> None:
     """CG14 (#913 S4-G1; the orchestrator's S4-G ruling 4): `CV_OMS_STATEMENT_TIMEOUT_MS`, #845's
     setting, defaults to the stores' 2000 ms constant. S4-G1 writes 20's row and the 21 and 24
-    lines that name it; S4-G2 the code, from which on the stores read it."""
+    lines that name it; S4-G2 the code, which every store the runtime builds that caps its
+    statements reads, so 20 and 21 drop their "from #913 S4-G2 on" clauses and every "2 s" cap is
+    the default. 20's row says when the stop resolver's store bound outgrows a stop request's, and
+    20's write-time buckets end at the setting's ceiling."""
     [row] = [
         line for line in _ARCH.splitlines() if line.startswith("| `CV_OMS_STATEMENT_TIMEOUT_MS`")
     ]
@@ -1159,15 +1163,64 @@ def test_the_oms_stores_statement_cap_is_a_setting_that_defaults_to_their_consta
         "so a blocked order write fails within it and order entry is refused",
         "1500-5000: above `CV_PERSIST_TIMEOUT` (1 s), as S7 has it, and at most the default "
         "submit bound",
-        "read from #913 S4-G2 on; until then the stores' constant `OMS_STATEMENT_TIMEOUT_MS`",
+        "the startup sweep keeps its own 15 s cap",
+        "from 2001 ms up, the stop resolver's store bound exceeds a stop request's 10 s, so a held "
+        "key waits longer",
     )
+    assert store_timeout_for(2000) == STOP_REQUEST_BOUND_S < store_timeout_for(2001)  # as it says
+    assert "S4-G2" not in notes and "until then" not in notes  # #913 S4-G2: the stores read it
+    schema = _words(_SCHEMA_DOC)
     assert (
         "caps its statements, lock waits included, at `CV_OMS_STATEMENT_TIMEOUT_MS` "
-        "(`statement_timeout`; 2 s, the E29-T01 default, a setting from #913 S4-G2 on)"
-    ) in _words(_SCHEMA_DOC)
+        "(`statement_timeout`; 2 s, the E29-T01 default) instead of the repository-wide 30 s"
+    ) in schema
+    assert "a setting from #913 S4-G2 on" not in schema
+    internal = _words(_INTERNAL_DOC)
     assert (
         "the order store's statement cap (`CV_OMS_STATEMENT_TIMEOUT_MS`, 2 s by default, #845)"
-    ) in _words(_INTERNAL_DOC)
+    ) in internal
+    assert (
+        "holds the anchor past the statement cap (2 s by default; the write-ahead record alone "
+        "may take 5 s)"
+    ) in internal
+    architecture = _words(_ARCH)
+    assert (
+        "p99 near the store's statement cap (`CV_OMS_STATEMENT_TIMEOUT_MS`, 2 s by default) means "
+        "order writes are close to refusal"
+    ) in architecture
+    assert (
+        "buckets 5 ms to 5 s, with edges at 1, 1.5, 2 and 2.5 s around the default cap and at 5 s, "
+        "the setting's ceiling"
+    ) in architecture
+    stale = ("2 s statement cap", "capped at 2 s like", "store's (2 s)")  # a fixed 2 s each
+    assert not any(phrase in text for phrase in stale for text in (architecture, internal, schema))
+
+
+def test_the_change_log_records_the_stores_reading_the_statement_cap() -> None:
+    """#913 S4-G2: the stores read the setting §19.41 announced, so 8.2's cap, and the lines in 20
+    and 21 that waited for it, have an entry of their own, the next free number when it lands."""
+    title = re.compile(
+        r"^### 19\.\d+ 2026-10-26 — §8\.2: the OMS stores read the statement cap "
+        r"\(E29-T04, #913\)$",
+        re.MULTILINE,
+    )
+    heads = title.findall(_INTERNAL_DOC)
+    assert len(heads) == 1, f"one §19 entry for S4-G2, found {len(heads)}"
+    after = _INTERNAL_DOC.split(heads[0], 1)[1]
+    entry = _words(after.split("\n### ", 1)[0])
+    assert not _missing(
+        entry,
+        "every store the OMS runtime builds that caps its statements reads "
+        "`CV_OMS_STATEMENT_TIMEOUT_MS`",
+        "2 s by default and 1.5 to 5 s, but two",
+        "and the machine-event store (`SqlAlchemyEventStore`) its own 2 s",
+        '21 §3.3.5 and 20 §7.2 drop their "from #913 S4-G2 on" clauses',
+        '20 §12.1 and §9.1\'s trade-group replay say "by default"',
+        "The stop resolver's bound on each store call follows the setting",
+        "so from 2001 ms up it exceeds a stop request's 10 s",
+        "`oms_db_write_seconds` gains an edge at 5 s, the setting's ceiling",
+        "No table or column changes.",
+    )
 
 
 def test_the_change_log_records_the_order_routes_contract_as_built() -> None:

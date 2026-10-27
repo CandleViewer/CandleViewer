@@ -57,9 +57,10 @@ CV_KILL_CANCEL_TIMEOUT: Final[float] = 5.0
 #: inside `asyncio.timeout(CV_PERSIST_TIMEOUT)`. A store that does not answer in time refuses the
 #: step, and `actionErrorPolicy: "rollback"` leaves the machine as it was (24 Sec.8.2 S7, S11).
 #: The p95 budget of a whole transition is 5 ms; this bounds a stalled store, not a slow one. The
-#: order store's server-side statement cap is longer (2 s, #845), so a COMMIT in flight may land
-#: after the binding gave up: it raises `StepOutcomeUnknown`, and the OMS facade rebuilds the order
-#: from its events, where the row decides.
+#: order store's server-side statement cap is longer (`CV_OMS_STATEMENT_TIMEOUT_MS`, 2 s by default
+#: and 1.5 s at least, #845), so a COMMIT in flight may land after the binding gave up: it raises
+#: `StepOutcomeUnknown`, and the OMS facade rebuilds the order from its events, where the row
+#: decides.
 CV_PERSIST_TIMEOUT: Final[float] = 1.0
 
 #: Bound on one command attempt of a B1 service (#847): `place` (with its lookups), `cancel`,
