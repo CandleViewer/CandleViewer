@@ -19,7 +19,7 @@ from candleviewer.exchange.base.fakes import FakeTradingPort
 from candleviewer.exchange.base.models import AccountRef, Order, Position, RateLane
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.clock_halt import ClockHalt
-from candleviewer.oms.commands import OmsCommandPort
+from candleviewer.oms.commands import ExitKind, ExitWatch, OmsCommandPort
 from candleviewer.oms.errors import HandoverUnavailable, TradingDisabled
 from candleviewer.oms.fakes import (
     FakeClockHealth,
@@ -161,6 +161,14 @@ def command(
         order=view(order, **over),
         terms=dict(terms or {}),
     )
+
+
+def taken(port: OmsCommandPort, order_id: UUID, kind: ExitKind, **kw: Any) -> ExitWatch:
+    """An exit's registration (`expect_exit`) whose command the facade took (`take_exit`), as the
+    exit service leaves it while B1's step stands: B1's call for that step spends it (#4662)."""
+    watch = port.expect_exit(order_id, kind, **kw)
+    port.take_exit(watch)
+    return watch
 
 
 def exchange_order(order: NewOrder, *, state: str = "new", **over: Any) -> Order:

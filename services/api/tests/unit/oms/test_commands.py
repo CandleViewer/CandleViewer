@@ -132,6 +132,7 @@ from tests.unit.oms.command_rig import (
     outage,
     position,
     ref,
+    taken,
 )
 from tests.unit.oms.command_rig import (
     earlier_request as _earlier_request,
@@ -2084,7 +2085,7 @@ async def test_a_cancel_the_venue_leaves_open_is_raised_after_one_call_its_watch
     refusal; for the 110001 it says why the order parks, with the code, so S4-C tells it apart."""
     rig = build_rig()
     row = await _live(rig)
-    watch = rig.port.expect_exit(row.id, "cancel", request_id=_REQUEST)
+    watch = taken(rig.port, row.id, "cancel", request_id=_REQUEST)
     rig.demo.script("cancel_order", venue)
     with pytest.raises(raised) as error:
         await rig.port.cancel(command("cancel", row))
@@ -2308,9 +2309,10 @@ async def test_native_sl_the_cancel_port_refuses_a_recorded_stops_row_unless_it_
 
 
 async def test_an_exit_watch_answers_b1s_cancel_and_a_kills_cancel_spends_none() -> None:
+    """A KILL's cancel spends no registration, even one whose command the facade took."""
     rig = build_rig()
     row = await _live(rig)
-    watch = rig.port.expect_exit(row.id, "cancel", request_id=_REQUEST)
+    watch = taken(rig.port, row.id, "cancel", request_id=_REQUEST)
     assert (watch.order_id, watch.kind, watch.request_id, watch.actor) == (
         row.id, "cancel", _REQUEST, None,
     )  # fmt: skip
@@ -2346,7 +2348,7 @@ async def test_a_cancelled_cancel_answers_its_watch_none_and_stays_cancelled(
     rig = build_rig()
     row = await _live(rig)
     monkeypatch.setattr(rig.demo, "cancel_order", _hangs)
-    watch = rig.port.expect_exit(row.id, "cancel")
+    watch = taken(rig.port, row.id, "cancel")
     task = asyncio.ensure_future(rig.port.cancel(command(kind, row)))
     for _ in range(64):  # into the venue's call, which never answers
         await asyncio.sleep(0)
@@ -2361,7 +2363,7 @@ async def test_a_cancelled_exit_waiter_never_cancels_the_answer() -> None:
     leaves it pending for B1's cancel, and a later waiter gets it."""
     rig = build_rig()
     row = await _live(rig)
-    watch = rig.port.expect_exit(row.id, "cancel")
+    watch = taken(rig.port, row.id, "cancel")
     waiter = asyncio.ensure_future(watch.answer())
     await asyncio.sleep(0)  # one turn of the loop: the waiter is now awaiting the answer
     waiter.cancel()

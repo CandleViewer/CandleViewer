@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any
@@ -95,9 +95,18 @@ def amending(machines: tx.Scripted, monkeypatch: pytest.MonkeyPatch) -> None:
     `amend_pending`, each settle answers the amend's watch, and a final order has no version, as
     B1's facade has none."""
 
-    async def command(account_id: UUID, order_id: UUID, event: Any, *_a: Any, **_k: Any) -> str:
+    async def command(
+        account_id: UUID,
+        order_id: UUID,
+        event: Any,
+        *_a: Any,
+        on_taken: Callable[[], None] | None = None,
+        **_k: Any,
+    ) -> str:
         if machines.refuse is not None:
             raise machines.refuse
+        if on_taken is not None:  # as the facade: once taken, before it is sent
+            on_taken()
         machines.sent.append(event)
         machines.held = "amend_pending"
         return machines.held

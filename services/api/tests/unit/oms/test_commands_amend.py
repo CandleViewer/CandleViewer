@@ -99,7 +99,7 @@ def rows_at_send(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> Iterator[list[Rec
 async def test_a_price_amend_sends_the_terms_alone_and_records_nothing(rig: Rig) -> None:
     """The amend's exit watch gets B1's answer, as the cancel's does; a cancel watch is unspent."""
     order = await _live(rig)
-    watch, other = (rig.port.expect_exit(order.id, kind) for kind in ("amend", "cancel"))
+    watch, other = (cr.taken(rig.port, order.id, kind) for kind in ("amend", "cancel"))
     answer = await rig.port.amend(_amend(order, price="60500", qty="0.02"))
     assert answer["ok"] is True and watch.answered and await watch.answer() == answer
     assert not other.answered
@@ -140,7 +140,7 @@ async def test_an_amends_rows_and_records_name_the_watch_actor(rig: Rig) -> None
     amend's exit watch holds, never the system's None."""
     order = await _live(rig)
     actor = SubmitActor(user_id=uuid4(), role="owner")
-    rig.port.expect_exit(order.id, "amend", actor=actor)
+    cr.taken(rig.port, order.id, "amend", actor=actor)
     answer = await rig.port.amend(_amend(order, stop_loss="58500", take_profit="65000"))
     assert answer["ok"] is True
     assert [row.actor_user_id for row in _rows(rig)] == [actor.user_id] * 2
@@ -190,7 +190,7 @@ async def test_a_refused_amend_voids_its_rows_audited_ahead(
     request's record. A user's void names the user, with the role the writer refuses it without
     (C-2.9), so it lands and its rows end void, nothing swallowed (CR-4609-01)."""
     order = await _live(rig)
-    rig.port.expect_exit(order.id, "amend", actor=actor)
+    cr.taken(rig.port, order.id, "amend", actor=actor)
     rig.demo.script("amend_order", FakeReject(OmsErrorCode.INSTRUMENT_FILTER, 110003, "hidden"))
     with capture_logs() as logs:
         answer = await rig.port.amend(_amend(order, stop_loss="58500"))
@@ -205,7 +205,7 @@ async def test_an_amend_whose_send_raises_leaves_its_rows_in_flight(rig: Rig) ->
     """Q11: B1 lands the order in `unknown`, never re-sent; the complete read ends the rows, and
     the exit service's watch reads None."""
     order = await _live(rig)
-    watch = rig.port.expect_exit(order.id, "amend", request_id=uuid4())
+    watch = cr.taken(rig.port, order.id, "amend", request_id=uuid4())
     rig.demo.script("amend_order", TransportError("cut off"))
     with pytest.raises(TransportError):
         await rig.port.amend(_amend(order, stop_loss="58500"))
@@ -218,7 +218,7 @@ async def test_a_refused_rate_token_voids_the_rows_with_nothing_sent(
     rig: Rig, actor: SubmitActor | None
 ) -> None:
     order = await _live(rig)
-    rig.port.expect_exit(order.id, "amend", actor=actor)
+    cr.taken(rig.port, order.id, "amend", actor=actor)
     rig.demo.script("amend_order", RateBudgetExceededError("no token", retry_after_s=2.0))
     with capture_logs() as logs:
         answer = await rig.port.amend(_amend(order, stop_loss="58500"))
