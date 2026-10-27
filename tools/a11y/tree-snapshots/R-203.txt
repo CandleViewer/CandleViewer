@@ -133,6 +133,9 @@
         - /url: /settings/hotkeys
 - complementary "Side panels":
   - button "Notifications"
-- contentinfo
+- contentinfo:
+  - text: "Connection: offline"
+  - status "System status": "WS latency: unavailable"
+  - text: "12:00:00 UTC Trading environment: Demo v0.1.0"
 - status
 - status

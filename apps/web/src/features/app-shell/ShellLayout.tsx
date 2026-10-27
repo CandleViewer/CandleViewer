@@ -10,6 +10,7 @@ import {
   ShellCanvasOverlaySlot,
   ShellConnectionSlot,
   ShellPanicSlot,
+  ShellStatusSlot,
 } from "./slots";
 import { TopBarSlot } from "./TopBarSlot";
 import { useRouteFocus } from "./useRouteFocus";
@@ -38,6 +39,7 @@ export function ShellLayout(): JSX.Element {
         canvasOverlay={<ShellCanvasOverlaySlot />}
         rightRail={<RightRail />}
         rightRailLabel={RIGHT_RAIL_LABEL}
+        status={<ShellStatusSlot />}
       >
         <Outlet />
       </AppShell>

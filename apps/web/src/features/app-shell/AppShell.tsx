@@ -30,6 +30,8 @@ export interface AppShellProps {
   /** The CMP-209 right rail (S6), inside the `complementary` landmark named `rightRailLabel`. */
   readonly rightRail?: ReactNode;
   readonly rightRailLabel?: string;
+  /** The CMP-208 status bar, inside the `contentinfo` landmark. */
+  readonly status?: ReactNode;
   /** The route outlet. */
   readonly children: ReactNode;
 }
@@ -55,7 +57,8 @@ const SCROLL: CSSProperties = { height: "100%", overflow: "auto" };
 const OVERLAY: CSSProperties = { position: "absolute", inset: 0, pointerEvents: "none" };
 
 export function AppShell(props: AppShellProps): JSX.Element {
-  const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, children } = props;
+  const { mainId, mainRef, nav, connection, panic, banner, canvasOverlay, status, children } =
+    props;
   const { rightRail, rightRailLabel } = props;
   return (
     <div style={FRAME}>
@@ -79,7 +82,7 @@ export function AppShell(props: AppShellProps): JSX.Element {
       <aside aria-label={rightRailLabel} style={{ ...CHROME, gridArea: "aside" }}>
         {rightRail}
       </aside>
-      <footer style={{ ...CHROME, gridArea: "footer" }} />
+      <footer style={{ ...CHROME, gridArea: "footer" }}>{status}</footer>
     </div>
   );
 }

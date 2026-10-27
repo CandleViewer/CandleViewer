@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import process from "node:process";
 import { defineConfig } from "vitest/config";
@@ -9,6 +10,10 @@ export default defineConfig({
   // The WS fault-injection flag (E17-T04 S5e): off unless CV_ALLOW_FAULT_INJECTION=1, as in vite.config.ts.
   define: {
     __CV_ALLOW_FAULT_INJECTION__: JSON.stringify(process.env.CV_ALLOW_FAULT_INJECTION === "1"),
+    // The status bar's version (E10-S01 S4), as in vite.config.ts.
+    __CV_APP_VERSION__: JSON.stringify(
+      JSON.parse(readFileSync(resolve(import.meta.dirname, "package.json"), "utf8")).version,
+    ),
   },
   resolve: {
     // Vitest resolves this jsdom project with node-style conditions, where react-router's `node`
