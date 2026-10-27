@@ -258,12 +258,12 @@ async def test_challenge_states_why_the_action_needs_a_fresh_step_up() -> None:
     w = await _world()
     release = w.send(_RELEASE)
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(release.json())
-    assert release.json()["reason"] == (
+    assert release.json()["step_up_reason"] == (
         "Live enablement and kill-switch disable always need a fresh code, even right after a "
         "recent step-up."
     )
     invite = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
-    assert invite.json()["code"] == "step_up_required" and "reason" not in invite.json()
+    assert invite.json()["code"] == "step_up_required" and "step_up_reason" not in invite.json()
 
 
 async def test_wrong_factor_names_the_attempts_left_before_the_downgrade() -> None:

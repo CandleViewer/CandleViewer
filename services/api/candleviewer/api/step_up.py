@@ -276,13 +276,13 @@ def _invalid_body(exc: ValidationError) -> JSONResponse:
 def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = None) -> JSONResponse:
     """`403 step_up_required`: the challenge issued for the one request it refused (#2304),
     restating it in the server-composed `text` of a route that validated its request, with the
-    class's fixed `reason` when the dialog design draws one."""
+    class's fixed `step_up_reason` when the dialog design draws one."""
     restated = (
         {} if text is None else {"action_summary": text.action_summary, "target": text.target}
     )
     reason = challenge_reason(challenge.action_class)
     if reason is not None:
-        restated["reason"] = reason
+        restated["step_up_reason"] = reason
     return _problem(
         403,
         "step_up_required",

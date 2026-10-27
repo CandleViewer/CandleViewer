@@ -44,10 +44,10 @@ class ChallengeText:
     target: str | None = None
 
 
-#: `Problem.reason`: SCR-006's line saying why the action needs a fresh step-up (E09-D06), the
-#: frame text verbatim, one per class. Only `no-grace-live-enable` draws a class reason ("Same
-#: frame for kill-switch disable"); a class whose frame draws none has no entry, so no copy is
-#: invented (AGENTS.md §8.13). Fixed text: never built from the request.
+#: `Problem.step_up_reason`: SCR-006's line saying why the action needs a fresh step-up
+#: (E09-D06), the frame text verbatim, one per class. Only `no-grace-live-enable` draws a class
+#: reason ("Same frame for kill-switch disable"); a class whose frame draws none has no entry, so
+#: no copy is invented (AGENTS.md §8.13). Fixed text: never built from the request.
 _NO_GRACE_REASON = (
     "Live enablement and kill-switch disable always need a fresh code, even right after a "
     "recent step-up."
@@ -59,7 +59,7 @@ CHALLENGE_REASONS: dict[str, str] = {
 
 
 def challenge_reason(action_class: str) -> str | None:
-    """`Problem.reason` of a challenge for `action_class`, or None to omit the member."""
+    """`Problem.step_up_reason` of a challenge for `action_class`, or None to omit the member."""
     return CHALLENGE_REASONS.get(action_class)
 
 

@@ -79,7 +79,8 @@ def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
 def _challenged(challenge: StepUpChallenge) -> RuleError:
     """`403 step_up_required` carrying the challenge issued for this request (#2304): a no-grace
     step-up must name it, so a refusal without it could never be answered. Its title and detail
-    are the ones every challenge states (`api.step_up.required_problem`), as is its `reason`."""
+    are the ones every challenge states (`api.step_up.required_problem`), as is its
+    `step_up_reason`."""
     reason = challenge_reason(challenge.action_class)
     return RuleError(
         403,
@@ -89,7 +90,7 @@ def _challenged(challenge: StepUpChallenge) -> RuleError:
         action_class=challenge.action_class,
         challenge_id=str(challenge.challenge_id),
         challenge_expires_at=challenge.expires_at.isoformat(),
-        **({} if reason is None else {"reason": reason}),
+        **({} if reason is None else {"step_up_reason": reason}),
     )
 
 
