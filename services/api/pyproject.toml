@@ -177,11 +177,11 @@ markers = [
 # own -m repeats it (scripts/tests/test_workflow_pytest_markers.py, #3091).
 addopts = "-m \"not fuzz and not perf and not harness and not flaky\" --strict-markers --cov=candleviewer --cov=cvdev --cov-branch --cov-fail-under=85"
 testpaths = ["tests"]
-# #4777: the suite-level bound, the only time bound a test may rely on (C-13.7 keeps wall-clock
-# bounds out of tests). A test still running after 120 s fails with a traceback and the lane goes
-# on: `signal` (SIGALRM, POSIX) interrupts only that test, where `thread` would end the run. A test
-# that needs longer says so with `@pytest.mark.timeout(N)` and a reason; tests/conftest.py exempts
-# the nightly-only heavy lanes, which their jobs' `timeout-minutes` bound.
+# #4777: the suite-level bound, the only time bound a test may rely on (03 §14). A test still
+# running after 120 s fails with a traceback and the lane goes on: `signal` (SIGALRM, POSIX)
+# interrupts only that test, where `thread` would end the run. A test that needs longer says so with
+# `@pytest.mark.timeout(N)` and a reason; tests/_suite_timeout.py lifts the nightly-only lanes and
+# gives Hypothesis tests the thread method.
 timeout = 120
 timeout_method = "signal"
 
