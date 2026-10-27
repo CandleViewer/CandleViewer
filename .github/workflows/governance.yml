@@ -6,16 +6,16 @@ name: governance
 #   - a canary self-test (--self-test) proving each checker still fails
 #     against a deliberately-broken fixture (scripts/gov_self_test.py),
 #   - a >=85% line coverage gate on scripts/** (CONSTITUTION.md §9 #3),
-#   - a 90 s duration budget per job, recorded as a GitHub Actions annotation. It measures the
-#     suite, not the runner (#4666): each test shard budgets its pytest wall time and
-#     `governance` its combine step, while the job wall time, which runner contention stretches,
-#     is only reported; `governance-checks` budgets its job wall time.
+#   - a 90 s duration budget per job on one measure, recorded as a `::notice` on every run;
+#     exceeding it fails that job. A test shard budgets its pytest time and `governance` its
+#     combine step, not their job wall time, which runner contention stretches (#4666);
+#     `governance-checks` still budgets its job wall time (#4693).
 # Owning ticket: E01-Q02. #3789: parallel jobs instead of one. `governance-checks` runs the
 # checks, the canary and the reports; the `governance-tests` shards run the unit tests
 # (tools/ci/governance_shards.py splits the files by measured duration; #4365, #4588: six shards,
 # because two ran at the 90 s budget); `governance` needs all of them, combines the shards'
 # coverage, applies the 85% gate and fails unless every job passed, so the `governance` check
-# still means the whole set. Each job checks its own duration.
+# still means the whole set.
 
 on:
   pull_request:
