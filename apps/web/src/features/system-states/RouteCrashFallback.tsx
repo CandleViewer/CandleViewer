@@ -1,43 +1,44 @@
 /**
  * The CMP-091 route-level fallback (E10-S04 #306, slice 6), rendered by `RouteErrorElement` for an
- * unexpected route error. Its root is `ScreenRoot` (E10-S01 #304): a `div` inside the shell's `main`,
- * its own `main` outside it, so the page keeps exactly one `main`. Reload page re-navigates to the
- * same location, which re-runs the route.
+ * unexpected route error. Reload page re-navigates to the same location, which re-runs the route.
  */
-import { useEffect, useState, type JSX } from "react";
+import { useEffect, useRef, useState, type JSX } from "react";
 import { useLocation, useMatches, useNavigate } from "react-router";
 import { ScreenRoot } from "../app-shell/ScreenRoot";
 import { CrashFallback } from "./CrashFallback";
-import { defaultCrashGuard, recordCrash, type CrashGuard, type CrashRecord } from "./crashGuard";
+import { recordCrash, type CrashRecord } from "./crashGuard";
 
-export interface RouteCrashFallbackProps {
-  readonly error: unknown;
-  readonly guard?: CrashGuard | undefined;
-}
-
-export function RouteCrashFallback({
-  error,
-  guard = defaultCrashGuard,
-}: RouteCrashFallbackProps): JSX.Element {
+export function RouteCrashFallback({ error }: { readonly error: unknown }): JSX.Element {
   const matches = useMatches();
   const routeId = matches[matches.length - 1]?.id ?? "route";
-  // recorded on commit: React's synchronous retry renders this element with a second error object,
-  // which is never committed; recordCrash is idempotent per object (StrictMode's double effect)
+  // Recorded on commit, once per mount and error value: React's synchronous retry renders this with
+  // a second error that is never committed, and StrictMode's double effect keeps the ref, so a
+  // thrown primitive is not counted twice.
+  const recorded = useRef<{ readonly error: unknown; readonly crash: CrashRecord } | null>(null);
   const [crash, setCrash] = useState<CrashRecord | null>(null);
   useEffect(() => {
-    setCrash(recordCrash(error, "route", routeId, guard));
-  }, [error, routeId, guard]);
+    if (recorded.current === null || !Object.is(recorded.current.error, error)) {
+      recorded.current = { error, crash: recordCrash(error, "route", routeId) };
+    }
+    setCrash(recorded.current.crash);
+  }, [error, routeId]);
   const navigate = useNavigate();
   const location = useLocation();
+  // The one wrapper is `ScreenRoot` (E10-S01 #304): a child route's error renders inside the shell's
+  // `main` (a `div` then), the layout route's outside it (its own `main`), so the page keeps exactly
+  // one `main`. The alert region is pre-rendered empty (the first commit, before the effect) and the
+  // fallback is injected into it.
   return (
     <ScreenRoot>
-      {crash === null ? null : (
-        <CrashFallback
-          scope="route"
-          crash={crash}
-          onReload={() => void navigate(location, { replace: true })}
-        />
-      )}
+      <div role="alert">
+        {crash === null ? null : (
+          <CrashFallback
+            scope="route"
+            crash={crash}
+            onReload={() => void navigate(location, { replace: true })}
+          />
+        )}
+      </div>
     </ScreenRoot>
   );
 }

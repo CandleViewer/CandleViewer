@@ -3,12 +3,16 @@
  * drawn state (panel, route, repeated) is rendered and axe-checked here; #267's CMP-091 brings the stories.
  */
 import { createRequire } from "node:module";
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { StrictMode } from "react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { createMemoryRouter } from "react-router";
 import { RouterProvider } from "react-router/dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PanelErrorBoundary } from "../../../src/features/system-states/PanelErrorBoundary";
-import { createCrashGuard } from "../../../src/features/system-states/crashGuard";
+import {
+  createCrashGuard,
+  setCrashGuardForTests,
+} from "../../../src/features/system-states/crashGuard";
 import { CRASH_COPY } from "../../../src/features/system-states/copy";
 import { RouteErrorElement } from "../../../src/routes/RouteErrorElement";
 import { buildDiagnostics, installCrashReporter } from "../../../src/shell/crash/reportCrash";
@@ -23,8 +27,10 @@ const RAW = ["raw", "error", "text"].join("-");
 const ID = "00000000-0000-4000-8000-000000000001";
 let uninstall: () => void = () => undefined;
 let failing = true;
+let throwPrimitive = false;
 
 function Bomb(): JSX.Element {
+  if (failing && throwPrimitive) throw `${RAW} primitive`; // a thrown non-Error is the case under test
   if (failing) throw new Error(`${RAW} ${SECRET}`);
   return <p>panel content</p>;
 }
@@ -39,19 +45,22 @@ async function expectCleanDom(): Promise<void> {
   );
 }
 
-function renderPanel(guard = createCrashGuard(() => 0), onReloadApp?: () => void): void {
-  render(
+function panelTree(onReloadApp?: () => void): JSX.Element {
+  return (
     <>
       <button type="button">survivor</button>
-      <PanelErrorBoundary id="test-panel" guard={guard} onReloadApp={onReloadApp}>
+      <PanelErrorBoundary id="test-panel" onReloadApp={onReloadApp}>
         <Bomb />
       </PanelErrorBoundary>
-    </>,
+    </>
   );
 }
+const renderPanel = (onReloadApp?: () => void) => render(panelTree(onReloadApp));
 
 beforeEach(() => {
   failing = true;
+  throwPrimitive = false;
+  setCrashGuardForTests(createCrashGuard(() => Date.now()));
   uninstall = installCrashReporter({
     version: "t",
     target: undefined,
@@ -90,10 +99,7 @@ describe("PanelErrorBoundary", () => {
   it("stops reloading on the third crash at 2:00 and offers Reload app", async () => {
     vi.useFakeTimers();
     const reloadApp = vi.fn();
-    renderPanel(
-      createCrashGuard(() => Date.now()),
-      reloadApp,
-    );
+    renderPanel(reloadApp);
     for (let i = 0; i < 2; i += 1) {
       act(() => vi.advanceTimersByTime(60_000));
       fireEvent.click(button(CRASH_COPY.panel.reload));
@@ -105,6 +111,30 @@ describe("PanelErrorBoundary", () => {
     expect(reloadApp).toHaveBeenCalledOnce();
     vi.useRealTimers();
     await expectCleanDom();
+  });
+
+  it("announces the fallback through an alert region pre-rendered empty", async () => {
+    failing = false;
+    const { rerender } = renderPanel();
+    expect(screen.getByRole("alert")).toBeEmptyDOMElement();
+    failing = true;
+    rerender(panelTree());
+    const alert = screen.getByRole("alert");
+    expect(within(alert).getByRole("heading", { name: CRASH_COPY.panel.heading })).toBeVisible();
+  });
+
+  it("still renders the fallback when the reporter throws", async () => {
+    uninstall();
+    uninstall = installCrashReporter({
+      version: "t",
+      target: undefined,
+      newId: () => {
+        throw new Error("reporter down");
+      },
+    });
+    renderPanel();
+    expect(await heading(CRASH_COPY.panel.heading)).toBeVisible();
+    expect(screen.getByText("unavailable")).toBeInTheDocument();
   });
 
   it("Copy diagnostics writes the redacted payload", async () => {
@@ -122,16 +152,18 @@ describe("PanelErrorBoundary", () => {
 });
 
 describe("RouteErrorElement (route boundary)", () => {
-  // one route id per test: the route boundary counts on the page's one guard
-  function renderRoute(id: string): void {
+  function renderRoute(id: string, strict = false): void {
     const routes = [{ id, path: "/t", element: <Bomb />, errorElement: <RouteErrorElement /> }];
-    render(<RouterProvider router={createMemoryRouter(routes, { initialEntries: ["/t"] })} />);
+    const app = <RouterProvider router={createMemoryRouter(routes, { initialEntries: ["/t"] })} />;
+    render(strict ? <StrictMode>{app}</StrictMode> : app);
   }
 
-  it("renders the route fallback in exactly one main, reported once at route level", async () => {
+  it("renders the route fallback in one main, inside its alert region, reported once", async () => {
     renderRoute("R-T1");
     expect((await heading(CRASH_COPY.route.heading)).tagName).toBe("H1");
     expect(screen.getAllByRole("main")).toHaveLength(1);
+    const alert = within(screen.getByRole("main")).getByRole("alert");
+    expect(within(alert).getByRole("heading", { name: CRASH_COPY.route.heading })).toBeVisible();
     expect(button(CRASH_COPY.reloadApp)).toBeInTheDocument();
     expect(buildDiagnostics().metrics.shell_crash_total.route).toBe(1);
     await expectCleanDom();
@@ -142,5 +174,26 @@ describe("RouteErrorElement (route boundary)", () => {
     failing = false;
     fireEvent.click(await screen.findByRole("button", { name: CRASH_COPY.route.reload }));
     expect(await screen.findByText("panel content")).toBeInTheDocument();
+  });
+
+  it("counts a thrown primitive once under StrictMode", async () => {
+    throwPrimitive = true;
+    const guard = createCrashGuard(() => Date.now());
+    const record = vi.spyOn(guard, "record");
+    setCrashGuardForTests(guard);
+    renderRoute("R-T3", true);
+    await heading(CRASH_COPY.route.heading);
+    expect(record).toHaveBeenCalledOnce();
+    expect(buildDiagnostics().metrics.shell_crash_total.route).toBe(1);
+  });
+
+  it("keeps counting across Reload page: the third crash shows the repeated state", async () => {
+    renderRoute("R-T4");
+    for (let i = 0; i < 2; i += 1) {
+      fireEvent.click(await screen.findByRole("button", { name: CRASH_COPY.route.reload }));
+    }
+    expect(await heading(CRASH_COPY.route.repeatedHeading)).toBeVisible();
+    expect(screen.queryByRole("button", { name: CRASH_COPY.route.reload })).toBeNull();
+    expect(button(CRASH_COPY.reloadApp)).toBeInTheDocument();
   });
 });

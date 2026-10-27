@@ -3,8 +3,10 @@
  * (#267) replaces it, with its styling and stories; until then its states are axe-checked in
  * `test/features/system-states/errorBoundary.test.tsx`. The raw error is never rendered ("Technical
  * detail" waits for #267); Copy diagnostics is an explicit action over the redacted payload (SR-177).
- * Focus (`15` CMP-091): to the heading only when the crash dropped it to the body. The announcement is
- * the host's polite region (PROPOSED: D04 F-09's shell assertive region does not exist yet).
+ * Focus (`15` CMP-091): to the heading only when the crash dropped it to the body. Announcement
+ * (`15` CMP-091, E05-D02, E10-D04 F-09: one assertive announcement per crash): each host renders a
+ * `role="alert"` region empty and injects this fallback into it. F-09 is open; the shell's
+ * pre-rendered assertive region takes over once it exists.
  */
 import { useEffect, useId, useRef, useState, type JSX } from "react";
 import { buildDiagnostics } from "../../shell/crash/reportCrash";

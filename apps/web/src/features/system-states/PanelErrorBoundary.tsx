@@ -6,13 +6,13 @@
  */
 import { Component, Fragment, type ReactNode } from "react";
 import { CrashFallback } from "./CrashFallback";
-import { defaultCrashGuard, recordCrash, type CrashGuard, type CrashRecord } from "./crashGuard";
+import { recordCrash, type CrashRecord } from "./crashGuard";
 
 export interface PanelErrorBoundaryProps {
   /** Stable per panel: the crash log's component and the repeated-crash ring's key. */
   readonly id: string;
   readonly children: ReactNode;
-  readonly guard?: CrashGuard | undefined;
+  /** Reload app; `window.location.reload` by default (tests pass a spy). */
   readonly onReloadApp?: (() => void) | undefined;
 }
 
@@ -30,10 +30,11 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State
   }
 
   override componentDidCatch(error: unknown): void {
-    const { id, guard = defaultCrashGuard } = this.props;
-    this.setState({ crash: recordCrash(error, "panel", id, guard) });
+    this.setState({ crash: recordCrash(error, "panel", this.props.id) });
   }
 
+  // The Reload panel button unmounts with the fallback, so focus drops to the body after a reload
+  // (#267's CMP-091 / the panel host decides where it goes; nothing here moves it).
   private readonly reload = (): void => {
     this.setState((s) => ({ failed: false, crash: null, generation: s.generation + 1 }));
   };
@@ -43,8 +44,8 @@ export class PanelErrorBoundary extends Component<PanelErrorBoundaryProps, State
     return (
       <>
         {failed ? null : <Fragment key={generation}>{this.props.children}</Fragment>}
-        {/* pre-rendered empty, so the fallback's arrival is announced (PROPOSED: polite) */}
-        <div aria-live="polite">
+        {/* CRASH_REGION: pre-rendered empty; the fallback is announced into it */}
+        <div role="alert">
           {crash === null ? null : (
             <CrashFallback
               scope="panel"

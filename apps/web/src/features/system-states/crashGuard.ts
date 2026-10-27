@@ -15,7 +15,10 @@ export interface CrashGuard {
   record(boundaryId: string): boolean;
 }
 
-/** `now` is injected; one ring of ≤ REPEAT_LIMIT times per id (the ids are static, so bounded). */
+/**
+ * `now` is injected; one ring of ≤ REPEAT_LIMIT times per id. The id set is finite: panel ids are
+ * literals at their mount sites, route ids come from the route manifest (through `useMatches`).
+ */
 export function createCrashGuard(now: () => number = Date.now): CrashGuard {
   const rings = new Map<string, number[]>();
   return {
@@ -31,28 +34,35 @@ export function createCrashGuard(now: () => number = Date.now): CrashGuard {
   };
 }
 
-/** The page's guard, so a route boundary that re-mounts per crash still counts. */
-export const defaultCrashGuard: CrashGuard = createCrashGuard();
+/** The page's one guard, so a route boundary that re-mounts per crash still counts. */
+let activeGuard: CrashGuard = createCrashGuard();
+
+/** Test-only seam: installs a guard (a fake clock, a fresh ring set) for the boundaries. */
+export function setCrashGuardForTests(guard: CrashGuard): void {
+  activeGuard = guard;
+}
 
 export interface CrashRecord {
   readonly correlationId: string;
   readonly repeated: boolean;
 }
 
-const recorded = new WeakMap<object, CrashRecord>();
-
-/** Reports a crash and counts it; idempotent per error object (StrictMode's double effect is one crash). */
+/**
+ * Reports one crash and counts it on the guard. Callers call it once per crash (the panel from
+ * `componentDidCatch`, the route once per mount and error). Never throws: a failing reporter still
+ * leaves a fallback to render.
+ */
 export function recordCrash(
   error: unknown,
   level: "panel" | "route",
   boundaryId: string,
-  guard: CrashGuard,
 ): CrashRecord {
-  const key = typeof error === "object" && error !== null ? error : {};
-  const crash = recorded.get(key) ?? {
-    correlationId: reportCrash(error, level, boundaryId), // never throws
-    repeated: guard.record(boundaryId),
-  };
-  recorded.set(key, crash);
-  return crash;
+  try {
+    return {
+      correlationId: reportCrash(error, level, boundaryId),
+      repeated: activeGuard.record(boundaryId),
+    };
+  } catch {
+    return { correlationId: "unavailable", repeated: false };
+  }
 }
