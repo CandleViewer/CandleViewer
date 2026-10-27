@@ -43,7 +43,19 @@ ticket's spec, hand-off and the working-tree `14` (its two pointer lines). It:
    inventory, the growth rule and its text in `14` SCR-024 (G-TAX14), no `aria-disabled` on a
    sentence-form row (G-SENTENCE-ARIA), §5.5's exits, §5.8's and §5.1's PROPOSED marks, §5.6's
    viewports, §8.1's forms, the pins (E15-D02, D03, D04, D06 at their merges), the ruling cite in
-   the heading and the Key, the mutation list).
+   the heading and the Key, the mutation list). The #4502 carries add: D-10 and every browser
+   row free of disabled / greyed / grayed / dimmed / inactive in any inflection, a negation
+   covering its own term (G-ABSENCE); a unit naming a sentence-form item by its label read by
+   G-NOLOCK; Unicode format characters (Cf) dropped by `norm_text`; the viewed user `lee`
+   distinct from the session's `alex` in §1.7, A-13 and K-27 (G-FIXTURE); D-17 amended so
+   AC6 wins, the focus on the first enabled item in the frame's actual order, and
+   `collapsed-own-actions` naming "DOM actions" (G-FOCUS); clamped-200's Geometry and Footnote
+   at scroll 0 with the scrolled-to-end inset named (G-GEOM-ROW).
+
+   Known limits (disclosed, accepted): the gates read words, not meaning. A contradiction
+   appended after an intact ruled sentence (§1.4's leg order, D-13's view-as first) passes
+   when it uses no gated word, and G-VIEWAS's semantic contradictions are likewise unread;
+   any word holding "lock" also hits "block" and "clock" (it fails safe: a FAIL, never a pass).
 4. **Strings and tokens.** Every backticked token exists (or is quoted in a CR / C / A row, or is
    the PENDING `color.sync.*`); no hex; no raw px outside a quote or a code span.
 5. **--selftest** applies every §6.3 mutation M-n and one mutation per further ruled sentence R-n
@@ -85,6 +97,7 @@ import math
 import re
 import subprocess
 import sys
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -193,7 +206,8 @@ NEW_KEYS = {"flag.panel_off", "layout.panel.no_settings", "layout.panel.at_defau
 SENTENCE_KEYS = NEW_KEYS | D03_KEYS  # every key §1.6's sentence form carries
 # G-VIEWAS: the picker frames whose leg is fixed (view-as is checked first, §1.4)
 PICKER_VIEW_STATES = {"disabled-viewer": "rbac.permission", "disabled-viewas": "rbac.view_as"}
-VIEWAS_USER = "alex"  # E15-D02's view-as fixture (§1.7)
+VIEWAS_USER = "lee"  # the viewed user on every view-as frame (§1.7; E10-D03's; PROPOSED A-13)
+SESSION_USER = "alex"  # the session's own user (§1.7; E15-D02's), never the viewed one
 BOARDS_RULED, TWINS_RULED = 10, 3  # RULED BQ-17: ten boards, seven dark plus three light twins
 NOT_OFFERED_RULED = 5  # RULED BQ-3: the five screens with no pane kind, one inventory row
 TICKET_ENTRIES = 2  # D02 D-28: the order ticket and the trade-group ticket
@@ -207,7 +221,14 @@ PICKER_T2_PAIRS = {
     "Deep Stats": {"recording.symbol_not_recorded"},  # the recording entry (§1.7, illustrative)
     "Desk risk overview": {"rbac.owner_only"},  # the owner-only entry (§1.7, illustrative)
 }
-FOCUS_STATES = ("no-settings", "keyboard-specimen")  # the register names the opening focus
+# the register names the opening focus on these rows (AC6 over D-17's default list)
+FOCUS_STATES = ("no-settings", "keyboard-specimen", "collapsed-own-actions")
+D17_RULE = "focus opens on the first enabled item in the frame's actual order"  # AC6 wins
+# clamped-200 (§6.2): the frame is scroll 0; the inset beside it is scrolled to the end
+CLAMP_SCROLL0 = "scroll 0: ▼ shown, no ▲"
+CLAMP_INSET = "inset: scrolled to end — shows ▲ and the footnote"
+# the sentence-form items' labels (§8.2's Control cells): naming one makes a unit G-NOLOCK's
+SENTENCE_LABELS = ("Liquidity map", "Settings…", "Reset settings…", "Equal sizes")
 FOCUS_CLAUSE = re.compile(r"(?:^|; )focus on open: (?P<item>[^;]+)")
 SENTENCE_ATTRS = "no `aria-disabled`; `aria-describedby` → the sentence"  # §1.6, condition 1
 SHIPPED_FOOTNOTE = "Multi-window workspaces need the desktop app."
@@ -1515,8 +1536,10 @@ def geometry_row_gates(frames: list[Frame], extra: dict[str, object]) -> list[st
             problems.append(f"clipped {m[1] if m else '?'}, not 0")
         if f.state == "clamped-200":
             clamp = extra.get("clamp")
-            if "▲ / ▼ shown" not in cell or not (isinstance(clamp, dict) and clamp["clamped"]):
-                problems.append("the clamped menu with ▲ / ▼")
+            if CLAMP_SCROLL0 not in cell or not (isinstance(clamp, dict) and clamp["clamped"]):
+                problems.append(f"the clamped menu at {CLAMP_SCROLL0!r}")
+            if CLAMP_INSET not in cell or CLAMP_INSET not in f.cell("Footnote"):
+                problems.append(f"the inset named in Geometry and Footnote ({CLAMP_INSET!r})")
         if problems:
             bad.append(f"[G-GEOM-ROW] {f.tag}: {'; '.join(problems)} (AC4; RULED BQ-14)")
     return bad
@@ -1688,29 +1711,44 @@ def reason_name_gates(spec: str, frames: list[Frame]) -> list[str]:
     return bad
 
 
-# Every text G-NOLOCK and G-ABSENCE read is normalised first (`norm_text`): markdown `**`, `*`
-# and backticks dropped, even inside a word ("**lo**cked"); the hyphens and dashes U+2010–2015
-# and "-" read as a space ("Not-available", "T-2", "Pop-outs"); whitespace, no-break spaces
-# included, collapsed; lowercased. The patterns below are written for that form.
+# Every text G-NOLOCK and G-ABSENCE read is normalised first (`norm_text`): Unicode format
+# characters (category Cf: soft hyphen, zero-width space and the like) dropped ("lo\u00adcked",
+# "Pop\u200bout"); markdown `**`, `*` and backticks dropped, even inside a word ("**lo**cked");
+# the hyphens and dashes U+2010–2015 and "-" read as a space ("Not-available", "T-2",
+# "Pop-outs"); whitespace, no-break spaces included, collapsed; lowercased. The patterns below
+# are written for that form.
 _DASHES = re.compile(r"[\u2010-\u2015-]")
 _MARKUP = re.compile(r"[*`]")
 
 
 def norm_text(text: str) -> str:
+    text = "".join(ch for ch in text if unicodedata.category(ch) != "Cf")
     return " ".join(_DASHES.sub(" ", _MARKUP.sub("", text)).split()).lower()
 
 
 _LOCK_TERM = r"(?:\w*lock\w*|t ?2s?|tier ?2|aria ?disabled|ariadisabled|unavailable)"
 _NEG_WORD = r"(?:\b(?:no|never|not|nor|without)\b|distinct from)"
 _NEG_TERM = rf"(?:{_LOCK_TERM}(?: glyph)?|cmp ?079)"
+
+
+def _negation(term: str) -> re.Pattern[str]:
+    return re.compile(
+        rf"{_NEG_WORD}\s+(?:(?:a|an|the|any|carries|by)\s+)*{term}\b"
+        rf"(?:\s*(?:,\s*)?(?:nor|(?:,|or|and)\s+{_NEG_WORD})\s+(?:the\s+)?{term}\b)*"
+        r"(?: lock| at all)?",
+    )
+
+
 # A negation covers its own term only. The chain goes on past "," / "and" / "or" only when the
 # chained term is itself negated ("no lock, no T2", "no lock nor T2"): "not T2 and locked" and
 # "no lock or Locked" leave the second term live.
-NEG = re.compile(
-    rf"{_NEG_WORD}\s+(?:(?:a|an|the|any|carries|by)\s+)*{_NEG_TERM}\b"
-    rf"(?:\s*(?:,\s*)?(?:nor|(?:,|or|and)\s+{_NEG_WORD})\s+(?:the\s+)?{_NEG_TERM}\b)*"
-    r"(?: lock| at all)?",
-)
+NEG = _negation(_NEG_TERM)
+# G-ABSENCE's vocabulary beyond the lock claim: disabled, greyed / grayed, dimmed, inactive in
+# every inflection ("Disabling", "greys", "dims"); a negation covers its own term ("never
+# disabled" is D-10's own statement), the same chain rule as NEG
+_DIM_TERM = r"(?:disabl\w*|gr[ae]y\w*|dim(?:s|med|ming)?|inactiv\w*)"
+DIMMISH = re.compile(rf"\b{_DIM_TERM}\b")
+NEG_ABSENT = _negation(rf"(?:{_NEG_TERM}|{_DIM_TERM})")
 # A double negation, or "only" / "just" after a negation, asserts its term: "never without a
 # lock", "never not locked", "not only locked" are lock claims. The phrase is dropped before NEG
 # runs, so the term after it stays live.
@@ -1733,6 +1771,12 @@ def lockish(text: str) -> bool:
     """A lock, T2 or `aria-disabled` claim left once every negated mention is removed."""
     t = norm_text(text).replace(DISTINCT_BASELINE, " ")
     return LOCKISH.search(NEG.sub(" ", DOUBLE_NEG.sub(" ", t))) is not None
+
+
+def dimmish(text: str) -> bool:
+    """A disabled / greyed / grayed / dimmed / inactive claim left once negations are removed."""
+    t = norm_text(text).replace(DISTINCT_BASELINE, " ")
+    return DIMMISH.search(NEG_ABSENT.sub(" ", DOUBLE_NEG.sub(" ", t))) is not None
 
 
 def pop_out(text: str) -> bool:
@@ -1770,6 +1814,17 @@ def names_key(text: str) -> bool:
     """The text names a new key or the D03 key, backticked or bare."""
     t = norm_text(text)
     return any(r.search(t) for r in _KEY_RES)
+
+
+_LABEL_RES = tuple(
+    re.compile(rf"(?<![\w]){re.escape(norm_text(lb))}(?![\w])") for lb in SENTENCE_LABELS
+)
+
+
+def names_label(text: str) -> bool:
+    """The text names a sentence-form item by its label ("Equal sizes", "Reset settings…")."""
+    t = norm_text(text)
+    return any(r.search(t) for r in _LABEL_RES)
 
 
 def section_units(block: str, skip: tuple[int, ...]) -> list[tuple[str, list[str]]]:
@@ -1810,7 +1865,8 @@ def section_units(block: str, skip: tuple[int, ...]) -> list[tuple[str, list[str
 def nolock_gates(spec: str, hand: str) -> list[str]:
     """G-NOLOCK (condition 1): no lock, T2, "Not available" or `aria-disabled` on a new key or a
     sentence-form item, read in every row, bullet, paragraph and heading of §4.4, §5.5, §5.9 and
-    hand-off Table N, in every row of §8.2, and in §1.6 whole."""
+    hand-off Table N, in every row of §8.2, and in §1.6 whole. A unit is read when it names a
+    new key, says "sentence" or names a sentence-form item by its label (`SENTENCE_LABELS`)."""
     bad: list[str] = []
     sections = (
         ("spec", "4.4 Disabled entries", spec, (), True),
@@ -1824,7 +1880,8 @@ def nolock_gates(spec: str, hand: str) -> list[str]:
             if not whole and len(cells) == 1:
                 continue  # §8.2: its table rows only
             keyed = any(names_key(c) for c in cells)
-            if not (keyed or any("sentence" in norm_text(c) for c in cells)):
+            named = any(names_label(c) for c in cells)
+            if not (keyed or named or any("sentence" in norm_text(c) for c in cells)):
                 continue  # a unit naming neither a new key nor a sentence-form item
             exempt = not keyed and host in T2_HOSTS
             hit = next(
@@ -1858,16 +1915,20 @@ def nolock_gates(spec: str, hand: str) -> list[str]:
 
 
 def absence_gates(spec: str, frames: list[Frame]) -> list[str]:
-    """G-ABSENCE (condition 2): Pop out, in any spelling (`POP_OUT`), in no cell of a browser
-    frame; absent in §5.5, with no lock or T2 word in any cell of its row; D-10 states the
-    absence, never a lock."""
+    """G-ABSENCE (condition 2): Pop out, in any spelling (`POP_OUT`), and no disabled / greyed /
+    grayed / dimmed / inactive word (`DIMMISH`), in no cell of a browser frame; absent in §5.5,
+    with no lock or T2 word in any cell of its row; D-10 states the absence, never a lock and
+    never disabled, greyed, dimmed or inactive (its own "never disabled" is a negation)."""
     bad: list[str] = []
     for f in frames:
         if f.surface != "SCR-028" or f.state not in BROWSER_STATES:
             continue
-        cols = [c for c, v in zip(REG_COLS, f.cells, strict=False) if pop_out(v)]
+        cols = [c for c, v in zip(REG_COLS, f.cells, strict=False) if pop_out(v) or dimmish(v)]
         if cols:
-            bad.append(f"[G-ABSENCE] {f.tag}: Pop out drawn in the browser ({', '.join(cols)})")
+            bad.append(
+                f"[G-ABSENCE] {f.tag}: Pop out or a disabled form drawn in the browser "
+                f"({', '.join(cols)})"
+            )
     row = row_starting(section(spec, "5.5 Static predicates"), "Pop out")
     if (
         row is None
@@ -1877,8 +1938,8 @@ def absence_gates(spec: str, frames: list[Frame]) -> list[str]:
         bad.append("[G-ABSENCE] §5.5 Pop out: absent with the footnote; no lock, no key")
     d10 = row_starting(section(spec, "2. Decisions"), "D-10")
     said = d10[1] if d10 and len(d10) > 1 else ""
-    if "Pop out is **absent**, never disabled" not in said or lockish(said):
-        bad.append("[G-ABSENCE] D-10: Pop out is absent in the browser, never T2 or a lock")
+    if "Pop out is **absent**, never disabled" not in said or lockish(said) or dimmish(said):
+        bad.append("[G-ABSENCE] D-10: Pop out is absent in the browser, never T2, a lock or dimmed")
     return bad
 
 
@@ -1992,7 +2053,11 @@ def owner_gates(spec: str, hand: str) -> list[str]:
 
 # G-KEYMODEL: §12.1 (surface, key) and §12.3 (event) rows → the words each must carry
 KEY_RULES: tuple[tuple[str, str, str], ...] = (
-    ("menu", "(on open)", "focus on the first item that is neither T2 nor sentence-form"),
+    (
+        "menu",
+        "(on open)",
+        "focus on the first item that is neither T2 nor sentence-form in the frame's actual order",
+    ),
     ("menu", "`↓` / `↑`", "lands on T2 and sentence items"),
     ("menu", "`Home` / `End`", "`End` lands on Close"),
     ("menu", "a printable character", "matches T2 items"),
@@ -2219,12 +2284,42 @@ def ruled_gates(spec: str, hand: str, p14: str, base: dict[str, str]) -> list[st
     for q in texts:
         if len(q) > 60 or not q.endswith("."):
             bad.append(f"[G-REASON] {q[:40]!r}: {len(q)} characters, one sentence ≤ 60")
+    # AC6 over D-17: the opening focus is the first enabled item in the frame's actual order
+    d17 = row_starting(section(spec, "2. Decisions"), "D-17")
+    if d17 is None or len(d17) < 2 or D17_RULE not in d17[1]:
+        bad.append(f"[G-FOCUS] D-17: {D17_RULE!r} (AC6 wins over the default list)")
+    bad += fixture_gates(spec, hand)
     bad += nolock_gates(spec, hand)
     bad += static_gates(spec)
     # honesty: every heuristic finding says so
     for r in table_rows(section(spec, "16. Heuristic evaluation")):
         if len(r) >= 2 and not r[1].endswith("(heuristic)"):
             bad.append(f"[G-HONESTY] §16 {r[0]}: a finding not marked (heuristic)")
+    return bad
+
+
+def fixture_gates(spec: str, hand: str) -> list[str]:
+    """G-FIXTURE (§1.7): the viewed user (`VIEWAS_USER`) is distinct from the session's own
+    (`SESSION_USER`), named in §1.7, in a PROPOSED A-row to E15-D02 (A-13) and in the copy deck
+    (K-27); no prose or hand-off line views as the session's own user. The view-as frames' cells
+    themselves are G-REASON-NAME's (the registry fills `{user}` with `VIEWAS_USER`)."""
+    bad: list[str] = []
+    s17 = section(spec, "1.7 Fixtures")
+    banner = f'"Read-only while viewing as {VIEWAS_USER}."'
+    if not all(x in s17 for x in (f"`{SESSION_USER}`", f"`{VIEWAS_USER}`", "A-13", banner)):
+        bad.append(f"[G-FIXTURE] §1.7: the viewed user `{VIEWAS_USER}` and the banner, A-13")
+    a13 = row_starting(section(spec, "19.4 Amendments"), "A-13")
+    said = " ".join(a13) if a13 else ""
+    if not all(x in said for x in (f"`{VIEWAS_USER}`", "E15-D02", "PROPOSED", banner)):
+        bad.append(f"[G-FIXTURE] §19.4: no PROPOSED A-13 adding `{VIEWAS_USER}` to E15-D02")
+    k27 = row_starting(section(spec, "9. Copy deck"), "K-27")
+    if k27 is None or f'= "{VIEWAS_USER}"' not in " ".join(k27) or "A-13" not in " ".join(k27):
+        bad.append(f'[G-FIXTURE] §9 K-27: {{user}} is not "{VIEWAS_USER}" (A-13)')
+    own = re.compile(rf"\bviewing as {SESSION_USER}\b")
+    for name, text in (("spec", spec), ("hand-off", hand)):
+        for n, line in enumerate(text.split("\n"), 1):
+            if (name == "hand-off" or not line.startswith("|")) and own.search(norm_text(line)):
+                bad.append(f"[G-FIXTURE] {name}:{n}: viewing as the session's own user")
     return bad
 
 
@@ -2570,7 +2665,11 @@ MUTATIONS: tuple[Mutation, ...] = (
         "M-14",
         "the second footnote sentence drawn as PROPOSED (condition 2)",
         "G-FOOTNOTE",
-        reg("SCR-028/clamped-200" + R1280, "Footnote", lambda c: c.removesuffix(" PROPOSED")),
+        reg(
+            "SCR-028/clamped-200" + R1280,
+            "Footnote",
+            replace('whole workspace." PROPOSED', 'whole workspace."'),
+        ),
     ),
     Mutation(
         "M-15",
@@ -3036,8 +3135,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-73",
-        'every text is normalised first (markdown, dashes, spaces, case): "— **lo**cked" in §4.4\'s '
-        "flag-off Visible cell",
+        "every text is normalised first (markdown, dashes, spaces, case): "
+        '"— **lo**cked" in §4.4\'s flag-off Visible cell',
         "G-NOLOCK",
         line_sub("| Liquidity map, illustrative", " — no lock", " — **lo**cked"),
     ),
@@ -3049,7 +3148,8 @@ MUTATIONS: tuple[Mutation, ...] = (
     ),
     Mutation(
         "M-75",
-        'a double negation asserts its term: "— never without a lock" in §4.4\'s flag-off Visible cell',
+        'a double negation asserts its term: "— never without a lock" in §4.4\'s '
+        "flag-off Visible cell",
         "G-NOLOCK",
         line_sub("| Liquidity map, illustrative", " — no lock", " — never without a lock"),
     ),
@@ -3063,6 +3163,199 @@ MUTATIONS: tuple[Mutation, ...] = (
             "The sentence lengths are",
             "Settings… with `layout.panel.no_settings` is locked. The sentence lengths are",
         ),
+    ),
+    # ---- the #4502 carries (rec-4502 recheck; the 11:27Z answers), one mutation each
+    Mutation(
+        "M-77",
+        'D-10 never disabled: "Pop out is disabled." appended to D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub(
+            "| D-10 ", "This is the one stated", "Pop out is disabled. This is the one stated"
+        ),
+    ),
+    Mutation(
+        "M-78",
+        'D-10 never greyed: "It is shown greyed out." in D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub(
+            "| D-10 ", "This is the one stated", "It is shown greyed out. This is the one stated"
+        ),
+    ),
+    Mutation(
+        "M-79",
+        'D-10 never grayed: "It is grayed." in D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub("| D-10 ", "This is the one stated", "It is grayed. This is the one stated"),
+    ),
+    Mutation(
+        "M-80",
+        'D-10 never dimmed: "It is dimmed." in D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub("| D-10 ", "This is the one stated", "It is dimmed. This is the one stated"),
+    ),
+    Mutation(
+        "M-81",
+        'D-10 never inactive: "It is drawn inactive." in D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub(
+            "| D-10 ", "This is the one stated", "It is drawn inactive. This is the one stated"
+        ),
+    ),
+    Mutation(
+        "M-82",
+        'a negation covers its own term: "never disabled but dimmed" in D-10 (condition 2)',
+        "G-ABSENCE",
+        line_sub("| D-10 ", "never disabled, with", "never disabled but dimmed, with"),
+    ),
+    Mutation(
+        "M-83",
+        'every browser row: "Disabling" in the Footnote cell of browser · dark (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/browser" + R1280, "Footnote", lambda c: c + "; Disabling the slot"),
+    ),
+    Mutation(
+        "M-84",
+        'every browser row: "greys" in the Footnote cell of browser · light (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/browser · 1280 · light", "Footnote", lambda c: c + "; the slot greys"),
+    ),
+    Mutation(
+        "M-85",
+        'every browser row: "dims" in the Footnote cell of clamped-200 (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/clamped-200" + R1280, "Footnote", lambda c: c + "; the slot dims"),
+    ),
+    Mutation(
+        "M-86",
+        'every browser row: "inactive" in the Footnote cell of browser · dark (condition 2)',
+        "G-ABSENCE",
+        reg("SCR-028/browser" + R1280, "Footnote", lambda c: c + "; an inactive slot"),
+    ),
+    Mutation(
+        "M-87",
+        "format characters dropped: lo + U+00AD + cked in §4.4's flag-off Visible cell",
+        "G-NOLOCK",
+        line_sub("| Liquidity map, illustrative", " — no lock", " — lo\u00adcked"),
+    ),
+    Mutation(
+        "M-88",
+        "format characters dropped: Pop + U+200B + out in a browser frame's cell (condition 2)",
+        "G-ABSENCE",
+        reg("SCR-028/browser" + R1280, "Sentence", lambda c: f'Pop\u200bout: "{SHIPPED_FOOTNOTE}"'),
+    ),
+    Mutation(
+        "M-89",
+        'a sentence item by its label: "Equal sizes is locked …" as a new §5.5 paragraph',
+        "G-NOLOCK",
+        line_sub(
+            "The sentence lengths are",
+            "The sentence lengths are",
+            "Equal sizes is locked with one panel.\n\nThe sentence lengths are",
+        ),
+    ),
+    Mutation(
+        "M-90",
+        'a sentence item by its label: "Liquidity map is drawn locked." as a new §4.4 paragraph',
+        "G-NOLOCK",
+        line_sub(
+            '"Needs a recorded symbol." (',
+            '"Needs a recorded symbol." (',
+            'Liquidity map is drawn locked.\n\n"Needs a recorded symbol." (',
+        ),
+    ),
+    Mutation(
+        "M-91",
+        'a sentence item by its label: a §5.9 bullet "Reset settings… is locked …"',
+        "G-NOLOCK",
+        line_sub(
+            "- **Tokens:** CMP-041's",
+            "- **Tokens:** CMP-041's",
+            "- Reset settings… is locked at its defaults.\n- **Tokens:** CMP-041's",
+        ),
+    ),
+    Mutation(
+        "M-92",
+        "the view-as frame names the viewed user: alex for lee in disabled-viewas's Picker cell",
+        "G-REASON-NAME",
+        reg(
+            "SCR-024/disabled-viewas" + R1280,
+            "Picker",
+            replace(f"as {VIEWAS_USER}.", f"as {SESSION_USER}."),
+        ),
+    ),
+    Mutation(
+        "M-93",
+        "§1.7 names a second fixture for the viewed user: `lee` written `alex` there",
+        "G-FIXTURE",
+        line_sub("Synthetic only (", "and `lee`, the viewed user", "and `alex`, the viewed user"),
+    ),
+    Mutation(
+        "M-94",
+        "the second fixture name is a PROPOSED A-row to E15-D02: A-13 deleted",
+        "G-FIXTURE",
+        drop(r"^\| A-13 "),
+    ),
+    Mutation(
+        "M-95",
+        'the copy deck fills {user} with the viewed user: K-27 "lee" written "alex"',
+        "G-FIXTURE",
+        line_sub("| K-27 ", '= "lee"', '= "alex"'),
+    ),
+    Mutation(
+        "M-96",
+        'no prose views as the session\'s own user: §7.1 says "viewing as alex"',
+        "G-FIXTURE",
+        line_sub("### 7.1 Viewer and view-as", "view-as (D-13)", "view-as (D-13; viewing as alex)"),
+    ),
+    Mutation(
+        "M-97",
+        'AC6 over D-17: collapsed-own-actions opens on "Settings…", not DOM actions',
+        "G-FOCUS",
+        reg(
+            "SCR-028/collapsed-own-actions" + R1280,
+            "Kbd",
+            replace("focus on open: DOM actions", "focus on open: Settings…"),
+        ),
+    ),
+    Mutation(
+        "M-98",
+        "AC6 over D-17: the opening focus unnamed on collapsed-own-actions",
+        "G-FOCUS",
+        reg(
+            "SCR-028/collapsed-own-actions" + R1280,
+            "Kbd",
+            replace("; focus on open: DOM actions", ""),
+        ),
+    ),
+    Mutation(
+        "M-99",
+        'AC6 over D-17: D-17 reads "in the default list\'s order"',
+        "G-FOCUS",
+        line_sub("| D-17 ", "in the frame's actual order", "in the default list's order"),
+    ),
+    Mutation(
+        "M-100",
+        "AC6 over D-17: §12.1's (on open) row loses \"in the frame's actual order\"",
+        "G-KEYMODEL",
+        cell_where("12.1 Keys", "menu", 2, replace(" in the frame's actual order", "")),
+    ),
+    Mutation(
+        "M-101",
+        'clamped-200 is scroll 0: its Geometry cell written "▲ / ▼ shown"',
+        "G-GEOM-ROW",
+        reg("SCR-028/clamped-200" + R1280, "Geometry", replace(CLAMP_SCROLL0, "▲ / ▼ shown")),
+    ),
+    Mutation(
+        "M-102",
+        "clamped-200 names its inset: the inset clause dropped from the Geometry cell",
+        "G-GEOM-ROW",
+        reg("SCR-028/clamped-200" + R1280, "Geometry", replace(f" ({CLAMP_INSET})", "")),
+    ),
+    Mutation(
+        "M-103",
+        "clamped-200 names its inset: the inset clause dropped from the Footnote cell",
+        "G-GEOM-ROW",
+        reg("SCR-028/clamped-200" + R1280, "Footnote", replace(f" ({CLAMP_INSET})", "")),
     ),
     # ---- the ruling's other sentences (rulings.md), one mutation each
     Mutation(
