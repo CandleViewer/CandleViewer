@@ -170,6 +170,11 @@ def _collect(expression: str | None, *targets: str) -> frozenset[str]:
     return frozenset(line for line in result.stdout.splitlines() if _NODE_ID.match(line))
 
 
+# #4777: the module fixtures collect the whole tree in a child pytest (about 200 s on CI), which
+# the suite's 120 s per-test default would cut short; 900 s keeps a bound with headroom.
+pytestmark = pytest.mark.timeout(900)
+
+
 @pytest.fixture(scope="module")
 def selected_by_marker() -> frozenset[str]:
     """What the pack's QA command, `pytest -m e09_regression` with no paths, selects in the tree."""

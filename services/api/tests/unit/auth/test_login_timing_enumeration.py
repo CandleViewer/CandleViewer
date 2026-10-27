@@ -20,6 +20,8 @@ SAMPLES = int(os.environ.get("CV_TIMING_SAMPLES", "1000"))
 
 
 @pytest.mark.perf
+# #4777: 1,000 timed samples take about 86 s on a hosted runner, near the suite's 120 s default.
+@pytest.mark.timeout(600)
 @pytest.mark.asyncio
 async def test_login_timing_unknown_vs_wrong_password_indistinguishable_over_1000_samples() -> None:
     repo = FakeUserRepository()
