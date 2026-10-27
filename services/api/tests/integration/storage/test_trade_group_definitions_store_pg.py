@@ -43,6 +43,9 @@ _FREEZE = (
 )
 _DISABLE = "UPDATE exchange_accounts SET is_enabled = false, trading_enabled = true WHERE id = %s"
 _WRITER = "SELECT updated_by, deleted_at IS NOT NULL FROM trade_group_definitions WHERE id = %s"
+_MEMBER_WRITER = (
+    "SELECT created_by, updated_by FROM trade_group_definition_members WHERE definition_id = %s"
+)
 
 
 @pytest.fixture(scope="module")
@@ -169,6 +172,28 @@ async def test_a_member_account_must_be_live_and_a_disabled_one_reads_disabled(
     assert await store.get(ME, PAIR) == pair
 
 
+async def test_an_account_soft_deleted_while_a_create_waits_is_refused(
+    store: Store, pg_dsn: str
+) -> None:
+    """The members' accounts are locked `FOR SHARE`: a create waits on a soft delete held open,
+    then reads it committed and refuses the account, writing nothing."""
+    hook, late = _Hook(), tg._account(pg_dsn)
+    racing = _new("Racing", A, late)
+    async with asyncio.timeout(15):
+        with tg._conn(pg_dsn) as holder:
+            holder.autocommit = False
+            holder.execute("UPDATE exchange_accounts SET deleted_at = now() WHERE id = %s", (late,))
+            create = asyncio.create_task(store.create(ME, racing, write_ahead=hook))
+            try:
+                await tg._wait_until_blocked(pg_dsn, "trade-groups-it")
+                await asyncio.to_thread(holder.commit)
+                with pytest.raises(port.DefinitionRuleError, match=r"^account_not_live$"):
+                    await create
+            finally:
+                await tg._settle(create)
+    assert hook.seen == [] and tg._sql(pg_dsn, _COUNT, racing.id, racing.id) == [(0, 0)]
+
+
 async def test_a_soft_deleted_definition_takes_no_member(store: Store, pg_dsn: str) -> None:
     """SEC-2-03 (21 Sec.3.3.3a): a replace of a deleted definition answers `None`, and one racing
     a delete waits on its row lock, then answers `None`; neither adds a member."""
@@ -218,6 +243,7 @@ async def test_the_stored_writer_is_the_owner_the_gate_checked(store: Store, pg_
     """The scope names the writer: another Owner's replace and then a soft delete store theirs."""
     hook, other, new = _Hook(), OwnerScope(tg._user(pg_dsn, "owner")), _new("Writers", A)
     await store.create(ME, new, write_ahead=hook)
+    assert tg._sql(pg_dsn, _MEMBER_WRITER, new.id) == [(OWNER, OWNER)]
     now = await store.replace(other, new.id, new, expected_updated_at=None, write_ahead=hook)
     assert now is not None and now.definition.created_by == OWNER
     assert now.definition.updated_by == other.user_id
