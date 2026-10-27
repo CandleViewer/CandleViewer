@@ -646,6 +646,7 @@ class RulesManager:
                 author=row.last_editor,
                 session=row.last_session,
                 action="reload_and_reapply",
+                title="If-Match / ETag precondition failed",  # 22's `PreconditionFailed` (#4674)
             )
         rule, h = self._validated(
             {**ir, "mode": row.mode, "enabled": row.mode != "disabled"}, rule_id

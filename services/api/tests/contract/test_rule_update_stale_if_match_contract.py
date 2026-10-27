@@ -25,6 +25,14 @@ def update_rule_responses() -> dict[str, Any]:
     return responses
 
 
+def _precondition_failed_example() -> dict[str, Any]:
+    """22's `PreconditionFailed` `stale` example: the `type` and `title` the 412 carries."""
+    response = load_openapi_spec()["components"]["responses"]["PreconditionFailed"]
+    example = response["content"]["application/problem+json"]["examples"]["stale"]["value"]
+    assert isinstance(example, dict) and example["code"] == "version_conflict"
+    return example
+
+
 def test_update_rule_contract_declares_412_and_no_409(
     update_rule_responses: dict[str, Any],
 ) -> None:
@@ -44,4 +52,5 @@ def test_update_rule_stale_if_match_answers_a_declared_status_with_the_declared_
     assert stale.status_code == 412
     body = stale.json()
     assert body["code"] == "version_conflict" and body["status"] == 412
-    assert body["title"] == "Version conflict"
+    stale_example = _precondition_failed_example()
+    assert body["type"] == stale_example["type"] and body["title"] == stale_example["title"]
