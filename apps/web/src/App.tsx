@@ -4,6 +4,7 @@ import { ThemeProvider } from "@candleviewer/ui";
 import { WsErrorHost } from "./lib/ws/WsErrorHost";
 import { startTelemetry } from "./lib/telemetry/aggregator";
 import { KeymapHost } from "./keymap/KeymapHost";
+import { SessionLockHost } from "./features/session/SessionLockHost";
 import { PreferencesProvider } from "./features/a11y-preferences/PreferencesContext";
 import { usePublishEngineFlags } from "./features/a11y-preferences/consumers";
 import { createRouteTree } from "./routes/tree";
@@ -29,6 +30,7 @@ export function App(): JSX.Element {
         <RouterProvider router={router} />
         <WsErrorHost />
         <KeymapHost />
+        <SessionLockHost />
       </PreferencesProvider>
     </ThemeProvider>
   );

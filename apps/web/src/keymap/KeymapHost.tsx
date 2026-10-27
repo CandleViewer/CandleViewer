@@ -62,6 +62,8 @@ export function KeymapHost(): JSX.Element {
       },
     });
     const onKey = (e: KeyboardEvent) => {
+      // SCR-005 (#1640): nothing that changes state runs behind the idle lock; no command lists "Locked"
+      if (document.querySelector('[data-keymap-context="Locked"]') !== null) return;
       const r = dispatch(e, activeContexts());
       if (r.status === "executed") e.preventDefault();
     };
