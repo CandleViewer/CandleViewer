@@ -183,6 +183,7 @@ _GRANT_VISIBLE: Final = (
     "AND EXISTS (SELECT 1 FROM user_account_access uaa WHERE uaa.user_id = CAST(:caller AS uuid) "
     "AND uaa.exchange_account_id = vl.exchange_account_id AND uaa.can_view AND NOT uaa.frozen))))"
 )
+_VISIBLE: Final = sa.text(_GRANT_VISIBLE)  # built once; `group_visible` binds a copy
 #: Transaction-local (`true`), like the order store's cap.
 _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
 #: Shared with the definitions store, which reuses the gate and the cap.
@@ -234,7 +235,7 @@ def _uuid_array(name: str, ids: Iterable[UUID]) -> sa.ColumnElement[Any]:
 # -- statements ----------------------------------------------------------------------------------
 
 
-def group_visible(scope: AccountScope, *, grant_visible: str = _GRANT_VISIBLE) -> sa.TextClause:
+def group_visible(scope: AccountScope, *, grant_visible: sa.TextClause = _VISIBLE) -> sa.TextClause:
     """The enclosing `trade_groups` row is in `scope`: for an `OwnerScope` the caller is a live
     owner (who sees every group, soft-deleted leg accounts included); for a `GrantScope` the
     SR-E28-21 predicate (`grant_visible`: the definitions store passes it over members), under
@@ -245,7 +246,7 @@ def group_visible(scope: AccountScope, *, grant_visible: str = _GRANT_VISIBLE) -
     granted = sa.bindparam(
         "granted", sorted(str(i) for i in scope.account_ids), type_=ARRAY(sa.Text)
     )
-    return sa.text(grant_visible).bindparams(granted, caller=caller)
+    return grant_visible.bindparams(granted, caller=caller)
 
 
 def anchor_statement(

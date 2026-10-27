@@ -41,6 +41,8 @@ _FREEZE = (
     "UPDATE user_account_access SET frozen = true, frozen_at = now() "
     "WHERE user_id = %s AND exchange_account_id = %s"
 )
+_DISABLE = "UPDATE exchange_accounts SET is_enabled = false, trading_enabled = true WHERE id = %s"
+_WRITER = "SELECT updated_by, deleted_at IS NOT NULL FROM trade_group_definitions WHERE id = %s"
 
 
 @pytest.fixture(scope="module")
@@ -62,7 +64,7 @@ def _new(
     name: str, *members: UUID, env: Any = "demo", of: UUID | None = None, off: UUID | None = None
 ) -> port.NewDefinition:
     kept = tuple(port.NewMember(m, m != off) for m in members)
-    return port.NewDefinition(id=of or uuid4(), name=name, env=env, members=kept, actor=OWNER)
+    return port.NewDefinition(id=of or uuid4(), name=name, env=env, members=kept)
 
 
 def _member(account: UUID, enabled: bool = True) -> port.MemberRow:
@@ -123,30 +125,53 @@ async def test_a_live_name_is_unique_in_any_letter_case_and_a_deleted_ones_name_
     assert hook.seen[1] == (first, None) and await store.get(ME, first.definition.id) is None
 
 
-async def test_a_member_of_another_environment_is_refused_by_trg_tgdm_env(
+@pytest.mark.parametrize(
+    ("error", "name", "new"),
+    [
+        (port.DefinitionRuleError, "trg_tgdm_env", _new("Mixed", A, LIVE)),
+        (port.DefinitionRuleError, "trg_tgdm_env", _new("Pair", A, C, LIVE, of=PAIR)),
+        (port.DefinitionRuleError, "trg_tgd_write_once", _new("Pair", A, C, env="live", of=PAIR)),
+        (port.DefinitionRuleError, "tgd_name", _new("n" * 81, A)),
+        (port.DefinitionRuleError, "account_not_live", _new("Ghost", uuid4())),
+        (port.DefinitionConflictError, "trade_group_definitions_pkey", _new("Taken", A, of=CORE3)),
+    ],
+)
+async def test_a_refused_write_leaves_by_its_name_and_writes_nothing(
+    store: Store, pg_dsn: str, error: type[Exception], name: str, new: port.NewDefinition
+) -> None:
+    """SR-E28-16, PF-T16 by create and by replace, and four more refusals: none writes anything."""
+    hook, kept = _Hook(), [await store.get(ME, d) for d in (CORE3, PAIR)]
+    write = _put(store, new, hook) if new.id == PAIR else store.create(ME, new, write_ahead=hook)
+    with pytest.raises(error) as refused:
+        await write
+    assert refused.value.args == (name,) and hook.seen == []
+    assert [await store.get(ME, d) for d in (CORE3, PAIR)] == kept
+    assert new.id in (CORE3, PAIR) or tg._sql(pg_dsn, _COUNT, new.id, new.id) == [(0, 0)]
+
+
+async def test_a_member_account_must_be_live_and_a_disabled_one_reads_disabled(
     store: Store, pg_dsn: str
 ) -> None:
-    """SR-E28-16, PF-T16, by create and by replace; a changed environment, a long name and an
-    unknown account are refused by name too, and none writes anything."""
-    hook, pair, mixed = _Hook(), await store.get(ME, PAIR), _new("Mixed", A, LIVE)
-    for rule, write in (
-        ("trg_tgdm_env", store.create(ME, mixed, write_ahead=hook)),
-        ("trg_tgdm_env", _put(store, _new("Pair", A, C, LIVE, of=PAIR), hook)),
-        ("trg_tgd_write_once", _put(store, _new("Pair", A, C, env="live", of=PAIR), hook)),
-        ("tgd_name", store.create(ME, _new("n" * 81, A), write_ahead=hook)),
-        ("trade_group_definition_members_exchange_account_id_fkey",
-         store.create(ME, _new("Ghost", uuid4()), write_ahead=hook)),
-    ):  # fmt: skip
-        with pytest.raises(port.DefinitionRuleError) as refused:
+    """Soft-deleted, it refuses a create and a replace, writing nothing; disabled, it is live."""
+    hook, gone, off = _Hook(), tg._account(pg_dsn), tg._account(pg_dsn)
+    tg._sql(pg_dsn, "UPDATE exchange_accounts SET deleted_at = now() WHERE id = %s", gone)
+    tg._sql(pg_dsn, _DISABLE, off)  # trading left on: a read of the wrong column would show
+    pair, late = await store.get(ME, PAIR), _new("Late", A, gone)
+    for write in (
+        store.create(ME, late, write_ahead=hook),
+        _put(store, _new("Pair", gone, of=PAIR), hook),
+    ):
+        with pytest.raises(port.DefinitionRuleError, match=r"^account_not_live$"):
             await write
-        assert refused.value.rule == rule
-    assert hook.seen == [] and tg._sql(pg_dsn, _COUNT, mixed.id, mixed.id) == [(0, 0)]
+    assert hook.seen == [] and tg._sql(pg_dsn, _COUNT, late.id, late.id) == [(0, 0)]
+    made = await store.create(ME, _new("Off", A, off), write_ahead=hook)
+    assert {m.exchange_account_id: m.account_enabled for m in made.members} == {A: True, off: False}
     assert await store.get(ME, PAIR) == pair
 
 
 async def test_a_soft_deleted_definition_takes_no_member(store: Store, pg_dsn: str) -> None:
-    """SEC-2-03: a replace of a deleted definition answers `None`, and one racing a delete waits
-    on its row lock, then answers `None`; neither adds a member."""
+    """SEC-2-03 (21 Sec.3.3.3a): a replace of a deleted definition answers `None`, and one racing
+    a delete waits on its row lock, then answers `None`; neither adds a member."""
     hook, held, release = _Hook(), asyncio.Event(), asyncio.Event()
     gone = (await store.create(ME, _new("Gone", A), write_ahead=hook)).definition.id
     raced = await store.create(ME, _new("Raced", A), write_ahead=hook)
@@ -174,7 +199,7 @@ async def test_a_soft_deleted_definition_takes_no_member(store: Store, pg_dsn: s
 
 
 async def test_a_replace_over_a_stale_updated_at_writes_nothing(store: Store) -> None:
-    hook = _Hook()
+    hook, pair = _Hook(), await store.get(ME, PAIR)  # another definition, whose members stay
     made = await store.create(ME, _new("Stale", A, C), write_ahead=hook)
     at, made_id = made.definition.updated_at, made.definition.id
     now = await _put(store, _new("Stale 2", A, of=made_id, off=A), hook, at)
@@ -186,6 +211,18 @@ async def test_a_replace_over_a_stale_updated_at_writes_nothing(store: Store) ->
     with pytest.raises(ValueError, match="replaced"):
         await store.replace(ME, made_id, other, expected_updated_at=None, write_ahead=hook)
     assert await store.get(ME, made_id) == now and len(hook.seen) == 2
+    assert await store.get(ME, PAIR) == pair
+
+
+async def test_the_stored_writer_is_the_owner_the_gate_checked(store: Store, pg_dsn: str) -> None:
+    """The scope names the writer: another Owner's replace and then a soft delete store theirs."""
+    hook, other, new = _Hook(), OwnerScope(tg._user(pg_dsn, "owner")), _new("Writers", A)
+    await store.create(ME, new, write_ahead=hook)
+    now = await store.replace(other, new.id, new, expected_updated_at=None, write_ahead=hook)
+    assert now is not None and now.definition.created_by == OWNER
+    assert now.definition.updated_by == other.user_id
+    await store.soft_delete(ME, new.id, write_ahead=hook)
+    assert tg._sql(pg_dsn, _WRITER, new.id) == [(OWNER, True)]
 
 
 async def test_a_grant_reads_only_definitions_whose_every_member_it_sees(
@@ -211,10 +248,10 @@ async def test_a_grant_reads_only_definitions_whose_every_member_it_sees(
 
 
 async def test_a_non_owner_scope_cannot_write(store: Store, pg_dsn: str) -> None:
-    """The live-owner gate comes first: nothing is read, written or written ahead."""
-    hook, pair, stranger, denied = _Hook(), await store.get(ME, PAIR), tg._user(pg_dsn), _new("No")
+    """The live-owner gate comes first, and a grant cannot write even a definition it sees."""
+    hook, pair, stranger = _Hook(), await store.get(ME, PAIR), tg._user(pg_dsn)
     tg._grant(pg_dsn, stranger, A)
-    them, grant = OwnerScope(stranger), GrantScope(stranger, frozenset({A}))
+    them, grant, denied = OwnerScope(stranger), GrantScope(stranger, frozenset({A})), _new("No", A)
     for attempt in (
         store.create(them, denied, write_ahead=hook),
         store.replace(

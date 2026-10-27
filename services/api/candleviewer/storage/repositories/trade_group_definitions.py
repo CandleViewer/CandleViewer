@@ -3,7 +3,7 @@ Sec.3.3.3a). Stdlib only, as its sibling `trade_groups`.
 
 `DefinitionStore` is the Owner's write surface (SR-E28-31): a write passes the live-owner gate
 first and awaits its write-ahead record before the commit (C-2.9); `replace` and `soft_delete`
-lock the live row first, so a soft-deleted definition takes no member (SEC-2-03).
+lock the live row first, so a soft-deleted definition takes no member (SEC-2-03, 21 Sec.3.3.3a).
 `DefinitionReads` is SR-E28-21 in SQL: an Owner sees every live definition, a grant one with a
 member and whose every member account it sees, with all its members or not at all. An error
 carries a constraint or rule name, never a value (C-12.6).
@@ -66,13 +66,12 @@ class NewMember:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class NewDefinition:
-    """What `create` inserts and `replace` sets; `actor`, the Owner, is stored as the writer."""
+    """What `create` inserts and `replace` sets; the writer stored is the scope's Owner."""
 
     id: UUID
     name: str
     env: ExchangeEnv
     members: tuple[NewMember, ...]
-    actor: UUID
 
 
 #: Awaited in the write's transaction before its commit with the record before and after (`None`
@@ -99,6 +98,8 @@ class DefinitionConflictError(DefinitionStoreError):
 
 
 class DefinitionRuleError(DefinitionStoreError):
+    """A `DEFINITION_RULES` name, or `ACCOUNT_NOT_LIVE`: a member account gone or soft-deleted."""
+
     def __init__(self, rule: str) -> None:
         super().__init__(rule)
         self.rule = rule

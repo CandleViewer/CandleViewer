@@ -3,11 +3,13 @@
 SQLAlchemy Core over the 0039 definition tables (21 Sec.3.3.3a), every value bound. A unit of
 work is the trade-group store's: its statement cap, its failure mapping by name (here
 `DEFINITION_RULES` and `DEFINITION_CONFLICTS`) and, for an `OwnerScope`, the live-owner gate
-before anything else; a write takes an `OwnerScope` only. `replace` and `soft_delete` lock the
-live row `FOR UPDATE` first: a soft-deleted one is not found and a racing write waits for the
-commit (SEC-2-03). `replace` also binds `env`, which `trg_tgd_write_once` refuses to change; the
-touch trigger moves `updated_at`. A read, and its members statement, carries `group_visible` with
-`DEFINITION_VISIBLE`, so a grant reads a definition with all its members or not at all.
+before anything else; a write takes an `OwnerScope` only, whose user it stores as the writer.
+`replace` and `soft_delete` lock the live row `FOR UPDATE` first (SEC-2-03, 21 Sec.3.3.3a): a
+soft-deleted one is not found, a racing write waits for the commit. A create or replace then locks
+its members' accounts `FOR SHARE` in id order and refuses one not live, as the fired-group store
+does for legs. `replace` binds `env`, which `trg_tgd_write_once` refuses to change; the touch
+trigger moves `updated_at`. A read, and its members statement, carries `group_visible` with
+`DEFINITION_VISIBLE`: a grant reads a definition with all its members or not at all.
 """
 
 from __future__ import annotations
@@ -31,15 +33,16 @@ from candleviewer.storage.repositories.relational_sqlalchemy import (
     SqlAlchemyRelationalRepository,
     SqlAlchemyUnitOfWork,
 )
+from candleviewer.storage.repositories.trade_groups import ACCOUNT_NOT_LIVE
 from candleviewer.storage.repositories.user_roles_sqlalchemy import (
     WRITE_AHEAD_TIMEOUT_S,
     bounded_write_ahead,
 )
 
 _D, _M = trade_group_definitions.c, trade_group_definition_members.c
-#: SR-E28-21 over the enclosing definition: `trade_groups_sqlalchemy._GRANT_VISIBLE` over its
-#: members for a group's legs (unit-pinned).
-DEFINITION_VISIBLE: Final = (
+#: SR-E28-21 over the enclosing definition, built once: `trade_groups_sqlalchemy._GRANT_VISIBLE`
+#: over its members for a group's legs (unit-pinned).
+DEFINITION_VISIBLE: Final = sa.text(
     "(EXISTS (SELECT 1 FROM trade_group_definition_members vl "
     "WHERE vl.definition_id = trade_group_definitions.id) "
     "AND NOT EXISTS (SELECT 1 FROM trade_group_definition_members vl "
@@ -82,16 +85,16 @@ def members_statement(scope: AccountScope, definition_id: UUID) -> sa.Select[Any
 
 
 def lock_statement(definition_id: UUID) -> sa.Select[Any]:
-    """The live row's `updated_at`, `FOR UPDATE` (SEC-2-03)."""
+    """The live row's `updated_at`, `FOR UPDATE` (SEC-2-03, 21 Sec.3.3.3a)."""
     live = sa.select(_D.updated_at).where(_D.id == definition_id, _D.deleted_at.is_(None))
     return live.with_for_update()
 
 
-def members_upsert_statement(new: port.NewDefinition) -> sa.Insert:
+def members_upsert_statement(new: port.NewDefinition, writer: UUID) -> sa.Insert:
     """Each member; one stored with another `enabled` takes this one and `updated_by`."""
     rows = [
         {"definition_id": new.id, "exchange_account_id": m.exchange_account_id,
-         "enabled": m.enabled, "created_by": new.actor, "updated_by": new.actor}
+         "enabled": m.enabled, "created_by": writer, "updated_by": writer}
         for m in new.members
     ]  # fmt: skip
     stmt = pg_insert(trade_group_definition_members).values(rows)
@@ -141,6 +144,14 @@ class SqlAlchemyDefinitionStore:
             return ()
         return (port.DefinitionRecord(port.DefinitionRow(*row), members),)
 
+    async def _read_back(
+        self, uow: SqlAlchemyUnitOfWork, scope: OwnerScope, definition_id: UUID
+    ) -> port.DefinitionRecord:
+        """A write's record; none, under the owner predicate, means its role lapsed: denied."""
+        if not (found := await self._record(uow, scope, definition_id)):
+            raise port.DefinitionScopeDeniedError
+        return found[0]
+
     async def _commit(
         self,
         uow: SqlAlchemyUnitOfWork,
@@ -149,10 +160,13 @@ class SqlAlchemyDefinitionStore:
         before: port.DefinitionRecord | None,
         write_ahead: port.DefinitionWriteAhead,
     ) -> port.DefinitionRecord:
-        """Upsert the members, read the record back, write it ahead (C-2.9), then commit."""
-        if new.members:
-            await uow.session.execute(members_upsert_statement(new))
-        (after,) = await self._record(uow, scope, new.id)
+        """Lock the members' accounts, each live; upsert, read back, write ahead (C-2.9), commit."""
+        if accounts := {m.exchange_account_id for m in new.members}:
+            live = await uow.session.execute(groups.lock_accounts_statement(accounts))
+            if set(live.scalars()) != accounts:  # one is missing or soft-deleted
+                raise port.DefinitionRuleError(ACCOUNT_NOT_LIVE)
+            await uow.session.execute(members_upsert_statement(new, scope.user_id))
+        after = await self._read_back(uow, scope, new.id)
         await bounded_write_ahead(write_ahead(before, after), WRITE_AHEAD_TIMEOUT_S)
         await uow.commit()
         return after
@@ -162,7 +176,7 @@ class SqlAlchemyDefinitionStore:
     ) -> port.DefinitionRecord:
         async with self._unit_of_work(scope, write=True) as uow:
             values = {"id": new.id, "name": new.name, "env": new.env}
-            row = values | {"created_by": new.actor, "updated_by": new.actor}
+            row = values | {"created_by": scope.user_id, "updated_by": scope.user_id}
             await uow.session.execute(sa.insert(trade_group_definitions).values(row))
             return await self._commit(uow, scope, new, None, write_ahead)
 
@@ -183,9 +197,11 @@ class SqlAlchemyDefinitionStore:
                 return None
             if expected_updated_at is not None and held.updated_at != expected_updated_at:
                 raise port.DefinitionStaleError
-            (before,) = await self._record(uow, scope, definition_id)
+            before = await self._read_back(uow, scope, definition_id)
             row = sa.update(trade_group_definitions).where(_D.id == definition_id)
-            await uow.session.execute(row.values(name=new.name, env=new.env, updated_by=new.actor))
+            await uow.session.execute(
+                row.values(name=new.name, env=new.env, updated_by=scope.user_id)
+            )
             kept = [m.exchange_account_id for m in new.members]
             dropped = sa.delete(trade_group_definition_members).where(
                 _M.definition_id == definition_id, _M.exchange_account_id.not_in(kept)
@@ -199,7 +215,7 @@ class SqlAlchemyDefinitionStore:
         async with self._unit_of_work(scope, write=True) as uow:
             if (await uow.session.execute(lock_statement(definition_id))).first() is None:
                 return None
-            (before,) = await self._record(uow, scope, definition_id)
+            before = await self._read_back(uow, scope, definition_id)
             row = sa.update(trade_group_definitions).where(_D.id == definition_id)
             await uow.session.execute(
                 row.values(deleted_at=sa.func.now(), updated_by=scope.user_id)

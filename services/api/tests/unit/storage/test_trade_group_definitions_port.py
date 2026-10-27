@@ -2,8 +2,9 @@
 
 The port imports the stdlib and two driver-free sibling ports only (whose own imports
 `test_trade_groups_port.py` pins), each error carries a name and nothing else (C-12.6), and the
-grant predicate is the trade-group store's SR-E28-21 predicate over a definition's members, read
-all or nothing across the store's two statements (its fake unit of work).
+grant predicate is the trade-group store's SR-E28-21 predicate over a definition's members. On
+that store's fake unit of work: both read statements carry the scope, a read is capped and an
+Owner's gated first, a grant reads all or nothing, and an empty read-back denies a write.
 """
 
 from __future__ import annotations
@@ -12,15 +13,30 @@ import sys
 from dataclasses import fields
 from datetime import UTC, datetime
 from typing import Any
+from unittest.mock import AsyncMock
 from uuid import UUID
+
+import pytest
 
 from candleviewer.db import models
 from candleviewer.storage.repositories import trade_group_definitions as port
 from candleviewer.storage.repositories import trade_group_definitions_sqlalchemy as pg
 from candleviewer.storage.repositories import trade_groups_sqlalchemy as groups
-from candleviewer.storage.repositories.accounts import GrantScope
+from candleviewer.storage.repositories.accounts import GrantScope, OwnerScope
+from tests.unit.storage import test_trade_groups_store as fake
 from tests.unit.storage.test_trade_groups_port import _DRIVERS, _imports
 from tests.unit.storage.test_trade_groups_store import _Rel, _Result
+
+_sql, _params, _marked = fake._sql, fake._params, fake._binds_as_markers
+_ID, _CALLER, _ACCOUNT = UUID(int=1), UUID(int=2), UUID(int=3)
+_GRANT, _OWNER = GrantScope(_CALLER, frozenset({_ACCOUNT})), OwnerScope(_CALLER)
+_AT = datetime(2026, 10, 1, tzinfo=UTC)
+_ROW: Any = (_ID, "Core3", "demo", None, None, _AT, _AT)
+_NEW = port.NewDefinition(id=_ID, name="Core3", env="demo", members=())
+
+
+def _store(rel: _Rel) -> pg.SqlAlchemyDefinitionStore:
+    return pg.SqlAlchemyDefinitionStore(rel)  # type: ignore[arg-type]  # structural fake
 
 
 def test_the_port_imports_no_driver() -> None:
@@ -33,7 +49,7 @@ def test_the_port_imports_no_driver() -> None:
     assert not {n.partition(".")[0] for n in direct} & _DRIVERS
 
 
-def test_each_error_carries_its_name_and_nothing_else() -> None:
+def test_an_error_carries_only_its_name_and_a_row_every_column_but_deleted_at() -> None:
     conflict = port.DefinitionConflictError("ux_tgd_name")
     rule = port.DefinitionRuleError("trg_tgdm_env")
     assert (conflict.constraint, conflict.args, rule.rule, rule.args) == (
@@ -51,14 +67,42 @@ def test_the_grant_predicate_is_the_group_stores_over_a_definitions_members() ->
     over_members = legs.replace(
         "vl.trade_group_id = trade_groups.id", "vl.definition_id = trade_group_definitions.id"
     )
-    assert pg.DEFINITION_VISIBLE == over_members != groups._GRANT_VISIBLE
+    assert pg.DEFINITION_VISIBLE.text == over_members != groups._GRANT_VISIBLE
+
+
+@pytest.mark.parametrize("build", [pg.definition_statement, pg.members_statement])
+def test_both_read_statements_carry_the_scope_and_bind_the_caller(build: Any) -> None:
+    grant, owner = build(_GRANT, _ID), build(_OWNER, _ID)
+    assert _marked(pg.DEFINITION_VISIBLE.text) in _marked(_sql(grant))
+    assert (_params(grant)["caller"], _params(grant)["granted"]) == (str(_CALLER), [str(_ACCOUNT)])
+    assert _marked(groups._OWNER_PRED) in _marked(_sql(owner))
+    assert "user_account_access" not in _sql(owner) and _params(owner)["caller"] == str(_CALLER)
 
 
 async def test_a_grant_read_is_all_or_nothing_across_its_two_statements() -> None:
     """A grant frozen between the definition and its members reads nothing (SR-E28-21)."""
-    at = datetime(2026, 10, 1, tzinfo=UTC)
-    row: Any = (UUID(int=1), "Core3", "demo", None, None, at, at)
-    vanished = _Rel(_Result([row]), _Result([]))
-    store = pg.SqlAlchemyDefinitionStore(vanished)  # type: ignore[arg-type]  # structural fake
-    assert await store.get(GrantScope(UUID(int=2), frozenset({UUID(int=3)})), UUID(int=1)) is None
+    vanished = _Rel(_Result([_ROW]), _Result([]))
+    assert await _store(vanished).get(_GRANT, _ID) is None
     assert len(vanished.calls) == 2 and vanished.commits == 0
+
+
+async def test_a_read_is_capped_an_owner_gated_first_and_an_empty_grant_runs_no_sql() -> None:
+    grant, owner, empty = _Rel(_Result([])), _Rel(_Result(), _Result([])), _Rel()
+    assert await _store(grant).get(_GRANT, _ID) is None and grant.caps == [{"timeout": "2000"}]
+    assert await _store(owner).get(_OWNER, _ID) is None and owner.calls[0] is groups.OWNER_GATE
+    assert await _store(empty).get(GrantScope(_CALLER, frozenset()), _ID) is None
+    assert empty.calls == empty.caps == []
+
+
+async def test_a_write_whose_read_back_finds_nothing_is_denied() -> None:
+    """The read-back carries the owner predicate: an Owner whose role lapsed after the gate (then
+    the insert or the row lock) reads nothing back, and nothing commits or is written ahead."""
+    rel, hook = _Rel(*[_Result(), _Result([_ROW]), _Result([])] * 3), AsyncMock()
+    for write in (
+        _store(rel).create(_OWNER, _NEW, write_ahead=hook),
+        _store(rel).replace(_OWNER, _ID, _NEW, expected_updated_at=None, write_ahead=hook),
+        _store(rel).soft_delete(_OWNER, _ID, write_ahead=hook),
+    ):
+        with pytest.raises(port.DefinitionScopeDeniedError):
+            await write
+    assert rel.commits == 0 and rel.rollbacks == 3 and hook.await_count == 0
