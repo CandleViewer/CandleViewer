@@ -170,7 +170,7 @@ def _invalid(field: str, rule: str, message: str) -> OrderInvalid:
     return OrderInvalid(message, errors=(FieldError(field, rule, message),))
 
 
-def _overlay(sizing: SizingRequest) -> tuple[dict[str, object], Decimal] | None:
+def sizing_overlay(sizing: SizingRequest) -> tuple[dict[str, object], Decimal] | None:
     """The request's sizing as profile fields (fractions for its percents) and its raw value;
     None for `profile`. `pct_position` and a missing value are refused."""
     mode = sizing.mode
@@ -196,7 +196,7 @@ def _overlay(sizing: SizingRequest) -> tuple[dict[str, object], Decimal] | None:
     return fields, value
 
 
-def _stop_overlay(
+def stop_overlay(
     stop: StopOffset | None, side: Side, ref: Decimal, instrument: Instrument
 ) -> dict[str, object]:
     """The request's stop as the profile's offset (ruling Q2), measured from the sizer's anchor so
@@ -222,7 +222,7 @@ def _stop_overlay(
     return {"sl_offset_unit": "ticks", "sl_offset_value": _EXACT.divide(distance, tick)}
 
 
-def _out_of_range(profile: AccountProfile, fields: dict[str, object]) -> OrderInvalid:
+def out_of_range(profile: AccountProfile, fields: dict[str, object]) -> OrderInvalid:
     """An overlay the profile model refuses, named by its field: the stop when the sizing alone
     holds, else the sizing."""
     try:
@@ -257,7 +257,7 @@ def _answered(leg: LegSizing) -> LegSizing:
     raise SizingUnavailable(retry_after_s=SIZING_RETRY_AFTER_S)  # figure_unknown
 
 
-def _market(mid: Px | None, last: Px | None) -> SizingMarket:
+def sizing_market(mid: Px | None, last: Px | None) -> SizingMarket:
     """Step 3a's read as the sizer takes it; a price no `Price` holds is no price."""
     try:
         return SizingMarket(mid=mid, last_price=last)
@@ -315,7 +315,7 @@ class EntrySizer:
             raise RiskRefused("No profile allows this order.")
         if not (profile.enabled and profile.trading_enabled):  # before any figure is read
             raise RiskRefused("The account's profile is not enabled for trading.")
-        overlay = _overlay(intent.sizing)
+        overlay = sizing_overlay(intent.sizing)
         named = (intent.sizing.max_notional_usd, intent.stop_loss, intent.take_profit)
         judged = overlay is not None or any(value is not None for value in named)
         if judged and not intent.sizing.round_to_lot:  # ADR-0040 row 16: always floored
@@ -329,7 +329,7 @@ class EntrySizer:
         except ValidationError:
             raise _invalid("price", "finite", "The price cannot be sized.") from None
         figures, untiered = await self._read(account, intent.symbol, profile)
-        market = _market(mid, last)
+        market = sizing_market(mid, last)
 
         def answered(leg: LegSizing) -> LegSizing:
             if untiered and leg.reason is FailReason.FIGURE_UNKNOWN:
@@ -348,11 +348,11 @@ class EntrySizer:
             answered(baseline)
             raise ValueError("a leg with no anchor is never ok")
         fields, value = overlay if overlay is not None else ({}, None)
-        stop = _stop_overlay(intent.stop_loss, intent.side, baseline.ref_price, instrument)
+        stop = stop_overlay(intent.stop_loss, intent.side, baseline.ref_price, instrument)
         try:
             widened = AccountProfile.model_validate(profile.model_dump() | fields | stop)
         except ValidationError:
-            raise _out_of_range(profile, fields) from None
+            raise out_of_range(profile, fields) from None
         leg = answered(self._observed(asked, widened, figures, instrument, market))
         overlaid = overlay is not None or intent.stop_loss is not None
         if overlaid and leg.binding is not None:  # refused whole, never clamped
@@ -377,13 +377,13 @@ class EntrySizer:
         baseline, profile, figures = size.baseline, size.profile, size.figures
         if baseline is None or profile is None or figures is None:
             return
-        own_tp = _own_take_profit(intent.side, profile, baseline, size.leg, instrument)
+        own_tp = own_take_profit(intent.side, profile, baseline, size.leg, instrument)
         try:
-            judged = _resolved(
+            judged = resolved_leg(
                 intent, profile, size.leg, own_tp if take_profit is None else take_profit
             )
-            bound = _resolved(intent, profile, replace(baseline, qty=size.leg.qty), own_tp)
-            requested = _requested(intent.sizing)
+            bound = resolved_leg(intent, profile, replace(baseline, qty=size.leg.qty), own_tp)
+            requested = requested_layers(intent.sizing)
         except ValidationError:
             raise _invalid("sizing", "profile_overlay", "The request cannot be judged.") from None
         verdict = judge_leg(
@@ -449,7 +449,7 @@ class EntrySizer:
         return EntrySize(leg, mode, value, stored, leg.qty, leg.stop.price, leg.ref_price)
 
 
-def _resolved(
+def resolved_leg(
     intent: EntryIntent, profile: AccountProfile, leg: LegSizing, tp: Decimal | None
 ) -> ResolvedLeg:
     """A leg as the comparator judges it: the order's terms, the profile's account-wide modes."""
@@ -465,7 +465,7 @@ def _resolved(
     )  # fmt: skip
 
 
-def _own_take_profit(
+def own_take_profit(
     side: Side, profile: AccountProfile, baseline: LegSizing, leg: LegSizing, inst: Instrument
 ) -> Px | None:
     """The profile's own take-profit (its last rung), resolved from the profile, never read from
@@ -476,7 +476,7 @@ def _own_take_profit(
     return tps[-1].price if tps else None
 
 
-def _requested(sizing: SizingRequest) -> tuple[LegOverrides, ...]:
+def requested_layers(sizing: SizingRequest) -> tuple[LegOverrides, ...]:
     """The request's sizing as the comparator's layer, in fractions; none for a `profile` request
     with no `max_notional_usd`. `round_to_lot` is left out: `false` is refused before (module
     docstring)."""
