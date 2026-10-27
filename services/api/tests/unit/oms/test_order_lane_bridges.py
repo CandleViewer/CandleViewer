@@ -1,24 +1,19 @@
-"""#913 slice 3 L1b (E29-T04, 29 CV-C13): the seven `Served*` bridges, each on a real order lane
+"""#913 slice 3 L1b (E29-T04, 29 CV-C13): the six `Served*` bridges, each on a real order lane
 whose serving loop is this test's (CR-S3L1B-02); L2 gave the lane its own audit writer and sink,
-so neither crosses any more. A stalled serving loop is one blocked on an event; each wait is a
-bound on the test, never a time it expects."""
+and L1d its own venue calls, so none of those crosses any more. A stalled serving loop is one
+blocked on an event; each wait is a bound on the test, never a time it expects."""
 
 from __future__ import annotations
 
 import asyncio
-import inspect
 import threading
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
-
-import pytest
 
 from candleviewer import oms_wiring
 from candleviewer.accounts.verification import Refusal
 from candleviewer.domain.order_entry import OrderEntryRefusal
-from candleviewer.exchange.base.models import AccountRef, Position
-from candleviewer.exchange.base.ports import TradingPort
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms_lane import Serving
 from candleviewer.oms_wiring import (
@@ -26,12 +21,10 @@ from candleviewer.oms_wiring import (
     ServedDemand,
     ServedFeed,
     ServedGate,
-    ServedPort,
     ServedProfiles,
     ServedStandings,
 )
 from tests.unit.oms import command_rig as cr
-from tests.unit.oms.test_oms_runtime import Port
 from tests.unit.oms.test_order_lane import BOUND_S, running
 
 OTHER = UUID(int=2)
@@ -135,34 +128,6 @@ async def test_a_landed_rejection_is_dropped_never_a_later_one_and_a_failed_one_
     loop.close()
     assert seen == [True, True, False] and list(standings._sent) == [OTHER]
     assert ServedGate(standing, standings).refusal(OTHER) is oms_wiring.NO_ACTIVE_KEY
-
-
-async def test_the_port_awaits_each_venue_call_on_the_serving_loop_and_refuses_a_private_stream(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CR-S3L1B-05: each coroutine member of the trading port but `subscribe_private` is declared
-    and awaited on the serving loop; the private stream is a typed refusal; the headroom is read
-    in place, on the lane."""
-    threads, positions = list[threading.Thread](), Port.positions
-
-    async def noted(self: Port, account: AccountRef) -> Sequence[Position]:
-        threads.append(threading.current_thread())
-        return await positions(self, account)
-
-    monkeypatch.setattr(Port, "positions", noted)
-    served = ServedPort(Port(environment="demo"), _serving())
-
-    async def on_lane() -> None:
-        assert await served.positions(cr.ref()) == []
-        assert served.headroom(cr.ref(), "entry").lane == "entry"
-        with pytest.raises(oms_wiring.PrivateStreamRefused):
-            await served.subscribe_private(cr.ref())
-
-    async with running() as lane:
-        await lane.call(on_lane())
-    assert threads == [threading.current_thread()]
-    hops = {name for name, m in inspect.getmembers(TradingPort) if inspect.iscoroutinefunction(m)}
-    assert hops - set(vars(served)) == {"subscribe_private"}
 
 
 async def test_the_feed_demand_profiles_and_clock_land_on_the_serving_loop() -> None:

@@ -38,6 +38,8 @@ from candleviewer.accounts.trade_group_repository import TradeGroupReader, Trade
 from candleviewer.accounts.trade_groups import ScopedTradeGroup
 from candleviewer.accounts.verification import Refusal
 from candleviewer.admin.wiring import (
+    LaneSigningBinder,
+    LoopSigningBorrower,
     MachineEventSinkMetrics,
     build_lane_audit_writer,
     build_machine_event_sink,
@@ -50,12 +52,10 @@ from candleviewer.domain.primitives import AccountId, Environment, GroupId, Px, 
 from candleviewer.exchange.base.errors import AuthError, ExchangeError, OmsErrorCode
 from candleviewer.exchange.base.models import (
     AccountRef,
-    RateHeadroom,
     RateLane,
     RiskLimitTier,
     TickerEvent,
 )
-from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import BoundedMetric, Metrics
@@ -202,6 +202,8 @@ from candleviewer.storage.repositories.trading_accounts_sqlalchemy import (
 )
 
 if TYPE_CHECKING:
+    import httpx
+
     from candleviewer.app import AppContext
 
 #: The stop request's bound (21 Sec.3.3.11, [LANE-25]), in seconds: how long an unanswered stop
@@ -698,23 +700,25 @@ SYSTEM_ACTOR: Final = "system:oms"
 
 class AuditWriterPort(Protocol):
     """`AuditWriter`'s durable appends (C-2.9) with the columns this module writes: the root may
-    not import `audit` (C-3.3), so `outcome`, `severity` and `env` go as their plain values."""
+    not import `audit` (C-3.3), so `outcome`, `severity` and `env` go as their plain values. Each id
+    takes what the writer's does, so the lane's own writer is also the one M2 records its lane
+    signings through (`admin.wiring.LaneAuditWriter`, #913 L1d)."""
 
     async def emit(
         self,
         action: str,
         *,
         actor_label: str,
-        actor_user_id: UUID | None = None,
+        actor_user_id: str | UUID | None = None,
         actor_ip: str | None = None,
-        session_id: UUID | None = None,
+        session_id: str | UUID | None = None,
         object_kind: str | None = None,
         object_id: str | None = None,
         outcome: Any = ...,
         severity: Any = ...,
         reason: str | None = None,
         after_state: dict[str, Any] | None = None,
-        request_id: UUID | None = None,
+        request_id: str | UUID | None = None,
         env: Any = None,
     ) -> None: ...
 
@@ -902,62 +906,16 @@ class OrderStateFeed:
 # each safe from another thread: the setting and the flag views (one value each, replaced whole),
 # the instrument catalogue (a frozen snapshot swapped by one assignment), the ticker stream's last
 # ticker and phase (one dict read each, of a frozen event), the clock guard's health
-# (`ServedClock`), the read-only gate and the governor's headroom (each under its own lock,
-# #4370), the persistence bundle's chain-trip latch (a dict the serving loop's restores write an
-# item at a time), its own refusals of rejected credentials, which the route's gate reads on the
-# serving loop too (`ServedStandings.refused`, one dict read), the order-entry gate since L4
-# (`ServedGate`: the maintenance boolean, the key standing's one snapshot and the self-check's
-# results a key at a time, the account health's dict read and evidence, 20 Sec.6.2) and the
-# serving loop's tick a new submit meets first (`ServingTick`, one float), the metrics and the
-# pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
-# `OmsStores`): neither crosses.
-
-
-class PrivateStreamRefused(RuntimeError):
-    """`ServedPort.subscribe_private`: a private stream stays on the loop that opens it, never the
-    order lane (20 Sec.6.2)."""
-
-
-def _served[**P, R](
-    serving: Serving, member: Callable[P, Coroutine[Any, Any, R]]
-) -> Callable[P, Coroutine[Any, Any, R]]:
-    async def served(*args: P.args, **kwargs: P.kwargs) -> R:
-        return await serving.call(member(*args, **kwargs))
-
-    return served
-
-
-class ServedPort:
-    """The router's port until L3's second PR (ruling Q11): every call the trading port signs
-    borrows M2's key on the serving loop, whose credential read, write-ahead audit and touch tasks
-    are that loop's, so each coroutine member is declared here, typed as the port's, and awaited
-    there within `HOP_TIMEOUT_S`; a private stream stays on the loop that opens it, so
-    `subscribe_private` is `PrivateStreamRefused`. `headroom` reads the governor in place, under
-    its own lock (#4370)."""
-
-    def __init__(self, port: OwnedPort, serving: Serving) -> None:
-        self.capabilities, self._port = port.capabilities, port
-        self.place_order = _served(serving, port.place_order)
-        self.place_batch = _served(serving, port.place_batch)
-        self.amend_order = _served(serving, port.amend_order)
-        self.cancel_order = _served(serving, port.cancel_order)
-        self.cancel_all = _served(serving, port.cancel_all)
-        self.set_trading_stop = _served(serving, port.set_trading_stop)
-        self.set_leverage = _served(serving, port.set_leverage)
-        self.open_orders = _served(serving, port.open_orders)
-        self.order_history = _served(serving, port.order_history)
-        self.positions = _served(serving, port.positions)
-        self.executions = _served(serving, port.executions)
-        self.closed_pnl = _served(serving, port.closed_pnl)
-        self.wallet = _served(serving, port.wallet)
-        self.fee_rate = _served(serving, port.fee_rate)
-        self.account_info = _served(serving, port.account_info)
-
-    def headroom(self, account: AccountRef, lane: RateLane) -> RateHeadroom:
-        return self._port.headroom(account, lane)
-
-    async def subscribe_private(self, account: AccountRef) -> PrivateStream:
-        raise PrivateStreamRefused("a private stream stays on the loop that opens it")
+# (`ServedClock`) and its offset's snapshot, the read-only gate and the governor's headroom (each
+# under its own lock, #4370), the persistence bundle's chain-trip latch (a dict the serving loop's
+# restores write an item at a time), its own refusals of rejected credentials, which the route's
+# gate reads on the serving loop too (`ServedStandings.refused`, one dict read), the order-entry
+# gate since L4 (`ServedGate`: the maintenance boolean, the key standing's one snapshot and the
+# self-check's results a key at a time, the account health's dict read and evidence, 20 Sec.6.2)
+# and the serving loop's tick a new submit meets first (`ServingTick`, one float), the metrics and
+# the pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
+# `OmsStores`), and its venue calls never cross: the lane's own port signs and sends them
+# (#913 L1d).
 
 
 class ServedProfiles:
@@ -1266,10 +1224,16 @@ class OwnedPort(RoutedPort, Protocol):
 
 class Venue(Protocol):
     """The exchange adapter's service as the root composes it (C-2.2): the trading port of the
-    process's environment, the waits of its lanes (ruling Q19) and its key-verdict table."""
+    process's environment for the order lane's loop, signed by that loop's M2 borrower (#913 L1d),
+    the waits of its lanes (ruling Q19) and its key-verdict table."""
 
-    def trading_port(
-        self, env: str, *, clock_offset_ms: Callable[[], int | None] | None = None
+    def lane_trading_port(
+        self,
+        env: str,
+        *,
+        credentials: LoopSigningBorrower,
+        transport: httpx.AsyncBaseTransport | None = None,
+        clock_offset_ms: Callable[[], int | None] | None = None,
     ) -> OwnedPort: ...
 
     def lane_waits(self) -> Mapping[RateLane, float]: ...
@@ -1280,7 +1244,8 @@ class Venue(Protocol):
 class Ingestion(Protocol):
     """`ingestion.service.IngestionService` as the order path reads it at `start()`: the clock
     guard, the ticker stream and the instrument catalogue, each None until composed, and the
-    clock's measured offset, None while unmeasured."""
+    snapshot of the clock's measured offset, None while unmeasured, which the lane reads with no
+    host-step check (CR-S3L1B-09)."""
 
     @property
     def clock(self) -> ClockHealth | None: ...
@@ -1291,7 +1256,7 @@ class Ingestion(Protocol):
     @property
     def instruments(self) -> InstrumentCatalogue | None: ...
 
-    def clock_offset_ms(self) -> int | None: ...
+    def clock_offset_snapshot_ms(self) -> int | None: ...
 
 
 class Bundle(Protocol):
@@ -1854,6 +1819,17 @@ class CommandAccounts:
             raise
 
 
+async def _close_port(port: OwnedPort | None, transport: httpx.AsyncBaseTransport | None) -> None:
+    """The lane's trading port, its account clients closed, then the lane's own transport, which
+    the port never closes (the dev-only account fixture's, #913 L1d): each on the lane."""
+    try:
+        if port is not None:
+            await port.aclose()
+    finally:
+        if transport is not None:
+            await transport.aclose()
+
+
 async def _closed(closers: Sequence[_Closer], deadline: float) -> None:
     """Each closer within an equal share of what is left until the loop's `deadline`, as
     `StorageService.stop` shares its own, so one that hangs (the sink's drain) cannot starve the
@@ -1894,6 +1870,8 @@ class OmsRuntime:
         profiles: Profiles | None,
         persistence: Bundle | None,
         feed: MachineStatePort,
+        lane_signing: LaneSigningBinder,
+        lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
         stores: Callable[[], OmsStores] | None = None,
         pager: Pager | None = None,
         now: Callable[[], datetime] = lambda: datetime.now(UTC),
@@ -1917,6 +1895,10 @@ class OmsRuntime:
         self._gate, self._standings = gate, standings
         self._oms_enabled, self._live_enabled = oms_enabled, live_enabled
         self._persistence, self._feed = persistence, feed
+        #: #913 L1d: M2's binder of the lane's own signing (`SecretsBundle.lane_signing`), and the
+        #: dev-only account fixture's lane transport, None in production; each start calls both
+        #: on the lane.
+        self._lane_signing, self._lane_transport = lane_signing, lane_transport
         #: The process's one effective-profile cache (finding 6), `profiles_wiring`'s, which its
         #: owner closes: the pipeline reads it, and E28-T02's writes invalidate the same one.
         self.profiles = profiles
@@ -2187,15 +2169,17 @@ class OmsRuntime:
         """Clear `ready`; give the submits in flight at most `CV_OMS_DRAIN_S`; cancel what remains
         and the startup task, their work on the lane with them, and wait for it to end there; then
         close the stop gate (its complete reads and passes cancelled with the startup task, before
-        the machines), the facade (it unwires B1's ports), the command port, the lane's own sink
-        and audit writer, the trading port and its pool, each on its own loop, isolated, within its
-        share of what is left, and last the environment's lock (SEC-S3N-01); then end the serving
-        loop's tick, stop the lane, one still asking the lock included, and join its thread. All of
-        it ends by `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the join's, inside the
-        OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its owner's to close.
-        What a composition handed over before the stop began is closed here; one that ends after
-        it closes what it built itself (SEC-S3L2-05). The serving loop's watch ends with the
-        startup task."""
+        the machines), the facade (it unwires B1's ports), the command port, the lane's own sink,
+        the trading port, its loop signing (whose close frees M2's lane pool), the lane's own
+        audit writer, which the signing's last record needs, the OMS's pool and the lane's
+        heartbeat, each on its own loop, isolated, within its share of what is left, and last the
+        environment's lock (SEC-S3N-01), so nothing that signs or sends outlives it; then end the
+        serving loop's tick, stop the lane, one still asking the lock included, and join its
+        thread. All of it ends by `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the
+        join's, inside the OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its
+        owner's to close. What a composition handed over before the stop began is closed here; one
+        that ends after it closes what it built itself (SEC-S3L2-05). The serving loop's watch ends
+        with the startup task."""
         self._ready.clear()
         with self._handoff:
             self._stopping = True
@@ -2365,14 +2349,15 @@ class OmsRuntime:
 
     async def _compose(self, lane: Lane, serving: Serving, tick: ServingTick) -> _Parts:
         """The C6 rig's composition, on the order lane (CV-C13), for the process's environment only
-        (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), the trading port
-        and router, then over the pool, made here, the stores, without a bundle the probe of the
-        file its sink would hold (SEC-S3L2-03, else `UnclaimedMachineEvents`), the environment's
-        lock, held before the facade or any machine exists (SEC-S3N-01, else `EnvironmentLocked`),
-        the lane's own audit writer and sink (#913 L2), the command port, the facade, the anchors
-        and the pipeline; what the serving loop holds, through its bridge (`Served*`). A failure
-        once the port exists closes what was built before it goes on, each closer on its own
-        loop."""
+        (C-2.11): the switches, bindings and announcements, the latch (20 Sec.6.2), then over the
+        pool, made here, the stores, without a bundle the probe of the file its sink would hold
+        (SEC-S3L2-03, else `UnclaimedMachineEvents`), the environment's lock, held before the
+        lane's signing, its trading port, the facade or any machine exists (SEC-S3N-01, else
+        `EnvironmentLocked`), the lane's own audit writer (#913 L2), its loop signing over that
+        writer and its self-check, the lane's own trading port and router (#913 L1d), the lane's
+        own sink, the command port, the facade, the anchors and the pipeline; what the serving
+        loop holds, through its bridge (`Served*`). A failure once the pool exists closes what was
+        built before it goes on, each closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -2407,22 +2392,10 @@ class OmsRuntime:
         self._phase = "profiles"
         if self.profiles is None:
             raise NoProfileCache
-        self._phase = "port"
-        port = self._venue.trading_port(env, clock_offset_ms=ingestion.clock_offset_ms)
-        closers: list[_Closer] = [("trading_port", lambda: serving.call(port.aclose()))]
+        self._phase = "stores"
+        stores = self._stores()
+        closers: list[_Closer] = [("pool", lambda: lane.call(stores.release()))]
         try:
-            served: RoutedPort = ServedPort(port, serving)  # the port's members, on its loop
-            # S4-F (24 Sec.8.7): the OMS's way to the venue meets cancel-all's folds; every other
-            # call passes through it as it is. The folds sit on the lane, before the serving hop.
-            spacer = CancelAllSpacer(monotonic=self._monotonic, sleep=self._sleep)
-            folds = CancelAllCoalescer(
-                served, spacer=spacer, monotonic=self._monotonic, sleep=self._sleep,
-                fold_sizes=_histogram(metrics, "oms_cancel_all_fold_members"),
-            )  # fmt: skip
-            router = TradingRouter({env: folds}, lane_waits=self._venue.lane_waits())
-            self._phase = "stores"
-            stores = self._stores()
-            closers.append(("pool", lambda: lane.call(stores.release())))
             self._phase = "sink_wal"  # SEC-S3L2-03: before the lane's sink or the facade exists
             if bundle is None and (left := await run_in_thread(stores.unclaimed)):
                 _log().critical("oms_machine_event_wal_unclaimed", pending_bytes=left)
@@ -2437,9 +2410,36 @@ class OmsRuntime:
             closers.append(("environment_lock", lambda: lane.call(stores.lock.release())))  # last
             admit_after = self._monotonic() + ENVIRONMENT_FENCE_GRACE_S  # SEC-S3L2-01
             self._phase = "audit"
-            # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users
+            # on the lane, its own WAL locked (D6), its alarm paged; it stops after its users, the
+            # loop signing's last records among them
             writer = stores.audit(self._audit_alarm)
             closers.insert(0, ("audit", lambda: lane.call(writer.stop(LANE_AUDIT_STOP_S))))
+            self._phase = "signing"
+            # #913 L1d: the lane signs its own venue calls through M2's `LoopSigning`, bound here
+            # over a credential store M2 builds on the lane and alone holds, its records ahead
+            # through the lane's own writer; its close frees that store's pool
+            signing = self._lane_signing(audit=writer)
+            closers.insert(0, ("loop_signing", lambda: lane.call(signing.aclose())))
+            await signing.self_check()  # a wiring fault fails the start, never an order's signing
+            self._phase = "port"
+            port: OwnedPort | None = None
+            transport = None if self._lane_transport is None else self._lane_transport()
+            # registered before the build, so a refused build still closes the transport: the
+            # closure reads `port` late, when a closer runs it, so it closes the port the build
+            # below assigns, or none if the adapter refused it
+            closers.insert(0, ("trading_port", lambda: lane.call(_close_port(port, transport))))
+            port = self._venue.lane_trading_port(
+                env, credentials=signing.borrower, transport=transport,
+                clock_offset_ms=ingestion.clock_offset_snapshot_ms,
+            )  # fmt: skip
+            # S4-F (24 Sec.8.7): the OMS's way to the venue meets cancel-all's folds; every other
+            # call passes through it as it is. The folds sit on the lane, over its own port.
+            spacer = CancelAllSpacer(monotonic=self._monotonic, sleep=self._sleep)
+            folds = CancelAllCoalescer(
+                port, spacer=spacer, monotonic=self._monotonic, sleep=self._sleep,
+                fold_sizes=_histogram(metrics, "oms_cancel_all_fold_members"),
+            )  # fmt: skip
+            router = TradingRouter({env: folds}, lane_waits=self._venue.lane_waits())
             self._phase = "commands"
             timer = WriteTimer(_histogram(metrics, "oms_db_write_seconds"))
             orders = OrderRepository(stores.orders, timer)
@@ -2524,7 +2524,9 @@ class OmsRuntime:
             tiers: TierRequests = NO_TIER_REQUESTS
             if catalogue is not None:
                 bridge = ServedTierRequests(catalogue, serving, metrics)
-                closers.append(("tier_requests", bridge.close))
+                # before the environment's lock, whose release the stop keeps last (#913 L2)
+                at_lock = [name for name, _ in closers].index("environment_lock")
+                closers.insert(at_lock, ("tier_requests", bridge.close))
                 tiers = bridge
             deps = SubmissionDeps(
                 accounts=accounts,
@@ -2572,7 +2574,8 @@ class OmsRuntime:
             beating = spawn(heartbeat.run(), name="oms-lane-heartbeat")
             beating.add_done_callback(functools.partial(_heartbeat_ended, self._pager))
             # it watches the lock until the lock's own closer, the last, releases it
-            closers.insert(len(closers) - 1, ("heartbeat", lambda: lane.call(_cancelled(beating))))
+            at_lock = [name for name, _ in closers].index("environment_lock")
+            closers.insert(at_lock, ("heartbeat", lambda: lane.call(_cancelled(beating))))
             parts = _Parts(
                 submission, anchors, machines, tuple(closers), stops, audit, stores.sweep, route,
                 gate, exits, lane, CancelAll(orders, exits, folds=(folds, accounts)), heartbeat,
@@ -2613,15 +2616,20 @@ def build_oms_runtime(
     profiles: Profiles | None,
     persistence: Bundle | None,
     feed: MachineStatePort,
+    lane_signing: LaneSigningBinder,
+    lane_transport: Callable[[], httpx.AsyncBaseTransport] | None = None,
 ) -> OmsRuntime | None:
     """The process's OMS runtime, with no I/O; None on the fake backend, which composes no OMS, so
     `placeOrder` answers `501 not_implemented` there (20 Sec.6.2). Its audit writer is its order
-    lane's own (#913 L2), never the serving loop's."""
+    lane's own (#913 L2), never the serving loop's; `lane_signing` is M2's binder of the lane's own
+    signing, and `lane_transport` the dev-only account fixture's lane transport, None in
+    production (#913 L1d)."""
     if settings.storage_backend != "real":
         return None
     return OmsRuntime(
         settings, venue=ctx.exchange_bybit, ingestion=ctx.ingestion,
         read_only=ctx.oms_read_only_gate, metrics=metrics, gate=gate,
         standings=standings, oms_enabled=oms_enabled, live_enabled=live_enabled,
-        profiles=profiles, persistence=persistence, feed=feed,
+        profiles=profiles, persistence=persistence, feed=feed, lane_signing=lane_signing,
+        lane_transport=lane_transport,
     )  # fmt: skip

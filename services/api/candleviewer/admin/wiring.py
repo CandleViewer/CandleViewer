@@ -84,13 +84,15 @@ SecretsHandle = SecretsLifecycle
 SecretsMeta = SecretsMetadata
 #: The order lane's loop signing (#913 L3b), so the lane's wiring names no `secrets` type.
 LoopSigningHandle = LoopSigning
+#: #913 L1d: the borrower a `LoopSigningHandle` signs with, as the adapter's `lane_trading_port`
+#: takes it, so the lane's wiring names no `secrets` type either.
+LoopSigningBorrower = CredentialBorrower
 
 
 class LaneAuditWriter(Protocol):
     """`AuditWriter.emit`, the durable append M2 writes its records ahead through (C-2.9), as the
-    order lane holds its own writer (#913 L1d): L2's lane writer or, until it lands, the OMS's hop
-    to the serving loop's writer, never that writer itself. Each parameter is the writer's, of its
-    kind and with its default."""
+    order lane holds its own writer (#913 L1d): L2's lane writer (`build_lane_audit_writer`),
+    never the serving loop's. Each parameter is the writer's, of its kind and with its default."""
 
     async def emit(
         self,
@@ -145,6 +147,7 @@ __all__ = [
     "LaneAuditWriter",
     "LaneNotWired",
     "LaneSigningBinder",
+    "LoopSigningBorrower",
     "LoopSigningHandle",
     "MachineEventSinkHandle",
     "MachineEventSinkMetrics",

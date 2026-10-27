@@ -11,6 +11,7 @@ import asyncio
 import hashlib
 import inspect
 import re
+import threading
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Mapping
 from contextlib import asynccontextmanager
@@ -118,13 +119,36 @@ class Port(FakeTradingPort):
 
 
 @dataclass
+class LaneCall:
+    """One `lane_trading_port` call: what the port was built with, and on which thread."""
+
+    env: str
+    credentials: Any
+    transport: Any
+    clock_offset_ms: Any
+    thread: threading.Thread
+
+
+@dataclass
 class Venue:
-    """The adapter's service: a port per call, and the adapter's lane waits."""
+    """The adapter's service: the lane's port per call (`lane_trading_port`, #913 L1d), each call
+    noted, refused with `refuse` when set; and the adapter's lane waits."""
 
     ports: list[Port] = field(default_factory=list)
+    lane_calls: list[LaneCall] = field(default_factory=list)
+    refuse: Exception | None = None
 
-    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
-        self.ports.append(Port(environment=cast(Environment, env)))
+    def port(self, env: str) -> Port:
+        return Port(environment=cast(Environment, env))
+
+    def lane_trading_port(
+        self, env: str, *, credentials: Any, transport: Any = None, clock_offset_ms: Any = None
+    ) -> Port:
+        thread = threading.current_thread()
+        self.lane_calls.append(LaneCall(env, credentials, transport, clock_offset_ms, thread))
+        if self.refuse is not None:
+            raise self.refuse
+        self.ports.append(self.port(env))
         return self.ports[-1]
 
     def lane_waits(self) -> Mapping[RateLane, float]:
@@ -181,6 +205,65 @@ class Sink(InMemoryMachineEventSink):
 
     async def stop(self) -> None:
         self.log.append("sink.stop")
+
+
+#: What the lane's signing did, in order, and on which thread (`Binder.log`).
+Steps = list[tuple[str, threading.Thread]]
+
+
+@dataclass
+class Signing:
+    """M2's `LoopSigning` as the runtime holds it (#913 L1d): its borrower, its start-up
+    self-check, awaited, which raises `fail` when set, and its one close, which also frees its
+    pool (L1d-0), each noted."""
+
+    log: Steps
+    fail: Exception | None = None
+    borrower: object = field(default_factory=object)
+    closed = False
+
+    async def self_check(self) -> None:
+        self.log.append(("self_check", threading.current_thread()))
+        if self.fail is not None:
+            raise self.fail
+
+    async def aclose(self) -> None:
+        self.closed = True
+        self.log.append(("loop_signing", threading.current_thread()))
+
+
+@dataclass
+class Binder:
+    """`SecretsBundle.lane_signing`: each call binds a new `Signing` on the calling thread, given
+    the lane's audit writer, or refuses with `refuse`; its handles' self-checks fail with `fail`."""
+
+    log: Steps = field(default_factory=list)
+    audits: list[Any] = field(default_factory=list)
+    handles: list[Signing] = field(default_factory=list)
+    refuse: Exception | None = None
+    fail: Exception | None = None
+
+    def __call__(self, *, audit: Any) -> Signing:
+        self.log.append(("bind", threading.current_thread()))
+        if self.refuse is not None:
+            raise self.refuse
+        self.audits.append(audit)
+        self.handles.append(Signing(self.log, self.fail))
+        return self.handles[-1]
+
+
+class Transport:
+    """The dev-only account fixture's lane transport, which the root closes, noted in `log`."""
+
+    def __init__(self, log: Steps) -> None:
+        self.log = log
+
+    async def aclose(self) -> None:
+        self.log.append(("transport", threading.current_thread()))
+
+
+def _unread() -> int | None:
+    raise AssertionError("the serving clock guard's reader, run off its loop (CR-S3L1B-09)")
 
 
 @dataclass
@@ -375,14 +458,18 @@ class World:
     #: more watch a test lets happen (`watches.tick`).
     watched: list[float] = field(default_factory=list)
     watches: Beats = field(default_factory=Beats)
+    binder: Binder = field(default_factory=Binder)
+    #: The dev-only account fixture's lane transport factory, None in production (#913 L1d).
+    lane_transport: Callable[[], Transport] | None = None
 
     def __post_init__(self) -> None:
         self.writer.log = self.lock.log = self.log
         self.health = FakeClockHealth(self.clock)
         self.health.measure()
         self.ingestion = SimpleNamespace(
-            clock=self.health, tickers=None, instruments=None, clock_offset_ms=lambda: None
-        )
+            clock=self.health, tickers=None, instruments=None, clock_offset_ms=_unread,
+            clock_offset_snapshot_ms=lambda: None,
+        )  # fmt: skip
 
     def stores(self) -> OmsStores:
         store = self.store
@@ -426,7 +513,8 @@ class World:
             "feed": feed, "stores": self.stores, "pager": self.pager, "now": lambda: T0,
             "monotonic": self.clock, "registry": REGISTRY, "oms_enabled": self.flags[0],
             "sleep": self.clock.sleep, "lane": self.lane, "heartbeat": self.heartbeat,
-            "fencing": self.fencing, "watch": self.watch,
+            "fencing": self.fencing, "watch": self.watch, "lane_signing": self.binder,
+            "lane_transport": self.lane_transport,
         }  # fmt: skip
         return OmsRuntime(settings, **(built | over))
 
@@ -521,29 +609,64 @@ async def test_start_composes_the_process_environment_only_and_announces_each_in
     assert not b01.ports_wired()
 
 
-async def test_the_router_and_cancel_all_share_the_one_fold_port_before_the_serving_hop() -> None:
+async def test_the_router_and_cancel_all_share_the_one_fold_port_over_the_lanes_own_port() -> None:
     """CR-S4F-09 (S4-F): the OMS reaches the venue through the cancel-all fold port the wiring
     builds. The router routes the environment to it, so the submit pipeline and B1's command
-    port meet it, and cancel-all's fold port is that same instance. It wraps the served port, so
-    the folds run on the order lane, before the hop to the serving loop; its calls still out at
-    the stop end once the machines have stopped."""
+    port meet it, and cancel-all's fold port is that same instance. It wraps the lane's own
+    trading port (#913 L1d), so the folds and the calls they pass run on the order lane; its
+    calls still out at the stop end once the machines have stopped."""
     world = World()
     async with started(world.runtime()) as runtime:
         parts = runtime._composed()
         folds = parts.submission._router.port_for("demo")
         assert isinstance(folds, CancelAllCoalescer)
-        assert isinstance(folds._inner, oms_wiring.ServedPort)
+        assert folds._inner is world.venue.ports[0]
         commands = cast(OmsCommandPort, parts.exits._d.commands)
         assert commands._router.port_for("demo") is folds
         assert parts.cancel_all._folds is not None and parts.cancel_all._folds[0] is folds
-        names = [name for name, _ in parts.closers]
-        assert names.index("cancel_all_folds") == names.index("machines") + 1
+        # the folds close right after the machines, before the commands and the port
+        assert [name for name, _ in parts.closers] == CLOSERS
+
+
+@pytest.mark.parametrize("tickers", [False, True], ids=["catalogue", "catalogue-and-tickers"])
+async def test_the_lock_is_released_last_when_an_exchange_feed_composes_a_catalogue(
+    tickers: bool,
+) -> None:
+    """L2b-2's lock is released by the stop's last closer, after the heartbeat's cancel, also on a
+    process whose exchange feed composes the instrument catalogue (S4-S-d's `tier_requests`
+    bridge) and the tickers (`ticker_demand`): each lands before the heartbeat, never after the
+    lock, so no watchdog tick reads the released lock as lost (`oms_environment_lock_lost`). The
+    stop's log is read first, the hazard itself, then the closers by name, in full: 14 with both."""
+    world = World()
+    world.ingestion.instruments = SimpleNamespace(snapshot=lambda: {cr.SYMBOL: instrument()})
+    if tickers:
+        world.ingestion.tickers = SimpleNamespace(
+            latest=lambda _symbol: None, is_stale=lambda _symbol: False,
+            acquire=lambda _consumer, _symbol: None, release=lambda _consumer, _symbol: None,
+        )  # fmt: skip
+    async with started(world.runtime()) as runtime:
+        names = [name for name, _ in runtime._composed().closers]
+    assert world.log[-2:] == ["heartbeat.end", "lock.release"]  # no tick reads a released lock
+    # the tickers' demand after the sink, the tier requests after the pool, both before the lock
+    demand = ["ticker_demand"] if tickers else []
+    assert names == [
+        "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", *demand,
+        "trading_port", "loop_signing", "audit", "pool", "tier_requests", "heartbeat",
+        "environment_lock",
+    ]  # fmt: skip
 
 
 #: What a composed runtime has started, in order (#913 L2): the environment's lock, then the lane's
 #: own writer and sink; and what its stop closes, in order, the lock last.
 STARTED = ["lock.acquire", "audit.start", "sink.start"]
 STOPPED = ["sink.stop", "audit.stop", "pool.release", "heartbeat.end", "lock.release"]
+#: The closers a composed runtime's stop runs, by name, in order (#913 L1d-1 on L2b-2): the lane's
+#: trading port, its signing, its writer and the pool, everything that can sign or send, close
+#: before the heartbeat's cancel and, last, the environment's lock's release.
+CLOSERS = [
+    "exits", "stop_gate", "machines", "cancel_all_folds", "commands", "sink", "trading_port",
+    "loop_signing", "audit", "pool", "heartbeat", "environment_lock",
+]  # fmt: skip
 _SINK_WAL = Path(Settings().machine_event_wal_path)
 _BESIDE = str(_SINK_WAL.with_name(f"oms_lane.{_SINK_WAL.name}"))
 
@@ -611,18 +734,24 @@ async def test_the_oms_records_through_the_lanes_own_writer_and_sink_never_the_s
 
 
 @pytest.mark.parametrize(
-    ("fails", "phase", "log"),
+    ("fails", "phase", "log", "ports"),
     [
-        ("build", "audit", ["lock.acquire", "pool.release", "lock.release"]),
-        ("start", "audit_start", ["lock.acquire", "audit.stop", "pool.release", "lock.release"]),
+        ("build", "audit", ["lock.acquire", "pool.release", "lock.release"], []),
+        (
+            "start",
+            "audit_start",
+            ["lock.acquire", "audit.stop", "pool.release", "lock.release"],
+            [True],
+        ),
     ],
 )
 async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed(
-    fails: str, phase: str, log: list[str], monkeypatch: pytest.MonkeyPatch
+    fails: str, phase: str, log: list[str], ports: list[bool], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """D6 (#913 L2): a writer whose WAL another writer holds is refused at its build, and one that
     cannot start is stopped again (its lock dropped): either way the runtime fails closed, paged,
-    with the port and the pool closed, and no sink started."""
+    with the pool closed, and no sink started; the trading port, which the lane's signing over
+    that writer comes before (#913 L1d), is built only once the writer is, and closed."""
     world = World(audit_fails=OSError("the WAL is locked") if fails == "build" else None)
 
     async def refused(self: Writer) -> None:
@@ -633,7 +762,8 @@ async def test_a_lane_writer_that_cannot_build_or_start_fails_the_runtime_closed
     with capture_logs() as logs:
         async with started(world.runtime()) as runtime:
             assert (failed_closed(logs), failed_phases(logs)) == (["OSError"], [phase])
-            assert world.log == log and world.venue.ports[0].closed and not b01.ports_wired()
+            assert world.log == log and not b01.ports_wired()
+            assert [port.closed for port in world.venue.ports] == ports
             assert world.pager.calls == [f"oms_runtime_failed_closed: {phase}"]
             with pytest.raises(OmsNotReady):
                 _ = runtime.submission
@@ -669,11 +799,13 @@ async def test_frames_no_sink_holds_fail_the_start_closed_critical_and_paged() -
 
 async def test_frames_no_sink_holds_refuse_the_start_before_the_lanes_sink_or_the_facade() -> None:
     """SEC-S3L2-03 (CR-S3L2X-06, one behaviour): the probe runs once, before the lane's sink or the
-    facade exists, so the refused start built neither, and it closes its port and its pool."""
+    facade exists, and before its signing and trading port (#913 L1d), so the refused start built
+    none of them, and it closes its pool."""
     world = World(unclaimed=1024)
     async with started(world.runtime()):
         assert world.probes == 1 and world.sinks == [] and not b01.ports_wired()
-        assert world.log == ["pool.release"] and world.venue.ports[0].closed
+        assert world.log == ["pool.release"] and world.venue.ports == []
+        assert world.binder.handles == []  # no signing bound either
 
 
 async def test_with_a_bundle_the_file_its_sink_holds_is_never_probed() -> None:
@@ -849,7 +981,8 @@ async def test_a_second_process_of_the_environment_fails_closed_critical_and_pag
 
 async def test_a_second_process_sweeps_nothing_and_releases_no_lock_it_never_held() -> None:
     """SEC-S3N-01 (CR-S3L2-09, one behaviour): the refused process serves no order and leaves the
-    first's unsent entry as it was; it closes its port and its pool and gives up no lock."""
+    first's unsent entry as it was; it binds no signing and builds no port, each of which comes
+    after the lock since #913 L1d, closes its pool and gives up no lock."""
     world = World()
     world.lock.elsewhere = True
     await crashed(world)
@@ -858,7 +991,8 @@ async def test_a_second_process_sweeps_nothing_and_releases_no_lock_it_never_hel
     async with started(world.runtime()) as runtime:
         with pytest.raises(OmsNotReady):
             _ = runtime.submission
-    assert world.log == ["pool.release"] and world.venue.ports[0].closed
+    assert world.log == ["pool.release"] and world.venue.lane_calls == []
+    assert world.binder.log == []  # nothing bound, not even asked (#913 L1d)
     assert world.store._orders[UNSENT.id].lifecycle_state == "validated"
 
 
@@ -880,7 +1014,9 @@ async def test_a_lock_postgres_cannot_answer_is_asked_again_with_the_sweeps_back
                 _ = runtime.submission
             await asyncio.wait_for(runtime.wait_ready(), 10)  # a bound on the test
             assert runtime.state == "ok"
-            assert [port.closed for port in world.venue.ports] == [True, True, False]
+            # the signing and the port only once the lock is held (#913 L1d): one of each
+            assert [port.closed for port in world.venue.ports] == [False]
+            assert [signing.closed for signing in world.binder.handles] == [False]
     first, ceiling = SWEEP_RETRY_S
     asked = [e["retry_s"] for e in logs if e["event"] == "oms_environment_lock_unanswered"]
     assert asked == [first, min(2 * first, ceiling)] and world.clock.slept[:2] == asked
@@ -1403,27 +1539,28 @@ async def test_a_page_that_cannot_be_raised_is_logged_and_the_start_still_fails_
     assert [e["error"] for e in logs if e["event"] == "oms_pager_failed"] == ["RuntimeError"]
 
 
-@pytest.mark.parametrize("step", ["port", "stores"])
+@pytest.mark.parametrize("step", ["port", "commands"])
 async def test_a_failure_once_the_trading_port_exists_closes_it(
     step: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """CR-S3E1-05: the port is registered for closing the moment it is built, so the router or
-    the stores (a bad DSN) failing after it leaves it open to no one; no pool exists to close."""
+    the command port failing after it leaves it open to no one; the lane's signing, its writer and
+    the pool, built before it since #913 L1d, close after it, and the environment's lock last."""
     world = World()
 
-    def refuse(*_args: Any) -> Any:
+    def refuse(*_args: Any, **_kwargs: Any) -> Any:
         raise ValueError("refused")
 
-    over: dict[str, Any] = {}
-    if step == "stores":
-        over["stores"] = refuse
+    if step == "commands":
+        monkeypatch.setattr(oms_wiring, "OmsCommandPort", refuse)
     else:
         monkeypatch.setattr(world.venue, "lane_waits", refuse)
     with capture_logs() as logs:
-        async with started(world.runtime(**over)):
-            [port] = world.venue.ports
+        async with started(world.runtime()):
+            [port], [signing] = world.venue.ports, world.binder.handles
             assert (failed_closed(logs), failed_phases(logs)) == (["ValueError"], [step])
-            assert port.closed and world.log == [] and world.lanes[0].stopped
+            assert port.closed and signing.closed and world.lanes[0].stopped
+            assert world.log == ["lock.acquire", "audit.stop", "pool.release", "lock.release"]
 
 
 async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_testnet_port() -> (
@@ -1431,13 +1568,17 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 ):
     """CR-S3E1-03, ruling R6: the adapter has no trading capability record for testnet, which
     CONSTITUTION.md limits to connectivity smoke tests, so a testnet process fails closed at the
-    port with nothing built. The fake venue's port accepts testnet, so this runs the real one."""
+    port with no port, sink or facade built; the lane's signing, its writer and the pool, built
+    before the port since #913 L1d, close, and the environment's lock last. The fake venue's port
+    accepts testnet, so this runs the real one."""
     world = World()
     real = ExchangeBybitService(credentials=fake_capability(), environment="testnet")
     with capture_logs() as logs:
         async with started(world.runtime("testnet", venue=real)) as runtime:
             assert (failed_closed(logs), failed_phases(logs)) == (["ValueError"], ["port"])
-            assert world.log == [] and not b01.ports_wired() and runtime.state == "degraded"
+            assert world.log == ["lock.acquire", "audit.stop", "pool.release", "lock.release"]
+            assert world.binder.handles[0].closed
+            assert world.sinks == [] and not b01.ports_wired() and runtime.state == "degraded"
             assert world.lanes[0].stopped
             with pytest.raises(OmsNotReady):
                 _ = runtime.submission
@@ -1446,8 +1587,25 @@ async def test_a_testnet_process_fails_closed_over_the_real_adapter_that_has_no_
 def test_the_fake_backend_composes_no_oms_runtime() -> None:
     """20 Sec.6.2: no runtime, so `placeOrder` answers `501 not_implemented` there."""
     names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled")
-    unused = dict.fromkeys((*names, "profiles", "persistence", "feed"))
+    unused = dict.fromkeys((*names, "profiles", "persistence", "feed", "lane_signing"))
     assert build_oms_runtime(cast(Any, None), Settings(), **cast(Any, unused)) is None
+
+
+def test_the_real_backends_runtime_holds_the_lanes_binder_and_transport_it_was_handed() -> None:
+    """#913 L1d-1: on the real backend `build_oms_runtime` hands the runtime the very binder of the
+    lane's signing and the very lane transport factory it was given, which the root's test cannot
+    see, as the fake backend it composes builds no runtime. The construction does no I/O: it calls
+    neither, the start does, on the lane."""
+    binder, factory = object(), object()  # neither callable: a call here would raise
+    ctx = SimpleNamespace(exchange_bybit=Venue(), ingestion=None, oms_read_only_gate=None)
+    names = ("metrics", "gate", "standings", "oms_enabled", "live_enabled", "profiles")
+    unused = dict.fromkeys((*names, "persistence", "feed"))
+    runtime = build_oms_runtime(
+        cast(Any, ctx), Settings(storage_backend="real"), **cast(Any, unused),
+        lane_signing=cast(Any, binder), lane_transport=cast(Any, factory),
+    )  # fmt: skip
+    assert isinstance(runtime, OmsRuntime)
+    assert runtime._lane_signing is binder and runtime._lane_transport is factory
 
 
 async def test_the_state_is_starting_while_the_startup_runs_and_degraded_once_failed_closed() -> (
@@ -1737,10 +1895,11 @@ async def test_stop_gives_each_closer_its_share_so_one_that_fails_or_hangs_starv
     """CR-S3E2-04: each close step is isolated and has its share of `OMS_STOP_RESERVE_S`. The
     command port fails to close and the sink's drain never ends; the trading port, which needs a
     turn of the loop, and the pool still close, and the whole stop is bounded."""
-    # 12 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
-    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the commands, then the hung sink,
-    # which costs a sixth of what is left, the lane's audit writer (#913 L2), the trading port,
-    # the pool, the lane's heartbeat and the environment's lock (SEC-S3N-01)
+    # 14 closers share 0.5 s (the reserve less the lane's join): the drain's cancel, the lane's
+    # wait, the exits, the stop gate (CR-S3H3B-01), the machines, the cancel-all folds, the
+    # commands, then the hung sink, which costs a seventh of what is left, the trading port, its
+    # loop signing (#913 L1d), the lane's audit writer (#913 L2), the pool, the lane's heartbeat and
+    # the environment's lock (SEC-S3N-01)
     monkeypatch.setattr(oms_wiring, "OMS_STOP_RESERVE_S", 1.5)
 
     async def fails(self: OmsCommandPort) -> None:
@@ -2591,9 +2750,8 @@ class Stalled(Port):
 
 @dataclass
 class StalledVenue(Venue):
-    def trading_port(self, env: str, *, clock_offset_ms: Any = None) -> Port:
-        self.ports.append(Stalled(environment=cast(Environment, env)))
-        return self.ports[-1]
+    def port(self, env: str) -> Port:
+        return Stalled(environment=cast(Environment, env))
 
 
 async def waiting_stop(world: World, *, deleted: bool = False) -> None:
@@ -2623,7 +2781,7 @@ async def test_the_startup_pass_never_holds_ready_and_stop_cancels_its_read() ->
         assert runtime.state == "ok"
         closers = [name for name, _ in runtime._composed().closers]
         # the exit service's tasks end first (slice 4), then the gate's reads (CR-S3H3B-01)
-        assert closers[:3] == ["exits", "stop_gate", "machines"]
+        assert closers == CLOSERS
     assert port.cancelled
     assert [row.status for row in world.store._stops.values()] == ["pending"]
 

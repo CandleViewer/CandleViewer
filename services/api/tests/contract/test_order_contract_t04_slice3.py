@@ -55,6 +55,7 @@ from candleviewer.oms_wiring import (
     UnclaimedMachineEvents,
     environment_lock_key,
 )
+from candleviewer.secrets.service import LOOP_STORE_CONNECTIONS
 from candleviewer.settings import (
     ACCOUNT_DOWN_MAX_S,
     OMS_AFTER_ANCHOR_S,
@@ -700,13 +701,13 @@ def test_24_gives_the_demand_and_the_audit_labels_the_code_holds() -> None:
 
 def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() -> None:
     """#913 slice 3 L1 (29 CV-C13): rule 1's one explicit thread; the lane, its crossings and its
-    stop inside the grace, from the code's own bounds; the hops named until L3, L2's and L4's gone;
-    the notices' bound and their count (CR-S3L1A-01); the private stream the lane's port refuses
-    (CR-S3L1B-05); no blocking hop left (SEC-S3L1A-03), the gate read in place since L4, with its
-    read inventory and its two reads; the lane's own refusals read in place (SEC-S3L1C-02); its
-    death paged (SEC-S3L1A-02); a cancelled start and nothing begun once the lane stops or dies,
-    with OM-D10 to OM-D12 (CR-S3L1C-03); and, the runtime on the lane since L1b, no status note
-    left in 20, 23 or 24."""
+    stop inside the grace, from the code's own bounds; the hops left named, L2's, L3's and L4's
+    gone; the notices' bound and their count (CR-S3L1A-01); the venue calls the lane's own port
+    signs and sends, and the private stream it refuses (#913 L1d); no blocking hop left
+    (SEC-S3L1A-03), the gate read in place since L4, with its read inventory and its two reads;
+    the lane's own refusals read in place (SEC-S3L1C-02); its death paged (SEC-S3L1A-02); a
+    cancelled start and nothing begun once the lane stops or dies, with OM-D10 to OM-D12
+    (CR-S3L1C-03); and, the runtime on the lane since L1b, no status note left in 20, 23 or 24."""
     rule = _between(_ARCH, "\n1. **One serving loop, and the order lane.**", "\n2. ")
     assert "the one explicit thread is the order lane's" in rule
     lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
@@ -718,9 +719,17 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "so `ready` is set and cleared on that loop alone",
         "and the calls one thread makes begin in the order it made them:",
         f"awaited and cut at `CV_COMMAND_TIMEOUT` ({HOP_TIMEOUT_S:g} s): the profile cache and the "
-        "clock guard's resync; and until L3 lets the lane sign and send from its own loop, every "
-        "venue call",
-        "the lane's port refuses `subscribe_private` (`PrivateStreamRefused`)",
+        "clock guard's resync;",
+        "on the lane, never crossing: every venue call, which the lane's own trading port signs "
+        "through M2's `LoopSigning` and sends, its account clients built, used and closed on the "
+        "lane, its tokens drawn from the adapter's one governor",
+        "and M2's `credential_borrowed` ahead of each signing, through the lane's own audit writer",
+        "so `subscribe_private` refuses every account (`RuntimeError`, 24 §14.1)",
+        "and the trading port the lane signs and sends with (`lane_trading_port`, #913 L1d), on "
+        "the process's one rate governor, signing through M2's `LoopSigning`",
+        "after a self-check that fails the start closed (phase `signing`) on a wiring fault",
+        "the clock guard's health and its offset's snapshot (never its host-step check)",
+        "so on a dev stack the lane is refused what the adapter's door answers, a dev-only gap",
         "the exit routes reach the exit service the same way (`OnLaneExits`)",
         "cancel-all reaches its own service the same way (`OnLaneCancelAll`): its scope, an "
         "account read, within that bound, and its run within the service's own deadline;",
@@ -757,12 +766,40 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
         "pages it once, the first time it reads that state",
     )
     threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
-    rows = {r[2:8]: _words(r) for r in threat.read_text(encoding="utf-8").splitlines()}
+    model = threat.read_text(encoding="utf-8").split("\n## 3. STRIDE table\n", 1)[1]
+    heads = [  # the model's own rows (3.1 to 3.6), whatever padding Prettier gives the id column
+        head
+        for line in model.split("\n### 3.7 ", 1)[0].splitlines()
+        if (head := re.match(r"^\|\s*(OM-[A-Z]\d+[a-z]?)\s*\|", line))
+    ]
+    rows = {head.group(1): _words(head.string) for head in heads}
+    assert len(rows) == len(heads)  # each id once: no other table's row re-points a pin
     assert not _missing(
         rows["OM-D10"],
-        "every venue call M2 signs (F7, `ServedPort`) still runs on the serving loop, awaited",
+        "and since L1d-1 it signs and sends every venue call (F7) there, through its own trading "
+        "port and M2's `LoopSigning`",
         "Since L2 the lane records through its own `AuditWriter` and `machine_events` WAL sink, on "
         "its own loop, one hash chain with the serving loop's under `pg_advisory_xact_lock`",
+        "a fresh submit keeps its profile-cache hop (`ServedProfiles`), as a risk-raising amend "
+        "does, its gate hop gone since L4 (`ServedGate`, OM-D11)",
+        "no slice removes the profile-cache hop (ruling Q7) or the clock guard's resync after a "
+        "`10002` (`ServedClock`, awaited on the serving loop)",
+        "but no longer a stop attach, a cancel or a KILL's cancels",
+    )
+    assert "ServedPort" not in rows["OM-D10"]
+    assert not _missing(  # #913 L1d-1: the lane's signing dependencies, with L1d-0's pool facts
+        rows["OM-D14"],
+        "The lane's signing dependencies (#913 L1d-1)",
+        f"bounded at {LOOP_STORE_CONNECTIONS} connections with no overflow",
+        "At the close, a read in flight is refused at the fence, but its checked-out connection "
+        "outlives the dispose",
+        "Residual: a start cancelled again while a lane closer hangs leaves the lane pool, the "
+        "lane writer's WAL lock and the environment's lock held until the process ends, so a "
+        "successor is refused (`EnvironmentLocked`) until then, paged by the gauge",
+        "A dead lane keeps the lane pool and the port's clients until then too, paged (20 §6.2)",
+        "a signing the fence refuses writes its `credential_sign_failed` through that writer after "
+        "`aclose` returns",
+        "Tombstones are L1d-2's (ruling Q6)",
     )
     assert (
         "as a persistence bundle's `machine_events` appends did until #913's L2 gave the lane its "
@@ -779,7 +816,8 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     ws = _words((OPENAPI_SPEC_PATH.parent / "23-ws-protocol.md").read_text(encoding="utf-8"))
     assert (
         "The lane writes its audit records and `machine_events` rows through its own writer and "
-        "sink (#913's L2), so neither waits on the serving loop" in ws
+        "sink (#913's L2), so neither waits on the serving loop, and signs and sends its venue "
+        "calls from its own trading port (#913's L1d), so none of them waits there either" in ws
     )
     assert "the order-entry gate it reads in place, never waiting there (#913's L4)" in ws
     assert not _missing(
@@ -792,9 +830,64 @@ def test_20_runs_the_oms_on_its_own_lane_and_23_and_24_name_what_crosses_it() ->
     assert not [text for text in (lane, ws, _ROUTE) if "until L4" in text]
     assert "lane to serving loop, blocking" not in lane and "Serving.block" not in _ARCH
     assert not [text for text in (lane, _ROUTE, ws) if "L1b" in text]
+    stale = ("ServedPort", "PrivateStreamRefused", "until L3 lets", "venue calls until L3")
+    assert not [word for word in stale for text in (lane, ws) if word in text]  # #913 L1d
     plan = (OPENAPI_SPEC_PATH.parent / "29-statechart-adoption-plan.md").read_text(encoding="utf-8")
     [row] = [line for line in plan.splitlines() if line.startswith("| CV-C13 ")]
     assert "STANDS" in row and "F lane table, `OrderLane`, nightly bench" in row
+
+
+def test_20_orders_the_lanes_signing_closers_and_a_dead_lane_keeps_them_as_the_lock() -> None:
+    """#913 L1d-1: 20 Sec.6.2 states the stop's order in each of its three places, the trading
+    port, then its `LoopSigning`, whose close frees M2's lane pool, then the lane's own audit
+    writer, which writes the signing's last records, then the OMS's pool, each before the
+    environment's lock; and a lane that has died keeps its port's clients and M2's lane pool until
+    the process exits, as it keeps the lock (CR-S3L2X-07), its closers being calls on that lane."""
+    lane = _between(_ARCH, "**The order lane (29 CV-C13; #913 slice 3 L1).**", "**Live trading")
+    assert not _missing(
+        _RUNTIME,
+        "then stops the machines, the order lane's own sink, its trading port, its loop signing "
+        "and its own audit writer, and its pool, stops the lane's heartbeat and releases the "
+        "environment's lock, and then stops the order lane (below)",
+        "leaves at least 5 s for the machines, the sink, the port, the signing, the writer, the "
+        "pool, the heartbeat, the lock and the lane",
+        "It keeps its trading port's account clients and M2's lane pool open until then too, as "
+        "their closers are calls on that lane as well (#913 L1d), so "
+        "`cv_credential_loop_pools_in_use` stays one above its base; the death itself pages "
+        "(below).",
+    )
+    assert not _missing(
+        lane,
+        "runs each closer on its own loop (after the sink, the trading port, then its "
+        "`LoopSigning`, whose close frees M2's lane pool, then the lane's own audit writer, then "
+        "the OMS's pool, each on the lane and before the environment's lock, above, so nothing "
+        "that signs or sends outlives it)",
+        "On the stop the sink stops after the machines and the command port, and the writer after "
+        "the trading port and the lane's `LoopSigning`, whose last records it writes (#913 L1d), "
+        "and before the pool",
+    )
+
+
+def test_e29_leaves_ruling_q7s_hop_and_the_clock_resync_after_l1d3_in_its_map_and_f20() -> None:
+    """#913 L1d-1: E29's ticket map gives OM-D10's close to L1d-3, leaving ruling Q7's
+    profile-cache hop and the clock guard's resync as its named residual, and holds SEC-S3E1-01
+    until L1d-3, not until "L1d ships", which L1d-1 is part of; F-20, met, names both hops left."""
+    threat = OPENAPI_SPEC_PATH.parents[1] / "security" / "threat-models" / "E29-oms.md"
+    lines = threat.read_text(encoding="utf-8").splitlines()
+    [row] = [_words(line) for line in lines if line.startswith("| E29-T04, the order lane (slice")]
+    [f20] = [_words(line) for line in lines if line.startswith("| F-20 |")]
+    assert not _missing(
+        row,
+        "L1d-3, which times that stall test for a stop attach and a KILL's cancel, closes OM-D10, "
+        "leaving ruling Q7's profile-cache hop and the clock guard's resync as its named residual;",
+        "SEC-S3E1-01 holds until L1d-3: the order facade on the serving loop is an interim, not a "
+        "waiver",
+    )
+    assert "until L1d ships" not in row
+    assert (
+        "The order lane hops to the serving loop for a fresh submit's profile read (ruling Q7) and "
+        "the clock guard's resync after a `10002`;" in f20
+    )
 
 
 def test_20_reads_the_order_facades_versions_in_place_beside_the_in_flight_guard() -> None:
@@ -916,7 +1009,8 @@ def test_20_24_and_the_e29_model_state_the_gate_in_place_and_its_stall_fence() -
     assert "A read not begun within 1 s answers `oms_not_ready`" not in d11
     assert "never an exit or a KILL" not in d11
     assert "a stalled serving loop fencing new submits within 1 s instead" in f20
-    assert "block the lane until L4" not in f20 and "| With #913's L1d |" in f20
+    assert "block the lane until L4" not in f20  # its venue-call half met by #913 L1d-1 too
+    assert "| Met (#913's L1d-1 and L4); Q7's hop stays | E29-T04 (#913 L1d-1, L4) |" in f20
     assert not _missing(
         row,
         "and L4's order-entry gate read in place, twice, with no hop, and its fence on new submits "

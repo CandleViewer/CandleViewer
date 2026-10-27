@@ -8,7 +8,10 @@ call, or naming the adapter's `_rest_transport`, would send signed key-verificat
 transport that the `CV_ACCOUNT_FIXTURE` gate never checked (C-2.11, C-12.2). Such a change fails
 here, and a security review decides it. #836 slice 2b5 adds the private-WS connector's way in on
 the same terms: the keyword `private_ws_connect=` and the adapter's `_ws_probe`, and G-8b (#3963)
-the private streams that dial with it: the adapter's `_stream_connect` and `_private_streams`.
+the private streams that dial with it: the adapter's `_stream_connect` and `_private_streams`. #913
+L1d-1 adds the order lane's own transport, the fixture's lane transport in a dev stack: the root
+hands it to `build_oms_runtime(lane_transport=)`, which hands it to `OmsRuntime(lane_transport=)`,
+whose composition hands what it builds to the adapter's `lane_trading_port(transport=)`, each once.
 
 Limits: these are AST checks, so an alias of either callee or a name built at run time is not
 caught, as in `test_dev_module_confined.py`.
@@ -29,6 +32,9 @@ ROOTS = (Path(candleviewer.__file__).resolve().parent, Path(cvdev.__file__).reso
 CARRIERS = {
     "ExchangeBybitService": frozenset({"rest_transport", "private_ws_connect"}),
     "build_app_context": frozenset({"account_fixture"}),
+    "build_oms_runtime": frozenset({"lane_transport"}),
+    "OmsRuntime": frozenset({"lane_transport"}),
+    "lane_trading_port": frozenset({"transport"}),
 }
 #: The adapter's fields that hold them.
 PRIVATE = frozenset({"_rest_transport", "_ws_probe", "_stream_connect", "_private_streams"})
@@ -91,6 +97,9 @@ def _found() -> list[str]:
         "svc._rest_transport = t",
         "setattr(svc, '_rest_transport', t)",
         "svc._ws_probe = p",
+        "build_oms_runtime(ctx, settings, lane_transport=handle.lane_rest_transport)",
+        "OmsRuntime(settings, lane_transport=factory)",
+        "self._venue.lane_trading_port(env, credentials=b, transport=t)",
     ],
 )
 def test_an_injection_is_found(source: str) -> None:
@@ -104,6 +113,7 @@ def test_an_injection_is_found(source: str) -> None:
         "build_app_context(settings, auth_clock=clock)",
         "_Fixture(rest_transport=t, private_ws_connect=connect)",
         "transport = handle.rest_transport",
+        "self._venue.lane_trading_port(env, credentials=b, clock_offset_ms=offset)",
     ],
 )
 def test_a_non_injection_is_allowed(source: str) -> None:
@@ -111,6 +121,8 @@ def test_a_non_injection_is_allowed(source: str) -> None:
 
 
 def test_only_the_composition_root_routes_a_transport_into_the_adapter() -> None:
-    """Its two calls, counted, so a third anywhere fails as well; this also shows the scan sees
-    them."""
-    assert [found.rsplit(":", 1)[0] for found in _found()] == ["candleviewer/app.py"] * 2
+    """Its calls, counted, so another anywhere fails as well; this also shows the scan sees them:
+    the root's two into the adapter and its one into the OMS runtime, and the OMS's wiring's two,
+    the runtime's construction and its lane's port (#913 L1d-1)."""
+    found = [found.rsplit(":", 1)[0] for found in _found()]
+    assert found == ["candleviewer/app.py"] * 3 + ["candleviewer/oms_wiring.py"] * 2

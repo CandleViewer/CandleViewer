@@ -438,6 +438,8 @@ def test_the_service_builds_one_governor_for_every_client() -> None:
     svc = ExchangeBybitService(credentials=fake_capability(), environment="demo")
     port = svc.trading_port("demo")
     assert port._governor is svc._governor
+    lane = svc.lane_trading_port("demo", credentials=fake_capability())  # the OMS's, #913 L1d
+    assert lane._governor is svc._governor  # one budget per UID across both loops (C-12.7)
     assert svc.public_rest_client("demo")._governor is svc._governor
     verifying = svc.key_verification_calls("demo", CREDENTIAL_ID, uid="7", recv_window_ms=5000)
     assert verifying._governor is svc._verify_governor

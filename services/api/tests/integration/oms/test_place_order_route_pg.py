@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import httpx
@@ -65,7 +65,7 @@ from tests.unit.api.test_orders_route import BODY, KEY
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
 from tests.unit.oms.order_rig import Pager
-from tests.unit.oms.test_oms_runtime import Beats, Flag, Port, Writer, started
+from tests.unit.oms.test_oms_runtime import Beats, Binder, Flag, Port, Writer, started
 
 pytestmark = pytest.mark.integration
 __all__ = ["pg_dsn"]  # C6's database for this module
@@ -230,13 +230,15 @@ def _runtime(world: World, dsn: str, profiles: Profiles, metrics: Metrics) -> Om
     return OmsRuntime(
         settings, venue=_Venue(ports=[world.port]),
         ingestion=SimpleNamespace(
-            clock=health, tickers=tickers, instruments=catalogue, clock_offset_ms=lambda: None
+            clock=health, tickers=tickers, instruments=catalogue,
+            clock_offset_snapshot_ms=lambda: None,
         ),
         read_only=sr.ReadOnly(), metrics=metrics,
         gate=SimpleNamespace(refusal=lambda _account: None),
         standings=SimpleNamespace(read_once=True, credential_rejected=lambda *_args: None),
         oms_enabled=flags[0], live_enabled=flags[1], profiles=profiles, persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
+        lane_signing=cast(Any, Binder()),
         stores=lambda: replace(  # the lane's own writer is the world's (#913 L2)
             pg_stores(settings, metrics), accounts=InMemoryTradingAccountReads(row),
             audit=lambda _alarm: world.writer,
