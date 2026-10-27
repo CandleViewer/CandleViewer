@@ -117,6 +117,9 @@ const MAX_TEXT = 1000;
 const isText = (v: unknown): v is string => isStr(v) && v.length <= MAX_TEXT;
 /** `bye.reason` is `maxLength 64`, and `revoked.reason` is an enum of names well under that: a short tag, logged and compared. */
 const isTag = (v: unknown): v is string => isStr(v) && v.length <= 64;
+/** `err.code`: a registry name (23 §10.3, snake_case). Anything else is a malformed frame, counted, never shown. */
+export const ERR_CODE = /^[a-z][a-z0-9_]{0,63}$/;
+const isErrCode = (v: unknown): v is string => isStr(v) && ERR_CODE.test(v);
 /** RFC 6455 close codes; the server's own set (`bye.code`) may grow, so the range is checked, not the list. */
 const isCloseCode = (v: unknown): boolean =>
   typeof v === "number" && Number.isInteger(v) && v >= 1000 && v <= 4999;
@@ -163,7 +166,7 @@ const REQUIRED: Readonly<Record<ControlType, string>> = {
   unsub_ok: "results:array",
   ctl_ok: "effective:object",
   revoked: "reason:tag message:string",
-  err: "code:text message:text",
+  err: "code:code message:text",
   bye: "code:number reason:tag message:text",
 };
 
@@ -177,6 +180,7 @@ function hasFields(spec: string, p: unknown): boolean {
     if (kind === "object") return isObj(v);
     if (kind === "text") return isText(v);
     if (kind === "tag") return isTag(v);
+    if (kind === "code") return isErrCode(v);
     return typeof v === kind && (kind !== "number" || Number.isFinite(v));
   });
 }

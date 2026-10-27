@@ -402,6 +402,8 @@ describe("the worker's message (worker -> tab)", () => {
     ["an err with an empty code", { t: "err", code: "" }],
     ["an err whose code is not text", { t: "err", code: 4403 }],
     ["an err with a code over 64 characters", { t: "err", code: "c".repeat(65) }],
+    ["an err whose code is free text", { t: "err", code: "Session expired. Re-enter your code" }],
+    ["an err whose code is not a registry name", { t: "err", code: "Forbidden" }],
     ["an err whose message is not text", { t: "err", code: "forbidden", message: null }],
     [
       "an err with a message over 1 000 characters",

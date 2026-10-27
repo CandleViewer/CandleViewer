@@ -10,7 +10,7 @@
 import type { PaneVisibility, TokenResult, TopicFrame } from "../api";
 import { MAX_TOKEN_LENGTH } from "../core/connection";
 import type { EngineCounters } from "../core/engine";
-import { isTopic, isUuid, type DataBody } from "../protocol/codec";
+import { ERR_CODE, isTopic, isUuid, type DataBody } from "../protocol/codec";
 import type { HelloPayload, SubOptions, SystemUpdate } from "../protocol/frames";
 import type { TopicStatus, WsState } from "../state/types";
 import type { SubscriptionPriority } from "../../../shell/bootstrap/subscriptionOrder";
@@ -350,7 +350,8 @@ export function parseWorkerMessage(data: unknown): WorkerMessage | undefined {
     }
     case "err": {
       const { code, message } = data;
-      if (!isText(code, MAX_ERR_CODE)) return undefined;
+      // a registry name only (the codec's `ERR_CODE`): the tab never shows the gateway's free text as a code
+      if (!isText(code, MAX_ERR_CODE) || !ERR_CODE.test(code)) return undefined;
       if (message === undefined) return { t: "err", code };
       return typeof message === "string" && message.length <= MAX_ERR_MESSAGE
         ? { t: "err", code, message }
