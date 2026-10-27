@@ -24,3 +24,6 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+
+export { Checkbox } from "./Checkbox.js";
+export type { CheckboxProps } from "./Checkbox.js";
