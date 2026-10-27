@@ -182,12 +182,33 @@ Code draws a glyph by name with CMP-019 `<Icon name size decorative label>`, nev
 
 - `registry.ts`: each icon's canonical name (the `IconName` union), group, glyph source and
   one-sentence meaning, sorted by name: the code twin of the Penpot icon page, compared by diff.
+  `minimumPx: 16` marks the six glyphs E05-D02 §7.12 calls "16 px minimum", whose detail closes
+  up at 12 px, so they never draw at `sm`; the types hold that, not the runtime. `Icon` is
+  generic in its name, and `IconProps<N>`'s `size` drops `sm` for a marked name: neither
+  `<Icon name="twap" size="sm" />` nor a CMP-002 `IconButton` with `icon="twap"` and `size="sm"`
+  type-checks. A name the call site leaves open, the whole `IconName` union as in a map over the
+  registry, keeps all three sizes.
 - `source/<origin>/<name>.svg`: the vetted glyphs, committed data (nothing is fetched at
   runtime). `lucide/` holds glyphs vendored byte for byte from `lucide-static`, each renamed to
   its registry name, beside their licence, `source/lucide/LICENSE` (ISC, plus the MIT notice of
   the Feather-derived glyphs); the version, its checksum and the owner are in the vendored-code
   register, [`35-dependency-freeze-policy.md` §7](../../docs/plan/35-dependency-freeze-policy.md).
-  `custom/` is where the trading glyphs that E05-D02 draws go.
+- `source/custom/`: the 13 trading glyphs of E05-D02 §7.12, CandleViewer's own, so a custom
+  source carries no `@license` line (the generator fails on one). Each draws its §7.12 motif as
+  an outline on a root with the grid's stroke (1.5, round caps and joins), with no dash, fill or
+  transform, its paths in absolute `M`, `L`, `H`, `V`, `C`, `A` and `Z` only (each arc circular
+  and unrotated), so `test/icons/glyphs.test.ts` reads every point. Every point, Bezier control
+  points and arc bulges included, stays in [1.75, 22.25]: the 1-unit clear margin plus half the
+  stroke.
+- `<name>.sm.svg` beside a source is its reduced form (E05-D02 §6 J24): a second drawing of the
+  name, never a name of its own, that `Icon` draws at `size="sm"` in place of the 24-unit master.
+  The generator gives it a module and an entry in `ICON_FORMS`, internal like the rest of
+  `generated/`. One glyph has one, `estimated`, whose 12 px form §7.12 left #271 to choose once:
+  a solid ring or the "≈" alone. It is the "≈" alone, drawn larger. At 12 px the master's dashed
+  ring resolves to dots; a solid ring would drop the dash that marks the value as inferred and
+  read as a plain circle; and a ring with the "≈" inside closes up. The reduced forms and the
+  `minimumPx` guard are both keyed to the `sm` token, 12 px as shipped: if slice 1 A10
+  (16 / 20 / 24 px) is approved, re-key them to the 12 px size.
 - `generated/`: one component per icon, and `components.ts`, the map by name that `Icon` draws
   from. Both are internal: the package exports `Icon`, the registry and the sizes, never a glyph
   component. `scripts/build-icons.mjs` (`build:icons`) writes them from the sources, in name

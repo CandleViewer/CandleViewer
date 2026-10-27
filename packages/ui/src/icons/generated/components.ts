@@ -9,6 +9,7 @@ import { ArrowUpIcon } from "./ArrowUpIcon.js";
 import { ArrowUpDownIcon } from "./ArrowUpDownIcon.js";
 import { CalendarIcon } from "./CalendarIcon.js";
 import { CancelledIcon } from "./CancelledIcon.js";
+import { ChaseLimitIcon } from "./ChaseLimitIcon.js";
 import { CheckIcon } from "./CheckIcon.js";
 import { ChevronDownIcon } from "./ChevronDownIcon.js";
 import { ChevronLeftIcon } from "./ChevronLeftIcon.js";
@@ -25,10 +26,15 @@ import { DownloadIcon } from "./DownloadIcon.js";
 import { DragHandleIcon } from "./DragHandleIcon.js";
 import { EditIcon } from "./EditIcon.js";
 import { ErrorIcon } from "./ErrorIcon.js";
+import { EstimatedIcon } from "./EstimatedIcon.js";
+import { EstimatedSmIcon } from "./EstimatedSmIcon.js";
 import { ExternalLinkIcon } from "./ExternalLinkIcon.js";
 import { FilterIcon } from "./FilterIcon.js";
+import { FlattenAllIcon } from "./FlattenAllIcon.js";
+import { HeatmapConventionSwapIcon } from "./HeatmapConventionSwapIcon.js";
 import { HelpIcon } from "./HelpIcon.js";
 import { HideIcon } from "./HideIcon.js";
+import { IcebergOrderIcon } from "./IcebergOrderIcon.js";
 import { InfoIcon } from "./InfoIcon.js";
 import { LockIcon } from "./LockIcon.js";
 import { MaximizeIcon } from "./MaximizeIcon.js";
@@ -36,7 +42,14 @@ import { MinimizeIcon } from "./MinimizeIcon.js";
 import { MinusIcon } from "./MinusIcon.js";
 import { MoreHorizontalIcon } from "./MoreHorizontalIcon.js";
 import { MoreVerticalIcon } from "./MoreVerticalIcon.js";
+import { NativeSlShieldIcon } from "./NativeSlShieldIcon.js";
+import { NodeActionIcon } from "./NodeActionIcon.js";
+import { NodeCommentIcon } from "./NodeCommentIcon.js";
+import { NodeConditionIcon } from "./NodeConditionIcon.js";
+import { NodeLogicGateIcon } from "./NodeLogicGateIcon.js";
+import { NodeTriggerIcon } from "./NodeTriggerIcon.js";
 import { NotificationsIcon } from "./NotificationsIcon.js";
+import { OneClickArmIcon } from "./OneClickArmIcon.js";
 import { PendingIcon } from "./PendingIcon.js";
 import { PinIcon } from "./PinIcon.js";
 import { PlusIcon } from "./PlusIcon.js";
@@ -46,6 +59,7 @@ import { SearchIcon } from "./SearchIcon.js";
 import { SettingsIcon } from "./SettingsIcon.js";
 import { ShowIcon } from "./ShowIcon.js";
 import { SuccessIcon } from "./SuccessIcon.js";
+import { TwapIcon } from "./TwapIcon.js";
 import { UndoIcon } from "./UndoIcon.js";
 import { UnlockIcon } from "./UnlockIcon.js";
 import { UploadIcon } from "./UploadIcon.js";
@@ -59,6 +73,7 @@ export const ICON_COMPONENTS = {
   "arrow-up-down": ArrowUpDownIcon,
   calendar: CalendarIcon,
   cancelled: CancelledIcon,
+  "chase-limit": ChaseLimitIcon,
   check: CheckIcon,
   "chevron-down": ChevronDownIcon,
   "chevron-left": ChevronLeftIcon,
@@ -75,10 +90,14 @@ export const ICON_COMPONENTS = {
   "drag-handle": DragHandleIcon,
   edit: EditIcon,
   error: ErrorIcon,
+  estimated: EstimatedIcon,
   "external-link": ExternalLinkIcon,
   filter: FilterIcon,
+  "flatten-all": FlattenAllIcon,
+  "heatmap-convention-swap": HeatmapConventionSwapIcon,
   help: HelpIcon,
   hide: HideIcon,
+  "iceberg-order": IcebergOrderIcon,
   info: InfoIcon,
   lock: LockIcon,
   maximize: MaximizeIcon,
@@ -86,7 +105,14 @@ export const ICON_COMPONENTS = {
   minus: MinusIcon,
   "more-horizontal": MoreHorizontalIcon,
   "more-vertical": MoreVerticalIcon,
+  "native-sl-shield": NativeSlShieldIcon,
+  "node-action": NodeActionIcon,
+  "node-comment": NodeCommentIcon,
+  "node-condition": NodeConditionIcon,
+  "node-logic-gate": NodeLogicGateIcon,
+  "node-trigger": NodeTriggerIcon,
   notifications: NotificationsIcon,
+  "one-click-arm": OneClickArmIcon,
   pending: PendingIcon,
   pin: PinIcon,
   plus: PlusIcon,
@@ -96,6 +122,7 @@ export const ICON_COMPONENTS = {
   settings: SettingsIcon,
   show: ShowIcon,
   success: SuccessIcon,
+  twap: TwapIcon,
   undo: UndoIcon,
   unlock: UnlockIcon,
   upload: UploadIcon,
@@ -103,3 +130,8 @@ export const ICON_COMPONENTS = {
   "zoom-in": ZoomInIcon,
   "zoom-out": ZoomOutIcon,
 } as const satisfies Readonly<Record<IconName, (props: GlyphProps) => JSX.Element>>;
+
+// Each name's size forms by size: the reduced drawings `Icon` swaps in (E05-D02 §6 J24).
+export const ICON_FORMS = {
+  estimated: { sm: EstimatedSmIcon },
+} as const;

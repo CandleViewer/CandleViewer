@@ -2,8 +2,8 @@
 // means, its group and where its glyph comes from. Sorted by name, one entry per icon, so the code
 // and the Penpot icon page compare by diff. Each name has exactly one component, which
 // scripts/build-icons.mjs generates into `generated/` from `source/<origin>/<name>.svg` and only
-// `Icon` (CMP-019) reaches (packages/ui/README.md, "Icons"). This is the base set; the custom
-// trading glyphs of brief §5 join it from `source/custom/` in a later E05-T06 slice.
+// `Icon` (CMP-019) reaches (packages/ui/README.md, "Icons"). The base set is Lucide's; the 13
+// trading glyphs of brief §5 are CandleViewer's own, drawn from E05-D02 §7.12 in `source/custom/`.
 
 /** An icon's group on the Penpot icon page and in Storybook. */
 export type IconCategory = "navigation" | "action" | "status" | "chart" | "trading" | "rule-graph";
@@ -19,6 +19,14 @@ export interface IconEntry {
   readonly source: IconSource;
   /** One sentence: what the icon means where it appears (the Penpot icon page's description). */
   readonly description: string;
+  /**
+   * Marks E05-D02 §7.12's "16 px minimum": the glyph's detail closes up at 12 px, so it is never
+   * drawn at `size.icon.sm` as shipped (12 px; §6 J24). The types hold it, not the runtime: `Icon`
+   * and CMP-002 `IconButton` refuse `size="sm"` for such a name (`MinimumSixteenName`). Omitted,
+   * the glyph holds at every optical size. Keyed to the `sm` token, as a reduced form is: if slice
+   * 1 A10 (16 / 20 / 24 px) is approved, re-key both to the 12 px size.
+   */
+  readonly minimumPx?: 16;
 }
 
 export const ICONS = {
@@ -46,6 +54,12 @@ export const ICONS = {
     category: "status",
     source: "lucide/ban",
     description: "Cancelled or not permitted, such as a cancelled order.",
+  },
+  "chase-limit": {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "Limit order that follows the price.",
+    minimumPx: 16,
   },
   check: {
     category: "action",
@@ -127,6 +141,11 @@ export const ICONS = {
     source: "lucide/circle-x",
     description: "Error: failed, rejected or offline.",
   },
+  estimated: {
+    category: "status",
+    source: "custom/E05-T06",
+    description: "The value is inferred, not reported by the exchange.",
+  },
   "external-link": {
     category: "navigation",
     source: "lucide/external-link",
@@ -137,6 +156,18 @@ export const ICONS = {
     source: "lucide/funnel",
     description: "Filters a list or a table.",
   },
+  "flatten-all": {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "Close every position at market.",
+    minimumPx: 16,
+  },
+  "heatmap-convention-swap": {
+    category: "chart",
+    source: "custom/E05-T06",
+    description: "Swap which side the heatmap colours show as bid and ask.",
+    minimumPx: 16,
+  },
   help: {
     category: "status",
     source: "lucide/circle-help",
@@ -146,6 +177,12 @@ export const ICONS = {
     category: "action",
     source: "lucide/eye-off",
     description: "Hides a revealed value, such as a password or a secret.",
+  },
+  "iceberg-order": {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "Order shown in visible slices with a hidden remainder.",
+    minimumPx: 16,
   },
   info: {
     category: "status",
@@ -182,10 +219,46 @@ export const ICONS = {
     source: "lucide/ellipsis-vertical",
     description: "Opens the action menu of a table or list row.",
   },
+  "native-sl-shield": {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "A native exchange stop-loss protects the position.",
+    minimumPx: 16,
+  },
+  "node-action": {
+    category: "rule-graph",
+    source: "custom/E05-T06",
+    description: "Rule node: what the rule does.",
+  },
+  "node-comment": {
+    category: "rule-graph",
+    source: "custom/E05-T06",
+    description: "Rule node: a note outside the rule.",
+  },
+  "node-condition": {
+    category: "rule-graph",
+    source: "custom/E05-T06",
+    description: "Rule node: a comparison that is true or false.",
+  },
+  "node-logic-gate": {
+    category: "rule-graph",
+    source: "custom/E05-T06",
+    description: "Rule node: combines inputs (all, any, none, at least n).",
+  },
+  "node-trigger": {
+    category: "rule-graph",
+    source: "custom/E05-T06",
+    description: "Rule node: what starts an evaluation.",
+  },
   notifications: {
     category: "status",
     source: "lucide/bell",
     description: "Notifications and alerts, as in the notification centre.",
+  },
+  "one-click-arm": {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "One-click trading is armed.",
   },
   pending: {
     category: "status",
@@ -232,6 +305,12 @@ export const ICONS = {
     source: "lucide/circle-check",
     description: "Success: done, connected or passing.",
   },
+  twap: {
+    category: "trading",
+    source: "custom/E05-T06",
+    description: "Order split evenly over a time window.",
+    minimumPx: 16,
+  },
   undo: {
     category: "action",
     source: "lucide/undo-2",
@@ -266,3 +345,8 @@ export const ICONS = {
 
 /** Every registered icon name. */
 export type IconName = keyof typeof ICONS;
+
+/** The names whose entry carries `minimumPx: 16`, E05-D02 §7.12's "16 px minimum" glyphs. */
+export type MinimumSixteenName = {
+  [N in IconName]: (typeof ICONS)[N] extends { readonly minimumPx: 16 } ? N : never;
+}[IconName];
