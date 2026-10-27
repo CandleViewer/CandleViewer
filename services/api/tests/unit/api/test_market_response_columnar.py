@@ -4,7 +4,8 @@
 (emitted-JSON pages and row lists, truncated anywhere) and the `kline_response` envelope splice
 against one `orjson.dumps` of the whole dict (hypothesis); and the `/market/klines` bodies over
 the pack's fixture lake against the pre-#2523 read, per-row build and dict envelope (golden,
-sha256-equal), with `include_delta` true and false. Merge-blocking for lever 4.
+sha256-equal), with `include_delta` true and false. Merge-blocking for lever 4. Lever 5: the
+new path runs twice, a cold page cache miss and then a hit, and both bodies equal the old one.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ import orjson
 import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
+from prometheus_client import REGISTRY
 
 from bench.ingestion.fixture_app import build_app, requests_plan, write_cold_lake
 from candleviewer.api import market
@@ -247,7 +249,8 @@ async def test_klines_bodies_over_the_fixture_lake_equal_the_pre_2523_path(
     """Golden: the pack's three klines requests (5 000 cold bars; 500 cold + 500 hot; 1 000
     hot) give sha256-equal bodies through the DuckDB-emitted page, `BarSegments` and the
     envelope splice, and through the pre-#2523 reader, per-row `serialize_bar` and one
-    `orjson.dumps` of the dict envelope."""
+    `orjson.dumps` of the dict envelope. The new path is read twice: a cold page cache miss,
+    then a hit (#2523 lever 5); the old path never consults the cache."""
     write_cold_lake(tmp_path)
     app = await build_app(tmp_path)
     spec = requests_plan()[route]
@@ -261,18 +264,26 @@ async def test_klines_bodies_over_the_fixture_lake_equal_the_pre_2523_path(
 
     monkeypatch.setattr(kr, "_read_page", spy)
     transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
+    hits = REGISTRY.get_sample_value("cv_cold_kline_page_cache_hits_total") or 0.0
     async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1") as client:
-        new = await client.get(spec["path"], params=params)
+        new = await client.get(spec["path"], params=params)  # a cold page cache miss
+        again = await client.get(spec["path"], params=params)  # the same page: a hit
+        hits = (REGISTRY.get_sample_value("cv_cold_kline_page_cache_hits_total") or 0.0) - hits
         # The pager now returns rows, so the service merges as before lever 4.
+        monkeypatch.setattr(kr._PageCache, "get", lambda self, key: None)
         monkeypatch.setattr(kr, "_read_page", _old_read_rows)
         monkeypatch.setattr(kr, "_read_rows", _old_read_rows)
         monkeypatch.setattr(mr, "serialize_bars", _old)
         monkeypatch.setattr(market, "kline_response", _old_kline_response)
         old = await client.get(spec["path"], params=params)
-    assert new.status_code == old.status_code == 200
+    assert new.status_code == again.status_code == old.status_code == 200
     assert len(new.json()["bars"]) == spec["params"]["limit"]
-    assert hashlib.sha256(new.content).hexdigest() == hashlib.sha256(old.content).hexdigest()
-    # The new body really came from an emitted-JSON page wherever the window is cold.
+    want = hashlib.sha256(old.content).hexdigest()
+    assert hashlib.sha256(new.content).hexdigest() == hashlib.sha256(again.content).hexdigest()
+    assert hashlib.sha256(new.content).hexdigest() == want
+    # The new body really came from an emitted-JSON page wherever the window is cold, scanned
+    # once: the second read was served from the cache.
     assert [type(p).__name__ for p in pages] == (
         [] if route == "klines_warm" else ["ColdKlinePage"]
     )
+    assert hits == (0 if route == "klines_warm" else 1)

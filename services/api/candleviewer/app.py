@@ -3711,6 +3711,7 @@ def _wire_klines(
     cold = ParquetKlineReader(
         DatasetRegistry(ctx.settings.parquet_root),
         max_concurrency=ctx.settings.cold_kline_concurrency,
+        page_cache_bytes=ctx.settings.cold_kline_page_cache_bytes,
     )
     ctx.ingestion.attach_klines(
         KlineReadService(

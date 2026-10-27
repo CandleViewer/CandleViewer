@@ -5,7 +5,8 @@
 
 * instruments: `rest/instruments_before.json` through the production `parse_instrument`;
 * klines: **cold** = the real `KlineReadService` + `ParquetKlineReader` (DuckDB scan of a
-  Parquet partition written from the `rest/kline_BTCUSDT_1_page*.json` corpus, tiled to 30 days);
+  Parquet partition written from the `rest/kline_BTCUSDT_1_page*.json` corpus, tiled to 30 days),
+  its page cache at the app's default bound (#2523 lever 5; `build_app` can turn it off);
   **warm** = the same service answering from the in-memory hot tier (the cache-hit path);
   **cold, first read** (`klines_cold_first`, #2523) = the cold request on a second app built
   alike (`build_first_read_app`), so its reader is not the one `klines_cold` reads through;
@@ -61,6 +62,7 @@ from candleviewer.ingestion.trade_stream import TradeStream
 from candleviewer.observability.metrics_runtime import freeze_startup_heap
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.recorder.coverage import CoverageService
+from candleviewer.settings import Settings
 from candleviewer.storage.cold.kline_reader import ColdKlineRow, ParquetKlineReader
 from candleviewer.storage.cold.layout import DatasetRegistry
 from candleviewer.storage.cold.manifest import ManifestEntry, ManifestStore, sha256_of
@@ -86,6 +88,8 @@ MIN_US = 60_000_000
 COLD_DAYS = 30
 HOT_BOUNDARY_US = int(datetime(2026, 9, 1, tzinfo=UTC).timestamp() * 1_000_000)
 HOT_BARS = 6_000
+#: `CV_COLD_KLINE_PAGE_CACHE_BYTES`' default, so the pack reads cold pages as the app does.
+COLD_PAGE_CACHE_BYTES: int = Settings.model_fields["cold_kline_page_cache_bytes"].default
 
 
 class _Principal:
@@ -268,15 +272,18 @@ async def _book() -> BookStream:
     return stream
 
 
-async def build_app(cold_root: Path) -> FastAPI:
+async def build_app(
+    cold_root: Path, *, cold_page_cache_bytes: int = COLD_PAGE_CACHE_BYTES
+) -> FastAPI:
     """The five read routes over fixture-fed real readers. `cold_root` must be pre-populated
-    by `write_cold_lake` (kept separate so tests can time it)."""
+    by `write_cold_lake` (kept separate so tests can time it). `cold_page_cache_bytes=0` reads
+    every cold page from DuckDB (the rig's cache-off reading)."""
     snap = _catalogue()
     listed = snap.get
     hot = _HotTier(_rows(HOT_BARS, HOT_BOUNDARY_US + HOT_BARS * MIN_US))
     svc = KlineReadService(
         hot,
-        cold=ParquetKlineReader(DatasetRegistry(cold_root)),
+        cold=ParquetKlineReader(DatasetRegistry(cold_root), page_cache_bytes=cold_page_cache_bytes),
         hot_boundary_us=lambda: HOT_BOUNDARY_US,
     )
     trades, book = await _trades(), await _book()
@@ -314,9 +321,9 @@ async def build_app(cold_root: Path) -> FastAPI:
 async def build_first_read_app(cold_root: Path) -> FastAPI:
     """The first-read leg's server (#2523): a second app built as `build_app` builds one, so its
     reader is its own and holds nothing `klines_cold`'s reader has read. The drivers send the
-    plan's `FIRST_READ` route here, and its build ends with the freeze too. Lever 5 turns this
-    reader's page cache off here, with one argument."""
-    return await build_app(cold_root)
+    plan's `FIRST_READ` route here, and its build ends with the freeze too. Its page cache is
+    off (#2523 lever 5), so every read of it is a first read."""
+    return await build_app(cold_root, cold_page_cache_bytes=0)
 
 
 def iso(us: int) -> str:

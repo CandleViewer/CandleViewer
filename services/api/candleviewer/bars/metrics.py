@@ -12,6 +12,9 @@ from __future__ import annotations
 from typing import Final
 
 from candleviewer.observability import pgwire_metrics  # noqa: F401 - registers the PG-wire series
+from candleviewer.observability.cold_kline_cache_metrics import (  # noqa: F401 - registers them
+    cv_cold_kline_page_cache_bytes,
+)
 from candleviewer.observability.kline_boundary_metrics import (  # noqa: F401 - registers it
     kline_hot_boundary_fallback_total,
 )
@@ -223,6 +226,10 @@ EXPORTED_NAMES: Final[frozenset[str]] = frozenset(
         "bars_restore_gap_total",
         "bars_kline_refused_total",  # bars.kline_rows (#2053)
         "kline_hot_boundary_fallback_total",  # storage.retention.kline_boundary (#2060)
+        "cv_cold_kline_page_cache_hits_total",  # storage.cold.kline_reader (#2523 lever 5)
+        "cv_cold_kline_page_cache_misses_total",
+        "cv_cold_kline_page_cache_evictions_total",
+        "cv_cold_kline_page_cache_bytes",
         "bars_endpoint_rows_returned_total",
         "bars_endpoint_422_no_data_recorded_total",
         "bars_endpoint_param_rejected_total",
