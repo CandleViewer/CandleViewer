@@ -19,6 +19,7 @@ import httpx
 import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.exchange.base.errors import ExchangeError
 from candleviewer.exchange.base.models import RateLane
 from candleviewer.exchange.base.reconnect import ConnectionBudget
 from candleviewer.exchange.bybit.archive import (
@@ -69,7 +70,7 @@ from candleviewer.exchange.bybit.trading import (
     BybitTradingPort,
 )
 from candleviewer.observability.health import HealthReport, HealthStatus
-from candleviewer.secrets import WithdrawPermissionRejected
+from candleviewer.secrets import SecretsError, WithdrawPermissionRejected
 
 if TYPE_CHECKING:
     from candleviewer.app import AppContext
@@ -274,6 +275,36 @@ class ExchangeBybitService:
         service itself trades nothing. Every port shares the adapter's one private-stream
         registry (G-8b), so its one-stream-per-account rule and its cap hold across ports.
         `clock_offset_ms` is the measured offset, `None` while unmeasured."""
+        return self._trading_port(env, clock_offset_ms, entry_wait_s, None)
+
+    def exposure_port(
+        self,
+        env: str,
+        *,
+        on_failure: Callable[[Exception], None],
+        clock_offset_ms: Callable[[], int | None] | None = None,
+    ) -> BybitTradingPort:
+        """E27-S04 B2a (#898): `trading_port` for one key's exposure read, refused as it is,
+        whose `on_failure` sees each call's failure before the port strips it, for
+        `exposure_probe_error`. A new port per call: two keys of one account never share one."""
+        return self._trading_port(env, clock_offset_ms, DEFAULT_ENTRY_WAIT_S, on_failure)
+
+    @staticmethod
+    def exposure_probe_error(error: Exception) -> str | None:
+        """E27-S04 B2a (#898): the `KeyProbeError` name of an exposure-read call's failure as
+        `exposure_port`'s hook sees it, causes intact: `probe_error`'s for an exchange error,
+        `vault_refused` when M2 refused to sign (nothing was sent), `None` for anything else."""
+        if isinstance(error, ExchangeError):
+            return probe_error(error)
+        return "vault_refused" if isinstance(error, SecretsError) else None
+
+    def _trading_port(
+        self,
+        env: str,
+        clock_offset_ms: Callable[[], int | None] | None,
+        entry_wait_s: float,
+        on_failure: Callable[[Exception], None] | None,
+    ) -> BybitTradingPort:
         if self._credentials is None:
             raise RuntimeError("no signing capability is wired")
         if env != self._environment:
@@ -287,6 +318,7 @@ class ExchangeBybitService:
             clock_offset_ms=clock_offset_ms,
             entry_wait_s=entry_wait_s,
             private_streams=streams,
+            on_failure=on_failure,
         )
 
     def lane_trading_port(
