@@ -259,6 +259,9 @@ def test_checks_span_runs_from_after_the_installs_to_the_last_report() -> None:
     assert names[closed - 1] == "Generate backlog per-epic summary (artefact)"
     assert names[closed + 1].startswith("actions/upload-artifact@")
     assert names[closed + 2 :] == [BUDGET]  # the budget step stays last
+    # The span runs from its own start, never the job's: from `gov_start` it would judge checkout.
+    span = _steps("governance-checks")[closed]
+    assert span["env"]["START_NS"] == "${{ steps.checks_start.outputs.start_ns }}"
     last = _steps("governance-checks")[-1]
     assert last["env"]["CHECKS_MS"] == "${{ steps.checks_span.outputs.checks_ms }}"
     assert 'if ! [ "$CHECKS_MS" -le "$BUDGET_MS" ]; then' in last["run"]

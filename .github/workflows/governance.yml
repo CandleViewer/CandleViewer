@@ -167,8 +167,9 @@ jobs:
 
       - name: Job duration budget (<=BUDGET_MS, E01-Q02)
         # #4693: judges the checks' span, the job's own work. The job wall time (checkout, setup,
-        # the installs and the uploads, which runner contention stretches) is reported, not
-        # judged. A run that recorded no span fails here instead of passing unmeasured.
+        # the installs and the reports' upload, which runner contention stretches) is reported,
+        # not judged; the accepted-risk report's small upload sits inside the span. A run that
+        # recorded no span fails here instead of passing unmeasured.
         if: always()
         continue-on-error: false
         env:
