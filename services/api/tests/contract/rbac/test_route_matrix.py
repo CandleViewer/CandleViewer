@@ -333,7 +333,8 @@ def test_undeclared_served_route_fails_the_build(world: World) -> None:
 
 # -- tripwire: not_executable rows for every logged-in actor (D1) -------------------------------
 
-#: Status the fail-closed stub returns today, identical for every actor. A route that becomes
+#: Status the fail-closed stub returns today, identical for every actor the row does not refuse
+#: (the `_RBAC_BEFORE_STUB` rows answer a refused actor 403 first, #4690). A route that becomes
 #: reachable changes a status here and turns the pack red; update a value only together with the
 #: matrix row (and a Security review of matrix.yaml). Every value must stay inside
 #: `_REFUSAL_STATUSES`: a pin can never be bumped to a success status, so a route that becomes
