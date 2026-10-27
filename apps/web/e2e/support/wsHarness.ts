@@ -1,0 +1,293 @@
+// E08-Q05 (#282) slice 1: a fake 23-ws-protocol.md gateway (`cv.v1.json`) for e2e, in front of the REAL web client. Its
+// socket lives in a shared worker, which `page.routeWebSocket` cannot see (it patches frames only), so `SharedWorker` is
+// wrapped: the worker's `WebSocket` relays over a BroadcastChannel to a page `WebSocket` that the route answers. Engine,
+// codec and close policy run unchanged. `src/` never imports this; the spec checks `dist/` has no `WS_HARNESS_MARKER`.
+// No wall clock: server times are a counter over the fixture's epoch, and the test drives every frame.
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { Page, WebSocketRoute } from "@playwright/test";
+import type { generated } from "@candleviewer/protocol";
+import { json } from "./api";
+
+/** The BroadcastChannel name, and the string the production-absence check looks for in `dist/`. */
+export const WS_HARNESS_MARKER = "cv-e2e-ws-harness";
+
+export type Frame = Readonly<Record<string, unknown>> & { readonly t: string };
+export type TickerRow = generated.ws.TickerSymbolTicker["tickers"][number];
+
+/** 13.3 `welcome.heartbeat` (interval >= 1 000, timeout >= 5 000). Defaults are 9.1's 15 s / 45 s. */
+export type Heartbeat = { readonly interval_ms: number; readonly timeout_ms: number };
+
+export interface WsHarness {
+  /** Client -> server frames in arrival order, `conn` 1-based; `auth.access_token` is masked to `x`s of its length. */
+  readonly frames: readonly { readonly conn: number; readonly frame: Frame }[];
+  readonly sent: readonly Frame[]; // server -> client
+  /** The closes the client started, with their 4.4 code and reason. */
+  readonly clientCloses: readonly { readonly code: number; readonly reason: string }[];
+  connections(): number; // sockets opened
+  authenticated(): number; // sockets that reached `auth_ok`
+  /** Drops the socket as a lost transport does (1006, RFC 6455 7.1.5) and refuses new ones until `restore()`. */
+  kill(): void;
+  restore(): void;
+  /** The open socket stays open and its server says nothing more, pongs included (9.1), until `resume()`. A new socket is answered. */
+  stall(): void;
+  resume(): void;
+  /** A `system` delta that skips one `s` (3.3, 12.3): the client must `resync` (7.5). */
+  desync(): void;
+  /** The next fixture ticker (BTCUSDT) or `fields`, as a `snap` then `d`s on `ticker.<symbol>` (6.1, 14.8). */
+  sendTicker(symbol: string, fields?: Partial<TickerRow>): void;
+}
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "../../../..");
+const FIXTURE = "packages/fixtures/bybit/2026-10-05/ws/recorded_tickers_BTCUSDT.jsonl";
+/** Bybit v5 `tickers` key:14.8 key, as services/api/candleviewer/api/ticker.py maps them. */
+const KEYS = `lastPrice:last_price markPrice:mark_price indexPrice:index_price bid1Price:bid1_price
+  bid1Size:bid1_size ask1Price:ask1_price ask1Size:ask1_size price24hPcnt:price_change_pct_24h
+  highPrice24h:high_24h lowPrice24h:low_24h volume24h:volume_24h turnover24h:turnover_24h`
+  .split(/\s+/)
+  .map((pair) => pair.split(":") as [string, string]);
+
+/** The recorded, redacted capture (manifest: capture_fixture.py, 2026-10-19), snapshot merged with each delta. */
+export function fixtureTickers(): readonly TickerRow[] {
+  const merged: Record<string, string> = {};
+  return readFileSync(join(ROOT, FIXTURE), "utf8")
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const { data, ts } = JSON.parse(line) as { data: Record<string, string>; ts: number };
+      Object.assign(merged, data);
+      const row: Record<string, unknown> = { symbol: merged["symbol"], ts_ms: ts };
+      for (const [from, to] of KEYS) if (merged[from]) row[to] = merged[from];
+      return row as unknown as TickerRow;
+    });
+}
+
+const EPOCH_MS = 1_792_391_746_229; // the fixture's first frame: server times count up from it
+const HEALTH = { kind: "health", health: "healthy" } as const;
+const ID = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+/** Runs in the page (serialised by Playwright): wraps `SharedWorker` and relays the worker's sockets. */
+function pageBridge({ name, shim }: { name: string; shim: string }): void {
+  const Real = window.SharedWorker;
+  const channel = new BroadcastChannel(name);
+  const sockets = new Map<string, WebSocket>();
+  window.SharedWorker = function (url: string | URL, opts?: string | WorkerOptions) {
+    const entry = JSON.stringify(new URL(String(url), location.href).href);
+    // The entry sets `onconnect` once its imports load; a tab that connects sooner is handed over then.
+    const src = `${shim}\nconst q=[];self.onconnect=(e)=>q.push(e);import(${entry}).then(()=>{for(const e of q)self.onconnect(e)});`;
+    return new Real(URL.createObjectURL(new Blob([src], { type: "text/javascript" })), opts);
+  } as unknown as typeof SharedWorker;
+  channel.onmessage = ({ data: m }: MessageEvent) => {
+    const ws = sockets.get(m.id);
+    if (m.k === "open") {
+      const s = new WebSocket(m.url, m.protocols);
+      sockets.set(m.id, s);
+      s.onopen = () => channel.postMessage({ k: "open", id: m.id });
+      s.onmessage = (e) => channel.postMessage({ k: "msg", id: m.id, data: e.data });
+      s.onclose = (e) => channel.postMessage({ k: "close", id: m.id, code: e.code });
+    } else if (m.k === "send") ws?.send(m.data);
+    else if (m.k === "close") {
+      // A code a page may not send (1002, 4.4) still closes, without the code.
+      ws?.close(...(m.code === 1000 || m.code >= 3000 ? [m.code, m.reason] : []));
+    }
+  };
+}
+
+/** Runs in the worker before its entry: a `WebSocket` whose traffic is relayed to the page. */
+function workerShim(name: string): void {
+  const channel = new BroadcastChannel(name);
+  const sockets = new Map<string, EventTarget>();
+  let next = 0;
+  class RelaySocket extends EventTarget {
+    readonly id = `w${(next += 1)}`;
+    constructor(url: string, protocols?: string | string[]) {
+      super();
+      sockets.set(this.id, this);
+      channel.postMessage({ k: "open", id: this.id, url: String(url), protocols });
+    }
+    send(data: string): void {
+      channel.postMessage({ k: "send", id: this.id, data });
+    }
+    close(code?: number, reason?: string): void {
+      channel.postMessage({ k: "close", id: this.id, code, reason });
+    }
+  }
+  channel.onmessage = ({ data: m }: MessageEvent) => {
+    const s = sockets.get(m.id);
+    if (m.k === "open") s?.dispatchEvent(new Event("open"));
+    if (m.k === "msg") s?.dispatchEvent(new MessageEvent("message", { data: m.data }));
+    if (m.k === "close") s?.dispatchEvent(new CloseEvent("close", { code: m.code }));
+  };
+  (self as unknown as { WebSocket: unknown }).WebSocket = RelaySocket;
+}
+
+/** `seq`: the last `s` sent per stream (3.3). */
+type Conn = {
+  readonly n: number;
+  readonly route: WebSocketRoute;
+  readonly seq: Map<string, number>;
+};
+
+/**
+ * Installs the fake gateway on `page`. Call it after `stubSession` and before `goto`: it also answers the refresh with a
+ * token the WS client accepts (4.3 / 13.4: 20 characters or more), opaque like the server's.
+ */
+export async function installWsHarness(page: Page, heartbeat?: Heartbeat): Promise<WsHarness> {
+  const frames: { conn: number; frame: Frame }[] = [];
+  const sent: Frame[] = [];
+  const clientCloses: { code: number; reason: string }[] = [];
+  const tickers = fixtureTickers();
+  let tick = 0;
+  let opened = 0;
+  let authed = 0;
+  let down = false;
+  let stalled: Conn | undefined;
+  let current: Conn | undefined;
+  const now = (): number => EPOCH_MS + (tick += 1);
+
+  const send = (c: Conn, frame: Frame): void => {
+    if (c === stalled) return;
+    sent.push(frame);
+    c.route.send(JSON.stringify(frame));
+  };
+  const data = (c: Conn, t: "snap" | "d", ch: string, p: unknown, s: number, meta?: object) => {
+    c.seq.set(ch, s);
+    send(c, { t, ch, s, ts: now(), e: "j", ...(meta && { meta }), p });
+  };
+
+  /** 4.2, 4.3, 5.2, 5.3, 7.5, 9.1: the replies a gateway owes each client frame. */
+  function answer(c: Conn, f: Frame): void {
+    const p = (f["p"] ?? {}) as Record<string, unknown>;
+    const id = f["id"];
+    switch (f.t) {
+      case "hello":
+        return send(c, {
+          t: "welcome",
+          id,
+          ts: now(),
+          p: {
+            protocol: "cv.v1",
+            encoding: "json",
+            server_version: "e2e-harness",
+            connection_id: `ws_e2e_${c.n}`,
+            server_time_ms: now(),
+            auth_required: true,
+            heartbeat: heartbeat ?? { interval_ms: 15_000, timeout_ms: 45_000 },
+            limits: {
+              max_subscriptions: 200,
+              max_topics_per_request: 50,
+              max_inbound_frame_bytes: 262_144,
+              max_outbound_frame_bytes: 4_194_304,
+              min_throttle_ms: 50,
+              max_symbols_per_connection: 40,
+            },
+          },
+        });
+      case "auth": {
+        authed += 1;
+        const killSwitch = { engaged: false, scope: "global" };
+        send(c, {
+          t: "auth_ok",
+          id,
+          ts: now(),
+          p: {
+            user_id: ID(1),
+            roles: ["owner"],
+            permissions: ["marketdata:read"],
+            account_scope: [],
+            allowed_environments: ["demo"],
+            session_id: ID(2),
+            token_expires_at_ms: now() + 600_000,
+            kill_switch: killSwitch,
+          },
+        });
+        // 6.2: `system` is subscribed implicitly at `auth_ok`, and its snapshot follows (12.1).
+        return data(c, "snap", "system", { ...HEALTH, kill_switch: killSwitch }, 1);
+      }
+      case "sub": {
+        const topics = ((p["topics"] ?? []) as ({ ch: string } | string)[]).map((t) =>
+          typeof t === "string" ? t : t.ch,
+        );
+        const results = topics.map((ch) => ({ ch, ok: true, sub_id: `s_${now()}`, effective: {} }));
+        send(c, { t: "sub_ok", id, ts: now(), p: { results } });
+        for (const ch of topics.filter((t) => t.startsWith("ticker.")))
+          harness.sendTicker(ch.slice("ticker.".length));
+        return;
+      }
+      case "resync": {
+        const ch = String(f["ch"]);
+        const last = c.seq.get(ch) ?? 0;
+        // Only `system` has a body to re-send here; a ticker resync waits for the next `sendTicker`.
+        if (ch === "system")
+          data(c, "snap", ch, HEALTH, last + 1, { reason: "client_resync", previous_seq: last });
+        return;
+      }
+      case "ping":
+        return send(c, { t: "pong", id, ts: now(), p: { server_ms: now() } });
+    }
+  }
+
+  const tokens = {
+    access_token: ["e2e", "ws", "harness", "opaque", "bearer"].join("."),
+    token_type: "Bearer",
+    expires_in: 600,
+    refresh_expires_in: 2_592_000,
+  };
+  await page.route("**/api/v1/auth/refresh", (r) =>
+    r.fulfill(json({ status: "authenticated", tokens })),
+  );
+  await page.routeWebSocket("**/api/v1/ws", (route) => {
+    opened += 1;
+    if (down) return route.close({ code: 1006, reason: "harness_kill" });
+    const c: Conn = { n: opened, route, seq: new Map() };
+    current = c;
+    route.onMessage((message) => {
+      const frame = JSON.parse(String(message)) as Frame;
+      const p = frame["p"] as Record<string, unknown> | undefined;
+      const mask = "x".repeat(String(p?.["access_token"]).length);
+      const kept = frame.t === "auth" ? { ...frame, p: { ...p, access_token: mask } } : frame;
+      frames.push({ conn: c.n, frame: kept });
+      answer(c, frame);
+    });
+    route.onClose(
+      (code, reason) => void clientCloses.push({ code: code ?? 1005, reason: reason ?? "" }),
+    );
+  });
+  await page.addInitScript(pageBridge, {
+    name: WS_HARNESS_MARKER,
+    shim: `(${workerShim.toString()})(${JSON.stringify(WS_HARNESS_MARKER)});`,
+  });
+
+  const harness: WsHarness = {
+    frames,
+    sent,
+    clientCloses,
+    connections: () => opened,
+    authenticated: () => authed,
+    kill() {
+      down = true;
+      void current?.route.close({ code: 1006, reason: "harness_kill" });
+      current = undefined;
+    },
+    restore: () => void (down = false),
+    stall: () => void (stalled = current),
+    resume: () => void (stalled = undefined),
+    desync() {
+      if (!current) throw new Error("desync: no live connection");
+      const s = (current.seq.get("system") ?? 0) + 2; // s + 1 is never sent
+      data(current, "d", "system", HEALTH, s);
+    },
+    sendTicker(symbol, fields = {}) {
+      if (!current) throw new Error("sendTicker: no live connection");
+      const ch = `ticker.${symbol}`;
+      const last = current.seq.get(ch);
+      const base = symbol === "BTCUSDT" ? tickers[(last ?? 0) % tickers.length] : undefined;
+      const row = { ...base, symbol, ...fields } as TickerRow;
+      const [t, meta] =
+        last === undefined ? (["snap", { reason: "initial" }] as const) : (["d"] as const);
+      data(current, t, ch, { tickers: [row] }, (last ?? 0) + 1, meta);
+    },
+  };
+  return harness;
+}
