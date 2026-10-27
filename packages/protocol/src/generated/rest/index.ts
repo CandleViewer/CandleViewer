@@ -2172,6 +2172,8 @@ export interface paths {
      *     by the private-WS `wallet` stream; `balance_stale` is `true` when the snapshot is
      *     older than 10 s (`balance_stale_since` says since when). After 60 s of stream silence a
      *     REST reconciliation refreshes it; if that fails too, risk-based sizing is unavailable.
+     *     The list carries no `ETag` header: each item's tag is `W/"<updated_at>"` of its own
+     *     `updated_at` (`components.headers.AccountETag`).
      */
     get: operations["listExchangeAccounts"];
     put?: never;
@@ -2227,7 +2229,11 @@ export interface paths {
      *     so a `keys` grant never admits it. The delete is audited as `account.deleted`, written
      *     ahead (C-2.9), naming the `challenge_id` of the grant it spent. The `422` is decided
      *     before the gate and spends no code; the `409 open_exposure` and `409 exposure_unknown`
-     *     refusals are decided after it and leave the grant spent, as restore's do.
+     *     refusals are decided after it and leave the grant spent, as restore's do. The challenge's
+     *     `action_summary` template is `Delete account '<label>' (<environment>, UID <exchange_uid>)`,
+     *     ending with `, open_exposure=flatten_first` when the request carries it, and `target` is
+     *     the account's label, or its id where `Problem.target`'s rule says so (not unique among
+     *     the caller's visible accounts, or not printable ASCII).
      */
     delete: operations["deleteExchangeAccount"];
     options?: never;
@@ -2260,6 +2266,44 @@ export interface paths {
      *     spent. The `422` is decided before the gate and spends no code; the `409 open_exposure`
      *     and `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
      *     restore's do.
+     *
+     *     **The challenge (SR-E27-02).** For a disable the challenge's `action_summary` template is
+     *     `Disable account '<label>' (<environment>, UID <exchange_uid>)`, ending with
+     *     `, open_exposure=<choice>` when the request carries a choice, and `target` is the
+     *     account's label, or its id where `Problem.target`'s rule says so (not unique among the
+     *     caller's visible accounts, or not printable ASCII). For a re-enable it is
+     *     `Re-enable account '<label>' (<environment>, UID <exchange_uid>)`, with no suffix, and
+     *     `target` is null. A re-enable ignores `open_exposure`: the choice applies only to
+     *     disabling. The label is escaped as the general rule of `POST /auth/step-up` says.
+     *
+     *     **Repeat and empty requests (SR-E27-02).** A disable of an account that is already
+     *     disabled, or a re-enable of one already enabled, answers `200` with the account
+     *     unchanged and writes no `account.disabled` / `account.updated` record, beyond the
+     *     step-up's own: the spent step-up is the caller's cost. A repeat reads no exposure and
+     *     flattens nothing: `open_exposure` on it is ignored. A re-enable that changes the account
+     *     is audited as any account update (`account.updated`). A body that names none of
+     *     `label`, `enabled`, `position_mode`, `margin_mode` is `422 validation_failed` (rule
+     *     `empty_patch`), decided before the gate like every `422`, so it spends no code.
+     *
+     *     **Streams.** A disable closes the account's private streams with the temporary reason
+     *     `account_disabled` (joins 24 §14.2 rule 13 and §14.4 with B4a) and narrows or ends the
+     *     account's WebSocket subscriptions as `23-ws-protocol.md` section 9.5 says; a re-enable
+     *     lifts that reason and the streams reopen on the account's signable keys. (`key_revoked`
+     *     and `key_rotated` stay permanent.)
+     *
+     *     **Concurrency.** `If-Match` is optional here: with the `ETag` of `getExchangeAccount`
+     *     (`components.headers.AccountETag`) the tag is compared after the `404` and before the
+     *     step-up gate, like the `422`: a stale tag is `412`, spends no code and reads no
+     *     exposure. No row lock is held across an exchange call. A `flatten_first` flatten runs
+     *     with the row unlocked: the account is re-read before its first order is sent, and a tag
+     *     that no longer matches is `412` there, with nothing sent. The tag is compared once more
+     *     inside the write itself, one conditional `UPDATE` (compare-and-set), so a change after
+     *     the gate is also `412`; each `412` after the gate leaves the grant spent, as the `409`s
+     *     do. A change after the pre-flatten re-read does not stop a flatten under way (it is
+     *     protective, C-2.6): the account is then flat and still enabled, the `412` says the
+     *     disable did not happen, and the write-ahead `account.disabled` record stands with the
+     *     flatten's own order records, as for any write-ahead record whose action did not follow.
+     *     Without `If-Match` the request proceeds, last write wins.
      */
     patch: operations["updateExchangeAccount"];
     trace?: never;
@@ -2505,8 +2549,14 @@ export interface paths {
      *     there: the key stays valid at the exchange until the Owner deletes it in the Bybit
      *     dashboard (SR-E27-06). Revoking the account's last signable key (no other `active` or
      *     `rotating` key remains) drops it to `key_status: missing`, halts its private streams and
-     *     ends each of its `orders`, `positions` and `wallet` subscriptions with a `revoked` frame,
-     *     reason `key_revoked` (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
+     *     ends each subscription of the account's account-scoped streams (`orders`, `positions`,
+     *     `executions`, `wallet`, `trade_groups` and `rules`) with a `revoked` frame, reason
+     *     `key_revoked`; a subscription that also names other accounts narrows instead and
+     *     continues for them, and the account's `machines.{order|leg|algo|risk_lockout}.state`
+     *     and `machines.reconciliation:{account_id}.state` subscriptions (`23-ws-protocol.md`
+     *     §6.4) end with the same reason, implemented with B4; a `machines.trade_group` subscription
+     *     spans accounts and, like the `trade_groups` family, continues while any leg's account
+     *     stays in scope (`23-ws-protocol.md` §9.5). The trigger is signable, not active,
      *     because a `rotating` key still signs and streams, so the account is not keyless while one
      *     remains. The route answers success only after the close of the key's private streams has
      *     completed within its 2 s bound; an overrun is no success (`PrivateStreamCloseOverran`,
@@ -2520,14 +2570,35 @@ export interface paths {
      *     key of the account counts in that definition, a `rotating` key too: while a `rotating`
      *     key is usable the account is not dead, whatever the key being revoked answers.
      *
+     *     `open_exposure=flatten_first` acts only when the revoked key is the account's last
+     *     signable key. When another signable key remains it is a recorded no-op (the completion
+     *     record `api_key.revoked` carries `flattened: false`, reason `other_key_signable`) and
+     *     the revoke answers `204`.
+     *
+     *     **Audit.** `api_key.revoke` is the ahead record (C-2.9): it carries only the decided
+     *     intent, the `open_exposure` choice and whether the key is the last signable one. After
+     *     the key is destroyed and the close of its private streams has completed, a completion
+     *     record `api_key.revoked` follows (`outcome: success`, severity `warning`), carrying
+     *     `flattened` (`true` or `false`, with reason `other_key_signable` for the no-op), the
+     *     accounts whose streams the close returned and the `request_id`
+     *     (`24-internal-schemas.md` section 15.5). When the flatten acts but the revoke then
+     *     fails, no completion record is written: the ahead record stands, as for any write-ahead
+     *     record whose action did not follow, and the flatten's own order records stand with it.
+     *
+     *     **The challenge.** The `action_summary` template is
+     *     `Revoke key '<keyId>' of account '<label>' (<environment>, UID <exchange_uid>)` for both
+     *     classes, ending with `, open_exposure=<choice>` when the request carries one, and
+     *     `target` is null.
+     *
      *     **Step-up (SR-E27-02).** A revoke needs a live `keys` step-up. Any revoke that carries
      *     `open_exposure=flatten_first`, which moves money, needs the no-grace `accounts` class
      *     instead, whatever keys remain and whatever the account holds: each such revoke spends a
      *     fresh code, and without one the route answers `403 step_up_required` with `action_class`
      *     set to `accounts`. The handler gates both classes after RBAC, validation and the `404`,
      *     so a caller without `keys:manage` gets `403 forbidden`, never a challenge, and the
-     *     `accounts` grant binds the method and the raw target with its query (`authStepUp`). The
-     *     `422` is decided before the gate and spends no code; the `409 open_exposure` and
+     *     `accounts` grant binds the method and the raw target with its query (`authStepUp`). A
+     *     `flatten_first` that turns out a no-op still spends the `accounts` code. The `422` is
+     *     decided before the gate and spends no code; the `409 open_exposure` and
      *     `409 exposure_unknown` refusals are decided after it and leave the grant spent, as
      *     restore's do.
      */
@@ -11732,7 +11803,9 @@ export interface components {
      *     close its positions reduce-only), then act; if the account is still not flat, the action
      *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
      *     parameter such a request is `409 open_exposure` with the consequence summary, and
-     *     nothing changes. Ignored when the account holds no exposure.
+     *     nothing changes. Ignored when the account holds no exposure. On `revokeApiKey` it acts
+     *     only when the revoked key is the account's last signable key; otherwise it is a
+     *     recorded no-op.
      *
      *     **The read.** The exposure is read with signed exchange calls, so each signable key's
      *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
@@ -11855,6 +11928,8 @@ export interface components {
   };
   requestBodies: never;
   headers: {
+    /** @description `W/"<updated_at>"` of the account answered: its `updated_at` as RFC 3339 UTC with exactly six fractional digits and a `Z` (`W/"2026-10-26T07:35:12.123456Z"`). The account has no version column, so the tag is derived from `updated_at`, which every item of `listExchangeAccounts` already carries. `listExchangeAccounts`, `getExchangeAccount` and `updateExchangeAccount` render `updated_at` in the body with exactly six fractional digits, the same formatter as the header (B4c), so a client may build the tag from the body. Send it back whole as `If-Match` on `updateExchangeAccount`: the server compares the two strings for exact equality. */
+    AccountETag: string;
     /**
      * @description SR-041 token for the session, in the request header's session-bound `<nonce>.<mac>`
      *     format (`components.parameters.CsrfToken`): the new `__Host-cv_csrf` value on a response
@@ -14963,6 +15038,7 @@ export interface operations {
       /** @description Account. */
       200: {
         headers: {
+          ETag: components["headers"]["AccountETag"];
           [name: string]: unknown;
         };
         content: {
@@ -15044,7 +15120,9 @@ export interface operations {
          *     close its positions reduce-only), then act; if the account is still not flat, the action
          *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
          *     parameter such a request is `409 open_exposure` with the consequence summary, and
-         *     nothing changes. Ignored when the account holds no exposure.
+         *     nothing changes. Ignored when the account holds no exposure. On `revokeApiKey` it acts
+         *     only when the revoked key is the account's last signable key; otherwise it is a
+         *     recorded no-op.
          *
          *     **The read.** The exposure is read with signed exchange calls, so each signable key's
          *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
@@ -15163,9 +15241,10 @@ export interface operations {
       };
     };
     responses: {
-      /** @description Updated. */
+      /** @description Updated, or unchanged for a repeated disable or re-enable. */
       200: {
         headers: {
+          ETag: components["headers"]["AccountETag"];
           [name: string]: unknown;
         };
         content: {
@@ -15176,7 +15255,7 @@ export interface operations {
       404: components["responses"]["NotFound"];
       409: components["responses"]["OpenExposureConflict"];
       412: components["responses"]["PreconditionFailed"];
-      /** @description The body or `open_exposure` fails its schema (`validation_failed`), or the body carries `position_mode` or `margin_mode` before E27-S05 serves a mode change (rule `mode_change_unavailable`). Decided before the step-up gate: nothing changes. */
+      /** @description The body or `open_exposure` fails its schema (`validation_failed`), the body names none of `label`, `enabled`, `position_mode`, `margin_mode` (rule `empty_patch`), or it carries `position_mode` or `margin_mode` before E27-S05 serves a mode change (rule `mode_change_unavailable`). Decided before the step-up gate: nothing changes. */
       422: {
         headers: {
           [name: string]: unknown;
@@ -15441,7 +15520,9 @@ export interface operations {
          *     close its positions reduce-only), then act; if the account is still not flat, the action
          *     is not carried out and the answer is `409 open_exposure` with what remains. Without the
          *     parameter such a request is `409 open_exposure` with the consequence summary, and
-         *     nothing changes. Ignored when the account holds no exposure.
+         *     nothing changes. Ignored when the account holds no exposure. On `revokeApiKey` it acts
+         *     only when the revoked key is the account's last signable key; otherwise it is a
+         *     recorded no-op.
          *
          *     **The read.** The exposure is read with signed exchange calls, so each signable key's
          *     calls are M2 borrows: M2 writes its write-ahead `security.credential_borrowed` record
