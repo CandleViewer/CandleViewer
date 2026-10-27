@@ -4,3 +4,6 @@ import "../build/css/tokens.dark.css";
 import "../build/css/tokens.light.css";
 import "../build/css/tokens.high-contrast.css";
 import "../src/theme/theme.css";
+// Component CSS (E05-S01), in the order `copy-css.mjs` concatenates it into `components.css`.
+import "../src/components/controls.css";
+import "../src/components/button.css";

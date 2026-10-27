@@ -6,3 +6,6 @@ export type {
   LegendConvention,
   LegendPalette,
 } from "./ColorConventionLegend.js";
+
+export { Button } from "./Button.js";
+export type { ButtonProps } from "./Button.js";

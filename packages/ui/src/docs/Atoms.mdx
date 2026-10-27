@@ -7,3 +7,16 @@ import { Meta } from "@storybook/addon-docs/blocks";
 `CMP-001..039` in `docs/plan/15-component-catalogue.md`: buttons, inputs, typography, icons, badges
 and indicators. A component's stories live under `Atoms/<Component>` and ship with the component
 (E05-S01..S04).
+
+## Keyboard
+
+Each component's keyboard table lives here (the WAI-ARIA pattern it follows, then keys and actions).
+
+### Button (CMP-001, APG Button)
+
+| Keys                         | Action                                                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus; focus-visible shows the ring. Plain disabled is skipped.               |
+| Enter, Space                 | Activates (`onClick`).                                                              |
+| Enter, Space (loading)       | No action while `aria-busy`; focus stays.                                           |
+| Enter, Space (with a reason) | No action; the button stays focusable and its reason is the accessible description. |

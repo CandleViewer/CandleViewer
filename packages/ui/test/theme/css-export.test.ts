@@ -69,3 +69,14 @@ describe("copy-css script", () => {
     },
   );
 });
+
+describe("components.css package export", () => {
+  it("is built from src/components/*.css with the shared controls.css first", () => {
+    execFileSync(process.execPath, [COPY_SCRIPT, "--no-tokens"], { cwd: UI_ROOT });
+    const built = createRequire(import.meta.url).resolve("@candleviewer/ui/components.css");
+    expect(built).toBe(join(UI_ROOT, "dist", "components.css"));
+    const css = readFileSync(built, "utf-8");
+    expect(css.indexOf(".cv-control")).toBeLessThan(css.indexOf(".cv-button"));
+    expect(css).toContain(".cv-visually-hidden");
+  });
+});
