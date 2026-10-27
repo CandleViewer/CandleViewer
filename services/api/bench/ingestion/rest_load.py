@@ -3,14 +3,15 @@
 The in-process driver issues the *same* request plan as `tests/load/k6/ingestion_rest.js`
 (`fixture_app.requests_plan`), at a bounded concurrency, and records per-route latency. The k6
 path starts uvicorn on 127.0.0.1 over the fixture backend, runs k6 with `--summary-export`, and
-folds the per-route p95s into the same verdict. Neither path can reach an exchange host.
+folds the per-route p95s into the same verdict. Both send the plan's first-read route to a second
+app (`build_first_read_app`, #2523). Neither path can reach an exchange host.
 """
 
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
-import math
 import os
 import shutil
 import socket
@@ -27,8 +28,10 @@ import httpx
 from bench.ingestion import budgets
 from bench.ingestion.config import Scenario
 from bench.ingestion.fixture_app import (
+    FIRST_READ,
     assert_loopback_target,
     build_app,
+    build_first_read_app,
     requests_plan,
     write_cold_lake,
 )
@@ -46,44 +49,54 @@ B13_SOFT_WEEKLY: Final = "reported, not gated, on the weekly run until #2825's s
 
 
 async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[float]]:
-    """Per-route latencies (ms). Cold klines bypass nothing: each cold call hits DuckDB."""
+    """Per-route latencies (ms). Cold klines bypass nothing: each cold call hits DuckDB. The
+    first-read route (`FIRST_READ`) goes to `build_first_read_app`'s app through a client of its
+    own; one semaphore bounds the requests to both apps (#2523)."""
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
-        app = await build_app(Path(tmp))
+        apps = await build_app(Path(tmp)), await build_first_read_app(Path(tmp))
         base = "http://127.0.0.1"
         assert_loopback_target(base)
-        transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 50000))
-        out: dict[str, list[float]] = {k: [] for k in requests_plan()}
+        plan = requests_plan()
+        out: dict[str, list[float]] = {k: [] for k in plan}
         sem = asyncio.Semaphore(concurrency)
-        async with httpx.AsyncClient(transport=transport, base_url=base) as client:
+        peer = ("127.0.0.1", 50000)
+        main, first = (
+            httpx.AsyncClient(transport=httpx.ASGITransport(app=a, client=peer), base_url=base)
+            for a in apps
+        )
+        async with main, first:
+            clients = {r: first if spec.get(FIRST_READ) else main for r, spec in plan.items()}
 
             async def one(route: str, spec: dict[str, Any]) -> None:
                 async with sem:
                     t0 = time.perf_counter()
-                    r = await client.get(spec["path"], params=spec["params"])
+                    r = await clients[route].get(spec["path"], params=spec["params"])
                     out[route].append((time.perf_counter() - t0) * 1000)
                     if r.status_code != 200:
                         raise RuntimeError(f"{route}: HTTP {r.status_code}")
 
-            for spec in requests_plan().values():  # one untimed warm-up per route
-                await client.get(spec["path"], params=spec["params"])
-            await asyncio.gather(
-                *(one(r, s) for _ in range(iterations) for r, s in requests_plan().items())
-            )
+            for route, spec in plan.items():  # one untimed warm-up per route
+                await clients[route].get(spec["path"], params=spec["params"])
+            await asyncio.gather(*(one(r, s) for _ in range(iterations) for r, s in plan.items()))
         return out
 
 
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+def _free_ports(n: int) -> list[int]:
+    """`n` distinct loopback ports, each free when picked: every socket stays bound until all
+    are, so no two come back the same."""
+    with contextlib.ExitStack() as held:
+        socks = [held.enter_context(socket.socket()) for _ in range(n)]
+        for s in socks:
+            s.bind(("127.0.0.1", 0))
+        return [int(s.getsockname()[1]) for s in socks]
 
 
 #: k6's exit codes that leave a reading: 0 (passed) and 99 (a threshold crossed). The script arms
 #: two kinds of threshold: each route's p95 under Budget #13's 150 ms, which `verdict` judges
 #: itself, and `checks` (each response a 200), which `k6_reading` judges: one failed check refuses
 #: the run, as the in-process driver refuses a non-200. Any other code is a script, configuration
-#: or run error (#2825).
+#: or run error (#2825). The first-read route (`FIRST_READ`) arms no p95 threshold (#2523).
 K6_READING_EXITS: Final = frozenset({0, 99})
 
 
@@ -94,7 +107,8 @@ def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
     shape: the run is unknown, never a 0 that passes, schedule or dispatch alike. A 99 must be
     explained by a route's p95 at or over 150 ms; otherwise the `checks` threshold failed. A route
     with no samples (`count` 0, or a `p(95)` not above 0.0) has no reading, so `verdict` fails it
-    by name, never a 0.0 that passes (#2825).
+    by name, never a 0.0 that passes (#2825). The first-read route (`FIRST_READ`) arms no p95
+    threshold, so it explains no 99 (#2523).
     """
     if returncode not in K6_READING_EXITS:
         raise RuntimeError(f"k6 exited {returncode}: the run is invalid, not a reading (#2825)")
@@ -109,13 +123,15 @@ def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
         raise RuntimeError("k6 wrote no checks count: the run is unknown (#2825)")
     if fails != 0:
         raise RuntimeError(f"k6 counted {fails!r} failed checks: the run is invalid (#2825)")
+    plan = requests_plan()
     out: dict[str, list[float]] = {}
-    for route in requests_plan():
+    for route in plan:
         m = metrics.get(f"route_{route}_ms", {})
         p95 = float(m.get("p(95)", 0.0))
         if p95 > 0.0 and m.get("count") != 0:
             out[route] = [p95]
-    if returncode == 99 and all(p < budgets.B13_READ_P95_MS for [p] in out.values()):
+    gated = [p for r, [p] in out.items() if not plan[r].get(FIRST_READ)]
+    if returncode == 99 and all(p < budgets.B13_READ_P95_MS for p in gated):
         raise RuntimeError(
             "k6 exited 99 with no route's p95 at or over 150 ms: a check failed (#2825)"
         )
@@ -125,10 +141,13 @@ def k6_reading(returncode: int, text: str) -> dict[str, list[float]]:
 def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     """Full profile: real sockets, k6 load. Returns route -> [p95] (k6 aggregates for us). Where
     `K6_EXPORT_ENV` names a file, k6's summary is copied there unchanged first, also for a run
-    refused below; unset, nothing is kept.
+    refused below; unset, nothing is kept. The first-read route (`FIRST_READ`) has a server of
+    its own over `build_first_read_app`, on a second loopback port k6 gets as `BASE_URL_FIRST`
+    (#2523); both servers stop on every path.
 
-    Raises `RuntimeError` when k6 is not on PATH, the fixture app does not start, or `k6_reading`
-    refuses the run. Other failures propagate under their own types, never as a reading:
+    Raises `RuntimeError` when k6 is not on PATH, both fixture apps get the same port, either
+    does not start, or `k6_reading` refuses the run. Other failures propagate under their own
+    types, never as a reading:
     `subprocess.TimeoutExpired` when k6 runs past its hour; `OSError` when the summary cannot be
     read or kept, `UnicodeDecodeError` when it is not UTF-8; `AttributeError` when it parses but
     is not k6's shape (not an object, or a non-object where k6 writes one); `ValueError` or
@@ -138,26 +157,31 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
     k6 = shutil.which("k6")
     if k6 is None:
         raise RuntimeError("k6 not on PATH (the full pack's workflow installs the pinned k6)")
-    port = _free_port()
-    base = f"http://127.0.0.1:{port}"
+    ports = _free_ports(2)
+    if ports[0] == ports[1]:  # two servers bound to one port can both report started
+        raise RuntimeError(f"both fixture apps were given port {ports[0]}: no reading (#2523)")
+    base, base_first = (f"http://127.0.0.1:{p}" for p in ports)
     assert_loopback_target(base)
+    assert_loopback_target(base_first)
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
-        app = asyncio.run(build_app(Path(tmp)))
-        server = uvicorn.Server(
-            uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-        )
+        apps = asyncio.run(build_app(Path(tmp))), asyncio.run(build_first_read_app(Path(tmp)))
+        servers = [
+            uvicorn.Server(uvicorn.Config(a, host="127.0.0.1", port=p, log_level="warning"))
+            for a, p in zip(apps, ports, strict=True)
+        ]
         import threading
 
-        th = threading.Thread(target=server.run, daemon=True)
-        th.start()
+        threads = [threading.Thread(target=s.run, daemon=True) for s in servers]
         try:
+            for th in threads:
+                th.start()
             for _ in range(200):
-                if server.started:
+                if all(s.started for s in servers):
                     break
-                time.sleep(0.05)  # bench process, not a test: wait for the socket to listen
-            if not server.started:
-                raise RuntimeError("the fixture app did not start: no reading (#2825)")
+                time.sleep(0.05)  # bench process, not a test: wait for the sockets to listen
+            if not all(s.started for s in servers):
+                raise RuntimeError("a fixture app did not start: no reading (#2825)")
             plan = Path(tmp) / "plan.json"
             plan.write_text(json.dumps(requests_plan()), encoding="utf-8")
             summary = Path(tmp) / "summary.json"
@@ -170,6 +194,8 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
                     str(summary),
                     "-e",
                     f"BASE_URL={base}",
+                    "-e",
+                    f"BASE_URL_FIRST={base_first}",
                     "-e",
                     f"PLAN={plan}",
                     "-e",
@@ -187,8 +213,11 @@ def drive_k6(duration: str, vus: int) -> dict[str, list[float]]:
                 shutil.copyfile(summary, keep)
             text = summary.read_text(encoding="utf-8") if summary.exists() else ""
         finally:
-            server.should_exit = True
-            th.join(timeout=10)
+            for s in servers:
+                s.should_exit = True
+            for th in threads:
+                if th.is_alive():
+                    th.join(timeout=10)
     return k6_reading(ran.returncode, text)
 
 
@@ -198,25 +227,37 @@ def verdict(
     """Budget #13 over every route of `requests_plan()`. A route the driver did not measure (k6
     wrote no `p(95)` for it) fails, named, in every profile: never a 0.0 that passes (#399).
     `b13_report_only` (the weekly run) reports the full profile's 150 ms rows as the smoke does,
-    noted `B13_SOFT_WEEKLY`; every other check stays hard (#2825)."""
+    noted `B13_SOFT_WEEKLY`; every other check stays hard (#2825). The cache speed-up is the first
+    read's p95 over the warm read's, and the first read's row is reported in every profile, under
+    its own note (`budgets.check_rest`, #2523). The first read is the route the plan marks
+    `FIRST_READ`, as the drivers send it; a plan that marks no route, or more than one, raises
+    `RuntimeError`."""
     weekly = b13_report_only and sc.profile != "smoke"
+    plan = requests_plan()
+    marked = [r for r, spec in plan.items() if spec.get(FIRST_READ)]
+    if len(marked) != 1:
+        raise RuntimeError(f"the plan marks {marked} as the first read, not one route (#2523)")
     v = budgets.Verdict(sc.name)
     p95 = {r: budgets.percentile(x, 0.95) for r, x in lat.items() if x}
     v.checks.extend(
         budgets.Check(f"rest_measured[{r}]", "#13", 0.0, 1.0, "p95", False, note="no reading")
-        for r in sorted(set(requests_plan()) - set(p95))
+        for r in sorted(set(plan) - set(p95))
     )
     v.checks.extend(
         budgets.check_rest(
             p95,
-            p95.get("klines_cold", math.nan),
-            p95.get("klines_warm", math.nan),
             float(sc.p("min_cache_speedup")),
+            first=marked[0],
+            repeat="klines_warm",
             budget_hard=sc.profile != "smoke" and not weekly,
         )
     )
-    if weekly:  # its soft rows are the 150 ms ones (the speed-up stays hard): say why
-        v.checks = [c if c.hard else replace(c, note=B13_SOFT_WEEKLY) for c in v.checks]
+    if weekly:  # its soft rows are the 150 ms ones (the speed-up stays hard): say why. The first
+        # read's keeps its own note: it is soft on every run, not until slice 2 decides (#2523)
+        v.checks = [
+            c if c.hard or c.note == budgets.B13_FIRST_READ else replace(c, note=B13_SOFT_WEEKLY)
+            for c in v.checks
+        ]
     v.metrics = {f"rest_{r}_ms": budgets.summary(x) for r, x in lat.items()}
     return v
 

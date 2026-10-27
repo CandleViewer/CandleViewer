@@ -2,7 +2,8 @@
 
 Budgets are 06-performance-and-load-standard §2 rows; each `Check` carries the measured number
 beside the budget so the report can print both (AC 1). Hard vs soft follows the §2 table, except
-that the smoke profile reports Budget #13's 150 ms without gating it (#399).
+that the smoke profile reports Budget #13's 150 ms without gating it (#399), and that the first
+read's 150 ms row is reported in every profile, never gated (#2523).
 
 Budget #8 is per symbol (06 §2: book state, bar builders, rolling aggregation buffers):
 `rss_per_symbol_mb` is the RSS the lanes add, i.e. the sample minus the RSS taken before they were
@@ -423,19 +424,26 @@ def check_latency(stage_ms: Sequence[float], budget_ms: float = B6_BACKEND_SLICE
     )
 
 
+#: The note of the first read's 150 ms row (#2523): a read no cache has served is reported in every
+#: profile and never gated. A budget of its own is the owner's call.
+B13_FIRST_READ = "a first read: reported, no budget (#2523)"
+
+
 def check_rest(
     p95_by_route: Mapping[str, float],
-    cold_p95: float,
-    warm_p95: float,
     min_speedup: float,
     *,
+    first: str,
+    repeat: str,
     budget_hard: bool = True,
 ) -> list[Check]:
-    """Budget #13's 150 ms per route, and the klines cache speed-up. `budget_hard=False` reports
-    the 150 ms rows without failing the verdict: `06` measures #13 with k6 on the bench runner
+    """Budget #13's 150 ms per route, and the klines cache speed-up: the p95 of route `first`, a
+    read no cache has served, over that of route `repeat`, a repeat read (#2523). `first`'s own
+    150 ms row is soft in every profile, noted `B13_FIRST_READ`. `budget_hard=False` reports the
+    other 150 ms rows without failing the verdict: `06` measures #13 with k6 on the bench runner
     (the full profile), never the smoke's in-process driver on a shared runner (#399). The
-    speed-up stays hard, and an unmeasured (NaN) cold or warm p95, or a warm one of 0 ms, fails
-    it: never `inf` (#2825)."""
+    speed-up stays hard, and an unmeasured (absent) `first` or `repeat` p95, or a `repeat` one of
+    0 ms, fails it: never `inf` (#2825)."""
     soft = "" if budget_hard else "reported, not gated, in the smoke profile (#399)"
     out = [
         Check(
@@ -445,15 +453,16 @@ def check_rest(
             B13_READ_P95_MS,
             "ms",
             p <= B13_READ_P95_MS,
-            budget_hard,
-            soft,
+            budget_hard and r != first,
+            B13_FIRST_READ if r == first else soft,
         )
         for r, p in sorted(p95_by_route.items())
     ]
-    if math.isnan(cold_p95) or math.isnan(warm_p95) or warm_p95 <= 0:
-        speedup = math.nan  # a cold or warm route not measured: never a pass
+    first_p95, repeat_p95 = p95_by_route.get(first, math.nan), p95_by_route.get(repeat, math.nan)
+    if math.isnan(first_p95) or math.isnan(repeat_p95) or repeat_p95 <= 0:
+        speedup = math.nan  # a first or repeat read not measured: never a pass
     else:
-        speedup = cold_p95 / warm_p95
+        speedup = first_p95 / repeat_p95
     out.append(
         Check(
             "klines_cache_speedup",
@@ -462,7 +471,7 @@ def check_rest(
             min_speedup,
             "x",
             speedup >= min_speedup,
-            note=f"cold p95 {cold_p95:.2f}ms vs warm p95 {warm_p95:.2f}ms",
+            note=f"{first} p95 {first_p95:.2f}ms vs {repeat} p95 {repeat_p95:.2f}ms",
         )
     )
     return out

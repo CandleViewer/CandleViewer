@@ -7,6 +7,8 @@
 * klines: **cold** = the real `KlineReadService` + `ParquetKlineReader` (DuckDB scan of a
   Parquet partition written from the `rest/kline_BTCUSDT_1_page*.json` corpus, tiled to 30 days);
   **warm** = the same service answering from the in-memory hot tier (the cache-hit path);
+  **cold, first read** (`klines_cold_first`, #2523) = the cold request on a second app built
+  alike (`build_first_read_app`), so its reader is not the one `klines_cold` reads through;
 * trades: a real `TradeStream` fed the clean BTCUSDT public-trade capture;
 * orderbook: a real `BookStream` fed `ws/orderbook_BTCUSDT.jsonl`;
 * data-coverage: the real `CoverageService` over the recorder test store.
@@ -18,7 +20,8 @@ Auth is a fixed bench principal with read permissions only (test-only identity, 
 far (`freeze_startup_heap`), so the pack's cold-read figures come from the heap shape the app
 serves from. The freeze is process-wide and never undone here: `rest_load.run_rest` undoes it when
 its scenario ends (`runner all` runs the later scenarios in the same process), and any other
-caller (a test, a rig) calls `unfreeze_startup_heap` once it is done.
+caller (a test, a rig) calls `unfreeze_startup_heap` once it is done. The first-read app freezes
+again as its build ends; the one unfreeze undoes both.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -308,15 +311,30 @@ async def build_app(cold_root: Path) -> FastAPI:
     return app
 
 
+async def build_first_read_app(cold_root: Path) -> FastAPI:
+    """The first-read leg's server (#2523): a second app built as `build_app` builds one, so its
+    reader is its own and holds nothing `klines_cold`'s reader has read. The drivers send the
+    plan's `FIRST_READ` route here, and its build ends with the freeze too. Lever 5 turns this
+    reader's page cache off here, with one argument."""
+    return await build_app(cold_root)
+
+
 def iso(us: int) -> str:
     return datetime.fromtimestamp(us / 1e6, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+#: The plan key that sends a route to the first-read server (`build_first_read_app`), never a query
+#: parameter: a cold read that no cache has served, reported and never gated (#2523).
+FIRST_READ: Final = "first_read"
+
+
 def requests_plan() -> dict[str, dict[str, Any]]:
-    """The k6/in-process request set (route -> (path, params)), shared by both drivers."""
+    """The k6/in-process request set (route -> (path, params)), shared by both drivers.
+    `klines_cold_first` is `klines_cold`'s request marked `FIRST_READ`, which the drivers read
+    to send it to the first-read server; only `params` go into a query string (#2523)."""
     warm_end = HOT_BOUNDARY_US + HOT_BARS * MIN_US
     cold_end = HOT_BOUNDARY_US - 86_400_000_000  # fully inside the cold lake
-    return {
+    plan: dict[str, dict[str, Any]] = {
         "instruments": {"path": "/instruments", "params": {"limit": 100}},
         "klines_cold": {
             "path": "/market/klines",
@@ -352,6 +370,9 @@ def requests_plan() -> dict[str, dict[str, Any]]:
         "orderbook": {"path": "/market/orderbook", "params": {"symbol": SYMBOL, "depth": 50}},
         "data_coverage": {"path": "/market/data-coverage", "params": {"symbol": SYMBOL}},
     }
+    cold = plan["klines_cold"]
+    plan["klines_cold_first"] = {**cold, "params": {**cold["params"]}, FIRST_READ: True}
+    return plan
 
 
 def assert_loopback_target(base_url: str) -> None:

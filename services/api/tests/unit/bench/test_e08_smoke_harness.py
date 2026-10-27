@@ -32,6 +32,7 @@ async def test_smoke_rest_profile_serves_every_route_and_cache_is_faster() -> No
     assert routes == {
         "rest_instruments_ms",
         "rest_klines_cold_ms",
+        "rest_klines_cold_first_ms",
         "rest_klines_warm_ms",
         "rest_klines_page_boundary_ms",
         "rest_trades_ms",
