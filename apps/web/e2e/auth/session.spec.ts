@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
 import { assertNoClientSecrets, json, stubSession, watchForLeaks } from "../support/api";
+import { installWsHarness } from "../support/wsHarness";
 
-// E09-Q02 (#293) session.spec. SCR-111/112 (sessions list, sign-out everywhere) are not built yet
-// (#1640 S3). Covered here: the unauthenticated redirect, cookie-stripped/401 handling, the
-// bootstrap session read, and SCR-005 idle lock -> unlock (#1640 S2). @electron tagged.
+// E09-Q02 (#293) session.spec. Covered here: the unauthenticated redirect, cookie-stripped/401
+// handling, the bootstrap session read, SCR-005 idle lock -> unlock (#1640 S2) and SCR-112 sign out
+// everywhere -> WS 4401 -> SCR-001 (#1640 S3). @electron tagged.
 
 test("E09-TC-C09 unauthenticated deep link redirects to /login preserving next @electron", async ({
   page,
@@ -135,4 +136,70 @@ test("#1640 a reload into an idle-locked session shows SCR-005, not /login; unlo
   expect(typed.filter((v) => v !== "")).toEqual([]);
   await assertNoClientSecrets(page, ["pw-lock-1"]);
   await guard.flush();
+});
+
+test("#1640 SCR-112 sign out everywhere: logout all, the socket closes 4401, SCR-001", async ({
+  page,
+}) => {
+  await stubSession(page, { role: "owner" });
+  const harness = await installWsHarness(page);
+  let revoked = false;
+  // services/api/candleviewer/api/sessions.py: `_view_json` rows in a page; after the logout the
+  // cleared cookie refreshes nothing (`_unauthorized("refresh_token_invalid")`)
+  const view = (id: string, current: boolean, device: string | null) => ({
+    id,
+    device_name: device,
+    ip: "100.64.0.7",
+    user_agent: "Mozilla/5.0 (X11; Linux x86_64) Firefox/131.0",
+    created_at: "2026-10-27T08:00:00+00:00",
+    last_seen_at: "2026-10-27T09:00:00+00:00",
+    expires_at: "2026-10-27T20:00:00+00:00",
+    current,
+  });
+  const items = [
+    view("00000000-0000-4000-8000-000000000002", true, null),
+    view("00000000-0000-4000-8000-000000000003", false, "Desktop app"),
+  ];
+  await page.route(
+    (url) => url.pathname === "/api/v1/auth/sessions",
+    (r) => r.fulfill(json({ items, meta: { next_cursor: null, has_more: false, count: 2 } })),
+  );
+  await page.route("**/api/v1/auth/refresh", (r) =>
+    revoked
+      ? r.fulfill(
+          json(
+            {
+              type: "about:blank",
+              title: "Unauthorized",
+              status: 401,
+              detail: "refresh_token_invalid",
+            },
+            401,
+          ),
+        )
+      : r.fallback(),
+  );
+  const logouts: unknown[] = [];
+  await page.route("**/api/v1/auth/logout", (r) => {
+    logouts.push(r.request().postDataJSON());
+    revoked = true;
+    harness.revokeSession(); // the hub closes the session's sockets before the 204 (23 4.3)
+    return r.fulfill({ status: 204 });
+  });
+
+  await page.goto("/settings/profile");
+  await expect.poll(() => harness.authenticated()).toBe(1);
+  const table = page.getByRole("table", { name: "Signed-in sessions" });
+  await expect(table.getByRole("rowheader", { name: /This session/u })).toBeVisible();
+  await page.getByRole("button", { name: "Sign out everywhere" }).click();
+  const confirm = page.getByRole("alertdialog", { name: "Sign out everywhere?" });
+  await expect(confirm.getByRole("button", { name: "Cancel" })).toBeFocused();
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/\/login\?next=%2Fsettings%2Fprofile$/u);
+  await expect(page.getByRole("heading", { name: "Sign in to CandleViewer" })).toBeVisible();
+  expect(logouts).toEqual([{ all_sessions: true }]);
+  expect(harness.sent.at(-1)).toMatchObject({ t: "bye", p: { code: 4401, reconnect: false } });
+  expect(harness.authenticated()).toBe(1); // bye.reconnect false: never re-authenticated
 });
