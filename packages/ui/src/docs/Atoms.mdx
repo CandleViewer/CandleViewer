@@ -230,6 +230,22 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Divider, `decorative` | none      | Not exposed: layout only.                                                     |
 | Divider-Label rule    | separator | Its visible caption, a sibling, through `aria-labelledby` (never a child).    |
 
+### Link (CMP-021, APG Link; native `<a>`)
+
+| Keys            | Action                                                                                                                   |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab | Moves focus; focus-visible shows the ring at the link's square corners (E8). A disabled link has no href and is skipped. |
+| Enter           | Follows the link: `to` navigates in-app through the router slot (`as`); `external` opens a new browsing context.         |
+| Space           | Not handled (native link behaviour).                                                                                     |
+
+| Element       | Role                                  | Name                                                                   |
+| ------------- | ------------------------------------- | ---------------------------------------------------------------------- |
+| Link          | link (native `<a href>`)              | Its visible text; external adds the hidden " (opens externally)".      |
+| Disabled link | link (`role="link"`, `aria-disabled`) | Its visible text; no href and no tabindex, so it is not focusable.     |
+| External icon | none                                  | `aria-hidden`; external links carry `rel="noopener noreferrer"` (E25). |
+
+`to` needs `as`, the app's router link component (`packages/ui` imports no router). Gated links are held (E27).
+
 ### Kbd (CMP-022, static shortcut hint)
 
 | Keys | Action                                                                                                                                                    |
@@ -310,6 +326,18 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Keys | Action                                                                                                                    |
 | ---- | ------------------------------------------------------------------------------------------------------------------------- |
 | None | Not focusable. The dots are `aria-hidden`; the visible label ("Low confidence") is plain text and always names the level. |
+
+### CopyButton (CMP-033, APG Button through CMP-002; polite status)
+
+| Keys                | Action                                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab     | Moves focus; the nested CMP-002 draws the ring. Disabled is skipped.                                                  |
+| Enter, Space        | Copies the value; the glyph turns to `check` and "Copied" is spoken; focus stays. A held Enter's repeats are ignored. |
+| (none; after 2 s)   | Reverts silently: the glyph returns and the status empties.                                                           |
+| Enter, Space (fail) | The clipboard refused: the `error` glyph and "Copy failed" (E20), reverting after 2 s.                                |
+
+The value is never in the DOM, an attribute, the status or the name. `useCopy()` gives hosts the same write
+and status.
 
 ### Countdown (CMP-035, text with a threshold announcer)
 
