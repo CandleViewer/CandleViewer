@@ -6,6 +6,7 @@ upstream fetcher."""
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import time
 from decimal import Decimal
@@ -14,7 +15,12 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
-from candleviewer.api.instruments import InstrumentsPrincipal, make_instruments_router
+from candleviewer.api.instruments import (
+    RECORDING_TIMEOUT_S,
+    InstrumentsPrincipal,
+    make_instruments_router,
+)
+from candleviewer.api.market_bars import RecordingStart
 from candleviewer.domain.events import Instrument
 from candleviewer.exchange.base.models import RiskLimitTier
 from candleviewer.exchange.bybit.instruments import parse_instrument
@@ -94,10 +100,21 @@ def _snap(stale_since_us: int | None = None) -> CatalogueSnapshot:
     )
 
 
-def _client(reader: FakeReader | None, resolver: Resolver | None = VIEWER) -> TestClient:
+def _client(
+    reader: FakeReader | None,
+    resolver: Resolver | None = VIEWER,
+    recording_started_at_us: RecordingStart | None = None,
+    recording_timeout_s: float = RECORDING_TIMEOUT_S,
+) -> TestClient:
     app = FastAPI()
     app.include_router(
-        make_instruments_router(lambda: reader, principal_resolver=resolver, now_us=lambda: _NOW)
+        make_instruments_router(
+            lambda: reader,
+            principal_resolver=resolver,
+            now_us=lambda: _NOW,
+            recording_started_at_us=recording_started_at_us,
+            recording_timeout_s=recording_timeout_s,
+        )
     )
     return TestClient(app)
 
@@ -248,3 +265,81 @@ async def test_list_p95_under_50ms_from_snapshot() -> None:
     print(f"GET /instruments handler p95={p95_ms:.2f}ms over 200 req, 600 symbols")
     assert p95_ms < 50
     assert reader.ensure_calls == []  # listing never touches upstream
+
+
+_REC_US = 1_699_999_000_123_456
+
+
+async def _started(symbol: str) -> int | None:
+    return _REC_US if symbol == "BTCUSDT" else None
+
+
+async def _boom(symbol: str) -> int | None:
+    raise RuntimeError("store down")
+
+
+def test_detail_with_a_recording_start_reports_recorded_and_the_iso_micros() -> None:
+    body = (
+        _client(FakeReader(_snap()), recording_started_at_us=_started)
+        .get("/instruments/BTCUSDT")
+        .json()
+    )
+    assert body["recorded"] is True
+    assert body["recording_started_at"] == "2023-11-14T21:56:40.123456+00:00"
+
+
+def test_detail_with_nothing_recorded_reports_false_and_null() -> None:
+    body = (
+        _client(FakeReader(_snap()), recording_started_at_us=_started)
+        .get("/instruments/ETHUSDT")
+        .json()
+    )
+    assert body["recorded"] is False
+    assert body["recording_started_at"] is None
+
+
+def test_detail_without_a_provider_omits_recorded_as_unknown() -> None:
+    body = _client(FakeReader(_snap())).get("/instruments/BTCUSDT").json()
+    assert "recorded" not in body  # unknown is never "not recorded" (SCR-140's CTA)
+    assert body["recording_started_at"] is None
+
+
+def test_detail_survives_a_failing_provider_and_omits_recorded() -> None:
+    r = _client(FakeReader(_snap()), recording_started_at_us=_boom).get("/instruments/BTCUSDT")
+    assert r.status_code == 200
+    assert "recorded" not in r.json()
+    assert r.json()["recording_started_at"] is None
+
+
+def test_detail_survives_a_hanging_provider_and_omits_recorded() -> None:
+    async def hang(symbol: str) -> int | None:
+        await asyncio.Event().wait()  # never set: only the timeout ends it
+        return 1
+
+    client = _client(FakeReader(_snap()), recording_started_at_us=hang, recording_timeout_s=0.01)
+    r = client.get("/instruments/BTCUSDT")
+    assert r.status_code == 200
+    assert "recorded" not in r.json()
+
+
+def test_detail_asks_the_provider_for_the_upper_cased_symbol() -> None:
+    calls: list[str] = []
+
+    async def spy(symbol: str) -> int | None:
+        calls.append(symbol)
+        return _REC_US
+
+    body = _client(FakeReader(_snap()), recording_started_at_us=spy).get("/instruments/btcusdt")
+    assert (body.json()["recorded"], calls) == (True, ["BTCUSDT"])
+
+
+def test_unknown_symbol_never_consults_the_provider() -> None:
+    calls: list[str] = []
+
+    async def spy(symbol: str) -> int | None:
+        calls.append(symbol)
+        return _REC_US
+
+    r = _client(FakeReader(_snap()), recording_started_at_us=spy).get("/instruments/NOPEUSDT")
+    assert r.status_code == 404
+    assert calls == []

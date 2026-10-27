@@ -2857,7 +2857,9 @@ def create_app(
     # #2561: the same session-backed resolver as the routes above (501 only without identity).
     app.include_router(
         make_instruments_router(
-            lambda: ctx.ingestion.instruments, principal_resolver=audit_resolver
+            lambda: ctx.ingestion.instruments,
+            principal_resolver=audit_resolver,
+            recording_started_at_us=recording_started_at_us(ctx),
         )
     )
     _compose_instrument_catalogue(ctx, resolved, public_rest)
