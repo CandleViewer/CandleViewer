@@ -248,6 +248,11 @@ describe("SessionLockHost", () => {
     expect(screen.getByRole("button", { name: "Unlock" })).toHaveFocus();
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
     expect(palette).toHaveBeenCalledTimes(1);
+    submit("pw");
+    await tick(0);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    expect(palette).toHaveBeenCalledTimes(2); // hotkeys resume once the lock is gone
     off();
   });
 

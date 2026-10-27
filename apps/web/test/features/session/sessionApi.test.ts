@@ -59,6 +59,23 @@ describe("sessionApi.unlock", () => {
     expect(await outcome).toEqual({ kind: "unreachable" });
   });
 
+  it("a 401 whose body is cut off by the timeout is unreachable, not a sign-out", async () => {
+    vi.useFakeTimers();
+    apiFetch.mockImplementationOnce(async (_url, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          init?.signal?.addEventListener("abort", () =>
+            controller.error(new DOMException("", "AbortError")),
+          );
+        },
+      });
+      return new Response(body, { status: 401 });
+    });
+    const outcome = sessionApi.unlock("pw");
+    await vi.advanceTimersByTimeAsync(UNLOCK_TIMEOUT_MS);
+    expect(await outcome).toEqual({ kind: "unreachable" });
+  });
+
   it("a 200 unlocks, sends the password only, then refreshes the token", async () => {
     apiFetch.mockResolvedValueOnce(reply(200, CLOCK));
     expect(await sessionApi.unlock("pw")).toEqual({ kind: "unlocked", clock: CLOCK });

@@ -78,6 +78,8 @@ async function unlock(password: string): Promise<UnlockOutcome> {
     if (res.status === 401) {
       // fail safe: any 401 but a wrong password, a body that is not JSON included, ends the session
       const problem: unknown = await res.json().catch(() => null);
+      // a body cut off by the timeout is no answer, not a refusal: never sign out over a slow server
+      if (problem === null && abort.signal.aborted) return { kind: "unreachable" };
       const code = (problem as { code?: unknown } | null)?.code;
       return code === "unlock_invalid" ? { kind: "invalid" } : { kind: "revoked" };
     }
