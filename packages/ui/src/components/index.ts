@@ -12,3 +12,6 @@ export type { ButtonProps } from "./Button.js";
 
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
+
+export { Toggle } from "./Toggle.js";
+export type { ToggleProps } from "./Toggle.js";

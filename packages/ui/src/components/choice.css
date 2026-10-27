@@ -1,0 +1,86 @@
+/* Shared row of CMP-004 Toggle and CMP-005 Checkbox: label (part of the target), control, trailing lock. */
+.cv-choice {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-field-gap);
+  min-height: var(--size-control-height);
+  color: var(--color-text-primary);
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+  cursor: pointer;
+}
+
+/* The wrapping label is the hit target: control cell, gap and label text are one clickable row. */
+.cv-choice__target {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-field-gap);
+  min-width: 0;
+  cursor: inherit;
+}
+
+/* Each part is at least one control tall and centred on it, so a wrapped label leaves the control on line one. */
+.cv-choice__control,
+.cv-choice__label,
+.cv-choice__lock {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  min-height: var(--size-control-height);
+}
+
+.cv-choice__control {
+  flex: none;
+  justify-content: center;
+  min-width: var(--size-control-height);
+}
+
+.cv-choice__label {
+  min-width: 0;
+  cursor: inherit;
+}
+
+.cv-choice[data-critical] .cv-choice__label {
+  font-weight: var(--type-ui-body-strong-font-weight);
+}
+
+.cv-choice[data-critical] .cv-choice__label > svg {
+  flex: none;
+  color: var(--color-status-warning-strong);
+}
+
+.cv-choice__lock {
+  flex: none;
+  color: var(--color-text-secondary);
+}
+
+/* Plain disabled: the whole row dims (native attribute, out of the Tab order). */
+.cv-choice[data-disabled] {
+  opacity: var(--opacity-disabled);
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): label, glyph and knob stay at full strength; only the control's plate dims. */
+.cv-choice[data-gated] {
+  cursor: default;
+}
+
+.cv-choice[data-gated] .cv-choice__target {
+  cursor: not-allowed;
+}
+
+@media (forced-colors: active) {
+  .cv-choice,
+  .cv-choice__lock,
+  .cv-choice[data-critical] .cv-choice__label > svg {
+    color: CanvasText;
+  }
+
+  .cv-choice[data-disabled],
+  .cv-choice[data-disabled] .cv-choice__lock,
+  .cv-choice[data-disabled][data-critical] .cv-choice__label > svg {
+    color: GrayText;
+    opacity: 1;
+  }
+}

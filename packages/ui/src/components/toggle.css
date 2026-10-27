@@ -1,0 +1,152 @@
+/* CMP-004 Toggle. State lives in aria-checked and the row's data-* attributes; colours are tokens only. */
+.cv-switch {
+  --cv-switch-track: var(--color-text-tertiary);
+  --cv-switch-knob: var(--color-text-on-action);
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  width: calc(var(--space-inset-xs) * 2 + var(--size-icon) * 2);
+  height: calc(var(--space-inset-xs) * 2 + var(--size-icon));
+  padding: var(--space-inset-xs);
+  border: 0;
+  border-radius: var(--radius-badge);
+  background: var(--cv-switch-track);
+  cursor: inherit;
+  transition: background-color var(--motion-duration-fast)
+    cubic-bezier(var(--motion-easing-standard));
+}
+
+.cv-switch:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+.cv-switch__knob {
+  width: var(--size-icon);
+  height: var(--size-icon);
+  border-radius: var(--radius-circle);
+  background: var(--cv-switch-knob);
+  transition: transform var(--motion-duration-fast) cubic-bezier(var(--motion-easing-standard));
+}
+
+.cv-switch[aria-checked="true"] {
+  --cv-switch-track: var(--color-action-primary-default);
+}
+
+.cv-switch[aria-checked="true"] > .cv-switch__knob {
+  transform: translateX(var(--size-icon));
+}
+
+/* Armed: a critical switch that is on draws the warning track with an inverse knob (D02 D4, proposed). */
+.cv-choice[data-critical] .cv-switch[aria-checked="true"] {
+  --cv-switch-track: var(--color-status-warning-strong);
+  --cv-switch-knob: var(--color-text-inverse);
+}
+
+/* Hover keeps the fill and adds a 1px inner outline (hairline constant), off and on alike. */
+.cv-choice:hover:not([data-disabled], [data-gated]) .cv-switch {
+  box-shadow: inset 0 0 0 calc(var(--border-hairline) * 1px) var(--color-text-secondary);
+}
+
+/* Gated (T2): the track dims on a plate; the knob takes text.primary at full strength. */
+.cv-switch[aria-disabled="true"] {
+  background: transparent;
+  cursor: not-allowed;
+}
+
+.cv-switch[aria-disabled="true"]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: var(--cv-switch-track);
+  opacity: var(--opacity-disabled);
+}
+
+.cv-switch[aria-disabled="true"] > .cv-switch__knob {
+  background: var(--color-text-primary);
+}
+
+@media (forced-colors: active) {
+  .cv-switch {
+    border: 1px solid CanvasText;
+    background: Canvas;
+    forced-color-adjust: none;
+  }
+
+  .cv-switch__knob,
+  .cv-choice[data-critical] .cv-switch__knob {
+    background: CanvasText;
+  }
+
+  .cv-switch[aria-checked="true"],
+  .cv-choice[data-critical] .cv-switch[aria-checked="true"] {
+    border-color: Highlight;
+    background: Highlight;
+  }
+
+  .cv-switch[aria-checked="true"] > .cv-switch__knob,
+  .cv-choice[data-critical] .cv-switch[aria-checked="true"] > .cv-switch__knob {
+    background: HighlightText;
+  }
+
+  .cv-choice:hover:not([data-disabled], [data-gated]) .cv-switch {
+    border-color: Highlight;
+    box-shadow: none;
+  }
+
+  .cv-switch:focus-visible {
+    outline-color: Highlight;
+  }
+
+  /* Disabled wins over on and armed: each rule repeats the checked / critical selector with more specificity. */
+  .cv-choice[data-disabled] .cv-switch,
+  .cv-choice[data-disabled] .cv-switch[aria-checked],
+  .cv-choice[data-disabled][data-critical] .cv-switch[aria-checked] {
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .cv-choice[data-disabled] .cv-switch > .cv-switch__knob,
+  .cv-choice[data-disabled] .cv-switch[aria-checked] > .cv-switch__knob,
+  .cv-choice[data-disabled][data-critical] .cv-switch[aria-checked] > .cv-switch__knob {
+    background: GrayText;
+  }
+
+  /* Gated: the border greys and the Highlight fill goes; the knob, whose position carries the state, stays CanvasText. */
+  .cv-switch[aria-disabled="true"],
+  .cv-choice[data-critical] .cv-switch[aria-disabled="true"][aria-checked] {
+    border-color: GrayText;
+    background: Canvas;
+  }
+
+  .cv-switch[aria-disabled="true"]::before {
+    content: none;
+  }
+
+  .cv-switch[aria-disabled="true"] > .cv-switch__knob,
+  .cv-choice[data-critical] .cv-switch[aria-disabled="true"][aria-checked] > .cv-switch__knob {
+    background: CanvasText;
+  }
+}
+
+/* The reduce pair for the knob slide and track fade: the end state appears at once (kept here so the file is self-contained). */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
