@@ -6,7 +6,9 @@ Statecharts record; this synchronous code enforces (C-2.21), before any send:
 * **Legality** is B1's static table (`Legality`, read from the committed chart, C-2.19). A command
   the order's state does not list raises `IllegalTransition`, and a `lifecycle` step that is not an
   edge of the chart is refused before its row is written (24-internal-schemas.md Sec.8.2 S8). A
-  receipt is never the gate on a `defer` chart (CV-C06).
+  receipt is never the gate on a `defer` chart (CV-C06). An exit (`AMEND`, `CANCEL`) is judged on
+  the state and version B1 settled in, never on the plain view, so B1 takes it at once or it is
+  refused, and none is held for later (#4711).
 * **S5.** Fills are always applied (S4 dedupes them). An `orders`-topic push older than the last
   one the order took, or one its state has no arm for while no request is in flight, is ignored.
   A push that outruns the order waits in a bounded reorder buffer, released in `(ts_exec, seq)`
@@ -72,7 +74,7 @@ from candleviewer.statechart.gateway import (
     GatewayError,
     receipt_is_conclusive,
 )
-from candleviewer.statechart.persistence import ChainTripLatch, MachineKey
+from candleviewer.statechart.persistence import ChainTripLatch, MachineKey, quiescent
 from candleviewer.statechart.plugins import LogPager, MachineEventSink, Pager, cv_plugins
 from candleviewer.storage.errors import StorageQueryFailed
 from candleviewer.storage.repositories.orders import (
@@ -165,6 +167,13 @@ MAX_PUSH_LEAD_MS: Final = 60_000
 #: Seconds the facade waits on its audit, notice and read ports (C-2.18): an order's lock is held
 #: meanwhile, so a stalled sink must not hold the order, or a KILL, for longer.
 PORT_TIMEOUT: Final = 5.0
+#: Seconds an exit waits, the order's lock held, for B1 to settle before it is judged (#4711): no
+#: longer than a port is waited on. Past it the exit is refused, nothing sent.
+QUIESCE_TIMEOUT: Final = PORT_TIMEOUT
+#: Seconds between two looks at B1 while an exit waits: the runtime announces no step's end. With
+#: the look that confirms a calm one, a pass of the loop later, B1 is looked at no more than twice
+#: a poll, so no faster than ~100 Hz (C-2.20).
+QUIESCE_POLL: Final = 0.02
 #: Rebuilt machines a caller follows the order through (C-2.18): one that waited on an order's
 #: lock while resyncs replaced its machine takes the newest, or is answered as if none held it.
 FOLLOWS: Final = 4
@@ -211,6 +220,8 @@ SYSTEM_ONLY: Final = frozenset({
 })  # fmt: skip
 #: Order-path commands a chain-trip latched machine refuses (CV-C63, 23 Sec.6.4 `degraded`).
 ORDER_PATH: Final = frozenset({"SEND", "CANCEL", "AMEND", "ADOPT"})
+#: The exits (24 Sec.8.4), each judged on the state and version B1 settled in (`_quiesce`).
+EXITS: Final = frozenset({"AMEND", "CANCEL"})
 #: Protection facts: the region takes them while the machine lives; B8 holds the position after.
 _PROTECTION: Final = frozenset({"SL_OBSERVED", "SL_LOST", "SL_DEADLINE"})
 #: Exchange ends that wait until the order holds every fill they report (INV-B1-k).
@@ -491,7 +502,8 @@ class _Held:
 @dataclass(eq=False, slots=True)
 class _Order:
     """One live order machine and the plain view its committed steps leave (C-2.20): the facade
-    decides from this, never by querying the interpreter."""
+    decides from this, never by querying the interpreter, but for an exit, user-paced and no hot
+    path, which it judges on B1's settled state (`_quiesce`, #4711)."""
 
     order_id: UUID
     account_id: UUID
@@ -615,6 +627,8 @@ class OrderMachines:
 
         self._transitions = counter("oms_state_transitions_total")
         self._illegal = counter("oms_illegal_transitions_total").child()
+        self._unsettled = counter("oms_exit_unsettled_total").child()
+        self._exits_deferred = counter("oms_exit_deferred_total").child()
         self._anomalies = counter("oms_reconcile_anomaly_total").child()
         self._backstops = counter("oms_native_stop_backstop_total").child()
         unknown = specs["oms_unknown_orders"]
@@ -774,7 +788,17 @@ class OrderMachines:
         A command that waited while a resync rebuilt the order's machine is taken by the rebuilt
         one. With `expected_seq` (an exit route's `If-Match`, slice 4's ruling Q5), a command the
         gates above admit is refused with `VersionConflict` when the order's `version` has moved
-        on, checked under the order's lock, with nothing sent or written.
+        on, checked under the order's lock, with nothing sent or written. Sent or refused, the
+        order is settled before its lock is let go.
+
+        An exit (`EXITS`) is judged on the state and version B1 settled in, never on the plain
+        view (#4711): under the order's lock the facade waits until B1 has no step in flight and
+        none waiting (`_quiesce`, at most `QUIESCE_TIMEOUT`), so the exit is the next event B1
+        takes. It is taken at once, in the state it was judged in, or refused: B1 never holds one
+        for later (S10), and a receipt that says it does is logged at ERROR, counted and paged
+        (`_exit_deferred`), the command answered as before. One B1 has not settled for in time is
+        refused (`IllegalTransition`), nothing sent; a machine that is not running is not waited
+        on, as the runtime refuses the send (`OrderStepRefused`).
 
         `on_taken`, when given, is called once the facade's own gates admitted the command, the
         version included, and before the send: under the order's lock, so whatever it marks is
@@ -783,10 +807,10 @@ class OrderMachines:
         or whose order no machine here holds, and once for one that waited out a resync, by the
         attempt that sends. A send the gateway then refuses, or a step B1 rolls back, raises
         after it was called, and an exit forgets its registration on every raise (`oms.exits`);
-        B1 may also leave the step's outcome unknown or defer it (S10). It is called
-        synchronously under the lock, so it must be quick and never await or re-enter the
-        facade. One that raises propagates before the send: nothing is sent, and the order's
-        lock and `busy` are released."""
+        B1 may also leave the step's outcome unknown. It is called synchronously under the
+        lock, so it must be quick and never await or re-enter the facade. One that raises
+        propagates before the send: nothing is sent, and the order's lock and `busy` are
+        released."""
         payload = payload or {}
         self._vet(COMMAND_EVENTS, event, payload)
         o = self._live(account_id, order_id)
@@ -795,10 +819,12 @@ class OrderMachines:
                 break
             async with self._holding(o):
                 if o.interp is not None:
-                    self._admit(o, event, actor, expected_seq)
-                    if on_taken is not None:
-                        on_taken()
                     try:
+                        if event in EXITS:
+                            await self._quiesce(o, event)
+                        self._admit(o, event, actor, expected_seq)
+                        if on_taken is not None:
+                            on_taken()
                         await self._send_order(o, event, payload)
                     finally:
                         await self._settle(o)
@@ -1304,13 +1330,18 @@ class OrderMachines:
     def _admit(self, o: _Order, event: str, actor: Actor, expected_seq: int | None = None) -> None:
         """The synchronous gates of a command, before any send: the chain-trip latch (CV-C63), S9
         and SR-E29-12 (whose source may send it), a recorded stop's amend (24 Sec.8.8 rule 6),
-        legality, and last, when given, the version the command expects (slice 4, Q5)."""
+        legality, and last, when given, the version the command expects (slice 4, Q5). An exit
+        is judged on the state and version B1 settled in (`_quiesce`), never on the plain view;
+        any other command on the plain view."""
+        state, seq = o.lifecycle, o.view.get("event_seq")
+        if event in EXITS:  # B1 has settled (`_quiesce`): its own state and version (#4711)
+            state, seq = _leaves(o.interp).get("lifecycle", ""), o.interp.context.get("event_seq")
         if event in ORDER_PATH:
             key = MachineKey(MACHINE, o.key, o.environment)
             if getattr(o.interp, "chain_trips", 0) and not self._latch.is_latched(key):
                 self._latch.latch(key, "chain_trips")
             self._latch.admit_command(key)
-        unowned = o.lifecycle == "untracked" and actor in MANAGERS
+        unowned = state == "untracked" and actor in MANAGERS
         misowned = (event in USER_ONLY and actor != "user") or (
             event in SYSTEM_ONLY and actor != "system"
         )
@@ -1318,14 +1349,48 @@ class OrderMachines:
         # whatever its position (`order_not_amendable`); a cancel is the cancel service's to judge.
         unamendable = event == "AMEND" and o.view.get("recorded_stop") is True
         if unowned or misowned or unamendable:
-            raise self._refuse(o.lifecycle, event)
+            raise self._refuse(state, event)
         try:
-            self.legality.require(o.lifecycle, event)
+            self.legality.require(state, event)
         except IllegalTransition:
-            raise self._refuse(o.lifecycle, event) from None
-        if expected_seq is not None and o.view.get("event_seq") != expected_seq:
-            logger().warning("oms_version_conflict", state=o.lifecycle, attempted=event)
+            raise self._refuse(state, event) from None
+        if expected_seq is not None and seq != expected_seq:
+            logger().warning("oms_version_conflict", state=state, attempted=event)
             raise VersionConflict
+
+    async def _quiesce(self, o: _Order, event: str) -> None:
+        """Until B1 has no step in flight and none waiting (`persistence.quiescent`), under the
+        order's lock, so an exit judged then is the next event B1 takes, in the state it was
+        judged in (#4711): a state that takes an exit runs no `lifecycle` invoke or timer whose
+        result could come first, and the `protection` region's result moves no `lifecycle` state.
+        B1 must read so twice, a pass of the loop apart, so an event its loop took but has not
+        begun shows; a busy B1 is looked at again a `QUIESCE_POLL` later (C-2.20). A machine that
+        is not running takes no event and holds none for later, so its exit waits for nothing:
+        the runtime refuses the send (`OrderStepRefused`). Past `QUIESCE_TIMEOUT` the exit is
+        refused (`IllegalTransition`, counted in `oms_exit_unsettled_total`, never as a refusal of
+        the static table), nothing sent, never judged on a state B1 may still leave;
+        `OrderNotLoaded` once no machine holds the order. Each wait is timed, so the loop is never
+        blocked."""
+        calm = False
+        try:
+            async with asyncio.timeout(QUIESCE_TIMEOUT):
+                while o.interp is not None:
+                    if not o.interp.is_running:
+                        return  # it takes and holds nothing: the runtime refuses the send
+                    if quiescent(o.interp):
+                        if calm:
+                            return
+                        calm = True
+                        await asyncio.sleep(0)
+                    else:
+                        calm = False
+                        await asyncio.sleep(QUIESCE_POLL)
+        except TimeoutError:
+            self._unsettled.inc()
+            link = o.view.get("order_link_id")
+            logger().warning("oms_exit_unsettled", order_link_id=link, attempted=event)
+            raise IllegalTransition(o.lifecycle, event) from None
+        raise OrderNotLoaded("no machine in this process holds the order")
 
     def _refuse(self, state: str, attempted: str) -> IllegalTransition:
         """`ILLEGAL_TRANSITION`, counted and logged: nothing was sent or written."""
@@ -1358,14 +1423,25 @@ class OrderMachines:
         rename it. A step B1 rolled back raises `OrderStepRefused`, `deterministic` when it
         refused its own data (`_data_refusal`), or `OrderStepUnknown` when its row may be ahead
         of the machine (`_BEHIND_ROW`, which also set `resync`); a deferred one is no error (S10),
-        and no receipt is a gate (CV-C06)."""
+        and no receipt is a gate (CV-C06). B1 never holds an exit for later (#4711): a receipt
+        that says it does fails loudly (`_exit_deferred`) and raises nothing."""
         receipt = await self._gateway.send(o.key, {**payload, "type": event}, wait=_AWAIT_STEP)
+        if event in EXITS and getattr(receipt, "deferred", False) is True:
+            self._exit_deferred(o, event)
         if receipt_is_conclusive(receipt) and (error := receipt.error) is not None:
             if isinstance(error, _BEHIND_ROW):
                 raise OrderStepUnknown(event, type(error).__name__)
             data = _data_refusal(error)
             typed = error if isinstance(error, OmsError) else None  # names no value (C-12.6)
             raise OrderStepRefused(event, type(error).__name__, deterministic=data) from typed
+
+    def _exit_deferred(self, o: _Order, event: str) -> None:
+        """B1 never holds an exit for later (#4711, 24 Sec.8.2 S10): a receipt that says it does
+        fails loudly, counted in `oms_exit_deferred_total`, logged at ERROR with the order's id
+        and the exit's kind, and paged. The command is answered as before."""
+        self._exits_deferred.inc()
+        logger().error("oms_exit_deferred", order_id=str(o.order_id), kind=event)
+        self._raise_alert("page", "oms_exit_deferred")
 
     async def _take(self, o: _Order, event: str, push: dict[str, Any]) -> bool:
         """S5 and S6 for one push to a live machine; True when the push is an S6 anomaly."""

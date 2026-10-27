@@ -22,6 +22,11 @@ dependencies = [
   "structlog>=24.1",
   "orjson>=3.10",
   "msgpack>=1.2.4",
+  # A move of this pin also re-runs tests/unit/oms/test_exit_settled_state.py and re-reads the
+  # runtime's _next_event: the OMS facade's exit wait (statechart.persistence.quiescent, #4711)
+  # rests on its run loop yielding at most once (one amortised sleep(0)) between an inbox pop and
+  # raising its step flag, and on its arming the replay of deferred events synchronously after a
+  # step.
   "xstate-statemachine==0.9.1",
   "jsonschema>=4.23",
   "argon2-cffi>=25.1.0",

@@ -2923,6 +2923,31 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E29",
     ),
     _s(
+        "oms_exit_unsettled_total",
+        "counter",
+        "refusals",
+        (),
+        "Exit commands (AMEND, CANCEL) the order facade refused as B1 had not settled within "
+        "QUIESCE_TIMEOUT: never judged, nothing sent, answered as a state that takes no exit "
+        "(#4711); kept apart from oms_illegal_transitions_total, the static table's refusals.",
+        "dashboard",
+        _P,
+        "E29",
+    ),
+    _s(
+        "oms_exit_deferred_total",
+        "counter",
+        "exits",
+        (),
+        "Exit commands (AMEND, CANCEL) whose receipt said B1 held them for later, against the "
+        "guarantee that B1 never does (#4711, 24 Sec.8.2 S10): each is logged oms_exit_deferred "
+        "at ERROR with the order's id and the exit's kind and paged by the order facade, the "
+        "command answered as before.",
+        "> 0 (page; the facade pages each)",
+        _P,
+        "E29",
+    ),
+    _s(
         "oms_reconcile_anomaly_total",
         "counter",
         "anomalies",

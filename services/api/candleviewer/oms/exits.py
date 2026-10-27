@@ -724,8 +724,10 @@ class OrderExits:
         `OrderStepUnknown`, SR-E29-15, one that had not begun within the settle's bound, or one
         still to come at `aclose`) finds none of this request's, and never another request's,
         whose command the facade has not taken: it refuses an exit of the order while this
-        one's step stands, and B1 calls only while a step stands. Its records name no request.
-        An `AMEND` B1 defers is #4711's."""
+        one's step stands, and B1 calls only while a step stands. Its records name no request,
+        and say so (`attribution: unregistered`). The facade judges the command on the state
+        and version B1 settled in, so B1 takes it at once or it is refused, and none is held
+        for later (#4711)."""
         kind = _kind(operation)
         account, pending = row.exchange_account_id, f"{kind}_pending"
         watch = self._d.commands.expect_exit(row.id, kind, request_id=request_id, actor=actor)
