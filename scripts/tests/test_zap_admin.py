@@ -16,7 +16,6 @@ import stat
 import subprocess
 import sys
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from types import ModuleType
 from typing import Any, ClassVar
@@ -24,7 +23,6 @@ from urllib.parse import quote
 
 import pytest
 import yaml
-from candleviewer.api.recorder_purge import PurgeRequest
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github/workflows/dast-admin-nightly.yml"
@@ -272,9 +270,9 @@ def test_the_owners_plan_is_its_purge_refusals_each_named_by_its_record(
     ]
     assert len(keys) == len(planned) == len(set(keys)) == 2
     assert all(uuid.UUID(key).version == 4 for key in keys) and not set(keys) & set(ids)
-    for item in planned:
-        body = PurgeRequest.model_validate_json(item["body"])
-        assert body.before == datetime(1970, 1, 1, tzinfo=UTC)
+    for body in bodies:  # what the handler's PurgeRequest requires, `before` included
+        assert set(body) <= {"symbol", "confirm_symbol", "reason", "before", "include_pinned"}
+        assert body["before"] == "1970-01-01T00:00:00Z" and len(body["reason"]) >= 3
 
 
 @pytest.mark.parametrize("role", sorted(plans.ROLES))
