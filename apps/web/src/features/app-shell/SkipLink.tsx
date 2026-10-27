@@ -1,7 +1,7 @@
 import { useState, type CSSProperties, type JSX, type MouseEvent } from "react";
 
 /** Visually hidden until focused (the standard clip pattern; these sizes are not layout spacing). */
-const HIDDEN: CSSProperties = {
+export const HIDDEN: CSSProperties = {
   position: "absolute",
   width: 1,
   height: 1,

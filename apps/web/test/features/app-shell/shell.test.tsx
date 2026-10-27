@@ -134,11 +134,16 @@ describe("E10-S01 S1: skip link and route focus", () => {
 });
 
 describe("E10-S01 S1: shell slots", () => {
-  it("render nothing by default", async () => {
+  it("render nothing by default, apart from S3's connection chip", async () => {
     signIn("owner");
     renderAt("/risk");
     await screen.findByRole("heading", { name: /R-150/ });
-    for (const slot of ["banner", "connection", "canvas-overlay"]) {
+    const connection = document.querySelector<HTMLElement>('[data-shell-slot="connection"]');
+    expect(connection).not.toBeNull();
+    if (connection !== null) {
+      expect(within(connection).getByRole("button", { name: /^Connection: / })).toBeInTheDocument();
+    }
+    for (const slot of ["banner", "canvas-overlay"]) {
       const el = document.querySelector(`[data-shell-slot="${slot}"]`);
       expect(el, slot).not.toBeNull();
       expect(el?.childNodes.length, slot).toBe(0);

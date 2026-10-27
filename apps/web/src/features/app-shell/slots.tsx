@@ -4,7 +4,8 @@
  *
  * - `ShellBannerSlot`: one full-width row between the top bar and the canvas (D03 §2, 0 px when
  *   empty). It has no landmark of its own; a banner brings its own role (`status` / `alert`).
- * - `ShellConnectionSlot`: inside the header (`banner`) landmark.
+ * - `ShellConnectionSlot`: inside the header (`banner`) landmark. S3 fills it with the CMP-076 chip
+ *   and the shell's live-region pair (`ConnectionStatusSlot`).
  * - `ShellCanvasOverlaySlot`: a positioned sibling of the route outlet inside `main`, covering the
  *   visible canvas. It never wraps or re-renders the outlet. Its layer ignores the pointer, so
  *   overlay content that takes input sets `pointer-events: auto` itself.
@@ -14,12 +15,13 @@
  * re-renders the outlet.
  */
 import type { JSX } from "react";
+import { ConnectionStatusSlot } from "./ConnectionStatusSlot";
 
 /** A shell slot: a prop-less component that renders its content or nothing. */
 export type ShellSlot = () => JSX.Element | null;
 
 export const ShellBannerSlot: ShellSlot = () => null;
 
-export const ShellConnectionSlot: ShellSlot = () => null;
+export const ShellConnectionSlot: ShellSlot = ConnectionStatusSlot;
 
 export const ShellCanvasOverlaySlot: ShellSlot = () => null;
