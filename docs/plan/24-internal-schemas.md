@@ -2187,6 +2187,15 @@ _Added for G-6 (#2876)._ Putting a position's recorded stop back over a looser o
 
 **Risk-increasing amends: the one definition (E29-T04 slice 4, #913 ruling Q10).** "Quantity up" is the quantity raised on an order that is not reduce-only, and "trigger re-armed" a conditional entry's trigger moved, an exposure-increasing (entry) trigger; a change of the `price` or `trigger_price` of an order that is not reduce-only is risk-increasing too, as a resting entry repriced to a marketable price fills at once, so its risk check is evaluated at the amended price (S4-A's security look, SEC-S4A-01; the orchestrator's ruling of 2026-10-24 15:26Z); a take-profit change, a reduce-only order's price, a quantity-reducing or stop-tightening amend and every cancel are none. `22-api-openapi.yaml` (`amendOrder`, `ArmToken`) and §8.4's exit routes point here.
 
+**Trade-group member readiness (E28-T05 S2a, #909).** A definition read's "N of M ready" (`TradeGroupReadiness` in 22,
+added by S0) is each member's account standing, read from in-memory state only (C-2.21). The first reason wins: the
+member's switch (`member_disabled`), no gate composed (`trading_disabled`), the account row (`account_disabled`), the
+order-entry gate's refusal from the table above (`no_active_key` is `key_invalid`, `account_disabled_by_policy` is
+`account_disabled`, `account_unhealthy` itself, `maintenance` and any unmapped reason `trading_disabled`), the B18 kill
+switch (`kill_switch_engaged`), the live gate for a live account (`trading_disabled`), then the lockout
+(`account_locked`); a source that errors reads `trading_disabled`. `NoLockouts` is the lockout source until E39-S02. The
+preview's per-leg `rejection`, not readiness, carries the risk state (`risk_state_unavailable`) and the OMS fence.
+
 ### 8.11 Risk state and the gate's verdict (E39)
 
 _Added for E39-T02 (#882)._ The domain objects of `services/api/candleviewer/risk/models.py`: frozen pydantic v2,
