@@ -82,6 +82,27 @@ _DOWNLOAD_HEAVY = [
     pytest.param("/admin/backups/" + "k " * (_CAP // 2), id="id-to-the-end"),
 ]
 
+
+def _fill(unit: str, head: str = "") -> str:
+    """The `_TAIL_MAX` characters that end a long text: `head`, then `unit` repeated."""
+    return (head + unit * redaction._TAIL_MAX)[: redaction._TAIL_MAX]
+
+
+#: The last `_TAIL_MAX` characters of a long text, which the cut reads each line break of for a
+#: label (#4671): a label before each line break, a label and then a long run of blank lines, and
+#: a key name and its separator on lines of their own (the most line breaks to read back).
+_LABEL_ENDS = [
+    pytest.param(_fill("sign:\n"), id="a-label-per-line"),
+    pytest.param(_fill("\n", head="sign:"), id="a-label-then-blank-lines"),
+    pytest.param(_fill("sign\n:\n"), id="a-name-and-separator-per-line"),
+]
+
+
+def _long_text_ending_in(end: str) -> str:
+    """A text of 5 MB: a single run, a line break, and `end` as its last characters."""
+    return "k" * 5_000_000 + "\n" + end
+
+
 _Found = tuple[str | None, tuple[int, int]] | None
 
 
@@ -131,6 +152,56 @@ def test_redaction_scan_still_redacts_a_jwt_after_a_long_run() -> None:
     assert redact_text(text) == "[redacted:jwt-shape]"
 
 
+class _ReadBackSpy:
+    """Stands in for `_LABEL_END_BACK` and records how many characters each read-back is given."""
+
+    def __init__(self, pattern: re.Pattern[str]) -> None:
+        self._pattern = pattern
+        self.lengths: list[int] = []
+
+    def match(self, string: str) -> re.Match[str] | None:
+        self.lengths.append(len(string))
+        return self._pattern.match(string)
+
+
+@pytest.fixture
+def read_backs(monkeypatch: pytest.MonkeyPatch) -> _ReadBackSpy:
+    spy = _ReadBackSpy(redaction._LABEL_END_BACK)
+    monkeypatch.setattr(redaction, "_LABEL_END_BACK", spy)
+    return spy
+
+
+# The next two tests count operations, not time, so they hold on any runner; the perf case below
+# holds the same ends to a clock, in the perf lane only (#4671).
+@pytest.mark.parametrize("end", _LABEL_ENDS)
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_redaction_cut_reads_back_once_for_each_line_that_holds_text(
+    redact: Callable[[str], str], end: str, read_backs: _ReadBackSpy
+) -> None:
+    out = redact(_long_text_ending_in(end))
+
+    # each read-back finds a label, to the text's end: no line is kept
+    assert out == redaction._TRUNCATED
+    # a run of blank lines is passed over in one step, not read back at each of its line breaks
+    lines_that_hold_text = sum(1 for line in end.split("\n") if line.strip())
+    assert 0 < len(read_backs.lengths) <= lines_that_hold_text
+
+
+@pytest.mark.parametrize("end", _LABEL_ENDS)
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_redaction_cut_reads_back_at_most_256_characters_from_a_line_break(
+    redact: Callable[[str], str], end: str, read_backs: _ReadBackSpy
+) -> None:
+    redact(_long_text_ending_in(end))
+
+    assert read_backs.lengths
+    assert max(read_backs.lengths) <= 256  # `_LABEL_REACH`, whatever the text's length
+
+
 @pytest.mark.perf
 @pytest.mark.parametrize("text", _PATHOLOGICAL)
 def test_perf_redact_text_scans_a_capped_pathological_string_within_budget(text: str) -> None:
@@ -158,22 +229,26 @@ def test_perf_a_5_mb_run_is_cut_within_budget(redact: Callable[[str], str]) -> N
 
 
 @pytest.mark.perf
+@pytest.mark.parametrize("end", _LABEL_ENDS)
 @pytest.mark.parametrize(
     "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
 )
 def test_perf_a_long_text_that_ends_in_labels_is_cut_within_budget(
-    redact: Callable[[str], str],
+    redact: Callable[[str], str], end: str
 ) -> None:
-    # a label before each line break of the end: each is read back at most `_LABEL_REACH`
-    # characters, whatever the text's length (#4671)
-    text = "k" * 5_000_000 + "\n" + "sign:\n" * 512
+    # each line break of the end is read back at most `_LABEL_REACH` characters, and a run of
+    # blank lines in one step, whatever the text's length (#4671)
+    text = _long_text_ending_in(end)
     best_ms = float("inf")
     for _ in range(5):
         start = time.perf_counter()
         out = redact(text)
         best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
     assert out == redaction._TRUNCATED  # each label goes with the line it names, the run whole
-    assert best_ms < 5.0, f"{best_ms:.3f} ms (about 1.2 ms; reading the whole text back: seconds)"
+    assert best_ms < 5.0, (
+        f"{best_ms:.3f} ms (about 1-3 ms; reading the whole text back: seconds; "
+        "reading back at each blank line: about 30 ms)"
+    )
 
 
 @pytest.mark.perf
