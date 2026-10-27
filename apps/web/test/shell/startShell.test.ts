@@ -113,6 +113,22 @@ describe("startShell", () => {
     }
   });
 
+  it("stop() drops the degraded facts and row 9's hand-over timer (E10-S04, #4723 review)", () => {
+    vi.useFakeTimers();
+    try {
+      const { port, handle } = started();
+      port.say({ t: "system", update: { kind: "exchange_state", private_ws: "connecting" } });
+      expect(getShellState().degraded.asserted).toEqual({ privateReconnect: 1 });
+      handle.stop();
+      expect(getShellState().degraded.asserted).toEqual({});
+      const before = getShellState();
+      vi.advanceTimersByTime(PRIVATE_HANDOVER_MS);
+      expect(getShellState()).toBe(before); // the dropped timer wrote nothing
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("maps the client's connection onto the shell's, and says it again on each transition", () => {
     setShellState({ connection: { kind: "live" } }); // what an earlier shell left
     const { port, handle } = started();
@@ -178,6 +194,17 @@ describe("startShell", () => {
     expect(getActiveClient()).not.toBeNull();
     second.handle.stop();
     expect(getActiveClient()).toBeNull();
+  });
+
+  it("a stale stop() leaves the live shell's degraded facts alone (E10-S04)", () => {
+    const first = started();
+    first.port.say({ t: "system", update: { kind: "exchange_state", public_ws: "disconnected" } });
+    const second = started(); // stops the first: its facts go with it
+    expect(getShellState().degraded.asserted).toEqual({});
+    second.port.say({ t: "system", update: { kind: "notice", reason: "maintenance.enabled" } });
+    first.handle.stop();
+    expect(getShellState().degraded.asserted).toEqual({ maintenance: 1 });
+    second.handle.stop();
   });
 
   it.each(["SharedWorker", "Worker"] as const)(

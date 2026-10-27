@@ -4,7 +4,7 @@
  * notes). Pure: `reduceDegraded(facts, update)` depends on its arguments only.
  *
  * Routing (`docs/design/E17/E17-D02.md` §6, first match wins; one reason, one surface): row 6
- * blocking (maintenance, the `postgres` component), row 8 the public exchange feed, row 10 the other
+ * blocking (maintenance: the `notice` or the `maintenance.mode` flag; the `postgres` component), row 8 the public exchange feed, row 10 the other
  * components. The overall `health` word routes nothing by itself. The transport states (the SCR-152
  * region) are never an issue here.
  *
@@ -106,6 +106,12 @@ function verdicts(u: SystemUpdate): Map<DegradedIssueId, boolean> {
     if (u.reason === "maintenance.enabled") out.set("maintenance", true);
     if (u.reason === "maintenance.disabled") out.set("maintenance", false);
   }
+  if (u.kind === "health" || u.kind === "feature_flags") {
+    // §15.9: the flag re-asserts maintenance on every snapshot or flag push; the notice is one-shot.
+    const flags: unknown = u.feature_flags;
+    const on = isRecord(flags) ? flags["maintenance.mode"] : undefined;
+    if (typeof on === "boolean") out.set("maintenance", on);
+  }
   if (u.kind === "health" && Array.isArray(u.components)) {
     for (const c of u.components as unknown[]) {
       if (!isRecord(c)) continue;
@@ -162,4 +168,19 @@ export function degradedIssues(facts: DegradedFacts): readonly DegradedIssue[] {
     }
   }
   return issues;
+}
+
+let lastFacts: DegradedFacts | null = null;
+let lastIssues: readonly DegradedIssue[] = [];
+
+/**
+ * `degradedIssues`, memoized on the facts' identity: the store keeps `degraded` by reference until a
+ * frame changes it, so an unrelated store change (latency, connection) returns the same rows array.
+ */
+export function selectDegradedIssues(facts: DegradedFacts): readonly DegradedIssue[] {
+  if (facts !== lastFacts) {
+    lastFacts = facts;
+    lastIssues = degradedIssues(facts);
+  }
+  return lastIssues;
 }

@@ -143,11 +143,23 @@ describe("E10-S01 S1: shell slots", () => {
     if (connection !== null) {
       expect(within(connection).getByRole("button", { name: /^Connection: / })).toBeInTheDocument();
     }
-    for (const slot of ["banner", "canvas-overlay"]) {
+    for (const slot of ["canvas-overlay"]) {
       const el = document.querySelector(`[data-shell-slot="${slot}"]`);
       expect(el, slot).not.toBeNull();
       expect(el?.childNodes.length, slot).toBe(0);
     }
+    // #306 slice 3: the banner slot holds only CMP-092's two empty live regions (E17-D02 §11).
+    const banner = document.querySelector('[data-shell-slot="banner"]');
+    expect(
+      [...(banner?.children ?? [])].map((c) => [
+        c.getAttribute("aria-live"),
+        c.getAttribute("role"),
+        c.textContent,
+      ]),
+    ).toEqual([
+      ["polite", null, ""],
+      ["assertive", null, ""],
+    ]);
   });
 
   it("place filled content in its region and never remount the outlet", () => {

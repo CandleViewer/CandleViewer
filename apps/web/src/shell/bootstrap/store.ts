@@ -133,6 +133,12 @@ export function applySystemUpdate(update: SystemUpdate): void {
   syncHandover(degraded);
 }
 
+/** Drops the degraded facts and row 9's hand-over timer, so a stopped shell leaves neither behind. */
+export function clearDegraded(): void {
+  clearHandover();
+  setShellState({ degraded: INITIAL_DEGRADED_FACTS });
+}
+
 /** Test-only reset to the initial, unauthenticated shell state. */
 export function resetShellState(): void {
   clearHandover();

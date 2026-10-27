@@ -8,6 +8,7 @@ import {
   degradedIssues,
   handOverPrivateReconnect,
   reduceDegraded,
+  selectDegradedIssues,
   type DegradedFacts,
 } from "../../../src/features/system-states/degradedIssues";
 
@@ -16,6 +17,7 @@ const run = (...updates: unknown[]): DegradedFacts =>
     (facts, u) => reduceDegraded(facts, u as SystemUpdate),
     INITIAL_DEGRADED_FACTS,
   );
+const MAINTENANCE_ON = { kind: "notice", reason: "maintenance.enabled" };
 const ids = (facts: DegradedFacts): string[] => degradedIssues(facts).map((i) => i.id);
 
 const health = (components: unknown[], extra: object = {}): SystemUpdate =>
@@ -91,6 +93,32 @@ describe("degraded issues", () => {
     const facts = run(on, { kind: "notice", reason: "auth.break_glass_used" });
     expect(ids(facts)).toEqual(["maintenance"]);
     expect(ids(run(on, { kind: "notice", reason: "maintenance.disabled" }))).toEqual([]);
+  });
+
+  it("test_degraded_maintenance_flag_in_snapshot_and_flag_push_asserts_and_clears", () => {
+    // `23-ws-protocol.md` §15.9's `system` snapshot example, with the flag a fresh tab would see.
+    const snapshot = {
+      kind: "health",
+      health: "healthy",
+      kill_switch: { engaged: false, scope: "global" },
+      feature_flags: { "trading.live_enabled": false, "maintenance.mode": true },
+      exchange: { public_ws: "connected", private_ws: "connected", rest: "healthy" },
+      clock_offset_ms: 4,
+      degraded_topics: [],
+    };
+    expect(degradedIssues(run(snapshot))).toMatchObject([{ id: "maintenance", assertedSeq: 1 }]);
+    const flag = (on: unknown) => ({
+      kind: "feature_flags",
+      feature_flags: { "maintenance.mode": on },
+    });
+    expect(degradedIssues(run(snapshot, flag(true)))[0]?.assertedSeq).toBe(2); // a re-assertion
+    expect(ids(run(snapshot, flag(false)))).toEqual([]);
+    expect(ids(run(MAINTENANCE_ON, flag("yes"), { kind: "feature_flags" }))).toEqual([
+      "maintenance",
+    ]);
+    expect(run({ ...snapshot, feature_flags: { "trading.live_enabled": false } }).asserted).toEqual(
+      {},
+    );
   });
 
   it("test_degraded_overall_health_word_and_other_components_route_nothing", () => {
@@ -176,5 +204,14 @@ describe("degraded issues", () => {
       expect(row.message).toMatch(/\.$/);
       if (row.stillWorks !== null) expect(row.stillWorks).toMatch(/\.$/);
     }
+  });
+});
+
+describe("selectDegradedIssues", () => {
+  it("returns the same rows array until the facts change, so unrelated store changes rebuild nothing", () => {
+    const facts = run(MAINTENANCE_ON);
+    const rows = selectDegradedIssues(facts);
+    expect(selectDegradedIssues(facts)).toBe(rows);
+    expect(selectDegradedIssues(run(MAINTENANCE_ON, MAINTENANCE_ON))[0]?.assertedSeq).toBe(2);
   });
 });
