@@ -1,6 +1,6 @@
 """The `trade_groups` WS topic (E28-T05 #909, slice S4a; 23-ws-protocol.md §6.2, §8.2, §15.5): the
 accounts module's read model of the active trade groups, its `SnapshotSource` for the family, and
-the deltas the OMS's committed group writes publish on it. Plain code, never a statechart (C-2.20).
+the frames the OMS's committed group writes publish on it. Plain code, never a statechart (C-2.20).
 
 The accounts module may import neither `ws` nor `auth` (CONSTITUTION §3), so the topic is typed
 structurally, as `wallet_topic` is: a subscription by the fields read here, and the hub's
@@ -11,34 +11,38 @@ injected by the composition root.
   `closing`), each with every leg. `seed` loads them once, as stored at start; before it, `build`
   gives `None` and a subscription stays `snapshot_pending` (§7.7). An event may come first: its
   group is held, and the seed neither replaces a held group nor holds one that recently ended.
-- **Deltas.** `created`, `leg_changed` and `group_changed`, each a committed write as stored,
-  update the model and publish one delta, never merged (§8.2): `id`, `status`, `updated_at_ms`
-  (the latest write on the group or a leg), `totals` (`group_totals`) and the changed legs, each
-  whole. A created group is sent whole, as a snapshot item: every member is new. A group that
-  leaves the active statuses leaves the model before its frame goes out, so a terminal frame is
-  its last. The ids of the `ENDED_MAX` groups that most recently reached a final status are kept
-  (C-2.18): a seed entry or a creation for one is refused, and a later change finds no group, so a
-  late event sends nothing. A `draft` group is not held and nothing of it is sent; its updates are
-  no end, so it can still be handed over whole (`created`) once it is active.
-- **Scope (SR-E28-21).** A group is only ever sent whole. A delta names its first leg's account to
-  the hub (`publish(account=)`) and asks, when it is sent, `select` whether the subscription's
-  accounts (narrowed in place on every grant change, §9.5) hold every leg's and whether its
-  `status` option lists the group's status before or after the change (a value outside
-  `TradeGroupStatus` matches nothing), and `viewer` whether the connection's principal, as it is
-  then, may see every leg's account. A grant withdrawn mid-stream stops the group at its next
-  frame, the terminal one included.
+- **Frames.** `created`, `leg_changed` and `group_changed`, each a committed write as stored,
+  update the model and publish, never merged (§8.2). A subscription gets at most one frame per
+  change, from two publishes on disjoint `select`s. The group's whole item, as a snapshot item,
+  goes to a subscription it enters: on creation, or when the `status` option lists the status
+  after the change and not the one before. A delta goes to a subscription whose view held the
+  group before the change: `id`, `status`, `updated_at_ms` (the latest write on the group or a
+  leg), `totals` (`group_totals`) and the changed legs, each whole; a group-only delta carries no
+  `legs`.
+- **Ends.** A group that leaves the active statuses leaves the model before its frames go out, so
+  a terminal frame is its last. The ids of the `ENDED_MAX` groups that most recently reached a
+  final status are kept (C-2.18): a seed entry or a creation for one is refused, and a later change
+  finds no group, so a late event sends nothing. A `draft` group is not held and nothing of it is
+  sent; its updates are no end, so it can still be handed over whole (`created`) once it is active.
+- **Scope (SR-E28-21).** A group is never sent in part. Every frame names its first leg's account
+  to the hub (`publish(account=)`) and asks, when it is sent, `select` whether the subscription's
+  accounts (narrowed in place on every grant change, §9.5) hold every leg's, an empty set matching
+  none, and `viewer` whether the connection's principal, as it is then, may see every leg's
+  account. A grant withdrawn mid-stream stops the group at its next frame, the terminal one
+  included. A `status` value outside `TradeGroupStatus` matches nothing.
 - **Snapshot.** The held groups whose every leg's account the subscription holds and whose status
   its `status` option lists, oldest first, each whole. Private: never cached (generation 0), and
-  no continuity (§7.6 forces a snapshot).
+  no continuity (§7.6 forces a snapshot). `build` is given no principal: the snapshot relies on
+  the gateway keeping `sub.accounts` inside the principal's live grants (§6.2, §9.5).
 - **Members.** Never `client_group_ref`, `created_by` or `note`: the `v: 1` schema still declares
   `client_group_ref`, and §15.5 forbids it. `intent` is not stored, and `atomicity` is left out for
-  `abort_on_first`, which its enum cannot name. A leg's `error` is `null`, or its stored code and
-  message, an empty string standing for one not stored.
+  `abort_on_first`, which its enum cannot name. A leg's `error` is `null` when neither its code nor
+  its message is stored, else both, `""` standing for the one not stored.
 - **No flag.** `trading.trade_groups` does not gate the topic: with the flag off it shows the groups
   written while it was on, and `placeOrder`'s one-leg groups.
-- **Failure.** A delta that fails is logged by its error type (never its message, C-12.6) and its
-  path, at most once per `LOG_INTERVAL_S` with the count held back, and goes no further: the OMS
-  neither waits on the topic nor sees it fail.
+- **Failure.** A change whose frame fails is logged by its error type (never its message, C-12.6)
+  and its path, at most once per `LOG_INTERVAL_S` with the count held back, and goes no further:
+  the OMS neither waits on the topic nor sees it fail. A cancellation is never held back.
 """
 
 from __future__ import annotations
@@ -67,7 +71,7 @@ TRADE_GROUPS: Final = "trade_groups"
 _FINAL: Final = frozenset({"closed", "failed", "cancelled"})
 #: How many recently ended group ids are kept, the oldest forgotten first.
 ENDED_MAX: Final = 1024
-#: A failed delta is logged at most once in this many seconds, the ones held back counted on the
+#: A failed publish is logged at most once in this many seconds, the ones held back counted on the
 #: next line: a hub that keeps failing never floods the log.
 LOG_INTERVAL_S: Final = 60.0
 
@@ -163,14 +167,15 @@ def _whole(held: _Held) -> Item:
 
 
 def _covers(sub: TradeGroupsSub, accounts: frozenset[UUID]) -> bool:
-    """SR-E28-21: the subscription's accounts, as they are now, hold every leg's."""
-    return accounts <= sub.accounts
+    """SR-E28-21: the subscription's accounts, as they are now, hold every leg's; a set with no
+    account is no one's (it fails closed)."""
+    return bool(accounts) and accounts <= sub.accounts
 
 
-def _lists(sub: TradeGroupsSub, *statuses: str | None) -> bool:
-    """The `status` option is absent, or lists one of `statuses` (before and after a change)."""
+def _lists(sub: TradeGroupsSub, status: str) -> bool:
+    """The `status` option is absent, or lists `status`."""
     wanted = sub.effective.get("status")
-    return wanted is None or any(status in wanted for status in statuses)
+    return wanted is None or status in wanted
 
 
 class TradeGroupTopic[B, P]:
@@ -217,13 +222,13 @@ class TradeGroupTopic[B, P]:
     def continuity(self, sub: TradeGroupsSub, from_ts_ms: int | None) -> bool:
         return False  # no delta history: `snapshot: false` is always `snapshot_forced`
 
-    # -- deltas, one per committed write
+    # -- frames, one per committed write and subscription
 
     def created(self, record: TradeGroupWithLegs) -> None:
         """A group was stored: held, and sent whole, when it is active and not yet held."""
         with self._contained("created"):
             if (held := self._hold(record)) is not None:
-                self._to_hub(held, None, _whole(held))
+                self._to_hub(held, None)
 
     def leg_changed(self, leg: TradeGroupLeg) -> None:
         """A leg was updated: its group's frame, with that leg alone."""
@@ -233,7 +238,7 @@ class TradeGroupTopic[B, P]:
                 self._to_hub(held, held.group.status, _head(held) | {"legs": [_leg_item(leg)]})
 
     def group_changed(self, group: TradeGroup) -> None:
-        """A group was updated: its frame, with no leg."""
+        """A group was updated: its delta, with no leg, or its whole item where it enters a view."""
         with self._contained("group_changed"):
             held = self._groups.get(group.group_id)
             if group.status not in OPEN_GROUP_STATUSES:
@@ -262,22 +267,30 @@ class TradeGroupTopic[B, P]:
             if len(self._ended) > ENDED_MAX:
                 del self._ended[next(iter(self._ended))]
 
-    def _to_hub(self, held: _Held, before: str | None, item: Item) -> None:
-        """One delta in the first leg's account's scope, judged on every leg when it is sent."""
+    def _to_hub(self, held: _Held, before: str | None, delta: Item | None = None) -> None:
+        """The change's frames in the first leg's account's scope, each judged on every leg when it
+        is sent, on disjoint `select`s: the whole item to a subscription the group enters (it is
+        new, or its status is newly listed), the delta to one whose view held it before."""
         accounts, after = held.accounts(), held.group.status
 
-        def select(sub: TradeGroupsSub) -> bool:
-            return _covers(sub, accounts) and _lists(sub, before, after)
+        def viewed(sub: TradeGroupsSub) -> bool:
+            return before is not None and _covers(sub, accounts) and _lists(sub, before)
+
+        def enters(sub: TradeGroupsSub) -> bool:
+            return _covers(sub, accounts) and _lists(sub, after) and not viewed(sub)
 
         first = next(iter(held.legs.values())).account_id
         viewer = self._viewer_for(accounts)
-        self._publish(
-            TRADE_GROUPS, {"trade_groups": [item]}, account=first, select=select, viewer=viewer
-        )
+        whole = _whole(held) if before != after else None  # only a new status enters a view
+        for item, sel in ((whole, enters), (delta, viewed)):
+            if item is not None:
+                self._publish(
+                    TRADE_GROUPS, {"trade_groups": [item]}, account=first, select=sel, viewer=viewer
+                )
 
     @contextmanager
     def _contained(self, path: str) -> Iterator[None]:
-        """A delta that fails stays here, logged by its error type (never its message, C-12.6)
+        """A publish that fails stays here, logged by its error type (never its message, C-12.6)
         and path, at most once per `LOG_INTERVAL_S`, with the count of those held back since the
         last line; a cancellation still propagates."""
         try:
