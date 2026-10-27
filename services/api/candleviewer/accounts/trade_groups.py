@@ -23,7 +23,8 @@ origin and `note` to 280 storable characters. A `LegDraft` is built from the one
 it was sized from, which gives the leg its account, `account_profile_id`, `profile_version` and
 snapshot, so they cannot drift (`tgl_snapshot`, the `tgl_profile_revision` key). `LegUpdate` and
 `GroupUpdate` carry absolute values and reach no write-once, create-only or sized column (amending
-those is E34-S03's). `TakeProfitLeg` and `TradeGroupAggregate` are values that nothing stores.
+those is E34-S03's). `TakeProfitLeg`, `TradeGroupAggregate` and `GroupTotals` (the `totals` 22 and
+23 serve) are values that nothing stores.
 """
 
 from __future__ import annotations
@@ -526,6 +527,37 @@ class TradeGroupAggregate(BaseModel):
         if self.weighted_avg_entry is not None and self.weighted_avg_entry <= 0:
             raise ValueError("weighted_avg_entry is above zero")
         return self
+
+
+#: What `group_totals` counts as rejected: a leg the exchange or the OMS refused.
+_REJECTED: Final = frozenset[LegStatus]({"rejected", "error"})
+
+
+@dataclass(frozen=True, slots=True)
+class GroupTotals:
+    """22's `TradeGroup.totals` and 23's frame `totals`, summed from a group's legs."""
+
+    requested_legs: int
+    submitted_legs: int
+    rejected_legs: int
+    filled_qty: Decimal
+    target_qty: Decimal
+    realised_pnl: Decimal
+
+
+def group_totals(legs: Iterable[TradeGroupLeg]) -> GroupTotals:
+    """The one totals function (the REST read, and later the WS topic). requested: every leg;
+    submitted: `submitted_at` set; rejected: `rejected` or `error` (a leg may count as both,
+    `cancelled` as neither); the quantities and the realised P&L are exact sums over every leg."""
+    rows = tuple(legs)
+    return GroupTotals(
+        requested_legs=len(rows),
+        submitted_legs=sum(leg.submitted_at is not None for leg in rows),
+        rejected_legs=sum(leg.status in _REJECTED for leg in rows),
+        filled_qty=exact_sum(leg.filled_qty for leg in rows),
+        target_qty=exact_sum(leg.target_qty for leg in rows),
+        realised_pnl=exact_sum(leg.realised_pnl for leg in rows),
+    )
 
 
 # -- containers --------------------------------------------------------------------------------

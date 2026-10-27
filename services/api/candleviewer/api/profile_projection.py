@@ -39,7 +39,7 @@ def plain(value: Decimal) -> str:
     return text.rstrip("0").rstrip(".") if "." in text else text
 
 
-def _plain(value: Decimal | None) -> str | None:
+def plain_or_none(value: Decimal | None) -> str | None:
     return None if value is None else plain(value)
 
 
@@ -83,11 +83,11 @@ def profile_body(profile: AccountProfile) -> dict[str, object]:
         "position_mode": v.position_mode,
         "sizing": {
             "mode": v.sizing_mode,
-            "qty": _plain(v.size_fixed_qty),
-            "notional_usd": _plain(v.size_fixed_notional_usd),
-            "pct": _plain(v.size_pct_equity),
-            "risk_per_trade_pct": _plain(v.risk_pct_equity),
-            "risk_per_trade_usd": _plain(v.risk_fixed_amount_usd),
+            "qty": plain_or_none(v.size_fixed_qty),
+            "notional_usd": plain_or_none(v.size_fixed_notional_usd),
+            "pct": plain_or_none(v.size_pct_equity),
+            "risk_per_trade_pct": plain_or_none(v.risk_pct_equity),
+            "risk_per_trade_usd": plain_or_none(v.risk_fixed_amount_usd),
             "min_leg_notional_usd": plain(v.min_leg_notional_usd),
         },
         "stop_loss": {
@@ -102,13 +102,13 @@ def profile_body(profile: AccountProfile) -> dict[str, object]:
             {"qty_pct": plain(rung.pct), "r": plain(rung.r)} for rung in v.tp_ladder or ()
         ],
         "risk_caps": {
-            "max_position_notional_usd": _plain(v.max_position_notional_usd),
-            "max_position_pct_equity": _plain(v.max_position_pct_equity),
-            "max_daily_loss_usd": _plain(v.max_daily_loss_usd),
-            "max_daily_loss_pct": _plain(v.max_daily_loss_pct),
+            "max_position_notional_usd": plain_or_none(v.max_position_notional_usd),
+            "max_position_pct_equity": plain_or_none(v.max_position_pct_equity),
+            "max_daily_loss_usd": plain_or_none(v.max_daily_loss_usd),
+            "max_daily_loss_pct": plain_or_none(v.max_daily_loss_pct),
             "max_open_positions": v.max_open_positions,
             "max_concurrent_orders": v.max_concurrent_orders,
-            "max_leverage_cap": _plain(v.max_leverage_cap),
+            "max_leverage_cap": plain_or_none(v.max_leverage_cap),
             "max_orders_per_minute": v.max_orders_per_minute,
         },
         "all_symbols": v.all_symbols,

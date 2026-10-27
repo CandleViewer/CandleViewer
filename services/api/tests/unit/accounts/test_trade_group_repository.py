@@ -8,7 +8,7 @@ failing closed with no value in the log. The store is a scripted fake of the M10
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -208,6 +208,15 @@ class _Store:
 
     async def get_group(self, scope: AccountScope, group_id: UUID) -> TradeGroupRecord | None:
         return cast("TradeGroupRecord | None", self._answer("get_group", scope, group_id))
+
+    async def list_groups(self, scope: AccountScope, **page: Any) -> tuple[TradeGroupRecord, ...]:
+        return cast("tuple[TradeGroupRecord, ...]", self._answer("list_groups", scope, **page))
+
+    async def leg_order_ids(
+        self, scope: AccountScope, leg_ids: Collection[UUID]
+    ) -> Mapping[UUID, tuple[UUID, ...]]:
+        answer = self._answer("leg_order_ids", scope, leg_ids)
+        return cast("Mapping[UUID, tuple[UUID, ...]]", answer)
 
 
 async def _hook(record: TradeGroupRecord) -> None:  # the fake store never awaits it
@@ -713,3 +722,34 @@ async def test_a_scoped_read_passes_storage_errors_and_fails_closed_on_a_bad_row
             "log_level": "warning",
         }
     ]
+
+
+# -- the scoped list and the order ids (E28-T05 S2e) -----------------------------------------------
+
+_PAGE: dict[str, Any] = {
+    "symbol": "BTCUSDT", "statuses": ("open",), "created_from": _T, "created_to": _T,
+    "after": (_T, _GROUP), "limit": 2,
+}  # fmt: skip
+
+
+async def test_a_scoped_list_never_serves_a_grant_a_group_without_legs_but_an_owner_does() -> None:
+    """SR-E28-21, as `get`: a grant sees a group by its legs, so one answered without (a store
+    that regressed) is left out; the page is passed on as given."""
+    bare = TradeGroupRecord(group=replace(_GROUP_ROW, id=UUID(int=5)), legs=())
+    grant = GrantScope(_USER, frozenset({_P.account_id}))
+    for scope, served in ((grant, [_GROUP]), (_OWNER, [UUID(int=5), _GROUP])):
+        store = _Store((bare, _RECORD))
+        page = await TradeGroupReader(store).list(scope, **_PAGE)
+        assert [s.record.group.group_id for s in page] == served
+        assert store.calls == [("list_groups", (scope,), _PAGE)]
+
+
+@pytest.mark.parametrize("bad", [{"limit": 0}, {"after": (datetime(2026, 10, 20), _GROUP)}])
+async def test_a_bad_page_argument_is_a_value_error_before_the_store_never_a_row_fault(
+    bad: dict[str, Any],
+) -> None:
+    """Refused here, so it is neither relabelled `stored trade group unreadable` nor logged."""
+    store, why = _Store(()), "limit must be" if "limit" in bad else "timezone-aware"
+    with structlog.testing.capture_logs() as logs, pytest.raises(ValueError, match=why):
+        await TradeGroupReader(store).list(_OWNER, **(_PAGE | bad))
+    assert store.calls == [] and logs == []

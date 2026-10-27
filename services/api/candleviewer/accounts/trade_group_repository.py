@@ -30,7 +30,8 @@ writing nothing; another user's ref reads as missing.
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from datetime import datetime
 from typing import Any, Final
 from uuid import UUID
 
@@ -91,6 +92,7 @@ from candleviewer.storage.repositories.trade_groups import (
     TradeGroupStoreRuleError,
     TradeGroupStoreScopeDeniedError,
     TradeGroupStoreStaleError,
+    check_page,
 )
 
 #: The request fingerprint the store compares verbatim (`sha256_hex`).
@@ -176,6 +178,13 @@ def _require_fingerprint(client_body_sha256: str) -> None:
 
 def _leg_with_profile(row: LegSnapshotRow) -> LegWithProfile:
     return LegWithProfile(leg=leg_from_row(row.leg), profile=leg_profile_snapshot(row))
+
+
+def _scoped(scope: AccountScope, record: TradeGroupRecord) -> ScopedTradeGroup:
+    found = _read(record_from_rows, record, group_id=str(record.group.id))
+    return ScopedTradeGroup(
+        record=found, shows_private_fields=shows_private_fields(scope, found.group)
+    )
 
 
 class TradeGroupRepository:
@@ -328,7 +337,27 @@ class TradeGroupReader:
             raise AccountNotFoundError("trade_group")
         if isinstance(scope, GrantScope) and not record.legs:  # a grant sees a group by its legs
             raise AccountNotFoundError("trade_group")
-        found = _read(record_from_rows, record, group_id=str(group_id))
-        return ScopedTradeGroup(
-            record=found, shows_private_fields=shows_private_fields(scope, found.group)
-        )
+        return _scoped(scope, record)
+
+    async def list(
+        self, scope: AccountScope, *, symbol: str | None = None,
+        statuses: Collection[TradeGroupStatus] = (), created_from: datetime | None = None,
+        created_to: datetime | None = None, after: tuple[datetime, UUID] | None = None, limit: int,
+    ) -> tuple[ScopedTradeGroup, ...]:  # fmt: skip
+        """One keyset page, newest first, of the groups `scope` sees, each as `get` serves it
+        (SR-E28-21). `ValueError` for a `limit` outside 1 to `MAX_GROUP_PAGE` or a naive time,
+        refused here, before the store, so a caller's mistake never reads as a stored row's fault.
+        A grant never sees a group answered without legs, and an Owner does."""
+        check_page(limit, created_from, created_to, after)
+        page = self._store.list_groups(
+            scope, symbol=symbol, statuses=statuses, created_from=created_from,
+            created_to=created_to, after=after, limit=limit,
+        )  # fmt: skip
+        records, grant = await _call(page), isinstance(scope, GrantScope)
+        return tuple(_scoped(scope, record) for record in records if record.legs or not grant)
+
+    async def order_ids(
+        self, scope: AccountScope, leg_ids: Collection[UUID]
+    ) -> Mapping[UUID, tuple[UUID, ...]]:
+        """The ids of these legs' orders, oldest first, by leg, for legs of groups `scope` sees."""
+        return await _call(self._store.leg_order_ids(scope, leg_ids))
