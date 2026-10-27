@@ -34,6 +34,11 @@ name: perf-ingestion-nightly
 # the run stays green and files nothing), until #2825's slice 2 decides the budget, because a
 # known-red weekly job trains everyone to ignore red. A dispatch still gates them, and a refused
 # k6 run, an app that never started or any other failed check stays red on the schedule too.
+# #2848: a dispatch with profile=auth runs E09-Q05's k6 auth profile (tests/load/k6/auth.js, job
+# auth-k6) alone (no soak), never on a schedule or a PR, and no required check reads it (C-9.2).
+# It boots the API on this runner as dast-admin-nightly.yml does (keyless testnet, real storage,
+# loopback) with CV_AUTH_PERF_ENABLED, seeds one Owner per VU with a TOTP method made per run,
+# and fails on the script's thresholds. Its numbers are not the reference host's (#2105).
 on:
   schedule:
     - cron: "37 3 * * *"
@@ -41,9 +46,9 @@ on:
   workflow_dispatch:
     inputs:
       profile:
-        description: "E08-Q04 pack profile (smoke = scaled nightly; full = 24 h soak + k6 10 min)"
+        description: "E08-Q04 pack profile (smoke = scaled nightly; full = 24 h soak + k6 10 min); auth = E09-Q05 k6 auth profile"
         type: choice
-        options: [smoke, full]
+        options: [smoke, full, auth]
         default: smoke
       scenario:
         description: "Full profile only: one scenario of bench/ingestion/config.py (e.g. soak_bars), or all"
@@ -55,7 +60,8 @@ env:
   PYTHONUNBUFFERED: "1" # every print reaches the log as it happens, also when a run is cancelled
 jobs:
   ingestion-soak:
-    if: github.event.schedule != '17 5 * * 0' # the weekly cron is perf-pack-full's alone (#2825)
+    # the weekly cron is perf-pack-full's alone (#2825); a profile=auth dispatch runs auth-k6 alone
+    if: github.event.schedule != '17 5 * * 0' && inputs.profile != 'auth'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -226,6 +232,132 @@ jobs:
           name: e08-perf-pack-full
           path: services/api/bench/reports/
           if-no-files-found: ignore
+
+  auth-k6:
+    # #2848: dispatch with profile=auth only. Every credential is made here, per run, masked and
+    # never echoed; no repository secret is read and the target is loopback.
+    if: github.event_name == 'workflow_dispatch' && inputs.profile == 'auth'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      BASE_URL: http://127.0.0.1:8000
+      PERF_USERS: "10" # one Owner per VU: the script needs 10
+      K6_VERSION: v2.3.0
+      # sha256 of k6-v2.3.0-linux-amd64.tar.gz, as perf-ws-load.yml pins it
+      K6_SHA256: 39c3117b6af817592dcd0ce4242105c0a7af10948c2a425306f0be8f7a8a8ab1
+      K6_NO_USAGE_REPORT: "true"
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      # Compose checks every service's variables on each command; these stores never start here.
+      GF_SECURITY_ADMIN_PASSWORD: unused-ci
+      MINIO_ROOT_PASSWORD: unused-ci
+      CV_ALERT_PAGE_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_TICKET_WEBHOOK_URL: http://127.0.0.1:1/unused
+      CV_ALERT_DEADMAN_URL: http://127.0.0.1:1/unused
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false # nothing here pushes or fetches
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - name: Install the pinned k6 (sha256 verified twice)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/k6"
+          mkdir -p "$dir"
+          cd "$dir"
+          tarball="k6-${K6_VERSION}-linux-amd64.tar.gz"
+          gh release download "$K6_VERSION" -R grafana/k6 -p "$tarball" -p "k6-${K6_VERSION}-checksums.txt" --clobber
+          echo "${K6_SHA256}  ${tarball}" | sha256sum -c -
+          grep " ${tarball}\$" "k6-${K6_VERSION}-checksums.txt" | sha256sum -c -
+          tar -xzf "$tarball" --strip-components=1 "k6-${K6_VERSION}-linux-amd64/k6"
+          ./k6 version | grep -F "k6 ${K6_VERSION} "
+          echo "$dir" >> "$GITHUB_PATH"
+      - name: Make this run's synthetic credentials (masked, never echoed)
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/cv" "$RUNNER_TEMP/cv-lane"
+          secret() { v=$(openssl rand -hex 32); echo "::add-mask::$v"; echo "$1=$v" >> "$GITHUB_ENV"; }
+          for name in POSTGRES_PASSWORD CV_AUTH_PEPPER CV_AUTH_TOTP_KEY_HEX \
+            CV_AUTH_RECOVERY_HMAC_KEY_HEX CV_AUTH_CSRF_KEY_HEX CV_PERF_PASSWORD; do secret "$name"; done
+          # The audit lane key, in a directory of its own (as dast-admin-nightly.yml makes it).
+          (umask 277 && openssl rand -hex 32 > "$RUNNER_TEMP/cv-lane/lane.key")
+      - name: Start Postgres and QuestDB (the compose data stores, loopback only)
+        run: docker compose -f infra/compose/docker-compose.yml --profile core up -d --wait postgres questdb
+      - name: Migrate, then seed one Owner per VU, each with a fresh TOTP method (testnet)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+        run: |
+          set -euo pipefail
+          umask 077
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          uv sync --frozen
+          uv run --frozen alembic upgrade head
+          suffix=$(openssl rand -hex 4)
+          for i in $(seq "$PERF_USERS"); do
+            CV_SEED_USERNAME="perf-$suffix-$i" CV_SEED_PASSWORD="$CV_PERF_PASSWORD" \
+              uv run --frozen python scripts/seed_fixture_user.py --totp-secret-out "$RUNNER_TEMP/cv/perf-$i.totp"
+            echo "::add-mask::$(cat "$RUNNER_TEMP/cv/perf-$i.totp")"
+          done
+          python3 - "$RUNNER_TEMP/cv" "$suffix" "$PERF_USERS" > "$RUNNER_TEMP/cv/users.json" <<'PY'
+          import json, pathlib, sys
+          d, suffix, n = pathlib.Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
+          print(json.dumps([{"identifier": f"perf-{suffix}-{i}",
+                             "totp_seed": (d / f"perf-{i}.totp").read_text().strip()}
+                            for i in range(1, n + 1)]))
+          PY
+      - name: Start the API (testnet, real storage backend, auth perf instrumentation, loopback)
+        working-directory: services/api
+        env:
+          CV_ENVIRONMENT: testnet
+          CV_STORAGE_BACKEND: real
+          CV_FEED: synthetic
+          CV_AUTH_PERF_ENABLED: "true" # #2097: refused unless testnet with no exchange key
+          CV_QUESTDB_PG: 127.0.0.1:8812
+          CV_QUESTDB_ILP: 127.0.0.1:9009
+          CV_BIND_HOST: 127.0.0.1
+          CV_BIND_PORT: "8000"
+          CV_METRICS_BIND: 127.0.0.1:9108
+        run: |
+          set -euo pipefail
+          export CV_PG_DSN="postgresql+asyncpg://cv:${POSTGRES_PASSWORD}@127.0.0.1:5432/candleviewer"
+          export CV_AUDIT_LANE_KEY_FILE="$RUNNER_TEMP/cv-lane/lane.key"
+          export CV_AUDIT_WAL_PATH="$RUNNER_TEMP/cv/audit/audit.wal"
+          export CV_PARQUET_ROOT="$RUNNER_TEMP/cv/data/parquet" CV_BACKUP_ROOT="$RUNNER_TEMP/cv/data/backups"
+          mkdir -p -m 700 "$RUNNER_TEMP/cv/audit" "$RUNNER_TEMP/cv/data" "$CV_PARQUET_ROOT" "$CV_BACKUP_ROOT"
+          nohup uv run --frozen python -m candleviewer.server > "$RUNNER_TEMP/cv/api.log" 2>&1 &
+          api=$!
+          for _ in $(seq 60); do
+            if curl -fsS -o /dev/null "$BASE_URL/healthz"; then exit 0; fi
+            kill -0 "$api" 2>/dev/null || break # it exited: stop waiting
+            sleep 2
+          done
+          echo "::error title=auth-k6::the API did not answer /healthz; the last of its log follows"
+          tail -n 200 "$RUNNER_TEMP/cv/api.log"
+          exit 1
+      - name: E09-Q05 k6 auth profile (its thresholds decide the step)
+        env:
+          CV_PERF_USERS_FILE: ${{ runner.temp }}/cv/users.json
+          K6_HOST_CLASS: hosted # the step-up p95 is reported, not judged, off #2105's host
+        run: k6 run --summary-export "$RUNNER_TEMP/k6-auth-summary.json" tests/load/k6/auth.js
+      - name: Report the step-up p95 beside its reference-host budget
+        if: always()
+        run: |
+          summary="$RUNNER_TEMP/k6-auth-summary.json"
+          [ -f "$summary" ] || exit 0
+          p95=$(jq -r '.metrics["http_req_duration{scenario:stepup_burst,endpoint:step_up}"]["p(95)"] // "n/a"' "$summary")
+          echo "::notice title=step-up p95 (hosted, informational)::${p95} ms; the 400 ms budget is judged on the reference host (#2105)"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: e09-auth-k6-summary
+          path: ${{ runner.temp }}/k6-auth-summary.json # metrics only: no body, token or seed
+          if-no-files-found: ignore
+      - name: Tear down
+        if: always()
+        run: docker compose -f infra/compose/docker-compose.yml --profile core down -v || true
 
   ingestion-soak-issue:
     needs: ingestion-soak
