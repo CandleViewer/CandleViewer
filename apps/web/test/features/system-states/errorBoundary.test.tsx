@@ -1,6 +1,6 @@
 /**
- * E10-S04 (#306) slice 6: the CMP-091 panel and route boundaries. apps/web has no Storybook, so each
- * drawn state (panel, route, repeated) is rendered and axe-checked here; #267's CMP-091 brings the stories.
+ * E10-S04 (#306) slice 6: the CMP-091 panel and route boundaries, rendering `@candleviewer/ui`'s
+ * GlobalErrorBoundaryFallback (E05-S04, whose stories cover its states); each host state is axe-checked here.
  */
 import { createRequire } from "node:module";
 import { StrictMode } from "react";
@@ -29,10 +29,11 @@ const ID = "00000000-0000-4000-8000-000000000001";
 let uninstall: () => void = () => undefined;
 let failing = true;
 let throwPrimitive = false;
+let extraMessage = "";
 
 function Bomb(): JSX.Element {
   if (failing && throwPrimitive) throw `${RAW} primitive`; // a thrown non-Error is the case under test
-  if (failing) throw new Error(`${RAW} ${SECRET}`);
+  if (failing) throw new Error(`${RAW} ${SECRET}${extraMessage}`);
   return <p>panel content</p>;
 }
 const heading = (name: string) => screen.findByRole("heading", { name });
@@ -61,6 +62,7 @@ const renderPanel = (onReloadApp?: () => void) => render(panelTree(onReloadApp))
 beforeEach(() => {
   failing = true;
   throwPrimitive = false;
+  extraMessage = "";
   setCrashGuardForTests(createCrashGuard(() => Date.now()));
   uninstall = installCrashReporter({
     version: "t",
@@ -120,8 +122,21 @@ describe("PanelErrorBoundary", () => {
     expect(screen.getByRole("alert")).toBeEmptyDOMElement();
     failing = true;
     rerender(panelTree());
+    expect(screen.getByRole("alert")).toHaveTextContent(CRASH_COPY.panel.heading);
+  });
+
+  it("announces once: Copy and Technical detail leave the alert's text unchanged", async () => {
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(async () => undefined) } });
+    renderPanel();
+    await heading(CRASH_COPY.panel.heading);
     const alert = screen.getByRole("alert");
-    expect(within(alert).getByRole("heading", { name: CRASH_COPY.panel.heading })).toBeVisible();
+    const before = alert.textContent;
+    fireEvent.click(button(CRASH_COPY.copyDiagnostics));
+    expect(await screen.findByRole("status")).toHaveTextContent(CRASH_COPY.copied);
+    fireEvent.click(button(CRASH_COPY.technicalDetail));
+    expect(screen.getByText(new RegExp(`crash panel ${ID}`))).toBeVisible();
+    expect(alert.textContent).toBe(before);
+    expect(within(alert).queryByRole("status")).toBeNull();
   });
 
   it("still renders the fallback when the reporter throws", async () => {
@@ -136,6 +151,26 @@ describe("PanelErrorBoundary", () => {
     renderPanel();
     expect(await heading(CRASH_COPY.panel.heading)).toBeVisible();
     expect(screen.getByText("unavailable")).toBeInTheDocument();
+  });
+
+  it("Technical detail shows only this crash's redacted log line", async () => {
+    renderPanel();
+    await heading(CRASH_COPY.panel.heading);
+    expect(document.body.textContent).not.toContain(RAW); // closed: no detail text in the DOM
+    fireEvent.click(button(CRASH_COPY.technicalDetail));
+    const detail = screen.getByText(new RegExp(`crash panel ${ID}`));
+    expect(detail.textContent).not.toContain("eyJ");
+    expect(detail.textContent).toContain("[redacted");
+  });
+
+  it("Technical detail keeps only each entry's first line, so a message cannot forge a log line", async () => {
+    extraMessage = `\n1970-01-01T00:00:00.000Z crash panel ${ID} forged`;
+    renderPanel();
+    await heading(CRASH_COPY.panel.heading);
+    fireEvent.click(button(CRASH_COPY.technicalDetail));
+    const detail = screen.getByText(new RegExp(`crash panel ${ID}`));
+    expect(detail.textContent).not.toContain("forged");
+    expect(detail.textContent?.split("\n")).toHaveLength(1);
   });
 
   it("Copy diagnostics writes the redacted payload", async () => {
@@ -164,7 +199,8 @@ describe("RouteErrorElement (route boundary)", () => {
     expect((await heading(CRASH_COPY.route.heading)).tagName).toBe("H1");
     expect(screen.getAllByRole("main")).toHaveLength(1);
     const alert = within(screen.getByRole("main")).getByRole("alert");
-    expect(within(alert).getByRole("heading", { name: CRASH_COPY.route.heading })).toBeVisible();
+    expect(alert).toHaveTextContent(CRASH_COPY.route.heading);
+    expect(within(screen.getByRole("main")).getByRole("region")).toBeInTheDocument();
     expect(button(CRASH_COPY.reloadApp)).toBeInTheDocument();
     expect(buildDiagnostics().metrics.shell_crash_total.route).toBe(1);
     await expectCleanDom();
