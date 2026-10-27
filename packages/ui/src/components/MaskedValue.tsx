@@ -39,6 +39,7 @@ let active: Entry | null = null;
  *
  * The mask lands after the caller returns, in a microtask, committed synchronously there: the timing is
  * the same from an event handler, an effect or plain code, and no in-effect `flushSync` warning appears.
+ * A host `onToggleReveal` that throws there surfaces as an uncaught microtask error; the mask still lands.
  */
 export function maskAllValues(): void {
   queueMicrotask(() => {
@@ -83,7 +84,8 @@ const warning = (label: string): string =>
  * value. The toggle is a ghost CMP-002 whose name ("Show/Hide {label}") carries the state, so no
  * `aria-pressed`. While revealed a CMP-035 count reads "Hides in 10 s" and speaks one warning 2 s before
  * the re-mask; the re-mask itself is silent and keeps focus. The window losing focus, a hidden tab, print,
- * history navigation, another value's reveal and `maskAllValues()` re-mask at once (S1-S7).
+ * history navigation and another value's reveal re-mask at once; `maskAllValues()` re-masks one microtask
+ * after its caller returns (S1-S7).
  */
 export function MaskedValue({
   value,
@@ -133,6 +135,8 @@ export function MaskedValue({
   useEffect(() => {
     if (shownAt === null) return undefined;
     const self = entry.current;
+    // Fallback only: a press hands off in `onPress`, so this finds another active value only when a
+    // reveal arrives some other way. Keep both.
     if (active !== null && active !== self) active.mask();
     active = self;
     // The browser and timer triggers commit the mask synchronously, before the event returns: a page
