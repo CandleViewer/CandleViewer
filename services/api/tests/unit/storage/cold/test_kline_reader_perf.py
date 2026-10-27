@@ -13,6 +13,8 @@ reads through the in-process ASGI app (`fixture_app.build_app`, driven as
 milliseconds. Sequential timings hide the GIL-held per-row work that concurrency multiplies.
 It is reported, not gated, as the pack's smoke rows are (`rest_load.py`, #399): the gate flips
 to an assertion in the follow-up gc.freeze PR under #2523. The budget itself never moves.
+Lever 5 runs it with the cold page cache off and on (the app's default bound). Every round
+repeats one window, so the on reading measures repeat reads, never a first cold read.
 """
 
 from __future__ import annotations
@@ -140,11 +142,13 @@ def _p95(samples: list[float]) -> float:
 
 
 @pytest.mark.perf
+@pytest.mark.parametrize("cache", [False, True], ids=["cache-off", "cache-on"])
 async def test_five_concurrent_cold_5000_bar_reads_report_their_p95_against_budget_13(
-    tmp_path: Path,
+    tmp_path: Path, cache: bool
 ) -> None:
     write_cold_lake(tmp_path)
-    app = await build_app(tmp_path)
+    # On is `build_app`'s own bound, the app's default (as the pack runs it); off is 0.
+    app = await build_app(tmp_path, **({} if cache else {"cold_page_cache_bytes": 0}))
     base = "http://127.0.0.1"
     assert_loopback_target(base)
     spec = requests_plan()["klines_cold"]
@@ -168,7 +172,8 @@ async def test_five_concurrent_cold_5000_bar_reads_report_their_p95_against_budg
     # Reported, not gated (#399's smoke pattern): this becomes `assert p95 <= B13_READ_P95_MS`
     # in the follow-up gc.freeze PR under #2523.
     print(
-        f"\n#2523 {CONCURRENCY} concurrent cold {WINDOW}-bar reads x {ROUNDS} rounds: "
+        f"\n#2523 {CONCURRENCY} concurrent cold {WINDOW}-bar reads x {ROUNDS} rounds, page "
+        f"cache {'on' if cache else 'off'}: "
         f"p50 {sorted(samples)[len(samples) // 2]:.1f} ms, p95 {p95:.1f} ms, "
         f"max {max(samples):.1f} ms (Budget #13 {B13_READ_P95_MS} ms): {verdict}, "
         "reported, not gated"
