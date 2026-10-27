@@ -23,7 +23,7 @@ from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, MfaMethodKind, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.settings import Environment, Settings
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _PHRASE = "correct horse battery staple"  # the fixture user's password
 _T0 = datetime(2026, 10, 15, 12, 0, tzinfo=UTC)
@@ -78,7 +78,7 @@ def _service(
         Hasher(perf_counter=ticks),
         per_ip_throttle=throttle,
         clock=lambda: _T0,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
 

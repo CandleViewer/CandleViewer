@@ -3623,8 +3623,8 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "counter",
         "failures",
         (),
-        "Failed sign-ins that took longer than the minimum failed sign-in time, so were not held "
-        "(#4648, LoginService).",
+        "Refused authentication steps (sign-in, second factor, recovery code, step-up) that took "
+        "longer than the minimum time, so were not held.",
         "AuthLoginFailureFloorMissed (any in 10m, ticket)",
         _L,
         "E09",

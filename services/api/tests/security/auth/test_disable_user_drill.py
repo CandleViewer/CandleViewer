@@ -40,7 +40,7 @@ from candleviewer.auth.step_up import StepUpService
 from candleviewer.settings import Settings
 from candleviewer.ws.gateway import make_ws_router
 from candleviewer.ws.revocation import CLOSE_USER_DISABLED, RevocationHub
-from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers
+from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -93,6 +93,7 @@ class _Env:
             FakeUserRepository(),
             Hasher(),
             clock=self.clock,
+            sleep=no_wait,
         )
         # The composition root wires these only with a real database; same seams, fake storage.
         auth._sessions = self.sessions

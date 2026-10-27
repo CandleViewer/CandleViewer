@@ -24,7 +24,7 @@ from candleviewer.auth.scopes import PrincipalSnapshot
 from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
 from candleviewer.statechart.bindings import b16_session
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -124,7 +124,7 @@ async def _build(
     """`gated_stub` mounts a stand-in for a `users` write gated in its handler (the invite
     re-issue, #2304 slice 3c); a caller mounting the real invite router turns it off."""
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
-    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
+    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
@@ -143,7 +143,7 @@ async def _build(
     hasher = Hasher()
     users = FakeUserRepository()
     users.add(make_user(password_hash=await hasher.hash(_PW)).model_copy(update={"id": user}))
-    svc = StepUpService(repo, rows, enc, users, hasher, clock=clock)
+    svc = StepUpService(repo, rows, enc, users, hasher, clock=clock, sleep=no_wait)
     auth = _Auth(svc, _Sessions({"tok": record}))
     emitter = _Emitter()
     b16_session.set_audit_sink(emitter)  # B16 chart audits land with the router's

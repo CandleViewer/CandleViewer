@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 import statistics
 import time
-from datetime import timedelta
 
 import pytest
 
@@ -15,7 +14,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LoginService
 from candleviewer.auth.models import LoginRequest
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 SAMPLES = int(os.environ.get("CV_TIMING_SAMPLES", "1000"))
 
@@ -26,13 +25,14 @@ async def test_login_timing_unknown_vs_wrong_password_indistinguishable_over_100
     repo = FakeUserRepository()
     hasher = Hasher(pepper="test-pepper")
     repo.add(make_user(password_hash=await hasher.hash("correct-horse-battery-staple")))
-    # No failure floor: this measures the two arms' own work, which a floor would pad to one
-    # deadline; the floor has its own tests (test_login_failure_paths.py, the integration suite).
+    # No wait for the minimum time (an injected no-op wait): this measures the two arms' own
+    # work, which the wait would pad to one deadline; the minimum time has its own tests
+    # (test_login_failure_paths.py, the integration suite).
     service = LoginService(
         repo,
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10**9),
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
 
     unknown: list[float] = []

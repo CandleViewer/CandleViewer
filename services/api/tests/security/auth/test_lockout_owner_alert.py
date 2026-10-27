@@ -37,7 +37,7 @@ from candleviewer.auth.login_service import LOCKOUT_DURATION, LOCKOUT_THRESHOLD,
 from candleviewer.auth.metrics import AUTH_EXPORTED_NAMES, export_auth_metrics
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.unit.api._fakes import WriterLane
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)  # SR-041 (#2090): routers require a codec
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -136,7 +136,7 @@ async def _world() -> AsyncIterator[_World]:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=clock,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
     audit, auth, app = _Audit(), _Auth(login), FastAPI()
     app.include_router(make_auth_router(auth, audit, csrf=_CSRF_CODEC), prefix="")  # type: ignore[arg-type]

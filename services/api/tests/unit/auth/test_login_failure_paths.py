@@ -21,6 +21,7 @@ from argon2 import PasswordHasher, extract_parameters
 from prometheus_client import REGISTRY
 
 from candleviewer.auth.errors import AccountDisabled, AccountLocked, InvalidCredentials
+from candleviewer.auth.failure_hold import FAILURE_MINIMUM_LOWEST
 from candleviewer.auth.hashing import DEFAULT_ARGON2_PARAMS, DUMMY_PASSWORD_HASH, Hasher
 from candleviewer.auth.login_service import (
     ABSENT_USER_ID,
@@ -31,11 +32,14 @@ from candleviewer.auth.login_service import (
 )
 from candleviewer.auth.models import LoginRequest, MfaChallengeResult, UserRecord, UserStatus
 from candleviewer.auth.throttle import PerIpLoginThrottle
+from candleviewer.settings import AUTH_LOGIN_FAILURE_FLOOR_MIN_MS
 from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 _FLOOR_S = LOGIN_FAILURE_FLOOR.total_seconds()
 Event = tuple[Any, ...]
+#: #4664: minimum times every service refuses (zero, and just below the setting's lowest).
+_BELOW_THE_LOWEST = [timedelta(0), FAILURE_MINIMUM_LOWEST - timedelta(milliseconds=1)]
 
 
 class _FakeTime:
@@ -354,15 +358,22 @@ async def test_login_held_failure_and_success_are_not_counted_as_not_held(real_h
     assert _floor_missed() == before
 
 
-async def test_login_without_a_floor_counts_nothing_as_not_held(real_hash: str) -> None:
-    service, _, events, _ = _timed_world(real_hash, verdict=False, work_s=0.01)
-    service._failure_floor_s = 0.0
-    before = _floor_missed()
+@pytest.mark.parametrize("below", _BELOW_THE_LOWEST)
+def test_login_service_refuses_a_minimum_time_below_the_settings_lowest_value(
+    below: timedelta,
+) -> None:
+    """#4664: no caller turns the minimum time off; a suite that must not wait injects a no-op
+    wait instead (`auth_fakes.no_wait`)."""
+    with pytest.raises(ValueError, match=str(AUTH_LOGIN_FAILURE_FLOOR_MIN_MS)):
+        LoginService(FakeUserRepository(), Hasher(pepper="p"), failure_floor=below)
 
-    await _failed_login(service, "basiltt")
 
-    assert _floor_missed() == before
-    assert not [e for e in events if e[0] == "sleep"]
+def test_login_service_accepts_the_settings_lowest_value() -> None:
+    service = LoginService(
+        FakeUserRepository(), Hasher(pepper="p"), failure_floor=FAILURE_MINIMUM_LOWEST
+    )
+
+    assert service._failure_hold.minimum == FAILURE_MINIMUM_LOWEST
 
 
 async def test_login_success_is_never_held(real_hash: str) -> None:
@@ -429,7 +440,7 @@ async def test_login_wait_is_bounded_by_the_floor_when_the_clock_steps_back(
 ) -> None:
     service, _, events, time = _timed_world(real_hash, verdict=False)
     readings = iter([100.0, 40.0])  # started, then an earlier reading at the wait
-    service._monotonic = lambda: next(readings)
+    service._failure_hold._monotonic = lambda: next(readings)
 
     await _failed_login(service, "basiltt")
 
@@ -446,7 +457,7 @@ async def test_login_cancellation_during_the_wait_propagates(real_hash: str) -> 
         waiting.set()
         await asyncio.Event().wait()  # never set: only a cancellation ends it
 
-    service._sleep = held
+    service._failure_hold._sleep = held
     attempt = asyncio.create_task(
         service.login(LoginRequest(identifier="ghost", password="a-guess"), source_ip="10.0.0.1")
     )

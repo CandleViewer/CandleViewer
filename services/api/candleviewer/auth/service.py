@@ -92,7 +92,8 @@ class AuthService:
         login_verify_concurrency: int = LOGIN_VERIFY_CONCURRENCY,
     ) -> None:
         self._started = False
-        #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`).
+        #: #4648: the minimum time a failed sign-in takes (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`);
+        #: #4664: also a refused second factor, recovery code and step-up.
         self._login_failure_floor = login_failure_floor
         #: #4663: sign-in verifications at a time (`CV_AUTH_LOGIN_VERIFY_CONCURRENCY`).
         self._login_verify_concurrency = login_verify_concurrency
@@ -322,6 +323,7 @@ class AuthService:
                 recovery_code_key=rc_key,
                 clock=self._clock,
                 skew_reporter=skew_reporter,
+                failure_floor=self._login_failure_floor,
             )
             if self._invite_repository is not None:
                 self._invites = InviteService(
@@ -343,6 +345,7 @@ class AuthService:
                     clock=self._clock,
                     chart=SessionChart(feed=self._machine_feed),
                     skew_reporter=skew_reporter,
+                    failure_floor=self._login_failure_floor,
                 )
         await self._break_glass_notice.start()  # read before cv-api serves, then every minute
         self._started = True

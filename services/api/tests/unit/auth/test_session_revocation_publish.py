@@ -44,6 +44,7 @@ from candleviewer.auth.session_service import (
     SessionService,
 )
 from candleviewer.auth.step_up import GRACE_WINDOW, StepUpService
+from tests.unit.auth.auth_fakes import no_wait
 
 from .auth_fakes import FakeUserRepository
 from .mfa_fakes import FakeMfaRepository
@@ -101,6 +102,7 @@ class _World:
             self.hasher,
             clock=self.clock,
             publish_revocation=self.sink,
+            sleep=no_wait,
         )
 
     async def mint(self, user: str | None = None) -> str:

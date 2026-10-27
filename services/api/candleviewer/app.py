@@ -797,7 +797,8 @@ def build_auth_service(
         system_events=PgSystemEventWriter(relational, redact_details=system_event_redactor()),
         # E09-S11 (O4): whether a break-glass reset is unresolved, for the WS `system` notice.
         break_glass_events=SqlAlchemyBreakGlassEvents(relational),
-        # #4648: the minimum time a failed sign-in takes, held to 250-5000 ms by `Settings`.
+        # #4648/#4664: the minimum time a refused sign-in step (password, second factor, recovery
+        # code) or step-up takes, held to 250-5000 ms by `Settings`.
         login_failure_floor=timedelta(milliseconds=settings.auth_login_failure_floor_ms),
         # #4663: sign-in verifications at a time, held to 1-32 by `Settings`.
         login_verify_concurrency=settings.auth_login_verify_concurrency,

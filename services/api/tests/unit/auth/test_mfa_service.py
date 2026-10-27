@@ -31,6 +31,7 @@ from candleviewer.auth.models import (
 )
 from candleviewer.auth.recovery_codes import generate_recovery_codes, hash_recovery_code
 from candleviewer.auth.totp import generate_code, time_step_for
+from tests.unit.auth.auth_fakes import no_wait
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -45,7 +46,9 @@ def _clock() -> datetime:
 
 def _service(repo: FakeMfaRepository) -> MfaService:
     key = os.urandom(32)
-    return MfaService(repo, TotpEncryptor(key), recovery_code_key=_RC_KEY, clock=_clock)
+    return MfaService(
+        repo, TotpEncryptor(key), recovery_code_key=_RC_KEY, clock=_clock, sleep=no_wait
+    )
 
 
 async def _make_login_challenge(repo: FakeMfaRepository, user_id: uuid.UUID) -> str:

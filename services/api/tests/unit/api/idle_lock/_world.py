@@ -33,7 +33,7 @@ from candleviewer.auth.step_up import StepUpService
 from candleviewer.auth.throttle import PerIpLoginThrottle
 from tests.conftest import RecordingAuditSink
 from tests.unit.api._fakes import WriterLane, enrolment_recorder
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -159,6 +159,7 @@ class World:
             Hasher(),
             clock=self.clock,
             chart=SessionChart(),
+            sleep=no_wait,
         )
         self.audit = _Audit()
         self.auth = _Auth(self.sessions)

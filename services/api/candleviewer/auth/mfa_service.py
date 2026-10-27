@@ -12,6 +12,14 @@ Every Gherkin scenario in the ticket maps to a method here:
 - `regenerate_recovery_codes()` — `POST /auth/mfa/recovery`'s sibling
   regeneration path from SCR-112.
 
+#4664: every refusal of `verify()` and `check_recovery()` returns no sooner than the
+minimum time (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`) after the attempt started, after its attempt
+count is written; a success is never held (`FailureHold`, shared with `LoginService`).
+Enrolment confirmation is not held: the caller already holds a session for the user, and the
+code it checks is for the secret just shown to that caller. Nor is `complete_recovery()`'s
+refusal of a code a concurrent request spent first: the code has already matched in
+`check_recovery()`, so that answer is decided by the other request, not by the code presented.
+
 As with `LoginService`, audit emission is the router's job (`auth` may not
 import `audit` — `forbidden-M18` import-linter contract); this module
 raises typed errors and returns typed results only.
@@ -19,7 +27,9 @@ raises typed errors and returns typed results only.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import time
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
@@ -34,6 +44,7 @@ from candleviewer.auth.errors import (
     RecoveryCodesExhausted,
     UserDisabled,
 )
+from candleviewer.auth.failure_hold import FAILURE_MINIMUM, FailureHold, MonotonicClock, Sleep
 from candleviewer.auth.mfa_repository import MfaRepository
 from candleviewer.auth.models import (
     MfaChallengeRecord,
@@ -60,6 +71,16 @@ CHALLENGE_TTL = timedelta(minutes=5)
 
 Clock = Callable[[], datetime]
 
+#: #4664: the refusals of a second-factor attempt (`verify`) and of a recovery-code attempt
+#: (`check_recovery`), each held to the minimum time.
+_VERIFY_REFUSALS = (MfaCodeInvalid, MfaCodeReused, MfaChallengeInvalid, MfaChallengeLocked)
+_RECOVERY_REFUSALS = (
+    MfaChallengeInvalid,
+    MfaChallengeLocked,
+    RecoveryCodeInvalid,
+    RecoveryCodesExhausted,
+)
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -82,8 +103,13 @@ class MfaService:
         clock: Clock = _utc_now,
         issuer: str = "CandleViewer",
         skew_reporter: TotpSkewReporter | None = None,
+        failure_floor: timedelta = FAILURE_MINIMUM,
+        monotonic: MonotonicClock = time.monotonic,
+        sleep: Sleep = asyncio.sleep,
     ) -> None:
         self._repository = repository
+        #: #4664: refuses a minimum time below the setting's lowest value (ValueError).
+        self._failure_hold = FailureHold(failure_floor, monotonic=monotonic, sleep=sleep)
         self._encryptor = encryptor
         # Server-side HMAC key for recovery-code hashes (PR #1618 security
         # review, blocking 1); never logged or returned.
@@ -99,7 +125,17 @@ class MfaService:
         `user_id`, so no account name is needed here.
 
         Raises `MfaChallengeInvalid`, `MfaChallengeLocked`, `MfaCodeInvalid`,
-        or `MfaCodeReused`."""
+        or `MfaCodeReused`, each no sooner than the minimum time after the attempt started
+        and after its attempt count is written (#4664); a success is never held."""
+        started = self._failure_hold.start()
+        try:
+            return await self._verify(request)
+        except _VERIFY_REFUSALS:
+            # A cancellation during the wait propagates (nothing here catches it).
+            await self._failure_hold.hold(started)
+            raise
+
+    async def _verify(self, request: MfaVerifyRequest) -> MfaVerifiedResult:
         if request.method is not MfaMethodKind.TOTP:
             # WebAuthn is out of scope (ticket "Out of scope"); recovery
             # codes go through `check_recovery()` / `/auth/mfa/recovery` instead
@@ -275,13 +311,22 @@ class MfaService:
         (C-2.9).
 
         Raises `MfaChallengeInvalid`, `MfaChallengeLocked`, `RecoveryCodeInvalid`, or
-        `RecoveryCodesExhausted`.
+        `RecoveryCodesExhausted`, each no sooner than the minimum time after the attempt
+        started and after its attempt count is written (#4664); a match is never held.
 
         Constant-time against the hashed set (ticket "Technical notes":
         "constant-time against the hashed set") is delivered by hashing the
-        candidate once and doing an equality-indexed lookup — the DB index
-        lookup itself is not a timing side-channel on the *code value*
-        because it operates on the keyed HMAC-SHA256 digest, not the code."""
+        candidate once and doing an equality-indexed lookup on the keyed
+        HMAC-SHA256 digest, never on the code itself, so how long the lookup
+        takes does not depend on how much of a guess matches a stored code."""
+        started = self._failure_hold.start()
+        try:
+            return await self._check_recovery(mfa_token, recovery_code)
+        except _RECOVERY_REFUSALS:
+            await self._failure_hold.hold(started)
+            raise
+
+    async def _check_recovery(self, mfa_token: str, recovery_code: str) -> MfaRecoveryCheck:
         challenge = await self._open_challenge_or_raise(mfa_token, purpose="login")
         if await self._repository.count_unused_recovery_codes(str(challenge.user_id)) == 0:
             # Ticket "Recovery codes exhausted": "I am told to contact the
@@ -316,7 +361,9 @@ class MfaService:
 
         Raises `RecoveryCodeInvalid`, with nothing changed, when a concurrent request spent
         the code or satisfied the challenge first (PR #1618 review finding 2); like a replay,
-        it counts as a failed attempt. Raises `UserDisabled`, with nothing changed and no
+        it counts as a failed attempt. That refusal is answered at once, not held to the minimum
+        time (#4664): the code already matched in `check_recovery()`, so the answer turns on the
+        other request, not on the code presented. Raises `UserDisabled`, with nothing changed and no
         attempt counted, when the user is disabled or gone, read under the user-row lock in
         that transaction (#2911), so a disable that commits first always wins."""
         challenge_id = str(check.challenge_id)

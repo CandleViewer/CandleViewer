@@ -10,6 +10,7 @@ from candleviewer.auth.envelope import TotpEncryptor
 from candleviewer.auth.mfa_service import MfaService, _hash_token
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind
 from candleviewer.auth.totp import generate_code, time_step_for
+from tests.unit.auth.auth_fakes import no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 
 NOW = datetime(2026, 9, 30, 12, 0, 0, tzinfo=UTC)
@@ -34,7 +35,9 @@ class MfaKit:
         self.clock = clock or Clock()
         self.repo = FakeMfaRepository()
         self.enc = TotpEncryptor(os.urandom(32))
-        self.svc = MfaService(self.repo, self.enc, recovery_code_key=RC_KEY, clock=self.clock)
+        self.svc = MfaService(
+            self.repo, self.enc, recovery_code_key=RC_KEY, clock=self.clock, sleep=no_wait
+        )
 
     async def enrol(self, user: uuid.UUID) -> bytes:
         res = await self.svc.enroll(

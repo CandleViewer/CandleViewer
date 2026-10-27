@@ -22,6 +22,7 @@ from candleviewer.auth.mfa_service import MfaService
 from candleviewer.auth.models import MfaEnrollRequest, MfaMethodKind, SessionRecord
 from candleviewer.auth.step_up import NO_GRACE_ACTION_CLASSES, StepUpService
 from candleviewer.auth.totp import generate_code, time_step_for
+from tests.unit.auth.auth_fakes import no_wait
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -75,7 +76,7 @@ async def _setup() -> tuple[StepUpService, _Clock, bytes, uuid.UUID, FakeSession
     clock = _Clock()
     repo = FakeMfaRepository()
     enc = TotpEncryptor(os.urandom(32))
-    mfa = MfaService(repo, enc, recovery_code_key=_RC_KEY, clock=clock)
+    mfa = MfaService(repo, enc, recovery_code_key=_RC_KEY, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
@@ -88,7 +89,7 @@ async def _setup() -> tuple[StepUpService, _Clock, bytes, uuid.UUID, FakeSession
         sessions.sessions[alias] = _session(user)
     users = FakeUserRepository()
     users.add(make_user(password_hash=await _pw_hash()).model_copy(update={"id": user}))
-    svc = StepUpService(repo, sessions, enc, users, _HASHER, clock=clock)
+    svc = StepUpService(repo, sessions, enc, users, _HASHER, clock=clock, sleep=no_wait)
     return svc, clock, seed, user, sessions
 
 
@@ -291,7 +292,13 @@ async def test_elevation_persists_on_session_row_across_restart() -> None:
     assert "keys" in sessions.sessions["s1"].step_up_elevations
     # Process restart: a brand-new service over the same session store.
     rebuilt = StepUpService(
-        FakeMfaRepository(), sessions, svc._encryptor, svc._users, svc._hasher, clock=clock
+        FakeMfaRepository(),
+        sessions,
+        svc._encryptor,
+        svc._users,
+        svc._hasher,
+        clock=clock,
+        sleep=no_wait,
     )
     clock.now += timedelta(minutes=4)
     await rebuilt.require_elevation("s1", "keys")
@@ -306,11 +313,13 @@ async def test_strikes_and_readonly_persist_across_restart() -> None:
         with pytest.raises(StepUpCodeInvalid):
             await svc.step_up(str(user), "s1", "keys", "000000", PASSWORD)
     rebuilt = StepUpService(
-        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock
+        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
     )
     with pytest.raises(SessionReadOnly):  # third strike counted after restart
         await rebuilt.step_up(str(user), "s1", "keys", "000000", PASSWORD)
-    again = StepUpService(svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock)
+    again = StepUpService(
+        svc._mfa, sessions, svc._encryptor, svc._users, svc._hasher, clock=clock, sleep=no_wait
+    )
     with pytest.raises(SessionReadOnly):
         await again.assert_writable("s1")
 

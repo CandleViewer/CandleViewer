@@ -60,7 +60,7 @@ from tests.contract.rbac.rbac_harness import _AuditSink, load_contract, role_per
 from tests.csrf_helpers import csrf_headers
 from tests.rules.test_rules_manager import _active_hash, _ir
 from tests.security.auth.test_disable_user_drill import _ORIGIN, _auth_ws, _Clock, _recv
-from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers
+from tests.unit.auth.auth_fakes import FakeUserRepository, FullUsers, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 from tests.unit.test_user_cascade_wiring import _actor
@@ -426,7 +426,9 @@ def deployed(
 
     ctx.auth._sessions = SessionService(w.repo, Hasher(), clock=w.clock, publish_revocation=publish)
     hasher, mfa, keys = Hasher(), FakeMfaRepository(), TotpEncryptor(bytes(range(32)))
-    step_up = StepUpService(mfa, w.repo, keys, FakeUserRepository(), hasher, clock=w.clock)
+    step_up = StepUpService(
+        mfa, w.repo, keys, FakeUserRepository(), hasher, clock=w.clock, sleep=no_wait
+    )
     ctx.auth._step_up = step_up
     with TestClient(app, client=("127.0.0.1", 50000), headers={"origin": _ORIGIN}) as client:
         assert client.portal is not None

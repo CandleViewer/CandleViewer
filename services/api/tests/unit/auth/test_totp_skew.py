@@ -45,6 +45,7 @@ from candleviewer.health_wiring import PgSystemEventWriter
 from candleviewer.observability.health_probes import SystemEventWriter
 from candleviewer.observability.metrics import CollectorRegistry
 from candleviewer.settings import Settings
+from tests.unit.auth.auth_fakes import no_wait
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository, RecordingSystemEvents, SkewRig, StalledSystemEvents
@@ -291,7 +292,14 @@ async def test_step_up_reports_a_skewed_code_but_not_the_replay_of_an_accepted_o
     users.add(user)
     minted = await SessionService(sessions, hasher, clock=rig.clock).mint(str(rig.user))
     service = StepUpService(
-        rig.repo, sessions, rig.enc, users, hasher, clock=rig.clock, skew_reporter=rig.reporter
+        rig.repo,
+        sessions,
+        rig.enc,
+        users,
+        hasher,
+        clock=rig.clock,
+        skew_reporter=rig.reporter,
+        sleep=no_wait,
     )
     uid, sid, accepted = str(rig.user), str(minted.session_id), rig.code(SECRET)
     await service.step_up(uid, sid, "keys", accepted, PASSWORD)

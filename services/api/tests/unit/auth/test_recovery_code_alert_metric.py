@@ -36,6 +36,7 @@ from candleviewer.auth.recovery_codes import hash_recovery_code
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.settings import Environment, Settings
 from tests.unit.api._fakes import Identity, WriterLane, sessions
+from tests.unit.auth.auth_fakes import no_wait
 
 from .mfa_fakes import FakeMfaRepository
 
@@ -143,7 +144,11 @@ async def _repo_with(
 
 def _client(repo: FakeMfaRepository, audit: _Audit, *, mfa_active: bool = True) -> TestClient:
     mfa = MfaService(
-        repo, TotpEncryptor(os.urandom(32)), recovery_code_key=_RC_KEY, clock=lambda: _NOW
+        repo,
+        TotpEncryptor(os.urandom(32)),
+        recovery_code_key=_RC_KEY,
+        clock=lambda: _NOW,
+        sleep=no_wait,
     )
     app = FastAPI()
     app.include_router(

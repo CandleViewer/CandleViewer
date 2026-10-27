@@ -72,7 +72,7 @@ from tests.unit.api.test_step_up_router import (
     _Sessions,
 )
 from tests.unit.api.test_users_router import _Notifier, _Resolver, _Store
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 from tests.unit.auth.mfa_fakes import FakeMfaRepository
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
@@ -145,7 +145,7 @@ class _World:
 async def _world() -> _World:
     clock, repo, enc = _Clock(), FakeMfaRepository(), TotpEncryptor(os.urandom(32))
     clock.now = _T0
-    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock)
+    mfa = MfaService(repo, enc, recovery_code_key=b"k" * 32, clock=clock, sleep=no_wait)
     user = uuid.uuid4()
     res = await mfa.enroll(
         str(user), MfaEnrollRequest(method=MfaMethodKind.TOTP, label=""), account_name="o"
@@ -159,7 +159,10 @@ async def _world() -> _World:
         await rows.create_session(record)
     hasher, users = Hasher(), FakeUserRepository()
     users.add(make_user(password_hash=await hasher.hash(_PW)).model_copy(update={"id": user}))
-    auth = _Auth(StepUpService(repo, rows, enc, users, hasher, clock=clock), _Sessions(sessions))
+    auth = _Auth(
+        StepUpService(repo, rows, enc, users, hasher, clock=clock, sleep=no_wait),
+        _Sessions(sessions),
+    )
     audit = _Emitter()
     b16_session.set_audit_sink(audit)
     app = FastAPI()

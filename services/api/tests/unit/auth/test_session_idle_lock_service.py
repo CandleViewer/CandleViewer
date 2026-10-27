@@ -33,6 +33,7 @@ from candleviewer.auth.session_service import (
 )
 from candleviewer.auth.step_up import StepUpChallenge, StepUpService
 from tests.conftest import RecordingAuditSink
+from tests.unit.auth.auth_fakes import no_wait
 
 from .auth_fakes import FakeUserRepository, make_user
 from .mfa_fakes import FakeMfaRepository
@@ -267,6 +268,7 @@ async def _step_up(users: FakeUserRepository) -> StepUpService:
         users,
         Hasher(),
         clock=_Clock(),
+        sleep=no_wait,
     )
 
 
@@ -360,6 +362,7 @@ async def test_step_up_grants_of_an_idle_locked_row_authorise_nothing() -> None:
         FakeUserRepository(),
         Hasher(),
         clock=clock,
+        sleep=no_wait,
     )
     try:
         assert await svc.remaining_grace(sid, "keys") is not None  # live: the grant counts

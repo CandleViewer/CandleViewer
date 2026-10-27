@@ -5,7 +5,7 @@ the counter's own semantics are in `tests/unit/auth/test_login_lockout_metric.py
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -18,7 +18,7 @@ from candleviewer.auth.hashing import Hasher
 from candleviewer.auth.login_service import LOCKOUT_THRESHOLD, LoginService
 from candleviewer.auth.metrics import export_auth_metrics
 from candleviewer.auth.throttle import PerIpLoginThrottle
-from tests.unit.auth.auth_fakes import FakeUserRepository, make_user
+from tests.unit.auth.auth_fakes import FakeUserRepository, make_user, no_wait
 
 _CSRF_CODEC = CsrfCodec(b"\x05" * 32)
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -40,7 +40,7 @@ async def _client() -> httpx.AsyncClient:
         hasher,
         per_ip_throttle=PerIpLoginThrottle(max_attempts=10_000),
         clock=lambda: _NOW,
-        failure_floor=timedelta(0),
+        sleep=no_wait,
     )
     app = FastAPI()
     auth: Any = _Auth(login)
