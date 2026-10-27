@@ -61,10 +61,14 @@ async def _session_in(wanted: _State) -> tuple[SessionService, SessionRecord, st
     return service, record, minted.access_token
 
 
-async def _agree(state: _State, *, touch: bool) -> None:
+async def _agree(state: _State, *, extend: bool) -> None:
+    """The strict path, and extend's (it authenticates, then `touch()`es: #2300's only re-stamp
+    on a live session), accept exactly the sessions `is_live_session` calls live."""
     service, record, token = await _session_in(state)
     try:
-        await service.authenticate_access_token(token, touch=touch)
+        await service.authenticate_access_token(token)
+        if extend:
+            await service.touch(str(record.id))
         accepted = True
     except (SessionNotFound, SessionRevoked, SessionIdleLocked):
         accepted = False
@@ -95,8 +99,8 @@ def test_is_live_session_holds_exactly_when_the_strict_path_accepts(
     age_us: int, idle_gap_us: int, idle_timeout_s: int, absolute_left_us: int, revoked: bool
 ) -> None:
     state = _State(age_us, idle_gap_us, idle_timeout_s, absolute_left_us, revoked)
-    asyncio.run(_agree(state, touch=False))
-    asyncio.run(_agree(state, touch=True))
+    asyncio.run(_agree(state, extend=False))
+    asyncio.run(_agree(state, extend=True))
 
 
 async def test_allow_locked_path_accepts_an_idle_locked_session_the_predicate_rejects() -> None:

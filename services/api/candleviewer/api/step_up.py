@@ -114,7 +114,10 @@ _CHALLENGE_REFUSED = {
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 #: Writes that must keep working in the downgrade (ending the session). `DELETE
 #: /auth/session/view-as` too (#3085, Q5): leaving view-as is one call that nothing refuses.
-_WRITE_EXEMPT_PATHS = frozenset({"/auth/logout", "/auth/step-up", "/auth/session/view-as"})
+#: And extend (#2300 D1): it acts on no data, and is the only activity a live session has.
+_WRITE_EXEMPT_PATHS = frozenset(
+    {"/auth/logout", "/auth/step-up", "/auth/session/view-as", "/auth/session/extend"}
+)
 
 
 class AuditRefused(Exception):

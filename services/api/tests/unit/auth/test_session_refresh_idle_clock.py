@@ -53,20 +53,21 @@ async def test_refreshes_alone_never_move_the_idle_clock() -> None:
         await svc.refresh(session.refresh_token)
 
 
-async def test_an_interactive_request_still_extends_the_session() -> None:
+async def test_an_extend_still_extends_the_session() -> None:
+    """#2300: extend (`touch()`) is the activity on a live session; a request is none."""
     svc, repo, clock = _svc()
     session = await svc.mint(_USER)
     clock.now += _CADENCE
     session = (await svc.refresh(session.refresh_token)).minted  # last activity is still T0
 
-    clock.now += timedelta(minutes=3)  # 14 minutes in, the user acts with the fresh token
-    await svc.authenticate_access_token(session.access_token, touch=True)
+    clock.now += timedelta(minutes=3)  # 14 minutes in, the user presses Extend
+    await svc.touch(str(session.session_id))
     active = clock.now
     clock.now += timedelta(seconds=60)
     session = (await svc.refresh(session.refresh_token)).minted
     assert repo.sessions[str(session.session_id)].last_seen_at == active
 
-    clock.now = active + _IDLE + timedelta(seconds=1)  # the clock runs from the interactive request
+    clock.now = active + _IDLE + timedelta(seconds=1)  # the clock runs from the extend
     with pytest.raises(SessionIdleLocked):
         await svc.refresh(session.refresh_token)
 

@@ -52,9 +52,7 @@ def _last_step_up_at(record: Any) -> datetime | None:
 
 
 class _Sessions(Protocol):
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = ...
-    ) -> Any: ...
+    async def authenticate_access_token(self, raw_access_token: str) -> Any: ...
 
 
 class _Identity(Protocol):
@@ -95,7 +93,7 @@ class SessionAuditPrincipalResolver:
         if scheme.lower() != "bearer" or not token:
             return None
         try:
-            record = await self._sessions().authenticate_access_token(token, touch=True)
+            record = await self._sessions().authenticate_access_token(token)
             subject = view_as_subject(request, record)  # the target on a live view (#3085)
             user = await self._identity.user(str(subject))
             info = await self._identity.session_info(str(subject))

@@ -221,9 +221,7 @@ class SessionMinterLike(Protocol):
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
 
-    async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False
-    ) -> SessionRecord: ...
+    async def authenticate_access_token(self, raw_access_token: str) -> SessionRecord: ...
 
     async def list_sessions(self, user_id: str) -> tuple[SessionView, ...]: ...
 
@@ -602,7 +600,7 @@ def make_auth_router(
         if (token := _bearer(request)) is None:
             return unauthenticated
         try:
-            record = await auth_service.sessions.authenticate_access_token(token, touch=True)
+            record = await auth_service.sessions.authenticate_access_token(token)
         except AuthError:
             return unauthenticated  # unknown, expired, revoked or idle-locked: one answer
         if (refusal := undeclared_query_refusal(request, frozenset())) is not None:

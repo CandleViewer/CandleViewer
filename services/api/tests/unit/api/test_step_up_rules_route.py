@@ -34,7 +34,8 @@ class _Identity:
 
 
 class _TouchingSessions(_Sessions):
-    """The resolver authenticates with `touch=True`; the harness sessions keep no idle clock."""
+    """Accepts the `touch` keyword the resolver once passed (#2300 retired it); the harness
+    sessions keep no idle clock."""
 
     async def authenticate_access_token(self, token: str, touch: bool = False) -> SessionRecord:
         return await super().authenticate_access_token(token)

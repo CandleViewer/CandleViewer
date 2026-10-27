@@ -119,7 +119,7 @@ class SessionTradingPrincipalResolver:
 
     async def _read(self, request: Request, token: str) -> TradingPrincipal | None:
         try:
-            record = await self._sessions().authenticate_access_token(token, touch=True)
+            record = await self._sessions().authenticate_access_token(token)
             # A context with no stamp raises `ViewAsUnstamped`: neither an `AuthError` nor a
             # `LookupError`, so it reaches `resolve`'s catch and is `StoreUnavailable` (#3085).
             user_id = view_as_subject(request, record)
