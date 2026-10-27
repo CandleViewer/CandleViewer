@@ -23,18 +23,22 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from structlog.testing import capture_logs
 
+from candleviewer.api.contract_conformance import load_openapi_spec
+from candleviewer.api.deny_by_default import declared_operations
 from candleviewer.api.idempotency import StoredResponse, request_fingerprint
 from candleviewer.api.order_admission import MAX_ORDER_BODY_BYTES
 from candleviewer.api.order_etag import order_etag
 from candleviewer.api.order_principal import TradingPrincipal
+from candleviewer.api.view_as_refusals import VIEW_AS_REFUSED, ViewAsRefusalRecorder
 from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
+from candleviewer.auth.view_as import ViewAsPhase, ViewAsRequestContext
 from candleviewer.domain.primitives import Environment
 from candleviewer.exchange.base.errors import OmsErrorCode
 from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
 from candleviewer.oms.errors import OMS_NOT_READY_RETRY_AFTER_S, OmsNotReady, StoreUnavailable
-from candleviewer.oms.ports import ArmToken, RequestRecord, StopOffset
+from candleviewer.oms.ports import ArmToken, KeyedRecord, RequestRecord, StopOffset
 from candleviewer.statechart.bindings import b01_order as b01
 from candleviewer.statechart.gateway import (
     GatewayDegradedError,
@@ -44,6 +48,7 @@ from candleviewer.statechart.gateway import (
 from candleviewer.storage.repositories.accounts import OwnerScope
 from candleviewer.storage.repositories.orders import OrderRow, ScopedOrder
 from tests.unit.api import test_order_exits_route as er
+from tests.unit.api.test_audit_budget import _Clock, _Writer
 from tests.unit.api.test_orders_route import ArmChecks
 from tests.unit.oms import command_rig as cr
 from tests.unit.oms import submit_rig as sr
@@ -985,3 +990,166 @@ async def test_a_client_that_leaves_does_not_stop_the_amend_nor_free_its_key_ear
     again = await patch(world, row.id, {"price": "60100"})
     assert (again.status_code, again.headers["idempotency-replayed"]) == (202, "true")
     assert again.headers["etag"] == first.headers["etag"] and len(amends(rig)) == 1
+
+
+# --- view-as (22 "View-as session", Protective writes; 24 Sec.8.10; #913 CG10) --------------------
+
+CONTEXT = UUID("0c000000-0000-4000-8000-00000000c0de")
+_TEMPLATE = {"method": "PATCH", "path": "/orders/{orderId}"}
+_PRICED = "price"
+_TIGHTER = {"stop_loss": {"unit": _PRICED, "value": "58500"}}  # the entry's 58000 stop, raised
+_KEPT = {"stop_loss": {"unit": _PRICED, "value": "58000"}}  # the stop in force, re-armed
+#: Amends with a component that is not protective (24 Sec.8.10; the 2026-10-20 registry ruling):
+#: each refused under view-as whatever the gate says of it.
+_NOT_PROTECTIVE = {
+    "take_profit": {"take_profit": {"unit": _PRICED, "value": "64500"}},
+    "price": {"price": "60100"},
+    "quantity_cut": _CUT,
+    "looser_stop": {"stop_loss": {"unit": _PRICED, "value": "57500"}},
+    "stop_and_take_profit": _TIGHTER | {"take_profit": {"unit": _PRICED, "value": "64500"}},
+    "stop_in_ticks": {"stop_loss": {"unit": "ticks", "value": "10"}},
+}
+_PHASES = {
+    "live": ("viewing:creator", "view_as_read_only"),
+    "held": ("viewing:", "view_as_expired"),
+}
+
+
+def viewed(world: er.World, phase: str, target: UUID = sr.USER) -> _Writer:
+    """`world` serving a session of the Owner viewing as `target`, by default the Manager who
+    created the rig's entry, as the view-as guard stamps a protective write it passes (the viewer
+    its subject), `live` or `held`; its view-as refusals recorded in the writer returned."""
+    writer = _Writer(_Clock())
+    held = ViewAsPhase.LIVE if phase == "live" else ViewAsPhase.HELD
+    world.viewing = ViewAsRequestContext(
+        viewer_user_id=OWNER, viewer_session_id=sr.SESSION, viewer_label="owner",
+        target_user_id=target, context_id=CONTEXT, subject_user_id=OWNER, phase=held,
+    )  # fmt: skip
+    operations = declared_operations(load_openapi_spec())
+    world.refusals = ViewAsRefusalRecorder(writer, operations=operations, clock=writer.clock)
+    return writer
+
+
+def refusals(writer: _Writer) -> list[dict[str, Any]]:
+    return [fields for action, fields, _ in writer.records if action == VIEW_AS_REFUSED]
+
+
+@pytest.mark.parametrize("phase", list(_PHASES))
+@pytest.mark.parametrize("body", list(_NOT_PROTECTIVE))
+async def test_a_viewers_amend_with_a_component_not_protective_is_refused_before_any_effect(
+    rig: SubmitRig, phase: str, body: str
+) -> None:
+    """22 "View-as session": the handler classifies a viewer's amend after validation (24
+    Sec.8.10) and refuses one with any component that is not protective as the guard refuses any
+    write, `view_as_read_only` while live, `view_as_expired` in the hold: before any effect,
+    nothing sent and no exit-service record, no key bound (the 24 h record and the in-flight guard
+    hold nothing), and one `admin.view_as_refused` naming the viewer, its refusal record."""
+    who, code = _PHASES[phase]
+    world, row = await amendable(rig, "creator")
+    writer = viewed(world, phase)
+    answer = await patch(world, row.id, _NOT_PROTECTIVE[body], who=who)
+    assert (answer.status_code, answer.json()["code"]) == (403, code)
+    assert answer.headers["content-type"] == "application/problem+json"
+    [refused_] = refusals(writer)
+    assert (refused_["reason"], refused_["after_state"], refused_["object_kind"]) == (
+        code, _TEMPLATE, "operation",
+    )  # fmt: skip
+    assert (refused_["actor_user_id"], refused_["session_id"]) == (OWNER, sr.SESSION)
+    assert (amends(rig), world.actions(), world.oms.tasks) == ([], [], [])
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
+    claimed = world.oms.service.guard.claim(OWNER, "amend", KEY)
+    assert not isinstance(claimed, ex.ExitOutcome)  # the key is free: nothing claimed it
+    claimed()
+    assert refused(world, code) == 1
+
+
+@pytest.mark.parametrize("phase", list(_PHASES))
+@pytest.mark.parametrize(("body", "stop"), [(_TIGHTER, D("58500")), (_KEPT, D("58000"))])
+async def test_a_viewers_amend_of_the_stop_alone_that_keeps_or_tightens_it_runs_as_the_viewer(
+    rig: SubmitRig, phase: str, body: dict[str, Any], stop: Decimal
+) -> None:
+    """A protective amend (its stop alone, kept or tightened: C-2.6) passes on to the exit
+    service and is sent, every record naming the viewer, the target never; no refusal recorded.
+    Live it reads the Manager's order in the Manager's trade grants (`scope_for_target`), held in
+    the Owner's own scope."""
+    who, _ = _PHASES[phase]
+    world, row = await amendable(rig, "creator")
+    writer = viewed(world, phase)
+    answer = await patch(world, row.id, body, who=who)
+    assert answer.status_code == 202, answer.text
+    [sent] = amends(rig)
+    assert (sent.stop_loss, sent.take_profit) == (stop, D("64000"))  # re-paired (Q2)
+    assert refusals(writer) == []
+    records = [record for record, _ in world.audits.written[world.since :]]
+    requests = {r.actor for r in records if isinstance(r, RequestRecord)}
+    rows = {(r.actor_user_id, r.actor) for r in records if isinstance(r, KeyedRecord)}
+    assert requests == {er.ACTOR}  # the exit service's records: the viewer, never the target
+    assert rows == {(OWNER, er.ACTOR)}  # the stop rows' (`sl.modified`, `tp.modified`): the viewer
+
+
+async def test_a_viewers_body_that_fails_validation_is_refused_as_any_body_is(
+    rig: SubmitRig,
+) -> None:
+    """The class is judged after validation: a body that is no `AmendOrderRequest` is the route's
+    own `400 validation_failed`, recorded at step 5 as any body's refusal, no view-as refusal."""
+    world, row = await amendable(rig, "creator")
+    writer = viewed(world, "live")
+    answer = await patch(world, row.id, {"qty": 5}, who="viewing:creator")
+    assert (answer.status_code, answer.json()["code"]) == (400, "validation_failed")
+    assert (world.actions(), world.steps()) == ([(_DENIED, "validation_failed")], ["body"])
+    assert (refusals(writer), amends(rig)) == ([], [])
+
+
+async def test_a_viewers_refusal_whose_record_cannot_land_is_503_audit_unavailable(
+    rig: SubmitRig,
+) -> None:
+    """22: a due refusal record that cannot be written turns the refusal into
+    `503 audit_unavailable`, and nothing changes; it is counted under that code."""
+    world, row = await amendable(rig, "creator")
+    writer = viewed(world, "live")
+    writer.mode = "fail"
+    answer = await patch(world, row.id, {"price": "60100"}, who="viewing:creator")
+    assert (answer.status_code, answer.json()["code"]) == (503, "audit_unavailable")
+    assert (amends(rig), world.actions(), refusals(writer)) == ([], [], [])
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
+    assert refused(world, "audit_unavailable") == 1
+
+
+async def test_a_viewers_refusal_with_no_recorder_composed_is_503_audit_unavailable(
+    rig: SubmitRig,
+) -> None:
+    """22: a due refusal record with no recorder to write it (the router built without
+    `view_as_refusals`) is `503 audit_unavailable`, as the guard answers (`refuse_component`), and
+    nothing changes; it is counted under that code."""
+    world, row = await amendable(rig, "creator")
+    viewed(world, "live")
+    world.refusals = None  # the router is built with no `view_as_refusals`
+    answer = await patch(world, row.id, {"price": "60100"}, who="viewing:creator")
+    assert (answer.status_code, answer.json()["code"]) == (503, "audit_unavailable")
+    assert (amends(rig), world.actions(), world.oms.tasks) == ([], [], [])
+    assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None
+    assert refused(world, "audit_unavailable") == 1
+
+
+@pytest.mark.parametrize(
+    ("env", "body", "key"),
+    [("live", _RAISE, KEY), ("demo", _NOT_PROTECTIVE["take_profit"], None)],
+    ids=["live-raise-without-an-arm-token", "no-idempotency-key"],
+)
+async def test_a_viewers_amend_is_classified_before_its_arm_token_and_its_key_are_read(
+    rig: SubmitRig, env: Environment, body: dict[str, Any], key: UUID | None
+) -> None:
+    """Step 5 classifies a viewer's amend before steps 6 and 7 (24 Sec.8.4): one that is not
+    protective is `view_as_read_only`, its one `admin.view_as_refused` written, whether it is a
+    raise on a live account sent without an arm token (no arm record asked, never
+    `session_not_armed`) or an amend sent without an `Idempotency-Key` (never
+    `validation_failed`)."""
+    world, row = await amendable(rig, "creator")
+    arms = routed(world, env)
+    writer = viewed(world, "live")
+    answer = await patch(world, row.id, body, who="viewing:creator", key=key)
+    assert (answer.status_code, answer.json()["code"]) == (403, "view_as_read_only")
+    [refused_] = refusals(writer)
+    assert (refused_["reason"], refused_["actor_user_id"]) == ("view_as_read_only", OWNER)
+    assert (arms.shown, world.actions(), world.steps(), amends(rig)) == ([], [], [], [])
+    assert refused(world, "view_as_read_only") == 1

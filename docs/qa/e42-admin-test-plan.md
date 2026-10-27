@@ -1231,8 +1231,8 @@ order is placed after a disable in AD-X-01; and the view-as entry criterion in s
 - for S03's view-as cases (AD-S03-05, AD-S03-N01 to AD-S03-N03, AD-S03-N06 to AD-S03-N08 and AD-S03-N11),
   `POST /admin/view-as` is mounted, as it is on `main` since #3085's server slices (AC-ADM-22 is
   `test_ac_adm_22_view_as_cannot_mutate`); AD-S03-05's protective-write half also needs the six handlers,
-  E39-S03 (`setKillSwitch`), E29-T04 (`cancelOrder`, `cancelAllOrders`), E29-T07 (`amendOrder`,
-  `setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted and registered as a
+  E39-S03 (`setKillSwitch`), E29-T04 (`cancelOrder`, `cancelAllOrders`, `amendOrder`), E29-T07
+  (`setPositionTpSl`) and E34-S03 (`amendTradeGroup`), since until each is mounted and registered as a
   protective write the guard refuses it like any other write;
 - for S08's latch cases (AD-S08-02 and AD-S08-03), Q-7 is answered: until the story's contract slice
   registers the acknowledge operation, its step-up class and its audit action, both are blocked; so are

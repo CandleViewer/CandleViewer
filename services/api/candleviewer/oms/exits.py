@@ -110,7 +110,7 @@ from .ports import (
     TradingSwitches,
 )
 from .routing import retry_after
-from .stop_ratchet import ratchet_refusal, tpsl_scope_refusal
+from .stop_ratchet import loosens, ratchet_refusal, tpsl_scope_refusal
 from .validator import Validator
 
 __all__ = [
@@ -119,7 +119,7 @@ __all__ = [
     "SETTLE_TIMEOUT_S", "TRANSITION_TIMEOUT_S", "VIEW_ONLY", "AmendTerms", "CancelReason",
     "ExitCaller", "ExitCommands", "ExitDeps", "ExitMachines", "ExitOperation", "ExitOrders",
     "ExitOutcome", "ExitStep", "InFlightGuard", "LiveStops", "OrderExits", "OutcomeKind",
-    "UnknownReason", "risk_increasing",
+    "UnknownReason", "protective_amend", "risk_increasing",
 ]  # fmt: skip
 
 #: What an exit's answer is (the 12:30Z ruling): taken, its outcome not known, or refused.
@@ -365,6 +365,34 @@ def risk_increasing(row: OrderRow, terms: AmendTerms) -> bool:
     raised = terms.qty is not None and terms.qty.is_finite() and terms.qty > row.qty
     moves = ((terms.price, row.price), (terms.trigger_price, row.trigger_price))
     return raised or any(new is not None and new.is_finite() and new != old for new, old in moves)
+
+
+def protective_amend(row: OrderRow, terms: AmendTerms) -> bool:
+    """24 Sec.8.10's protective amend, the one a view-as session may make (22 "View-as session",
+    Protective writes; the protective-write registry ruling of 2026-10-20): every component
+    protective. On `amendOrder` that is the stop-loss alone, the SL field that attaches or re-arms
+    a protective stop (Sec.8.10), given as a price above zero that attaches the order's missing
+    stop, keeps it (re-arms the trigger in force) or tightens it, never one `stop_ratchet`'s
+    `loosens` says loosens it. A take-profit, a quantity, a price or a trigger is no protective
+    component, whatever the order-entry gate says of it; nor is a stop given as a distance, which
+    only the exit service resolves to a level (fail closed), nor a stop asked cleared. Judged on
+    `row`, the order as the route read it (step 4); the exit service's own ratchet still runs."""
+    named = (terms.qty, terms.price, terms.trigger_price)
+    sides = dict(terms.sides or {})
+    if any(term is not None for term in named) or set(sides) != {"stop_loss"}:
+        return False
+    stop = sides["stop_loss"]
+    if stop is None or stop.unit != "price" or not _level(stop.value):
+        return False
+    held = row.stop_loss
+    if held is None:
+        return True  # attaches the order's missing stop
+    return _level(held) and not loosens(row.side, held, stop.value)
+
+
+def _level(value: Decimal) -> bool:
+    """A finite price above zero (finite first: ordering a NaN raises)."""
+    return value.is_finite() and value > 0
 
 
 class ExitMachines(Protocol):

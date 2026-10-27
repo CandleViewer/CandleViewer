@@ -3,10 +3,11 @@
 
 After the middleware (CSRF, the session state and the view-as guard, deny-by-default) each route
 checks 24 Sec.8.4's exit-route steps, each before the next. A cancel has no body, no arm token
-and no switches (steps 5, 6 and 10): it is never gated (C-2.6). Under view-as a cancel is a
-protective write (22 "View-as session"): the guard passes it on once the target holds
-`orders:write`, and it runs as the viewer, its step 4 scope the target's trade grants as well
-(`exit_caller`, `scope_for_target`), the viewer's own in the hold.
+and no switches (steps 5, 6 and 10): it is never gated (C-2.6). Under view-as both are protective
+writes (22 "View-as session"): the guard passes each on once the target holds `orders:write`, and
+it runs as the viewer, its step 4 scope the target's trade grants as well (`exit_caller`,
+`scope_for_target`), the viewer's own in the hold; a cancel is protective whole, an amend only
+when step 5 finds every component protective.
 
 1. the principal, as `POST /orders`' step 1: none is 401, one that cannot be read 503
    `store_unavailable`, no source composed 501; then the order's id, which is not a UUID is
@@ -20,8 +21,11 @@ protective write (22 "View-as session"): the guard passes it on once the target 
    not_found`, `403 account_scope_denied` or `forbidden`, `503 store_unavailable`;
 5. an amend's body, read under `MAX_ORDER_BODY_BYTES` and strictly into the exit service's terms
    (22 `AmendOrderRequest`): `400 validation_failed`, each rule that failed named, recorded as it
-   names an order in scope; and its class (`risk_increasing`, 24 Sec.8.10), judged on step 4's
-   read;
+   names an order in scope; under view-as (the guard's stamp), its components (24 Sec.8.10,
+   `protective_amend`): one that is not protective is refused `view_as_read_only`, or
+   `view_as_expired` in the hold, as the guard refuses any write, its refusal record written,
+   before any effect and with no key bound (22 "View-as session"); and its class
+   (`risk_increasing`, 24 Sec.8.10), judged on step 4's read;
 6. a risk-increasing amend's arm token, as `POST /orders` checks it (`403 session_not_armed` where
    the arm records refuse it: a live account without a token); a cut never needs one (C-2.6);
 7. `Idempotency-Key`; 8. the 24 h record of first `2xx` answers, by principal, operation and key,
@@ -39,14 +43,16 @@ protective write (22 "View-as session"): the guard passes it on once the target 
 
 A refusal the route makes from step 5 on is recorded through `OrderExits.deny`, naming its step
 (`body`, `arm`, `key`, `replay`, `guard`), before it is answered (C-2.9), else `503
-audit_unavailable`; the service records its own (steps 4, 10 and 11). An `oms_not_ready` met
-after step 3, the runtime's stop begun or the order lane stopped or not answering within its bound
-(20 Sec.6.2) at step 4's scope read, at a refusal's record from step 5 on, in that refusal's place,
-at step 9's run or at step 11's exit, is step 3's answer (`not_ready`): counted, never audited or
-paged, and never logged as a refusal that escaped the exit service (`oms_exit_refusal_escaped`).
-Any other fault the exit service raises at step 4, or in step 11's task once the client left too,
-is `exit_fault`'s answer: every such `500` pages, one page for the fault's class (the
-orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is counted in
+audit_unavailable`, but for a viewer's amend refused at step 5: that one is recorded as the view-as
+guard records any refusal (`refuse_component`), one `admin.view_as_refused` naming the operation's
+template, not the order, never through `deny`. The service records its own (steps 4, 10 and 11). An
+`oms_not_ready` met after step 3, the runtime's stop begun or the order lane stopped or not
+answering within its bound (20 Sec.6.2) at step 4's scope read, at a refusal's record from step 5
+on, in that refusal's place, at step 9's run or at step 11's exit, is step 3's answer (`not_ready`):
+counted, never audited or paged, and never logged as a refusal that escaped the exit service
+(`oms_exit_refusal_escaped`). Any other fault the exit service raises at step 4, or in step 11's
+task once the client left too, is `exit_fault`'s answer: every such `500` pages, one page for the
+fault's class (the orchestrator's ruling of 2026-10-25 02:50Z (2)). Every refusal is counted in
 `oms_exit_refused_total{operation,code}` as it is answered (ruling Q14), the unaudited ones and the
 faults included. No log line or problem carries the key, the fingerprint or the token (C-12.6).
 """
@@ -66,6 +72,7 @@ from fastapi.responses import Response
 from pydantic import ValidationError
 
 from candleviewer.api._generated import openapi_models as api
+from candleviewer.api.csrf import source_ip
 from candleviewer.api.idempotency import IdempotencyCache, StoredResponse, request_fingerprint
 from candleviewer.api.order_admission import (
     MAX_ORDER_BODY_BYTES,
@@ -97,9 +104,13 @@ from candleviewer.api.order_exits_common import (
 from candleviewer.api.order_principal import TradingPrincipal
 from candleviewer.api.order_problems import order_problem
 from candleviewer.api.refusal_session import SessionsLike
-from candleviewer.api.view_as_policy import ProtectiveWrites
+from candleviewer.api.view_as_guard import refuse_component
+from candleviewer.api.view_as_policy import PROTECTIVE_WRITES, ProtectiveWrites
+from candleviewer.api.view_as_refusals import ViewAsRefusalRecorder
+from candleviewer.api.view_as_subject import view_as_stamp
 from candleviewer.audit.errors import AuditError
 from candleviewer.auth.scopes import ForbiddenError, decide, enforce
+from candleviewer.auth.view_as import ViewAsRequestContext
 from candleviewer.domain.primitives import Environment
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms.errors import (
@@ -120,6 +131,7 @@ from candleviewer.oms.exits import (
     ExitOutcome,
     ExitStep,
     InFlightGuard,
+    protective_amend,
     risk_increasing,
 )
 from candleviewer.oms.ports import FAILED, ArmRecords, StopOffset, SubmitActor
@@ -131,6 +143,9 @@ __all__ = ["ExitRoutesRuntime", "make_order_exits_router"]
 #: The 24 h record's operations (22's operationIds) and the exits the guard and the counter name.
 _OPERATION: Final = "cancelOrder"
 _AMEND_OPERATION: Final = "amendOrder"
+#: The amend as the view-as guard names it, (METHOD, contract path template): a viewer's refusal's
+#: record names it so (`ViewAsRefusalRecorder.refuse_operation`).
+_AMEND_WRITE: Final = PROTECTIVE_WRITES[_AMEND_OPERATION][0]
 _CANCEL: Final[ExitOperation] = "cancel"
 _AMEND: Final[ExitOperation] = "amend"
 _SIDES: Final = ("take_profit", "stop_loss")
@@ -259,17 +274,21 @@ def make_order_exits_router(
     audit: AuditEmitter, metrics: Metrics, auth: SessionsLike | None = None,
     replays: IdempotencyCache | None = None, pager: Pager | None = None,
     protective: ProtectiveWrites | None = None,
+    view_as_refusals: Callable[[], ViewAsRefusalRecorder | None] | None = None,
 ) -> APIRouter:  # fmt: skip
     """`DELETE` and `PATCH /orders/{orderId}` (module docstring). No principal source (no identity
     composed) answers 501, as no runtime (the fake backend) does after RBAC. `audit` takes step 2's
     `rbac.denied`; the exit service records the rest. `replays` is the 24 h record of first `2xx`
-    answers. `protective`, the view-as guard's registry, learns that this handler decides a
-    viewer's cancel itself: protective whole (C-2.6), it runs as the viewer in the scope
-    `exit_caller` gives (`scope_for_target`). Cancel-all is its own router
-    (`api/order_cancel_all.py`), mounted ahead of this one (the orchestrator's ruling of
-    2026-10-24 19:43Z)."""
+    answers. `protective`, the view-as guard's registry, learns that these handlers decide a
+    viewer's cancel and amend themselves: a cancel protective whole (C-2.6), an amend by its
+    components (step 5), each run as the viewer in the scope `exit_caller` gives
+    (`scope_for_target`); `view_as_refusals`, read per request, records a viewer's refused amend,
+    and with none composed that refusal answers `503 audit_unavailable` (C-2.9). Cancel-all is
+    its own router (`api/order_cancel_all.py`), mounted ahead of this one (the orchestrator's
+    ruling of 2026-10-24 19:43Z)."""
     if protective is not None:
         protective.register(_OPERATION)
+        protective.register(_AMEND_OPERATION)
     router = APIRouter(tags=["trading"])
     kept = replays if replays is not None else IdempotencyCache()
     paging: Pager = LogPager() if pager is None else pager
@@ -292,6 +311,14 @@ def make_order_exits_router(
         """Step 3's answer, and a stop or a stopped lane met after it: counted, never audited
         (24 Sec.8.4)."""
         return counted(operation, "oms_not_ready", order_problem(OmsNotReady(), pager=paging))
+
+    async def viewer_refused(context: ViewAsRequestContext, request: Request) -> Response:
+        """A viewer's amend with a component that is not protective (`protective_amend`), refused
+        at step 5 as the view-as guard refuses any write: before any effect, its refusal record
+        written, no key bound (22 "View-as session"); counted under its code (ruling Q14)."""
+        recorder = None if view_as_refusals is None else view_as_refusals()
+        ip = source_ip(request.scope)
+        return counted(_AMEND, *await refuse_component(recorder, context, _AMEND_WRITE, ip))
 
     async def audit_refusal(
         operation: ExitOperation, exits: _Exits, row: OrderRow, caller: ExitCaller,
@@ -455,6 +482,9 @@ def make_order_exits_router(
                 message = f"Send a body of at most {MAX_ORDER_BODY_BYTES} bytes."
                 raise OrderInvalid(errors=(FieldError("body", "body_too_large", message),))
             terms = _terms(raw)
+            viewing = view_as_stamp(request)  # under view-as, its components (24 Sec.8.10)
+            if viewing is not None and not protective_amend(row, terms):
+                return await viewer_refused(viewing, request)
             step = "arm"
             if risk_increasing(row, terms):  # step 6, judged on step 4's read
                 armed = got.reads.arm_records.check(

@@ -58,6 +58,8 @@ from tests.security.admin._world import (
 from tests.security.auth._stack import PW as STACK_PW
 from tests.security.auth._stack import Stack, open_stack
 from tests.security.auth.test_invite_http_abuse import _INVITE, _invite, _owner, _redeem
+from tests.unit.api import test_order_amend_route as amend_route
+from tests.unit.api import test_order_exits_route as ex_route
 from tests.unit.api.test_view_as_gate import _contract_own_operations
 
 #: Parallel attempts per race: enough to interleave on one loop, as a real burst would.
@@ -330,9 +332,13 @@ _UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 _UI_FLAG = "rules.graph_editor"
 
 
-#: The protective writes registered so far (E29-T04's cancel-all and cancel, `PROTECTIVE_WRITES`).
+#: The protective writes registered so far (E29-T04's cancel-all, cancel and amend,
+#: `PROTECTIVE_WRITES`).
 _CANCEL_ALL = ("POST", "/orders/cancel-all")
 _CANCEL = ("DELETE", "/orders/{orderId}")
+_AMEND = ("PATCH", "/orders/{orderId}")
+#: The rig's limit buy entry holds its stop at 58000 (`command_rig.STOP`): raised, it is tightened.
+_TIGHTER = {"stop_loss": {"unit": "price", "value": "58500"}}
 
 
 def _coded(answer: httpx.Response) -> tuple[int, Any]:
@@ -375,16 +381,17 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     as `test_ac_adm_15` reads the audit routes, so a new write route cannot escape the case, and
     the world's refusal cap is above the sweep (`VIEW_AS_REFUSAL_BUDGET`), which the case asserts.
     The carve-out is the contract's list of the viewer's own operations, which the guard reads: a
-    second start is the start route's own refusal, and leaving is never refused. Two protective
-    writes are registered, E29-T04's cancel-all and cancel, each protective whole (C-2.6): the
-    guard passes each on, the Manager holding `orders:write` (22's dual check, its permission
-    half), and its handler decides it, as the viewer, which this case says: with no OMS composed
-    here, each answers its handler's own `501`, no refusal recorded. E29-T04's amend is not
-    registered yet, so the sweep refuses it as any write. E39-S03's kill switch, E34-S03's group
-    amend and E29-T07's position stop are not mounted yet; the sweep reads the served operations,
-    so once one is mounted it is refused as any write until its handler registers. The day one
-    registers, this case must say what it admits. The guard's own check of a registered one's
-    target, through this same wiring, is the case after it."""
+    second start is the start route's own refusal, and leaving is never refused. Three protective
+    writes are registered, E29-T04's cancel-all, cancel and amend: the guard passes each on, the
+    Manager holding `orders:write` (22's dual check, its permission half), and its handler decides
+    it, as the viewer, which this case says: with no OMS composed here, each answers its handler's
+    own `501`, no refusal recorded. The cancels are protective whole (C-2.6); the amend's handler
+    admits only an amend whose every component is protective, which the protective sub-cases
+    below hold through this same wiring. E39-S03's kill switch, E34-S03's group amend and
+    E29-T07's position stop are not mounted yet; the sweep reads the served operations, so once
+    one is mounted it is refused as any write until its handler registers. The day one registers,
+    this case must say what it admits. The guard's own check of a registered one's target,
+    through this same wiring, is the case after it."""
     owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
     admin.elevate(["users", "flags"])  # the start's step-up class, and the control write's
     stamp = _flag_updated_at(admin, _UI_FLAG)
@@ -414,7 +421,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     unsafe = {op for op in served_operations(admin.app) if op[0] in _UNSAFE_METHODS}
     protective = [operation for operation, _ in PROTECTIVE_WRITES.values()]
     registered = {op for op in protective if admin.app.state.protective_writes.is_registered(op)}
-    assert registered == {_CANCEL_ALL, _CANCEL}  # their handlers decide them; the next must say
+    assert registered == {_CANCEL_ALL, _CANCEL, _AMEND}  # their handlers decide; the next must say
     assert _contract_own_operations() == OWN_OPERATIONS  # the contract's list, read from its prose
     carved_out = {op for op in unsafe if op in OWN_OPERATIONS}
     assert carved_out == {op for op in OWN_OPERATIONS if op[0] in _UNSAFE_METHODS}, carved_out
@@ -467,6 +474,7 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     for operation, path, body in (
         (_CANCEL_ALL, _CANCEL_ALL[1], {"json": {}}),
         (_CANCEL, f"/orders/{uuid.uuid4()}", {}),
+        (_AMEND, f"/orders/{uuid.uuid4()}", {"json": _TIGHTER}),
     ):
         routed, mark = len(admin.reached), len(admin.audit.records)
         passed = admin.send("owner", operation[0], path, body)
@@ -493,23 +501,27 @@ def test_ac_adm_22_view_as_cannot_mutate(admin: AdminWorld) -> None:
     assert _flag_value(admin, _UI_FLAG) is False
 
 
-def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_the_real_wiring(
-    admin: AdminWorld,
+@pytest.mark.parametrize(
+    ("method", "body"), [("DELETE", {}), ("PATCH", {"json": _TIGHTER})], ids=["cancel", "amend"]
+)
+def test_a_viewing_owners_exit_the_target_may_not_make_is_forbidden_through_the_real_wiring(
+    admin: AdminWorld, method: str, body: dict[str, Any]
 ) -> None:
     """#3085, #913: `create_app`'s own wiring of the view-as guard's `permissions=`, `identity=`
     and `denials=`, which the unit tests (`test_view_as_gate.py`) build by hand. An Owner viewing
-    a Viewer, who holds no `orders:write`, sends a cancel, whose handler registers it as it is
-    mounted: `403 forbidden` before any handler, counted, and one `rbac.denied` naming the
-    Owner, the Owner's session and address as the actor and the Viewer as the object, and the
-    refused operation (22 "View-as session")."""
+    a Viewer, who holds no `orders:write`, sends a cancel, or an amend with a protective body (its
+    stop alone, tightened), each registered by its handler as it is mounted: `403 forbidden`
+    before any handler, counted, and one `rbac.denied` naming the Owner, the Owner's session and
+    address as the actor and the Viewer as the object, and the refused operation (22 "View-as
+    session")."""
     admin.elevate(["users"])  # the start's step-up class
     owner, viewer = admin.actors["owner"], admin.actors["viewer"]
-    start = {"json": {"target_user_id": str(viewer.user_id), "reason": "cancel check"}}
+    start = {"json": {"target_user_id": str(viewer.user_id), "reason": "exit check"}}
     started = admin.send("owner", "POST", "/admin/view-as", start)
     assert started.status_code == 201, started.text
     counted = Stack.in_process("authz_denied_total", permission="orders:write")
     routed = len(admin.reached)
-    answer = admin.send("owner", "DELETE", f"/orders/{uuid.uuid4()}", {})
+    answer = admin.send("owner", method, f"/orders/{uuid.uuid4()}", body)
     assert _coded(answer) == (403, "forbidden"), answer.text  # not 503: both reads are wired
     assert admin.reached[routed:] == []  # the guard answered: no handler ran
     assert Stack.in_process("authz_denied_total", permission="orders:write") - counted == 1
@@ -518,7 +530,7 @@ def test_a_viewing_owners_cancel_the_target_may_not_make_is_forbidden_through_th
     assert str(denied["session_id"]) == str(owner.session_id)
     assert (denied["object_kind"], denied["object_id"]) == ("user", str(viewer.user_id))
     assert denied["reason"] == "missing_permission:orders:write:none"
-    assert denied["after_state"] == {"method": "DELETE", "path": "/orders/{orderId}"}
+    assert denied["after_state"] == {"method": method, "path": "/orders/{orderId}"}
 
 
 def test_in_the_hold_a_viewing_owners_cancel_reaches_its_handler_as_the_viewer(
@@ -549,3 +561,55 @@ def test_in_the_hold_a_viewing_owners_cancel_reaches_its_handler_as_the_viewer(
     assert _coded(answer) == (501, "not_implemented"), answer.text  # the handler's own answer
     assert admin.reached[routed:] == [("DELETE", path)]
     assert admin.audit.records[mark:] == []  # no refusal, no target read: nothing recorded
+
+
+def _scripted_oms(admin: AdminWorld, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, Any, Any]:
+    """An OMS for this app, which the fake backend composes none of: the real exit service over
+    S4-C's scripted B1 facade (`test_exits.scripted`), made to take an `AMEND`, its order the
+    command rig's entry on the Owners' scope, this world's Owner among them. Its records land in
+    the rig's audits: the scripted world, its facade and the order."""
+    assert admin.client.portal is not None
+    scripted = ex_route.scripted_world  # held `submitted`, and so is its one settle
+    world, machines, row, port = admin.client.portal.call(scripted, "submitted", "submitted")
+    port.store.seed_owner(admin.actors["owner"].user_id)
+    amend_route.amending(machines, monkeypatch)
+    amend_route.routed(world, versions=machines)
+    monkeypatch.setattr(admin.app.state, "oms_runtime", world.oms)  # read per request
+    return world, machines, row
+
+
+def test_ac_adm_22_a_viewers_amend_runs_only_when_every_component_is_protective(
+    admin: AdminWorld, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AC-ADM-22's protective sub-cases for E29-T04's amend, through `create_app`'s own wiring
+    (the guard, the handler and the refusal recorder; the 2026-10-20 registry ruling): an Owner
+    viewing a Manager sends a mixed amend, a tightened stop beside a take-profit change. Its
+    handler refuses it `403 view_as_read_only` after validation and before any effect: nothing
+    sent and no exit-service record, no step-up challenge, and one `admin.view_as_refused`
+    naming the viewer, its refusal record. It bound no key: the same key then carries the stop
+    alone, which is protective, and the amend runs, recorded with the viewer as the actor."""
+    admin.elevate(["users"])  # the start's step-up class
+    owner, manager = admin.actors["owner"], admin.actors["manager_with_grant"]
+    start = {"json": {"target_user_id": str(manager.user_id), "reason": "amend check"}}
+    assert admin.send("owner", "POST", "/admin/view-as", start).status_code == 201
+    world, machines, row = _scripted_oms(admin, monkeypatch)
+    path, key = f"/orders/{row.id}", {"Idempotency-Key": str(uuid.uuid4())}
+    mixed = _TIGHTER | {"take_profit": {"unit": "price", "value": "64500"}}
+    mark = len(admin.audit.records)
+    refused = admin.send("owner", "PATCH", path, {"json": mixed, "headers": key})
+    assert _coded(refused) == (403, "view_as_read_only"), refused.text
+    assert ("PATCH", path) in admin.reached  # the guard passed it: its handler refused it
+    written = admin.audit.records[mark:]
+    assert [r["action"] for r in written] == ["admin.view_as_refused"]  # no step-up challenge
+    [record] = written
+    assert (record["reason"], record["after_state"]) == ("view_as_read_only", {
+        "method": "PATCH", "path": "/orders/{orderId}",
+    })  # fmt: skip
+    assert (str(record["actor_user_id"]), str(record["session_id"])) == (
+        str(owner.user_id), str(owner.session_id),
+    )  # fmt: skip
+    assert (machines.sent, world.actions()) == ([], [])
+    admitted = admin.send("owner", "PATCH", path, {"json": _TIGHTER, "headers": key})
+    assert admitted.status_code == 202, admitted.text  # the key was free: never bound
+    assert machines.sent == ["AMEND"]
+    assert {actor.user_id for actor, _ in world.named()} == {owner.user_id}  # never the Manager
