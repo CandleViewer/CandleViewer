@@ -34,8 +34,10 @@ Minimum time (#4664): a step-up refused once its factors are being checked, and 
 `verify_password`, return no sooner than the minimum time (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`)
 after the call started, after the strike or the account failure count is written; a success
 is never held (`FailureHold`, shared with `LoginService`). A refusal decided before any factor
-is checked (an unknown class, a read-only or revoked session, a refused challenge) is answered
-at once: it does not depend on the factors.
+is checked (an unknown class, a session read-only or revoked when the call begins, a refused
+challenge) is answered at once: it does not depend on the factors. `POST /auth/unlock` checks
+the password with `verify_password(..., hold=False)` and holds its own refusal once the session
+service has written everything a wrong password changes (`failure_hold`).
 """
 
 from __future__ import annotations
@@ -488,9 +490,12 @@ class StepUpService:
         failure - wrong password, locked account, wrong/replayed code - raises
         the same `StepUpCodeInvalid` and is counted identically.
 
-        #4664: every refusal raised once the factors are being checked (`StepUpCodeInvalid`,
-        `SessionReadOnly`, `SessionRevoked`) returns no sooner than the minimum time after this
-        call started, after the strike is written; a grant is never held."""
+        #4664: every refusal raised once the factors are being checked returns no sooner than
+        the minimum time after this call started, after the strike is written: `StepUpCodeInvalid`,
+        `SessionReadOnly` (the third strike, or a downgrade that lands during the check), and
+        `SessionRevoked` when the session is revoked during the check. A session already revoked
+        or read-only when the call begins is refused at once, before any factor is checked. A
+        grant is never held."""
         started = self._failure_hold.start()
         if action_class is not None and action_class not in ACTION_CLASSES:
             raise UnknownActionClass(action_class)
@@ -581,7 +586,15 @@ class StepUpService:
         challenge = await self.live_challenge(session_id)
         return None if challenge is None else challenge.action_class
 
-    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict:
+    @property
+    def failure_hold(self) -> FailureHold:
+        """#4664: the minimum time of this service's refusals, for a caller that holds its own
+        refusal after `verify_password(..., hold=False)` (`POST /auth/unlock`)."""
+        return self._failure_hold
+
+    async def verify_password(
+        self, user_id: str, password: str, *, hold: bool = True
+    ) -> PasswordVerdict:
         """The account password on login's Argon2id path and lockout counters
         (SR-015, SR-016), as step-up checks it: a wrong password counts toward
         the account lockout, and a locked or unknown account fails like a wrong
@@ -589,11 +602,13 @@ class StepUpService:
         the lockout a wrong password applies (`locked_until`).
 
         #4664: a failed verdict returns no sooner than the minimum time after the call
-        started, after the failure count is written; a verified one is never held."""
+        started, after the failure count is written; a verified one is never held. A caller
+        with more to write after a failed verdict passes `hold=False` and holds its own
+        refusal with `failure_hold` once those writes are done."""
         started = self._failure_hold.start()
         user = await self._users.find_by_id(user_id)
         verdict = await self._password_verdict(user, password, self._clock())
-        if not verdict.ok:
+        if hold and not verdict.ok:
             await self._failure_hold.hold(started)
         return verdict
 

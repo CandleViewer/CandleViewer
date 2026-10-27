@@ -205,7 +205,7 @@ class LoginService:
         self, request: LoginRequest, *, source_ip: str
     ) -> MfaChallengeResult | EnrolmentOnlyLogin:
         found = await self._repository.find_by_identifier(request.identifier)
-        # Enumeration resistance: an unknown identifier (or, defensively, a record
+        # One answer for every identifier: an unknown one (or, defensively, a record
         # carrying the placeholder's id) continues as `_ABSENT_USER` through the same
         # steps as a wrong password, and always fails.
         known = found is not None and found.id != ABSENT_USER_ID
@@ -217,8 +217,8 @@ class LoginService:
             # hash) before reporting the lock, so a locked account's
             # response takes the same wall-clock time and the same
             # information shape as a wrong-password failure — this branch
-            # must not become a cheap, fast-fail oracle that confirms the
-            # account exists and is currently locked.
+            # must never answer faster than a wrong password does, so its
+            # answer never shows that the account exists and is locked.
             await self._hasher.verify(user.password_hash, request.password)
             # #4663: an attempt at a locked account is a failed attempt from this address, so
             # repeated attempts from one address are refused by the throttle above and take

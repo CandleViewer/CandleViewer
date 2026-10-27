@@ -27,6 +27,7 @@ from candleviewer.auth.errors import (
     RecoveryCodeInvalid,
     RecoveryCodesExhausted,
     SessionReadOnly,
+    SessionRevoked,
     StepUpCodeInvalid,
     UnknownActionClass,
 )
@@ -329,6 +330,36 @@ async def test_mfa_recovery_match_is_never_held() -> None:
     assert not _sleeps(world.events)
 
 
+async def test_mfa_recovery_slow_refusal_is_not_held_further_and_is_counted() -> None:
+    slow = _MIN_S + 0.5
+    world = _MfaWorld(work_s=slow)
+    await world.add_recovery_codes()
+    await world.open_challenge()
+    before = _missed()
+
+    with pytest.raises(RecoveryCodeInvalid):
+        await world.svc.check_recovery(_TOKEN, "not-a-recovery-code")
+
+    assert world.time.now == pytest.approx(slow)
+    assert not _sleeps(world.events)
+    assert _missed() == before + 1
+
+
+async def test_mfa_recovery_spent_first_by_another_request_is_answered_at_once() -> None:
+    world = _MfaWorld()
+    codes = await world.add_recovery_codes()
+    await world.open_challenge()
+    check = await world.svc.check_recovery(_TOKEN, codes[0])
+    await world.svc.complete_recovery(check)  # the other request spends it first
+    world.events.clear()
+
+    with pytest.raises(RecoveryCodeInvalid):
+        await world.svc.complete_recovery(check)
+
+    assert [e[0] for e in world.events] == ["record_challenge_attempt"]
+    assert not _sleeps(world.events)
+
+
 @pytest.mark.parametrize("below", _BELOW_THE_LOWEST)
 def test_mfa_service_refuses_a_minimum_time_below_the_settings_lowest_value(
     below: timedelta,
@@ -359,12 +390,16 @@ class _SpySessions(FakeSessionRepository):
         super().__init__()
         self.events = events
         self.time = time
+        #: The session is revoked between the read and this write (the write finds no live row).
+        self.revoked_at_the_write = False
 
     async def update_step_up_state(
         self, session_id: str, change: StepUpChange
     ) -> SessionRecord | None:
         self.events.append(("update_step_up_state",))
         self.time.work()  # the write's work, on the fake clock
+        if self.revoked_at_the_write:
+            return None
         return await super().update_step_up_state(session_id, change)
 
 
@@ -508,6 +543,27 @@ async def test_step_up_refusal_decided_before_the_factors_is_answered_at_once() 
     assert not _sleeps(world.events)
 
 
+async def test_step_up_session_revoked_during_the_check_is_held() -> None:
+    world = await _step_up_world()
+    world.sessions.revoked_at_the_write = True
+
+    with pytest.raises(SessionRevoked):
+        await world.step_up(world.wrong_code())
+
+    assert world.time.now == pytest.approx(_MIN_S)
+    assert [e[0] for e in world.events][-2:] == ["update_step_up_state", "sleep"]
+
+
+async def test_step_up_session_revoked_before_the_check_is_answered_at_once() -> None:
+    world = await _step_up_world()
+    await world.sessions.revoke("s1", reason="logout", now=_NOW)
+
+    with pytest.raises(SessionRevoked):
+        await world.step_up(world.wrong_code())
+
+    assert not _sleeps(world.events)
+
+
 async def test_step_up_cancellation_during_the_wait_propagates() -> None:
     world = await _step_up_world()
     waiting = asyncio.Event()
@@ -545,6 +601,29 @@ async def test_step_up_password_recheck_for_an_unknown_account_is_held() -> None
 
     assert not verdict.ok
     assert len(_sleeps(world.events)) == 1
+
+
+async def test_step_up_password_recheck_slow_failure_is_not_held_further_and_is_counted() -> None:
+    slow = _MIN_S + 0.5
+    world = await _step_up_world(work_s=slow)
+    before = _missed()
+
+    verdict = await world.svc.verify_password(str(world.user), "a-guess")
+
+    assert not verdict.ok
+    assert world.time.now == pytest.approx(slow)
+    assert not _sleeps(world.events)
+    assert _missed() == before + 1
+
+
+async def test_step_up_password_recheck_left_to_the_caller_is_not_held_here() -> None:
+    world = await _step_up_world()
+
+    verdict = await world.svc.verify_password(str(world.user), "a-guess", hold=False)
+
+    assert not verdict.ok
+    assert [e[0] for e in world.events] == ["record_login_failure"]
+    assert world.svc.failure_hold.minimum == FAILURE_MINIMUM
 
 
 async def test_step_up_password_recheck_success_is_never_held() -> None:

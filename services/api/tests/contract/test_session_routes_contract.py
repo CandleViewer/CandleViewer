@@ -45,6 +45,7 @@ from candleviewer.api.sessions import REFRESH_COOKIE, make_session_router
 from candleviewer.audit.actions import validate_action
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.csrf import CSRF_HEADER
+from candleviewer.auth.failure_hold import FailureHold
 from candleviewer.auth.models import MintedSession
 from candleviewer.auth.session_chart import SessionChart
 from candleviewer.auth.session_service import MIN_IDLE_TIMEOUT_S, SessionService
@@ -62,6 +63,7 @@ from tests.unit.api._fakes import (
     SessionsAuth,
     enrolment_recorder,
 )
+from tests.unit.auth.auth_fakes import no_wait
 from tests.unit.auth.session_fakes import FakeSessionRepository
 
 _SPEC = load_openapi_spec()
@@ -164,8 +166,11 @@ class _Authority:
 
     def __init__(self) -> None:
         self.chart = SessionChart()
+        self.failure_hold = FailureHold(sleep=no_wait)  # #4664: the refusal's wait, made instant
 
-    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict:
+    async def verify_password(
+        self, user_id: str, password: str, *, hold: bool = True
+    ) -> PasswordVerdict:
         return PasswordVerdict(ok=password == _PW)
 
 

@@ -16,7 +16,9 @@ Every Gherkin scenario in the ticket maps to a method here:
 minimum time (`CV_AUTH_LOGIN_FAILURE_FLOOR_MS`) after the attempt started, after its attempt
 count is written; a success is never held (`FailureHold`, shared with `LoginService`).
 Enrolment confirmation is not held: the caller already holds a session for the user, and the
-code it checks is for the secret just shown to that caller.
+code it checks is for the secret just shown to that caller. Nor is `complete_recovery()`'s
+refusal of a code a concurrent request spent first: the code has already matched in
+`check_recovery()`, so that answer is decided by the other request, not by the code presented.
 
 As with `LoginService`, audit emission is the router's job (`auth` may not
 import `audit` — `forbidden-M18` import-linter contract); this module
@@ -314,9 +316,9 @@ class MfaService:
 
         Constant-time against the hashed set (ticket "Technical notes":
         "constant-time against the hashed set") is delivered by hashing the
-        candidate once and doing an equality-indexed lookup — the DB index
-        lookup itself is not a timing side-channel on the *code value*
-        because it operates on the keyed HMAC-SHA256 digest, not the code."""
+        candidate once and doing an equality-indexed lookup on the keyed
+        HMAC-SHA256 digest, never on the code itself, so how long the lookup
+        takes does not depend on how much of a guess matches a stored code."""
         started = self._failure_hold.start()
         try:
             return await self._check_recovery(mfa_token, recovery_code)
@@ -359,7 +361,9 @@ class MfaService:
 
         Raises `RecoveryCodeInvalid`, with nothing changed, when a concurrent request spent
         the code or satisfied the challenge first (PR #1618 review finding 2); like a replay,
-        it counts as a failed attempt. Raises `UserDisabled`, with nothing changed and no
+        it counts as a failed attempt. That refusal is answered at once, not held to the minimum
+        time (#4664): the code already matched in `check_recovery()`, so the answer turns on the
+        other request, not on the code presented. Raises `UserDisabled`, with nothing changed and no
         attempt counted, when the user is disabled or gone, read under the user-row lock in
         that transaction (#2911), so a disable that commits first always wins."""
         challenge_id = str(check.challenge_id)

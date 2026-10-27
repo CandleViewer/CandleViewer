@@ -59,6 +59,14 @@ Audit `actor_ip`, the SR-015 per-address sign-in throttle key and the minted
 session's `ip` are `api.csrf.source_ip`: the address `MeshOnlyMiddleware`
 admitted (trusted-proxy aware), else the socket peer, the same value the
 session router and the CSRF guard record. `X-Forwarded-For` is never read here.
+
+The second factor and the recovery code (#4664, SR-015): each refusal of
+`/auth/mfa/verify` and `/auth/mfa/recovery` counts against one per-address budget
+the two share, as many failures in the same window as the password step allows. An
+address over it is answered `429` `rate_limited` at once, with a `Retry-After`,
+before any challenge is read or any attempt counted; that answer is not held to the
+minimum time of a refused step, so a caller cannot keep server capacity busy with
+refusals beyond the budget.
 """
 
 from __future__ import annotations
@@ -134,6 +142,7 @@ from candleviewer.auth.models import (
     UserStatus,
 )
 from candleviewer.auth.recovery_codes import RECOVERY_CODE_COUNT
+from candleviewer.auth.throttle import PerIpLoginThrottle
 from candleviewer.observability.context import current_request_uuid
 
 #: `sessions.revoked_reason` and audit `reason` of the sessions a confirmed enrolment ends:
@@ -342,14 +351,38 @@ def make_auth_router(
     identity: IdentityProvider | None = None,
     csrf: CsrfCodec,
     server_timing: bool = False,
+    mfa_refusal_budget: PerIpLoginThrottle | None = None,
 ) -> APIRouter:
     """Bind `/auth/login` to a concrete `AuthService` instance. *csrf* issues the
     SR-041 `__Host-cv_csrf` cookie wherever a session is minted (#2090).
     *server_timing* (#2097, `CV_AUTH_PERF_ENABLED`, keyless testnet only) adds
     `Server-Timing: argon2;dur=<ms>` to the `mfa_required` challenge and to no
     other response, so it never helps tell a wrong password from an unknown user
-    (SR-014)."""
+    (SR-014). *mfa_refusal_budget* (#4664, SR-015) is the per-address budget of refusals
+    the two second-factor routes share; by default the password step's own limits."""
     router = APIRouter(tags=["auth"])
+    mfa_refusals = mfa_refusal_budget or PerIpLoginThrottle()
+
+    def _mfa_over_budget(request: Request) -> JSONResponse | None:
+        """#4664: the `429` for an address whose second-factor refusals used up the budget,
+        decided before any challenge is read, answered at once and not audited (its refusals
+        were); `None` while the address is within it."""
+        key = _client_ip(request) or "unknown"
+        if not mfa_refusals.is_blocked(key):
+            return None
+        _log().warning("auth.mfa_refused.over_budget")
+        return _problem(
+            429,
+            "Too many requests",
+            "too many failed attempts; retry later",
+            code="rate_limited",
+            retry_after_s=mfa_refusals.retry_after_s(key),
+        )
+
+    def _mfa_refused(request: Request) -> None:
+        """#4664: one refusal of a second-factor route, against the address's budget."""
+        mfa_refusals.record_failure(_client_ip(request) or "unknown")
+
     lane_unwired_logged = False
 
     def _lane_unwired(action: str) -> None:
@@ -673,9 +706,12 @@ def make_auth_router(
     async def mfa_verify(request: Request, body: MfaVerifyRequest) -> JSONResponse:
         if not auth_service.mfa_is_active:
             return _problem(503, "Service unavailable", "mfa backend is not wired")
+        if (over := _mfa_over_budget(request)) is not None:
+            return over
         try:
             result = await auth_service.mfa.verify(body)
         except (MfaChallengeInvalid, MfaChallengeLocked, MfaCodeInvalid, MfaCodeReused):
+            _mfa_refused(request)
             auth_login_failures_total.labels(method=body.method.value).inc()
             await _audit_outcome(
                 "auth.mfa_failed",
@@ -747,6 +783,7 @@ def make_auth_router(
             # `auth.login_failed` row, on the factor the request named: the code was right, so
             # neither `totp` nor `webauthn` is the wrong one (#3054). Its row voids the session
             # `auth.session_created` announced (C-2.9).
+            _mfa_refused(request)
             auth_login_failures_total.labels(method=body.method.value).inc()
             voided = {"voids_session_created": str(session_id)}
             await _audit_refusal(request, result.user_id, session_id=session_id, after_state=voided)
@@ -816,10 +853,19 @@ def make_auth_router(
         # ("Recovery codes exhausted") requires a contact-the-owner message the UI must render
         # differently.
         refused = _problem(401, _RECOVERY_FAILED, "invalid or expired code")
+        if (over := _mfa_over_budget(request)) is not None:
+            return over  # before the challenge is read or any attempt counted (#4664)
 
         async def failed(action: str, outcome: AuditOutcome, **row: Any) -> JSONResponse:
             """A refusal's row, counted once (SR-125). It follows the refusal, never ahead of it:
-            an outcome row through the lane (`_audit_outcome`), and the answer stands either way."""
+            an outcome row through the lane (`_audit_outcome`), and the answer stands either way.
+            Each counts against the address's second-factor budget (#4664)."""
+            _mfa_refused(request)
+            return await server_failed(action, outcome, **row)
+
+        async def server_failed(action: str, outcome: AuditOutcome, **row: Any) -> JSONResponse:
+            """As `failed`, for a refusal the server caused (a store failure): it is not the
+            caller's attempt, so it does not count against the address's budget (#4664)."""
             auth_login_failures_total.labels(method=MfaMethodKind.RECOVERY_CODE.value).inc()
             await _audit_outcome(action, actor_ip=ip, outcome=outcome, **row)
             return refused
@@ -911,7 +957,7 @@ def make_auth_router(
                 new_session_id=str(new_id),
                 error=type(exc).__name__,
             )
-            return await failed("auth.mfa_failed", _FAILED, reason="store_error", **void)
+            return await server_failed("auth.mfa_failed", _FAILED, reason="store_error", **void)
         # SR-022 (#2496): each spent code pages the Owner (`AuthRecoveryCodeUsed`). Counted as soon
         # as the commit spent it, so no later failure can hide a use; a failing audit sink cannot
         # either, because nothing is spent without its record (written ahead above).
@@ -944,7 +990,8 @@ def make_auth_router(
                 revoked_session_ids=[str(sid) for sid in (*ending, *unplanned)],
                 error=type(exc).__name__,
             )
-            await failed("auth.mfa_failed", _FAILED, reason="unminted", **mine, **created)  # C-2.9
+            # C-2.9: its row voids the session `auth.session_created` announced
+            await server_failed("auth.mfa_failed", _FAILED, reason="unminted", **mine, **created)
             return _problem(401, _RECOVERY_FAILED, _UNMINTED)
         # U34 (RR-15): an Owner's enrolment-only session is to page; no rule yet (#2746).
         auth_enrolment_only_sessions_total.labels(

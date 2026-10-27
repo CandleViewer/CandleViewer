@@ -131,6 +131,7 @@ from candleviewer.auth.errors import (
     UnlockPasswordInvalid,
     UserDisabled,
 )
+from candleviewer.auth.failure_hold import FailureHold
 from candleviewer.auth.metrics import (
     auth_audit_outcome_lost_total,
     auth_csrf_refused_total,
@@ -235,12 +236,20 @@ class SessionServiceLike(Protocol):
 class UnlockAuthority(Protocol):
     """What `POST /auth/unlock` needs besides the session service (#2300): the B16
     chart the lock and the unlock are recorded on (B16.7), and the password check on
-    login's Argon2id path and lockout counters (SR-015, SR-016). `StepUpService`."""
+    login's Argon2id path and lockout counters (SR-015, SR-016). `StepUpService`.
+
+    #4664: the route checks with `hold=False` and holds a refusal itself with *failure_hold*,
+    after the session service has written everything a wrong password changes."""
 
     @property
     def chart(self) -> SessionChart: ...
 
-    async def verify_password(self, user_id: str, password: str) -> PasswordVerdict: ...
+    @property
+    def failure_hold(self) -> FailureHold: ...
+
+    async def verify_password(
+        self, user_id: str, password: str, *, hold: bool = True
+    ) -> PasswordVerdict: ...
 
 
 class AuthServiceLike(Protocol):
@@ -1405,8 +1414,9 @@ def make_session_router(
         verify, user_id = authority.verify_password, str(record.user_id)
 
         async def check(candidate: str) -> bool:
-            """The password on login's path (SR-015, SR-016); notes a lockout it applied."""
-            verdict = await verify(user_id, candidate)
+            """The password on login's path (SR-015, SR-016); notes a lockout it applied. Not
+            held here: the refusal is held below, once everything after the check is written."""
+            verdict = await verify(user_id, candidate, hold=False)
             if verdict.locked_until is not None:
                 locked_account.append(verdict.locked_until)
             return verdict.ok
@@ -1446,6 +1456,11 @@ def make_session_router(
                     reason="unlock_attempts_exceeded",
                 )
 
+        # #4664: a refused password returns no sooner than the minimum time after the check
+        # began, once the unlock count, its records and any revoke are written; the same wait
+        # for a wrong password, one that locked the account and the third strike.
+        hold = authority.failure_hold
+        started = hold.start()
         try:
             unlocked = await auth_service.sessions.unlock(
                 str(record.id), password=password, check=check, write_ahead=write_ahead
@@ -1455,6 +1470,7 @@ def make_session_router(
             return _audit_down()  # the lock stays and nothing was revoked
         except UnlockPasswordInvalid:
             await _record_committed(chart, record, at, "UNLOCK_FAILED")
+            await hold.hold(started)  # a cancellation during the wait propagates
             return idle_lock.unlock_invalid_problem()
         except SessionNotLocked:  # lifted by another request since the check above
             # `observe` used the row read before that unlock, so it may have recorded the
@@ -1471,6 +1487,7 @@ def make_session_router(
             # B16.7: `revoked` carries this decision to the chart's guard; `replay` keeps the
             # chart from writing a second `auth.session_revoked`.
             await _record_committed(chart, record, at, "UNLOCK_FAILED", revoked=True, replay=True)
+            await hold.hold(started)
             return idle_lock.session_revoked_problem("unlock_attempts_exceeded")
         except SessionNotFound:
             await chart.forget(str(record.id))
