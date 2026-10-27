@@ -8,3 +8,5 @@ import "../src/theme/theme.css";
 import "../src/components/controls.css";
 import "../src/components/button.css";
 import "../src/components/iconbutton.css";
+import "../src/components/choice.css";
+import "../src/components/toggle.css";
