@@ -24,3 +24,6 @@ export type { SliderProps } from "./Slider.js";
 
 export { TextInput } from "./TextInput.js";
 export type { TextInputProps } from "./TextInput.js";
+
+export { NumericStepperInput } from "./NumericStepperInput.js";
+export type { NumericStepperInputProps, StepDirection } from "./NumericStepperInput.js";
