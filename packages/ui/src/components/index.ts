@@ -19,6 +19,14 @@ export type { ToggleProps } from "./Toggle.js";
 export { RadioGroup } from "./RadioGroup.js";
 export type { RadioGroupBaseProps, RadioGroupProps, RadioOption } from "./RadioGroup.js";
 
+export { SegmentedControl } from "./SegmentedControl.js";
+export type {
+  SegmentedControlBaseProps,
+  SegmentedControlProps,
+  SegmentedOption,
+  SegmentedOptions,
+} from "./SegmentedControl.js";
+
 export { Slider } from "./Slider.js";
 export type { SliderProps } from "./Slider.js";
 

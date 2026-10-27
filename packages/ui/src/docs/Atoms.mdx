@@ -42,6 +42,21 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Arrows (radio with a reason)  | Focus lands on it and its reason is the description; it is never checked. A plain-disabled radio is skipped.               |
 | Any key (group with a reason) | No action: focus stays on the checked radio, the value never changes, no form is submitted; the reason is its description. |
 
+### SegmentedControl (CMP-003, APG Radio Group)
+
+| Keys                                                  | Action                                                                                                                       |
+| ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                       | Enters on the checked segment (the first when none is checked) and leaves the group; one tab stop.                           |
+| Right / Down Arrow                                    | Moves focus to the next segment and checks it; wraps from the last to the first.                                             |
+| Left / Up Arrow                                       | Moves focus to the previous segment and checks it; wraps from the first to the last.                                         |
+| Home / End                                            | Moves focus to the first / last segment and checks it.                                                                       |
+| Space                                                 | Checks the focused segment.                                                                                                  |
+| Alt, Ctrl or Meta + a key                             | Ignored: the browser and the host keep their shortcuts.                                                                      |
+| Arrows, Home, End, Space, Enter (group with a reason) | No action: focus stays on the checked segment, the value never changes, no form is submitted; the reason is its description. |
+| Any key (disabled group)                              | The group is out of the Tab order and no segment takes focus, by keyboard or pointer.                                        |
+
+Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), as for the Slider. Option values must be unique, and a computed option list needs a cast to the 2 to 6 tuple type, which defeats the compile-time bound.
+
 ### Slider (CMP-010, APG Slider)
 
 | Keys                             | Action                                                                                                                                               |
