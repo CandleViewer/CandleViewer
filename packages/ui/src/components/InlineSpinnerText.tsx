@@ -50,15 +50,21 @@ export function InlineSpinnerText(props: InlineSpinnerTextProps): JSX.Element {
   useEffect(() => {
     setMounted(true);
   }, []);
-  // A new label or kind is a new wait: the slow phase belongs to the wait it was reached in, so it resets with
-  // no stale frame and the 5 s timer restarts. One frame of blank text on mount is the empty-then-insert step.
+  // A new label or kind is a new wait, so the slow phase resets in the same render (no stale frame) and the 5 s
+  // timer restarts. The phase is stored with the wait it belongs to and cleared on every change, so a switch
+  // A -> B -> A made before B's timer fires starts A's wait afresh instead of reviving A's old slow phase.
+  // One frame of blank text on mount is the empty-then-insert step.
   const wait = `${kind}\u0000${label}`;
-  const [slowWait, setSlowWait] = useState<string | null>(null);
+  const [phase, setPhase] = useState({ wait, slow: false });
+  if (phase.wait !== wait) setPhase({ wait, slow: false });
   useEffect(() => {
-    const timer = setTimeout(() => setSlowWait(wait), SLOW_AFTER_MS);
+    const timer = setTimeout(
+      () => setPhase((current) => (current.wait === wait ? { wait, slow: true } : current)),
+      SLOW_AFTER_MS,
+    );
     return () => clearTimeout(timer);
   }, [wait]);
-  const slow = slowWait === wait;
+  const slow = phase.wait === wait && phase.slow;
   // Enforced at run time as well as in the types, for JavaScript and spread callers.
   const cancel =
     props.onCancel !== undefined && CANCELLABLE.has(kind) && slow ? props.onCancel : undefined;

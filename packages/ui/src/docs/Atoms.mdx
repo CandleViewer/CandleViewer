@@ -355,5 +355,8 @@ it sits on `color.surface.app` (3.45:1), as the ThemeLight story does.
 | Dismiss | button                                                                        | "Dismiss {title}" | A ghost CMP-002 `close`, after the actions.                                                  |
 
 The hatched `unprotected` edge is deferred until its PROPOSED pattern token lands; every callout draws the solid edge.
+The body is part of the announced message, so it holds no focusable content: links and buttons go in `retry` and
+`actions`. A change of live role (a tone crossing the polite / assertive line, or `live` turning on) remounts the
+message, body included, so it is announced again.
 Flap-collapse (reconnect attempts within 5 s read as one "Connection unstable") is the host's (CMP-077), which
 owns the connection state; the callout announces each state entry it is given once.
