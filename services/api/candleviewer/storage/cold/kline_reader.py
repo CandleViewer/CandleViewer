@@ -544,8 +544,10 @@ class ColdKlinePage:
 #: Measured on the perf pack's fixture lake (`bench.ingestion.fixture_app`, duckdb 1.5.5,
 #: pyarrow 25.0.1) as anonymous RSS per held page: 337 KB for 1 bar (`nbytes` 294 B), 378 KB
 #: for 100 bars (27.5 KB) and 2.17 MB for 5 000 bars (1.38 MB; 2.08 MB without this share).
-#: 384 KiB covers each, so the bound caps what the pages really hold, small ones included. A
-#: compact copy of the table would make `nbytes` honest, but costs about 69 ms a 5 000-bar page.
+#: 384 KiB covers each, so the bound caps what the held pages keep alive, small ones included;
+#: under eviction churn the process's RSS can still run to about twice the bound (allocator
+#: fragmentation). A compact copy of the table would make `nbytes` honest, but costs about
+#: 69 ms a 5 000-bar page.
 _PAGE_OVERHEAD_BYTES = 384 * 1024
 
 
