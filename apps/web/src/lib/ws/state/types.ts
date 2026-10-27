@@ -45,10 +45,10 @@ export type OrderEntry =
   | { readonly enabled: false; readonly reason: OrderEntryReason };
 
 /**
- * E10-S04 (#306): the Disconnected episode the CMP-077 region reads (E17-D02 §6, §10 B; E17-D01 §4.1
- * T4). The engine stamps it as `lost` on the event that takes an `up` link down (so the transition is still
- * one state message); the next socket's `auth_ok` clears it.
- * Epoch milliseconds of the worker's wall clock, the tab's too.
+ * E10-S04 (#306): the Disconnected episode the CMP-077 region reads (E17-D02 §6, §10 B; E17-D01
+ * §4.1 T4). The engine stamps it as `lost` on the event that takes an `up` link down, so the
+ * transition stays one state message; the next socket's `auth_ok` clears it. Times are epoch
+ * milliseconds of the worker's wall clock, which the tab shares.
  */
 export interface Outage {
   /** When the link left `up`: the start of the episode (T4's 10 s / 30 s / 5 min run from here). */

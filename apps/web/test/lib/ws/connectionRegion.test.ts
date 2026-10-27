@@ -35,6 +35,12 @@ describe("connectionRegion", () => {
     for (const ws of [up(), run(connecting), run(connecting, authOk())]) expect(at(ws)).toBeNull();
   });
 
+  it("is empty for a session that was never up: SCR-001 owns it (§2 row 7, §10 D)", () => {
+    const never = [retry(LOST), down("offline"), down("fatal", 1002), down("fatal", 4403)];
+    for (const e of never) expect(at(run(connecting, e), 400_000)).toBeNull();
+    expect(R.regionAnnouncement(null, null)).toBeNull();
+  });
+
   it("B1: the counter, the age and the countdown, verbatim", () => {
     expect(at(dropped())).toEqual({
       state: "reconnecting",
@@ -65,7 +71,7 @@ describe("connectionRegion", () => {
     expect(at(up(down(cause)))).toMatchObject({
       state: "reconnecting",
       title: "Disconnected — reconnecting",
-      lines: [`${sentence} — last data 00:12 ago.`, `${ORDERS_OFF} ${STOPS}`],
+      lines: [`${sentence} — last data 00:12 ago.`, STOPS], // §6 over B1b: cancel / close are T2
       countdown: null,
     });
     expect(at(up(down(cause, undefined, NO_DATA)))?.lines[0]).toBe(`${sentence}.`);
@@ -80,8 +86,19 @@ describe("connectionRegion", () => {
     expect(at(dropped(), 300_000)?.title).toBe("Disconnected for 05:00 — escalated");
     expect(at(up(down("offline")), 301_000)).toMatchObject({
       title: "Disconnected for 05:01 — escalated",
-      lines: ["You're offline — last data 05:13 ago.", `${ORDERS_OFF} ${STOPS}`],
+      lines: ["You're offline — last data 05:13 ago.", STOPS],
     });
+  });
+
+  it("T4 on the stopped states: a fatal close notifies but has no age step; a session end neither", () => {
+    const fatal = at(up(down("fatal", 1002)), 30_000);
+    expect([fatal?.notifyDue, fatal?.ageEmphasis, fatal?.lastDataAgo]).toEqual([true, false, null]);
+    const ended = at(up(down("fatal", 4403)), 30_000);
+    expect([ended?.notifyDue, ended?.ageEmphasis, ended?.lastDataAgo]).toEqual([
+      false,
+      false,
+      null,
+    ]);
   });
 
   it.each([
@@ -92,6 +109,7 @@ describe("connectionRegion", () => {
     [1009, "Can't connect — a message was too large. Copy details and report a bug."],
     [4400, "Can't connect — repeated protocol errors. Copy details and report a bug."],
     [undefined, "Can't connect. Copy details and report a bug."],
+    [4401, "Can't connect. Copy details and report a bug."], // `bye.reconnect: false` 4401 until G12
   ])("B4: a fatal %s close stops the retry, unescalated", (code, l1) => {
     expect(at(up(down("fatal", code)), 300_000)).toMatchObject({
       state: "offline",
@@ -113,24 +131,36 @@ describe("connectionRegion", () => {
     });
   });
 
-  it("read-only: R1, R2, R5, R6 in routing order; Disconnected beats them all", () => {
-    const reason = (ws: WsState, privateDown = true) => at(ws, 0, privateDown)?.reason;
-    const reasons = [
-      reason(up(shutdown, killSwitch(ON))),
-      reason(up(killSwitch(ON))),
-      reason(up(stream("stale"))),
-      reason(up(stream("stale")), false),
-      reason(dropped()),
+  it("read-only: R1 > R2 > R5 > R6, one cause removed at a time; Disconnected beats them all", () => {
+    const ro = (ws: WsState, privateDown: boolean) => {
+      const v = at(ws, 0, privateDown);
+      return [v?.reason, v?.title, ...(v?.lines ?? [])];
+    };
+    // R2 and R6 never hold together: an unknown kill switch is never "engaged" (WS-E06).
+    expect(ro(up(shutdown, killSwitch(ON)), true)).toEqual([
+      "R1-shutdown",
+      "Order entry off — backend restarting",
+      "Cancel and close still work; exchange-side stops still protect open positions; app-managed rules are paused.",
+    ]);
+    const r2 = [
+      "R2-kill-switch",
+      "Order entry off — trading frozen by the owner.",
+      "Cancel still works.",
     ];
-    expect(reasons.join()).toBe(
-      "R1-shutdown,R2-kill-switch,R5-private-down,R6-system-unknown,disconnected",
-    );
-    expect(at(up(), 0, true)).toMatchObject({
-      state: "read-only",
-      title: "Order entry off — private feed down; fills cannot be seen live.",
-      lines: ["Cancel and close still work, confirmed over REST."],
-      controls: ["details"],
-    });
+    expect(ro(up(killSwitch(ON)), true)).toEqual(r2);
+    const r5 = [
+      "R5-private-down",
+      "Order entry off — private feed down; fills cannot be seen live.",
+      "Cancel and close still work, confirmed over REST.",
+    ];
+    expect([ro(up(), true), ro(up(stream("stale")), true)]).toEqual([r5, r5]);
+    expect(ro(up(stream("stale")), false)).toEqual([
+      "R6-system-unknown",
+      "Order entry off — kill-switch status unknown until the server reports it.",
+      "Cancel and close still work.",
+    ]);
+    expect(at(up(shutdown, killSwitch(ON), retry(LOST)), 0, true)?.reason).toBe("disconnected");
+    expect(at(up(), 0, true)).toMatchObject({ state: "read-only", controls: ["details"] });
   });
 
   it("formats ages: floored, a clock step back is zero, hours past 59:59", () => {

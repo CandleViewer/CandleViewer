@@ -54,14 +54,18 @@ const FATAL: Readonly<Record<number, string>> = {
   1009: "Can't connect — a message was too large. Copy details and report a bug.",
   4400: "Can't connect — repeated protocol errors. Copy details and report a bug.",
 };
-/** PROPOSED: §10 B4's pattern with no F sentence (a fatal close with no code). */
+/**
+ * PROPOSED: §10 B4's pattern with no F sentence: a close with no code, or a `bye.reconnect: false`
+ * 4401, which §6's `offline` row lands here until G12 routes it to `session-ended`.
+ */
 const FATAL_UNKNOWN = "Can't connect. Copy details and report a bug.";
 const SESSION_STOPS =
   "Exchange-side stops still protect open positions; app-managed rules are paused — sign in again to cancel or close.";
 /** §10 F, a bare 4403 (no `bye` reason reaches the client until G12). */
 const ACCESS_REMOVED = "Your access was removed — contact the owner";
 const READ_ONLY: Readonly<Record<ReadOnlyReason, readonly [string, string]>> = {
-  // PROPOSED: §10 R1 without the release, which the reducer does not keep (server prose).
+  // PROPOSED: §10 R1 without the release (server prose the reducer drops) and without "Back in ~N s",
+  // since `WsState` keeps no notice time. Titles keep the §10 R punctuation (R1 has no full stop).
   "R1-shutdown": [
     "Order entry off — backend restarting",
     "Cancel and close still work; exchange-side stops still protect open positions; app-managed rules are paused.",
@@ -133,40 +137,38 @@ export function connectionRegion(
     const [title, stillWorks] = READ_ONLY[reason];
     return view("read-only", reason, title, [stillWorks], ["details"]);
   }
-  if (outage === null && link.kind === "connecting") return null; // §11 row 15: nothing to freeze yet
-  const lastDataMs = outage?.lastDataMs ?? null;
-  const lastDataAgo = lastDataMs === null ? null : formatAge(nowMs - lastDataMs);
-  const outageMs = outage === null ? -Infinity : nowMs - outage.sinceMs;
-  const timing = {
-    lastDataAgo,
-    ageEmphasis: outageMs >= T4_STEP_MS,
-    notifyDue: outageMs >= T4_NOTIFY_MS,
-  };
+  // Never up: nothing to freeze (§11 row 15), and a failed session start, a fatal or 4403 one
+  // included, is SCR-001's alert region with the §10 D sentence (§2 row 7), never this region.
+  if (outage === null) return null;
+  const lastDataAgo = outage.lastDataMs === null ? null : formatAge(nowMs - outage.lastDataMs);
+  const outageMs = nowMs - outage.sinceMs;
+  // T4 runs on Disconnected (§6 routing row 1, `offline` `fatal` included); the age step needs an
+  // age line, which only the reconnecting kinds draw; a session end is row 2, not Disconnected.
+  const notifyDue = outageMs >= T4_NOTIFY_MS;
+  const timing = { lastDataAgo, notifyDue, ageEmphasis: outageMs >= T4_STEP_MS };
   if (link.kind === "offline" && link.cause === "fatal") {
     if (link.closeCode === 4403) {
       const lines = [`${ACCESS_REMOVED}.`, SESSION_STOPS];
-      return view(
-        "session-ended",
-        "session",
-        "Session ended",
-        lines,
-        ["sign-in", "details"],
-        timing,
-      );
+      return view("session-ended", "session", "Session ended", lines, ["sign-in", "details"]);
     }
     const l1 = (link.closeCode === undefined ? undefined : FATAL[link.closeCode]) ?? FATAL_UNKNOWN;
+    // PROPOSED (§10 B4): L2 is E17-D01's two safety sentences on one line.
     const lines = [l1, `${ORDERS_OFF} ${STOPS}`];
-    return view("offline", "fatal", "Offline — retry stopped", lines, RETRY, timing);
+    return view("offline", "fatal", "Offline — retry stopped", lines, RETRY, { notifyDue });
   }
   const escalated = outageMs >= T4_ESCALATE_MS;
   const state = escalated ? "long-outage" : "reconnecting";
-  let title = "Disconnected — reconnecting"; // a shell cause; `connecting` has no counter (PROPOSED)
+  // A shell cause has no counter (B1b). `connecting` has none either: `Link` drops the attempt number
+  // when the socket opens, so the title loses "(N)" between attempts (PROPOSED).
+  let title = "Disconnected — reconnecting";
   if (escalated) title = `Disconnected for ${formatAge(outageMs)} — escalated`;
   if (link.kind === "offline" && link.cause !== "fatal") {
     const cause = SHELL[link.cause];
-    // §10 B1b (PROPOSED there); without an age, the D sentence alone.
+    // §10 B1b (PROPOSED there); without an age, the D sentence alone. L2 is the stops sentence only:
+    // B1b's L2 says cancel and close "remain available", but §6's `reconnecting` row makes them T2
+    // with a shell cause (REST is unreachable too). The conservative §6 reading wins (owner item).
     const l1 = lastDataAgo === null ? `${cause}.` : `${cause} — last data ${lastDataAgo} ago.`;
-    return view(state, "disconnected", title, [l1, `${ORDERS_OFF} ${STOPS}`], RETRY, timing);
+    return view(state, "disconnected", title, [l1, STOPS], RETRY, timing);
   }
   // PROPOSED: with no data this session, L1 drops its "Last data … ago." sentence.
   const l1 = lastDataAgo === null ? ORDERS_OFF : `Last data ${lastDataAgo} ago. ${ORDERS_OFF}`;

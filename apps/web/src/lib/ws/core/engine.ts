@@ -210,7 +210,8 @@ function stampedSink(sink: EngineSink, wall: () => number): EngineSink {
   let up = false;
   let lastDataMs: number | null = null;
   return {
-    ...sink,
+    changed: () => sink.changed?.(),
+    error: (code, message) => sink.error?.(code, message),
     event(event) {
       if (event.type === "auth_ok") up = true;
       if (event.type !== "connecting" && event.type !== "reconnecting" && event.type !== "offline")

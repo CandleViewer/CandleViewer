@@ -285,4 +285,14 @@ describe("the outage stamp (E10-S04, the CMP-077 region's last data)", () => {
     await t.advance(500);
     expect(t.events.slice(seen)[0]).toEqual({ type: "connecting" }); // the attempt is no new episode
   });
+
+  it("still forwards `changed` and `error` through the stamping sink", async () => {
+    const [changed, error] = [vi.fn(), vi.fn()];
+    const sink = { event: () => undefined, deliver: () => undefined, changed, error };
+    const t = engineHarness(undefined, { sink });
+    await t.start();
+    t.gateway.latest.send({ t: "err", p: { code: "forbidden", message: "disabled" } });
+    expect(error).toHaveBeenCalledWith("forbidden", "disabled");
+    expect(changed).toHaveBeenCalled();
+  });
 });
