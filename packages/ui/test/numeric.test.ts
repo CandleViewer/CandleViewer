@@ -21,8 +21,26 @@ describe("parseNumericInput", () => {
     ["-0", 1, 0],
     [".0", 0, 0],
   ])("%j at precision %i is %d", (text, precision, value) => {
-    expect(p(text, precision)).toEqual({ ok: true, value });
+    expect(p(text, precision)).toEqual({ ok: true, value, rounded: false });
   });
+  it.each([
+    ["1.25", 1, 1.3],
+    ["1.24", 1, 1.2],
+    ["-1.25", 1, -1.3],
+    ["-0.25", 1, -0.3],
+    ["1.005", 2, 1.01],
+    ["-1.005", 2, -1.01],
+    ["0.999", 2, 1],
+    ["0.004", 2, 0],
+    ["-0.004", 2, 0],
+    ["2.5", 0, 3],
+    [".5", 0, 1],
+  ])(
+    "rounds %j at precision %i to %d (half away from zero, on digits)",
+    (text, precision, value) => {
+      expect(p(text, precision)).toEqual({ ok: true, value, rounded: true });
+    },
+  );
   it.each([
     ["", "empty"],
     ["   ", "empty"],
@@ -32,13 +50,35 @@ describe("parseNumericInput", () => {
     [".", "not-a-number"],
     ["-", "not-a-number"],
     ["1e3", "not-a-number"],
-    ["1.25", "too-many-decimals"],
+    ["NaN", "not-a-number"],
+    ["Infinity", "not-a-number"],
+    ["-Infinity", "not-a-number"],
+    ["+.5x", "not-a-number"],
+    ["5 5", "not-a-number"],
+    ["1".repeat(400), "too-many-digits"],
+    ["123456789012345.5", "too-many-digits"],
+    ["999999999999999", "too-many-digits"],
   ] as const)("%j is refused as %s", (text, reason) => {
     expect(p(text, 1)).toEqual({ ok: false, reason });
   });
 });
 
+describe("preconditions", () => {
+  it.each([-1, 1.5, 16, NaN])("precision %d throws", (precision) => {
+    expect(() => p("1", precision)).toThrow(RangeError);
+    expect(() => formatNumeric(1, precision)).toThrow(RangeError);
+  });
+  it("rounding up into 16 digits is refused", () => {
+    expect(p("999999999999999.5", 0)).toEqual({ ok: false, reason: "too-many-digits" });
+    expect(p("12345678901234", 0)).toEqual({ ok: true, value: 12345678901234, rounded: false });
+  });
+});
+
 describe("formatNumeric / valueText", () => {
+  it.each([NaN, Infinity, -Infinity, 1e21, 1e15])("%d is not representable: empty text", (v) => {
+    expect(formatNumeric(v, 2)).toBe("");
+    expect(valueText(v, 2, "%")).toBe(" %");
+  });
   it.each([
     [1.5, 2, "1.50"],
     [1234567.891, 1, "1234567.9"],
@@ -63,10 +103,11 @@ describe("validateNumeric", () => {
   ] as const)("%d against 0..10 is %s", (v, out) => {
     expect(validateNumeric(v, { min: 0, max: 10 })).toBe(out);
   });
+  it("fails closed on NaN", () => expect(validateNumeric(NaN, { min: 0 })).toBe("not-a-number"));
   it("treats missing bounds as open", () => expect(validateNumeric(-1e9, {})).toBe("in-range"));
   it("AC: min 0, step 0.1, typed -5 is below-min and not clamped", () => {
     const r = p("-5", 1);
-    expect(r).toEqual({ ok: true, value: -5 });
+    expect(r).toEqual({ ok: true, value: -5, rounded: false });
     if (r.ok) expect(validateNumeric(r.value, { min: 0 })).toBe("below-min");
   });
 });
@@ -88,6 +129,30 @@ describe("stepValue", () => {
     expect(stepValue(0.05, 0.1, "down", 1, 2, 0, 10)).toBe(0);
     expect(stepValue(10, 0.1, "up", 1, 1, 0, 10)).toBe(10);
   });
+  it("clamps to an off-grid bound value itself", () => {
+    expect(stepValue(10, 0.01, "up", 1, 2, undefined, 10.005)).toBe(10.005);
+    expect(stepValue(0.01, 0.01, "down", 1, 2, 0.005)).toBe(0.005);
+  });
+  it("clamps a start outside the range; min wins over max; one-sided bounds", () => {
+    expect(stepValue(-5, 1, "up", 1, 0, 0, 10)).toBe(0);
+    expect(stepValue(20, 1, "down", 1, 0, 0, 10)).toBe(10);
+    expect(stepValue(5, 1, "up", 1, 0, 8, 3)).toBe(8);
+    expect(stepValue(5, 1, "down", 1, 0, 5)).toBe(5);
+    expect(stepValue(5, 1, "up", 1, 0, undefined, 5)).toBe(5);
+  });
+  it("returns a non-representable value unchanged", () => {
+    expect(stepValue(Infinity, 1, "up", 1, 0)).toBe(Infinity);
+    expect(stepValue(NaN, 1, "up", 1, 0)).toBeNaN();
+  });
+  it.each([
+    ["multiplier 0.5", () => stepValue(1, 1, "up", 0.5, 0)],
+    ["multiplier NaN", () => stepValue(1, 1, "up", NaN, 0)],
+    ["multiplier -1", () => stepValue(1, 1, "up", -1, 0)],
+    ["step finer than precision", () => stepValue(1, 0.001, "up", 1, 2)],
+    ["step 0", () => stepValue(1, 0, "up", 1, 2)],
+    ["step NaN", () => stepValue(1, NaN, "up", 1, 2)],
+    ["precision 20", () => stepValue(1, 1, "up", 1, 20)],
+  ])("throws for %s", (_n, fn) => expect(fn).toThrow(RangeError));
 });
 
 // mulberry32, fixed seed: deterministic.
@@ -111,9 +176,10 @@ describe("seeded fuzz (2000 cases)", () => {
       expect(stepValue(up, step, "down", mult, precision)).toBe(value);
       for (const v of [value, up]) {
         const text = formatNumeric(v, precision);
-        expect(p(text, precision)).toEqual({ ok: true, value: v });
-        expect(Number.isInteger(Math.round(v * grid))).toBe(true);
-        expect(Math.abs(v * grid - Math.round(v * grid))).toBeLessThan(1e-3);
+        const parsed = p(text, precision);
+        expect(parsed).toEqual({ ok: true, value: v, rounded: false });
+        expect(parsed.ok && formatNumeric(parsed.value, precision)).toBe(text);
+        expect(Number.isInteger(Number(text.replace(".", "")))).toBe(true);
         expect(text.split(".")[1]?.length ?? 0).toBe(precision);
       }
     }
