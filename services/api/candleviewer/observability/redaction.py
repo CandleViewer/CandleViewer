@@ -201,6 +201,27 @@ _CUT_LEN: Final = _MAX_SCAN_LEN + len(_TRUNCATED)
 #: The most of a long text's end that a cut keeps, as whole lines: a traceback names its exception
 #: last (#415).
 _TAIL_MAX: Final = 3072
+#: How far `_cut` reads back from a line break for the end of a label (#4671), so that the read
+#: costs the same for a text of any length.
+_LABEL_REACH: Final = 256
+#: The longest key name.
+_KEY_NAME_LEN: Final = max(map(len, _REDACT_KEY_FORMS))
+#: `_KEY_NAMES` with each name written backwards.
+_KEY_NAMES_BACK: Final = "|".join(
+    sorted(re.escape(k[::-1]).replace("_", "[-_]") for k in _REDACT_KEY_FORMS)
+)
+#: The end of a label as `_LABELLED_VALUE` reads it, written backwards, to read it back from a line
+#: break (#4671): whitespace (an escaped line break, tab or return, `\n`, `\t` or `\r`, reads `n\`,
+#: `t\` or `r\`), a separator and the whitespace before it, a quote, and a key name. Each part is
+#: optional, so it always matches, and it ends where the text stops reading as the end of a label.
+_LABEL_END_BACK: Final = re.compile(
+    rf"""(?i)(?:\s|[tnr]\\)*+(?P<sep>[:=]\s*+)?["']?(?P<name>{_KEY_NAMES_BACK})?"""
+)
+#: Whitespace and a separator: a label whose key name ends a line can have its separator on the
+#: next one.
+_SEP_AHEAD: Final = re.compile(r"\s*+[:=]")
+#: The first character that is not whitespace: where the value after a label starts.
+_NOT_SPACE: Final = re.compile(r"\S")
 
 #: A run of the characters the value shapes are made of: word characters, `.` and `-`. A match of
 #: each shape but the download path lies inside one run, and the pattern matches a run alone exactly
@@ -234,6 +255,25 @@ def _label_marker(match: re.Match[str]) -> str:
     return f"{match['label']}{match['quote'] or ''}{_KEY_NAME_MARKER}"
 
 
+def _label_runs_on(text: str, line: int) -> bool:
+    """Whether a label runs on past the line break at `line`, so that the value it names follows
+    it (#4671): the text before the line break ends with a key name (a word of its own or the end
+    of one), a quote or none, and whitespace, with the separator before the line break or after
+    it, as `_LABELLED_VALUE` reads a label; an escaped line break, tab or return before the line
+    break reads as whitespace either way.
+
+    The text is read back at most `_LABEL_REACH` characters: what still reads as the end of a label
+    that far back is taken to be one.
+    """
+    start = max(0, line - _LABEL_REACH)
+    back = _LABEL_END_BACK.match(text[start:line][::-1])
+    if back is None or (start > 0 and back.end() > line - start - _KEY_NAME_LEN):
+        return True
+    return back["name"] is not None and (
+        back["sep"] is not None or _SEP_AHEAD.match(text, line) is not None
+    )
+
+
 def _cut(text: str) -> str:
     """`text`, or, when it is longer than `_CUT_LEN`, its start and its last lines (up to
     `_TAIL_MAX` characters), `_MAX_SCAN_LEN` characters in all, joined by `_TRUNCATED` (#415).
@@ -243,10 +283,17 @@ def _cut(text: str) -> str:
     bundle's buffer writes them) would leave its backslash before the marker, where the two read as
     a label's value, and a second pass would change the text. Only the character at the cut is read
     forward, so a cut costs the same for a run of any length.
+
+    The last lines start at a line break that no label runs on past (`_label_runs_on`): a cut keeps
+    a label with the value it names, or drops both (#4671). Each line break is read back at most
+    `_LABEL_REACH` characters, so this too costs the same for a text of any length.
     """
     if len(text) <= _CUT_LEN:
         return text
     line = text.find("\n", len(text) - _TAIL_MAX)
+    while line >= 0 and _label_runs_on(text, line):
+        value = _NOT_SPACE.search(text, line)  # the line of the value goes with its label
+        line = -1 if value is None else text.find("\n", value.end())
     tail = text[line:] if line >= 0 else ""
     end = _MAX_SCAN_LEN - len(tail)
     if _CUT_RUN.match(text, end, end + 1) and (split := _CUT_RUN.match(text[end - 1 :: -1])):

@@ -961,6 +961,62 @@ def test_each_labelled_value_of_a_long_text_is_redacted_or_cut_away(text: str) -
 
 
 @pytest.mark.parametrize(
+    "before",
+    ["error:", "token", "tokens =", "token = ab"],
+    ids=["no-key-name", "no-separator", "longer-word", "value-on-its-line"],
+)
+@pytest.mark.parametrize("redact", _REDACTIONS.values(), ids=_REDACTIONS)
+def test_a_cut_keeps_the_last_lines_from_a_line_break_that_no_label_runs_on_past(
+    redact: Callable[[str], str], before: str
+) -> None:
+    out = redact(f"{_FILLER}{before}\n{_OTHER_VALUE} ok\n{_LINES}")
+
+    assert out.endswith(f"{redaction._TRUNCATED}\n{_OTHER_VALUE} ok\n{_LINES}")
+
+
+#: A label whose whitespace runs to the end of a text, as the label rule reads one (a key name
+#: read anywhere), and a key name, a quote and whitespace (an escaped line break or tab reads as
+#: whitespace too) at the end of a text, which a separator on the next line makes a label.
+_LABEL_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?{redaction._LABEL_SPACE}\Z""")
+_NAME_TO_END = re.compile(rf"""(?i)(?:{redaction._KEY_NAMES})["']?(?:\s|\\[tnr])*+\Z""")
+#: Key names (in any case, either twin, in a longer word), separators, quotes, whitespace, escapes
+#: and other characters.
+_READ_BACK_PIECES = (
+    *("password", "Token", "x-api-key", "x_API_key", "set-cookie", "tokens", "my", "ab", "."),
+    *(":", "=", '"', "'", ",", " ", "\t", "\n", "\r\n", "\\n", "\\t", "\\R", "\\"),
+)
+_READ_BACK_TEXT = st.lists(st.sampled_from(_READ_BACK_PIECES), max_size=10).map("".join)
+
+
+@given(st.sampled_from(["", "x" * 1000]), _READ_BACK_TEXT, _READ_BACK_TEXT)
+@example("", "password", ": ab")
+@example("x" * 1000, 'x-api-key"\t=\\t', "ab")
+def test_a_label_is_read_back_from_a_line_break_as_the_label_rule_reads_it(
+    start: str, before: str, after: str
+) -> None:
+    head = start + before
+    expected = _LABEL_TO_END.search(head) is not None or (
+        _NAME_TO_END.search(head) is not None and re.match(r"\s*[:=]", "\n" + after) is not None
+    )
+
+    assert redaction._label_runs_on(f"{head}\n{after}", len(head)) is expected
+
+
+@pytest.mark.parametrize(
+    "before",
+    ["password:" + " " * 300, "password" + "\t" * 250 + "=", "token:" + "\\n" * 200, " " * 300],
+    ids=["whitespace-after", "whitespace-before-the-separator", "escapes-after", "whitespace"],
+)
+def test_the_end_of_a_label_that_runs_on_past_the_read_back_is_taken_to_be_one(
+    before: str,
+) -> None:
+    text = f"{'x' * 1000}{before}\nab"
+
+    assert len(before) > redaction._LABEL_REACH
+    assert redaction._label_runs_on(text, len(text) - 3)
+
+
+@pytest.mark.parametrize(
     ("length", "redacted"), [(41, False), (42, True), (43, True), (44, True), (45, False)]
 )
 def test_the_access_token_shape_takes_42_to_44_url_safe_characters(

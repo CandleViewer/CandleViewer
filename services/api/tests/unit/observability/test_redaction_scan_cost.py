@@ -158,6 +158,25 @@ def test_perf_a_5_mb_run_is_cut_within_budget(redact: Callable[[str], str]) -> N
 
 
 @pytest.mark.perf
+@pytest.mark.parametrize(
+    "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
+)
+def test_perf_a_long_text_that_ends_in_labels_is_cut_within_budget(
+    redact: Callable[[str], str],
+) -> None:
+    # a label before each line break of the end: each is read back at most `_LABEL_REACH`
+    # characters, whatever the text's length (#4671)
+    text = "k" * 5_000_000 + "\n" + "sign:\n" * 512
+    best_ms = float("inf")
+    for _ in range(5):
+        start = time.perf_counter()
+        out = redact(text)
+        best_ms = min(best_ms, (time.perf_counter() - start) * 1000)
+    assert out == redaction._TRUNCATED  # each label goes with the line it names, the run whole
+    assert best_ms < 5.0, f"{best_ms:.3f} ms (about 1.2 ms; reading the whole text back: seconds)"
+
+
+@pytest.mark.perf
 @pytest.mark.parametrize("text", _DOWNLOAD_HEAVY)
 @pytest.mark.parametrize(
     "redact", [redact_text, redaction._redact_runs], ids=["message", "traceback"]
