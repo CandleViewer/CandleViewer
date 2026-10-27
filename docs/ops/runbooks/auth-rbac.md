@@ -1,6 +1,6 @@
 # Auth / RBAC operator runbook (E09-K02)
 
-Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines, which shipped in #4522, and its known-gaps row was dropped; on 2026-10-26 (#4494's follow-up) it gained a bullet on the orphaned `invited` user that a run for another email leaves behind. Every command, route, metric and audit action
+Status: written 2026-10-09 against `main` at `d9143fb`; corrected 2026-10-13 against `main` after #2154 (QA gaps on #292); the lockout, authz and step-up metrics were updated 2026-10-15 for #2117, and the login-failure, session and invite signals for #2319; re-enrolment (§2 step 4) was updated 2026-10-16 for #2295, and the recovery sign-in (§1) for #2344; the audit volume (Quick facts and §3) was added 2026-10-17 for #2615; §4 was updated 2026-10-18 for #965 (the served disable and its limits); §12 was added 2026-10-18 for #3009 (the audit lane's offline release), and §13 on 2026-10-19 (its alerts and key rotation); §3 became runnable 2026-10-20 for #2119 (E09-S11), with a dry-run transcript, and was corrected 2026-10-23 from its cold run (#2494, E09-X04) and from the reviews of #4254 and #300; the idle-lock activity paragraph was added 2026-10-21 for #4012; it, §1 and §10 were updated 2026-10-21 for #2300 (unlock is live, extend is served), and the step-up penalty paragraph after it was added for #4051; the activity paragraph was rewritten 2026-10-27 for #2300's last slice (activity is explicit: extend and unlock only); §4, §10 and the known gaps were updated 2026-10-21 for #3009 (the lane's exit, ADR-0037 Amendment 1); §4's backstop paragraph names the two classifying middleware since 2026-10-22 (#3085 S7); §1, §10 and the known gaps were updated 2026-10-22 for #2914's PR C (the login routes' rows on the lane, ADR-0037 Amendment 2); §4's bootstrap paragraph became the runnable "Bootstrap the first Owner" procedure on 2026-10-25 for #4479 (C2), checked against C2's code and against #3180's compose lines, which shipped in #4522, and its known-gaps row was dropped; on 2026-10-26 (#4494's follow-up) it gained a bullet on the orphaned `invited` user that a run for another email leaves behind. Every command, route, metric and audit action
 below was checked against the code at that commit. Where a procedure needs something that does not
 exist yet, it says **BLOCKED — not implemented** and names the tracking reference; no substitute
 command is offered. This runbook has **not** been executed on staging (see the last section).
@@ -22,29 +22,22 @@ Quick facts the procedures rely on:
 | Session lifetime | 12 h absolute, 12 min access token, idle lock 15 min default (5–60 min)             | `auth/session_service.py`                                                        |
 | Audit volume     | `cv-audit-data` at `/var/lib/candleviewer/audit`; back it up with Postgres          | `infra/compose/docker-compose.yml`, §3                                           |
 
-**What counts as activity for the idle lock (#4012).** The idle clock runs from the session's
-`last_seen_at`. A request re-stamps it when its handler authenticates the bearer with
-`authenticate_access_token(touch=True)`: the `/me` routes (`GET /me`, `/me/preferences`,
-`/me/keymap`), `GET /auth/sessions`, MFA enrolment, and every route whose caller comes from a
-session-backed principal resolver (`SessionAuditPrincipalResolver`, `SessionSnapshotResolver`,
-`SessionRulesActorResolver`). That is most of the signed-in REST surface: the market-data and chart
-reads (`/market/bars`, `/market/trades`, `/market/orderbook`, `/instruments` and its ticker,
-`/indicators`), drawings, workspaces, `POST /telemetry/frontend`, the rules, audit and admin
-routes, and owner user management. Find the resolvers with
-`grep -rn 'touch=True' services/api/candleviewer` and their routers in `candleviewer/app.py`
-(`audit_resolver`, `owner_resolver`). `POST /auth/session/extend` re-stamps it through
-`SessionService.touch()`, after its write-ahead record; a successful `POST /auth/unlock` re-stamps
-it too, in the write that lifts the lock.
-Nothing else does: not `GET /auth/session`, `DELETE /me/sessions/{sessionId}`, `POST /auth/logout`,
-the idle-lock middleware, the step-up and read-only guards, WS traffic, nor a token refresh, which
-carries the presented session's `last_seen_at` to its successor. A tab whose only traffic is its
-socket and its token refreshes (about every 11 minutes) therefore locks after its idle timeout, 15
-minutes by default: its next refresh is answered `401 session_idle_locked`, and its socket ends
+**What counts as activity for the idle lock (#4012, #2300).** The idle clock runs from the session's
+`last_seen_at`, which sign-in sets. Only two calls move it: `POST /auth/session/extend` (the
+"Stay signed in" control) re-stamps it through `SessionService.touch()`, after its write-ahead
+`auth.session_extended` record, and a successful `POST /auth/unlock` re-stamps it in the write that
+lifts the lock. `touch()` has one production caller, `extend_session` in `api/sessions.py`, and
+`authenticate_access_token` has no switch that re-stamps. Nothing else is activity: no REST read or
+write (the `/me` routes, `GET /auth/sessions`, MFA enrolment, the market-data and chart reads, the
+rules, audit, admin and owner routes, orders and trade groups), not `GET /auth/session`, not
+`POST /auth/logout` or `DELETE /me/sessions/{sessionId}`, not the idle-lock middleware or the
+step-up and read-only guards, not WS traffic, and not a token refresh, which carries the presented
+session's `last_seen_at` to its successor. A tab that keeps polling but whose user never presses
+Extend therefore locks after its idle timeout, 15 minutes by default: its next request is answered
+`401 session_idle_locked`, `GET /auth/session` reports `locked: true`, and its socket ends
 `token_expired` within one access-token lifetime. `POST /auth/unlock` with the password lifts
-the lock (§1); `POST /auth/logout` and a new sign-in end it instead. The contract's "Activity is
-explicit" model, in which only `POST /auth/session/extend` and `POST /auth/unlock` count, is not
-what ships yet: activity stays implicit on the routes above until #2300's last slice, which waits
-for the client (#1640).
+the lock (§1); `POST /auth/logout` and a new sign-in end it instead. A session in the step-up
+read-only downgrade can still extend: the read-only guard exempts extend, which acts on no data.
 
 **A token refresh keeps the step-up penalty (#4051, SR-025).** The successor session carries the
 presented one's strike count and read-only window (`step_up_failures`, `readonly_until`), so a
@@ -238,7 +231,8 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    identical `401` (`Invalid password or code.`, with `failures_remaining`). **A wrong password also
    increments your login lockout counter**, so five mistakes can lock your own account (see §1).
    Three failures abandon the action and make your session read-only for 5 minutes
-   (`403 session_read_only`). Every failed step-up adds 1 to `auth_stepup_failures_total`, and the
+   (`403 session_read_only`); sign-out and "Stay signed in" (`POST /auth/session/extend`) still
+   work. Every failed step-up adds 1 to `auth_stepup_failures_total`, and the
    failure that locks your account also adds 1 to `auth_lockouts_total` (metrics listener, §1).
 
    Both kinds of step-up trouble are audited as `auth.step_up_failed`; `outcome` tells them apart
@@ -295,7 +289,9 @@ self-reset). The reset needs a step-up for action class `users`. The target is n
    `GET /auth/session`, `POST /auth/refresh` and `POST /auth/logout` (anything else is
    `403 mfa_enrollment_required`; the WebSocket closes with `4403`). The user enrols a new TOTP, then
    confirms a code: that revokes their other methods and sessions, replaces their recovery codes
-   with 10 new ones (shown once) and returns a full session. If the 15 minutes run out, they sign
+   with 10 new ones (shown once) and returns a full session. An enrolment-only session cannot extend
+   or unlock, so it has no activity path (#2300): enrolment must finish within the 15 minutes, which
+   end no later than the 15-minute default idle lock would. If the 15 minutes run out, they sign
    in again. Verify: audit `auth.session_created` with `enrolment_only: true`, then
    `auth.mfa_enrolled` and `auth.recovery_codes_regenerated` for the user; counter
    `auth_enrolments_total{result="completed"}` rises by 1 (`refused` counts wrong codes). A sign-in

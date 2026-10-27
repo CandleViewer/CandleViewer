@@ -8,8 +8,8 @@ Every Gherkin scenario in the ticket maps to a method here:
   `MfaService` complete the two-legged login, per those modules' own
   `NotImplementedError`/`MfaVerifiedResult` "E09-S03 scope" notes).
 - `refresh()` — "Refresh-token reuse kills the family".
-- `touch()` — "Idle lock preserves the data feed" (re-stamps
-  `last_seen_at`, i.e. the `REQUEST` event on B16).
+- `touch()` — the one activity: re-stamps `last_seen_at`. Its production caller is
+  `POST /auth/session/extend`; no other request is activity (#2300).
 - `require_active()` — "Order entry is refused while locked": the
   per-request/per-WS-frame revocation + idle-lock check every caller in
   the OMS/WS path must run before honouring a session id.
@@ -763,12 +763,13 @@ class SessionService:
         return found
 
     async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
+        self, raw_access_token: str, *, allow_locked: bool = False
     ) -> SessionRecord:
         """Per-request authentication (ADR-0020): resolve the opaque bearer
         handle to its session, refusing unknown, expired-token, revoked and
         idle-locked sessions. Raises `SessionNotFound`, `SessionRevoked`,
-        `SessionIdleLocked`. *touch* re-stamps `last_seen_at` (activity)."""
+        `SessionIdleLocked`. Never activity: a request leaves `last_seen_at` as
+        it is; only extend (`touch()`) and unlock move it (#2300)."""
         jti = hash_access_token(raw_access_token)
         found = await self._repository.find_by_access_token_jti(str(jti))
         if found is None or not hmac.compare_digest(
@@ -785,17 +786,16 @@ class SessionService:
             if found.is_absolute_expired(now=self._clock()):
                 raise SessionRevoked("expired")
             return found
-        if touch:
-            return await self.touch(str(found.id))
         return await self.require_active(str(found.id))
 
     async def touch(self, session_id: str) -> SessionRecord:
-        """The `REQUEST` event on B16: re-stamp `last_seen_at`, extending
-        the idle deadline. Raises the same errors as `require_active` —
-        activity on a dead/locked session never resurrects it. The write is
-        conditional on the row being neither revoked nor idle-locked at `now`,
-        so a lock that engages between the check and the write is not lifted
-        (B16.7: activity never lifts a lock); the row is then refused as it is."""
+        """Extend's activity (`POST /auth/session/extend`, its sole route):
+        re-stamp `last_seen_at`, extending the idle deadline. Raises the same
+        errors as `require_active` — activity on a dead/locked session never
+        resurrects it. The write is conditional on the row being neither
+        revoked nor idle-locked at `now`, so a lock that engages between the
+        check and the write is not lifted (B16.7: activity never lifts a lock);
+        the row is then refused as it is."""
         await self.require_active(session_id)
         now = self._clock()
         touched = await self._repository.touch_last_seen(session_id, now=now)

@@ -394,3 +394,125 @@ def test_no_one_click_arm_route_is_served_while_unlock_cannot_invalidate_an_arm_
     served = {(method, route_path(path)) for method, path in served_operations(app)}
     assert ("POST", "/auth/unlock") in served
     assert not [op for op in served if op[1] == "/settings/arm"]
+
+
+# -- activity is explicit (#2300 slice 2f-B, contract "Idle lock") ------------------------------
+
+#: The one activity on a live session (`authUnlock` is the other, on a locked one).
+_EXTEND = ("POST", "/auth/session/extend")
+#: How long a test idles before its request, so a re-stamp would show.
+_IDLE_STEP = timedelta(seconds=60)
+
+
+def _last_seen(stack: Stack, minted: MintedSession) -> Any:
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None
+    return row.last_seen_at
+
+
+def _contract_operations() -> list[tuple[str, str]]:
+    paths = load_openapi_spec()["paths"]
+    assert isinstance(paths, dict)
+    return sorted(
+        (method.upper(), path)
+        for path, item in paths.items()
+        for method in _HTTP
+        if isinstance(item.get(method), dict)
+    )
+
+
+def test_no_operation_but_extend_and_unlock_moves_the_idle_deadline(stack: Stack) -> None:
+    """#2300 scenario 5 over the whole contract: every operation, read or write, from a live
+    session leaves `last_seen_at` where it was; only `authExtendSession` moves it. Unlock on a
+    live session answers 409 and moves nothing (on a locked one it is the other activity)."""
+    uid, _ = stack.add_user("sweeping")
+    operations = _contract_operations()
+    assert _EXTEND in operations and ("POST", "/auth/unlock") in operations
+    moved: dict[tuple[str, str], int] = {}
+    for method, path in operations:
+        minted = stack.call(stack.auth.sessions.mint, str(uid), idle_timeout_s=3600)
+        before = _last_seen(stack, minted)
+        stack.clock.now += _IDLE_STEP
+        r = stack.client.request(
+            method,
+            _fill(path),
+            headers=_headers(stack, minted),
+            json={} if method in ("POST", "PUT", "PATCH") else None,
+        )
+        if (method, path) == ("POST", "/auth/unlock"):
+            assert (r.status_code, _code(r)) == (409, "conflict"), r.text
+        if _last_seen(stack, minted) != before:
+            moved[(method, path)] = r.status_code
+    assert moved == {_EXTEND: 200}
+
+
+#: What a backgrounded client polls (#2300 "Introspection is not activity", widened). `GET /me`
+#: passes the gate and the route's own session check; this stack's fake identity then fails its
+#: body (a 500), which no lock check follows, so only its lock refusal is asserted.
+_POLLED = ("/auth/session", "/me", "/auth/sessions")
+
+
+def _poll(stack: Stack, headers: dict[str, str], seconds: int) -> dict[str, set[int]]:
+    """Every 10 s for *seconds*: the statuses each of `_POLLED` answered."""
+    answers: dict[str, set[int]] = {p: set() for p in _POLLED}
+    for _ in range(seconds // 10):
+        for p in _POLLED:
+            answers[p].add(stack.client.get(p, headers=headers).status_code)
+        stack.clock.now += timedelta(seconds=10)
+    return answers
+
+
+def _unlocked(answers: dict[str, set[int]]) -> bool:
+    return answers["/auth/session"] == answers["/auth/sessions"] == {200} and (
+        401 not in answers["/me"]
+    )
+
+
+def test_a_session_polled_every_10_s_locks_on_time(stack: Stack) -> None:
+    """Background reads every 10 s across the deadline are not activity: the session locks at
+    `last_seen_at + idle_timeout_s`, and the poll learns it from `GET /auth/session`."""
+    minted = _session(stack, "polled")
+    headers = _headers(stack, minted)
+    deadline = _last_seen(stack, minted) + timedelta(seconds=_IDLE_S)
+    stack.clock.now = deadline - timedelta(seconds=30)
+    assert _unlocked(_poll(stack, headers, 30))
+    assert stack.clock.now == deadline
+    me = stack.client.get("/me", headers=headers)
+    assert (me.status_code, _code(me)) == (401, "session_idle_locked")
+    info = stack.client.get("/auth/session", headers=headers)
+    assert info.status_code == 200 and info.json()["session"]["locked"] is True
+    assert _poll(stack, headers, 30)["/me"] == {401}  # locked from then on
+    assert stack.audit.of("auth.session_extended") == []
+
+
+def test_extend_is_the_activity_that_keeps_a_polled_session_unlocked(stack: Stack) -> None:
+    """The positive path: one Extend 30 s before the deadline, written ahead as one
+    `auth.session_extended` record, carries the same polled session past it."""
+    minted = _session(stack, "extending")
+    headers = _headers(stack, minted)
+    stack.clock.now = _last_seen(stack, minted) + timedelta(seconds=_IDLE_S - 30)
+    r = stack.client.post("/auth/session/extend", headers=headers)
+    assert r.status_code == 200 and r.json()["session"]["locked"] is False, r.text
+    assert _last_seen(stack, minted) == stack.clock.now
+    assert _unlocked(_poll(stack, headers, 60))
+    assert len(stack.audit.of("auth.session_extended")) == 1
+
+
+def test_a_read_only_session_extends_and_stays_read_only(stack: Stack) -> None:
+    """D1 (#4052's follow-up): the step-up penalty refuses every data write, not Extend, which
+    acts on no data and moves only the idle deadline. The downgrade itself is unchanged."""
+    minted = _session(stack, "downgraded")
+    headers = _headers(stack, minted)
+    bad = {"code": "000000", "password": PW, "action_class": "keys"}
+    tries = [stack.client.post("/auth/step-up", headers=headers, json=bad) for _ in range(3)]
+    assert _code(tries[-1]) == "session_read_only", [t.text for t in tries]
+    row = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert row is not None and row.readonly_until is not None
+    stack.clock.now += _IDLE_STEP
+    r = stack.client.post("/auth/session/extend", headers=headers)
+    assert r.status_code == 200, r.text
+    assert _last_seen(stack, minted) == stack.clock.now
+    write = stack.client.post("/orders", headers=headers, json={})
+    assert (write.status_code, _code(write)) == (403, "session_read_only")
+    after = stack.call(stack.auth.sessions.peek_refresh, minted.refresh_token)
+    assert after is not None and after.readonly_until == row.readonly_until

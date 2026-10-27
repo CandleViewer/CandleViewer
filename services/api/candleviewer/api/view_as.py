@@ -75,7 +75,7 @@ PATH: Final = "/auth/session/view-as"
 
 class _Sessions(Protocol):
     async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
+        self, raw_access_token: str, *, allow_locked: bool = False
     ) -> SessionRecord: ...
 
     async def require_active(

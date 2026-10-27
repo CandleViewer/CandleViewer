@@ -68,8 +68,8 @@ from tests.unit.api.test_audit_signing_rotate import OWNER as KEYS_MANAGE
 from tests.unit.api.test_audit_signing_rotate import _deployed, _Rot
 from tests.unit.api.test_invites_create_app_e2e import _login
 from tests.unit.api.test_step_up_challenge_router import _IDEM, _World, _world
-from tests.unit.api.test_step_up_router import _PW, _T0, _code
-from tests.unit.api.test_step_up_rules_route import _Identity, _TouchingSessions
+from tests.unit.api.test_step_up_router import _PW, _T0, _code, _Sessions
+from tests.unit.api.test_step_up_rules_route import _Identity
 from tests.unit.credentials_m2._vectors import API_KEY, API_SECRET
 from tests.unit.oms import submit_rig as sr
 from tests.unit.test_key_import_wiring import Rig as KeyRig
@@ -286,7 +286,7 @@ async def _set_rule_mode(w: _World, locks: _Locks, stack: AsyncExitStack, gate: 
 
     mgr = RulesManager(InMemoryRuleStore(), default_registry(), audit=audit, broadcast=broadcast)
     resolver = SessionRulesActorResolver(
-        lambda: _TouchingSessions(w.sessions), lambda: w.auth.step_up, _Identity(), w.audit
+        lambda: _Sessions(w.sessions), lambda: w.auth.step_up, _Identity(), w.audit
     )
     app = w.client.app
     assert isinstance(app, FastAPI)  # not yet serving: routes may be added

@@ -200,7 +200,7 @@ class SessionServiceLike(Protocol):
     ) -> RefreshOutcome: ...
 
     async def authenticate_access_token(
-        self, raw_access_token: str, *, touch: bool = False, allow_locked: bool = False
+        self, raw_access_token: str, *, allow_locked: bool = False
     ) -> SessionRecord: ...
 
     async def peek_access_token(self, raw_access_token: str) -> SessionRecord | None: ...
@@ -944,17 +944,17 @@ def make_session_router(
         return response
 
     async def _authenticate(
-        request: Request, *, allow_locked: bool = False, activity: bool = True
+        request: Request, *, allow_locked: bool = False
     ) -> SessionRecord | JSONResponse:
         """The bearer's session, or the answer: `401 session_idle_locked` for a locked one
-        (contract "Idle lock"), else the uniform 401. With *activity* False the check moves
-        no deadline (extend re-stamps only after its write-ahead record)."""
+        (contract "Idle lock"), else the uniform 401. Never activity: it moves no deadline
+        (extend re-stamps itself, after its write-ahead record; #2300)."""
         token = _bearer(request)
         if token is None:
             return _unauthorized()
         try:
             return await auth_service.sessions.authenticate_access_token(
-                token, touch=activity and not allow_locked, allow_locked=allow_locked
+                token, allow_locked=allow_locked
             )
         except SessionNotFound:
             # Unknown and expired handles share this error. Only a handle this server never
@@ -1348,7 +1348,7 @@ def make_session_router(
         only records, and the row is the deadline's truth (C-2.21)."""
         if not auth_service.sessions_is_active:
             return _problem(503, "Service unavailable", "session backend is not wired")
-        record = await _authenticate(request, activity=False)  # its activity is `touch()`
+        record = await _authenticate(request)  # its activity is `touch()`, below
         if isinstance(record, JSONResponse):
             return record
         try:  # C-2.9 write-ahead: audit down => 503 and the deadline does not move

@@ -143,6 +143,7 @@ race. The 3 unit cases, in `tests/unit/auth/test_mfa_service_edges.py`, are
 | AC-LOCK-02    | TB-4 SR-041       | Cookie only, no live access token (after a reload)  | `POST /auth/unlock` with no or a foreign `Origin`, or with an SR-041 token bound to another session   | 403 before any password check, count or record: the route checks the SR-042 `Origin` and binds the SR-041 token to the session it unlocks, as `/auth/refresh` does           | 403, no password checked or counted; another session's token: 403 `csrf_token_invalid`, audited                               | DEFENDED (router level; see the evidence note)                            |
 | AC-LOCK-03    | U1 SR-016         | Locked terminal; guesses the password               | Five wrong unlock passwords, then the right one                                                       | The fifth wrong password revokes the session (`unlock_attempts_exceeded`, published: its sockets close with 4401); the right password then answers `session_revoked`         | 401 `unlock_invalid` x4, then 401 `session_revoked`; revoked, published and counted; right password refused                   | DEFENDED (router level; see the evidence note)                            |
 | AC-LOCK-04    | U27 SR-016        | Locked terminal of a legitimate user                | Wrong unlock passwords to lock the account out: U27 from the lock screen, not the login form          | A wrong unlock password counts toward the SR-016 lockout as a wrong login does; the one that locks the account writes `auth.account_locked`; time-bounded (AC-CRED-05)       | Counted on the account; `auth.account_locked` written; while locked, the right password fails like a wrong one                | DESIGN-DECISION (lockout shared with login; see the evidence note)        |
+| AC-LOCK-05    | U2 SR-025         | Unattended unlocked terminal; a tab keeps polling   | Reads every 10 s (`GET /auth/session`, `/me`, `/auth/sessions`) across the idle deadline, no Extend   | Reads are not activity (#2300): the session locks at `last_seen_at + idle_timeout_s`; only extend and unlock move the deadline                                               | `/me` 401 `session_idle_locked` at the deadline; `GET /auth/session` `locked: true`                                           | DEFENDED (deployed app; see the evidence note)                            |
 | AC-INV-01..04 | U12 SR-027        | Guessing, expired, reused, owner role               | invite service                                                                                        | Uniform reject; owner not invitable                                                                                                                                          | As expected                                                                                                                   | DEFENDED (fake repo)                                                      |
 | AC-INV-05     | U12 SR-027        | Owner session, stepped up                           | `POST /users` with role `manager`, then `owner`                                                       | 422, audited, nothing created                                                                                                                                                | 422 x2; 2 `users.invite_refused` rows; no invite. Before #2316: 500, no row (F-3)                                             | DEFENDED                                                                  |
 | AC-INV-06     | SR-027 (#2109)    | Legacy invite row stored as `manager`               | Redeem over HTTP                                                                                      | Viewer only; downgrade audited                                                                                                                                               | Viewer; `users.invite_role_downgraded`, `users.invite_redeemed`. Before #2316: 500 (F-3)                                      | DEFENDED                                                                  |
@@ -190,7 +191,7 @@ Evidence for AC-AUD-01/02, all in the CI integration lane (`pytest tests/integra
 - The owner's own `TRUNCATE` refusal is asserted by that module after every AC-AUD-02 attack, and on its own by
   `test_truncate_refused_even_for_owner` in `services/api/tests/integration/audit/test_audit_repository.py`.
 
-Evidence for AC-LOCK-01..04 (#2300, `POST /auth/unlock`): router-level tests in
+Evidence for AC-LOCK-01..05 (#2300, `POST /auth/unlock`; AC-LOCK-05, explicit activity): router-level tests in
 `services/api/tests/unit/api/idle_lock/`, in `test_unlock.py` unless another file is named. The
 deployed app serves the route: `create_app()` passes the step-up service as its unlock authority,
 and `CsrfMiddleware` hands an unlock that the `cv_refresh` cookie identifies to the route's own
@@ -211,6 +212,15 @@ refused before any password check when its CSRF token belongs to another session
   `test_fifth_wrong_password_with_the_records_failing_is_503_never_a_plain_401` and
   `test_every_wrong_password_is_recorded_as_unlock_failed_the_revoking_one_replayed`
   (`test_unlock_b16.py`).
+- AC-LOCK-05 (`test_idle_lock_http.py`): `test_a_session_polled_every_10_s_locks_on_time`,
+  `test_no_operation_but_extend_and_unlock_moves_the_idle_deadline` (every contract operation),
+  `test_extend_is_the_activity_that_keeps_a_polled_session_unlocked` and
+  `test_a_read_only_session_extends_and_stays_read_only`; the session-backed resolvers, which this
+  stack replaces with a fake, in `tests/unit/api/test_session_resolvers_not_activity.py`.
+  Residual, open (#4052 F6): extend is unthrottled, and since #2300 it is the one write that needs no
+  permission and survives the read-only downgrade. Every call appends an `auth.session_extended`
+  row, kept indefinitely, so a held bearer can write audit rows at line rate (it still cannot move
+  `expires_at`). The fix is contract-first: a per-session window with a `429`, as refresh has.
 - AC-LOCK-04: `test_wrong_password_is_unlock_invalid_counted_toward_the_account_lockout`,
   `test_the_wrong_unlock_password_that_locks_the_account_writes_account_locked` and
   `test_a_locked_account_fails_like_a_wrong_password`. The password check is step-up's, on login's

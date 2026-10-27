@@ -146,9 +146,34 @@ def test_unlock_contract_records_unlock_ok_on_b16_never_request(spec: dict[str, 
     unlock = _flat(_op(spec, "post", "/auth/unlock")["description"])
     assert "`last_seen_at` is re-stamped (`UNLOCK_OK` on B16)" in unlock
     assert "`REQUEST`" not in unlock
+    section = _idle_lock_section(spec)
+    assert "unlock's re-stamp is recorded as `UNLOCK_OK` on B16 (extend sends B16 nothing)" in (
+        section
+    )
+
+
+def test_extend_re_stamps_the_row_and_sends_b16_nothing(spec: dict[str, Any]) -> None:
+    # #2300 slice 2f-B (#4052 follow-up): the route never sent `REQUEST`; the chart reads the
+    # deadline from the row on access (INV-B16-e) and no gate reads chart state (C-2.21).
     extend = _flat(_op(spec, "post", "/auth/session/extend")["description"])
-    assert "It re-stamps `last_seen_at` (`REQUEST` on B16)" in extend
-    assert "(`REQUEST` for extend and `UNLOCK_OK` for unlock, on B16" in _idle_lock_section(spec)
+    assert "It re-stamps `last_seen_at` on the session row (it sends B16 nothing)" in extend
+    assert "`REQUEST`" not in extend
+
+
+def test_a_read_only_downgrade_never_refuses_extend(spec: dict[str, Any]) -> None:
+    # #2300 slice 2f-B, D1 (#4052 follow-up): once activity is explicit, a downgraded session
+    # must still be able to extend, or a 5 min idle timeout locks it inside the penalty.
+    extend = _flat(_op(spec, "post", "/auth/session/extend")["description"])
+    assert "A read-only downgrade does not refuse it: extend acts on no data" in extend
+    assert "A read-only downgrade (`POST /auth/step-up`) does not refuse extend" in (
+        _idle_lock_section(spec)
+    )
+    step_up = _flat(_op(spec, "post", "/auth/step-up")["description"])
+    assert (
+        "(`403 session_read_only` on every write except `POST /auth/logout`, "
+        "`POST /auth/session/extend` and `DELETE /auth/session/view-as`; "
+        "`POST /auth/step-up` answers it itself)"
+    ) in step_up
 
 
 def test_a_rotated_away_cookie_is_audited_outside_refresh(spec: dict[str, Any]) -> None:

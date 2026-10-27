@@ -188,7 +188,7 @@ def test_gate_sees_a_route_mounted_through_an_included_router() -> None:
 
 _STEP_UP_TEXT = re.compile(r"step[-_ ]up", re.IGNORECASE)
 #: `authStepUp` answers the challenges; it names every no-grace class and can never need a
-#: step-up itself (`_WRITE_EXEMPT_PATHS` in `api/step_up.py`).
+#: step-up itself (`write_exempt` in `api/step_up.py`).
 _ELEVATION = ("POST", "/auth/step-up")
 #: The OpenAPI path-item fields that are operations. The others (`parameters`, `servers`,
 #: `summary`, `description`, `$ref` and `x-` extensions) are not, whatever their type.

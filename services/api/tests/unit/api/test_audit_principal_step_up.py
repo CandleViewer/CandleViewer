@@ -116,6 +116,7 @@ async def test_reauth_age_is_right_across_the_grace_window_and_an_idle_lock() ->
     await svc.step_up(str(user), sid, "keys", _code(seed, clock), PASSWORD)
     clock.now = _T0 + timedelta(seconds=90)
     assert (await principal()).reauth_age_s(clock.now) == 90
+    await session_service.touch(sid)  # Extend: a resolved request is not activity (#2300)
 
     # The window ends at 300 s; the step-up still happened, so the age keeps counting.
     clock.now = _T0 + GRACE_WINDOW + timedelta(seconds=1)
