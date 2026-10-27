@@ -1,7 +1,7 @@
 """E08-Q04 assertion logic on fake samples: each budget passes and fails where it should.
-Pure (no I/O, no clock), apart from the k6 driver's tests, which fake k6, the fixture app and its
-server, and write to `tmp_path` (the weekly run's tests start the runner, whose reports go there
-too), and the k6 script's test, which reads the script."""
+Pure (no I/O, no clock), apart from the drivers' tests, which fake k6, the two fixture apps and
+their servers, and write to `tmp_path` (the weekly run's tests start the runner, whose reports go
+there too), and the k6 script's tests, which read the script."""
 
 from __future__ import annotations
 
@@ -13,10 +13,12 @@ import re
 import statistics
 import subprocess
 import tempfile
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from urllib.parse import parse_qsl
 
 import pytest
 
@@ -24,7 +26,7 @@ from bench.ingestion import budgets as b
 from bench.ingestion import rest_load, runner
 from bench.ingestion.budgets import Sample
 from bench.ingestion.config import Scenario
-from bench.ingestion.fixture_app import requests_plan
+from bench.ingestion.fixture_app import FIRST_READ, assert_loopback_target, requests_plan
 
 MiB = 2**20
 HOUR = 3600.0
@@ -128,21 +130,52 @@ def test_latency_budget() -> None:
     assert not b.check_latency([1.0] * 90 + [25.0] * 10).passed
 
 
+def _rest_checks(p95: dict[str, float], **kw: Any) -> dict[str, b.Check]:
+    """`check_rest` as `verdict` calls it: the first read over the warm read, at least 2.0x."""
+    checks = b.check_rest(p95, 2.0, first="klines_cold_first", repeat="klines_warm", **kw)
+    return {c.name: c for c in checks}
+
+
 def test_rest_budget_and_cache_speedup() -> None:
-    ok = b.check_rest({"a": 20.0, "klines_cold": 100.0}, 100.0, 10.0, 2.0)
-    assert all(c.passed for c in ok)
-    bad = {c.name: c for c in b.check_rest({"klines_cold": 200.0}, 200.0, 150.0, 2.0)}
+    ok = _rest_checks({"a": 20.0, "klines_cold_first": 100.0, "klines_warm": 10.0})
+    assert all(c.passed for c in ok.values())
+    bad = _rest_checks({"klines_cold": 200.0, "klines_cold_first": 200.0, "klines_warm": 150.0})
     assert not bad["rest_p95[klines_cold]"].passed and not bad["klines_cache_speedup"].passed
     assert bad["rest_p95[klines_cold]"].hard and bad["klines_cache_speedup"].hard
 
 
 def test_rest_budget_reported_soft_keeps_the_cache_speedup_hard() -> None:
-    soft = {
-        c.name: c
-        for c in b.check_rest({"klines_cold": 200.0}, 200.0, 150.0, 2.0, budget_hard=False)
-    }
+    soft = _rest_checks(
+        {"klines_cold": 200.0, "klines_cold_first": 200.0, "klines_warm": 150.0}, budget_hard=False
+    )
     cold = soft["rest_p95[klines_cold]"]
     assert not cold.passed and not cold.hard and soft["klines_cache_speedup"].hard
+
+
+def test_the_cache_speed_up_is_the_first_read_over_the_warm_read() -> None:
+    """#2523: a read no cache has served (`klines_cold_first`) over a repeat read (`klines_warm`),
+    both named in the note. `klines_cold` is not in it: with a page cache it is a repeat read."""
+    rows = _rest_checks({"klines_cold": 5.0, "klines_cold_first": 100.0, "klines_warm": 10.0})
+    speed = rows["klines_cache_speedup"]
+    assert speed.passed and speed.measured == 10.0
+    assert speed.note == "klines_cold_first p95 100.00ms vs klines_warm p95 10.00ms"
+    slow_cold = {"klines_cold": 400.0, "klines_cold_first": 15.0, "klines_warm": 10.0}
+    assert not _rest_checks(slow_cold)["klines_cache_speedup"].passed  # 1.5x, whatever cold reads
+
+
+@pytest.mark.parametrize("budget_hard", [True, False])
+def test_the_first_reads_row_is_reported_and_never_gated(budget_hard: bool) -> None:
+    """#2523: the first read's 150 ms row is soft whatever the profile, under its own note; the
+    other routes' rows are as before."""
+    rows = _rest_checks(
+        {"klines_cold": 400.0, "klines_cold_first": 400.0, "klines_warm": 10.0},
+        budget_hard=budget_hard,
+    )
+    first, cold = rows["rest_p95[klines_cold_first]"], rows["rest_p95[klines_cold]"]
+    assert (first.measured, first.limit, first.passed, first.hard) == (400.0, 150.0, False, False)
+    assert first.note == b.B13_FIRST_READ == "a first read: reported, no budget (#2523)"
+    assert (cold.passed, cold.hard) == (False, budget_hard)
+    assert cold.note == ("" if budget_hard else "reported, not gated, in the smoke profile (#399)")
 
 
 def _rest(profile: str) -> Scenario:
@@ -162,37 +195,145 @@ def _rest(profile: str) -> Scenario:
 )
 def test_rest_verdict_gates_budget_13_only_in_the_full_profile(profile: str, passed: bool) -> None:
     """#399: the smoke profile reports Budget #13's 150 ms (`06` measures it with k6 on the bench
-    runner, the full profile) and fails only on its hard checks; the cache speed-up holds here."""
+    runner, the full profile) and fails only on its hard checks; the cache speed-up holds here.
+    The first read's row is reported in both (#2523)."""
     lat = {r: [20.0] * 20 for r in requests_plan()}
-    lat |= {"klines_cold": [400.0] * 20, "klines_warm": [10.0] * 20}
+    lat |= {r: [400.0] * 20 for r in ("klines_cold", "klines_cold_first")}
+    lat |= {"klines_warm": [10.0] * 20}
     v = rest_load.verdict(_rest(profile), lat)
     assert v.passed is passed
-    assert {c.hard for c in v.checks if c.name.startswith("rest_p95[")} == {not passed}
+    rows = {c.name: c.hard for c in v.checks if c.name.startswith("rest_p95[")}
+    assert rows.pop("rest_p95[klines_cold_first]") is False
+    assert set(rows.values()) == {not passed}
+
+
+_SMOKE_SOFT = "reported, not gated, in the smoke profile (#399)"
 
 
 @pytest.mark.parametrize(
-    "absent", [("klines_warm", "trades"), ("klines_cold",)], ids=["warm", "cold"]
+    ("profile", "weekly", "note"),
+    [
+        ("smoke", False, _SMOKE_SOFT),
+        ("full", False, ""),
+        ("full", True, rest_load.B13_SOFT_WEEKLY),
+    ],
+    ids=["smoke", "full", "weekly"],
+)
+def test_a_slow_first_read_fails_no_hard_check_in_any_profile(
+    profile: str, weekly: bool, note: str
+) -> None:
+    """#2523: a first read at 400 ms is reported against 150 ms, under its own note, and gates
+    nothing in the smoke, the full profile or the weekly run; every other route's row is as
+    before (all at 20 ms here, the warm one at 10)."""
+    lat = {r: [20.0] * 20 for r in requests_plan()}
+    lat |= {"klines_cold_first": [400.0] * 20, "klines_warm": [10.0] * 20}
+    v = rest_load.verdict(_rest(profile), lat, b13_report_only=weekly)
+    assert v.passed and [c.name for c in v.checks if c.hard and not c.passed] == []
+    rows = {c.name: c for c in v.checks if c.name.startswith("rest_p95[")}
+    first = rows.pop("rest_p95[klines_cold_first]")
+    assert (first.passed, first.hard, first.note) == (False, False, b.B13_FIRST_READ)
+    others = {(c.limit, c.passed, c.hard, c.note) for c in rows.values()}
+    assert others == {(150.0, True, profile == "full" and not weekly, note)}
+    assert len(rows) == len(requests_plan()) - 1
+
+
+@pytest.mark.parametrize(
+    "absent",
+    [("klines_warm", "trades"), ("klines_cold_first",), ("klines_cold",)],
+    ids=["warm", "first", "cold"],
 )
 @pytest.mark.parametrize("profile", ["smoke", "full"])
 def test_a_route_with_no_reading_fails_the_verdict_in_every_profile(
     profile: str, absent: tuple[str, ...]
 ) -> None:
     """#399: a route the driver did not measure (k6 wrote no p95 for it) fails, named; an
-    unmeasured cold or warm read fails the speed-up, never a 0.0 or an `inf` that passes."""
+    unmeasured first or warm read fails the speed-up, never a 0.0 or an `inf` that passes. The
+    first read is such a route too (#2523), and `klines_cold` is not in the speed-up."""
     lat = {r: [20.0] * 20 for r in requests_plan() if r not in absent}
+    lat |= {r: [400.0] * 20 for r in ("klines_cold_first",) if r not in absent}  # a 20x speed-up
     v = rest_load.verdict(_rest(profile), lat)
     named = {c.name: c for c in v.checks if c.name.startswith("rest_measured[")}
     assert not v.passed and set(named) == {f"rest_measured[{r}]" for r in absent}
     assert all(c.hard and not c.passed for c in named.values())
     speed = next(c for c in v.checks if c.name == "klines_cache_speedup")
-    assert speed.hard and not speed.passed
+    unmeasured = bool({"klines_cold_first", "klines_warm"} & set(absent))
+    assert speed.hard and speed.passed is not unmeasured
+    assert math.isnan(speed.measured) is unmeasured
     assert not {f"rest_p95[{r}]" for r in absent} & {c.name for c in v.checks}  # never a 0.0 row
 
 
 def test_a_warm_read_of_zero_fails_the_cache_speed_up() -> None:
     """#2825: a 0 ms warm p95 is no reading, never an `inf` speed-up that passes."""
-    speed = b.check_rest({}, 100.0, 0.0, 2.0)[-1]
-    assert speed.name == "klines_cache_speedup" and speed.hard and not speed.passed
+    speed = _rest_checks({"klines_cold_first": 100.0, "klines_warm": 0.0})["klines_cache_speedup"]
+    assert speed.hard and not speed.passed and math.isnan(speed.measured)
+
+
+def test_the_plan_marks_klines_colds_request_alone_for_the_first_read_server() -> None:
+    """#2523: `klines_cold_first` is `klines_cold`'s request, marked `FIRST_READ` for the drivers
+    to send to the first-read server, and the only route marked; the marker is no parameter."""
+    plan = requests_plan()
+    assert [r for r, spec in plan.items() if spec.get(FIRST_READ)] == ["klines_cold_first"]
+    assert plan["klines_cold_first"] == {**plan["klines_cold"], FIRST_READ: True}
+    assert FIRST_READ == "first_read" and FIRST_READ not in plan["klines_cold_first"]["params"]
+
+
+@pytest.mark.parametrize("marked", [[], ["klines_cold", "klines_cold_first"]], ids=["none", "two"])
+def test_verdict_refuses_a_plan_that_marks_no_single_first_read(
+    monkeypatch: pytest.MonkeyPatch, marked: list[str]
+) -> None:
+    """#2523: `verdict` takes the first read from the plan's `FIRST_READ` marker, as the drivers
+    do, never by its name: a plan that marks no route, or two, is refused, never guessed."""
+    plan = {r: {**spec, FIRST_READ: r in marked} for r, spec in requests_plan().items()}
+    monkeypatch.setattr(rest_load, "requests_plan", lambda: plan)
+    with pytest.raises(RuntimeError, match=re.escape(f"the plan marks {marked} as the first read")):
+        rest_load.verdict(_rest("full"), {r: [20.0] * 20 for r in plan})
+
+
+_Seen = list[tuple[str, str, tuple[tuple[str, str], ...]]]
+
+
+def _asgi(name: str, seen: _Seen) -> Any:
+    """An ASGI app that answers 200 to anything and notes who answered which path and query."""
+
+    async def app(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        query = tuple(sorted(parse_qsl(scope["query_string"].decode())))
+        seen.append((name, scope["path"], query))
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    return app
+
+
+async def test_drive_inprocess_sends_the_first_read_to_its_own_app(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#2523: the marked route goes to the first-read app (`build_first_read_app`) through a client
+    of its own, and every other route to the app: each warmed once untimed, then timed `iterations`
+    times under its own name. Its query is `klines_cold`'s params, and nothing else."""
+    seen: _Seen = []
+
+    async def app(_: Path) -> Any:
+        return _asgi("app", seen)
+
+    async def first_read_app(_: Path) -> Any:
+        return _asgi("first-read app", seen)
+
+    temp = functools.partial(tempfile.TemporaryDirectory, dir=tmp_path)
+    monkeypatch.setattr("bench.ingestion.rest_load.tempfile.TemporaryDirectory", temp)
+    monkeypatch.setattr(rest_load, "write_cold_lake", lambda _: 0)
+    monkeypatch.setattr(rest_load, "build_app", app)
+    monkeypatch.setattr(rest_load, "build_first_read_app", first_read_app)
+
+    lat = await rest_load.drive_inprocess(iterations=3, concurrency=2)
+
+    plan = requests_plan()
+    assert {r: len(x) for r, x in lat.items()} == dict.fromkeys(plan, 3)
+    want: Counter[tuple[str, str, tuple[tuple[str, str], ...]]] = Counter()
+    for spec in plan.values():
+        server = "first-read app" if spec.get(FIRST_READ) else "app"
+        query = tuple(sorted((k, str(v)) for k, v in spec["params"].items()))
+        want[(server, spec["path"], query)] += 1 + 3  # one untimed warm-up, three timed calls
+    assert Counter(seen) == want
 
 
 #: A canned `--summary-export` (#2825), with the stats the script asks k6 for (`summaryTrendStats`)
@@ -248,6 +389,15 @@ def test_k6_reading_keeps_a_99_that_a_route_at_or_over_150_ms_explains() -> None
     assert rest_load.k6_reading(99, _k6(trades=150.0)) == _K6_READ | {"trades": [150.0]}
 
 
+def test_k6_reading_a_first_read_over_150_ms_explains_no_99() -> None:
+    """#2523: the script arms no threshold on the first-read route, so its p95 over 150 ms is read
+    on a 0, and a 99 that it alone would explain is a failed check."""
+    slow = _every_route(klines_cold_first=527.5)
+    assert rest_load.k6_reading(0, slow)["klines_cold_first"] == [527.5]
+    with pytest.raises(RuntimeError, match="no route's p95 at or over 150 ms"):
+        rest_load.k6_reading(99, slow)
+
+
 @pytest.mark.parametrize("code", [1, 98, 107, 255])
 def test_k6_reading_refuses_a_run_k6_ended_with_an_error(code: int) -> None:
     """#2825: only 0 and 99 leave a reading; a script, configuration or run error refuses it."""
@@ -301,46 +451,126 @@ def test_a_k6_run_whose_routes_took_no_samples_fails_the_full_verdict() -> None:
 
 @pytest.fixture
 def faked_k6(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> SimpleNamespace:
-    """`drive_k6` with k6, the fixture app and its server faked: no network, no sleep, its files
-    under `tmp_path`. Set `.code`, `.text` (None: k6 writes no summary) and `.starts` first."""
+    """`drive_k6` with k6, the two fixture apps and their servers faked: no network, no sleep, its
+    files under `tmp_path`. Set `.code`, `.text` (None: k6 writes no summary) and `.starts` first;
+    `.argv` is then k6's command line, and each of `.servers` has the `.config` it was made with."""
     import uvicorn
 
-    state = SimpleNamespace(code=0, text=_k6(), starts=True, servers=[])
+    state = SimpleNamespace(code=0, text=_k6(), starts=True, servers=[], argv=[])
 
     class Server:
-        def __init__(self, config: object) -> None:
-            self.started, self.should_exit = state.starts, False
+        def __init__(self, config: dict[str, object]) -> None:
+            self.config, self.started, self.should_exit = config, state.starts, False
             state.servers.append(self)
 
         def run(self) -> None:
             return None
 
     def run(argv: list[str], **_: object) -> subprocess.CompletedProcess[bytes]:
+        state.argv = argv
         if state.text is not None:
             Path(argv[argv.index("--summary-export") + 1]).write_text(state.text, "utf-8")
         return subprocess.CompletedProcess(argv, state.code)
 
-    async def build_app(_: Path) -> object:
-        return object()
+    async def build_app(_: Path) -> str:
+        return "app"
+
+    async def build_first_read_app(_: Path) -> str:
+        return "first-read app"
 
     temp = functools.partial(tempfile.TemporaryDirectory, dir=tmp_path)
     monkeypatch.delenv(rest_load.K6_EXPORT_ENV, raising=False)  # a developer's own never leaks in
     monkeypatch.setattr("bench.ingestion.rest_load.shutil.which", lambda _: "/fake/k6")
     monkeypatch.setattr(rest_load, "write_cold_lake", lambda _: None)
     monkeypatch.setattr(rest_load, "build_app", build_app)
-    monkeypatch.setattr(rest_load, "_free_port", lambda: 8123)
+    monkeypatch.setattr(rest_load, "build_first_read_app", build_first_read_app)
+    monkeypatch.setattr(rest_load, "_free_ports", lambda n: [8123, 8124][:n])
     monkeypatch.setattr("bench.ingestion.rest_load.subprocess.run", run)
     monkeypatch.setattr("bench.ingestion.rest_load.time.sleep", lambda _: None)
     monkeypatch.setattr("bench.ingestion.rest_load.tempfile.TemporaryDirectory", temp)
     monkeypatch.setattr(uvicorn, "Server", Server)
-    monkeypatch.setattr(uvicorn, "Config", lambda *_, **__: None)
+    monkeypatch.setattr(uvicorn, "Config", lambda app, **kw: {"app": app, **kw})
     return state
 
 
 def test_drive_k6_reads_k6s_summary_and_stops_the_app(faked_k6: SimpleNamespace) -> None:
-    """#2825: the driver hands k6's exit code and summary to `k6_reading`, then stops the app."""
+    """#2825: the driver hands k6's exit code and summary to `k6_reading`, then stops the apps."""
     assert rest_load.drive_k6("1s", 1) == _K6_READ
-    assert [s.should_exit for s in faked_k6.servers] == [True]
+    assert [s.should_exit for s in faked_k6.servers] == [True, True]
+
+
+def test_drive_k6_serves_the_first_read_from_its_own_loopback_server(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2523: a second server, over the first-read app, on a loopback port of its own; both URLs
+    pass the loopback check before any server is made, k6 gets the second as BASE_URL_FIRST
+    beside BASE_URL, and both servers stop once k6 is done."""
+    checked: list[str] = []
+
+    def check(url: str) -> None:
+        assert not faked_k6.servers, "a server was made before its URL was checked"
+        assert_loopback_target(url)
+        checked.append(url)
+
+    monkeypatch.setattr(rest_load, "assert_loopback_target", check)
+    assert rest_load.drive_k6("1s", 1) == _K6_READ
+    assert checked == ["http://127.0.0.1:8123", "http://127.0.0.1:8124"]
+    served = [(s.config["app"], s.config["host"], s.config["port"]) for s in faked_k6.servers]
+    assert served == [("app", "127.0.0.1", 8123), ("first-read app", "127.0.0.1", 8124)]
+    env = [faked_k6.argv[i + 1] for i, arg in enumerate(faked_k6.argv) if arg == "-e"]
+    assert env[:2] == ["BASE_URL=http://127.0.0.1:8123", "BASE_URL_FIRST=http://127.0.0.1:8124"]
+    assert [s.should_exit for s in faked_k6.servers] == [True, True]
+
+
+def test_free_ports_binds_every_socket_before_it_closes_any(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#2523: a port is free again once its socket closes, so `_free_ports` holds every socket
+    until all are bound: each bind precedes any close, and the `n` ports differ. The fake OS binds
+    the lowest port no open socket holds, so a socket closed early would hand its port on."""
+    held: set[int] = set()
+    calls: list[str] = []
+
+    class Socket:
+        def __init__(self) -> None:
+            self.port, self.closed = 0, False
+
+        def __enter__(self) -> Socket:
+            return self
+
+        def __exit__(self, *_: object) -> None:
+            self.close()
+
+        def bind(self, address: tuple[str, int]) -> None:
+            assert address == ("127.0.0.1", 0)
+            self.port = min(set(range(40_000, 40_010)) - held)
+            held.add(self.port)
+            calls.append("bind")
+
+        def getsockname(self) -> tuple[str, int]:
+            if self.closed:
+                raise OSError(9, "Bad file descriptor")  # as a closed socket's does
+            return ("127.0.0.1", self.port)
+
+        def close(self) -> None:
+            self.closed = True
+            held.discard(self.port)
+            calls.append("close")
+
+    monkeypatch.setattr(rest_load, "socket", SimpleNamespace(socket=Socket))
+    assert rest_load._free_ports(3) == [40_000, 40_001, 40_002]
+    assert calls == ["bind"] * 3 + ["close"] * 3 and not held
+
+
+def test_drive_k6_refuses_one_port_for_both_servers(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2523: two uvicorn servers bound to one port can both report started, so the driver refuses
+    a pair of equal ports before it makes a server, and k6 never runs."""
+    monkeypatch.setattr(rest_load, "_free_ports", lambda n: [8123] * n)
+    with pytest.raises(RuntimeError, match="both fixture apps were given port 8123: no reading"):
+        rest_load.drive_k6("1s", 1)
+    assert faked_k6.servers == [] and faked_k6.argv == []
 
 
 @pytest.mark.parametrize(
@@ -359,24 +589,43 @@ def test_drive_k6_refuses_an_invalid_run_and_still_stops_the_app(
     faked_k6.code, faked_k6.text, faked_k6.starts = code, text, starts
     with pytest.raises(RuntimeError, match=match):
         rest_load.drive_k6("1s", 1)
-    assert [s.should_exit for s in faked_k6.servers] == [True]
+    assert [s.should_exit for s in faked_k6.servers] == [True, True]
 
 
 def test_drive_k6_app_up_on_the_third_sleep_reads_the_run(
     faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """#2825: the driver waits for the server to listen, a short sleep at a time; one that looked
-    once would refuse every run whose app came up a moment late."""
+    """#2825: the driver waits for the servers to listen, a short sleep at a time; one that looked
+    once would refuse every run whose app came up a moment late. It waits for both (#2523): the
+    app listens after the first sleep, the first-read app only after the third."""
     faked_k6.starts = False
     naps: list[float] = []
 
     def sleep(seconds: float) -> None:
         naps.append(seconds)
-        if len(naps) == 3:
-            faked_k6.servers[0].started = True
+        if len(naps) == 1:
+            faked_k6.servers[0].started = True  # the app
+        elif len(naps) == 3:
+            faked_k6.servers[1].started = True  # the first-read app, two sleeps later
 
     monkeypatch.setattr("bench.ingestion.rest_load.time.sleep", sleep)
     assert rest_load.drive_k6("1s", 1) == _K6_READ and len(naps) == 3
+
+
+def test_drive_k6_refuses_a_run_whose_first_read_server_never_listens(
+    faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2523: the driver waits for both servers; the app up and the first-read app never is no
+    reading, and both are stopped."""
+    faked_k6.starts = False
+
+    def sleep(_: float) -> None:
+        faked_k6.servers[0].started = True
+
+    monkeypatch.setattr("bench.ingestion.rest_load.time.sleep", sleep)
+    with pytest.raises(RuntimeError, match="fixture app did not start"):
+        rest_load.drive_k6("1s", 1)
+    assert [s.should_exit for s in faked_k6.servers] == [True, True]
 
 
 @pytest.mark.parametrize(
@@ -416,10 +665,11 @@ def _every_route(**p95: float) -> str:
 @pytest.fixture
 def weekly(faked_k6: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
     """The full pack's rest_k6 as the weekly cron starts it (#2825), over the faked k6: cold
-    klines at 527.5 ms cross their threshold (99), and every other check passes."""
+    klines at 527.5 ms cross their threshold (99), the first read is as slow (it has none,
+    #2523), and every other check passes."""
     monkeypatch.setenv("CV_BENCH_MACHINE_PROFILE", "unit-test")  # gated against no baseline
     monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "1")
-    faked_k6.code, faked_k6.text = 99, _every_route(klines_cold=527.5)
+    faked_k6.code, faked_k6.text = 99, _every_route(klines_cold=527.5, klines_cold_first=527.5)
     return faked_k6
 
 
@@ -432,7 +682,7 @@ def test_runner_weekly_run_only_budget_13_over_warns_and_exits_0(
     weekly: SimpleNamespace, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """#2825: until slice 2 decides Budget #13, the weekly run names the routes over it, green,
-    so it files no issue."""
+    so it files no issue. The first read is not one of them: it has no budget (#2523)."""
     assert _pack(tmp_path) == 0
     warned = [x for x in capsys.readouterr().out.splitlines() if x.startswith("::warning::")]
     over = "over Budget #13's 150 ms: rest_p95[klines_cold] 527.5 ms"
@@ -445,6 +695,20 @@ def test_runner_dispatch_budget_13_over_exits_1(
     """#2825: a dispatch sets the variable empty, so Budget #13 still gates it."""
     monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "")
     assert _pack(tmp_path) == 1
+
+
+def test_runner_dispatch_only_the_first_read_over_150_ms_exits_0(
+    weekly: SimpleNamespace,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#2523: a dispatch gates Budget #13, and the first read has no budget: alone over 150 ms
+    (k6 exits 0, as no threshold is armed on it), it fails nothing and is in no annotation."""
+    monkeypatch.setenv(rest_load.B13_REPORT_ONLY_ENV, "")
+    weekly.code, weekly.text = 0, _every_route(klines_cold_first=527.5)
+    assert _pack(tmp_path) == 0
+    assert not [x for x in capsys.readouterr().out.splitlines() if x.startswith("::")]
 
 
 @pytest.mark.parametrize(
@@ -483,22 +747,36 @@ def test_runner_weekly_run_another_failed_check_exits_1(
 ) -> None:
     """#2825: only the 150 ms rows are reported; every other hard check still fails the weekly run:
     warm klines with no samples (no reading, so no speed-up either), warm klines at 400 ms (a 1.3x
-    speed-up from cold's 527.5 ms, under the minimum) and a route with no samples, each of the
-    last two failing that one check alone."""
-    weekly.text = _every_route(klines_cold=527.5, **p95)
+    speed-up from the first read's 527.5 ms, under the minimum, #2523) and a route with no
+    samples, each of the last two failing that one check alone."""
+    weekly.text = _every_route(klines_cold=527.5, klines_cold_first=527.5, **p95)
     assert _pack(tmp_path) == 1
 
 
-def test_k6_script_arms_only_checks_and_each_routes_budget_13_p95() -> None:
+def test_k6_script_arms_only_checks_and_each_gated_routes_budget_13_p95() -> None:
     """#2825: `k6_reading` blames a 99 that no route's p95 at or over Budget #13 explains on a
     failed check, which holds while the script arms those two kinds of threshold and no other, at
-    the budget's own number: a drift fails here, not as "a check failed" on the bench runner."""
+    the budget's own number: a drift fails here, not as "a check failed" on the bench runner. The
+    route the plan marks `FIRST_READ` arms none (#2523): it is reported, never gated."""
     src = rest_load.K6_SCRIPT.read_text(encoding="utf-8")
-    assert src.count("thresholds") == 3  # declared, filled in per route, handed to `options`
-    assert re.search(r"^const thresholds = \{ checks: \['rate>0\.99'\] \};$", src, re.M)
-    route = r"^for \(const r of ROUTES\) thresholds\[`route_\$\{r\}_ms`\] = \['p\(95\)<(\d+)'\];"
+    assert src.count("thresholds") == 3  # declared, filled in per gated route, handed to `options`
+    assert re.search(r'^const thresholds = \{ checks: \["rate>0\.99"\] \};$', src, re.M)
+    gated = rf"^const GATED = ROUTES\.filter\(\(r\) => !PLAN\[r\]\.{FIRST_READ}\);"
+    route = r'^for \(const r of GATED\) thresholds\[`route_\$\{r\}_ms`\] = \["p\(95\)<(\d+)"\];'
     (limit,) = re.findall(route, src, re.M)
-    assert re.search(r"^  thresholds,$", src, re.M) and float(limit) == b.B13_READ_P95_MS
+    assert re.search(gated, src, re.M) and re.search(r"^  thresholds,$", src, re.M)
+    assert float(limit) == b.B13_READ_P95_MS
+
+
+def test_k6_script_sends_the_first_read_to_its_own_loopback_server() -> None:
+    """#2523: the route the plan marks `FIRST_READ` goes to BASE_URL_FIRST, which must be set and
+    pass BASE_URL's own loopback check, or the script fails; only `params` reach the query."""
+    src = rest_load.K6_SCRIPT.read_text(encoding="utf-8")
+    assert re.search(r'^const BASE_FIRST = __ENV\.BASE_URL_FIRST \|\| "";$', src, re.M)
+    for base in ("BASE", "BASE_FIRST"):
+        assert re.search(rf"^if \(!LOOPBACK\.test\({base}\)\) \{{\n  fail\(`refusing ", src, re.M)
+    assert re.search(rf"^    const base = spec\.{FIRST_READ} \? BASE_FIRST : BASE;$", src, re.M)
+    assert "http.get(`${base}${spec.path}?${qs(spec.params)}`" in src
 
 
 def test_headroom_zero_or_ip_limit_fails() -> None:
