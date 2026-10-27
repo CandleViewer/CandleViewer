@@ -132,6 +132,20 @@ describe("Button (CMP-001)", () => {
     expect(get(host)).toHaveAttribute("data-testid", "x");
   });
 
+  it("treats a whitespace-only disabledReason as no reason", async () => {
+    const host = await mount(<Button disabledReason="   ">Save</Button>);
+    const b = get(host);
+    expect(b).not.toHaveAttribute("aria-disabled");
+    expect(b).not.toHaveAttribute("data-gated");
+    expect(b).not.toHaveAccessibleDescription();
+  });
+
+  it("keeps the full text as the accessible name for a long label", async () => {
+    const long = "Submit the order to every selected account in the trade group now";
+    const host = await mount(<Button fullWidth>{long}</Button>);
+    expect(get(host, long).dataset["fullWidth"]).toBe("");
+  });
+
   it("honours type=submit", async () => {
     const host = await mount(<Button type="submit">Save</Button>);
     expect(get(host)).toHaveProperty("type", "submit");

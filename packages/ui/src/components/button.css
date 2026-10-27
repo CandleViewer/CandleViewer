@@ -17,6 +17,13 @@
   cursor: pointer;
 }
 
+.cv-button__label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cv-button[data-size="sm"] {
   padding-inline: var(--space-inset-sm);
 }
@@ -75,9 +82,12 @@
   cursor: not-allowed;
 }
 
-/* Disabled with a reason (T2): only the fill dims on a plate, the label stays at full strength. */
-.cv-button[data-gated] {
+/* Disabled with a reason (T2): only the fill dims on a plate, the label stays at full strength. The plate is
+   dimmed, so the label uses text.primary on every variant (D02 token note); the selector out-specifies the variants. */
+.cv-button[data-gated],
+.cv-button[data-gated][data-variant] {
   background: transparent;
+  color: var(--color-text-primary);
   cursor: not-allowed;
 }
 
@@ -113,7 +123,8 @@
 }
 
 @media (forced-colors: active) {
-  .cv-button {
+  .cv-button,
+  .cv-button[data-variant] {
     border-color: ButtonText;
     background: ButtonFace;
     color: ButtonText;
@@ -125,15 +136,19 @@
     border-color: Highlight;
   }
 
-  .cv-button:disabled {
+  .cv-button:disabled,
+  .cv-button[data-variant]:disabled {
     border-color: GrayText;
     color: GrayText;
     opacity: 1;
   }
 
-  .cv-button[data-gated] {
+  /* Gated keeps ButtonText: the reason is the message, only the border greys. */
+  .cv-button[data-gated],
+  .cv-button[data-gated][data-variant] {
     border-color: GrayText;
     background: ButtonFace;
+    color: ButtonText;
   }
 
   .cv-button[data-gated]::before {

@@ -5,7 +5,7 @@ import { cx } from "./internal/cx.js";
 
 export interface ButtonProps extends Omit<
   ComponentPropsWithoutRef<"button">,
-  "className" | "style" | "disabled" | "children"
+  "className" | "style" | "disabled" | "children" | "aria-disabled"
 > {
   /** Buy and sell arrive with the icon registry (#271). */
   variant?: "primary" | "secondary" | "ghost" | "danger";

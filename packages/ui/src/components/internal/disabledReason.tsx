@@ -17,12 +17,14 @@ export function useDisabledReason(
   disabledReason: string | undefined,
 ): DisabledReasonAttrs {
   const reasonId = useId();
-  const gated = disabledReason !== undefined && disabledReason !== "";
+  // Whitespace-only is no reason: a sighted user would see nothing, a screen reader a blank description.
+  const trimmed = disabledReason?.trim();
+  const gated = trimmed !== undefined && trimmed !== "";
   return {
     gated,
     disabled: disabled === true && !gated,
     reasonId,
-    reason: gated ? disabledReason : undefined,
+    reason: gated ? trimmed : undefined,
     ariaDisabled: gated ? true : undefined,
     ariaDescribedBy: gated ? reasonId : undefined,
   };

@@ -35,7 +35,9 @@ for (const source of sources) await copyFile(source, path.join(dist, path.basena
 const componentDir = path.join(UI_ROOT, "src/components");
 const componentFiles = (await readdir(componentDir).catch(() => []))
   .filter((name) => name.endsWith(".css"))
-  .sort((a, b) => (a === "controls.css" ? -1 : b === "controls.css" ? 1 : a.localeCompare(b)));
+  .sort((a, b) =>
+    a === "controls.css" ? -1 : b === "controls.css" ? 1 : a < b ? -1 : a > b ? 1 : 0,
+  );
 const written = sources.map((source) => path.basename(source));
 if (componentFiles.length > 0) {
   const parts = await Promise.all(componentFiles.map((n) => readFile(path.join(componentDir, n))));

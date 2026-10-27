@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { Button } from "./Button.js";
 
 const VARIANTS = ["primary", "secondary", "ghost", "danger"] as const;
@@ -71,6 +71,43 @@ export const DisabledWithReason: Story = {
 };
 
 export const FullWidth: Story = { args: { fullWidth: true } };
+
+/** A label wider than its box truncates with an ellipsis; the accessible name stays the full text. */
+const LONG_LABEL = "Submit the order to every selected account in the trade group now";
+export const LongLabel: Story = {
+  args: { children: LONG_LABEL, fullWidth: true },
+  decorators: [
+    (Story) => (
+      <div style={{ width: "10rem" }}>
+        <Story />
+      </div>
+    ),
+  ],
+  play: async ({ canvasElement }) => {
+    const button = within(canvasElement).getByRole("button", { name: LONG_LABEL });
+    const label = button.querySelector<HTMLElement>(".cv-button__label");
+    await expect(label?.scrollWidth).toBeGreaterThan(label?.clientWidth ?? 0);
+    await expect(button.scrollWidth).toBeLessThanOrEqual(button.clientWidth);
+  },
+};
+
+/** Gated primary and danger: the label is text.primary on the dimmed plate; axe checks it per theme. */
+const gatedMatrix = (theme: string): Story => ({
+  globals: { theme },
+  play: async () => {
+    // The theme runtime applies the global in an effect: prove axe runs on this theme, not the dark default.
+    await waitFor(() => expect(document.documentElement).toHaveAttribute("data-theme", theme));
+  },
+  render: (args) => (
+    <div style={row}>
+      {(["primary", "danger"] as const).map((variant) => (
+        <Button key={variant} {...args} variant={variant} disabledReason={REASON} />
+      ))}
+    </div>
+  ),
+});
+export const GatedContrastLight: Story = gatedMatrix("light");
+export const GatedContrastHighContrast: Story = gatedMatrix("high-contrast");
 
 export const FocusVisible: Story = {
   play: async ({ canvasElement }) => {

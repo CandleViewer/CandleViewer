@@ -43,7 +43,7 @@
 
 @media (prefers-reduced-motion: no-preference) {
   .cv-spinner {
-    animation: cv-spin 1s linear infinite;
+    animation: cv-spin calc(var(--motion-duration-slow) * 2) linear infinite;
   }
 }
 
