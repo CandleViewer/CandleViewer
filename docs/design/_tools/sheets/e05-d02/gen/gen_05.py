@@ -8,9 +8,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import s3fields as f
-
 import e05d02kit as k
+import s3fields as f
 
 Node = dict
 NN = 5

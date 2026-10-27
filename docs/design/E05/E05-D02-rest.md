@@ -2,17 +2,18 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 5
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens,
-E09-D09 and the owning screen specs without a Penpot build; the boards are PENDING. The boards PR carries the closing
-line for #161; this PR, like slices 1–4, refers to #161 without closing it.
+E09-D09 and the owning screen specs without a Penpot build; the boards are the ten specimen boards of the boards PR
+(`E05-D02-boards.md`), which carries the closing line for #161.
 **Ruling:** the coordinator's ruling 6438042003 on #161 (2026-10-27) takes every §6 recommendation: J2–J14 and J16–J25
 are RULED; **J1 and J15 stay PROPOSED, owner approval pending (#2701)**, and every place that draws them says so. The
 `15` clauses of §7 land in this PR, each tagged with the J-row it depends on; a later "no" drops its clauses forward.
 **Penpot:** the per-set file `E05-D02 boards` (the coordinator's ruling of 2026-10-27: the shared DS file no longer
 loads, so the boards are the ten specimen boards of the boards PR, `E05-D02 / 01 actions` … `E05-D02 / 10
 light-composite`, on the four slice pages). Slice 5 adds no board (the ten-board cap per design ticket). A slice-5
-component folds into a specimen board where its text lands first, as a part of a slice 1–4 component: CMP-022 Kbd in
-board 09's menu shortcut slot and tooltip, and CMP-035 Countdown in board 09's order-confirm footer (slice 4 §1 draws
-both "from its catalogue entry as a plain board until it ships"). Every other section here, the glyph set included, is
+component folds into a specimen board as plain text inside a slice 1–4 component: CMP-022 Kbd as the `Del` key text in
+board 09's CMP-041 menu shortcut slot (not in a tooltip), and CMP-035 Countdown as the `Cancels in 0:20` text in board
+09's CMP-044 confirm footer (slice 4 §1 draws both "from its catalogue entry as a plain board until it ships"; see
+`E05-D02-boards.md` §4). Every other section here, the glyph set included, is
 **not drawn — the text is binding**.
 **Slices:** #161 ships as five design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection; slice 2 (#4290,
 `E05-D02-data-display.md`) the data display and text atoms; slice 3 (#4322, `E05-D02-form-controls.md`) the form
