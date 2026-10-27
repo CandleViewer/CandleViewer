@@ -9,7 +9,7 @@
  * render minimal placeholders.
  */
 import { createBrowserRouter, redirect, type RouteObject } from "react-router";
-import { ROUTE_MANIFEST } from "./manifest";
+import { ROUTE_MANIFEST, type ManifestEntry } from "./manifest";
 import { guardRoute } from "./guards";
 import { RouteErrorElement } from "./RouteErrorElement";
 import { StubRoute } from "./StubRoute";
@@ -24,6 +24,7 @@ import { SetupChecklistCard } from "../features/onboarding/SetupChecklistCard";
 import { HotkeyEditor } from "../keymap/HotkeyEditor";
 import { AccessibilitySettingsScreen } from "../features/a11y-preferences/AccessibilitySettingsScreen";
 import { getMeClaims } from "../lib/auth/meCache";
+import { ShellLayout } from "../features/app-shell/ShellLayout";
 
 function elementFor(routeId: string, owner: string | null): RouteObject["element"] {
   if (routeId === "R-900") return <ForbiddenState />;
@@ -31,12 +32,7 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
   if (routeId === "R-001") return <LoginScreen />;
   if (routeId === "R-007") return <ChangePasswordScreen />;
   if (routeId === "R-009") return <InviteAcceptScreen />;
-  if (routeId === "R-202")
-    return (
-      <main>
-        <HotkeyEditor />
-      </main>
-    );
+  if (routeId === "R-202") return <HotkeyEditor />;
   // R-203 /settings/appearance hosts SCR-116 (palette) and SCR-117 a11y prefs (12-sitemap.md).
   if (routeId === "R-203")
     return (
@@ -60,7 +56,7 @@ function elementFor(routeId: string, owner: string | null): RouteObject["element
 }
 
 function buildRoutes(): RouteObject[] {
-  const routes: RouteObject[] = ROUTE_MANIFEST.map((entry) => ({
+  const toRoute = (entry: ManifestEntry): RouteObject => ({
     id: entry.id,
     path: entry.path,
     element: elementFor(entry.id, entry.owner),
@@ -74,7 +70,20 @@ function buildRoutes(): RouteObject[] {
       if (entry.id === "R-200") return redirect("/settings/profile");
       return null;
     },
-  }));
+  });
+
+  // E10-S01 (#304): every non-public route renders inside the shell layout and its one `main`;
+  // public routes keep their own `main` outside it.
+  const isPublic = (entry: ManifestEntry): boolean => entry.access.roles === "public";
+  const routes: RouteObject[] = [
+    {
+      id: "shell",
+      element: <ShellLayout />,
+      errorElement: <RouteErrorElement />,
+      children: ROUTE_MANIFEST.filter((e) => !isPublic(e)).map(toRoute),
+    },
+    ...ROUTE_MANIFEST.filter(isPublic).map(toRoute),
+  ];
 
   // Documented redirects (`12-sitemap.md` §8: fresh install / unauthenticated root).
   routes.push(

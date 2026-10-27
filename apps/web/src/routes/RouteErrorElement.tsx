@@ -2,6 +2,7 @@ import type { JSX } from "react";
 import { isRouteErrorResponse, useRouteError } from "react-router";
 import { ForbiddenError } from "./guards";
 import { ForbiddenState, NotFoundState } from "./ErrorStates";
+import { ScreenRoot } from "../features/app-shell/ScreenRoot";
 
 /**
  * Route-level `errorElement`. Guard loaders throw typed errors (never plain
@@ -22,9 +23,9 @@ export function RouteErrorElement(): JSX.Element {
   // error boundary UI. This minimal fallback keeps the route tree
   // testable standalone before that ticket lands.
   return (
-    <main>
+    <ScreenRoot>
       <h1>Something went wrong</h1>
       <p>An unexpected error occurred while loading this route.</p>
-    </main>
+    </ScreenRoot>
   );
 }
