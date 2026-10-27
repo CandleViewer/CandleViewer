@@ -214,7 +214,9 @@ ignore red: a warning names the routes over 150 ms and nothing is filed. A dispa
 them, and any other failure of the Sunday run's pack step (a refused k6 run, an app that never
 started, another failed check) files as before. The first read (`klines_cold_first`), always
 reported and never gated (#2523), is left out of the Sunday warning, but stays in the report and
-the runner's `warn` lines. A failure before the pack (the `bench-free` guard, the k6 install,
+the runner's `warn` lines. It runs in a k6 scenario of its own, at a fixed arrival rate, and in a
+pool of its own in the nightly smoke, so the 7 budget routes run the request mix their recorded
+p95 series was read from. A failure before the pack (the `bench-free` guard, the k6 install,
 `uv sync`, the scenario check) files nothing, so look at the run.
 
 To triage a red `dast-admin` run (E42-X03's ZAP admin profile), find the step that failed:

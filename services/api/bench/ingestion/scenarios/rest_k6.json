@@ -1,18 +1,18 @@
 {
-  "title": "k6 REST profile: instruments, klines (cold, cold first read on a reader of its own, warm, page-boundary), trades, orderbook, data-coverage (budget #13)",
+  "title": "k6 REST profile: instruments, klines (cold, warm, page-boundary), trades, orderbook, data-coverage (budget #13), and a cold first read in a scenario and on a reader of its own",
   "kind": "rest",
   "common": { "min_cache_speedup": 2.0 },
   "full": {
     "driver": "k6",
     "k6_duration": "10m",
     "k6_vus": 5,
-    "scaling": "none: k6, 5 VUs (§9 realistic peak), 10 min, uvicorn on 127.0.0.1 over the fixture backend"
+    "scaling": "none: k6, 5 VUs (§9 realistic peak) on the 7 budget routes, 10 min, uvicorn on 127.0.0.1 over the fixture backend; the first read in a k6 scenario of its own, at a fixed arrival rate, on a second server"
   },
   "smoke": {
     "driver": "inprocess",
     "iterations": 40,
     "concurrency": 5,
-    "scaling": "in-process httpx ASGI driver (no sockets, no k6) issuing the same request plan, 40 rounds at concurrency 5 (nearest-rank p95 is not the max)"
+    "scaling": "in-process httpx ASGI driver (no sockets, no k6) issuing the same request plan, 40 rounds of the 7 budget routes at concurrency 5 and, beside them, 40 first reads in a pool of their own (nearest-rank p95 is not the max)"
   },
   "tolerances": {
     "rest_klines_cold_ms": 0.25,
