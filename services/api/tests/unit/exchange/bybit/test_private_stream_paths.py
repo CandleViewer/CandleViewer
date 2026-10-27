@@ -3,7 +3,7 @@ venue and a virtual clock: rows read while subscribing wait behind `resyncing`; 
 unanswered or broken required subscription recycles the socket and the optional one does not;
 `budget_blocked` waits for the window; and a stream that is closing sends nothing more at any
 step (each B13 hook checks it). Plus the registry's edges: an unknown environment, a failed
-build, a failed owned task, and the bounded key marks.
+build, a failed owned task, and the bounded key tables.
 """
 
 from __future__ import annotations
@@ -397,12 +397,19 @@ async def test_aclose_from_another_task_ends_the_read_waiting_there_and_frees_th
     await streams.aclose()
 
 
-def test_the_key_marks_are_bounded_oldest_first() -> None:
+@pytest.mark.parametrize("table", ["refused", "closed"])
+def test_the_key_marks_are_bounded_oldest_first(table: str) -> None:
+    """Both tables, the keys three refusals marked and the keys a revoke or rotation closed, keep
+    at most `KEYS_REMEMBERED` keys, the oldest dropped first."""
     streams = make_streams(PrivateVenue(VirtualClock()))
-    for n in range(ps.KEYS_REMEMBERED + 1):
-        streams.mark_refused(f"key-{n}")
-    assert streams.reopen("key-0") is False  # dropped as the oldest
-    assert streams.reopen(f"key-{ps.KEYS_REMEMBERED}") is True
+    keys = [str(UUID(int=n)) for n in range(ps.KEYS_REMEMBERED + 1)]  # api_keys ids
+    for key_ref in keys:
+        if table == "refused":
+            streams.mark_refused(key_ref)
+        else:
+            streams.tombstones.close(key_ref, "key_revoked")
+    assert not streams.tombstones.refuses(keys[0])  # dropped as the oldest
+    assert streams.tombstones.refuses(keys[1]) and streams.tombstones.refuses(keys[-1])
 
 
 async def test_closing_a_key_with_no_stream_closes_nothing() -> None:
