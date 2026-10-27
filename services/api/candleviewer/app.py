@@ -184,6 +184,7 @@ from candleviewer.api.step_up_challenge import ChallengeText
 from candleviewer.api.support_bundle import make_support_bundle_router
 from candleviewer.api.telemetry import SessionKeyResolver, make_telemetry_router
 from candleviewer.api.ticker import make_tickers_router
+from candleviewer.api.trade_group_definitions import make_trade_group_definitions_router
 from candleviewer.api.users import (
     AccountAccessStore,
     PermissionChangeNotifier,
@@ -320,7 +321,7 @@ from candleviewer.observability.support_bundle import filter_config
 from candleviewer.observability.support_bundle_wiring import build_support_bundle_service
 from candleviewer.observability.telemetry import SessionRateLimiter, TelemetrySink
 from candleviewer.oms.service import OmsService
-from candleviewer.oms_wiring import OmsAudit, OmsRuntime, build_oms_runtime
+from candleviewer.oms_wiring import InterimKillSwitch, OmsAudit, OmsRuntime, build_oms_runtime
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.indicators.catalogue import default_catalogue
 from candleviewer.orderflow.indicators.engine import IndicatorEngine, StoredHistory
@@ -470,6 +471,7 @@ from candleviewer.storage.retention.workspaces_tasks import (
     WorkspacesPurgeTask,
 )
 from candleviewer.storage.service import StorageService
+from candleviewer.trade_groups_wiring import GateReadiness, NoLockouts, definition_store
 from candleviewer.user_cascade_wiring import build_user_disable_service, build_users_purge_task
 from candleviewer.view_as_wiring import (
     IdentityLabels,
@@ -2409,6 +2411,20 @@ def create_app(
     # `app.state` serve this one.
     app.state.order_entry_gate = feature_flags.compose_order_entry_gate(
         account_health.order_entry_check
+    )
+    # E28-T05 S2b (#909): the definition reads, readiness from each account row, that gate, the
+    # B18 kill switch (the OMS's interim) and the live gate. No rollout flag gates a read (22).
+    app.state.trade_group_readiness = readiness = GateReadiness(
+        app.state.order_entry_gate, kill_switch=InterimKillSwitch().refusal,
+        live_enabled=resolved.trading_live_enabled, live_flag=feature_flags.live_enabled,
+        lockouts=NoLockouts(),
+    )  # fmt: skip
+    readiness.announce()  # once, at startup
+    definitions = definition_store(resolved)
+    app.include_router(  # in the caller's grants, as the profile reads; a refusal names the session
+        make_trade_group_definitions_router(
+            definitions, readiness, _LazyAuditEmitter(ctx.audit), profiles_resolver, auth=ctx.auth
+        )
     )
     # #913 slice 3E (20 Sec.6.2): the OMS runtime over that gate, the shared profile cache above
     # and the persistence bundle's latch when there is one; its audit writer and sink are its order

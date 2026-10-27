@@ -1,5 +1,5 @@
 """Composition-root wiring (not a module) of trade-group readiness (E28-T05 S2a, #909). Nothing
-mounts it until S2b's definition reads.
+mounts it but the definition reads (S2b, in `app.py`), over `definition_store`.
 
 `GateReadiness` is the `ReadinessSource` over what refuses an order, read as the OMS reads it (24
 Sec.8.4, 8.10): in-memory reads only (C-2.21). It fails closed, and the first reason wins: no gate
@@ -25,6 +25,11 @@ import structlog
 from candleviewer.accounts.trade_group_readiness import ReadinessReason
 from candleviewer.domain.order_entry import OrderEntryCheck, RefusalReason
 from candleviewer.domain.primitives import AccountId, Environment
+from candleviewer.settings import Settings
+from candleviewer.storage.repositories import trade_group_definitions_sqlalchemy as pg
+from candleviewer.storage.repositories.orders_sqlalchemy import OMS_STATEMENT_TIMEOUT_MS
+from candleviewer.storage.repositories.relational_sqlalchemy import SqlAlchemyRelationalRepository
+from candleviewer.storage.repositories.user_roles_sqlalchemy import WRITE_AHEAD_TIMEOUT_S
 
 #: The environments whose orders meet no live precondition, as the OMS's switches read it
 #: (`oms_wiring`): any other value is live's, so an unknown one fails closed.
@@ -102,3 +107,12 @@ class GateReadiness:
                 serves=NoLockouts.serves,
             )
         return interim
+
+
+def definition_store(settings: Settings) -> pg.SqlAlchemyDefinitionStore | None:
+    """On a pool of its own, at the trade-group store's caps; `None` on the fake backend (503)."""
+    if settings.storage_backend != "real":
+        return None
+    pool = SqlAlchemyRelationalRepository(settings.pg_dsn.get_secret_value(), "group-definitions")
+    cap, bound = OMS_STATEMENT_TIMEOUT_MS, WRITE_AHEAD_TIMEOUT_S
+    return pg.SqlAlchemyDefinitionStore(pool, statement_timeout_ms=cap, audit_timeout_s=bound)

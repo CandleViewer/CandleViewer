@@ -37,6 +37,7 @@ operations had left it 6 high). #898 B2b serves the contract-first `getAccountCo
 #4707 (E08-T08) adds the contract-first `getTickers`: 98.
 E08-T09's contract slice (#4708) adds five unserved `/scanner*` operations: 103.
 #4707 (E08-T08) serves `getTickers`: 102.
+#909 S2b serves the contract-first `listTradeGroupDefinitions` and `getTradeGroupDefinition`: 100.
 Keep both caps tight: a contract PR that
 adds an operation raises ``PENDING_BASELINE`` by exactly its overflow, measured against current
 ``main`` with CI re-run there (two parallel raises merge cleanly yet both under-count); a PR that
@@ -68,7 +69,7 @@ from candleviewer.statechart.registry import Registry
 PKG = Path(bindings_pkg.__file__).resolve().parents[2]
 API_DIR = PKG / "api"
 MAIN_TREE = ast.parse((PKG / "main.py").read_text(encoding="utf-8"))
-PENDING_BASELINE = 102
+PENDING_BASELINE = 100
 FROZEN_BASELINE = 90
 BASELINE_TICKET = "E49-K01-F4-baseline"
 REAL_TICKET = re.compile(r"^#\d+$|^E\d\d-[A-Z]\d\d$")

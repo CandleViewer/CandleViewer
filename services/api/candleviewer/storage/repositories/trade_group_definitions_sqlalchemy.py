@@ -72,16 +72,31 @@ def definition_statement(scope: AccountScope, definition_id: UUID) -> sa.Select[
     return sa.select(*columns).where(_D.id == definition_id, _D.deleted_at.is_(None), visible)
 
 
-def members_statement(scope: AccountScope, definition_id: UUID) -> sa.Select[Any]:
-    """Its members under the same predicate, each with its account's `env` and `is_enabled`."""
+def page_statement(
+    scope: AccountScope, after: tuple[str, UUID] | None, limit: int
+) -> sa.Select[Any]:
+    """Up to `limit` live definitions `scope` sees, by `lower(name)` then id, past `after`."""
+    visible = groups.group_visible(scope, grant_visible=DEFINITION_VISIBLE)
+    key = (sa.func.lower(_D.name), _D.id)
+    columns = (_D[f.name] for f in fields(port.DefinitionRow))
+    stmt = sa.select(*columns).where(_D.deleted_at.is_(None), visible)
+    if after is not None:
+        stmt = stmt.where(sa.tuple_(*key) > sa.tuple_(sa.func.lower(after[0]), after[1]))
+    return stmt.order_by(*key).limit(limit)
+
+
+def members_statement(scope: AccountScope, *definition_ids: UUID) -> sa.Select[Any]:
+    """Their members under the same predicate, each with its account's `env` and `is_enabled`."""
     ea = _ACCOUNTS.c
     joined = trade_group_definition_members.join(trade_group_definitions).join(
         _ACCOUNTS, ea.id == _M.exchange_account_id
     )
     visible = groups.group_visible(scope, grant_visible=DEFINITION_VISIBLE)
-    stmt = sa.select(_M.exchange_account_id, _M.enabled, ea.env, ea.is_enabled).select_from(joined)
-    stmt = stmt.where(_D.id == definition_id, _D.deleted_at.is_(None), visible)
-    return stmt.order_by(_M.exchange_account_id)
+    stmt = sa.select(_M.definition_id, _M.exchange_account_id, _M.enabled, ea.env, ea.is_enabled)
+    stmt = stmt.select_from(joined).where(
+        _D.id.in_(definition_ids), _D.deleted_at.is_(None), visible
+    )
+    return stmt.order_by(_M.definition_id, _M.exchange_account_id)
 
 
 def lock_statement(definition_id: UUID) -> sa.Select[Any]:
@@ -107,11 +122,18 @@ def members_upsert_statement(new: port.NewDefinition, writer: UUID) -> sa.Insert
 
 class SqlAlchemyDefinitionStore:
     """`DefinitionStore` and `DefinitionReads` over one relational repository (asyncpg), each
-    statement capped at `OMS_STATEMENT_TIMEOUT_MS`, lock waits included: a write that waits longer
+    statement capped at `statement_timeout_ms`, lock waits included: a write that waits longer
     on another's row lock leaves as `StorageQueryFailed('57014')`, having written nothing."""
 
-    def __init__(self, relational: SqlAlchemyRelationalRepository) -> None:
-        self._relational = relational
+    def __init__(
+        self, relational: SqlAlchemyRelationalRepository, *,
+        statement_timeout_ms: int = OMS_STATEMENT_TIMEOUT_MS,
+        audit_timeout_s: float = WRITE_AHEAD_TIMEOUT_S,
+    ) -> None:  # fmt: skip
+        if type(statement_timeout_ms) is not int or statement_timeout_ms < 1:  # 0 is "no cap"
+            raise ValueError("statement_timeout_ms must be an int of at least 1")
+        self._relational, self._timeout = relational, str(statement_timeout_ms)
+        self._audit_timeout_s = audit_timeout_s
 
     @asynccontextmanager
     async def _unit_of_work(
@@ -121,8 +143,7 @@ class SqlAlchemyDefinitionStore:
             raise port.DefinitionScopeDeniedError
         with groups.constraints(_REFUSALS):
             async with self._relational.unit_of_work() as uow:
-                cap = {"timeout": str(OMS_STATEMENT_TIMEOUT_MS)}
-                await uow.session.execute(groups.SET_TIMEOUT, cap)
+                await uow.session.execute(groups.SET_TIMEOUT, {"timeout": self._timeout})
                 if isinstance(scope, OwnerScope):
                     caller = {"caller": str(scope.user_id)}
                     if not (await uow.session.execute(groups.OWNER_GATE, caller)).scalar_one():
@@ -130,19 +151,27 @@ class SqlAlchemyDefinitionStore:
                 yield uow
 
     @staticmethod
-    async def _scoped_record(
-        uow: SqlAlchemyUnitOfWork, scope: AccountScope, definition_id: UUID
+    async def _with_members(
+        uow: SqlAlchemyUnitOfWork, scope: AccountScope, rows: Any
     ) -> tuple[port.DefinitionRecord, ...]:
-        """The definition with its members, or nothing; a grant that reads none of its members
-        reads nothing: all or none, should the scope change between the two statements."""
+        """With their members, in one statement: all or none for a grant (`get`'s rule)."""
+        read: dict[UUID, tuple[port.DefinitionRow, list[port.MemberRow]]] = {
+            d.id: (d, []) for d in (port.DefinitionRow(*r) for r in rows)
+        }
+        if read:
+            stmt = members_statement(scope, *read)
+            for definition_id, *member in await uow.session.execute(stmt):
+                read[definition_id][1].append(port.MemberRow(*member))
+        grant = isinstance(scope, GrantScope)
+        return tuple(port.DefinitionRecord(d, tuple(m)) for d, m in read.values() if m or not grant)
+
+    @classmethod
+    async def _scoped_record(
+        cls, uow: SqlAlchemyUnitOfWork, scope: AccountScope, definition_id: UUID
+    ) -> tuple[port.DefinitionRecord, ...]:
+        """The definition with its members, or nothing (`_with_members`)."""
         row = (await uow.session.execute(definition_statement(scope, definition_id))).first()
-        if row is None:
-            return ()
-        found = await uow.session.execute(members_statement(scope, definition_id))
-        members = tuple(port.MemberRow(*m) for m in found)
-        if isinstance(scope, GrantScope) and not members:
-            return ()
-        return (port.DefinitionRecord(port.DefinitionRow(*row), members),)
+        return await cls._with_members(uow, scope, () if row is None else (row,))
 
     async def _read_back(
         self, uow: SqlAlchemyUnitOfWork, scope: OwnerScope, definition_id: UUID
@@ -167,7 +196,7 @@ class SqlAlchemyDefinitionStore:
                 raise port.DefinitionRuleError(ACCOUNT_NOT_LIVE)
             await uow.session.execute(members_upsert_statement(new, scope.user_id))
         after = await self._read_back(uow, scope, new.id)
-        await bounded_write_ahead(write_ahead(before, after), WRITE_AHEAD_TIMEOUT_S)
+        await bounded_write_ahead(write_ahead(before, after), self._audit_timeout_s)
         await uow.commit()
         return after
 
@@ -220,7 +249,7 @@ class SqlAlchemyDefinitionStore:
             await uow.session.execute(
                 row.values(deleted_at=sa.func.now(), updated_by=scope.user_id)
             )
-            await bounded_write_ahead(write_ahead(before, None), WRITE_AHEAD_TIMEOUT_S)
+            await bounded_write_ahead(write_ahead(before, None), self._audit_timeout_s)
             await uow.commit()
         return before
 
@@ -230,3 +259,12 @@ class SqlAlchemyDefinitionStore:
         async with self._unit_of_work(scope) as uow:
             found = await self._scoped_record(uow, scope, definition_id)
         return found[0] if found else None
+
+    async def page(
+        self, scope: AccountScope, *, after: tuple[str, UUID] | None, limit: int
+    ) -> tuple[port.DefinitionRecord, ...]:
+        if isinstance(scope, GrantScope) and not scope.account_ids:
+            return ()  # as `get`
+        async with self._unit_of_work(scope) as uow:
+            rows = await uow.session.execute(page_statement(scope, after, limit))
+            return await self._with_members(uow, scope, rows)

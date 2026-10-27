@@ -9,6 +9,7 @@ Owner's gated first, a grant reads all or nothing, and an empty read-back denies
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from dataclasses import fields
 from datetime import UTC, datetime
@@ -19,6 +20,7 @@ from uuid import UUID
 import pytest
 
 from candleviewer.db import models
+from candleviewer.storage.errors import WriteAheadTimeout
 from candleviewer.storage.repositories import trade_group_definitions as port
 from candleviewer.storage.repositories import trade_group_definitions_sqlalchemy as pg
 from candleviewer.storage.repositories import trade_groups_sqlalchemy as groups
@@ -35,8 +37,8 @@ _ROW: Any = (_ID, "Core3", "demo", None, None, _AT, _AT)
 _NEW = port.NewDefinition(id=_ID, name="Core3", env="demo", members=())
 
 
-def _store(rel: _Rel) -> pg.SqlAlchemyDefinitionStore:
-    return pg.SqlAlchemyDefinitionStore(rel)  # type: ignore[arg-type]  # structural fake
+def _store(rel: _Rel, **caps: Any) -> pg.SqlAlchemyDefinitionStore:
+    return pg.SqlAlchemyDefinitionStore(rel, **caps)  # type: ignore[arg-type]  # structural fake
 
 
 def test_the_port_imports_no_driver() -> None:
@@ -106,3 +108,33 @@ async def test_a_write_whose_read_back_finds_nothing_is_denied() -> None:
         with pytest.raises(port.DefinitionScopeDeniedError):
             await write
     assert rel.commits == 0 and rel.rollbacks == 3 and hook.await_count == 0
+
+
+async def test_the_store_runs_under_the_caps_it_is_given() -> None:
+    """The root's caps: a statement cap, an int of at least 1, and a write-ahead bound."""
+    for timeout in (0, -1, True, 2.5, "2000"):
+        with pytest.raises(ValueError, match="statement_timeout_ms"):
+            _store(_Rel(), statement_timeout_ms=timeout)
+    rel, late = _Rel(_Result([])), _Rel(_Result(), _Result(), _Result([_ROW]), _Result([]))
+    assert await _store(rel, statement_timeout_ms=750).get(_GRANT, _ID) is None
+    store = _store(late, audit_timeout_s=0.01)
+    with pytest.raises(WriteAheadTimeout):  # its 0.01 s bound, never the 5 s default
+        async with asyncio.timeout(1):
+            await store.create(_OWNER, _NEW, write_ahead=lambda *_: asyncio.sleep(10))
+    assert (rel.caps, late.commits, late.rollbacks) == ([{"timeout": "750"}], 0, 1)
+
+
+async def test_a_page_reads_its_members_in_one_statement_all_or_nothing() -> None:
+    """In one statement: a grant reads one whose members it lost in between as nothing."""
+    other: Any = (UUID(int=4), "Pair", "demo", None, None, _AT, _AT)
+    member: Any = (_ID, _ACCOUNT, True, "demo", False)
+    first = port.DefinitionRecord(port.DefinitionRow(*_ROW), (port.MemberRow(*member[1:]),))
+    grant = _Rel(_Result([_ROW, other]), _Result([member]))
+    assert await _store(grant).page(_GRANT, after=("Core", _ID), limit=2) == (first,)
+    assert "trade_group_definitions.id IN ($3::UUID, $4::UUID)" in _sql(grant.calls[1])
+    owner = _Rel(_Result(), _Result([_ROW, other]), _Result([member]))  # the owner gate first
+    lone = port.DefinitionRecord(port.DefinitionRow(*other), ())
+    assert await _store(owner).page(_OWNER, after=None, limit=2) == (first, lone)
+    empty = _Rel()  # an empty grant runs no SQL
+    assert await _store(empty).page(GrantScope(_CALLER, frozenset()), after=None, limit=2) == ()
+    assert empty.calls == empty.caps == []

@@ -13,9 +13,12 @@ from uuid import UUID
 import pytest
 from structlog.testing import capture_logs
 
+from candleviewer import app as appmod
+from candleviewer import trade_groups_wiring
 from candleviewer.accounts.trade_group_readiness import ReadinessMember, ReadinessReason, readiness
 from candleviewer.domain.order_entry import REFUSAL_REASONS, OrderEntryRefusal, RefusalReason
 from candleviewer.domain.primitives import Environment
+from candleviewer.settings import Settings
 from candleviewer.trade_groups_wiring import GATE_REASONS, GateReadiness, NoLockouts
 from tests.unit.accounts._fakes import ACC
 
@@ -123,3 +126,14 @@ def test_no_lockout_is_reported_until_e39() -> None:
     with capture_logs() as logs:
         assert not _source(None).announce()  # a real lockout source: nothing to say
     assert logs == []
+
+
+def test_the_root_wires_the_definition_reads_and_announces_the_interim_lockouts_once() -> None:
+    assert trade_groups_wiring.definition_store(Settings(storage_backend="fake")) is None
+    store = trade_groups_wiring.definition_store(Settings(storage_backend="real"))
+    assert store is not None and (store._timeout, store._audit_timeout_s) == ("2000", 5.0)
+    with capture_logs() as logs:
+        app = appmod.create_app()
+    source = app.state.trade_group_readiness
+    assert source._gate is app.state.order_entry_gate and isinstance(source._lockouts, NoLockouts)
+    assert [log["event"] for log in logs].count("trade_groups_interim_port") == 1

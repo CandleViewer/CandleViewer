@@ -230,14 +230,6 @@
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
     },
-    "GET /trade-group-definitions": {
-      "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
-      "ticket": "E28-T05"
-    },
-    "GET /trade-group-definitions/{definitionId}": {
-      "reason": "contract-first operation (E28-T02 P-1a contract slice); E28-T05 serves it",
-      "ticket": "E28-T05"
-    },
     "GET /trade-groups": {
       "reason": "contract-first operation; implementation lands with its owning epic",
       "ticket": "E49-K01-F4-baseline"
