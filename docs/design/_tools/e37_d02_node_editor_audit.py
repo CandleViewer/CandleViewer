@@ -28,10 +28,11 @@ paired with its own stop clause (``place_order`` with the non-emptiable field, `
 ``sl.kept``; ``scale_in`` and the other four each with their read-only sentence verbatim); the
 four indicator words
 verbatim in the Word cell of their frame row and in the copy deck, and an ``Arm…`` class named
-on every frame row (the pre-PR lens's F-8 and F-1); (7) the structure counts
+on every frame row (the pre-PR lens's F-8 and F-1); S-graph's pinned wiring, every gate
+reaching the action through one root (the text approval's b-1); (7) the structure counts
 (``<!-- audit:NAME=VALUE -->`` markers).
 
-``--self-test [SPEC]`` runs the text reviews' 19 frame-level mutations of those elements on the
+``--self-test [SPEC]`` runs the text reviews' 21 frame-level mutations of those elements on the
 spec in memory (the file is never written): each must exit 1 with exactly one new FAIL, and the
 clean spec must exit 0 before and after.
 
@@ -266,7 +267,7 @@ CITES: dict[tuple[str, int], str] = {
     ("22", 13035): "the server never reconciles",
     ("22", 13048): "blocks_arming: { type: boolean }",
     ("22", 13049): "round_trip:",
-    ("22", 14430): "Omitting it accepts last-write-wins.",
+    ("22", 14978): "answers `400` without it",
     ("22", 19242): "editor: { type: string, enum: [form, graph], default: form }",
     ("22", 19249): "Node/edge coordinates for the node-graph editor. Ignored by the engine.",
     ("05", 28): "### 3.1 Design rules",
@@ -333,7 +334,7 @@ CITES: dict[tuple[str, int], str] = {
     ("18", 375): "| **US-RULE-005** Node-graph editor",
     ("18", 376): "| **US-RULE-006** Editor round-trip switching",
     ("18", 599): "| **SCR-082** | Rule editor — node-graph mode",
-    ("18", 857): "| CMP-146 | NodeGraphCanvas",
+    ("18", 859): "| CMP-146   | NodeGraphCanvas",
     ("18", 949): "| CMP-238 | Minimap",
     ("20", 718): "rule-graph/                 # pure rule IR",
     ("30", 139): "| **E37** | Rule node-graph editor | R3",
@@ -505,6 +506,10 @@ CITES: dict[tuple[str, int], str] = {
     ("graph.py", 10): "exactly one ``when`` edge from the single root condition",
     ("graph.py", 12): "Well-formedness (cycles, multiple sinks, orphans, dangling ports)",
     ("graph.py", 14): "form-subset detector flags as graph-only",
+    # :182 repeats :172's token at a shallower indent (any needle of it also hits :172): left
+    # unregistered, counted as such.
+    ("graph.py", 172): '                    "multiple_sinks",',
+    ("graph.py", 201): '_err("orphan_node", f"nodes.{o}"',
     ("catalogue.py", 42): "places_orders: bool = False",
     ("catalogue.py", 63): "RETIRED_ACTIONS = frozenset",
     ("catalogue.py", 65): 'ActionSpec("place_order", "Place order"',
@@ -512,7 +517,7 @@ CITES: dict[tuple[str, int], str] = {
     ("catalogue.py", 73): 'ActionSpec("reverse_position", "Reverse position"',
     ("catalogue.py", 80): 'ActionSpec("arm_chase_limit", "Arm chase limit"',
     ("validator.py", 202): '"native_stop_violation"',
-    ("E33-D02", 94): "| C-2.6 + C-4.14 on every algo child",
+    ("E33-D02", 107): "| C-2.6 + C-4.14 on every algo child",
     ("catalogue.py", 66): "only_tighten=false is refused",
     ("model.ts", 3): "export type GraphNodeType",
     ("model.ts", 14): "export interface GraphEdge",
@@ -716,6 +721,11 @@ GATES: dict[str, str] = {
         "every action node that places an order shows its native stop on the node card and in the "
         "inspector, as the merged texts have it"
     ),
+    # The text approval's b-1: the second gate must reach the action, or S-graph is an orphan.
+    "S-graph: one root, no gate without an action": (
+        "the shared condition feeds `all of` input 1 and `any of` input 1, `any of` feeds `all of` "
+        "input 2 and `all of` feeds the action's `when` input"
+    ),
 }
 RECOVERY = (
     "Keep the form version — the graph's {diverging node} is replaced by this form's Row {n}.",
@@ -760,6 +770,14 @@ MISMATCH_ELEMENTS = (
 # (2) Both graph-only frames draw the state-2 badge.
 GRAPH_ONLY_ROWS = ("editing-graph-only", "round-trip-graph-only")
 GRAPH_ONLY_BADGE = re.compile(r"badged `graph-only` \(glyph \+ word\)")
+# (2b) The text-delta lens's M-1: S-graph's §20 wiring gate anchored to the frame row that draws
+# S-graph and to §0's S-graph clause (a gate sentence alone survives the row losing the wiring);
+# the gate count is part of the anchor, so "one logic gate, wired as …" fails too.
+S_GRAPH_WIRED = "wired as §20 pins it"
+S_GRAPH_ROW_TEXT = f"feeding two logic gates, {S_GRAPH_WIRED}"
+S_GRAPH_S0_TEXT = f"one condition feeding two gates, {S_GRAPH_WIRED}"
+S_GRAPH_ROW = "editing-graph-only"
+S_GRAPH_CLAUSE = re.compile(r"\*\*S-graph\*\* \(([^)]*)")
 # (3) No clause of the drawn sections pairs the trigger with an edge into the root (BQ-21); the
 # CMP-147 cell must say **no edge** (checked on its own, so the scan skips that row).
 TRIGGER = re.compile(r"\btrigger", re.IGNORECASE)
@@ -1092,7 +1110,7 @@ def structure(spec: str) -> dict[str, Any]:
         "ac_rows": sum(
             1 for ln in ac.split("\n") if ln.startswith(("| Sc. ", "| Box ", "| Note", "| DoD"))
         ),
-        "pending": "PENDING" in boards,
+        "drawn": "Boards as drawn" in boards,
     }
 
 
@@ -1312,6 +1330,11 @@ def check_frames(spec: str, st: dict[str, Any]) -> list[str]:
     for frame in GRAPH_ONLY_ROWS:
         if not GRAPH_ONLY_BADGE.search(frame_row(frames, frame)):
             out.append(f"FAIL frame `SCR-082 / {frame}` does not draw the `graph-only` badge")
+    if S_GRAPH_ROW_TEXT not in frame_row(frames, S_GRAPH_ROW):
+        out.append(f"FAIL S-graph wiring not anchored in `SCR-082 / {S_GRAPH_ROW}`")
+    s_graph = S_GRAPH_CLAUSE.search(section(spec, "## 0. ", "## 1. "))
+    if not s_graph or S_GRAPH_S0_TEXT not in s_graph.group(1):
+        out.append("FAIL S-graph wiring not anchored in the §0 S-graph clause")
     drawn = "\n".join((section(spec, "## 0. ", "## 1. "), section(spec, "## 2. ", "## 6. "))).split(
         "\n"
     )
@@ -1381,8 +1404,8 @@ def evaluate(spec: str) -> tuple[list[str], list[str], int, int, dict[str, Any]]
     st = d["structure"]
     problems = check_markers(spec, d["markers"]) + check_rules(spec)
     problems += check_strings(spec, st) + check_frames(spec, st) + check_hygiene(spec, "spec")
-    if not st["pending"]:
-        problems.append("FAIL section 0 does not read PENDING")
+    if not st["drawn"]:
+        problems.append("FAIL section 0 does not list the boards as drawn")
     fails, warns, checked, unregistered = check_cites(spec)
     return problems + fails, warns, checked, unregistered, d
 
@@ -1412,9 +1435,9 @@ def check(spec_path: Path, pr_body: Path | None) -> int:
     return 1 if problems else 0
 
 
-# The text review's 15 frame-level mutations of the A2 elements (M-1) and the fold delta's four
-# (DM-1 O03-O05, dm-4), run in memory by --self-test: name -> (old, new); each must raise exactly
-# one new FAIL (exit 1).
+# The text review's 15 frame-level mutations of the A2 elements (M-1), the fold delta's four
+# (DM-1 O03-O05, dm-4), the text approval's b-1 and the text-delta lens's M-1, run in memory by
+# --self-test: name -> (old, new); each must raise exactly one new FAIL (exit 1).
 MUTATIONS: tuple[tuple[str, str, str], ...] = (
     (
         "the state-3 badge off the mismatch row",
@@ -1506,7 +1529,7 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
             "`reverse_position`, "
             "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only line "
             '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
-            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94)'
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:107)'
         ),
         "",
     ),
@@ -1519,7 +1542,7 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
             "for `reverse_position`, "
             "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only "
             '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
-            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94) (A1)'
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:107) (A1)'
         ),
         "",
     ),
@@ -1538,7 +1561,7 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         (
             "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` the read-only "
             '"Stop: attached by the server (native SL)." (an algo only when it opens a position; '
-            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:94) (A1)'
+            'a reduce-only algo reads "reduce-only, no new stop", `E33-D02`:107) (A1)'
         ),
         "`arm_chase_limit`, `start_iceberg_slice` and `start_twap` their order parameters (A1)",
     ),
@@ -1566,6 +1589,23 @@ MUTATIONS: tuple[tuple[str, str, str], ...] = (
         "a trigger→root edge with another verb in the `editing` row",
         "| the full anatomy with S-form (§2);",
         "| the full anatomy with S-form (§2), the trigger feeding the root condition;",
+    ),
+    # The text approval's b-1: S-graph's second gate wired to nothing (the r2 script's orphan).
+    (
+        "S-graph's `any of` left without a path to the action",
+        "`any of` feeds `all of` input 2 and `all of` feeds the action's `when` input",
+        "`all of` feeds the action's `when` input",
+    ),
+    # The text-delta lens's M-1: the S-graph frame row no longer carries the §20 wiring.
+    (
+        "S-graph's wiring clause off the `editing-graph-only` row",
+        "feeding two logic gates, wired as §20 pins it;",
+        "feeding two logic gates;",
+    ),
+    (
+        "section 0 no longer records the boards as drawn",
+        "Boards as drawn (exported",
+        "Boards as planned (exported",
     ),
 )
 
