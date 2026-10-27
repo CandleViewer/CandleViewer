@@ -1584,8 +1584,8 @@ def evaluate(spec: str, handoff: str) -> tuple[list[str], dict[str, Any]]:
         problems.append(f"FAIL contrast: {d['contrast']['failed']} gated row(s) under the bar")
     if d["markers"]["tokens_missing"]:
         problems.append("FAIL tokens: a bound token does not resolve")
-    if "PENDING" not in section(spec, "## 0. ", "## 1. "):
-        problems.append("FAIL section 0 does not read PENDING")
+    if "Boards as drawn" not in section(spec, "## 0. ", "## 1. "):
+        problems.append("FAIL section 0 does not list the boards as drawn")
     return problems, d
 
 
