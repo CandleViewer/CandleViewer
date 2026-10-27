@@ -393,7 +393,21 @@ async def test_a_demo_seed_is_insert_only_so_an_owners_write_sticks_and_both_vie
         assert (runtime.oms_enabled(), runtime.live_enabled()) == (False, False)
     finally:
         await runtime.stop()
-    assert len(polls) == 2 and all(poll.done() for poll in polls) and runtime._view_polls == []
+    assert len(polls) == 3 and all(poll.done() for poll in polls) and runtime._view_polls == []
+
+
+async def test_a_write_to_the_trade_groups_flag_reaches_its_view_before_it_returns() -> None:
+    """E28-T05 (#909), as SEC-S3A-03 for the OMS flag: the writer's hook covers this view too, so
+    an Owner's write is read by the process that made it, on or off, with no wait for a poll."""
+    runtime, key, seen = _runtime(), "trading.trade_groups", list[bool]()  # demo: no seed
+    row = await runtime.service.stored(runtime.registry[key])
+    assert row is not None and runtime.trade_groups() is False
+    for value in (True, False):
+        row = await runtime.writer.set(
+            key, _OWNER, value=value, reason="hold", expected_updated_at=row.updated_at
+        )
+        seen.append(runtime.trade_groups())
+    assert seen == [True, False]
 
 
 def test_every_step_up_class_a_flag_write_demands_is_registered() -> None:

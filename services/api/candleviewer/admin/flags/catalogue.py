@@ -31,6 +31,9 @@ DESKTOP_BACKEND_CONNECTION = "desktop.backend_connection"
 #: #913 slice 3 ruling Q3: new `placeOrder` admissions; the composition root reads it with no
 #: principal (`flags_wiring.FlagView`).
 TRADING_OMS_ENABLED = "trading.oms_enabled"
+#: E28-T05 (#909): the definition writes and the preview, never a read; read as the OMS flag is.
+#: No process seeds it (`ENVIRONMENT_SEEDS`) before the preview's refusals ship (S3c).
+TRADING_TRADE_GROUPS = "trading.trade_groups"
 #: Ruling Q3: the value the insert-only `ensure` gives a flag with no row in a process of an
 #: environment, where it is not the flag's default (21 10.7), so an Owner's later write sticks.
 #: Never a kill switch or the live gate (C-4.14): `flags_wiring._seeds` ignores such a seed, and
@@ -58,6 +61,15 @@ FLAGS: tuple[FlagSpec, ...] = (
         TRADING_OMS_ENABLED,
         _B,
         "New OMS order admissions (placeOrder); owner @basiltt, removal #4227",
+        _ROLLOUT,
+        False,
+        _ALL,
+        restrictive=False,
+    ),
+    FlagSpec(
+        TRADING_TRADE_GROUPS,
+        _B,
+        "Trade-group definition writes and the preview; owner @basiltt, removal #4798",
         _ROLLOUT,
         False,
         _ALL,
