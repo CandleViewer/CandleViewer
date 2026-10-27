@@ -83,3 +83,7 @@ services/api/tests/unit/accounts/golden/e28_sizer_vectors.json
 # docs/design/_tools/sheets/lib: vendored Penpot plugin libraries (cvlib, cvsheet), kept byte-identical to
 # the copies the boards were drawn with; docs/design/_tools/sheets/MANIFEST.sha256 pins their sha256
 docs/design/_tools/sheets/lib/
+
+# docs/design/_tools/sheets/e05-d02/v4: the packed (compact) E05-D02 sheets the boards were rendered from, kept
+# byte-identical apart from compactOf.file; E05-D02-boards.md §6 pins their sha256
+docs/design/_tools/sheets/e05-d02/v4/

@@ -8,8 +8,8 @@ requirements).
 accessibility and CVD sign-off is E05-D04's**, and this document does not replace it.
 
 Covers the 12 components of slice 2 (CMP-011, 012, 013, 018, 020, 021, 024, 025, 030, 032, 033 and 037) as specified
-in `E05-D02-data-display.md` §6 and drawn on Penpot page `10 Components — Atoms`. Their board exports are PENDING
-(text-first merge, 2026-10-23); the boards PR completes slice 2 (`E05-D02-data-display.md` §6). The shared CMP-039
+in `E05-D02-data-display.md` §6 and drawn on specimen boards 03–04 of the per-set file `E05-D02 boards`
+(`E05-D02-boards.md`); what the boards do not show is not drawn, and the text is binding. The shared CMP-039
 focus ring and the CMP-002 IconButton that CMP-011 and CMP-033 nest are reviewed in slice 1's audit
 (`E05-D02-a11y-audit.md`). Composition by live instances (`E05-D02-data-display.md` §1 and §7: overrides only,
 nothing detached) is stated for the 2026-10-20 build and not audited here, because the page is not re-verified at

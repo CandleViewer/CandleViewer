@@ -8,8 +8,9 @@
 accessibility and CVD sign-off is E05-D04's**, and this document does not replace it.
 
 Covers the 17 components of slice 4 (CMP-015, 016, 017, 023, 026, 027, 028, 029, 038, 041, 043, 044, 045, 046, 089, 090
-and 091) as specified in `E05-D02-feedback-overlays.md` §7. The slice is text-first: nothing is drawn yet, and the
-boards PR builds and exports the sections on Penpot page `10 Components — Atoms`. The CMP-039 ring and the CMP-001,
+and 091) as specified in `E05-D02-feedback-overlays.md` §7. The slice is text-first; the boards
+PR drew it as specimen boards 08–10 of the per-set file `E05-D02 boards` (`E05-D02-boards.md`), and what they do not
+show is not drawn (the text is binding). The CMP-039 ring and the CMP-001,
 CMP-002, CMP-005, CMP-006 and CMP-014 these components nest are reviewed in slice 1's audit (`E05-D02-a11y-audit.md`);
 the CMP-007 and CMP-040 fields and the CMP-079 RbacGate wrapper in slice 3's (`E05-D02-form-controls-a11y-audit.md`).
 

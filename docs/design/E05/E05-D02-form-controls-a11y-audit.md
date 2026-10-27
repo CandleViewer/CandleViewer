@@ -8,8 +8,8 @@
 accessibility and CVD sign-off is E05-D04's**, and this document does not replace it.
 
 Covers the 11 components of slice 3 (CMP-007, 008, 009, 034, 040, 047, 048, 049, 054, 065 and 079) as specified in
-`E05-D02-form-controls.md` §7. The slice is text-first: nothing is drawn yet, and the boards PR builds and exports the
-sections on Penpot page `10 Components — Atoms`. The CMP-039 ring and the CMP-002, CMP-005 and CMP-014 that slice-3
+`E05-D02-form-controls.md` §7. The slice is text-first; the boards PR drew it as specimen boards 05–07 of the
+per-set file `E05-D02 boards` (`E05-D02-boards.md`), and what they do not show is not drawn (the text is binding). The CMP-039 ring and the CMP-002, CMP-005 and CMP-014 that slice-3
 components nest are reviewed in slice 1's audit (`E05-D02-a11y-audit.md`).
 
 **Method.** Every ratio below was computed for this review from `packages/ui/tokens` as #3925 left them (`a0132de01`,

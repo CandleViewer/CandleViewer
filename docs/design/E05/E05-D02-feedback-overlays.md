@@ -2,10 +2,10 @@
 
 **Ticket:** E05-D02 (#161) · **Epic:** E05 Design system v0 · **Status:** In Review — awaiting owner approval (slice 4
 of 5) (design PR: the owner approves under C-10.1; the coordinator reviews). Text-first: written from `15`, the tokens
-and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards are PENDING.
-**Penpot:** page `10 Components — Atoms` of the CandleViewer DS file. The boards PR builds the 17 variant sets there
-(the molecules and the three route states beside the atoms), exports them, adds the page id and redraws nothing in
-slices 1–3. Slice 5 carries #161's closing line.
+and E09-D09 without a Penpot build (the coordinator's ruling of 2026-10-23); the boards PR drew it as specimen boards 08–10.
+**Penpot:** the per-set file `E05-D02 boards`, page `E05-D02 slice 4 feedback and overlays` (page id
+`006e12a1-d0c6-803c-8008-da92b1e868e0`), specimen boards 08–10 (the coordinator's ruling of 2026-10-27 on #161: ten
+specimen boards, one page per slice); see [E05-D02-boards.md](E05-D02-boards.md).
 **Slices:** #161 ships as five design PRs. Slice 1 (#3914, `E05-D02.md`) covers actions and selection; slice 2 (#4290,
 `E05-D02-data-display.md`) the data display and text atoms; slice 3 (#4322, `E05-D02-form-controls.md`)
 the form controls; this slice the feedback and overlays of the coordinator's five-slice plan on #161: CMP-015 Skeleton,
@@ -994,8 +994,9 @@ arrival (H21, against E13-D04's CR-11 and M3, RULED with its BQ-16, record 63647
 
 ## 7. Components
 
-**Boards PENDING (text-first, 2026-10-23).** No section below has a Penpot build. Each names the variant set the boards
-PR builds on page `10 Components — Atoms` and the export it adds, `docs/design/E05/img/CMP-0xx-name.png`.
+**Boards (as built, 2026-10-27).** The boards PR drew this slice as specimen boards 08–10 on the slice page (the
+page id in the header; [E05-D02-boards.md](E05-D02-boards.md)). Each section's board line names its board or says it is not drawn; what a
+board does not show is not drawn, and the text is binding (board cap). No per-section `CMP-0xx-name.png` is exported.
 
 ### CMP-015 · Skeleton
 
@@ -1010,7 +1011,8 @@ PR builds on page `10 Components — Atoms` and the export it adds, `docs/design
 | Motion  | shimmer, static        | shimmer |
 | Surface | base, overlay          | base    |
 
-**Variants × States (6 cells; boards PENDING: `CMP-015 · Skeleton`, export `img/CMP-015-skeleton.png`):**
+**Variants × States (6 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell            | Axes                                     | What it shows                                                                                          |
 | --------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------ |
@@ -1068,7 +1070,8 @@ replacing `color.surface.skeleton` and `motion.shimmer` (H3); Storybook adds Sta
 | Content | short, long              | short     |
 | Trigger | hover, focus             | hover     |
 
-**Variants × States (7 cells; boards PENDING: `CMP-016 · Tooltip`, export `img/CMP-016-tooltip.png`):**
+**Variants × States (7 cells; drawn on specimen board 09, `img/E05-D02-09-overlays.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell          | Axes                                                   | What it shows                                                                                                                                                |
 | ------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1133,7 +1136,8 @@ for `elevation.3`, `radius.card` for `radius.sm`); Storybook adds Echo.
 | Placement | below, above  | below   |
 | Overflow  | fits, scrolls | fits    |
 
-**Variants × States (4 cells; boards PENDING: `CMP-017 · Popover`, export `img/CMP-017-popover.png`):**
+**Variants × States (4 cells; drawn on specimen board 09, `img/E05-D02-09-overlays.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell    | Axes                                        | What it shows                                                                                                                                               |
 | ------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1195,7 +1199,8 @@ for `radius.md`); Storybook adds Flipped and Scrolling.
 | Value | partial, empty, complete          | partial  |
 | Label | shown, hidden                     | shown    |
 
-**Variants × States (8 cells; boards PENDING: `CMP-023 · ProgressBar`, export `img/CMP-023-progress-bar.png`):**
+**Variants × States (8 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell       | Axes                                                    | What it shows                                                                                              |
 | ---------- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -1250,7 +1255,8 @@ with a 1 px CanvasText border; the value text carries the figure (conventions 38
 | Variant | no-data, recording-not-started, backfill-in-progress, filtered-empty, error | no-data |
 | Action  | cta, sentence                                                               | cta     |
 
-**Variants × States (7 cells; boards PENDING: `CMP-026 · EmptyState`, export `img/CMP-026-emptystate.png`):**
+**Variants × States (7 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell                 | Axes                                           | What it shows                                                                                                                                                                                                   |
 | -------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1309,8 +1315,8 @@ adds SentenceForm.
 | Retry    | shown, none           | shown   |
 | Details  | closed, open          | closed  |
 
-**Variants × States (5 cells, and one sample; boards PENDING: `CMP-027 · ErrorState`, export
-`img/CMP-027-errorstate-inlineerror.png`):**
+**Variants × States (5 cells, and one sample; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell    | Axes                                                    | What it shows                                                                                                                                                                                                                                    |
 | ------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -1377,7 +1383,8 @@ Banner and Summary.
 | Action      | none, retry, actions                                                             | none    |
 | Edge        | solid, hatched                                                                   | solid   |
 
-**Variants × States (9 cells; boards PENDING: `CMP-028 · Callout`, export `img/CMP-028-callout-banner.png`):**
+**Variants × States (9 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell         | Axes                                       | What it shows                                                                                                                                                                                                                                                                                                                                                              |
 | ------------ | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1445,8 +1452,9 @@ LivePolite and Unprotected. Held: the disclosure (H15 (3)).
 | Panes  | 1, 3            | 1       |
 | Motion | shimmer, static | shimmer |
 
-**Variants × States (3 cells; boards PENDING: `CMP-029 · Skeleton-Chart placeholder`, export
-`img/CMP-029-skeleton-chart.png`):** **default** (Panes=1, Motion=shimmer: the candle silhouette and the axis blocks,
+**Variants × States (3 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):** **default** (Panes=1, Motion=shimmer: the candle silhouette and the axis
+blocks,
 with the host's CMP-038 "Loading 5,000 bars…" centred over it, outside the hidden node — `E11-D02.md:407`,
 `E11-D04.md:321`); **Panes=3** (a price pane over two sub-panes, divided by the host's pane rules); **Motion=static**
 (the reduce look and the look after the 5 s stop). **Not drawn:** every interactive state (it is hidden and inert);
@@ -1483,8 +1491,8 @@ A11y appends that the host's CMP-038 words sit over it, outside the hidden node;
 | Phase  | waiting, slow | waiting |
 | Cancel | none, offered | none    |
 
-**Variants × States (3 cells; boards PENDING: `CMP-038 · InlineSpinnerText`, export
-`img/CMP-038-inlinespinnertext.png`):** **default** (Phase=waiting: "Loading positions", slice 1 CMP-014's example);
+**Variants × States (3 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):** **default** (Phase=waiting: "Loading positions", slice 1 CMP-014's example);
 **slow** (Phase=slow, Cancel=none: SCR-150's slow boot at 5 s, "Still loading… the server is slow to answer", no Cancel
 — E10-D03 §9.3, `E10-D03.md:305`); **cancellable** (Cancel=offered: a load at 5 s, "Still loading positions…" with
 `Cancel`). **Not drawn:** hover, focus-visible, active and disabled (not interactive; `Cancel` is CMP-001's); empty and
@@ -1527,8 +1535,8 @@ is announced once and the slow text once, with no time cap and no elapsed counte
 | Trigger   | button, context                                                                                       | button  |
 | ItemState | default, hover, focus-visible, active, checked, disabled, disabled-with-reason, danger, submenu, busy | default |
 
-**Variants × States (11 cells; each draws the open menu with the named item; boards PENDING: `CMP-041 · Menu`, export
-`img/CMP-041-menu.png`):**
+**Variants × States (11 cells; each draws the open menu with the named item; drawn on specimen board 09,
+`img/E05-D02-09-overlays.png`, see [E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell                 | Axes                              | What it shows                                                                                                                                                                                                                           |
 | -------------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1619,8 +1627,8 @@ DisabledWithReason, Danger and Busy.
 | Overflow | fits, scrolls         | fits    |
 | State    | default, busy, reflow | default |
 
-**Variants × States (7 cells, each over the scrim; boards PENDING: `CMP-043 · Dialog`, export
-`img/CMP-043-dialog-modal.png`):**
+**Variants × States (7 cells, each over the scrim; drawn on specimen board 09, `img/E05-D02-09-overlays.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell        | Axes                                               | What it shows                                                                                                                                              |
 | ----------- | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1692,8 +1700,8 @@ adds AlertDialog, Scrolling and Busy. Held: a dialog with unsaved changes (H36).
 | Variant | standard, typed, hold                                                                  | standard |
 | State   | default, match, holding, armed, busy, partial-failure, gated, counting-down, timed-out | default  |
 
-**Variants × States (10 cells, each over the scrim; boards PENDING: `CMP-044 · ConfirmDialog`, export
-`img/CMP-044-confirmdialog.png`):**
+**Variants × States (10 cells, each over the scrim; drawn on specimen board 09, `img/E05-D02-09-overlays.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell            | Axes                            | What it shows                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | --------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1790,7 +1798,8 @@ adds Busy, PartialFailure, ConfirmGated and OrderConfirm.
 | Lifetime | timed, persistent              | timed   |
 | State    | default, focused               | default |
 
-**Variants × States (7 cells; boards PENDING: `CMP-045 · Toast`, export `img/CMP-045-toast-notification.png`):**
+**Variants × States (7 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell      | Axes                                                  | What it shows                                                                                                                                                                                                                                                                                   |
 | --------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1871,7 +1880,8 @@ H6); Storybook adds Persistent, Focused, ActionGated and Undo.
 | Modal | true, false              | true    |
 | State | default, loading, narrow | default |
 
-**Variants × States (5 cells; boards PENDING: `CMP-046 · Drawer`, export `img/CMP-046-drawer-side-panel.png`):**
+**Variants × States (5 cells; drawn on specimen board 09, `img/E05-D02-09-overlays.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell      | Axes                                  | What it shows                                                                                                                                                                                                                                                                    |
 | --------- | ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1941,7 +1951,8 @@ Narrow.
 | Ref     | shown, none          | shown      |
 | Scope   | permission, account  | permission |
 
-**Variants × States (4 cells; boards PENDING: `CMP-089 · ForbiddenState`, export `img/CMP-089-forbiddenstate.png`):**
+**Variants × States (4 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 
 | Cell      | Axes                                           | What it shows                                                                                                                                                                                                          |
 | --------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1996,7 +2007,8 @@ adds Withdrawn, AccountVariant and NoRef.
 | ------- | ---------------- | ------- |
 | Variant | unknown, deleted | unknown |
 
-**Variants × States (3 cells; boards PENDING: `CMP-090 · NotFoundState`, export `img/CMP-090-notfoundstate.png`):**
+**Variants × States (3 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):**
 **default** (Variant=unknown at `/nowhere`: "Page not found" · "There's nothing at /nowhere." · "Try: Workspace ·
 Journal · Settings", `E09-D09.md:279`); **admin** (`/admin/users` for a session without `admin:read`: the same copy,
 title and analytics — D09's T3 hard-404, §6, `E09-D09.md:168`); **deleted** (Variant=deleted: the distinct copy for a
@@ -2041,8 +2053,8 @@ navigation; Tokens: inherits CMP-026, plus `type.ui.heading-lg` and `type.num.sm
 | Details  | closed, open      | closed  |
 | Repeated | false, true       | false   |
 
-**Variants × States (5 cells; boards PENDING: `CMP-091 · GlobalErrorBoundaryFallback`, export
-`img/CMP-091-globalerrorboundaryfallback.png`):** **default** (Scope=panel: "This panel stopped working" with
+**Variants × States (5 cells; drawn on specimen board 08, `img/E05-D02-08-feedback-states.png`, see
+[E05-D02-boards.md](E05-D02-boards.md)):** **default** (Scope=panel: "This panel stopped working" with
 `Reload panel`, `Remove panel` and `Copy diagnostics` inside the panel, the workspace alive around it (E10-D03 §9.4,
 `E10-D03.md:309`; `14:2924`); the error id; the host's protection sentence where true); **route** (Scope=route: the
 canvas with the chrome intact, `Reload page`, `Reload app` and `Start in safe mode`, E10-D03 §9.4); **app** (Scope=app:
@@ -2092,7 +2104,7 @@ Completed for the 17 components. Open items say why and who closes them.
       a named primitive (§4, §5.2); §5.1's constants and the scrim's primitives are recorded, ticked when §6 H1 and H7
       are answered and the boards PR has drawn them.
 - [ ] **Themes and densities:** structurally guaranteed and measured in all three themes (audit §4). **Open:** the
-      boards are PENDING.
+      boards are specimens, dark except board 10 light (08–10, E05-D02-boards.md).
 - [ ] **Contrast matrix:** every text pair passes; three non-text pairs are thin and carried by words — the dark danger
       progress fill (2.92:1, §6 H4), light warning's toast edge (2.76:1, §6 H6), E39-D03's hold ring on its track
       (1.90:1 dark). **Open** for the owner.
