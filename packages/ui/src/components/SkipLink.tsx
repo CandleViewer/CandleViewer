@@ -48,10 +48,13 @@ function focusTarget(target: HTMLElement): void {
  * CMP-085: "Skip to main content" and its siblings (WCAG 2.4.1). Each link is visually hidden until
  * focused, then shown as a pill at the top-left of the positioned host. Activation (click, or Enter,
  * which arrives as a click) focuses the target in script and prevents the default, so the hash never
- * reaches the router. Never gated; no motion; no live region.
+ * reaches the router; a modified click is left to the browser. Never gated; no motion; no live region.
  */
 export function SkipLink({ targets }: SkipLinkProps): JSX.Element {
   const onClick = (event: MouseEvent<HTMLAnchorElement>, id: string): void => {
+    // a modified or non-primary click keeps the browser's own meaning (a new tab or window)
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+      return;
     event.preventDefault();
     const target = event.currentTarget.ownerDocument.getElementById(id);
     if (target !== null) focusTarget(target);

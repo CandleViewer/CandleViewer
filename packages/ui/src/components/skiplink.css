@@ -13,10 +13,10 @@
   border: 0;
 }
 
-/* Focused: the pill at the host's top-left, at least the control height, grown with its label. */
+/* Focused: the pill at the host's top-left (an 8px inset leaves the 2px ring clear of a clipping host), at least the control height, grown with its label. */
 .cv-skip-link:focus {
-  top: var(--space-inset-xs);
-  left: var(--space-inset-xs);
+  top: var(--space-inset-sm);
+  left: var(--space-inset-sm);
   z-index: 1;
   box-sizing: border-box;
   display: inline-flex;

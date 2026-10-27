@@ -110,6 +110,18 @@ describe("SkipLink (CMP-085)", () => {
     expect(within(host).getByRole("region", { name: "Order ticket" })).toHaveFocus();
   });
 
+  it("leaves a modified click to the browser", async () => {
+    const host = await mount(page(true));
+    for (const init of [{ ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) {
+      const event = new MouseEvent("click", { bubbles: true, cancelable: true, ...init });
+      act(() => {
+        link(host, SKIP_LINK_COPY.orderTicket).dispatchEvent(event);
+      });
+      expect(event.defaultPrevented).toBe(false);
+      expect(within(host).getByRole("region", { name: "Order ticket" })).not.toHaveFocus();
+    }
+  });
+
   it("does nothing but prevent the default when the target is not mounted", async () => {
     const host = await mount(<SkipLink targets={[{ id: "absent", label: "Skip" }]} />);
     const event = new MouseEvent("click", { bubbles: true, cancelable: true });
