@@ -19,16 +19,16 @@ Every component entry states: **ID** `CMP-nnn` · **Name** · **Tier** (Atom / M
 
 ### 0.2 ID bands
 
-| Band         | Tier / Area                                                                                                      |
-| ------------ | ---------------------------------------------------------------------------------------------------------------- |
-| CMP-001..039 | Atoms (buttons, inputs, typography, icons, badges, indicators)                                                   |
-| CMP-040..069 | Molecules (form fields, menus, tooltips, toasts, tabs, cards)                                                    |
-| CMP-070..099 | Organisms — chrome & navigation (app shell, panels, dialogs, tables)                                             |
-| CMP-100..139 | Trading-specific molecules/organisms (order ticket, DOM row, footprint cell, positions grid, etc.)               |
-| CMP-140..159 | Rule engine & node-graph components                                                                              |
-| CMP-160..179 | Watchlist / alerts / journal / audit row components                                                              |
-| CMP-180..199 | Chart-engine primitives (series, panes, axes, overlays, drawings)                                                |
-| CMP-200..238 | Auth surfaces, shell furniture, chart chrome, rule-editor chrome (added in the traceability reconciliation, §7A) |
+| Band         | Tier / Area                                                                                                                                                                                            |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CMP-001..039 | Atoms (buttons, inputs, typography, icons, badges, indicators)                                                                                                                                         |
+| CMP-040..069 | Molecules (form fields, menus, tooltips, toasts, tabs, cards)                                                                                                                                          |
+| CMP-070..099 | Organisms — chrome & navigation (app shell, panels, dialogs, tables)                                                                                                                                   |
+| CMP-100..139 | Trading-specific molecules/organisms (order ticket, DOM row, footprint cell, positions grid, etc.)                                                                                                     |
+| CMP-140..159 | Rule engine & node-graph components                                                                                                                                                                    |
+| CMP-160..179 | Watchlist / alerts / journal / audit row components                                                                                                                                                    |
+| CMP-180..199 | Chart-engine primitives (series, panes, axes, overlays, drawings)                                                                                                                                      |
+| CMP-200..243 | Auth surfaces, shell furniture, chart chrome, rule-editor chrome (added in the traceability reconciliation, §7A); 240 and 243 added by E36-D05 (#947) from E13-D02 G-1 / G-4 (A-2); 241–242 unassigned |
 
 ### 0.3 Cross-cutting rules (apply to every component; not repeated per-entry unless overridden)
 
@@ -2397,7 +2397,7 @@ interface OrderLineOverlayProps {
 
 ---
 
-## 7A. Auth, shell-surface, chart-chrome & editor-chrome components (CMP-200..238)
+## 7A. Auth, shell-surface, chart-chrome & editor-chrome components (CMP-200..243)
 
 This band was added during the cross-document traceability reconciliation (see `18-traceability-matrix.md` §6). `14-screens-catalogue.md` composed 39 components that had no entry in bands 1–7: authentication surfaces (SCR-001..006), shell furniture that is distinct from `CMP-070 AppShell` (status bar, right rail, panic buttons, toast host), chart _chrome_ (toolbars, pickers, chips) as opposed to chart _primitives_ (CMP-180..199, which are engine-level render objects with no DOM), and rule-editor chrome shared by the form and node editors. They are first-class entries here rather than being folded into existing IDs because each has its own a11y contract, Storybook story set and test requirements — the same reasoning §8 gives for not collapsing CMP-147..151.
 
@@ -2798,26 +2798,66 @@ This band was added during the cross-document traceability reconciliation (see `
 - **Tests**: unit (precedence/never-stacked assertion, CSS-class-only render), visual (both themes), axe (redundant non-colour channel present for every non-live state), live-region collapse test (flapping within 5s → one announcement).
 - **Motion spec**: [E08-D11.md](../design/E08/E08-D11.md) (E08-D11; the single flip's timing: chip at 0 ms, one `normal` settle of the dim, instant under reduce; contract lines proposed as A-rows).
 
+### CMP-240 TreeView (E13-D02 G-1)
+
+- **Tier**: Molecule · **Purpose**: a hierarchical list with `role="tree"` semantics; CMP-049 Table's semantics are table / grid, not `role="tree"`, so CMP-049 stays SCR-045's (E13-D02 §10 G-1, §17 C-5).
+- **Props**: TBD (E36-D05 #947). E13-D02 G-1 names the parts, not their prop names: `role="tree"` / `treeitem` / `group`, `aria-multiselectable`, roving tabindex, type-ahead, disclosure, a drag handle with the `Alt+↑/↓` keyboard twin, an inline-rename slot (CMP-058), a per-item action slot (CMP-002 buttons), virtualised above 200 items (E13-D02 §10 G-1).
+- **Variants**: TBD (E36-D05 #947).
+- **States**: default, selected, multi-selected, hidden item, locked item, loading, empty (E13-D02 §10 G-1).
+- **A11y**: `role="tree"` / `treeitem` / `group`, `aria-multiselectable`, roving tabindex, type-ahead, disclosure; the drag handle has the `Alt+↑/↓` keyboard twin (E13-D02 §10 G-1).
+- **Tokens**: TBD (E36-D05 #947). Item height per consumer: SCR-036 tree row 24 / 32 px, indent step 16 / 20 px (E13-D02 §2 sizes table); SCR-088 tree item `size.row.compact` / `size.row.comfortable` (E36-D03 §13).
+- **Storybook**: Default, MultiSelect, Nested, InlineRename, Empty, Loading (E13-D02 §10 G-1).
+- **Tests**: TBD (E36-D05 #947); the §0.3 item 7 baseline applies.
+- **Motion spec**: under `motion: reduce` a reorder repositions instantly (no slide), with the announcement carrying the position (E13-D02 §11.6); otherwise TBD (E36-D05 #947).
+- **Consumers**:
+  - SCR-036 Indicator manager: the object tree with multi-select (`Ctrl+Space` toggle, `Shift+↑/↓` extend, `Ctrl+A` per group; selected rows carry `aria-selected="true"`) (E13-D02 §6.3 D22; §10 G-1).
+  - The rule node inspector's object list, later (E13-D02 §10 G-1).
+  - SCR-088 Rule IR inspector, Tree segment (PROPOSED consumer row): "the IR tree of SCR-088: node = IR key / value, `aria-level`, type-ahead, a Copy path action per item; no drag handle, no rename" (E36-D03 §9, BQ-D03-2 RULED).
+  - SCR-088, E35-D03's delta (PROPOSED, D03-A5): account leaves show the masked value "Main (…4f2a)" with a visually-hidden "account, masked"; Copy path on `Enter` (E35-D03 §7, §14 D03-A5); keys `↑` / `↓`, `←` / `→`, `Home` / `End`, type-ahead, `*` (E35-D03 §10).
+- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-1 (E13-D02, status In Review; entry owner E05); consumers: [E36-D03.md](../design/E36/E36-D03.md) §9, [E35-D03.md](../design/E35/E35-D03.md) §7.
+
+### CMP-243 BulkActionBar (E13-D02 G-4)
+
+- **Tier**: Molecule · **Purpose**: a selection-count toolbar with actions: "N selected" + action buttons + Clear (E13-D02 §10 G-4).
+- **Props**: TBD (E36-D05 #947).
+- **Variants**: TBD (E36-D05 #947).
+- **States**: TBD (E36-D05 #947). E13-D02 G-4 gives one rule: the bar appears with a selection (E13-D02 §10 G-4).
+- **A11y**: `role="toolbar"`; appears with a selection; in the Tab order after its list (E13-D02 §10 G-4). Its appearance never moves focus (E36-D03 §2).
+- **Tokens**: TBD (E36-D05 #947). Bar height per consumer: SCR-036 32 / 40 px (E13-D02 §2 sizes table); SCR-080 buttons 24 / 32 px (E36-D03 §13).
+- **Storybook**: TBD (E36-D05 #947).
+- **Tests**: TBD (E36-D05 #947); the §0.3 item 7 baseline applies.
+- **Motion spec**: SCR-080's appear is opacity + 8 px slide, `fast` · `decelerate`, instant under reduce (E36-D03 §10 row 9); otherwise TBD (E36-D05 #947).
+- **Consumers**:
+  - SCR-036 Indicator manager: "**3 selected** · Hide · Show · Lock · Unlock · Delete · Clear selection", each a CMP-001 button (E13-D02 §6.3 D22).
+  - CMP-114 PositionsGrid bulk cancel; the journal (E13-D02 §10 G-4).
+  - SCR-080 Rules list (PROPOSED consumer row): "3 selected · Disarm · Export · Clear"; **Clear** empties the selection and returns focus to the table (E36-D03 §2, §9, BQ-D03-2 RULED).
+- **Design (DS spec):** [E13-D02.md](../design/E13/E13-D02.md) §10 G-4 (E13-D02, status In Review; entry owner E05); consumer: [E36-D03.md](../design/E36/E36-D03.md) §2, §9.
+
 ---
 
 ## 8. Summary tallies
 
-| Band                                                               | Count                                |
-| ------------------------------------------------------------------ | ------------------------------------ |
-| Atoms (CMP-001..039)                                               | 39                                   |
-| Molecules (CMP-040..069)                                           | 30                                   |
-| Organisms — chrome & nav (CMP-070..099)                            | 30                                   |
-| Trading-specific (CMP-100..139)                                    | 40                                   |
-| Rule engine & node-graph (CMP-140..159)                            | 20                                   |
-| Watchlist/alerts/journal/replay/audit (CMP-160..179)               | 20                                   |
-| Chart-engine primitives (CMP-180..199)                             | 20                                   |
-| Auth / shell-surface / chart-chrome / editor-chrome (CMP-200..239) | 40                                   |
-| **Total catalogued components**                                    | **239 — see E08-D04 addendum below** |
+| Band                                                               | Count                                               |
+| ------------------------------------------------------------------ | --------------------------------------------------- |
+| Atoms (CMP-001..039)                                               | 39                                                  |
+| Molecules (CMP-040..069)                                           | 30                                                  |
+| Organisms — chrome & nav (CMP-070..099)                            | 30                                                  |
+| Trading-specific (CMP-100..139)                                    | 40                                                  |
+| Rule engine & node-graph (CMP-140..159)                            | 20                                                  |
+| Watchlist/alerts/journal/replay/audit (CMP-160..179)               | 20                                                  |
+| Chart-engine primitives (CMP-180..199)                             | 20                                                  |
+| Auth / shell-surface / chart-chrome / editor-chrome (CMP-200..243) | 42                                                  |
+| **Total catalogued components**                                    | **241 — see the E08-D04 and E36-D05 addenda below** |
 
 **Addendum (E08-D04, 2026-09-27):** CMP-239 FreshnessMarker was added as the design-system contribution for the
 data-confidence vocabulary (`docs/design/E08/E08-D01.md`) — a genuinely new cross-cutting atom (per-value
 freshness marker for WatchlistRow/KeyValueRow/tape/DOM cells) with no existing entry to extend, per the ticket's
 scope. This is the only count change since the lock below; future changes still require the same rationale.
+
+**Addendum (E36-D05, #947):** CMP-240 TreeView and CMP-243 BulkActionBar are catalogued from E13-D02's G-1 and G-4
+proposals (`docs/design/E13/E13-D02.md`, G-1 / G-4), whose A-2 row asks for the entries and for the last band to be
+extended to CMP-243. Both are reused by E36-D03 (SCR-088's tree, SCR-080's bulk bar) with no existing entry to extend.
+IDs 241 and 242 stay unassigned (E13-D02's G-2 / G-3 propose them; not catalogued here).
 
 **Decision — final count was locked at 238, not 120–180 (supersedes the brief's range for this deliverable).** The count was 199 until the cross-document traceability reconciliation (`18-traceability-matrix.md`), which found 39 components composed by `14-screens-catalogue.md` that had no catalogue entry; rather than silently dropping those references or overloading existing IDs, band 7A was opened at CMP-200..238. 238 is the number backlog tickets are generated from. Rationale for not consolidating: the trading-specific, chart-engine and band-7A entries intentionally enumerate each node-graph node type, each chart primitive, each piece of chart/editor chrome and each heuristic-detector chip as its own first-class CMP-* entry (per `05-accessibility-standard.md` §11.3's requirement that trading-specific components get the same first-class a11y/test treatment as generic atoms — collapsing them would under-specify their individual contracts, e.g. CMP-147..151's distinct keyboard-connect and a11y-label behaviours per node type, or CMP-227 EstimatedBadge's catalogue-level enforcement test).
 
