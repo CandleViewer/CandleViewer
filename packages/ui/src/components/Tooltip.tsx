@@ -22,6 +22,7 @@ export interface TooltipTriggerProps {
   "aria-describedby"?: string | undefined;
   onPointerEnter?: (event: PointerEvent<HTMLElement>) => void;
   onPointerLeave?: (event: PointerEvent<HTMLElement>) => void;
+  onPointerCancel?: (event: PointerEvent<HTMLElement>) => void;
   onFocus?: (event: FocusEvent<HTMLElement>) => void;
   onBlur?: (event: FocusEvent<HTMLElement>) => void;
 }
@@ -155,10 +156,15 @@ export function Tooltip({
     shown.current = open;
   }, [open]);
   // The content emptied while shown (a gate lifted): it goes, with its Esc listener. Content that arrives while
-  // the trigger holds keyboard focus or the pointer (a gate engaging) shows at once.
+  // the trigger holds keyboard focus or the pointer (a gate engaging) shows at once, unless `Esc` dismissed it or
+  // the trigger has since become natively disabled (it fires no pointer leave, so its hover is stale).
   useEffect(() => {
     if (empty) hide();
-    else if ((focused.current || hovered.current) && !dismissed.current) setOpen(true);
+    else if ((focused.current || hovered.current) && !dismissed.current) {
+      const element = trigger.current;
+      if (element !== null && !isFocusable(element)) hovered.current = false;
+      else setOpen(true);
+    }
   }, [empty, hide]);
 
   useEffect(() => {
@@ -210,6 +216,11 @@ export function Tooltip({
       dismissed.current = false;
       leave();
     },
+    // A cancelled pointer (a touch turned into a scroll, a lost capture) is no longer on the trigger.
+    onPointerCancel: (event) => {
+      own.onPointerCancel?.(event);
+      leave();
+    },
     onFocus: (event) => {
       own.onFocus?.(event);
       const element = event.currentTarget;
@@ -222,6 +233,8 @@ export function Tooltip({
       own.onBlur?.(event);
       focused.current = false;
       dismissed.current = false;
+      // A trigger that went natively disabled blurs and never fires its pointer leave: forget the hover.
+      if (!isFocusable(event.currentTarget)) hovered.current = false;
       if (!hovered.current) hide();
     },
   };

@@ -68,6 +68,9 @@ export function useCopy({ onCopied }: UseCopyOptions = {}): UseCopyResult {
       // `navigator.clipboard` is absent outside a secure context: that is a failed copy, not a throw.
       const clipboard = (navigator as Partial<Navigator>).clipboard;
       if (clipboard === undefined) throw new Error("clipboard unavailable");
+      // No timeout on purpose: a hung write (a permission prompt left open) keeps this press pending. A repeat
+      // press while "Copied" shows has already emptied the status and cleared the reset timer, so the glyph
+      // stays `copied` with an empty status until this write settles and the latest press decides.
       await clipboard.writeText(value);
       ok = true;
     } catch {

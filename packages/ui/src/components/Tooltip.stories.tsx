@@ -112,6 +112,8 @@ export const EchoName: Story = {
     await showByKeyboard();
     await expect(tooltip()).toHaveAttribute("aria-hidden", "true");
     await expect(tooltip()).toHaveAttribute("data-side", "right");
+    // The visible echo is the trigger's name, word for word.
+    await expect(tooltip()).toHaveTextContent(/^Settings$/);
     await expect(button).not.toHaveAttribute("aria-describedby");
   },
 };
