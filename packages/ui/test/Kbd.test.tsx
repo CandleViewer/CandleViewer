@@ -2,7 +2,8 @@
 import { composeStories } from "@storybook/react-vite";
 import { expect } from "storybook/test";
 import { describe, it } from "vitest";
-import { Kbd, kbdExpansion } from "../src/components/index.js";
+import { Kbd } from "../src/components/index.js";
+import { kbdExpansion } from "../src/components/Kbd.js";
 import * as stories from "../src/components/Kbd.stories.js";
 import { mount } from "./theme/mount.js";
 
@@ -50,6 +51,13 @@ describe("Kbd (CMP-022)", () => {
   it("takes the keymap's name table over the catalogue's words", () => {
     expect(kbdExpansion(["Ctrl", "Del"], { Del: "Delete" })).toBe("Control plus Delete");
     expect(kbdExpansion(["Ctrl", "K"], { Ctrl: "Command" })).toBe("Command plus K");
+  });
+
+  it("reads inherited member names as written, never as the prototype's members", () => {
+    expect(kbdExpansion(["constructor", "toString", "__proto__"])).toBe(
+      "constructor plus toString plus __proto__",
+    );
+    expect(kbdExpansion(["Ctrl", "hasOwnProperty"], {})).toBe("Control plus hasOwnProperty");
   });
 
   it("can be hidden whole inside a menu item, which carries aria-keyshortcuts", async () => {

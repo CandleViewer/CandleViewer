@@ -32,7 +32,7 @@ export type { ButtonProps } from "./Button.js";
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
 
-export { Kbd, kbdExpansion } from "./Kbd.js";
+export { Kbd } from "./Kbd.js";
 export type { KbdProps } from "./Kbd.js";
 
 export { KeyValueRow } from "./KeyValueRow.js";
