@@ -146,8 +146,10 @@ def test_ac_adm_05_a_replayed_code_strikes_three_times_then_the_session_reads_on
     stack: Stack,
 ) -> None:
     headers, seed = stack.principal("owner", "owner", Permission.USERS_WRITE)
-    assert stack.client.post("/users", headers=headers, json=_INVITE).status_code == 403
-    assert stack.step_up(headers, seed).status_code == 200  # this time step's code is spent
+    denied = stack.client.post("/users", headers=headers, json=_INVITE)
+    assert denied.status_code == 403
+    spent = stack.step_up(headers, seed, denied.json()["challenge_id"])
+    assert spent.status_code == 200  # this time step's code is spent
     failed = stack.in_process("auth_stepup_failures_total")
     replay = {"code": stack.code(seed), "password": STACK_PW, "action_class": "users"}
     answers = [stack.client.post("/auth/step-up", headers=headers, json=replay) for _ in range(3)]

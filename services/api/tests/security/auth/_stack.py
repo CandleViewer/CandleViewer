@@ -168,8 +168,11 @@ class Stack:
         csrf = csrf_headers(self.state.csrf_codec, minted.session_id)
         return {"Authorization": f"Bearer {minted.access_token}", **csrf}, seed
 
-    def step_up(self, headers: dict[str, str], seed: bytes) -> Any:
+    def step_up(self, headers: dict[str, str], seed: bytes, challenge_id: str | None = None) -> Any:
+        """`POST /auth/step-up`, naming the live challenge the client was refused with (#2725)."""
         body = {"code": self.code(seed), "password": PW}
+        if challenge_id is not None:
+            body["challenge_id"] = challenge_id
         return self.client.post("/auth/step-up", headers=headers, json=body)
 
     def scraped(self, name: str, **labels: str) -> float:

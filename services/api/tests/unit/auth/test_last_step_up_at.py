@@ -99,7 +99,8 @@ async def test_a_pending_challenge_is_not_a_step_up() -> None:
     challenge = await svc.record_pending("s1", "keys")
     assert challenge.key() in sessions.sessions["s1"].step_up_elevations
     assert last_step_up_at(sessions.sessions["s1"].step_up_elevations) is None
-    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD)
+    cid = challenge.challenge_id
+    await svc.step_up(str(user), "s1", "keys", _code(seed, clock), PASSWORD, challenge_id=cid)
     stepped = clock.now
     clock.now += timedelta(seconds=60)
     await svc.record_pending("s1", "users")  # a later challenge must not look like a later step-up

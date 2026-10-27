@@ -52,8 +52,13 @@ async def test_guard_under_root_path_admits_the_session_once_elevated() -> None:
     c, _em, seed, clock, _ = await _build()
     rc = _rooted(c)
     path = f"{_ROOT}/exchange-accounts/{uuid.uuid4()}/keys/k1/rotate"  # a pre-registered path row
-    assert rc.post(path, headers=_H).status_code == 403
-    body = {"code": _code(seed, clock), "password": _PW}
+    denied = rc.post(path, headers=_H)
+    assert denied.status_code == 403
+    body = {
+        "code": _code(seed, clock),
+        "password": _PW,
+        "challenge_id": denied.json()["challenge_id"],
+    }
     ok = rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=body)
     assert ok.status_code == 200 and ok.json()["action_class"] == "keys"
     assert rc.post(path, headers=_H).status_code == 200

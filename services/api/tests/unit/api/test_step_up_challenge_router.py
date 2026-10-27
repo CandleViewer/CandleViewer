@@ -254,6 +254,65 @@ async def test_restatement_comes_from_server_records_never_the_request(
     assert _account_reference(_SPEC).fullmatch(account_part)
 
 
+async def test_challenge_states_why_the_action_needs_a_fresh_step_up() -> None:
+    """SCR-006's "why" line (E09-D06), composed by the server per class next to
+    `action_summary`: the no-grace frame's sentence for `killswitch`, and no member at all for a
+    class whose frame draws none (`users`)."""
+    w = await _world()
+    release = w.send(_RELEASE)
+    _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(release.json())
+    assert release.json()["step_up_reason"] == (
+        "Live enablement and kill-switch disable always need a fresh code, even right after a "
+        "recent step-up."
+    )
+    invite = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
+    assert invite.json()["code"] == "step_up_required" and "step_up_reason" not in invite.json()
+
+
+async def test_wrong_factor_names_the_attempts_left_before_the_downgrade() -> None:
+    """`401 mfa_invalid` carries `failures_remaining` (#2304): 2, then 1; the third failure is
+    the read-only downgrade, which names none. It counts this session's failures only: the same
+    user's other session still has both (no cross-session oracle)."""
+    w = await _world()
+    live = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())
+    cid = live.json()["challenge_id"]
+    answers = [w.step_up(code="000000", challenge_id=cid) for _ in range(3)]
+    assert [a.status_code for a in answers] == [401, 401, 403]
+    for answer in answers[:2]:
+        _validator(_SPEC, _ref(_PROBLEM)).validate(answer.json())
+    assert [a.json().get("failures_remaining") for a in answers] == [2, 1, None]
+    assert answers[2].json()["code"] == "session_read_only"
+    other = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h("tok2"))
+    elsewhere = w.step_up("tok2", code="000000", challenge_id=other.json()["challenge_id"])
+    assert (elsewhere.status_code, elsewhere.json()["failures_remaining"]) == (401, 2)
+
+
+async def test_wrong_factor_title_is_the_error_registry_title() -> None:
+    """`401 mfa_invalid` states the catalogued title (`x-error-codes`,
+    error_registry_single_source), never a literal of its own."""
+    w = await _world()
+    cid = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h()).json()["challenge_id"]
+    body = w.step_up(code="000000", challenge_id=cid).json()
+    spec: dict[str, Any] = _SPEC
+    entry = {e["code"]: e for e in spec["x-error-codes"]}["mfa_invalid"]
+    assert (body["code"], body["status"], body["title"]) == (
+        entry["code"],
+        entry["status"],
+        entry["title"],
+    )
+
+
+async def test_failures_remaining_starts_again_after_a_successful_step_up() -> None:
+    w = await _world()
+    path = f"/users/{uuid.uuid4()}/invite"
+    cid = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    assert w.step_up(code="000000", challenge_id=cid).json()["failures_remaining"] == 2
+    assert w.step_up(challenge_id=cid).status_code == 200
+    w.clock.now += timedelta(minutes=5, seconds=1)  # the window ends; a new challenge
+    cid = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    assert w.step_up(code="000000", challenge_id=cid).json()["failures_remaining"] == 2
+
+
 @pytest.mark.parametrize("stale", ["expired", "unknown", "superseded"])
 async def test_stale_challenge_id_is_400_challenge_expired(stale: str) -> None:
     """AC "Challenge expiry": a challenge issued more than 5 minutes ago is refused 400. The
@@ -299,9 +358,9 @@ async def test_refused_challenge_and_wrong_factor_rows_are_told_apart() -> None:
     `step_up_challenge` and the refusal rule as reason; a wrong password or code is outcome
     `failure`, has no object and gives `<class>:remaining=<n>`."""
     w = await _world()
-    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live `users` challenge
+    live = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a `users` challenge
     assert w.step_up(challenge_id=str(uuid.uuid4())).status_code == 400
-    assert w.step_up(code="000000").status_code == 401
+    assert w.step_up(code="000000", challenge_id=live.json()["challenge_id"]).status_code == 401
 
     refused, wrong = w.of("auth.step_up_failed")
 
@@ -349,19 +408,42 @@ async def test_challenge_id_is_unknown_to_any_other_session(who: str) -> None:
     assert w.step_up(challenge_id=challenge_id).status_code == 200  # still live for its owner
 
 
-@pytest.mark.parametrize("answer", ["with-challenge-id", "without-challenge-id"])
-async def test_grace_challenge_is_answered_with_or_without_challenge_id(answer: str) -> None:
+async def test_grace_challenge_is_answered_by_its_challenge_id() -> None:
     w = await _world()
     path = f"/users/{uuid.uuid4()}/invite"
     denied = w.client.post(path, headers=w.h())
     assert denied.status_code == 403
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(denied.json())
-    sent = {"challenge_id": denied.json()["challenge_id"]} if answer == "with-challenge-id" else {}
-    ok = w.step_up(**sent)
+    ok = w.step_up(challenge_id=denied.json()["challenge_id"])
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     expires = datetime.fromisoformat(ok.json()["step_up_expires_at"])
     assert expires == w.clock.now + timedelta(minutes=5)
     assert w.client.post(path, headers=w.h()).status_code == 200
+
+
+@pytest.mark.parametrize("named", [{}, {"action_class": "users"}], ids=["bare", "action-class"])
+async def test_step_up_without_challenge_id_while_a_challenge_is_live_is_400(
+    named: dict[str, str],
+) -> None:
+    """#2725 scenario 6, grace classes too: the right password and code without the live
+    challenge's id are `400 validation_failed`, rule `challenge_required`, audited as a refused
+    challenge; no factor is counted, nothing is elevated and the challenge stays answerable."""
+    w = await _world()
+    path = f"/users/{uuid.uuid4()}/invite"
+    challenge_id = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    r = w.step_up(**named)
+    assert r.status_code == 400
+    _validator(_SPEC, _ref(_PROBLEM)).validate(r.json())
+    assert [(e["field"], e["rule"]) for e in r.json()["errors"]] == [
+        ("challenge_id", "challenge_required")
+    ]
+    (refused,) = w.of("auth.step_up_failed")
+    assert (refused["outcome"], refused["reason"]) == (AuditOutcome.DENIED, "challenge_required")
+    assert not w.of("auth.step_up_granted")
+    assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == 0
+    assert w.client.post(path, headers=w.h()).status_code == 403  # nothing elevated
+    fresh = w.client.post(path, headers=w.h()).json()["challenge_id"]
+    assert fresh != challenge_id and w.step_up(challenge_id=fresh).status_code == 200
 
 
 @pytest.mark.parametrize("value", ["challenge-1", 7], ids=["not-a-uuid", "not-a-string"])

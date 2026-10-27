@@ -27,6 +27,7 @@ from candleviewer.api._generated.openapi_models import (
 from candleviewer.api.step_up_challenge import (
     UPDATE_USER_RENDERED,
     account_reference,
+    challenge_reason,
     export_audit_text,
     import_key_text,
     invite_user_text,
@@ -266,3 +267,30 @@ def test_slice_3c_texts_refuse_a_value_outside_their_enum(build: Callable[[], ob
     """Fail closed: a value the contract lacks is a defect, never restated."""
     with pytest.raises(ValueError):
         build()
+
+
+#: The SCR-006 frame `no-grace-live-enable` (E09-D06), whose annotation reads "Same frame for
+#: kill-switch disable": its line under the action, verbatim.
+_NO_GRACE_WHY = (
+    "Live enablement and kill-switch disable always need a fresh code, even right after a "
+    "recent step-up."
+)
+
+
+@pytest.mark.parametrize("action_class", ["live_enablement", "killswitch"])
+def test_challenge_reason_is_the_designed_no_grace_line(action_class: str) -> None:
+    assert challenge_reason(action_class) == _NO_GRACE_WHY
+
+
+@pytest.mark.parametrize(
+    "action_class",
+    ["keys", "users", "risk_caps", "recorder", "recorder_purge", "flags", "audit", "backups"],
+)
+def test_challenge_reason_is_omitted_for_a_class_with_no_designed_line(action_class: str) -> None:
+    """No copy is invented (AGENTS.md §8.13): a class whose SCR-006 frame draws no reason of its
+    own gets none."""
+    assert challenge_reason(action_class) is None
+
+
+def test_challenge_reason_is_none_for_an_unknown_class() -> None:
+    assert challenge_reason("bogus") is None

@@ -11,10 +11,11 @@ Pins the contract:
 * a label never identifies an account or a rule alone: an account is followed by its environment
   and UID, a rule (provisionally, until the route slice) by its environments, and every label is
   escaped before it is quoted;
-* `POST /auth/step-up` takes `challenge_id`: required for a no-grace class (`400
-  validation_failed`, rule `challenge_required`, without it) and optional, for now, for a grace
-  class; a stale one is `400 validation_failed` with rule `challenge_expired`; both are decided
-  before any factor is checked;
+* `POST /auth/step-up` takes `challenge_id`: required whenever the session has a live challenge,
+  grace classes included, and always for a no-grace class (`400 validation_failed`, rule
+  `challenge_required`, without it); only a grace class named by `action_class` with no challenge
+  live elevates without it (#2725 scenario 6); a stale one is `400 validation_failed` with rule
+  `challenge_expired`; both are decided before any factor is checked;
 * a no-grace grant is bound to the challenged request by a stated SHA-256 fingerprint and lives
   60 seconds; another request of the class is refused `403 step_up_required` and audited
   `auth.step_up_mismatch`;
@@ -157,6 +158,7 @@ def test_step_up_required_is_a_403_in_the_error_catalogue(spec: dict[str, Any]) 
         ("action_class", {"type": "string"}),
         ("action_summary", {"type": "string"}),
         ("target", {"type": ["string", "null"]}),
+        ("step_up_reason", {"type": "string"}),
     ],
 )
 def test_problem_declares_the_step_up_challenge_field(
@@ -174,6 +176,11 @@ def test_problem_declares_the_step_up_challenge_field(
             "challenge_id",
             "a random UUIDv4 scoped to the issuing session, so a value from another session is "
             "unknown",
+        ),
+        (
+            "challenge_id",
+            "Send it as `challenge_id` to `POST /auth/step-up`, which requires it while the "
+            "challenge is live, whatever the class",
         ),
         ("challenge_id", "a step-up for a no-grace class must send it"),
         ("action_summary", "It comes from a fixed per-route template"),
@@ -250,6 +257,53 @@ def test_problem_challenge_field_states_its_rule(
     assert rule in _problem_text(spec, field)
 
 
+def test_problem_declares_failures_remaining(spec: dict[str, Any]) -> None:
+    """#2304 (additive, C-6.3): how many step-up attempts the session has left."""
+    prop = spec["components"]["schemas"]["Problem"]["properties"]["failures_remaining"]
+    assert {key: prop[key] for key in ("type", "minimum", "maximum")} == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 2,
+    }
+    assert _flat(prop["description"]).startswith("`mfa_invalid` from `POST /auth/step-up` only:")
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "how many more step-up attempts this session has before a failure downgrades it to "
+        "read-only",
+        "2 after its first consecutive failure and 1 after its second",
+        "the next failure is the third and answers `403 session_read_only` instead",
+        "It counts this session's own consecutive step-up failures only",
+        "never another session's, never the account's sign-in lockout counter",
+        "A successful step-up starts the count again",
+        "additive (C-6.3)",
+    ],
+)
+def test_problem_failures_remaining_states_its_rule(spec: dict[str, Any], rule: str) -> None:
+    assert rule in _problem_text(spec, "failures_remaining")
+
+
+def test_step_up_invalid_example_carries_failures_remaining(spec: dict[str, Any]) -> None:
+    unauthorized = spec["components"]["responses"]["Unauthorized"]
+    body = unauthorized["content"]["application/problem+json"]["examples"]["stepUpInvalid"]
+    _validator(spec, _ref(_PROBLEM)).validate(body["value"])
+    assert (body["value"]["code"], body["value"]["failures_remaining"]) == ("mfa_invalid", 2)
+    entry = {e["code"]: e for e in spec["x-error-codes"]}["mfa_invalid"]
+    assert (body["value"]["status"], body["value"]["title"]) == (entry["status"], entry["title"])
+
+
+@pytest.mark.parametrize("attempts", [0, 3, "2"])
+def test_problem_rejects_failures_remaining_outside_its_range(
+    spec: dict[str, Any], attempts: object
+) -> None:
+    unauthorized = spec["components"]["responses"]["Unauthorized"]
+    value = unauthorized["content"]["application/problem+json"]["examples"]["stepUpInvalid"]
+    with pytest.raises(ValidationError):
+        _validator(spec, _ref(_PROBLEM)).validate(value["value"] | {"failures_remaining": attempts})
+
+
 def test_kill_switch_release_challenge_restates_what_would_execute(spec: dict[str, Any]) -> None:
     """AC "Challenge restates what will execute" (POST /trading/kill-switch, release, global)."""
     body = _forbidden_example(spec, "stepUpRequired")
@@ -257,6 +311,41 @@ def test_kill_switch_release_challenge_restates_what_would_execute(spec: dict[st
     assert body["action_class"] == "killswitch"
     assert body["action_summary"] == "Release kill switch, scope global"
     assert set(_CHALLENGE_FIELDS) <= set(body)
+    assert body["step_up_reason"] == (
+        "Live enablement and kill-switch disable always need a fresh code, even right after a "
+        "recent step-up."
+    )
+
+
+def test_challenge_without_a_designed_reason_omits_it(spec: dict[str, Any]) -> None:
+    """`step_up_reason` is optional: a class with no designed SCR-006 line sends none (`keys`)."""
+    body = _forbidden_example(spec, "stepUpRequiredTypedConfirmation")
+    _validator(spec, _STEP_UP_REQUIRED_BODY).validate(body)
+    assert "step_up_reason" not in body
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        "the server-composed sentence saying why this action needs a fresh step-up",
+        "the line the step-up dialog (SCR-006, E09-D06) shows under the action",
+        "shown verbatim; the client adds no prefix and never composes its own",
+        "Present only when `action_class` is `live_enablement` or `killswitch`, carrying "
+        "SCR-006's no-grace sentence verbatim",
+        '"Live enablement and kill-switch disable always need a fresh code, even right after a '
+        'recent step-up."',
+        "Omitted for every other class",
+        "Fixed text, never built from the request",
+        "additive (C-6.3)",
+    ],
+)
+def test_problem_step_up_reason_states_its_rule(spec: dict[str, Any], rule: str) -> None:
+    assert rule in _problem_text(spec, "step_up_reason")
+
+
+def test_forbidden_response_names_the_step_up_reason(spec: dict[str, Any]) -> None:
+    text = _flat(spec["components"]["responses"]["Forbidden"]["description"])
+    assert "and, for `live_enablement` and `killswitch`, `step_up_reason`" in text
 
 
 def test_typed_confirmation_challenge_names_its_target(spec: dict[str, Any]) -> None:
@@ -470,15 +559,16 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
 @pytest.mark.parametrize(
     "rule",
     [
-        "Required for a no-grace class (`live_enablement`, `killswitch`, `backups`, "
-        "`sl_loosen`, `accounts` or `recorder_purge`, named by the live challenge or by "
-        "`action_class`)",
+        "Required whenever the session has a live challenge, whatever its class, grace classes "
+        "included, and always for a no-grace class (`live_enablement`, `killswitch`, `backups` "
+        "or `recorder_purge`; and `sl_loosen` and `accounts` once their routes are mounted), "
+        "named by the live challenge or by `action_class`",
         "omitting it is `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_required}]`",
-        "Optional for a grace class: without it the server uses the session's live challenge",
-        "This grace-class optionality is transitional and ends with #2725 (the web client sends "
-        "`challenge_id` on every step-up); from then on it is required whenever the session has a "
-        "live challenge",
+        "Only a grace class named by `action_class` while no challenge is live elevates without it",
+        "This ends the transitional grace-class optionality that #2725 was to end (the web client "
+        "sends `challenge_id` on every step-up): a tightening this contract announced before any "
+        "client relied on the optionality",
         "A value that does not name the live challenge (expired, superseded, already used or "
         "unknown), or that is sent when there is none, gets `400 validation_failed` with "
         "`errors: [{field: challenge_id, rule: challenge_expired}]`",
@@ -490,6 +580,15 @@ def test_step_up_description_states_the_password_and_write_ahead_rules(
 def test_step_up_challenge_id_states_when_it_is_required(spec: dict[str, Any], rule: str) -> None:
     """AC "Challenge expiry" (contract half) and the no-grace `challenge_id` requirement."""
     assert rule in _challenge_id_text(spec)
+
+
+def test_the_no_grace_classes_the_server_knows_are_the_ones_the_contract_names_now(
+    spec: dict[str, Any],
+) -> None:
+    """The contract's mounted no-grace list is the server's set, no more and no fewer."""
+    text = _challenge_id_text(spec)
+    named = text.split("always for a no-grace class (", 1)[1].split(";", 1)[0]
+    assert set(re.findall(r"`([a-z_]+)`", named)) == set(NO_GRACE_ACTION_CLASSES)
 
 
 @pytest.mark.parametrize("rule", ["challenge_required", "challenge_expired"])
@@ -531,6 +630,12 @@ def test_refused_challenge_answer_is_a_conforming_400(spec: dict[str, Any], rule
         "A step-up for a no-grace class (named by the live challenge or by `action_class`) must "
         "send it: without it, or without a live challenge, the answer is `400`",
         "`action_class` alone never elevates a no-grace class",
+        "Every step-up while the session has a live challenge must send its `challenge_id`, grace "
+        "classes included (`400` with rule `challenge_required` without it), so a newer `403` "
+        "cannot change the class the password and code elevate",
+        "`action_class` alone elevates only a grace class, and only while no challenge is live",
+        "That `401` carries `failures_remaining`, the attempts this session has left before the "
+        "read-only downgrade (see `Problem`)",
     ],
 )
 def test_step_up_description_states_the_challenge_rule(spec: dict[str, Any], rule: str) -> None:

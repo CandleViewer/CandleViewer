@@ -94,8 +94,9 @@ async def test_one_risk_caps_step_up_admits_every_profile_write_inside_its_windo
     c, em, seed, clock, _ = await _build()
     reached = _stand_ins(c, gated=True)
     for method, path in _WRITES:
-        assert c.request(method, path, headers=_H).status_code == 403, path
-    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock)))
+        denied = c.request(method, path, headers=_H)
+        assert denied.status_code == 403, path
+    ok = c.post("/auth/step-up", headers=_H, json=_modal_body(_code(seed, clock), denied))
     assert ok.status_code == 200 and ok.json()["action_class"] == "risk_caps"
     clock.now += timedelta(minutes=3)
     for method, path in _WRITES:

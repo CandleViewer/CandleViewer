@@ -123,12 +123,12 @@ async def test_newer_step_up_replaces_the_class_grant() -> None:
 async def test_read_only_downgrade_ends_the_grant() -> None:
     svc, clock, seed, user, sessions = await _setup()
     await _granted(svc, clock, seed, user)
-    await svc.record_pending("s1", "keys")
+    cid = (await svc.record_pending("s1", "keys")).challenge_id
     for _ in range(2):
         with pytest.raises(StepUpCodeInvalid):
-            await svc.step_up(str(user), "s1", None, "000000", PASSWORD)
+            await svc.step_up(str(user), "s1", None, "000000", PASSWORD, challenge_id=cid)
     with pytest.raises(SessionReadOnly):
-        await svc.step_up(str(user), "s1", None, "000000", PASSWORD)
+        await svc.step_up(str(user), "s1", None, "000000", PASSWORD, challenge_id=cid)
     assert sessions.sessions["s1"].step_up_elevations == {}
     clock.now += timedelta(minutes=5)
     with pytest.raises(StepUpRequired):

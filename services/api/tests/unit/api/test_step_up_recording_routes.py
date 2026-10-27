@@ -43,7 +43,10 @@ async def test_retention_change_needs_recorder_step_up_then_gets_a_grace_window(
     assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
     assert denied.json()["action_class"] == "recorder" and not ran
     assert "auth.step_up_required" in em.actions()
-    ok = c.post("/auth/step-up", headers=_H, json={"code": _code(seed, clock), "password": _PW})
+    answer = {"code": _code(seed, clock), "password": _PW}
+    ok = c.post(
+        "/auth/step-up", headers=_H, json=answer | {"challenge_id": denied.json()["challenge_id"]}
+    )
     assert ok.status_code == 200 and ok.json()["action_class"] == "recorder"
     assert ok.json()["single_use"] is False
     for _ in range(2):  # a grace class: the window covers the next change too

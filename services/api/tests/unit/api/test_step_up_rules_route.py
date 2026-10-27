@@ -82,6 +82,7 @@ async def test_rules_refusal_is_a_challenge_answered_by_id_and_the_held_request_
     body = denied.json()
     _validator(_SPEC, _STEP_UP_REQUIRED_BODY).validate(body)  # provider side (C-6.2)
     assert body["action_class"] == "live_enablement"
+    assert body["step_up_reason"].startswith("Live enablement and kill-switch disable always need")
     assert uuid.UUID(body["challenge_id"]).version == 4
     expires = datetime.fromisoformat(body["challenge_expires_at"])
     assert expires == w.clock.now + timedelta(minutes=5)

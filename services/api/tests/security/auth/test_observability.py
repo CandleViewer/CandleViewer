@@ -200,9 +200,14 @@ def test_obs_step_up_failure_is_audited_and_counted_on_its_one_series(
 ) -> None:  # AC-STEP-01..04 (U18)
     owner, _ = stack.principal("owner", "owner", Permission.USERS_WRITE)
     body = {"email": "x@example.com", "username": "xavier", "roles": ["viewer"]}
-    assert stack.client.post("/users", headers=owner, json=body).status_code == 403
+    challenged = stack.client.post("/users", headers=owner, json=body)
+    assert challenged.status_code == 403
     before = stack.scraped("auth_stepup_failures_total")
-    wrong = {"code": "000000", "password": "wrong"}
+    wrong = {
+        "code": "000000",
+        "password": "wrong",
+        "challenge_id": challenged.json()["challenge_id"],
+    }
     assert stack.client.post("/auth/step-up", headers=owner, json=wrong).status_code == 401
     ((reason, outcome, severity),) = _rows(stack, "auth.step_up_failed")
     assert reason.startswith("users:") and (outcome, severity) == ("failure", "error")

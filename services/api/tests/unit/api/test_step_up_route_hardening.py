@@ -56,8 +56,8 @@ async def test_step_up_password_is_capped_like_login_before_any_factor(
     """`LoginRequest.password` is at most 512 characters. A longer one is refused by the schema:
     it never reaches the Argon2id check and counts no strike."""
     w = await _world()
-    w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live grace challenge
-    r = w.step_up(password="p" * length)
+    live = w.client.post(f"/users/{uuid.uuid4()}/invite", headers=w.h())  # a live grace challenge
+    r = w.step_up(password="p" * length, challenge_id=live.json()["challenge_id"])
     assert r.status_code == status
     assert w.rows.sessions[str(w.sessions["tok"].id)].step_up_failures == strikes
     if status == 422:

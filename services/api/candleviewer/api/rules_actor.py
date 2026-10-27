@@ -27,7 +27,11 @@ from candleviewer.api.step_up import (
     AuditRefused,
     consume_bound_grant,
 )
-from candleviewer.api.step_up_challenge import raw_request_target, request_fingerprint
+from candleviewer.api.step_up_challenge import (
+    challenge_reason,
+    raw_request_target,
+    request_fingerprint,
+)
 from candleviewer.api.view_as_subject import acting_user, view_as_subject
 from candleviewer.audit.models import AuditOutcome
 from candleviewer.auth.errors import AuthError, SessionReadOnly, SessionRevoked
@@ -75,7 +79,9 @@ def _before(payload: dict[str, Any]) -> dict[str, Any] | None:
 def _challenged(challenge: StepUpChallenge) -> RuleError:
     """`403 step_up_required` carrying the challenge issued for this request (#2304): a no-grace
     step-up must name it, so a refusal without it could never be answered. Its title and detail
-    are the ones every challenge states (`api.step_up.required_problem`)."""
+    are the ones every challenge states (`api.step_up.required_problem`), as is its
+    `step_up_reason`."""
+    reason = challenge_reason(challenge.action_class)
     return RuleError(
         403,
         "step_up_required",
@@ -84,6 +90,7 @@ def _challenged(challenge: StepUpChallenge) -> RuleError:
         action_class=challenge.action_class,
         challenge_id=str(challenge.challenge_id),
         challenge_expires_at=challenge.expires_at.isoformat(),
+        **({} if reason is None else {"step_up_reason": reason}),
     )
 
 

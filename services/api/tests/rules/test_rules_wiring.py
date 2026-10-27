@@ -20,7 +20,7 @@ from candleviewer.api.step_up import (
     STEP_UP_REQUIRED_TITLE,
     readonly_problem,
 )
-from candleviewer.api.step_up_challenge import request_fingerprint
+from candleviewer.api.step_up_challenge import CHALLENGE_REASONS, request_fingerprint
 from candleviewer.app import create_app
 from candleviewer.audit.writer import AuditUnavailable
 from candleviewer.auth.errors import (
@@ -193,6 +193,7 @@ async def test_actor_consume_refusal_carries_the_challenge_issued_for_this_reque
         "action_class": "live_enablement",
         "challenge_id": str(step_up.issued.challenge_id),
         "challenge_expires_at": step_up.issued.expires_at.isoformat(),
+        "step_up_reason": CHALLENGE_REASONS["live_enablement"],  # #2304: the no-grace why-line
     }
     assert step_up.pending == [_HELD] and audit.actions == audited
 

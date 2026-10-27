@@ -972,10 +972,15 @@ def test_a_delete_whose_key_or_profile_id_is_no_uuid_is_an_unaudited_422(w: Writ
     example = declared["application/problem+json"]["examples"]["notAKey"]["value"]
     keyed, pathed = send(w, DELETE, key="not-a-uuid"), send(w, DELETE, profile="Swing")
     assert answered(keyed, DELETE)["errors"] == example["errors"]
-    # The path case's message is not pinned: the shared handler still quotes a character there
-    # (R1S-01's twin, owed separately).
-    named = [(e["field"], e["rule"]) for e in answered(pathed, DELETE)["errors"]]
-    assert named == [("path.profileId", "uuid_parsing")]
+    # The shared handler's constant message (`error_redaction.CONSTANT_MESSAGES`): no character
+    # of the input is quoted.
+    assert answered(pathed, DELETE)["errors"] == [
+        {
+            "field": "path.profileId",
+            "rule": "uuid_parsing",
+            "message": "Input should be a valid UUID.",
+        }
+    ]
     assert (w.world.audit.records, _new(w), w.rows.hooks) == ([], [], [])
 
 

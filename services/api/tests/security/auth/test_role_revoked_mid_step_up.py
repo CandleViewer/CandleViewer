@@ -283,15 +283,20 @@ class World:
     async def call(self, actor: _Actor, method: str, path: str, **kw: Any) -> httpx.Response:
         return await self.client.request(method, path, headers=actor.headers, **kw)
 
-    async def step_up(self, actor: _Actor, *, action_class: str | None = None) -> httpx.Response:
-        """`POST /auth/step-up` with password and a fresh TOTP code. Without `action_class` the
-        server elevates the class its own last 403 challenged."""
+    async def step_up(
+        self, actor: _Actor, *, action_class: str | None = None, challenge_id: str | None = None
+    ) -> httpx.Response:
+        """`POST /auth/step-up` with password and a fresh TOTP code. With `challenge_id` the
+        server elevates the class its own 403 challenged (#2725: required while it is live);
+        `action_class` names a grace class when no challenge is live."""
         body: dict[str, Any] = {
             "code": generate_code(actor.seed, time_step_for(_T0.timestamp())),
             "password": PW,
         }
         if action_class is not None:
             body["action_class"] = action_class
+        if challenge_id is not None:
+            body["challenge_id"] = challenge_id
         return await self.call(actor, "POST", "/auth/step-up", json=body)
 
     async def elevate(self, actor: _Actor) -> None:
@@ -404,11 +409,14 @@ def _assert_refused_without_effect(w: World, action: _Action, response: httpx.Re
         assert not w.audit.find(effect, actor=w.owner_a.user_id)
 
 
-async def _challenge(w: World, action: _Action) -> None:
-    """A's first attempt, without an elevation: refused with the step-up challenge."""
+async def _challenge(w: World, action: _Action) -> str:
+    """A's first attempt, without an elevation: refused with the step-up challenge, whose id
+    the step-up modal answers."""
     challenged = await w.act(w.owner_a, action)
     assert challenged.status_code == 403
     assert challenged.json()["code"] == "step_up_required"
+    challenge_id: str = challenged.json()["challenge_id"]
+    return challenge_id
 
 
 @pytest.mark.parametrize("action", ACTIONS, ids=lambda a: a.id)
@@ -418,7 +426,7 @@ async def test_role_revoked_between_step_up_challenge_and_completion_refuses_the
     a, b, log = world.owner_a, world.owner_b, world.audit
     # B holds a live elevation, so its own revoke is not challenged.
     await world.elevate(b)
-    await _challenge(world, action)
+    challenge_id = await _challenge(world, action)
 
     revoked = await world.revoke_owner_role(b, a)
     assert revoked.status_code == 200, revoked.text
@@ -430,7 +438,7 @@ async def test_role_revoked_between_step_up_challenge_and_completion_refuses_the
     assert Permission.USERS_WRITE.value not in session.json()["permissions"]
 
     # The step-up modal A had open still completes: password and code are right.
-    completed = await world.step_up(a)
+    completed = await world.step_up(a, challenge_id=challenge_id)
     assert completed.status_code == 200, completed.text
     retried = await world.act(a, action)
 
@@ -449,12 +457,12 @@ async def test_role_revoked_while_the_step_up_is_verifying_refuses_the_retry(
 ) -> None:
     a, b, log = world.owner_a, world.owner_b, world.audit
     await world.elevate(b)
-    await _challenge(world, action)
+    challenge_id = await _challenge(world, action)
 
     # Park A's step-up after the password check, inside the TOTP check, and revoke meanwhile.
     hold = _Hold(a.user_id)
     world.mfa_repo.hold = hold
-    stepping = asyncio.create_task(world.step_up(a))
+    stepping = asyncio.create_task(world.step_up(a, challenge_id=challenge_id))
     await _until_parked(hold, stepping)
     revoked = await world.revoke_owner_role(b, a)
     assert revoked.status_code == 200, revoked.text

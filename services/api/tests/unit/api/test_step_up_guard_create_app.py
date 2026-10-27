@@ -73,7 +73,7 @@ async def test_invite_create_under_root_path_still_needs_step_up(
     denied = w.client.post(f"{_ROOT}/users", headers=_h(owner), json=_BODY)
     assert denied.status_code == 403 and denied.json()["code"] == "step_up_required"
     assert not w.invites.rows and not w.audit.of("users.invited")
-    body = {"code": w.code(owner), "password": _PW}
+    body = {"code": w.code(owner), "password": _PW, "challenge_id": denied.json()["challenge_id"]}
     ok = w.client.post(f"{_ROOT}/auth/step-up", headers=_h(owner), json=body)
     assert ok.status_code == 200 and ok.json()["action_class"] == "users"
     assert w.client.post(f"{_ROOT}/users", headers=_h(owner), json=_BODY).status_code == 201

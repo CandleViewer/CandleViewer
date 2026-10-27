@@ -45,7 +45,7 @@ from candleviewer.api.csrf import (
     SESSION_REFUSALS_PER_WINDOW,
     source_ip,
 )
-from candleviewer.api.step_up_challenge import ChallengeText, mfa_reset_text
+from candleviewer.api.step_up_challenge import ChallengeText, challenge_reason, mfa_reset_text
 from candleviewer.api.storage_outage import is_storage_outage
 from candleviewer.api.view_as_subject import view_as_subject
 from candleviewer.audit.access import AuditPrincipal
@@ -98,11 +98,14 @@ SESSION_READ_ONLY_DETAIL = (
 AUDIT_UNAVAILABLE_CODE = ErrorCode.AUDIT_UNAVAILABLE.value
 AUDIT_UNAVAILABLE_TITLE = ERROR_META[ErrorCode.AUDIT_UNAVAILABLE].title
 AUDIT_UNAVAILABLE_DETAIL = "audit unavailable"
+#: `401 mfa_invalid` of a wrong step-up factor: the catalogued code and title (`x-error-codes`).
+MFA_INVALID_CODE = ErrorCode.MFA_INVALID.value
+MFA_INVALID_TITLE = ERROR_META[ErrorCode.MFA_INVALID].title
 #: What `AuditService.writer` raises before `start()`; any other `RuntimeError` is a defect.
 _AUDIT_NOT_STARTED = "AuditService.start() has not wired"
 #: `400 validation_failed` details for a step-up that cannot answer its challenge (#2304).
 _CHALLENGE_REFUSED = {
-    "challenge_required": "A step-up for this action class must send the challenge_id.",
+    "challenge_required": "This step-up must send the challenge_id it answers.",
     "challenge_expired": "The step-up challenge cannot be answered.",
     "challenge_mismatch": "action_class does not match the step-up challenge.",
     "required": "There is no step-up challenge to answer; send action_class.",
@@ -275,10 +278,14 @@ def _invalid_body(exc: ValidationError) -> JSONResponse:
 
 def required_problem(challenge: StepUpChallenge, text: ChallengeText | None = None) -> JSONResponse:
     """`403 step_up_required`: the challenge issued for the one request it refused (#2304),
-    restating it in the server-composed `text` of a route that validated its request."""
+    restating it in the server-composed `text` of a route that validated its request, with the
+    class's fixed `step_up_reason` when the dialog design draws one."""
     restated = (
         {} if text is None else {"action_summary": text.action_summary, "target": text.target}
     )
+    reason = challenge_reason(challenge.action_class)
+    if reason is not None:
+        restated["step_up_reason"] = reason
     return _problem(
         403,
         "step_up_required",
@@ -844,10 +851,12 @@ def make_step_up_router(
         # Step-up granted / failed / read-only downgrade are audited by the B16
         # chart's actions (`StepUpService` records each decision on it).
         except StepUpCodeInvalid as exc:
+            # `failures_remaining` (#2304, E42-D03 CG-3): this session's own strikes left before
+            # the read-only downgrade, from its row (`sessions.step_up_failures`).
             return _problem(
                 401,
-                "mfa_invalid",
-                "Step-up rejected",
+                MFA_INVALID_CODE,
+                MFA_INVALID_TITLE,
                 "Invalid password or code.",
                 failures_remaining=exc.failures_remaining,
             )
