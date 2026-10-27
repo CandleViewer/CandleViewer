@@ -238,7 +238,8 @@ describe("Select (CMP-009)", () => {
     expect(key(host, "PageDown")).toBe(true);
     key(host, "Enter");
     for (const init of [{ ctrlKey: true }, { altKey: true }, { shiftKey: true }]) {
-      expect(key(host, "ArrowDown", init)).toBe(true);
+      // Open, Alt+Down is consumed (a no-op) so the page does not scroll; the other chords stay the host's.
+      expect(key(host, "ArrowDown", init)).toBe(!("altKey" in init));
       expect(key(host, "Escape", init)).toBe(true);
     }
     expect(activeLabel(host)).toBe("Alpha");

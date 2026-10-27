@@ -44,6 +44,13 @@ const activeLabel = (host: HTMLElement): string | undefined => {
     ? undefined
     : document.getElementById(id)?.querySelector(".cv-select__label")?.textContent;
 };
+// The elements `scrollIntoView` was called on: the whole row (label, reason, ring), never the inner option line.
+const scrollTargets = (): unknown[] => vi.mocked(Element.prototype.scrollIntoView).mock.contexts;
+const activeRow = (host: HTMLElement): Element | null | undefined => {
+  const id = box(host).getAttribute("aria-activedescendant");
+  return id === null ? undefined : document.getElementById(id)?.closest(".cv-select__row");
+};
+
 const key = (host: HTMLElement, k: string, init: object = {}): boolean => {
   let result = true;
   act(() => {
@@ -329,6 +336,7 @@ describe("Select type-ahead", () => {
     vi.mocked(Element.prototype.scrollIntoView).mockClear();
     key(host, "s");
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollTargets()).toEqual([activeRow(host)]);
   });
 
   it("a Space continues a typed string while the longer string still matches", async () => {
@@ -399,6 +407,7 @@ describe("Select type-ahead", () => {
     key(host, "ArrowDown");
     expect(activeLabel(host)).toBe("Delta");
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
+    expect(scrollTargets()).toEqual([activeRow(host)]);
   });
 
   it("ignores Ctrl, Alt and Meta chords and Shift+Space", async () => {
@@ -432,12 +441,13 @@ describe("Select type-ahead", () => {
 });
 
 describe("Select Alt chords", () => {
-  it("Alt+Down opens without moving the active option; open, it is left to the host", async () => {
+  it("Alt+Down opens without moving the active option; open, it is consumed and changes nothing", async () => {
     const host = await mount(<Host value="f" />);
     expect(key(host, "ArrowDown", { altKey: true })).toBe(false);
     expect(box(host)).toHaveAttribute("aria-expanded", "true");
     expect(activeLabel(host)).toBe("Sub-account 1");
-    expect(key(host, "ArrowDown", { altKey: true })).toBe(true);
+    expect(key(host, "ArrowDown", { altKey: true })).toBe(false); // consumed: the page does not scroll
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
     expect(activeLabel(host)).toBe("Sub-account 1");
   });
 
