@@ -2,12 +2,12 @@
 
 Each `governance-tests` shard and the `governance` job ended with a blocking budget step that
 compared the job's wall time, checkout, installs and artifact transfers included, with
-`BUDGET_MS=90000`. Under runner contention the shards' pytest run stayed at about 55-65 s while
-provisioning stretched the jobs past 90 s, so green pull requests went red on the budget alone
-(three on 2026-10-26). Each shard now budgets its pytest wall time (the pytest step's
-`pytest_ms`) and `governance` its combine step (the combine step's `combine_ms`); the job wall
-time stays in each summary as an informational row. `governance-checks` is unchanged: its checks
-are its job, and it still budgets the job wall time.
+`BUDGET_MS=90000`, so runner contention failed green pull requests on the budget alone: on
+2026-10-26 (run 40398652820) shard 1/6 failed at 101 s of job wall time, 66 s of it checkout and
+14 s its pytest step. Each shard now budgets its pytest wall time (the pytest step's `pytest_ms`)
+and `governance` its combine step (the combine step's `combine_ms`); the job wall time stays in
+each summary as an informational row. `governance-checks` still budgets its job wall time, a
+known residual (#4693).
 
 The cases run the steps' own scripts as the runner does (`bash -e`), with the step outputs in the
 environment and stand-ins for `python` and `date` first on PATH; the stand-in clock replays fixed
@@ -235,8 +235,8 @@ def test_budget_run_of_exactly_budget_ms_passes(tmp_path: Path, job: str) -> Non
 def test_budget_run_that_recorded_no_time_fails_instead_of_passing_unmeasured(
     tmp_path: Path, job: str, measured: str
 ) -> None:
-    # A step that failed or never ran wrote no output, which reads ''. `[ '' -gt 90000 ]` is an
-    # error and an `if` reads it as false, so an unchecked budget would pass unmeasured.
+    # A step that never ran, or stopped before it measured, wrote no output, which reads ''. The
+    # budget fails such a value as unmeasured before its compare, on which `[` could only error.
     ran = _budget(tmp_path, job, job_s=0, measured=measured)
     assert ran.code == 1, ran.log
     assert _row(ran.summary, MEASURED[job].row) == (measured or "n/a")  # still reported
@@ -249,7 +249,7 @@ def test_budget_run_that_recorded_no_time_fails_instead_of_passing_unmeasured(
 def test_budget_checks_job_still_judges_its_job_wall_time(
     tmp_path: Path, job_s: int, fails: bool
 ) -> None:
-    # Unchanged by #4666: the GOV checks, the canary and the reports are that job's own work.
+    # Unchanged by #4666: that job still budgets its job wall time, a known residual (#4693).
     ran = _budget(tmp_path, "governance-checks", job_s=job_s)
     assert ran.code == int(fails), ran.log
     assert bool(_errors(ran.log)) == fails
