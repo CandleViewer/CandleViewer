@@ -560,7 +560,6 @@ async def require_bound_elevation(
 #: seed marks for step-up is in neither registry nor its reasoned allow-list.
 DANGEROUS_ROUTES: tuple[tuple[str, re.Pattern[str], str], ...] = (
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/rotate$"), "keys"),
-    ("DELETE", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+$"), "keys"),
     # reveal-scope has no contract path yet (E27); pre-registered under the keys prefix.
     ("POST", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
     ("GET", re.compile(r"^/exchange-accounts/[^/]+/keys/[^/]+/reveal-scope$"), "keys"),
@@ -662,8 +661,15 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
     ("DELETE", "/exchange-accounts/{accountId}/profiles/{profileId}", "risk_caps"),
     ("PUT", "/exchange-accounts/{accountId}/default-profile", "risk_caps"),
     # createExchangeAccount: `keys`, the class of the key routes the account needs next (22
-    # names none). Its patch and delete are E27-S04's (#898) to register when it mounts them.
+    # names none).
     ("POST", "/exchange-accounts", "keys"),
+    # E27-S04 (#898): the account's disable, re-enable and delete, and a revoke's two classes
+    # (`keys` for the revoke, `accounts` for its `flatten_first` branch). Each is mounted by its
+    # slice, with its handler test; until then `_PENDING_HANDLER_GATES` holds it.
+    ("PATCH", "/exchange-accounts/{accountId}", "accounts"),  # updateExchangeAccount
+    ("DELETE", "/exchange-accounts/{accountId}", "accounts"),  # deleteExchangeAccount
+    ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "keys"),  # revokeApiKey
+    ("DELETE", "/exchange-accounts/{accountId}/keys/{keyId}", "accounts"),  # revokeApiKey
 )
 
 #: Mounted write routes whose path matches this must be in one of the two
@@ -675,12 +681,13 @@ HANDLER_GATED_ROUTES: tuple[tuple[str, str, str], ...] = (
 #: (#3085): an impersonation start, handler-gated. `exchange-accounts/{id}/profiles` (#906,
 #: SR-E28-02): the profile writes, handler-gated with `risk_caps` (#2304 slice 3c).
 #: `exchange-accounts/{id}/default-profile` (#906 0d): the default binding's move, likewise.
-#: `exchange-accounts` exactly (#895, SR-E27-02): the account's create; nothing under it.
+#: `exchange-accounts` exactly (#895, SR-E27-02): the account's create. `exchange-accounts/{id}`
+#: (E27-S04, #898): the account's patch and delete; fee-rate and consequences stay unswept.
 DANGEROUS_PATH_PATTERN = re.compile(
     r"^/(admin/)?(users|exchange-accounts/[^/]+/keys|keys|live|kill|trading/kill-switch"
     r"|session/environment|risk/lockouts|recording[^/]*|recorder[^/]*|audit|backups"
     r"|feature-flags|view-as|exchange-accounts/[^/]+/profiles"
-    r"|exchange-accounts/[^/]+/default-profile|exchange-accounts$)(/|$)"
+    r"|exchange-accounts/[^/]+/default-profile|exchange-accounts(/[^/]+)?$)(/|$)"
 )
 
 

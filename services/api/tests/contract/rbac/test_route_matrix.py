@@ -479,7 +479,10 @@ def test_account_scope_rows_have_the_shape_the_runner_reads() -> None:
             continue
         cls, gap = row["step_up"], row.get("step_up_pending")
         # m2: a class nothing registers yet is valid only beside the gap that names its ticket.
-        assert cls is None or cls in ACTION_CLASSES or gap, f"{key}: {cls} is no action class"
+        named = cls if isinstance(cls, list) else [cls]
+        assert cls is None or set(named) <= ACTION_CLASSES or gap, (
+            f"{key}: {cls} is no action class"
+        )
         assert gap is None or (cls and _resolvable(gap)), f"{key}: step_up_pending"
 
 

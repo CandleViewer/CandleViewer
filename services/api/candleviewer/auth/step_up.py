@@ -92,6 +92,8 @@ READONLY_WINDOW = timedelta(minutes=5)
 #: issue or delete.
 #: #3083 (AD-F01, 04 §7.2.2 row 46): `flags` gates a feature-flag write that is neither a
 #: kill-switch-class release nor `trading.live_enabled: true`; a grace class (`setFeatureFlag`).
+#: E27-S04 (#898): `accounts` gates an exchange account's disable, re-enable or delete and a
+#: revoke's `flatten_first`; no-grace.
 ACTION_CLASSES = frozenset(
     {
         "keys",
@@ -104,11 +106,15 @@ ACTION_CLASSES = frozenset(
         "flags",
         "audit",
         "backups",
+        "accounts",
     }
 )
 #: Ticket "No-grace list": always a fresh code. `backups`: a restore, download-link issue or delete
-#: cannot be undone; nor can `recorder_purge`'s purge of recorded data.
-NO_GRACE_ACTION_CLASSES = frozenset({"live_enablement", "killswitch", "backups", "recorder_purge"})
+#: cannot be undone; nor can `recorder_purge`'s purge of recorded data. `accounts` (E27-S04, #898):
+#: an account's disable, re-enable or delete and a revoke's `flatten_first`, one fresh code each.
+NO_GRACE_ACTION_CLASSES = frozenset(
+    {"live_enablement", "killswitch", "backups", "recorder_purge", "accounts"}
+)
 #: `PositionStateProvider.source` when no position store exists yet.
 POSITION_SOURCE_NOT_DEPLOYED = "not_deployed"
 #: Key prefix (in `step_up_elevations`) of the challenge issued by the last 403.

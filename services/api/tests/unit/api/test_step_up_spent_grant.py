@@ -54,6 +54,15 @@ async def _gate(
     )
 
 
+async def _gate_as(
+    w: _World, action_class: str, fingerprint: str, text: ChallengeText | None = None
+) -> JSONResponse | SpentGrant:
+    sid = w.sessions["tok"].id
+    return await require_bound_elevation(
+        w.auth, sid, action_class, fingerprint=fingerprint, emitter=w.audit, text=text
+    )
+
+
 async def _granted(w: _World, fingerprint: str, action_class: str = "backups") -> StepUpChallenge:
     """Step up for the request `fingerprint` names: the session then holds its one-shot grant."""
     sid = str(w.sessions["tok"].id)
@@ -214,3 +223,28 @@ async def test_consume_bound_grant_still_returns_none_on_use() -> None:
     again = await consume_bound_grant(step_up, w.audit, sid, "live_enablement", _HELD)
     assert isinstance(again, StepUpChallenge) and again.fingerprint == _HELD
     assert again.challenge_id != second.challenge_id  # spent: the re-send is challenged afresh
+
+
+async def test_the_accounts_class_is_registered_no_grace_and_is_challenged_not_a_defect() -> None:
+    """E27-S04 (#898), B3a: `accounts` is a known no-grace class, so its gate issues the challenge
+    for the request (403, `action_class` named) and never answers the unregistered-class 500."""
+    w = await _world()
+    challenge = _problem(await _gate_as(w, "accounts", _HELD, _TEXT), 403)
+    assert challenge["code"] == "step_up_required"
+    assert challenge["action_class"] == "accounts"
+    held = await _granted(w, _HELD, "accounts")
+    assert (held.action_class, held.fingerprint) == ("accounts", _HELD)
+    spent = await _gate_as(w, "accounts", _HELD)
+    assert isinstance(spent, SpentGrant) and spent.action_class == "accounts"
+
+
+async def test_a_keys_grant_never_satisfies_an_accounts_demand() -> None:
+    """Grants match by class: a `keys` step-up leaves a `keys` grace window, and the same
+    request's `accounts` demand is still challenged."""
+    w = await _world()
+    sid = str(w.sessions["tok"].id)
+    issued = await w.auth.step_up.record_pending(sid, "keys")
+    assert w.step_up(challenge_id=str(issued.challenge_id)).status_code == 200
+    assert await w.auth.step_up.remaining_grace(sid, "keys") is not None
+    refused = _problem(await _gate_as(w, "accounts", _HELD), 403)
+    assert refused["action_class"] == "accounts"
