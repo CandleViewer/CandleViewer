@@ -7,3 +7,14 @@ import { Meta } from "@storybook/addon-docs/blocks";
 `CMP-040..069` in `docs/plan/15-component-catalogue.md`: form fields, menus, tabs, dialogs, toasts,
 tables and cards. A component's stories live under `Molecules/<Component>` and ship with the
 component (E05-S01..S04).
+
+## RbacGate (CMP-079)
+
+RbacGate is a UI affordance, not an authorisation control: the server enforces RBAC (C-12.4).
+
+It wraps one atom. Allowed renders the atom unchanged. Denied takes a key of the E09-D09 §3.1
+vocabulary (`RBAC_REASONS`, with `{verb}` or `{user}` fills where the string has them) and passes
+the sentence to the atom's own `disabledReason`, so the atom stays focusable with
+`aria-disabled="true"` and its reason as the accessible description. It has no keys of its own:
+Enter, Space and a click on a denied control do nothing. Only the inline form ships; the tooltip and
+notice forms follow CMP-016 Tooltip.
