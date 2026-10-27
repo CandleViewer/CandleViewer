@@ -52,3 +52,48 @@ export function openIndex<T>(items: readonly T[], chosen: number, skip: Skip<T>)
   const item = items[chosen];
   return item !== undefined && !skip(item) ? chosen : firstIndex(items, skip);
 }
+
+/** Type-ahead (APG): a typed string lives this long (ms) after its last key. */
+export const TYPE_AHEAD_MS = 500;
+
+export interface Typed {
+  readonly text: string;
+  readonly at: number;
+}
+
+/** The string after one more key: it restarts when the last key is older than the window. `now` is injected. */
+export const extendTyped = (prev: Typed, char: string, now: number): Typed => ({
+  text: now - prev.at > TYPE_AHEAD_MS ? char : prev.text + char,
+  at: now,
+});
+
+/**
+ * The next option whose label starts with `text` (case-insensitive), wrapping. A string of one repeated letter
+ * cycles: it starts after `from`. Any other string starts at `from` itself, so "su" stays on "Sub-account 1".
+ * Skipped options never match. Returns -1 for no match.
+ */
+export function matchIndex<T>(
+  items: readonly T[],
+  from: number,
+  text: string,
+  label: (item: T) => string,
+  skip: Skip<T>,
+): number {
+  const needle = text.toLowerCase();
+  const cycle = [...needle].every((c) => c === needle[0]);
+  const begin = cycle ? from + 1 : Math.max(from, 0);
+  for (let step = 0; step < items.length; step += 1) {
+    const i = (begin + step) % items.length;
+    const item = items[i] as T;
+    // A repeated letter matches on that one letter, so "aa" keeps cycling through the "a" labels.
+    if (
+      !skip(item) &&
+      label(item)
+        .toLowerCase()
+        .startsWith(cycle ? needle.slice(0, 1) : needle)
+    ) {
+      return i;
+    }
+  }
+  return -1;
+}

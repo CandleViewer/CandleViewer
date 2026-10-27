@@ -182,15 +182,17 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 
 ### Select (CMP-009, select-only combobox)
 
-| Keys                            | Action                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab                 | Moves focus to or from the trigger; focus never enters the list. Plain disabled is skipped.           |
-| Enter, Space, ↓, ↑ (closed)     | Opens the list on the chosen option, else the first enabled one. Nothing is submitted or scrolled.    |
-| Home / End (closed)             | Opens on the first / last enabled option.                                                             |
-| ↓ / ↑, Home / End (open)        | Moves the active option; a disabled option is skipped, no wrap. `aria-activedescendant` follows.      |
-| Page Up / Page Down (open)      | Moves up to ten enabled options; the page never scrolls.                                              |
-| Enter, Space (open)             | Chooses the active option, closes; focus stays on the trigger (Space per APG select-only).            |
-| Tab (open)                      | Chooses the active option, closes and moves focus on.                                                 |
-| Esc (open)                      | Closes with the value unchanged, focus stays; the next Esc bubbles to the host.                       |
-| Ctrl, Alt, Meta or Shift chords | Ignored.                                                                                              |
-| Any key above (with a reason)   | The list never opens; the first one of a focus visit announces the reason once. Tab and Esc are free. |
+| Keys                              | Action                                                                                                |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | Moves focus to or from the trigger; focus never enters the list. Plain disabled is skipped.           |
+| Enter, Space, ↓, ↑ (closed)       | Opens the list on the chosen option, else the first enabled one. Nothing is submitted or scrolled.    |
+| Home / End (closed)               | Opens on the first / last enabled option.                                                             |
+| ↓ / ↑, Home / End (open)          | Moves the active option; a disabled option is skipped, no wrap. `aria-activedescendant` follows.      |
+| Page Up / Page Down (open)        | Moves up to ten enabled options; the page never scrolls.                                              |
+| A printable key                   | Type-ahead (closed or open): the next label that starts with the typed string, case-insensitive.      |
+| Enter, Space (open)               | Chooses the active option, closes; focus stays on the trigger (Space per APG select-only).            |
+| Enter, Space on a reason option   | An unavailable or locked option is reachable but never chosen; its reason is announced again.         |
+| Tab (open)                        | Chooses the active option, closes and moves focus on.                                                 |
+| Esc (open)                        | Closes with the value unchanged, focus stays; the next Esc bubbles to the host.                       |
+| Ctrl, Alt, Meta chords, Shift+key | Ignored (Shift+letter is typed).                                                                      |
+| Any key above (with a reason)     | The list never opens; the first one of a focus visit announces the reason once. Tab and Esc are free. |

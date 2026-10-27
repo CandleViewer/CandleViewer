@@ -13,13 +13,30 @@ import { Icon } from "../icons/Icon.js";
 import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
 import { cx } from "./internal/cx.js";
 import { FieldMessage, useRefusalAnnounce } from "./internal/fieldParts.js";
-import { firstIndex, lastIndex, openIndex, pageIndex, stepIndex } from "./internal/listNav.js";
+import {
+  extendTyped,
+  firstIndex,
+  lastIndex,
+  matchIndex,
+  openIndex,
+  pageIndex,
+  stepIndex,
+  TYPE_AHEAD_MS,
+  type Typed,
+} from "./internal/listNav.js";
 
 export interface SelectOption {
   readonly value: string;
   readonly label: string;
   /** Plain disabled: dimmed, passed over by the arrows, never chosen. */
   readonly disabled?: boolean;
+  /**
+   * The form's own rules make this option unavailable, and say why: the validity look. Arrow-reachable, never
+   * chosen; the reason is its second line and its description. A reason wins over `disabled`.
+   */
+  readonly unavailableReason?: string;
+  /** A gated option (T2): the lock, the label in `color.text.tertiary`, the reason as its second line. Never chosen. */
+  readonly disabledReason?: string;
 }
 
 export interface SelectProps {
@@ -71,8 +88,29 @@ const fitStyle = (fit: Fit): CSSProperties | undefined =>
         "--cv-select-wide": `${String(fit.wide)}px`,
       } as CSSProperties);
 
-/** The seam for slice 11: the arrows pass over exactly these options. */
-const skipped = (option: SelectOption): boolean => option.disabled === true;
+type Kind = "disabled" | "unavailable" | "locked";
+
+const trimmed = (text: string | undefined): string | undefined => {
+  const t = text?.trim();
+  return t === "" ? undefined : t;
+};
+
+/** How an option looks and behaves: a stated reason (T2 first) makes it reachable; plain disabled has none. */
+function look(option: SelectOption): { kind: Kind | undefined; reason: string | undefined } {
+  const locked = trimmed(option.disabledReason);
+  if (locked !== undefined) return { kind: "locked", reason: locked };
+  const unavailable = trimmed(option.unavailableReason);
+  if (unavailable !== undefined) return { kind: "unavailable", reason: unavailable };
+  return { kind: option.disabled === true ? "disabled" : undefined, reason: undefined };
+}
+
+/** The arrows pass over exactly these options: plain disabled. Unavailable and T2 options stay reachable. */
+const skipped = (option: SelectOption): boolean => look(option).kind === "disabled";
+
+const labelOf = (option: SelectOption): string => option.label;
+
+/** Never chosen, by key or pointer: every kind of denied option. */
+const blocked = (option: SelectOption): boolean => look(option).kind !== undefined;
 
 /** CMP-009: the select-only combobox (APG). Focus stays on the trigger; `aria-activedescendant` names the option. */
 export function Select({
@@ -97,6 +135,9 @@ export function Select({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const [fit, setFit] = useState<Fit>(UNFIT);
+  // The option whose reason Enter or a press re-showed (announced politely while it stays active).
+  const [recalled, setRecalled] = useState(-1);
+  const typed = useRef<Typed>({ text: "", at: 0 });
 
   const chosen = options.findIndex((option) => option.value === value);
   // `options` may change while open: an index that no longer names a reachable option falls back to the start.
@@ -110,11 +151,16 @@ export function Select({
 
   const choose = (index: number): void => {
     const option = options[index];
-    if (option !== undefined && skipped(option)) return;
+    if (option !== undefined && blocked(option)) {
+      // An unavailable or T2 option is never chosen; its reason is shown again. Plain disabled says nothing.
+      if (look(option).reason !== undefined) setRecalled(index);
+      return;
+    }
     if (option !== undefined && option.value !== value) onChange(option.value);
     setOpen(false);
   };
   const openAt = (index: number): void => {
+    setRecalled(-1);
     setActive(index);
     setOpen(true);
   };
@@ -154,9 +200,28 @@ export function Select({
     const { key } = event;
     // A chord belongs to the host (Shift+Tab is focus movement, not a chord of ours).
     if (event.ctrlKey || event.altKey || event.metaKey) return;
-    if (event.shiftKey && key !== "Tab") return;
+    if (event.shiftKey && key !== "Tab" && (key.length > 1 || key === " ")) return;
     if (key === "Tab") {
       if (open) choose(current); // no preventDefault: focus moves on (APG)
+      return;
+    }
+    // Type-ahead (APG): printables extend a short-lived string; the next label that starts with it becomes active.
+    // A Space inside a typed string continues it (APG), so "sub account" works; a lone Space opens or chooses.
+    const now = performance.now();
+    const typing = typed.current.text !== "" && now - typed.current.at <= TYPE_AHEAD_MS;
+    if (key.length === 1 && (key !== " " || typing)) {
+      typed.current = extendTyped(typed.current, key, now);
+      const found = matchIndex(
+        options,
+        open ? current : chosen,
+        typed.current.text,
+        labelOf,
+        skipped,
+      );
+      if (found >= 0) {
+        event.preventDefault(); // a key that did something is ours; one that matched nothing stays the host's
+        openAt(found);
+      }
       return;
     }
     const consume = (): void => event.preventDefault();
@@ -279,34 +344,58 @@ export function Select({
             aria-labelledby={ariaLabelledBy}
             onMouseDown={keepFocus}
           >
-            {options.map((option, index) => (
-              // The trigger holds focus and drives the options; an option is a pointer target.
-              // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/interactive-supports-focus -- see above
-              <div
-                key={option.value}
-                id={optionId(index)}
-                role="option"
-                className="cv-select__option"
-                aria-selected={index === chosen}
-                aria-disabled={skipped(option) ? true : undefined}
-                data-active={index === current ? "" : undefined}
-                onMouseMove={() => {
-                  if (!skipped(option) && index !== current) setActive(index);
-                }}
-                onClick={() => choose(index)}
-              >
-                <span className="cv-select__check">
-                  {index === chosen ? <Icon name="check" /> : null}
-                </span>
-                <span>{option.label}</span>
-              </div>
-            ))}
+            {options.map((option, index) => {
+              const { kind, reason: why } = look(option);
+              return (
+                // The trigger holds focus and drives the options; an option is a pointer target.
+                // eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/interactive-supports-focus -- see above
+                <div
+                  key={option.value}
+                  id={optionId(index)}
+                  role="option"
+                  className="cv-select__option"
+                  aria-selected={index === chosen}
+                  aria-describedby={why === undefined ? undefined : `${optionId(index)}-reason`}
+                  aria-disabled={kind === undefined ? undefined : true}
+                  data-kind={kind}
+                  data-active={index === current ? "" : undefined}
+                  onMouseMove={() => {
+                    if (kind !== "disabled" && index !== current) setActive(index);
+                  }}
+                  onClick={() => choose(index)}
+                >
+                  <span className="cv-select__check">
+                    {index === chosen ? <Icon name="check" /> : null}
+                  </span>
+                  {kind === "locked" ? (
+                    <span className="cv-select__optlock">
+                      <Icon name="lock" />
+                    </span>
+                  ) : null}
+                  <span className="cv-select__body">
+                    <span id={`${optionId(index)}-label`} className="cv-select__label">
+                      {option.label}
+                    </span>
+                    {why === undefined ? null : (
+                      <span id={`${optionId(index)}-reason`} className="cv-select__reason">
+                        {why}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         ) : null}
       </div>
       <FieldMessage id={errorId} message={invalid ? errorMessage : undefined} />
       <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
       {refusal.status}
+      {options.some((option) => look(option).reason !== undefined) ? (
+        <span className="cv-visually-hidden" role="status">
+          {open && recalled === current ? look(options[current] as SelectOption).reason : ""}
+        </span>
+      ) : null}
     </div>
   );
 }

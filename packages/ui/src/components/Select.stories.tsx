@@ -164,6 +164,77 @@ export const LongList: Story = {
   },
 };
 
+const PAIRS = [
+  { value: "gtc", label: "GTC" },
+  { value: "ioc", label: "IOC" },
+  {
+    value: "fok",
+    label: "FOK",
+    unavailableReason: "Market orders are always IOC on Bybit",
+  },
+  { value: "post", label: "Post-only", disabledReason: "Owner only: your role can't change this." },
+  { value: "gone", label: "Retired", disabled: true },
+];
+
+/** Unavailable and T2 options: arrow-reachable, aria-disabled, described by the reason; Enter never chooses. */
+export const Unavailable: Story = {
+  args: { options: PAIRS, value: "gtc", "aria-label": "Time in force" },
+  play: async ({ canvasElement, args }) => {
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}{ArrowDown}");
+    const box = trigger(canvasElement);
+    const fok = within(canvasElement).getByRole("option", { name: /^FOK/ });
+    await expect(fok).toHaveAccessibleDescription("Market orders are always IOC on Bybit");
+    await expect(box).toHaveAttribute("aria-activedescendant", fok.id);
+    await userEvent.keyboard("{Enter}");
+    await expect(args.onChange).not.toHaveBeenCalled();
+    await expect(box).toHaveAttribute("aria-expanded", "true");
+    await expect(within(canvasElement).getByRole("status")).toHaveTextContent(/always IOC/);
+    // The T2 option follows; the plain-disabled one after it is skipped.
+    await userEvent.keyboard("{ArrowDown}{ArrowDown}");
+    await expect(box).toHaveAttribute(
+      "aria-activedescendant",
+      within(canvasElement).getByRole("option", { name: /^Post-only/ }).id,
+    );
+  },
+};
+
+/** Type-ahead: a printable moves the active option to the next label that starts with the typed string. */
+export const TypeAhead: Story = {
+  play: async ({ canvasElement, args }) => {
+    await userEvent.tab();
+    await userEvent.keyboard("sub-account 3");
+    const box = trigger(canvasElement);
+    await expect(box).toHaveAttribute("aria-expanded", "true");
+    await expect(box).toHaveAttribute(
+      "aria-activedescendant",
+      within(canvasElement).getByRole("option", { name: "Sub-account 3" }).id,
+    );
+    await expect(args.onChange).not.toHaveBeenCalled();
+  },
+};
+
+/** Fourteen options with a reason on the last: ten rows, then it scrolls; End keeps the active row in view. */
+export const LongListUnavailable: Story = {
+  args: {
+    options: Array.from({ length: 14 }, (_, i) => ({
+      value: `o${String(i)}`,
+      label: `Option ${String(i + 1)}`,
+      ...(i === 13 ? { unavailableReason: "Sold out" } : {}),
+    })),
+    value: "o0",
+  },
+  play: async ({ canvasElement }) => {
+    await userEvent.tab();
+    await userEvent.keyboard("{End}");
+    const list = within(canvasElement).getByRole("listbox");
+    await expect(list.scrollHeight).toBeGreaterThan(list.clientHeight);
+    const last = within(canvasElement).getByRole("option", { name: /^Option 14/ });
+    const edge = list.getBoundingClientRect();
+    await expect(last.getBoundingClientRect().bottom).toBeLessThanOrEqual(edge.bottom + 1);
+  },
+};
+
 export const AllStates: Story = {
   render: (args) => (
     <div style={col}>
@@ -197,7 +268,7 @@ const themed = (theme: string): Story => ({
   },
   render: (args) => (
     <div style={{ ...col, paddingBlockEnd: "10rem" }}>
-      <Host {...args} aria-label="Open" />
+      <Host {...args} aria-label="Open" options={PAIRS} value="gtc" />
       <Host {...args} aria-label="Gated" disabledReason={REASON} />
       <Host {...args} aria-label="Invalid" invalid errorMessage={ERROR} />
       <Host {...args} aria-label="Placeholder" value={undefined} placeholder="Choose an account" />
