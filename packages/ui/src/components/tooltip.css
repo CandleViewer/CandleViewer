@@ -1,0 +1,89 @@
+/*
+ * CMP-016 Tooltip (D02 slice 4, conventions 30): a floating overlay surface, text only, no arrow.
+ * Positioned by `useAnchoredPosition` (fixed, `space.inset.xs` from the trigger, flipped at the viewport edge).
+ * The 20rem maximum is the 320 px component constant at 100 % text (slice 4 §5.1 "Surface widths"; no size token).
+ * Stacking: portalled to `body`, no z-index. Its order against the future CMP-017 Popover, CMP-041 Menu and the
+ * toasts is not specified yet (E05-D02 slice 4, conventions 30 and 32; there is no layer token).
+ */
+.cv-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(20rem, calc(100vw - 2 * var(--space-inset-xs)));
+  padding-block: var(--space-inset-xs);
+  padding-inline: var(--space-inset-sm);
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-overlay);
+  box-shadow: var(--elevation-popover);
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  white-space: normal;
+  overflow-wrap: break-word;
+  opacity: 1;
+  transition: opacity var(--motion-duration-fast) var(--motion-easing-decelerate);
+}
+
+/* The fade-in starts from transparent once `hidden` is removed (motion-safe). */
+@starting-style {
+  .cv-tooltip {
+    opacity: 0;
+  }
+}
+
+/* Out over `fast` / `accelerate`; no pointer events from the first frame of the exit (conventions 35). */
+.cv-tooltip[hidden] {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-duration-fast) var(--motion-easing-accelerate),
+    display var(--motion-duration-fast) allow-discrete;
+}
+
+/* Never seen at the origin: invisible until the first placement lands. */
+.cv-tooltip:not([data-positioned]) {
+  visibility: hidden;
+}
+
+/* Reduced motion (the in-app override, or the OS until the runtime writes data-motion): a cut, no fade. */
+:root[data-motion="reduce"] .cv-tooltip,
+:root[data-motion="reduce"] .cv-tooltip[hidden] {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-tooltip,
+  :root:not([data-motion]) .cv-tooltip[hidden] {
+    transition: none;
+  }
+}
+
+/* The universal reduce pair (as theme.css applies it), kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}
+
+/* Forced colours (conventions 38): a CanvasText 1 px border on Canvas, CanvasText text. */
+@media (forced-colors: active) {
+  .cv-tooltip {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+}

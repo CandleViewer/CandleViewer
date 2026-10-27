@@ -195,3 +195,18 @@ Only a neutral label truncates. A status chip never shrinks, so give it room for
 | Tab (first) | The first Tab on a page focuses the first skip link and shows it.                                                     |
 | Tab         | To the next skip link, then into the TopBar; each link hides again when it loses focus.                               |
 | Enter       | Moves focus to the target, which takes `tabindex="-1"` until blur and shows the ring; the next Tab continues from it. |
+
+### Tooltip (CMP-016, APG Tooltip)
+
+| Keys                          | Action                                                                                                |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab to trigger    | Keyboard focus (`:focus-visible`) shows it at once; a pointer focus waits for the 300 ms hover delay. |
+| Tab / Shift+Tab away, blur    | Hides it, unless the pointer is still on the trigger.                                                 |
+| Esc                           | Hides it; focus stays on the trigger and the key stops there. A second Esc reaches the host.          |
+| Pointer on trigger or tooltip | Shows after the delay and stays (WCAG 1.4.13); leaving hides it after a 100 ms grace, never a timer.  |
+
+| Element              | Role    | Name    | Description                                                                                  |
+| -------------------- | ------- | ------- | -------------------------------------------------------------------------------------------- |
+| tooltip, `describes` | tooltip | —       | In the DOM at mount and `hidden`; the trigger's `aria-describedby` points at it.             |
+| tooltip, `echo`      | tooltip | —       | `aria-hidden`: a visual copy of the trigger's `aria-label` or of its always-rendered reason. |
+| trigger              | its own | its own | Must take focus; a static atom never hosts a tooltip. Never the `title` attribute.           |
