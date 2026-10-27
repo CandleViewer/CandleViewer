@@ -3,8 +3,11 @@ import * as Atoms from "../src/index.js";
 import { TOKEN_SCHEMA_VERSION, Placeholder } from "../src/index.js";
 import type {
   ButtonProps,
+  CheckboxProps,
   IconButtonProps,
+  NumericStepperInputProps,
   RadioGroupProps,
+  SegmentedControlProps,
   SelectProps,
   SliderProps,
   TextInputProps,
@@ -22,14 +25,15 @@ describe("@candleviewer/ui public export surface", () => {
 });
 
 describe("@candleviewer/ui control atoms (E05-S01)", () => {
-  // CMP-003 SegmentedControl, CMP-005 Checkbox and CMP-008 NumericStepperInput join this list
-  // with their own PRs (#4757, #4738, #4761).
   it.each([
     ["Button", Atoms.Button],
     ["IconButton", Atoms.IconButton],
+    ["SegmentedControl", Atoms.SegmentedControl],
     ["Toggle", Atoms.Toggle],
+    ["Checkbox", Atoms.Checkbox],
     ["RadioGroup", Atoms.RadioGroup],
     ["TextInput", Atoms.TextInput],
+    ["NumericStepperInput", Atoms.NumericStepperInput],
     ["Select", Atoms.Select],
     ["Slider", Atoms.Slider],
   ])("exports %s from the package entry as a component function", (_name, component) => {
@@ -41,9 +45,12 @@ describe("@candleviewer/ui control atoms (E05-S01)", () => {
       | [
           ButtonProps,
           IconButtonProps,
+          SegmentedControlProps,
           ToggleProps,
+          CheckboxProps,
           RadioGroupProps,
           TextInputProps,
+          NumericStepperInputProps,
           SelectProps,
           SliderProps,
         ]

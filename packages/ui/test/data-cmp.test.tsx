@@ -1,22 +1,46 @@
 // @vitest-environment jsdom
 import type { JSX } from "react";
 import { describe, expect, it } from "vitest";
-import { Button, IconButton, RadioGroup, Select, Slider, TextInput, Toggle } from "../src/index.js";
+import {
+  Button,
+  Checkbox,
+  IconButton,
+  NumericStepperInput,
+  RadioGroup,
+  SegmentedControl,
+  Select,
+  Slider,
+  TextInput,
+  Toggle,
+} from "../src/index.js";
+import type { SegmentedOptions } from "../src/index.js";
 import { mount } from "./theme/mount.js";
 
 const options = [
   { value: "a", label: "Alpha" },
   { value: "b", label: "Bravo" },
 ];
+const segments: SegmentedOptions = [
+  { value: "a", label: "Alpha" },
+  { value: "b", label: "Bravo" },
+];
 const noop = (): void => undefined;
 
-// CMP-003, CMP-005 and CMP-008 add their rows with their own PRs (#4757, #4738, #4761).
 const atoms: [string, () => JSX.Element][] = [
   ["CMP-001", () => <Button>Save</Button>],
   ["CMP-002", () => <IconButton icon="lock" label="Settings" />],
+  [
+    "CMP-003",
+    () => <SegmentedControl aria-label="View" options={segments} value="a" onChange={noop} />,
+  ],
   ["CMP-004", () => <Toggle label="Armed" />],
+  ["CMP-005", () => <Checkbox label="Reduce only" />],
   ["CMP-006", () => <RadioGroup aria-label="Mode" options={options} value="a" onChange={noop} />],
   ["CMP-007", () => <TextInput aria-label="Name" value="" onChange={noop} />],
+  [
+    "CMP-008",
+    () => <NumericStepperInput label="Size" value={1} step={1} precision={0} onChange={noop} />,
+  ],
   ["CMP-009", () => <Select aria-label="Pick" options={options} value="a" onChange={noop} />],
   [
     "CMP-010",

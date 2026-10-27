@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState, type JSX } from "react";
 import { act } from "react";
-import { expect, fn, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, waitFor, within } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import { Select, type SelectProps } from "../src/components/index.js";
 import { extendTyped, matchIndex, TYPE_AHEAD_MS } from "../src/components/internal/listNav.js";
@@ -218,7 +218,9 @@ describe("Select unavailable and T2 options", () => {
     const delta = options(host)[3] as HTMLElement;
     const reasonLine = rowOf(delta).querySelector(".cv-select__reason") as HTMLElement;
     await userEvent.hover(reasonLine);
-    expect(activeLabel(host)).toBe("Delta");
+    // The mouse move runs outside `act`, so React commits the new active option on its own scheduler turn,
+    // which a loaded run can delay past the end of `hover`: wait for the commit, do not assume it.
+    await waitFor(() => expect(activeLabel(host)).toBe("Delta"));
     expect(within(host).getByRole("status")).toHaveTextContent("");
     await userEvent.click(reasonLine);
     expect(within(host).getByRole("status")).toHaveTextContent("Owner only.");
@@ -402,7 +404,8 @@ describe("Select type-ahead", () => {
     await userEvent.hover(bravo);
     expect(activeLabel(host)).toBe("Alpha");
     await userEvent.hover(charlie);
-    expect(activeLabel(host)).toBe("Charlie");
+    // As above: the hover commits on its own turn. Once Charlie is active, Bravo's earlier hover has committed too.
+    await waitFor(() => expect(activeLabel(host)).toBe("Charlie"));
     expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
     key(host, "ArrowDown");
     expect(activeLabel(host)).toBe("Delta");
