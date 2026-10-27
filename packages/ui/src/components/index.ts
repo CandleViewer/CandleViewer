@@ -23,6 +23,9 @@ export type {
 export { ConfidenceDots } from "./ConfidenceDots.js";
 export type { ConfidenceDotsProps, ConfidenceLevel } from "./ConfidenceDots.js";
 
+export { CopyButton, useCopy } from "./CopyButton.js";
+export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from "./CopyButton.js";
+
 export { Countdown } from "./Countdown.js";
 export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
 
@@ -67,6 +70,8 @@ export type {
   PopoverPlacement,
   PopoverProps,
 } from "./Popover.js";
+export { Link } from "./Link.js";
+export type { LinkProps, LinkSlot, LinkSlotProps } from "./Link.js";
 
 export { ProgressBar } from "./ProgressBar.js";
 export type { ProgressBarName, ProgressBarProps } from "./ProgressBar.js";

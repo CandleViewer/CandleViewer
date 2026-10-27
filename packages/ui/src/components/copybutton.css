@@ -1,0 +1,26 @@
+/* CMP-033 CopyButton. The box, ring, hover and dimming are the nested CMP-002 ghost md's (conv. 20); this
+   root binds no opacity and no ring of its own. Only the glyph colour changes with the state, and instantly:
+   no motion, so reduced motion holds by construction. */
+.cv-copy-button {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  vertical-align: middle;
+}
+
+/* Copied: the check glyph in success.default (at least 3:1 on every surface, D02 data-display CMP-033). */
+.cv-copy-button[data-state="copied"] svg {
+  color: var(--color-status-success-default);
+}
+
+/* Failed (E20): the error glyph in danger.default; the shape and "Copy failed" carry it, not the hue. */
+.cv-copy-button[data-state="failed"] svg {
+  color: var(--color-status-danger-default);
+}
+
+@media (forced-colors: active) {
+  /* The status hues are lost: the glyph follows the CMP-002 ButtonText (GrayText when disabled). */
+  .cv-copy-button[data-state] svg {
+    color: currentcolor;
+  }
+}
