@@ -5,6 +5,12 @@ import { Select, type SelectProps } from "./Select.js";
 
 const REASON = "Owner only: your role can't change this account.";
 const ERROR = "Choose an account.";
+/** The T2 option sample (D02F §7 CMP-009; the registered `rbac.account_read_only` copy). */
+const T2_OPTION = {
+  value: "sub_002",
+  label: "sub_002",
+  disabledReason: "You can view this account, not trade it.",
+};
 const OPTIONS = [
   { value: "main", label: "Main account" },
   { value: "sub1", label: "Sub-account 1" },
@@ -62,6 +68,7 @@ export const FocusVisible: Story = {
 
 /** Open: the listbox under the trigger, the chosen option checked, the active one on the hover surface with CMP-039's inset ring. */
 export const Open: Story = {
+  args: { options: [...OPTIONS, T2_OPTION] },
   play: async ({ canvasElement }) => {
     await userEvent.tab();
     await userEvent.keyboard("{ArrowDown}");
@@ -172,12 +179,12 @@ const PAIRS = [
     label: "FOK",
     unavailableReason: "Market orders are always IOC on Bybit",
   },
-  { value: "post", label: "Post-only", disabledReason: "Owner only: your role can't change this." },
+  T2_OPTION,
   { value: "gone", label: "Retired", disabled: true },
 ];
 
 /** Unavailable and T2 options: arrow-reachable, aria-disabled, described by the reason; Enter never chooses. */
-export const Unavailable: Story = {
+export const UnavailableOption: Story = {
   args: { options: PAIRS, value: "gtc", "aria-label": "Time in force" },
   play: async ({ canvasElement, args }) => {
     await userEvent.tab();
@@ -194,7 +201,7 @@ export const Unavailable: Story = {
     await userEvent.keyboard("{ArrowDown}{ArrowDown}");
     await expect(box).toHaveAttribute(
       "aria-activedescendant",
-      within(canvasElement).getByRole("option", { name: /^Post-only/ }).id,
+      within(canvasElement).getByRole("option", { name: /^sub_002/ }).id,
     );
   },
 };

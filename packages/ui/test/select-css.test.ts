@@ -86,7 +86,17 @@ describe("select.css forced-colours cascade", () => {
     expect(prop(rule(normal, ".cv-select__reason"), "opacity")).toBeUndefined();
     expect(prop(twins(".cv-select__reason")[0] as Block, "color")).toBe("CanvasText");
     const locked = '.cv-select__option[data-kind="locked"] .cv-select__label';
-    expect(prop(twins(locked)[0] as Block, "color")).toBe("GrayText");
+    // T2 keeps its label and lock in CanvasText, never GrayText (conventions 29); plain disabled is the GrayText one.
+    expect(prop(twins(locked)[0] as Block, "color")).toBe("CanvasText");
+    expect(
+      prop(
+        twins('.cv-select__option[data-kind="locked"] .cv-select__optlock')[0] as Block,
+        "color",
+      ),
+    ).toBe("CanvasText");
+    expect(prop(twins('.cv-select__option[data-kind="disabled"]')[0] as Block, "color")).toBe(
+      "GrayText",
+    );
     // The active twin is last and equal in weight, so it beats the kind twins on the Highlight fill.
     const onFill = twins(".cv-select__option[data-active] .cv-select__reason")[0] as Block;
     expect(prop(onFill, "color")).toBe("HighlightText");
@@ -198,5 +208,20 @@ describe("select.css popup", () => {
 
   it("no hover rule exists: the pointer moves the active option, so the highlight and aria agree", () => {
     expect(CSS).not.toContain(":hover");
+  });
+});
+
+describe("select.css two-line options", () => {
+  it("a reason row has block padding, so the inset ring clears the text", () => {
+    expect(prop(rule(normal, ".cv-select__option[data-lines]"), "padding-block")).toBe(
+      "var(--space-inset-xs)",
+    );
+  });
+
+  it("the lock sits inside the label line, so the label column is shared; long labels clamp to two lines", () => {
+    expect(prop(rule(normal, ".cv-select__line"), "display")).toBe("flex");
+    const label = rule(normal, ".cv-select__label");
+    expect(prop(label, "-webkit-line-clamp")).toBe("2");
+    expect(prop(label, "overflow")).toBe("hidden");
   });
 });

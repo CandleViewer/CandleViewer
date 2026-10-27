@@ -56,6 +56,8 @@ const type = (host: HTMLElement, text: string): void => {
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
+  // The type-ahead window reads `performance.now`: only that clock is faked, so no test depends on real time.
+  vi.useFakeTimers({ toFake: ["performance"] });
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -114,6 +116,62 @@ describe("Select unavailable and T2 options", () => {
     key(host, "Tab");
     expect(onChange).not.toHaveBeenCalled();
     expect(box(host)).toHaveTextContent("Alpha");
+  });
+
+  it("announce the reason on a press, never on arrival, and again on every repeat press", async () => {
+    const host = await mount(<Host value="a" />);
+    key(host, "Enter");
+    key(host, "ArrowDown"); // arrives on Charlie: the description is read, the status is silent
+    const status = within(host).getByRole("status");
+    expect(status).toHaveTextContent("");
+    expect(options(host)[2]).toHaveAccessibleDescription("Not on Bybit linear.");
+    key(host, "Enter");
+    const first = status.firstElementChild;
+    expect(first).toHaveTextContent("Not on Bybit linear.");
+    key(host, "Enter"); // the same text again: a new node, so a polite region speaks it again
+    const second = status.firstElementChild;
+    expect(second).toHaveTextContent("Not on Bybit linear.");
+    expect(second).not.toBe(first);
+    // Arrowing away and back stays silent.
+    key(host, "ArrowDown");
+    key(host, "ArrowUp");
+    expect(activeLabel(host)).toBe("Charlie");
+    expect(status).toHaveTextContent("");
+    // Every other way of moving clears it too.
+    key(host, "Enter");
+    expect(status).toHaveTextContent("Not on Bybit linear.");
+    key(host, "End");
+    key(host, "Home");
+    key(host, "ArrowDown");
+    expect(status).toHaveTextContent("");
+  });
+
+  it("Tab leaving the list on a reason option closes it without choosing or announcing", async () => {
+    const onChange = fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    key(host, "Enter");
+    key(host, "ArrowDown");
+    key(host, "Tab");
+    expect(within(host).getByRole("status")).toHaveTextContent("");
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
+    expect(onChange).not.toHaveBeenCalled();
+    // On an ordinary option Tab still chooses.
+    key(host, "ArrowDown");
+    key(host, "ArrowDown");
+    key(host, "ArrowDown");
+    key(host, "ArrowDown"); // opens, then Charlie, Delta, Charlie two
+    key(host, "Tab");
+    expect(onChange).toHaveBeenCalledWith("e");
+  });
+
+  it("a press with no prior pointer move (a tap, an AT click) activates the row and shows its reason", async () => {
+    const host = await mount(<Host value="a" />);
+    key(host, "Enter");
+    const delta = options(host)[3] as HTMLElement;
+    act(() => delta.click());
+    expect(activeLabel(host)).toBe("Delta");
+    expect(within(host).getByRole("status")).toHaveTextContent("Owner only.");
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
   });
 
   it("are never chosen by a pointer click, which re-shows the reason; a plain disabled click says nothing", async () => {
@@ -181,7 +239,6 @@ describe("Select type-ahead", () => {
   });
 
   it("accumulates within the window, restarts after it, and an injected clock drives it", async () => {
-    vi.useFakeTimers();
     const host = await mount(<Host value="a" />);
     key(host, "Enter");
     type(host, "sub-account 2".slice(0, 4)); // "sub-"
@@ -205,10 +262,12 @@ describe("Select type-ahead", () => {
     expect(activeLabel(host)).toBe("Charlie two");
     key(host, "c");
     expect(activeLabel(host)).toBe("Charlie");
-    vi.useFakeTimers();
-    vi.advanceTimersByTime(TYPE_AHEAD_MS * 2);
-    key(host, "z");
+    key(host, "z"); // "cccz" matches nothing
     expect(activeLabel(host)).toBe("Charlie");
+    // The window really passed: the string restarts, so "a" alone reaches Alpha ("ccca" never would).
+    vi.advanceTimersByTime(TYPE_AHEAD_MS + 1);
+    key(host, "a");
+    expect(activeLabel(host)).toBe("Alpha");
   });
 
   it("a closed list stays closed when nothing matches; plain disabled never matches", async () => {
@@ -227,12 +286,74 @@ describe("Select type-ahead", () => {
     expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   });
 
-  it("a Space continues a typed string; on its own it is not type-ahead", async () => {
+  it("a Space continues a typed string while the longer string still matches", async () => {
     const host = await mount(<Host value="a" />);
     key(host, "s");
-    type(host, "ub-account ");
+    expect(key(host, "u")).toBe(false);
+    type(host, "b-account");
+    expect(key(host, " ")).toBe(false);
     key(host, "2");
     expect(activeLabel(host)).toBe("Sub-account 2");
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("a Space at exactly the window edge still continues the string; one ms later it does not", async () => {
+    const host = await mount(<Host value="a" />);
+    type(host, "sub-account");
+    vi.advanceTimersByTime(TYPE_AHEAD_MS);
+    expect(key(host, " ")).toBe(false);
+    key(host, "2");
+    expect(activeLabel(host)).toBe("Sub-account 2");
+    // One ms past the window the Space is a lone Space: it chooses, and the string is gone.
+    vi.advanceTimersByTime(TYPE_AHEAD_MS + 1);
+    key(host, " ");
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
+    expect(box(host)).toHaveTextContent("Sub-account 2");
+  });
+
+  it("a Space after a letter never scrolls: it is always consumed and does its own job", async () => {
+    const onChange = fn();
+    const tif = [
+      { value: "gtc", label: "GTC" },
+      { value: "ioc", label: "IOC" },
+      { value: "fok", label: "FOK", unavailableReason: "Market orders are always IOC" },
+    ];
+    // Closed, "g" opens on GTC; the Space ("g " matches nothing) then chooses it.
+    const closed = await mount(<Host options={tif} value="ioc" onChange={onChange} />);
+    key(closed, "g");
+    expect(box(closed)).toHaveAttribute("aria-expanded", "true");
+    expect(key(closed, " ")).toBe(false);
+    expect(onChange).toHaveBeenLastCalledWith("gtc");
+    expect(box(closed)).toHaveAttribute("aria-expanded", "false");
+    // Closed, "x" matches nothing and stays closed; the Space opens it instead of being left to the page.
+    const none = await mount(<Host options={tif} value="gtc" />);
+    expect(key(none, "x")).toBe(true);
+    expect(box(none)).toHaveAttribute("aria-expanded", "false");
+    expect(key(none, " ")).toBe(false);
+    expect(box(none)).toHaveAttribute("aria-expanded", "true");
+    // Open, "i" then Space chooses IOC.
+    const open = await mount(<Host options={tif} value="gtc" onChange={onChange} />);
+    key(open, "Enter");
+    key(open, "i");
+    expect(activeLabel(open)).toBe("IOC");
+    expect(key(open, " ")).toBe(false);
+    expect(onChange).toHaveBeenLastCalledWith("ioc");
+    expect(box(open)).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("a plain-disabled option is not activated by hover; a keyboard move scrolls, a hover does not", async () => {
+    const host = await mount(<Host value="a" />);
+    key(host, "Enter");
+    const [, bravo, charlie] = options(host) as [HTMLElement, HTMLElement, HTMLElement];
+    vi.mocked(Element.prototype.scrollIntoView).mockClear();
+    await userEvent.hover(bravo);
+    expect(activeLabel(host)).toBe("Alpha");
+    await userEvent.hover(charlie);
+    expect(activeLabel(host)).toBe("Charlie");
+    expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+    key(host, "ArrowDown");
+    expect(activeLabel(host)).toBe("Delta");
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: "nearest" });
   });
 
   it("ignores Ctrl, Alt and Meta chords and Shift+Space", async () => {
@@ -240,6 +361,10 @@ describe("Select type-ahead", () => {
     for (const init of [{ ctrlKey: true }, { altKey: true }, { metaKey: true }]) {
       expect(key(host, "c", init)).toBe(true);
     }
+    for (const init of [{ ctrlKey: true }, { metaKey: true }, { altKey: true, shiftKey: true }]) {
+      expect(key(host, "ArrowDown", init)).toBe(true);
+    }
+    expect(key(host, "ArrowLeft", { altKey: true })).toBe(true);
     expect(key(host, " ", { shiftKey: true })).toBe(true);
     expect(box(host)).toHaveAttribute("aria-expanded", "false");
   });
@@ -258,6 +383,48 @@ describe("Select type-ahead", () => {
     const off = await mount(<Host value="a" disabled />);
     expect(key(off, "c")).toBe(true);
     expect(box(off)).toHaveAttribute("aria-expanded", "false");
+  });
+});
+
+describe("Select Alt chords", () => {
+  it("Alt+Down opens without moving the active option; open, it is left to the host", async () => {
+    const host = await mount(<Host value="f" />);
+    expect(key(host, "ArrowDown", { altKey: true })).toBe(false);
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+    expect(activeLabel(host)).toBe("Sub-account 1");
+    expect(key(host, "ArrowDown", { altKey: true })).toBe(true);
+    expect(activeLabel(host)).toBe("Sub-account 1");
+  });
+
+  it("Alt+Up chooses the active option and closes; closed, it is left to the host", async () => {
+    const onChange = fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    expect(key(host, "ArrowUp", { altKey: true })).toBe(true);
+    key(host, "Enter");
+    key(host, "ArrowDown");
+    key(host, "ArrowDown");
+    key(host, "ArrowDown"); // Charlie, Delta, Charlie two
+    expect(key(host, "ArrowUp", { altKey: true })).toBe(false);
+    expect(onChange).toHaveBeenCalledWith("e");
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("Alt+Up on an unavailable option re-shows its reason and keeps the list open", async () => {
+    const onChange = fn();
+    const host = await mount(<Host value="a" onChange={onChange} />);
+    key(host, "Enter");
+    key(host, "ArrowDown");
+    key(host, "ArrowUp", { altKey: true });
+    expect(onChange).not.toHaveBeenCalled();
+    expect(box(host)).toHaveAttribute("aria-expanded", "true");
+    expect(within(host).getByRole("status")).toHaveTextContent("Not on Bybit linear.");
+  });
+
+  it("a gated select refuses Alt+Down but leaves Alt+Up alone", async () => {
+    const host = await mount(<Host value="a" disabledReason="Owner only" />);
+    expect(key(host, "ArrowUp", { altKey: true })).toBe(true);
+    expect(key(host, "ArrowDown", { altKey: true })).toBe(false);
+    expect(box(host)).toHaveAttribute("aria-expanded", "false");
   });
 });
 
