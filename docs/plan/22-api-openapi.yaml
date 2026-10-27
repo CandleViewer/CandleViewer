@@ -12334,8 +12334,8 @@ paths:
         `recorder_purge` are no-grace: the response is `single_use: true` and no window is opened. Three consecutive
         invalid codes downgrade the session to read-only for 5 minutes (`403 session_read_only` on
         every write except `POST /auth/logout`, `POST /auth/session/extend` and
-        `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that require elevation return `403` with `code: step_up_required`
-        until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
+        `DELETE /auth/session/view-as`; `POST /auth/step-up` answers it itself). Endpoints that
+        require elevation return `403` with `code: step_up_required` until this succeeds. Always audited (`auth.step_up_required`, `auth.step_up_granted`,
         `auth.step_up_failed`, `auth.step_up_mismatch`, `auth.session_readonly_downgrade`).
 
         **Session rotation (SR-013).** A successful step-up also rotates the session, the way
