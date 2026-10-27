@@ -56,6 +56,7 @@ from candleviewer.exchange.base.models import (
     RiskLimitTier,
     TickerEvent,
 )
+from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability import spawn, spawn_child
 from candleviewer.observability.context import run_in_thread
 from candleviewer.observability.metrics import BoundedMetric, Metrics
@@ -146,6 +147,7 @@ from candleviewer.oms.submit import (
 )
 from candleviewer.oms.validator import ReadOnlyCheck, Validator
 from candleviewer.oms_lane import HOP_TIMEOUT_S, LANE_JOIN_S, Lane, LaneStopped, OrderLane, Serving
+from candleviewer.oms_streams import LaneStreams
 from candleviewer.settings import OMS_INFLIGHT_STUCK_MAX_S, OMS_STOP_RESERVE_S, Settings
 from candleviewer.statechart.bindings.b01_order import ALREADY_TERMINAL
 from candleviewer.statechart.config import CV_COMMAND_TIMEOUT, CV_PERSIST_TIMEOUT
@@ -915,7 +917,8 @@ class OrderStateFeed:
 # and the serving loop's tick a new submit meets first (`ServingTick`, one float), the metrics and
 # the pager. Its audit writer and `machine_events` sink are its own, built on its loop (#913 L2,
 # `OmsStores`), and its venue calls never cross: the lane's own port signs and sends them
-# (#913 L1d).
+# (#913 L1d). Its private streams stay on the serving loop's registry, whose items cross a batch
+# at a time (`oms_streams.LaneStreams`, #913 L1d-2b, ruling Q2 (b)).
 
 
 class ServedProfiles:
@@ -1225,8 +1228,9 @@ class OwnedPort(RoutedPort, Protocol):
 
 class Venue(Protocol):
     """The exchange adapter's service as the root composes it (C-2.2): the trading port of the
-    process's environment for the order lane's loop, signed by that loop's M2 borrower (#913 L1d),
-    the waits of its lanes (ruling Q19) and its key-verdict table."""
+    process's environment for the order lane's loop, signed by that loop's M2 borrower (#913 L1d)
+    and opening its private streams through the lane's bridge; the opener of those streams, on the
+    serving loop (#913 L1d-2b); the waits of its lanes (ruling Q19); and its key-verdict table."""
 
     def lane_trading_port(
         self,
@@ -1235,7 +1239,12 @@ class Venue(Protocol):
         credentials: LoopSigningBorrower,
         transport: httpx.AsyncBaseTransport | None = None,
         clock_offset_ms: Callable[[], int | None] | None = None,
+        private_streams: LaneStreams | None = None,
     ) -> OwnedPort: ...
+
+    async def open_private_stream(
+        self, account: AccountRef, *, clock_offset_ms: Callable[[], int | None] | None = None
+    ) -> PrivateStream: ...
 
     def lane_waits(self) -> Mapping[RateLane, float]: ...
 
@@ -2172,10 +2181,11 @@ class OmsRuntime:
         and the startup task, their work on the lane with them, and wait for it to end there; then
         close the stop gate (its complete reads and passes cancelled with the startup task, before
         the machines), the facade (it unwires B1's ports), the command port, the lane's own sink,
-        the trading port, its loop signing (whose close frees M2's lane pool), the lane's own
-        audit writer, which the signing's last record needs, the OMS's pool and the lane's
-        heartbeat, each on its own loop, isolated, within its share of what is left, and last the
-        environment's lock (SEC-S3N-01), so nothing that signs or sends outlives it; then end the
+        the private streams its bridge still holds (#913 L1d-2b), the trading port, its loop
+        signing (whose close frees M2's lane pool), the lane's own audit writer, which the
+        signing's last record needs, the OMS's pool and the lane's heartbeat, each on its own
+        loop, isolated, within its share of what is left, and last the environment's lock
+        (SEC-S3N-01), so nothing that signs or sends outlives it; then end the
         serving loop's tick, stop the lane, one still asking the lock included, and join its
         thread. All of it ends by `OMS_STOP_RESERVE_S` after the drain, `LANE_JOIN_S` of it the
         join's, inside the OMS module's 15 s grace (20 Sec.6.2). The shared profile cache is its
@@ -2356,10 +2366,11 @@ class OmsRuntime:
         (SEC-S3L2-03, else `UnclaimedMachineEvents`), the environment's lock, held before the
         lane's signing, its trading port, the facade or any machine exists (SEC-S3N-01, else
         `EnvironmentLocked`), the lane's own audit writer (#913 L2), its loop signing over that
-        writer and its self-check, the lane's own trading port and router (#913 L1d), the lane's
-        own sink, the command port, the facade, the anchors and the pipeline; what the serving
-        loop holds, through its bridge (`Served*`). A failure once the pool exists closes what was
-        built before it goes on, each closer on its own loop."""
+        writer and its self-check, the lane's own trading port and router (#913 L1d) with the
+        bridge its private streams cross (#913 L1d-2b), the lane's own sink, the command port, the
+        facade, the anchors and the pipeline; what the serving loop holds, through its bridge
+        (`Served*`). A failure once the pool exists closes what was built before it goes on, each
+        closer on its own loop."""
         self._phase = "settings"
         settings, env, metrics = self._settings, self._env, self._metrics
         ingestion = self._ingestion
@@ -2430,10 +2441,17 @@ class OmsRuntime:
             # closure reads `port` late, when a closer runs it, so it closes the port the build
             # below assigns, or none if the adapter refused it
             closers.insert(0, ("trading_port", lambda: lane.call(_close_port(port, transport))))
+            # #913 L1d-2b: the private streams stay on the serving loop's one registry (ruling Q2
+            # (b)); the port opens them across this bridge, which does no I/O until a subscribe
+            streams = LaneStreams(self._venue.open_private_stream, serving)
             port = self._venue.lane_trading_port(
                 env, credentials=signing.borrower, transport=transport,
-                clock_offset_ms=ingestion.clock_offset_snapshot_ms,
+                clock_offset_ms=ingestion.clock_offset_snapshot_ms, private_streams=streams,
             )  # fmt: skip
+            # what a consumer left open closes on the serving loop, the lane dead or not, ahead of
+            # the port, by name, so before the heartbeat and the environment's lock (#913 L2)
+            at_port = [name for name, _ in closers].index("trading_port")
+            closers.insert(at_port, ("private_streams", lambda: serving.call(streams.aclose())))
             # S4-F (24 Sec.8.7): the OMS's way to the venue meets cancel-all's folds; every other
             # call passes through it as it is. The folds sit on the lane, over its own port.
             spacer = CancelAllSpacer(monotonic=self._monotonic, sleep=self._sleep)
