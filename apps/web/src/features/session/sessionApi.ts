@@ -30,6 +30,8 @@ export interface SessionApi {
   unlock(password: string): Promise<UnlockOutcome>;
   /** Forgets the token in every tab and routes to SCR-001. */
   endSession(): void;
+  /** Calls `listener` when a refresh or a call finds the session idle-locked; returns the unsubscribe. */
+  onLocked(listener: () => void): () => void;
 }
 
 const BASE = "/api/v1/auth";
@@ -100,4 +102,5 @@ export const sessionApi: SessionApi = {
   extend: () => clockOf(apiFetch(`${BASE}/session/extend`, { method: "POST" })),
   unlock,
   endSession: () => accessToken.endSession(),
+  onLocked: (listener) => accessToken.onLocked(listener),
 };

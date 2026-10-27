@@ -8,6 +8,8 @@ import "@candleviewer/ui/tokens.light.css";
 import "@candleviewer/ui/tokens.high-contrast.css";
 import "@candleviewer/ui/theme.css";
 import { startShell } from "./shell/startShell";
+import { runBootstrap } from "./shell/bootstrap/bootstrap";
+import { getShellState } from "./shell/bootstrap/store";
 
 const container = document.getElementById("root");
 if (!container) {
@@ -29,8 +31,15 @@ const shell = startShell({ wsUrl: systemWsUrl() });
 // App is imported lazily: its module creates the data router, which runs the
 // initial route loaders (guards) at creation time.
 void shell.ready.then(async () => {
+  const root = createRoot(container);
+  // #1640: a reload into an idle-locked session unlocks first (SCR-005), then boots for real
+  if (getShellState().bootstrap.kind === "locked") {
+    const { unlockBeforeBoot } = await import("./features/session/lockedBoot");
+    await unlockBeforeBoot(root);
+    await runBootstrap();
+  }
   const { App } = await import("./App");
-  createRoot(container).render(
+  root.render(
     <StrictMode>
       <App />
     </StrictMode>,

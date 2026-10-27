@@ -34,6 +34,8 @@ export interface SessionLockHostProps {
   readonly api?: SessionApi;
   /** Only a signed-in shell reads its session. */
   readonly enabled?: boolean;
+  /** Called when a read finds the session not locked: a reload into a locked session boots on. */
+  readonly onUnlocked?: () => void;
 }
 
 /**
@@ -45,11 +47,16 @@ export interface SessionLockHostProps {
 export function SessionLockHost({
   api = sessionApi,
   enabled = getMeClaims().authenticated,
+  onUnlocked,
 }: SessionLockHostProps): JSX.Element | null {
   const [view, setView] = useState<View>({ kind: "none" });
   const [idleMinutes, setIdleMinutes] = useState(15);
   const [now, setNow] = useState(() => Date.now());
   const actions = useRef<Actions | null>(null);
+  const unlocked = useRef(onUnlocked);
+  useEffect(() => {
+    unlocked.current = onUnlocked;
+  });
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -61,11 +68,20 @@ export function SessionLockHost({
     let failures = 0;
     let retryMs = RETRY_MS;
     let unlocking = false;
+    let reading = false;
     const at = (ms: number, task: () => void): void => {
       clearTimeout(timer);
       timer = setTimeout(task, Math.max(ms, MIN_DELAY_MS));
     };
-    const read = (): void => void api.read().then(apply);
+    const read = (): void => {
+      if (reading) return; // a burst of lock reports makes one read
+      reading = true;
+      void api.read().then((clock) => {
+        reading = false;
+        apply(clock);
+      });
+    };
+
     const retry = (): void => {
       at(retryMs, read);
       retryMs = Math.min(retryMs * 2, RETRY_MAX_MS);
@@ -94,6 +110,7 @@ export function SessionLockHost({
         );
         return;
       }
+      unlocked.current?.();
       const left = Date.parse(session.idle_deadline) - Date.parse(clock.server_time);
       // past its deadline but not locked yet (or no usable time): ask again later, not at once
       if (!(left > 0)) return retry();
@@ -134,9 +151,14 @@ export function SessionLockHost({
         });
       },
     };
+    // SCR-005 opens from events too: a refresh or a call that finds the session idle-locked
+    const off = api.onLocked(() => {
+      if (!unlocking) read();
+    });
     read();
     return () => {
       live = false;
+      off();
       clearTimeout(timer);
     };
   }, [enabled, api]);

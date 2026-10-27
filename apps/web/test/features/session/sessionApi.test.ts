@@ -1,13 +1,16 @@
 /** #1640 review: `sessionApi` outcomes against a stubbed `apiFetch` (no network). */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { apiFetch, refresh, endSession } = vi.hoisted(() => ({
+const { apiFetch, refresh, endSession, onLocked } = vi.hoisted(() => ({
   apiFetch: vi.fn<(url: string, init?: RequestInit) => Promise<Response>>(),
   refresh: vi.fn(),
   endSession: vi.fn(),
+  onLocked: vi.fn(),
 }));
 vi.mock("../../../src/lib/http/csrfFetch", () => ({ apiFetch }));
-vi.mock("../../../src/lib/auth/accessToken", () => ({ accessToken: { refresh, endSession } }));
+vi.mock("../../../src/lib/auth/accessToken", () => ({
+  accessToken: { refresh, endSession, onLocked },
+}));
 
 import { UNLOCK_TIMEOUT_MS, sessionApi } from "../../../src/features/session/sessionApi";
 
@@ -114,5 +117,13 @@ describe("sessionApi.read / extend", () => {
   it("endSession hands over to the token holder", () => {
     sessionApi.endSession();
     expect(endSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sessionApi: S2 (#1640)", () => {
+  it("onLocked goes to the tab's token holder", () => {
+    const listener = vi.fn();
+    sessionApi.onLocked(listener);
+    expect(onLocked).toHaveBeenCalledWith(listener);
   });
 });

@@ -19,6 +19,7 @@
  * - The WS client reads it through `getToken`: `ok`, `locked` (`401 session_idle_locked`; nothing is
  *   cleared) or `unavailable`. Any other `401` from the refresh, or `endSession`, forgets it and routes to
  *   sign-in (SCR-001); a logout's `2xx` forgets it.
+ * - `onLocked` listeners (SCR-005, #1640) hear of an idle lock a refresh or a call's `401` found.
  */
 import type { ErrorCode, generated } from "@candleviewer/protocol";
 import { CSRF_HEADER, readCsrfCookie } from "../http/csrfCookie";
@@ -119,6 +120,11 @@ export interface AccessTokenHolder extends TokenSource {
   clear(): void;
   /** Logout or a lost session: forgets the token and routes to sign-in. */
   endSession(): void;
+  /**
+   * Calls `listener` each time the session is found idle-locked: a refresh answered `locked`, or a call got
+   * `401 session_idle_locked`. Returns the unsubscribe.
+   */
+  onLocked(listener: () => void): () => void;
   /** One refresh, shared by every caller while it runs; never rejects; `failed` once `REFRESH_WAIT_MS` pass. */
   refresh(): Promise<RefreshOutcome>;
   /**
@@ -285,7 +291,19 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
   let inFlight: Promise<RefreshOutcome> | null = null;
   /** Refreshes that wait for a sibling's bundle. */
   const waiting = new Set<() => void>();
+  const lockListeners = new Set<() => void>();
   const channel = openChannel();
+
+  /** Tells the `onLocked` listeners; one that throws neither stops the others nor fails the call. */
+  function reportLocked(): void {
+    for (const listener of lockListeners) {
+      try {
+        listener();
+      } catch {
+        // a listener's own failure: the lock is still reported to the rest
+      }
+    }
+  }
 
   const fresh = (): boolean =>
     token !== null && !stale && Date.now() < token.expiresAtMs - REFRESH_LEAD_MS - HANDOUT_SLACK_MS;
@@ -457,6 +475,7 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     if (res.status !== 401) return "failed";
     if (isRecord(body) && body["code"] === IDLE_LOCKED) {
       lockedUntil = Date.now() + LOCKED_MEMO_MS;
+      reportLocked();
       return "locked";
     }
     return lose();
@@ -510,6 +529,10 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
     clear,
     endSession,
     refresh: () => waitFor(begin()),
+    onLocked(listener) {
+      lockListeners.add(listener);
+      return () => void lockListeners.delete(listener);
+    },
     async getToken(): Promise<TokenResult> {
       if (signedOut) return { kind: "unavailable" };
       const outcome = fresh() ? "ok" : await waitFor(begin());
@@ -544,6 +567,7 @@ export function createAccessTokenHolder(toSignIn: () => void): AccessTokenHolder
         init.signal?.throwIfAborted(); // the caller stopped waiting: as `fetch` would, it is told so
         if (next !== null) res = await attempt(next);
       }
+      if (res.status === 401 && (await codeOf(res)) === IDLE_LOCKED) reportLocked();
       if (path === LOGOUT_PATH && res.ok) clear(); // the session ended: the caller routes
       if (path === UNLOCK_PATH && res.ok) {
         // a live session, unlocked: the next ask refreshes, even in a tab signed out because a locked

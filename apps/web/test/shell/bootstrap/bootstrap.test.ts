@@ -76,6 +76,19 @@ describe("runBootstrap", () => {
     expect(getShellState().environment).toBe("unknown");
   });
 
+  it.each([
+    ["session_idle_locked", { kind: "locked" }],
+    ["unauthenticated", { kind: "failed", reason: "http_error", status: 401 }],
+  ])("a /me 401 %s sets bootstrap to %j, with no claims (#1640)", async (code, phase) => {
+    const fetchImpl = vi.fn().mockImplementation((path: string) => {
+      if (path === "/api/v1/me") return Promise.resolve(jsonResponse({ status: 401, code }, 401));
+      return Promise.resolve(jsonResponse({}, 401));
+    });
+    await runBootstrap({ fetchImpl });
+    expect(getShellState().bootstrap).toEqual(phase);
+    expect(getMeClaims().authenticated).toBe(false);
+  });
+
   it("proceeds with defaults and a warning when preferences fails, without failing the whole boot", async () => {
     const fetchImpl = vi.fn().mockImplementation((path: string) => {
       if (path === "/api/v1/me") return Promise.resolve(jsonResponse(ME_BODY));

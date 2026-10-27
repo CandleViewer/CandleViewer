@@ -40,6 +40,8 @@ export type BootstrapPhase =
   | { readonly kind: "loading" }
   | { readonly kind: "slow" }
   | { readonly kind: "ready" }
+  /** `/me` found the session idle-locked (a reload while locked): SCR-005 first, not /login (#1640). */
+  | { readonly kind: "locked" }
   | {
       readonly kind: "failed";
       readonly reason: "timeout" | "http_error" | "unknown";

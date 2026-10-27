@@ -979,6 +979,47 @@ describe("a refresh no tab saw answered: its keepalive request outlives the lock
   });
 });
 
+describe("onLocked: SCR-005 hears of an idle lock (#1640)", () => {
+  it("a refresh answered 401 session_idle_locked tells each listener once; the 5 s memo tells none", async () => {
+    const [a, b] = [vi.fn(), vi.fn()];
+    holder.onLocked(a);
+    holder.onLocked(b);
+    fetchMock.mockImplementation(async () => refused("session_idle_locked"));
+    await expect(holder.refresh()).resolves.toBe("locked");
+    await expect(holder.refresh()).resolves.toBe("locked"); // the memo: no cookie, no report
+    expect([a.mock.calls.length, b.mock.calls.length]).toEqual([1, 1]);
+    expect(toSignIn).not.toHaveBeenCalled();
+  });
+
+  it("a call refused 401 session_idle_locked tells the listeners; any other refusal does not", async () => {
+    const listener = vi.fn();
+    holder.onLocked(listener);
+    holder.set(bundle(1));
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    expect((await holder.send("/api/v1/x", {}, transport)).status).toBe(401);
+    expect(listener).toHaveBeenCalledTimes(1);
+    for (const res of [refused("unlock_invalid"), json(403, { code: "forbidden" }), noContent()]) {
+      transport.mockResolvedValueOnce(res);
+      await holder.send("/api/v1/auth/unlock", { method: "POST" }, transport);
+    }
+    expect(listener).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unsubscribed listener hears nothing, and one that throws fails neither the call nor the rest", async () => {
+    const gone = vi.fn();
+    const after = vi.fn();
+    holder.onLocked(() => {
+      throw new Error("listener");
+    });
+    holder.onLocked(after);
+    holder.onLocked(gone)();
+    transport.mockResolvedValueOnce(refused("session_idle_locked"));
+    await expect(holder.send("/api/v1/x", {}, transport)).resolves.toHaveProperty("status", 401);
+    expect(after).toHaveBeenCalledTimes(1);
+    expect(gone).not.toHaveBeenCalled();
+  });
+});
+
 describe("the test setup takes BroadcastChannel away for the token holder alone", () => {
   it("no other src module uses one, so none runs channel-less in its tests unnoticed (it would stub its own)", () => {
     const src = resolve(import.meta.dirname, "../../../src");

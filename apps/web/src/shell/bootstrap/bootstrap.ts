@@ -20,7 +20,13 @@ import {
   applyChartColorMode,
   readStoredChartColorMode,
 } from "./preferencesApply.js";
-import { type Keymap, type Me, type Settings, setShellState } from "./store.js";
+import {
+  type BootstrapPhase,
+  type Keymap,
+  type Me,
+  type Settings,
+  setShellState,
+} from "./store.js";
 
 /** `/me` has this ceiling before the "slow boot" state is shown (SCR-150). */
 export const SLOW_BOOT_THRESHOLD_MS = 5_000;
@@ -106,11 +112,10 @@ export async function runBootstrap(deps: BootstrapDeps = {}): Promise<void> {
   setShellState({ bootstrap: { kind: "ready" } });
 }
 
-function classifyMeFailure(reason: unknown): {
-  kind: "failed";
-  reason: "timeout" | "http_error" | "unknown";
-  status?: number;
-} {
+function classifyMeFailure(reason: unknown): BootstrapPhase {
+  if (reason instanceof HttpError && reason.code === "session_idle_locked") {
+    return { kind: "locked" };
+  }
   if (reason instanceof HttpTimeoutError) {
     return { kind: "failed", reason: "timeout" };
   }

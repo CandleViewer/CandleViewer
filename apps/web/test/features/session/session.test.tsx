@@ -40,6 +40,7 @@ function fakeApi(over: Partial<SessionApi> = {}): SessionApi {
     extend: vi.fn(() => Promise.resolve(clock(900))),
     unlock: vi.fn(() => Promise.resolve({ kind: "unlocked" as const, clock: clock(900) })),
     endSession: vi.fn(),
+    onLocked: vi.fn(() => () => undefined),
     ...over,
   };
 }
@@ -365,5 +366,99 @@ describe("SessionLockHost", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stay signed in" }));
     await tick(0);
     expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
+  });
+});
+
+describe("SessionLockHost: S2 (#1640)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+    });
+    vi.setSystemTime(NOW);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  const lockedRead = (): SessionApi["read"] => vi.fn().mockResolvedValue(clock(0, true));
+  const submit = (value: string): void => {
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value } });
+    fireEvent.submit(screen.getByLabelText("Password"));
+  };
+  /** A fake `onLocked` seam: `fire()` reports a lock as the token holder would. */
+  function seam() {
+    const listeners = new Set<() => void>();
+    return {
+      onLocked: vi.fn((l: () => void) => {
+        listeners.add(l);
+        return () => void listeners.delete(l);
+      }),
+      fire: () => listeners.forEach((l) => l()),
+      size: () => listeners.size,
+    };
+  }
+
+  it("opens SCR-005 when the token holder reports a lock: one read per burst", async () => {
+    const lock = seam();
+    const read = vi.fn().mockResolvedValueOnce(clock(900)).mockResolvedValue(clock(0, true));
+    const { unmount } = render(
+      <SessionLockHost api={fakeApi({ read, onLocked: lock.onLocked })} enabled />,
+    );
+    await tick(0);
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    lock.fire();
+    lock.fire(); // a refresh and a call find it locked at once
+    await tick(0);
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
+    unmount();
+    expect(lock.size()).toBe(0); // the subscription goes with the host
+  });
+
+  it("a lock report while an unlock is on the wire reads nothing", async () => {
+    const lock = seam();
+    const read = lockedRead();
+    const unlock = vi.fn(() => new Promise<never>(() => undefined));
+    render(<SessionLockHost api={fakeApi({ read, unlock, onLocked: lock.onLocked })} enabled />);
+    await tick(0);
+    submit("pw");
+    lock.fire();
+    await tick(0);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alertdialog")).toHaveAttribute("aria-busy", "true");
+  });
+
+  it("reports a session found unlocked: a locked reload boots on after the unlock", async () => {
+    const onUnlocked = vi.fn();
+    render(
+      <SessionLockHost api={fakeApi({ read: lockedRead() })} enabled onUnlocked={onUnlocked} />,
+    );
+    await tick(0);
+    expect(onUnlocked).not.toHaveBeenCalled();
+    submit("pw");
+    await tick(0);
+    expect(onUnlocked).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("unlockBeforeBoot", () => {
+  it("renders SCR-005 alone, and resolves once the session is unlocked", async () => {
+    const { createRoot } = await import("react-dom/client");
+    const { unlockBeforeBoot } = await import("../../../src/features/session/lockedBoot");
+    const host = document.body.appendChild(document.createElement("div"));
+    const root = createRoot(host);
+    let booted = false;
+    await act(async () => {
+      void unlockBeforeBoot(
+        root,
+        fakeApi({ read: vi.fn().mockResolvedValue(clock(0, true)) }),
+      ).then(() => (booted = true));
+    });
+    expect(screen.getByRole("alertdialog", { name: "Session locked" })).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Password"), { target: { value: "pw" } });
+    await act(async () => {
+      fireEvent.submit(screen.getByLabelText("Password"));
+    });
+    expect(booted).toBe(true);
+    act(() => root.unmount());
+    host.remove();
   });
 });

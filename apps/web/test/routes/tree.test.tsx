@@ -44,6 +44,13 @@ describe("route tree x RBAC matrix", () => {
     expect(router.state.location.search).toBe("?next=%2Fterminal%2Fabc%3Ftf%3D15");
   });
 
+  it("R-005 /locked is an alias: it lands on the default route, where the overlay host opens the lock (#1640)", async () => {
+    claimsFor("viewer");
+    const router = createMemoryRouter(buildRoutes(), { initialEntries: ["/locked"] });
+    render(<RouterProvider router={router} />);
+    await waitFor(() => expect(router.state.location.pathname).toBe("/terminal/last"));
+  });
+
   it("renders the owner-owned stub for R-150 /risk when signed in as owner", async () => {
     claimsFor("owner");
     renderAt("/risk");
