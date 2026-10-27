@@ -49,9 +49,11 @@ B13_SOFT_WEEKLY: Final = "reported, not gated, on the weekly run until #2825's s
 
 
 async def drive_inprocess(iterations: int, concurrency: int) -> dict[str, list[float]]:
-    """Per-route latencies (ms). Cold klines bypass nothing: each cold call hits DuckDB. The
-    first-read route (`FIRST_READ`) goes to `build_first_read_app`'s app through a client of its
-    own; one semaphore bounds the requests to both apps (#2523)."""
+    """Per-route latencies (ms). `build_app` runs the cold page cache at the app's default bound
+    (#2523 lever 5), so only the untimed warm-up scans a cold window in DuckDB: every timed cold
+    call repeats it and is a cache hit. The first-read route (`FIRST_READ`) goes to
+    `build_first_read_app`'s app, whose page cache is off, through a client of its own; one
+    semaphore bounds the requests to both apps (#2523)."""
     with tempfile.TemporaryDirectory(prefix="cv-e08q04-") as tmp:
         write_cold_lake(Path(tmp))
         apps = await build_app(Path(tmp)), await build_first_read_app(Path(tmp))

@@ -649,7 +649,8 @@ class Settings(BaseSettings):
     cold_kline_concurrency: int = 2
     # #2523 lever 5: byte bound of the cold tier's LRU of kline pages, keyed by the files each
     # page was read from; a page over a quarter of it is not cached, and 0 turns the cache off.
-    cold_kline_page_cache_bytes: int = Field(default=64 * 1024 * 1024, ge=0)
+    # At most 1 GiB, a typo guard (as `replay_readahead_bytes`).
+    cold_kline_page_cache_bytes: int = Field(default=64 * 1024 * 1024, ge=0, le=1 << 30)
     # #2060: seconds between reloads of the klines hot-retention rule (rules are editable).
     kline_boundary_refresh_s: int = 600
     # E16-T07 disk budget (ADR-0015 d6, 24-internal-schemas §13.4.1). 600 GB is the E16-K01

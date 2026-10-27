@@ -53,8 +53,9 @@ _DEFAULT_CONCURRENCY = 2
 _MEMORY_LIMIT = "256MiB"
 _THREADS = 2
 
-#: `(path, size, mtime_ns)` of one Parquet file a read resolved (#2523 lever 5).
-type _FileId = tuple[str, int, int]
+#: `(path, size, mtime_ns, sha256)` of one Parquet file a read resolved, the sha256 its manifest
+#: entry's (#2523 lever 5).
+type _FileId = tuple[str, int, int, str]
 #: `page()`'s cache key: `(symbol, interval, lo_us, hi_us, max_rows)` and the sorted file ids.
 type _PageKey = tuple[str, str, int, int, int, tuple[_FileId, ...]]
 
@@ -144,7 +145,9 @@ class ParquetKlineReader:
 
     def close(self) -> None:
         """Release the shared DuckDB instance; it closes once no read still holds a cursor.
-        A later read opens a fresh one."""
+        A later read opens a fresh one. The cached pages are dropped, and their cost leaves
+        the gauge (#2523 lever 5)."""
+        self._pages.clear()
         if self._db is not None:
             self._retire(self._db)
 
@@ -205,7 +208,8 @@ class ParquetKlineReader:
 
     async def _files(self, paths: ColdPaths) -> list[_FileId]:
         """The partition's manifested, verified files, each with the `(size, mtime_ns)` stamp
-        the verification check read (#2523 lever 5's key reuses it: no extra `stat`)."""
+        the verification check read and its manifest entry's sha256: #2523 lever 5's key
+        reuses both, so it adds no I/O."""
         store = ManifestStore(paths.manifests_dir)
         read = store.read_with_quarantine
         try:
@@ -228,7 +232,7 @@ class ParquetKlineReader:
                 # rather than silently serving a partial window.
                 raise ColdKlineReadError("cold kline partition failed verification") from exc
             self._verified.update(stamps)
-        return [(f.as_posix(), *stamps[f]) for f in files]
+        return [(f.as_posix(), *stamps[f], e.sha256) for f, e in zip(files, entries, strict=True)]
 
     async def _resolve(self, symbol: str, interval: str, lo: int, hi: int) -> list[_FileId]:
         found: list[_FileId] = []
@@ -242,7 +246,7 @@ class ParquetKlineReader:
         found = await self._resolve(symbol, interval, lo, hi)
         if not found:
             return []
-        return await self._query([path for path, _, _ in found], lo, hi)
+        return await self._query([path for path, *_ in found], lo, hi)
 
     async def page(
         self, symbol: str, interval: str, rng: Range
@@ -251,11 +255,12 @@ class ParquetKlineReader:
         emitted by DuckDB, #2523 lever 4), or the lever-3 rows when the files cannot be emitted
         as JSON text. Same files, verification, bounds and timeout as `__call__`.
 
-        #2523 lever 5: a page is cached under the read and the `(path, size, mtime_ns)` of
-        every file it resolved. Roll-off, import, compaction and purge each add, rewrite or
-        delete a file, so they make a new key and a stale page is never served. The cache is
+        #2523 lever 5: a page is cached under the read and the `(path, size, mtime_ns, sha256)`
+        of every file it resolved, the sha256 its manifest entry's. Roll-off, import, compaction
+        and purge each add, rewrite or delete a file, so they make a new key; the one blind spot
+        is a rewrite that keeps a file's size, `mtime_ns` and manifest checksum. The cache is
         consulted here, on the loop, before the DuckDB semaphore: a hit takes no slot. Rows
-        (the lever-3 fallback) are never cached."""
+        (the lever-3 fallback) and empty pages are never cached."""
         lo, hi = int(rng.start_us), int(rng.end_us)
         found = await self._resolve(symbol, interval, lo, hi)
         if not found:
@@ -264,7 +269,7 @@ class ParquetKlineReader:
         if (hit := self._pages.get(key)) is not None:
             return hit
         async with self._sem:
-            got = await self._query_unbounded(_read_page, [p for p, _, _ in found], lo, hi)
+            got = await self._query_unbounded(_read_page, [p for p, *_ in found], lo, hi)
         if isinstance(got, ColdKlinePage):
             self._pages.put(key, got)
         return got
@@ -534,23 +539,35 @@ class ColdKlinePage:
         )
 
 
+#: The share of the bound every cached page costs on top of `table.nbytes + len(bars_json)`
+#: (#2523 lever 5): DuckDB's Arrow export keeps more alive with a page than `nbytes` counts.
+#: Measured on the perf pack's fixture lake (`bench.ingestion.fixture_app`, duckdb 1.5.5,
+#: pyarrow 25.0.1) as anonymous RSS per held page: 337 KB for 1 bar (`nbytes` 294 B), 378 KB
+#: for 100 bars (27.5 KB) and 2.17 MB for 5 000 bars (1.38 MB; 2.08 MB without this share).
+#: 384 KiB covers each, so the bound caps what the pages really hold, small ones included. A
+#: compact copy of the table would make `nbytes` honest, but costs about 69 ms a 5 000-bar page.
+_PAGE_OVERHEAD_BYTES = 384 * 1024
+
+
 def _page_cost(page: ColdKlinePage) -> int:
-    """A cached page's cost (#2523 lever 5): `table.nbytes + len(bars_json)`, the bar array
-    `bars_json(b"")` builds: every `body`, a `}` each and a `,` between two, counted without
-    building it. `body` is in `table.nbytes` too, so the bound over-counts what is held: a
-    5 000-bar page costs about 2.1 MB and holds about 1.4 MB."""
+    """A cached page's cost (#2523 lever 5): `table.nbytes`, plus `len(bars_json)` (the bar
+    array `bars_json(b"")` builds: every `body`, a `}` each and a `,` between two, counted
+    without building it), plus `_PAGE_OVERHEAD_BYTES`. That allowance and the JSON length cover
+    what DuckDB's export holds beyond `nbytes`: a 1-bar page costs about 394 KB and was measured
+    holding 337 KB, a 5 000-bar page costs about 2.47 MB and held 2.17 MB."""
     n = len(page)
-    held = int(page.table.nbytes)
+    cost = int(page.table.nbytes) + _PAGE_OVERHEAD_BYTES
     if not n:
-        return held
-    return held + int(pc.sum(pc.binary_length(page.table.column("body"))).as_py()) + 2 * n - 1
+        return cost
+    return cost + int(pc.sum(pc.binary_length(page.table.column("body"))).as_py()) + 2 * n - 1
 
 
 class _PageCache:
     """`ParquetKlineReader.page`'s LRU of pages, bounded in bytes (#2523 lever 5); event loop
-    thread only. A page over a quarter of the bound is never stored; a store evicts the least
-    recently used pages until the held cost fits. No single-flight: concurrent misses on one key
-    each read, and the first store wins. A bound of 0 turns it off: no lookup, store or count."""
+    thread only. An empty page, or one over a quarter of the bound, is never stored; a store
+    evicts the least recently used pages until the held cost fits. No single-flight: concurrent
+    misses on one key each read, and the first store wins. A bound of 0 turns it off: no
+    lookup, store or count."""
 
     def __init__(self, max_bytes: int) -> None:
         self.max_bytes = max(0, max_bytes)
@@ -569,7 +586,7 @@ class _PageCache:
         return entry[0]
 
     def put(self, key: _PageKey, page: ColdKlinePage) -> None:
-        if not self.max_bytes or key in self._entries:
+        if not self.max_bytes or not len(page) or key in self._entries:
             return
         cost = _page_cost(page)
         if 4 * cost > self.max_bytes:
@@ -580,6 +597,11 @@ class _PageCache:
             _, (_, evicted) = self._entries.popitem(last=False)
             self._count(-evicted)
             cv_cold_kline_page_cache_evictions_total.inc()
+
+    def clear(self) -> None:
+        """Drop every page and take their cost off the gauge; no eviction is counted."""
+        self._entries.clear()
+        self._count(-self.held)
 
     def _count(self, delta: int) -> None:
         self.held += delta
