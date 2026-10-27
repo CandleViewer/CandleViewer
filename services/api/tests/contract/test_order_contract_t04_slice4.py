@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, get_args
+from uuid import UUID
 
 import pytest
 
 from candleviewer.api.contract_conformance import OPENAPI_SPEC_PATH, load_openapi_spec
 from candleviewer.api.order_problems import order_problem
 from candleviewer.audit.actions import AUDIT_ACTIONS
+from candleviewer.observability.context import bind_context
 from candleviewer.observability.correlation import CORRELATION_HEADER
 from candleviewer.oms.errors import OmsError
 from candleviewer.oms.exits import ALREADY_FINAL, RECLASSIFIED, ExitStep
@@ -896,7 +898,8 @@ def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
     declares the `500` its route answers for a fault the exit service raises, as `amendOrder`,
     whose route renders the same service, and `cancelAllOrders` (the ruling of 2026-10-25 00:27Z
     (3)), all through one shared `InternalError`, the registry's `internal_error`, which says what
-    the shared renderer gives (00:36Z): no `instance`, the correlation id on `X-Correlation-Id`;
+    the shared renderer gives (00:36Z): since S4-G2d (CG11, the ruling of 2026-10-26 19:24Z) its
+    `instance`, `urn:cv:req:{id}`, the id `X-Correlation-Id` echoes, as `placeOrder`'s `500`;
     `cancelAllOrders` declares its in-flight guard's `429`; and each declares step 1's `401` (no
     principal), the shared `Unauthorized`, as the orchestrator's security look on S4-D1b found it
     undeclared. Each of the three declares these statuses and no other."""
@@ -929,18 +932,26 @@ def test_the_exit_routes_declare_every_answer_their_routes_give() -> None:
         "internal_error", 500, entry["title"],
     )  # fmt: skip
     assert example["type"] == "https://candleviewer.local/errors/internal_error"
-    rendered = order_problem(OmsError("a fault no row names"))  # the shared renderer's 500
-    assert json.loads(bytes(rendered.body)) == example and "instance" not in example
+    request = example["instance"].removeprefix("urn:cv:req:")
+    with bind_context(request_id=request):  # the shared renderer's 500, in the example's request
+        rendered = order_problem(OmsError("a fault no row names"))
+    assert json.loads(bytes(rendered.body)) == example and UUID(request).version == 4
     described = _words(fault["description"])
     assert not _missing(
         described,
         "`internal_error`, retryable (the error-code registry)",
-        "The problem names no internals and carries no `instance`, which no order route sets: the "
-        f"request's correlation id rides the `{CORRELATION_HEADER}` response header",
+        "The problem names no internals. Its `instance` is `urn:cv:req:{id}`, the request's "
+        f"correlation id, the one the `{CORRELATION_HEADER}` response header echoes, which finds "
+        "the fault in the logs (#913 S4-G2d, CG11",
+        "A fault that escapes the route is answered by the app's unhandled-exception handler, "
+        f"whose `500` carries neither `instance` nor the `{CORRELATION_HEADER}` header: it never "
+        "passes the correlation middleware.",
         "On the exit routes (`amendOrder`, `cancelOrder`, `cancelAllOrders`) it is a fault the "
         "exit service raised, which also pages the operator",
     )
-    assert "`instance` carries" not in described
+    assert "which no order route sets" not in described
+    placed = _words(_OPS["placeOrder"]["responses"]["500"]["description"])
+    assert "`internal_error`, its `instance` the request's, as `InternalError` gives it" in placed
     assert (
         "`429 rate_limited` with `Retry-After: 1` when the in-flight guard holds all its keys, or "
         "all the caller's share of them, nothing sent (24-internal-schemas.md section 8.4 step 9)"

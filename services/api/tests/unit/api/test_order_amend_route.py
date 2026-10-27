@@ -427,6 +427,7 @@ async def test_a_fault_the_exit_service_raises_is_a_500_paged_once_and_counted_a
     body = answer.json()
     er._PROBLEM.validate(body)
     assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", er._REDACTED)
+    assert er._names_its_request(answer)
     assert world.pages == [page] and str(error) not in answer.text
     assert (refused(world, "internal_error"), world.refused("internal_error")) == (1, 0)
     assert world.cache.get(str(OWNER), f"amendOrder:{KEY}") is None

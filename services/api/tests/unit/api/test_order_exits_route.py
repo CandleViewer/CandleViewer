@@ -32,7 +32,7 @@ from candleviewer.auth.generated_permissions import Permission
 from candleviewer.auth.scopes import AccountGrant, PrincipalSnapshot
 from candleviewer.domain.order_link import ext_key
 from candleviewer.exchange.base.errors import OmsErrorCode
-from candleviewer.observability.correlation import CorrelationMiddleware
+from candleviewer.observability.correlation import CORRELATION_HEADER, CorrelationMiddleware
 from candleviewer.observability.metrics import Metrics
 from candleviewer.oms import commands as oc
 from candleviewer.oms import exits as ex
@@ -555,8 +555,17 @@ async def test_a_client_that_leaves_does_not_stop_the_cancel_nor_free_its_key_ea
     assert machines.sent == ["CANCEL"]
 
 
-#: The redacted `500`'s members (22 `InternalError`): its code and title only.
-_REDACTED = {"type", "title", "status", "code"}
+#: The redacted `500`'s members (22 `InternalError`): its code and title, and its request's
+#: `instance` (CG11).
+_REDACTED = {"type", "title", "status", "code", "instance"}
+
+
+def _names_its_request(answer: httpx.Response) -> bool:
+    """CG11 (S4-G2d): a `500`'s `instance` is `urn:cv:req:{id}`, the id `X-Correlation-Id`
+    echoes."""
+    return bool(answer.json()["instance"] == f"urn:cv:req:{answer.headers[CORRELATION_HEADER]}")
+
+
 _UNEXPECTED = "oms_exit_unexpected_failure"
 #: Faults the exit service raises and no outcome answers, and the one page each is: a row that
 #: pages (`oms.errors.PROBLEMS`) its own, any other the exit routes' (`exit_fault`).
@@ -585,6 +594,7 @@ async def test_every_fault_the_exit_service_raises_is_a_500_paged_once(
     body = answer.json()
     _PROBLEM.validate(body)
     assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", _REDACTED)
+    assert _names_its_request(answer)
     assert world.pages == [page] and world.refused("internal_error") == 1
     assert str(error) not in answer.text and machines.sent == []
     assert world.actions() == [(_DENIED, "user"), (_DENIED, type(error).__name__)]
@@ -704,6 +714,7 @@ async def test_a_gateway_refusal_that_is_no_backpressure_is_a_paged_500_with_its
     body, name = answer.json(), fault.__name__
     _PROBLEM.validate(body)
     assert (answer.status_code, body["code"], set(body)) == (500, "internal_error", _REDACTED)
+    assert _names_its_request(answer)
     assert (world.pages, machines.sent) == ([f"{_UNEXPECTED}:{name}"], [])
     assert (world.refused("internal_error"), world.refused("oms_not_ready")) == (1, 0)
     records = [r for r, _ in world.audits.written[world.since :] if isinstance(r, RequestRecord)]
