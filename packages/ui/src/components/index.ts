@@ -27,3 +27,11 @@ export type { TextInputProps } from "./TextInput.js";
 
 export { Checkbox } from "./Checkbox.js";
 export type { CheckboxProps } from "./Checkbox.js";
+
+export { SegmentedControl } from "./SegmentedControl.js";
+export type {
+  SegmentedControlBaseProps,
+  SegmentedControlProps,
+  SegmentedOption,
+  SegmentedOptions,
+} from "./SegmentedControl.js";

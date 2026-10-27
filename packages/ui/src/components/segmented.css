@@ -1,0 +1,211 @@
+/* CMP-003 SegmentedControl. State lives in data-* attributes set by SegmentedControl.tsx; colours are tokens only.
+   Each segment draws its fill on ::before (so a gated control can dim the fill, never the label) and the selected
+   2px outline on ::after (so the focus ring, which is the element's own outline, never fights it). */
+.cv-segmented {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: stretch;
+  border: calc(var(--border-hairline) * 1px) solid var(--color-border-default);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-raised);
+}
+
+.cv-segmented[data-full-width] {
+  display: flex;
+  width: 100%;
+}
+
+.cv-segmented__option {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-inset-xs);
+  min-width: var(--size-control-height);
+  min-height: var(--size-control-height);
+  padding-inline: var(--space-button-paddingX);
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-control);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+}
+
+.cv-segmented[data-full-width] .cv-segmented__option {
+  flex: 1 1 0;
+}
+
+.cv-segmented[data-size="sm"] .cv-segmented__option {
+  padding-inline: var(--space-inset-sm);
+}
+
+.cv-segmented__icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+}
+
+.cv-segmented__lock {
+  color: var(--color-text-primary);
+}
+
+/* The fill plate and the selected outline sit behind and over the content; neither takes the pointer. */
+.cv-segmented__option::before,
+.cv-segmented__option::after {
+  content: "";
+  position: absolute;
+  inset: calc(var(--border-hairline) * -1px);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.cv-segmented__option::before {
+  z-index: -1;
+  background: transparent;
+}
+
+.cv-segmented__option::after {
+  box-sizing: border-box;
+  border: calc(var(--border-thick) * 1px) solid transparent;
+}
+
+/* Selected: the fill plus a 2px inner outline (the tint alone is 1.1:1 on the track); no selected-hover token. */
+.cv-segmented__option[data-checked] {
+  color: var(--color-text-primary);
+}
+
+.cv-segmented__option[data-checked]::before {
+  background: var(--color-action-selected);
+}
+
+.cv-segmented__option[data-checked]::after {
+  border-color: var(--color-border-selected);
+}
+
+/* Unselected hover swaps tokens instantly (no transition); a refused segment never reacts. */
+.cv-segmented__option:hover:not([data-checked], [data-disabled], [data-gated]) {
+  color: var(--color-text-primary);
+}
+
+.cv-segmented__option:hover:not([data-checked], [data-disabled], [data-gated])::before {
+  background: var(--color-surface-hover);
+}
+
+/* Keyboard focus: the 2px ring sits around the segment (CMP-039), at a 2px offset. */
+.cv-segmented__option:focus-visible {
+  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+/* Plain disabled: the whole control dims and leaves the Tab order. */
+.cv-segmented[data-disabled] {
+  opacity: var(--opacity-disabled);
+}
+
+.cv-segmented[data-disabled] .cv-segmented__option {
+  cursor: not-allowed;
+}
+
+/* Disabled with a reason (T2): only the fill dims; the labels, the lock and the selected outline stay at full strength. */
+.cv-segmented[data-gated] .cv-segmented__option {
+  cursor: not-allowed;
+}
+
+.cv-segmented[data-gated] .cv-segmented__option[data-checked]::before {
+  opacity: var(--opacity-disabled);
+}
+
+@media (forced-colors: active) {
+  .cv-segmented {
+    border-color: ButtonText;
+    background: ButtonFace;
+    forced-color-adjust: none;
+  }
+
+  .cv-segmented .cv-segmented__option {
+    color: ButtonText;
+    forced-color-adjust: none;
+  }
+
+  .cv-segmented .cv-segmented__option::before {
+    background: ButtonFace;
+  }
+
+  .cv-segmented .cv-segmented__option[data-checked] {
+    color: HighlightText;
+  }
+
+  .cv-segmented .cv-segmented__option[data-checked]::before {
+    background: Highlight;
+  }
+
+  .cv-segmented .cv-segmented__option[data-checked]::after {
+    border-color: Highlight;
+  }
+
+  /* Hover (unselected): the fill is set again, and the segment gains a 1px Highlight border. */
+  .cv-segmented .cv-segmented__option:hover:not([data-checked], [data-disabled], [data-gated]) {
+    border-color: Highlight;
+    color: ButtonText;
+  }
+
+  .cv-segmented
+    .cv-segmented__option:hover:not([data-checked], [data-disabled], [data-gated])::before {
+    background: ButtonFace;
+  }
+
+  .cv-segmented .cv-segmented__option:focus-visible {
+    outline-color: Highlight;
+  }
+
+  /* Disabled and gated come last and out-specify the checked and hover rules: refused wins. */
+  .cv-segmented[data-disabled] {
+    border-color: GrayText;
+    opacity: 1;
+  }
+
+  .cv-segmented[data-disabled] .cv-segmented__option,
+  .cv-segmented[data-disabled] .cv-segmented__option[data-checked] {
+    color: GrayText;
+  }
+
+  .cv-segmented[data-disabled] .cv-segmented__option::before,
+  .cv-segmented[data-disabled] .cv-segmented__option[data-checked]::before {
+    background: ButtonFace;
+  }
+
+  .cv-segmented[data-disabled] .cv-segmented__option[data-checked]::after {
+    border-color: GrayText;
+  }
+
+  /* Gated: the track border greys; the selection stays at full strength as a 2px ButtonText border in place of the fill. */
+  .cv-segmented[data-gated] {
+    border-color: GrayText;
+  }
+
+  .cv-segmented[data-gated] .cv-segmented__option,
+  .cv-segmented[data-gated] .cv-segmented__option[data-checked] {
+    color: ButtonText;
+  }
+
+  .cv-segmented[data-gated] .cv-segmented__option::before,
+  .cv-segmented[data-gated] .cv-segmented__option[data-checked]::before {
+    background: ButtonFace;
+    opacity: 1;
+  }
+
+  .cv-segmented[data-gated] .cv-segmented__option[data-checked]::after {
+    border-color: ButtonText;
+  }
+
+  .cv-segmented .cv-segmented__lock {
+    color: ButtonText;
+  }
+}

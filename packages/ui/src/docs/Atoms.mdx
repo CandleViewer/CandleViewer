@@ -65,3 +65,16 @@ Each component's keyboard table lives here (the WAI-ARIA pattern it follows, the
 | Esc                                                          | Not handled: it bubbles to the host.                                                          |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+
+### SegmentedControl (CMP-003, APG Radio Group)
+
+| Keys                          | Action                                                                                                                       |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab               | Enters on the checked segment (the first when none is checked) and leaves the group; one tab stop.                           |
+| Right / Down Arrow            | Moves focus to the next segment and checks it; wraps from the last to the first.                                             |
+| Left / Up Arrow               | Moves focus to the previous segment and checks it; wraps from the first to the last.                                         |
+| Home / End                    | Moves focus to the first / last segment and checks it.                                                                       |
+| Space                         | Checks the focused segment.                                                                                                  |
+| Alt, Ctrl or Meta + a key     | Ignored: the browser and the host keep their shortcuts.                                                                      |
+| Any key (group with a reason) | No action: focus stays on the checked segment, the value never changes, no form is submitted; the reason is its description. |
+| Any key (disabled group)      | The group is out of the Tab order and no segment takes focus, by keyboard or pointer.                                        |
