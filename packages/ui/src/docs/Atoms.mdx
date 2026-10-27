@@ -80,3 +80,80 @@ Arrow keys are not mirrored under `dir="rtl"` (Right / Down is always "next"), a
 | Esc                                                          | Not handled: it bubbles to the host.                                                          |
 | Typing, Enter, Backspace, Delete, paste, cut (with a reason) | Changes nothing; the first one of a focus visit announces the reason once.                    |
 | Arrows, Home, End, copy (with a reason)                      | Allowed and silent. Tab and Esc are never touched.                                            |
+
+### Tag (CMP-011; the remove control follows APG Button through CMP-002)
+
+| Keys                         | Action                                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab              | Moves focus to the remove button of a removable chip; the nested CMP-002 draws the only ring. Static chips are not in the Tab order.                             |
+| Enter, Space (remove)        | Fires `onRemove`. The chip never moves focus: the owning group moves it to the next chip's remove button, else the previous one, else its input; never `<body>`. |
+| Enter, Space (with a reason) | No removal; the remove button stays focusable and its reason is the accessible description.                                                                      |
+
+| Element                | Role        | Name                                     | Notes                                                       |
+| ---------------------- | ----------- | ---------------------------------------- | ----------------------------------------------------------- |
+| Chip                   | none (span) | its visible label                        | Status tones carry a fixed glyph plus the word.             |
+| Leading glyph          | none        | none                                     | `aria-hidden`: the word is in the label.                    |
+| Remove (ghost CMP-002) | button      | "Remove {label}", e.g. "Remove Breakout" | Gated removal: `aria-disabled` plus the reason description. |
+
+Only a neutral label truncates. A status chip never shrinks, so give it room for its whole word.
+
+### Badge (CMP-012, static; the `img` role when a count stands alone)
+
+| Keys | Action                                                                                                                                                                            |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. A standalone count is `role="img"` named `{value} {label}` (the full number, past the "99+" cap); on a labelled control, and always as a dot, it is `aria-hidden`. |
+
+### Avatar (CMP-013, static; the `img` role when it is the only content)
+
+| Keys | Action                                                                                                                                    |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. Beside its visible name it is `aria-hidden`; `standalone`, it is `role="img"` named by the full label, never the initials. |
+
+### AvatarGroup (CMP-025, static image summary)
+
+| Keys | Action                                                                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| none | Not focusable. `role="img"` named `{n} accounts: {every label}`, the names folded into `+N` included; avatars and the chip are `aria-hidden`. |
+
+### FocusRing (CMP-039, utility; no pattern of its own)
+
+| Keys                              | Action                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                   | The ring appears on the newly focused element (`:focus-visible`).               |
+| Arrow keys (roving tabindex)      | The ring moves with focus; only one ring is visible.                            |
+| Pointer click / tap               | No ring on buttons and similar controls; text inputs still show it.             |
+| Esc (closing a dialog or popover) | Focus returns to the trigger; the ring shows if the last interaction was a key. |
+
+`useFocusRing({ inset? })` returns `{ className }`; `inset` draws the ring inside the element's bounds.
+
+### Spinner (CMP-014, status region when labelled; decorative otherwise)
+
+| Keys | Action                                                                                        |
+| ---- | --------------------------------------------------------------------------------------------- |
+| none | Not focusable. With `label`: a polite `role="status"`. Without: `aria-hidden` in a busy host. |
+
+### Typography: Text, Heading, MonoText, NumericText (CMP-020, static text)
+
+| Keys            | Action                                                                                                         |
+| --------------- | -------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab | Skipped: static text is never focusable. Headings are reached by screen-reader heading navigation, not by Tab. |
+
+| Element                 | Role                         | Name                                                                                          |
+| ----------------------- | ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Text                    | none (span, or `p`)          | Its text.                                                                                     |
+| Heading                 | heading, `h1`..`h6` by level | Its text; the level never follows the visual style.                                           |
+| MonoText                | none (span, or `code`)       | Its text.                                                                                     |
+| NumericText             | none (span)                  | The value as shown: "+420.00", "-420.00", or an unsigned "0.00". No `aria-label` on the span. |
+| NumericText abbreviated | none (span)                  | The visible "1.2M" is `aria-hidden`; a visually hidden "1,200,000" is read instead.           |
+
+### Skeleton (CMP-015) and Skeleton-Chart (CMP-029)
+
+| Keys | Action                                                                                                     |
+| ---- | ---------------------------------------------------------------------------------------------------------- |
+| None | Not focusable and `aria-hidden`; the host carries `aria-busy="true"` and the words that announce the wait. |
+
+### ProgressBar (CMP-023, `progressbar` or `meter` role)
+
+| Keys | Action                                                                                                 |
+| ---- | ------------------------------------------------------------------------------------------------------ |
+| None | Not focusable; read in reading order by its name and value (`aria-valuetext` when `valueText` is set). |

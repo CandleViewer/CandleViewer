@@ -1,0 +1,36 @@
+/* CMP-013 Avatar. A fixed circle (radius.badge on a square box) that never grows with text; the initials
+   are part of the graphic and the circle clips them. Static: no hover, focus or motion. */
+.cv-avatar {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--size-control-height);
+  height: var(--size-control-height);
+  overflow: hidden;
+  /* Transparent at rest; forced colours paint it CanvasText so the circle keeps its edge. */
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-badge);
+  background: var(--color-neutral-subtle);
+  color: var(--color-text-primary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.cv-avatar[data-size="sm"] {
+  width: var(--size-icon);
+  height: var(--size-icon);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+@media (forced-colors: active) {
+  .cv-avatar {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+}

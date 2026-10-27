@@ -1,0 +1,139 @@
+/* CMP-020 Typography primitives. Roles bind the composite type tokens; colours are tokens only. */
+.cv-text,
+.cv-heading {
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+.cv-text {
+  font: var(--type-ui-body-font-weight) var(--type-ui-body-font-size) /
+    var(--type-ui-body-line-height) var(--type-ui-body-font-family);
+}
+
+.cv-text[data-variant="caption"] {
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-text[data-variant="body-strong"] {
+  font: var(--type-ui-body-strong-font-weight) var(--type-ui-body-strong-font-size) /
+    var(--type-ui-body-strong-line-height) var(--type-ui-body-strong-font-family);
+}
+
+.cv-text[data-variant="label"] {
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+}
+
+.cv-text[data-tone="secondary"] {
+  color: var(--color-text-secondary);
+}
+
+.cv-heading {
+  font: var(--type-ui-heading-md-font-weight) var(--type-ui-heading-md-font-size) /
+    var(--type-ui-heading-md-line-height) var(--type-ui-heading-md-font-family);
+}
+
+.cv-heading[data-variant="heading-sm"] {
+  font: var(--type-ui-heading-sm-font-weight) var(--type-ui-heading-sm-font-size) /
+    var(--type-ui-heading-sm-line-height) var(--type-ui-heading-sm-font-family);
+}
+
+.cv-heading[data-variant="heading-lg"] {
+  font: var(--type-ui-heading-lg-font-weight) var(--type-ui-heading-lg-font-size) /
+    var(--type-ui-heading-lg-line-height) var(--type-ui-heading-lg-font-family);
+}
+
+.cv-heading[data-variant="display"] {
+  font: var(--type-ui-display-font-weight) var(--type-ui-display-font-size) /
+    var(--type-ui-display-line-height) var(--type-ui-display-font-family);
+}
+
+/*
+ * Numbers and mono text: longhands only, because the `font` shorthand resets font-variant-numeric.
+ * The size steps re-point four custom properties; `tabular-nums` is set once, here, for every step.
+ */
+.cv-num,
+.cv-mono {
+  --cv-num-family: var(--type-num-base-font-family);
+  --cv-num-size: var(--type-num-base-font-size);
+  --cv-num-weight: var(--type-num-base-font-weight);
+  --cv-num-leading: var(--type-num-base-line-height);
+  font-family: var(--cv-num-family);
+  font-size: var(--cv-num-size);
+  font-weight: var(--cv-num-weight);
+  line-height: var(--cv-num-leading);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-primary);
+}
+
+.cv-num {
+  white-space: nowrap;
+}
+
+.cv-num[data-size="xs"],
+.cv-mono[data-size="xs"] {
+  --cv-num-family: var(--type-num-xs-font-family);
+  --cv-num-size: var(--type-num-xs-font-size);
+  --cv-num-weight: var(--type-num-xs-font-weight);
+  --cv-num-leading: var(--type-num-xs-line-height);
+}
+
+.cv-num[data-size="sm"],
+.cv-mono[data-size="sm"] {
+  --cv-num-family: var(--type-num-sm-font-family);
+  --cv-num-size: var(--type-num-sm-font-size);
+  --cv-num-weight: var(--type-num-sm-font-weight);
+  --cv-num-leading: var(--type-num-sm-line-height);
+}
+
+.cv-num[data-size="md"],
+.cv-mono[data-size="md"] {
+  --cv-num-family: var(--type-num-md-font-family);
+  --cv-num-size: var(--type-num-md-font-size);
+  --cv-num-weight: var(--type-num-md-font-weight);
+  --cv-num-leading: var(--type-num-md-line-height);
+}
+
+.cv-num[data-size="lg"],
+.cv-mono[data-size="lg"] {
+  --cv-num-family: var(--type-num-lg-font-family);
+  --cv-num-size: var(--type-num-lg-font-size);
+  --cv-num-weight: var(--type-num-lg-font-weight);
+  --cv-num-leading: var(--type-num-lg-line-height);
+}
+
+.cv-num[data-size="xl"],
+.cv-mono[data-size="xl"] {
+  --cv-num-family: var(--type-num-xl-font-family);
+  --cv-num-size: var(--type-num-xl-font-size);
+  --cv-num-weight: var(--type-num-xl-font-weight);
+  --cv-num-leading: var(--type-num-xl-line-height);
+}
+
+/* colorBySign (E1 interim: the `.default` tokens until text-grade buy / sell / neutral exist). */
+.cv-num[data-color-by-sign][data-sign="positive"] {
+  color: var(--color-buy-default);
+}
+
+.cv-num[data-color-by-sign][data-sign="negative"] {
+  color: var(--color-sell-default);
+}
+
+.cv-num[data-color-by-sign][data-sign="zero"] {
+  color: var(--color-neutral-default);
+}
+
+/* Forced colours: all text is CanvasText; the + / − sign carries profit and loss. */
+@media (forced-colors: active) {
+  .cv-text,
+  .cv-heading,
+  .cv-num,
+  .cv-mono,
+  .cv-text[data-tone="secondary"],
+  .cv-num[data-color-by-sign][data-sign="positive"],
+  .cv-num[data-color-by-sign][data-sign="negative"],
+  .cv-num[data-color-by-sign][data-sign="zero"] {
+    color: CanvasText;
+  }
+}

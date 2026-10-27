@@ -1,0 +1,123 @@
+/* CMP-023 ProgressBar. Tokens only (D02 H4); the tone lives in data-tone, the value in --cv-progress. */
+.cv-progress {
+  --cv-progress-fill: var(--color-action-primary-default);
+  display: grid;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-progress[data-tone="success"] {
+  --cv-progress-fill: var(--color-status-success-default);
+}
+
+.cv-progress[data-tone="warning"] {
+  --cv-progress-fill: var(--color-status-warning-strong);
+}
+
+.cv-progress[data-tone="danger"] {
+  --cv-progress-fill: var(--color-status-danger-default);
+}
+
+/* The label row wraps; the value text never truncates. */
+.cv-progress__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-inset-xs);
+}
+
+.cv-progress__label {
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  color: var(--color-text-secondary);
+}
+
+.cv-progress__value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  margin-inline-start: auto;
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--color-text-secondary);
+}
+
+.cv-progress__value > svg {
+  flex: none;
+}
+
+.cv-progress[data-tone="warning"] .cv-progress__value > svg {
+  color: var(--color-status-warning-strong);
+}
+
+.cv-progress[data-tone="danger"] .cv-progress__value > svg {
+  color: var(--color-status-danger-strong);
+}
+
+/* The 8 px track: twice space.inset.xs (slice 1 B4). */
+.cv-progress__track {
+  box-sizing: border-box;
+  height: calc(var(--space-inset-xs) * 2);
+  overflow: hidden;
+  border-radius: var(--radius-badge);
+  background: var(--color-surface-hover);
+}
+
+/* A new value moves the fill by transform; reduced motion makes it a step (the reduce pair below). */
+.cv-progress__fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-badge);
+  background: var(--cv-progress-fill);
+  transform: scaleX(var(--cv-progress));
+  transform-origin: left;
+  transition: transform var(--motion-duration-normal) cubic-bezier(var(--motion-easing-standard));
+}
+
+/* Right to left: the fill grows from the inline start. At small values scaleX squashes the rounded ends (accepted). */
+[dir="rtl"] .cv-progress__fill {
+  transform-origin: right;
+}
+
+/* Forced colours: a Highlight fill on a bordered track; the value text carries the figure, the glyph the tone. */
+@media (forced-colors: active) {
+  .cv-progress__label,
+  .cv-progress__value {
+    color: CanvasText;
+  }
+
+  .cv-progress[data-tone="warning"] .cv-progress__value > svg,
+  .cv-progress[data-tone="danger"] .cv-progress__value > svg {
+    color: CanvasText;
+  }
+
+  .cv-progress__track {
+    border: 1px solid CanvasText;
+    background: Canvas;
+  }
+
+  .cv-progress__fill {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+}
+
+/* The universal reduce pair, kept here so the file is self-contained. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  transition-duration: 0.01ms !important;
+  transition-delay: 0s !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+  }
+}

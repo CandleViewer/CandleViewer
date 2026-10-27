@@ -1,0 +1,60 @@
+/* CMP-025 AvatarGroup. One row that never wraps; static, with no hover, focus or motion. */
+.cv-avatar-group {
+  display: inline-flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  vertical-align: middle;
+}
+
+/* The last avatar's overhang past its slot, so the group's box holds it when no chip follows. */
+.cv-avatar-group:not([data-overflow]) {
+  padding-inline-end: calc(var(--size-control-height) - var(--size-icon));
+}
+
+/* Fixed size.icon slots: each md avatar overlaps the next by the difference (8 px compact). */
+.cv-avatar-group__slot {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  overflow: visible;
+}
+
+/* The cut-out ring: an outline (never a box-shadow, which forced colours drop) in the host's surface. */
+.cv-avatar-group .cv-avatar,
+.cv-avatar-group__more {
+  outline: calc(var(--border-thick) * 1px) solid
+    var(--cv-avatar-group-ring, var(--color-surface-canvas));
+}
+
+/* The +N chip: min-width size.control.height, growing with digits. */
+.cv-avatar-group__more {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--size-control-height);
+  height: var(--size-control-height);
+  padding-inline: var(--space-inset-xs);
+  border: calc(var(--border-hairline) * 1px) solid transparent;
+  border-radius: var(--radius-badge);
+  background: var(--color-neutral-subtle);
+  color: var(--color-text-secondary);
+  font: var(--type-num-sm-font-weight) var(--type-num-sm-font-size) / var(--type-num-sm-line-height)
+    var(--type-num-sm-font-family);
+  white-space: nowrap;
+}
+
+@media (forced-colors: active) {
+  /* A CanvasText ring keeps the overlapping circles apart. */
+  .cv-avatar-group .cv-avatar,
+  .cv-avatar-group__more {
+    outline-color: CanvasText;
+  }
+
+  .cv-avatar-group__more {
+    border-color: CanvasText;
+    background: Canvas;
+    color: CanvasText;
+  }
+}

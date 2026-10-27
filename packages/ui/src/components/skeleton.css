@@ -1,0 +1,223 @@
+/* CMP-015 Skeleton and CMP-029 Skeleton-Chart. Tokens only (D02 H3); hidden from assistive technology. */
+.cv-skeleton,
+.cv-skeleton-chart {
+  --cv-skeleton-fill: var(--color-surface-hover);
+  --cv-skeleton-sweep: var(--color-surface-raised);
+}
+
+/* On an overlay host the light hover equals the overlay, so the blocks move one step up (D02 H3). */
+.cv-skeleton[data-surface="overlay"] {
+  --cv-skeleton-fill: var(--color-surface-selected);
+  --cv-skeleton-sweep: var(--color-surface-hover);
+}
+
+.cv-skeleton {
+  display: grid;
+  gap: var(--space-stack-xs);
+}
+
+.cv-skeleton__block {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--cv-skeleton-fill);
+}
+
+/* The shimmer: a band sweeping the fill to the sweep tone, 1,200 ms (3 x slow) a sweep, four sweeps, then static. */
+.cv-skeleton__block::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--cv-skeleton-sweep), transparent);
+  transform: translateX(-100%);
+  animation: cv-skeleton-sweep calc(var(--motion-duration-slow) * 3) linear 4;
+}
+
+@keyframes cv-skeleton-sweep {
+  to {
+    transform: translateX(100%);
+  }
+}
+
+/* A text line is the line box of the text it stands for; the last of several is 60 % wide. */
+.cv-skeleton[data-shape="text"] > .cv-skeleton__block,
+.cv-skeleton__card > .cv-skeleton__block {
+  height: calc(var(--type-ui-body-font-size) * var(--type-ui-body-line-height));
+}
+
+.cv-skeleton[data-shape="text"] > .cv-skeleton__block:last-child:not(:first-child),
+.cv-skeleton__card > .cv-skeleton__block:last-child {
+  width: 60%;
+}
+
+.cv-skeleton__card > .cv-skeleton__block:first-child {
+  width: 40%;
+}
+
+/* Rows abut; a row is the table's row height with three cell blocks. */
+.cv-skeleton[data-shape="row"] {
+  gap: 0;
+}
+
+.cv-skeleton__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-inset-sm);
+  min-height: var(--size-row-height);
+  padding-inline: var(--space-inset-sm);
+}
+
+.cv-skeleton__row > .cv-skeleton__block {
+  flex: 1;
+  height: var(--size-icon);
+}
+
+.cv-skeleton__card {
+  display: grid;
+  gap: var(--space-stack-xs);
+  padding: var(--space-inset-md);
+  border: calc(var(--border-hairline) * 1px) solid var(--cv-skeleton-fill);
+  border-radius: var(--radius-card);
+}
+
+/* `shape="chart"`: one block filling the host's slot. */
+.cv-skeleton[data-shape="chart"],
+.cv-skeleton__chart,
+.cv-skeleton__chart > .cv-skeleton__block {
+  height: 100%;
+}
+
+.cv-skeleton__chart > .cv-skeleton__block {
+  border-radius: var(--radius-card);
+}
+
+/* CMP-029: the pane on the canvas, candles and axis label blocks in the fill; the number of candles follows the width. */
+.cv-skeleton-chart {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-surface-canvas);
+}
+
+.cv-skeleton-chart__pane {
+  display: flex;
+  flex: 3 1 0;
+  min-height: 0;
+}
+
+.cv-skeleton-chart__pane[data-sub] {
+  flex-grow: 1;
+}
+
+.cv-skeleton-chart__plot {
+  display: flex;
+  flex: 1;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+  padding-inline: var(--space-inset-sm);
+  overflow: hidden;
+}
+
+.cv-skeleton-chart__candle {
+  position: relative;
+  flex: none;
+  width: var(--space-inset-sm);
+}
+
+.cv-skeleton-chart__candle > .cv-skeleton__block {
+  position: absolute;
+  border-radius: 0;
+}
+
+.cv-skeleton-chart__wick {
+  left: calc(50% - var(--border-hairline) * 0.5px);
+  width: calc(var(--border-hairline) * 1px);
+  top: var(--cv-wick-top);
+  height: var(--cv-wick-h);
+}
+
+.cv-skeleton-chart__body {
+  inset-inline: 0;
+  top: var(--cv-body-top);
+  height: var(--cv-body-h);
+}
+
+.cv-skeleton-chart__pane[data-sub] .cv-skeleton-chart__body {
+  top: auto;
+  bottom: 0;
+}
+
+.cv-skeleton-chart__axis,
+.cv-skeleton-chart__time {
+  display: flex;
+  flex: none;
+  justify-content: space-around;
+  padding: var(--space-inset-xs) var(--space-inset-sm);
+}
+
+.cv-skeleton-chart__axis {
+  flex-direction: column;
+}
+
+.cv-skeleton-chart__time {
+  padding-inline-end: calc(var(--size-icon) * 3 + var(--space-inset-sm) * 2);
+}
+
+.cv-skeleton-chart__axis > .cv-skeleton__block,
+.cv-skeleton-chart__time > .cv-skeleton__block {
+  width: calc(var(--size-icon) * 3);
+  height: calc(var(--type-num-sm-font-size) * var(--type-num-sm-line-height));
+}
+
+/* Forced colours: the fills drop out and the host's busy words carry the wait (D02 conventions 38). */
+@media (forced-colors: active) {
+  .cv-skeleton__block,
+  .cv-skeleton-chart {
+    background: Canvas;
+  }
+
+  .cv-skeleton__block::after {
+    display: none;
+    background: Canvas;
+  }
+
+  .cv-skeleton__card {
+    border-color: CanvasText;
+  }
+}
+
+/* Reduced motion (in-app or OS): no sweep from the first frame; the static two-tone holds (#265 Gherkin). */
+:root[data-motion="reduce"] .cv-skeleton__block::after {
+  display: none;
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) .cv-skeleton__block::after {
+    display: none;
+    animation: none;
+  }
+}
+
+/* The universal reduce pair, copied from src/theme/theme.css (the source; keep the copies in step), so the
+   file is self-contained for the reduced-motion contract test. */
+:root[data-motion="reduce"] *,
+:root[data-motion="reduce"] *::before,
+:root[data-motion="reduce"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion]) *,
+  :root:not([data-motion]) *::before,
+  :root:not([data-motion]) *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+  }
+}

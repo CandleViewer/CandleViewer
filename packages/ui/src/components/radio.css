@@ -89,11 +89,7 @@
   border-color: var(--color-text-secondary);
 }
 
-/* Keyboard focus: the 2px ring sits around the radio's ring (CMP-039), at a 2px offset. */
-.cv-radio:focus-visible .cv-radio__ring {
-  outline: calc(var(--border-focus) * 1px) solid var(--color-focus-ring);
-  outline-offset: 2px;
-}
+/* Keyboard focus: CMP-039's ring around the radio's ring, through the host / target classes (focusring.css). */
 
 /* Plain disabled: the whole row dims and leaves the Tab order. */
 .cv-radio[data-disabled] {
@@ -140,10 +136,6 @@
 
   .cv-radio:hover:not([data-disabled], [data-gated]) .cv-radio__ring::before {
     border-color: Highlight;
-  }
-
-  .cv-radio:focus-visible .cv-radio__ring {
-    outline-color: Highlight;
   }
 
   /* Disabled and gated come last and out-specify the checked and hover rules: disabled wins. */

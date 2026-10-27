@@ -72,7 +72,7 @@ function RadioRow({
       onKeyDown={roving.onKeyDown}
       onFocus={roving.onFocus}
       onBlur={roving.onBlur}
-      className="cv-radio"
+      className="cv-radio cv-focus-ring-host"
       aria-checked={checked}
       aria-disabled={disabled || gated ? true : undefined}
       aria-labelledby={labelId}
@@ -83,7 +83,7 @@ function RadioRow({
       onClick={handleClick}
     >
       <span className="cv-radio__mark" aria-hidden="true">
-        <span className="cv-radio__ring" />
+        <span className="cv-radio__ring cv-focus-ring-target" />
       </span>
       <span id={labelId} className="cv-radio__label">
         {option.label}
