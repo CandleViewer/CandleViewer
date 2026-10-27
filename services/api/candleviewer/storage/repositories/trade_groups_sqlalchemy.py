@@ -185,6 +185,9 @@ _GRANT_VISIBLE: Final = (
 )
 #: Transaction-local (`true`), like the order store's cap.
 _SET_TIMEOUT: Final = sa.text("SELECT set_config('statement_timeout', :timeout, true)")
+#: Shared with the definitions store, which reuses the gate and the cap.
+OWNER_GATE: Final = _OWNER_GATE
+SET_TIMEOUT: Final = _SET_TIMEOUT
 #: SQLSTATEs that carry a constraint name: unique, check and foreign-key violations.
 _NAMED_VIOLATIONS: Final = frozenset({"23505", "23514", "23503"})
 #: A server that does not serve: shut down (57P01, 57P02), starting (57P03), full (53300).
@@ -231,17 +234,18 @@ def _uuid_array(name: str, ids: Iterable[UUID]) -> sa.ColumnElement[Any]:
 # -- statements ----------------------------------------------------------------------------------
 
 
-def group_visible(scope: AccountScope) -> sa.TextClause:
+def group_visible(scope: AccountScope, *, grant_visible: str = _GRANT_VISIBLE) -> sa.TextClause:
     """The enclosing `trade_groups` row is in `scope`: for an `OwnerScope` the caller is a live
     owner (who sees every group, soft-deleted leg accounts included); for a `GrantScope` the
-    SR-E28-21 predicate, under which a group with no leg is invisible. E28-T05's list reuses it."""
+    SR-E28-21 predicate (`grant_visible`: the definitions store passes it over members), under
+    which a group with no leg is invisible. E28-T05's list reuses it."""
     caller = str(scope.user_id)
     if isinstance(scope, OwnerScope):
         return sa.text(_OWNER_PRED).bindparams(caller=caller)
     granted = sa.bindparam(
         "granted", sorted(str(i) for i in scope.account_ids), type_=ARRAY(sa.Text)
     )
-    return sa.text(_GRANT_VISIBLE).bindparams(granted, caller=caller)
+    return sa.text(grant_visible).bindparams(granted, caller=caller)
 
 
 def anchor_statement(
@@ -481,8 +485,14 @@ def _violated_constraint(exc: DBAPIError) -> str | None:
     return None
 
 
+#: The group store's refusals by name, each with the error it leaves as.
+_GROUP_REFUSALS: Final[Mapping[str, type[Exception]]] = dict.fromkeys(
+    TRADE_GROUP_CONFLICTS, TradeGroupStoreConflictError
+) | dict.fromkeys(TRADE_GROUP_RULES, TradeGroupStoreRuleError)
+
+
 @contextmanager
-def _constraints() -> Iterator[None]:
+def _constraints(refusals: Mapping[str, type[Exception]] = _GROUP_REFUSALS) -> Iterator[None]:
     """A refusal leaves as its rule or constraint name, a lost connection as
     `StorageTierUnavailable` naming only the error's type, anything else as
     `StorageQueryFailed(sqlstate)`; never chained (C-12.6)."""
@@ -493,15 +503,16 @@ def _constraints() -> Iterator[None]:
         if exc.connection_invalidated or state.startswith("08") or state in _NOT_SERVING:
             raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
         name = _violated_constraint(exc)
-        if name in TRADE_GROUP_RULES:
-            raise TradeGroupStoreRuleError(name) from None
-        if name in TRADE_GROUP_CONFLICTS:
-            raise TradeGroupStoreConflictError(name) from None
+        if name is not None and name in refusals:
+            raise refusals[name](name) from None
         raise StorageQueryFailed(_sqlstate(exc)) from None
     except WriteAheadTimeout:
         raise  # the audit hook's bound, not the database's, although it is a `TimeoutError` too
     except (OSError, sa.exc.TimeoutError) as exc:
         raise StorageTierUnavailable(f"postgres unreachable ({type(exc).__name__})") from None
+
+
+constraints = _constraints  # the definitions store passes its own refusals
 
 
 # -- the store -----------------------------------------------------------------------------------
