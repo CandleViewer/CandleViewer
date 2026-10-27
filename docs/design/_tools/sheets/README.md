@@ -58,6 +58,8 @@ boundary; default `STOP` in the current directory).
    yourself, or stop if it cannot be reloaded, then re-run the remaining boards. Never reload in the
    middle of a board. A reload empties plugin storage, and the libraries reinstall on the next call.
 5. To resume one board, use `run/render_exec.py <compact sheet> --page <page> --from <step>`.
+6. Draw at most ten boards per design ticket (light and high-contrast twins at most a third of
+   them). Every other board is listed as "not drawn — the text is binding".
 
 ## 4. Post-steps and export
 
