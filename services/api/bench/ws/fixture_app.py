@@ -328,10 +328,11 @@ class Backend:
         )
 
     async def _authenticate(self, token: str) -> tuple[str, uuid.UUID, datetime]:
-        # The harness stands for active users: each socket auth counts as their activity, as a
-        # touching REST read would in production (a WS auth does not), so a refresh never finds
-        # the session idle-locked (#4012: a refresh is no activity) during a 30 or 60 min profile.
-        rec = await self.sessions.authenticate_access_token(token, touch=True)
+        # The harness stands for active users: each socket auth also presses Extend, the only
+        # activity on a live session (#2300; a WS auth is none), so a refresh never finds the
+        # session idle-locked (#4012: a refresh is no activity) during a 30 or 60 min profile.
+        rec = await self.sessions.authenticate_access_token(token)
+        rec = await self.sessions.touch(str(rec.id))
         return str(rec.id), rec.user_id, access_token_expires_at(rec)
 
     async def _refresh(self, body: dict[str, str]) -> dict[str, str]:
