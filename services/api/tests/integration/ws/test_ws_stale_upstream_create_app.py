@@ -87,8 +87,8 @@ def _resync(c: h.Client, ch: str, last_seq: int) -> dict[str, Any]:
     return _next(c, "snap")
 
 
-def _sub(c: h.Client, ch: str) -> dict[str, Any]:
-    topic = {"ch": ch, "opts": {"encoding": "structured"}}
+def _sub(c: h.Client, ch: str, encoding: str = "structured") -> dict[str, Any]:
+    topic = {"ch": ch, "opts": {"encoding": encoding}}
     c.send({"t": "sub", "id": "s", "p": {"topics": [topic]}})
     assert _next(c, "sub_ok")["p"]["results"][0]["ok"] is True
     return _next(c, "snap")
@@ -100,9 +100,20 @@ def _stale(snap: dict[str, Any]) -> bool:
     return "stale" in snap["meta"]
 
 
+def _payload_stale(snap: dict[str, Any], encoding: str) -> bool | None:
+    """The §14.1 payload's own `stale` (structured); a kind-1 frame has none, so on the binary
+    form `meta.stale` is the flag's only carrier (`None` here)."""
+    if encoding == "structured":
+        flag: bool = snap["p"]["stale"]
+        return flag
+    assert snap["e"] != "j", snap
+    return None
+
+
+@pytest.mark.parametrize("encoding", ["structured", "binary"])
 @pytest.mark.parametrize("offer", h.OFFERS.values(), ids=h.OFFERS.keys())
 def test_book_snap_goes_stale_when_the_book_stalls_past_the_watchdog_limit_and_clears_on_resume(
-    offer: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    offer: list[str], encoding: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`book`: `stale` is `BookStream.is_stale`, the REST book's own verdict, so a book that
     applied no frame for `STALENESS_S["book"]` is served flagged until the next frame lands."""
@@ -112,21 +123,22 @@ def test_book_snap_goes_stale_when_the_book_stalls_past_the_watchdog_limit_and_c
         up.books.acquire("test", h.SYM)  # held before any socket: the book is LIVE at sub
         up.book_frame(BOOK[0])
         with up.stack.connect(offer) as c:
-            first = _sub(c, BOOK_CH)
-            fresh = (_stale(first), first["p"]["stale"], _gauge() - base)
+            first = _sub(c, BOOK_CH, encoding)
+            fresh = (_stale(first), _payload_stale(first, encoding), _gauge() - base)
             up.t += limit / 2
             up.book_frame(BOOK[1])  # a delta inside the limit: still fresh
             up.t += limit / 2
             within = _resync(c, BOOK_CH, first["s"])
             up.t += limit  # stalled: no frame for the whole limit
             stalled = _resync(c, BOOK_CH, within["s"])
-            flagged = (_stale(stalled), stalled["p"]["stale"], _gauge() - base)
+            flagged = (_stale(stalled), _payload_stale(stalled, encoding), _gauge() - base)
             up.book_frame(BOOK[2])  # the feed resumes
             resumed = _resync(c, BOOK_CH, stalled["s"])
-            cleared = (_stale(resumed), resumed["p"]["stale"], _gauge() - base)
-    assert fresh == (False, False, 0) and _stale(within) is False
-    assert flagged == (True, True, 1)
-    assert cleared == (False, False, 0)
+            cleared = (_stale(resumed), _payload_stale(resumed, encoding), _gauge() - base)
+    structured = encoding == "structured"
+    assert fresh == (False, False if structured else None, 0) and _stale(within) is False
+    assert flagged == (True, True if structured else None, 1)
+    assert cleared == (False, False if structured else None, 0)
     assert up.books.is_stale(h.SYM) is False  # the REST view's verdict is the same one
 
 

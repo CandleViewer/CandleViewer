@@ -81,3 +81,13 @@ async def test_a_reacquire_in_grace_keeps_the_last_frames_age() -> None:
     rig.t += TRADE_STALE_AFTER_S
     rig.stream.acquire("ws", SYM)
     assert rig.stream.is_stale(SYM) is True
+
+
+async def test_a_frame_freshens_only_its_own_symbol() -> None:
+    """The verdict is per symbol: a BTCUSDT print says nothing about a silent ETHUSDT tape."""
+    rig = _Rig()
+    rig.stream.acquire("ws", SYM)
+    rig.stream.acquire("ws", "ETHUSDT")
+    rig.t += TRADE_STALE_AFTER_S
+    await rig.stream.handle_frame(TRADES[0])
+    assert (rig.stream.is_stale(SYM), rig.stream.is_stale("ETHUSDT")) == (False, True)
