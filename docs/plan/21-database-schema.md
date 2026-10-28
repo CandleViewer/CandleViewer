@@ -35,7 +35,7 @@ Conventions used throughout:
    3.5 Alerts & deliveries
    3.6 Recorder, retention, replay
    3.7 Journal & notes
-   3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys
+   3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys, watchlists
    3.9 Settings & feature flags
    3.10 Audit log (hash chain), system events, incidents, backups
    3.11 Risk state: lockouts, policy, kill switch
@@ -424,6 +424,7 @@ erDiagram
     users ||--o{ drawings : draws
     users ||--o{ indicator_presets : saves
     users ||--o{ hotkey_profiles : configures
+    users ||--o{ watchlists : keeps
     users ||--o{ settings : personalises
     feature_flags ||--o{ feature_flag_overrides : overridden
     users ||--o{ audit_log : acts
@@ -438,6 +439,7 @@ erDiagram
     drawings { uuid id PK  symbol_code symbol  jsonb geometry }
     indicator_presets { uuid id PK  text indicator_code  jsonb params }
     hotkey_profiles { uuid id PK  jsonb bindings }
+    watchlists { uuid id PK  uuid user_id FK  text name  int version }
     settings { uuid id PK  text key  jsonb value }
     feature_flags { uuid id PK  text key UK  flag_kind kind }
     audit_log { bigserial id PK  sha256_hex entry_hash  sha256_hex prev_hash }
@@ -3264,7 +3266,7 @@ CREATE INDEX ix_notes_author  ON notes (author_id, created_at DESC);
 CREATE INDEX ix_notes_fts     ON notes USING gin (to_tsvector('english', coalesce(title,'') || ' ' || body));
 ```
 
-### 3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys
+### 3.8 Workspaces, layouts, chart templates, drawings, presets, hotkeys, watchlists
 
 #### 3.8.1 `workspaces`, `layouts`, `layout_panes`
 
@@ -3471,6 +3473,39 @@ CREATE UNIQUE INDEX ux_hk_active ON hotkey_profiles (owner_user_id) WHERE is_act
 ```
 
 Conflict detection (two actions on one chord) is a save-time application check with the offending chord returned as a 422; it is not expressible as a SQL constraint over JSONB without a trigger, and the trigger `trg_hk_conflicts` implements it by expanding `bindings` values and asserting uniqueness.
+
+#### 3.8.6 `watchlists`
+
+E08-T07 (#4706): the lists `/watchlists` persists for SCR-100 and SCR-101 (`docs/design/E08/E08-D07.md`
+§12 C-4, C-5). Specified by the contract slice; its migration ships with the router slice. A list
+belongs to one user and is read and written only by its owner: the API answers another user's list
+id as an id that does not exist (`404`). `symbols` is the list in order, at most 200 and none twice;
+each is a trading USDT linear perpetual of the instrument catalogue when it is written (the API
+checks it, so a symbol delisted later stays in the list until the owner edits it). `version` starts
+at 1 and goes up by one on each replace, in one statement guarded by the version the client sent
+(`UPDATE … WHERE id = :id AND user_id = :owner AND version = :expected`), so of two writers holding
+the same version exactly one wins and the other is `412 version_conflict`. `ux_wl_name` makes a name
+unique per user in any letter case (`409 conflict` / `name_taken`). A delete removes the row; its
+history is the audit trail (`watchlist.created`, `watchlist.updated`, `watchlist.deleted`,
+`24-internal-schemas.md` §15.5), which records the name, the symbol count and the version, never the
+list. Rows also go with their owner's `users` row (`ON DELETE CASCADE`).
+
+```sql
+CREATE TABLE watchlists (
+  id          uuid PRIMARY KEY,
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  symbols     text[] NOT NULL DEFAULT '{}',   -- in order; at most 200, none twice (the API checks both)
+  columns     text[] NOT NULL DEFAULT '{}',   -- column ids, in order
+  version     integer NOT NULL DEFAULT 1,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  updated_at  timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT wl_name_len    CHECK (char_length(name) BETWEEN 1 AND 80),
+  CONSTRAINT wl_symbols_max CHECK (cardinality(symbols) <= 200),
+  CONSTRAINT wl_version     CHECK (version >= 1)
+);
+CREATE UNIQUE INDEX ux_wl_name ON watchlists (user_id, lower(name));
+```
 
 ### 3.9 Settings & feature flags
 
@@ -3681,7 +3716,7 @@ Inserts into `audit_log` are **serialised** by an advisory lock (`pg_advisory_xa
 The same revision gives `audit_chain()` a `search_path` of its own, `pg_catalog, public, pg_temp` (#4032), so what it calls (`digest()`, and `audit_field()`, which runs under that path when the chain calls it), the `audit_log` it reads and the `audit_log_id_seq` it draws from no longer resolve through the inserting session's path: a schema that session puts first, with a `digest()` of its own, cannot forge the hash. `pg_catalog` first; `public`, where the tables, the sequence and pgcrypto live; `pg_temp` last, so a temporary table never stands in for `audit_log`. The pin holds while `public` stays closed to other roles: a better-typed overload created there (a `pg_advisory_xact_lock(int4)`, a `nextval(text)`) would still win over `pg_catalog`'s. `cv_owner` owns `public`, `pg_bootstrap.sql` revokes CREATE on it from PUBLIC (PostgreSQL's default since 15), and the role privilege matrix pins it for `cv_app` (`test_cv_app_may_use_schema_public_but_not_create_in_it`); schema-qualified calls in a later revision would remove the dependency. `forbid_mutation()` and `audit_refuse_truncate()` only raise, so they resolve nothing and keep no path of their own. The bodies above are 0003's but for the id line, so the hash input is unchanged; CI-MIG-003 exempts that revision only in its reviewed shape, each statement's text pinned by its sha256.
 
 Actions that MUST be audited (non-exhaustive, enforced by a Semgrep rule on the service layer):
-`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
+`auth.login`, `auth.login_failed`, `auth.logout`, `auth.session_created`, `auth.session_refreshed`, `auth.session_revoked`, `auth.disabled_user_session_revoked`, `auth.idle_locked`, `auth.refresh_reuse_detected`, `auth.refresh_reuse_replayed`, `auth.session_fixation_attempt`, `auth.session_revoke_denied`, `auth.mfa_enroll`, `auth.mfa_reset`, `auth.password_change`, `users.create`, `users.disable`, `roles.grant`, `roles.revoke`, `accounts.create`, `accounts.enable_trading`, `api_key.import`, `api_key.rotate`, `api_key.revoke`, `api_key.reveal_attempt`, `profile.created`, `profile.updated`, `profile.deleted`, `profile.bound`, `profile.unbound`, `profile.save_refused`, `orders.submit`, `orders.cancel`, `orders.amend`, `trade_group.submit`, `trade_group.override_refused`, `positions.flatten`, `risk.freeze_manager`, `risk.unfreeze_manager`, `rules.arm`, `rules.disarm`, `rules.version_create`, `alert.created`, `alert.updated`, `alert.enabled`, `alert.disabled`, `alert.deleted`, `alert.denied`, `alert.scope_refused`, `alert.fired`, `alert.disarmed`, `alert.delivery_acked`, `alert.deliveries_acked`, `alert.desktop_outcome`, `indicator_preset.created`, `indicator_preset.updated`, `indicator_preset.deleted`, `indicator_preset.imported`, `watchlist.created`, `watchlist.updated`, `watchlist.deleted`, `recorder.start`, `recorder.stop`, `recorder.update`, `retention.change`, `retention.purge`, `flags.change`, `settings.change`, `onboarding.checklist_tamper_rejected`, `backup.run`, `backup.restore`, `backup.verified`, `backup.downloaded`, `backup.deleted`, `env.switch_live`.
 
 #### 3.10.2 `system_events`
 
@@ -5168,6 +5203,7 @@ Classification levels: **P0 public/internal** (no restriction), **P1 personal** 
 | `drawings`                                             | `label`, `geometry`, `style`            | P0         | text / jsonb                                    | User-authored chart annotations; free text, no credentials or PII intended                                                                      |
 | `workspaces`, `layouts`, `layout_panes`                | `name`, `grid_spec`, `pane_config`      | P0         | text / jsonb                                    | User layout preferences; never logged. Pane settings must never carry credentials or account identifiers                                        |
 | `indicator_presets`                                    | `name`, `params`, `style`               | P0         | text / jsonb                                    | User indicator settings (`name` is free text); no credentials or PII intended; never logged or audited                                          |
+| `watchlists`                                           | `name`, `symbols`, `columns`            | P0         | text / text[]                                   | User list preferences; no credentials or PII beyond the owning `user_id`; never logged; audited by name, count and version only                 |
 | `journal_trades`                                       | all P&L columns                         | P1         | plaintext                                       | Financial personal data                                                                                                                         |
 | `exchange_accounts`                                    | `exchange_uid`, `label`                 | P1         | plaintext                                       | Account identifiers                                                                                                                             |
 | `exchange_accounts`                                    | `policy_disarm_code` and its times      | P0         | plaintext                                       | A fixed rule code and two times (0031), never text, an IP or a UID; Viewers read the same code in `account.disabled_by_policy`                  |

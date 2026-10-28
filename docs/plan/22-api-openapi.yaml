@@ -12946,6 +12946,9 @@ paths:
       tags: [workspaces]
       operationId: listWatchlists
       summary: List own watchlists
+      description: >
+        The caller's own lists, each with its `version` (E08-T07). Another user's lists are never
+        listed, whatever the caller's role.
       x-rbac: { permissions: [workspaces:read], scope: self }
       responses:
         "200":
@@ -12956,12 +12959,21 @@ paths:
                 type: object
                 properties:
                   items: { type: array, items: { $ref: "#/components/schemas/Watchlist" } }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     post:
       tags: [workspaces]
       operationId: createWatchlist
       summary: Create a watchlist
+      description: >
+        Creates one of the caller's lists at `version` 1 (E08-T07). A `name` that another of the
+        caller's lists already uses, in any letter case, is `409 conflict` with
+        `errors[0].rule = name_taken` and `field` `name`. A list that breaks a rule of
+        `WatchlistInput` is `422 validation_failed` naming the field and the rule:
+        `too_many_symbols` (over 200), `unknown_symbol` (not a trading USDT linear perpetual of
+        the instrument catalogue) or `duplicate_symbol` (a symbol twice in one list), each on
+        `symbols`. Either way nothing is written. Audited write-ahead as `watchlist.created`.
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       requestBody:
@@ -12972,10 +12984,15 @@ paths:
       responses:
         "201":
           description: Created.
+          headers:
+            ETag: { $ref: "#/components/headers/WatchlistETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Watchlist" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /watchlists/{watchlistId}:
@@ -12988,8 +13005,26 @@ paths:
       tags: [workspaces]
       operationId: updateWatchlist
       summary: Replace a watchlist
+      description: >
+        Replaces the whole list and stores it as its next `version` (E08-T07). `If-Match` is
+        required: a stale write is never applied silently. Without it the answer is
+        `428 precondition_required`; with a tag that does not name the list's current version
+        the answer is `412 version_conflict`, whose `ETag` header names the current version.
+        Either way nothing changes: reload, then edit again. The name and list rules are those of
+        `createWatchlist` (`409 conflict` / `name_taken`, `422 validation_failed`). Another
+        user's list id is `404`, as an id that does not exist, never `403`. Audited write-ahead as
+        `watchlist.updated`.
       x-rbac: { permissions: [workspaces:write], scope: self }
-      parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
+      parameters:
+        - name: If-Match
+          in: header
+          required: true
+          description: >
+            The `ETag` of the list as last read (`WatchlistETag`). The server compares the id and
+            the version it names; any other value (`*`, a list of tags, another list's tag, an
+            unparseable value) is `412 version_conflict`, never a match.
+          schema: { type: string }
+        - $ref: "#/components/parameters/CsrfToken"
       requestBody:
         required: true
         content:
@@ -12997,21 +13032,47 @@ paths:
             schema: { $ref: "#/components/schemas/WatchlistInput" }
       responses:
         "200":
-          description: Updated.
+          description: Replaced.
+          headers:
+            ETag: { $ref: "#/components/headers/WatchlistETag" }
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Watchlist" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "412":
+          description: >
+            `If-Match` does not name the list's current version (`version_conflict`). Nothing
+            changed; the `ETag` header names the current version.
+          headers:
+            ETag: { $ref: "#/components/headers/WatchlistETag" }
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/UnprocessableEntity" }
+        "428":
+          description: >
+            The replace carried no `If-Match` (`precondition_required`). Nothing changed; read
+            the list, then send its `ETag` back.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
     delete:
       tags: [workspaces]
       operationId: deleteWatchlist
       summary: Delete a watchlist
+      description: >
+        Deletes one of the caller's lists; the row is removed, and its history is the audit trail
+        (`watchlist.deleted`, written ahead). Another user's list id is `404`, as an id that does
+        not exist, never `403` (E08-T07).
       x-rbac: { permissions: [workspaces:write], scope: self }
       parameters: [{ $ref: "#/components/parameters/CsrfToken" }]
       responses:
         "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/CsrfTokenInvalid" }
         "404": { $ref: "#/components/responses/NotFound" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -15356,6 +15417,12 @@ components:
         `W/"<id>:<version>"` of the profile answered. Send it as `If-Match` on
         `updateAccountProfile` and `deleteAccountProfile`: the server compares the id and the
         version it names, so the weak tag matches.
+      schema: { type: string, pattern: '^W/"[0-9a-f-]{36}:[1-9][0-9]*"$' }
+    WatchlistETag:
+      description: >
+        `W/"<id>:<version>"` of the watchlist answered (E08-T07). Send it as `If-Match` on
+        `updateWatchlist`: the server compares the id and the version it names, so the weak tag
+        matches.
       schema: { type: string, pattern: '^W/"[0-9a-f-]{36}:[1-9][0-9]*"$' }
     DefaultBindingETag:
       description: >
@@ -21791,8 +21858,16 @@ components:
       allOf:
         - $ref: "#/components/schemas/WatchlistInput"
         - type: object
+          required: [id, version, created_at, updated_at]
           properties:
             id: { type: string, format: uuid }
+            version:
+              type: integer
+              minimum: 1
+              readOnly: true
+              description: >
+                Server-assigned: 1 on create, one more on each replace. `updateWatchlist` takes it
+                back through `If-Match` (`WatchlistETag`), never in the body.
             created_at: { type: string, format: date-time }
             updated_at: { type: string, format: date-time }
 
@@ -21801,10 +21876,18 @@ components:
       required: [name, symbols]
       additionalProperties: false
       properties:
-        name: { type: string, minLength: 1, maxLength: 80 }
+        name:
+          type: string
+          minLength: 1
+          maxLength: 80
+          description: Unique among the owner's lists, in any letter case (`409 conflict` / `name_taken`).
         symbols:
           type: array
           maxItems: 200
+          description: >
+            The list, in order: each a trading USDT linear perpetual of the instrument catalogue,
+            none twice (`422 validation_failed`: `too_many_symbols`, `unknown_symbol`,
+            `duplicate_symbol`).
           items: { $ref: "#/components/schemas/Symbol" }
         columns:
           type: array
