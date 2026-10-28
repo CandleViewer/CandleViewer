@@ -12,7 +12,7 @@ from typing import Any, cast
 from uuid import UUID
 
 import pytest
-from prometheus_client import generate_latest
+from prometheus_client import REGISTRY, generate_latest
 from structlog.testing import capture_logs
 
 from candleviewer.accounts.trade_group_topic import TradeGroupTopic
@@ -32,15 +32,17 @@ from tests.unit.ws._seq_support import Conn, Source, principal
 type Topic = TradeGroupTopic[SnapshotBody, PrincipalSnapshot]
 
 
-def _wired(*seed: Any, seeded: bool = True) -> tuple[SequencingHub, Topic, Metrics, SnapshotRouter]:
+def _wired(
+    *seed: Any, seeded: bool = True, orders: Source | None = None
+) -> tuple[SequencingHub, Topic, Metrics, SnapshotRouter]:
     """The hub, the topic seeded with `seed` (unless not `seeded`), its counts' registry and the
-    snapshot router."""
+    snapshot router, its `orders` source `orders` or a new one, serving an empty list."""
     hub, metrics, counts = SequencingHub(), Metrics("demo"), TradeGroupFrameCounts()
     counts.bind(metrics)
     topic = trade_groups_topic(hub, counts)
     if seeded:
         topic.seed(seed)
-    orders = Source()
+    orders = orders or Source()
     orders.bodies["orders"] = SnapshotBody({"orders": []})
     return hub, topic, metrics, SnapshotRouter({"trade_groups": topic, "orders": orders})
 
@@ -128,16 +130,37 @@ def test_the_wired_viewer_stops_what_select_lets_through_and_the_owner_is_sent_i
     assert [_ids(frame) for frame in conn.take()] == [[_G1]]
 
 
-def test_a_sub_made_before_the_seed_is_sent_its_initial_snapshot_when_the_seed_lands() -> None:
-    """S4b's R1C-01: the gateway serves before the OMS seeds the topic, so a `sub` may wait first,
-    `snapshot_pending` (§7.7); the seed wakes it with one `initial` snapshot, then deltas flow."""
-    hub, topic, _, router = _wired(seeded=False)
-    conn = _conn(hub, router, _A)
+def _resyncs(reason: str) -> float:
+    """`cv_ws_resync_total{reason}`, the process's (bound at import, so never absent)."""
+    value = REGISTRY.get_sample_value("cv_ws_resync_total", {"reason": reason})
+    assert value is not None
+    return value
+
+
+def test_a_sub_made_before_the_seed_is_sent_its_pending_snapshot_when_the_seed_lands() -> None:
+    """S4b's R1C-01 and RC-02: the gateway serves before the OMS seeds the topic, so a `sub` may
+    wait first, `snapshot_pending` (§7.7). The seed wakes the family's alone, an `orders` one still
+    pending left to its own module, each under the reason it awaits: a client's `resync` is kept,
+    and no `upstream_desync` is sent or counted. Then deltas flow."""
+    orders = Source()
+    orders.unavailable.add("")  # `orders` names no symbol: nothing to build until cleared
+    hub, topic, _, router = _wired(seeded=False, orders=orders)
+    conn, resyncing = _conn(hub, router, _A), _conn(hub, router, _A)
     _, sub = conn.sub(_entry(_A))
-    assert conn.take() == [] and sub.snapshot_pending
+    _, held = conn.sub(_entry(_A, ch="orders"))
+    resyncing.sub(_entry(_A))
+    ask = {"t": "resync", "id": "r1", "ch": "trade_groups", "p": {"reason": "client_restart"}}
+    assert resyncing.emitter.client_resync(resyncing.authz, ask) is None
+    assert conn.take() == resyncing.take() == [] and sub.snapshot_pending and held.snapshot_pending
+    orders.unavailable.clear()  # buildable now, and still the `orders` module's to wake
+    desync, client = _resyncs("upstream_desync"), _resyncs("client_resync")
     topic.seed([_stored(1, _A)])
     [snap] = conn.take()
     assert (snap["t"], snap["meta"]["reason"], _ids(snap)) == ("snap", "initial", [_G1])
+    [snap] = resyncing.take()
+    assert (snap["t"], snap["meta"]["reason"], _ids(snap)) == ("snap", "client_resync", [_G1])
+    assert (_resyncs("upstream_desync"), _resyncs("client_resync")) == (desync, client + 1)
+    assert held.snapshot_pending
     topic.leg_changed(_leg(1, 0, _A, filled_qty=Decimal("0.004")))
     assert [(frame["t"], _ids(frame)) for frame in conn.take()] == [("d", [_G1])]
 

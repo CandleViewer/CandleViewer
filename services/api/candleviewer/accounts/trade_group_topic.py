@@ -195,9 +195,10 @@ class TradeGroupTopic[B, P]:
         *,
         clock: Callable[[], float] = time.monotonic,
         resync: Callable[[], object] = lambda: None,
+        wake: Callable[[], object] = lambda: None,
     ) -> None:
         self._publish, self._body, self._viewer_for, self._clock = publish, body, viewer_for, clock
-        self._resync = resync
+        self._resync, self._wake = resync, wake
         self._groups: dict[UUID, _Held] = {}
         self._ended: dict[UUID, None] = {}  # insertion order: the oldest is forgotten first
         self._seeded = False
@@ -205,16 +206,17 @@ class TradeGroupTopic[B, P]:
         self._suppressed = 0  # and how many it held back since its last line
 
     def seed(self, groups: Iterable[TradeGroupWithLegs]) -> None:
-        """Hold the active groups as stored at start, once, then wake (`resync`) the subscriptions
-        made before it: each still awaits its `initial` snapshot, a reason a resync keeps (§7.7).
-        A resync that fails is the hub's to log, as in `_contained`."""
+        """Hold the active groups as stored at start, once, then `wake` the subscriptions made
+        before it: each is sent its pending `snap` (§7.7) once the load lands, under the reason
+        it awaits (`initial`, or a client's `resync`), and none is pended again. A wake that
+        fails is the hub's to log, as in `_contained`."""
         if self._seeded:
             raise ValueError("the trade_groups topic is already seeded")
         for record in groups:
             self._hold(record)
         self._seeded = True
         with contextlib.suppress(Exception):
-            self._resync()
+            self._wake()
 
     # -- SnapshotSource
 

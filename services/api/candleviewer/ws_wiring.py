@@ -613,7 +613,9 @@ def trade_groups_topic(
     hub: SequencingHub, counts: TradeGroupFrameCounts
 ) -> TradeGroupTopic[SnapshotBody, PrincipalSnapshot]:
     """E28-T05 (#909): the accounts module's `trade_groups` topic over `hub`, each publish with
-    its viewer, a resync through it, and `counts` taking each snapshot built and delta sent."""
+    its viewer, a resync through it, the seed's wake (the family's pending subscriptions flushed,
+    each with its own reason, as `alerts_topic` wakes its owner's), and `counts` taking each
+    snapshot built and delta sent."""
 
     def snapshot(structured: Mapping[str, Any]) -> SnapshotBody:
         counts.add("snapshot", 1)
@@ -637,7 +639,10 @@ def trade_groups_topic(
     def resync() -> int:
         return hub.resnapshot(lambda sub: sub.ch == "trade_groups", "upstream_desync")
 
-    return TradeGroupTopic(publish, snapshot, viewer_for, resync=resync)
+    def wake() -> int:
+        return hub.flush_pending(lambda sub: sub.ch == "trade_groups")
+
+    return TradeGroupTopic(publish, snapshot, viewer_for, resync=resync, wake=wake)
 
 
 class _Identity(Protocol):

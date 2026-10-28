@@ -6,6 +6,7 @@ and counted when every read fails."""
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any, cast
@@ -28,6 +29,7 @@ from candleviewer.oms_wiring import (
     GroupStores,
     ObservedGroups,
     ObservedSubmissions,
+    OmsRuntime,
     OmsStores,
 )
 from candleviewer.storage.errors import StorageTierUnavailable
@@ -181,14 +183,25 @@ class _SeededWorld(World):
 
 @pytest.mark.parametrize("failures", [0, 1, SEED_ATTEMPTS])
 async def test_the_runtime_seeds_the_topic_before_it_is_ready_and_a_failed_seed_never_blocks_it(
-    failures: int,
+    failures: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Only a submit, admitted once ready, writes a group: the seed is handed over before `ready`,
     so before any write, and its count logged. A failed read is tried again after the sweep's
     first backoff; a seed whose every read fails is counted and logged at critical, and the OMS
-    gets ready all the same (R1S-04, R1C-05)."""
+    gets ready all the same (R1S-04, R1C-05). One sweep bound wraps every read (RC-03b)."""
     world, ready_at_seed, topic = _SeededWorld(), list[bool](), Mock()
     world.failures = failures
+    spans = list[tuple[int, int]]()  # each bounded call's open-group reads, at its start and end
+    bounded = OmsRuntime._bounded
+
+    async def spied(oms: OmsRuntime, step: Awaitable[Any]) -> Any:
+        reads = world.groups.reads
+        try:
+            return await bounded(oms, step)
+        finally:
+            spans.append((reads, world.groups.reads))
+
+    monkeypatch.setattr(OmsRuntime, "_bounded", spied)
     runtime = world.runtime(trade_groups=topic)
     topic.seed.side_effect = lambda _groups: ready_at_seed.append(runtime._ready.is_set())
     with capture_logs() as logs:
@@ -205,6 +218,7 @@ async def test_the_runtime_seeds_the_topic_before_it_is_ready_and_a_failed_seed_
     text = generate_latest(world.metrics.registry).decode()
     counted = f'{SEED_FAILURES}{{env="demo"}} 1.0' in text
     assert world.groups.reads == min(failures + 1, SEED_ATTEMPTS) and SEED_ATTEMPTS == 3  # 20 §6.2
+    assert [(a, b) for a, b in spans if a != b] == [(0, world.groups.reads)]  # one bound for all
     assert world.clock.slept.count(SWEEP_RETRY_S[0]) == min(failures, SEED_ATTEMPTS - 1)
     if failures == SEED_ATTEMPTS:
         failed = {"event": "oms_trade_groups_unseeded", "error": "StorageTierUnavailable"}

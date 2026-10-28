@@ -116,6 +116,7 @@ def test_x02_ac_05_a_sub_naming_a_and_b_is_narrowed_to_a_and_b_data_never_reache
         assert [f["ch"] for f in sorted(drained(c), key=lambda f: f["ch"])] == list(SCOPED)
         assert [publish(world, f, ACC_B) for f in SCOPED] == [0] * n  # in nobody's scope
         assert [publish(world, f, ACC_A) for f in SCOPED] == [1] * n  # while A's reaches its one
+        assert publish(world, "trade_groups", ACC_A, ACC_B) == 0  # a leg on B too (SR-E28-21)
         got = drained(c)
     assert sorted((f["t"], f["ch"], f["s"]) for f in got) == [("d", f, 2) for f in SCOPED]
     assert naming(c.seen, ACC_B) == []  # not one frame of the whole stream names B
