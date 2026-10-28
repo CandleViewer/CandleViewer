@@ -29,6 +29,7 @@ const advance = async (ms: number): Promise<void> => {
 const screen = (): ReturnType<typeof within> => within(document.body);
 const LABEL = "Flatten 4 positions — all accounts, LIVE + DEMO";
 const ARMED = "Press again to flatten 4 positions — all accounts, LIVE + DEMO";
+const RING = "Hold to flatten 4 positions — all accounts, LIVE + DEMO";
 const confirmButton = (): HTMLElement =>
   screen().getByRole("button", { name: /flatten 4 positions/i });
 const ring = (): HTMLElement => screen().getByRole("progressbar");
@@ -107,9 +108,9 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     expect(clampHold(1200)).toBe(1200);
   });
 
-  it("renders the ring as a progressbar named by Confirm, at 0 %", async () => {
+  it("renders the ring as a progressbar named 'Hold to {effect}', at 0 %", async () => {
     await openHost();
-    expect(ring()).toHaveAccessibleName(LABEL);
+    expect(ring()).toHaveAccessibleName(RING);
     expect(ring()).toHaveAttribute("aria-valuenow", "0");
     expect(ring()).toHaveAttribute("aria-valuetext", "0 %");
     expect(confirmButton()).toBeEnabled();
@@ -225,7 +226,8 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     await key("keyUp", "Enter");
     expect(target).toHaveAccessibleName(ARMED);
     expect(target).toHaveAttribute("data-armed", "");
-    expect(ring()).toHaveAccessibleName(ARMED);
+    // The ring's name stays put while Confirm's changes (E39-D03 §5).
+    expect(ring()).toHaveAccessibleName(RING);
     const statuses: HTMLElement[] = screen().getAllByRole("status");
     expect(statuses.filter((s: HTMLElement) => s.textContent === ARMED)).toHaveLength(1);
     // The release at once kept no progress.
@@ -242,7 +244,12 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     await key("keyDown", "Enter");
     await key("keyUp", "Enter");
     expect(onConfirm).not.toHaveBeenCalled();
+    // 250 ms after the first, but 1 ms after a keyup: the shape of an auto-repeat pair, not a new press.
     await advance(1);
+    await key("keyDown", "Enter");
+    await key("keyUp", "Enter");
+    expect(onConfirm).not.toHaveBeenCalled();
+    await advance(50);
     await key("keyDown", "Enter");
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm.mock.calls[0]?.[0]).toMatchObject({ gate: "double-press" });
@@ -256,6 +263,11 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     await key("keyUp", "Enter");
     await advance(5000);
     expect(target).toHaveAccessibleName(LABEL);
+    // The lapse is heard once, politely: the armed name does not just vanish.
+    const statuses: HTMLElement[] = screen().getAllByRole("status");
+    expect(
+      statuses.filter((s: HTMLElement) => s.textContent === `Disarmed — ${LABEL}`),
+    ).toHaveLength(1);
     await key("keyDown", "Enter");
     await key("keyUp", "Enter");
     expect(onConfirm).not.toHaveBeenCalled();
@@ -281,6 +293,26 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     await key("keyUp", " ");
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(onConfirm.mock.calls[0]?.[0]).toMatchObject({ gate: "double-press" });
+  });
+
+  it("auto-repeat as keyup/keydown pairs (repeat false) is one press: nothing fires", async () => {
+    const onConfirm = vi.fn();
+    await openHost({ onConfirm });
+    const target = await focusConfirm();
+    await key("keyDown", "Enter");
+    await advance(500);
+    await key("keyUp", "Enter");
+    await key("keyDown", "Enter");
+    for (let i = 0; i < 10; i += 1) {
+      await advance(33);
+      await key("keyUp", "Enter");
+      await key("keyDown", "Enter");
+    }
+    await key("keyUp", "Enter");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(target).toHaveAttribute("data-armed", "");
+    await advance(5000);
+    expect(onConfirm).not.toHaveBeenCalled();
   });
 
   it("a Space keyup without its own press on Confirm counts for nothing", async () => {
@@ -331,6 +363,8 @@ describe("ConfirmDialog hold (CMP-044, H25)", () => {
     await key("keyDown", "Enter");
     await key("keyUp", "Enter");
     await key("keyDown", "Escape");
+    // Pins that the gate lets Esc bubble to the dialog: one cancel, and it is the dialog's own.
+    expect(onCancel).toHaveBeenCalledTimes(1);
     expect(onCancel).toHaveBeenLastCalledWith("escape");
     await advance(2000);
     expect(onConfirm).not.toHaveBeenCalled();
@@ -472,5 +506,136 @@ describe("ConfirmDialog autoCancelMs (CMP-044, E30-D03 D3)", () => {
     expect(onCancel).toHaveBeenLastCalledWith("timeout");
     await advance(2_000);
     expect(onConfirm).not.toHaveBeenCalled();
+  });
+});
+
+/** A host whose props change on demand, by controls outside the dialog's trap (for the test only). */
+function Patched({ patches, ...props }: Extra & { patches: Record<string, Extra> }): JSX.Element {
+  const [patch, setPatch] = useState<Extra>({});
+  return (
+    <>
+      {Object.entries(patches).map(([name, change]) => (
+        <Button key={name} onClick={() => setPatch((current) => ({ ...current, ...change }))}>
+          {name}
+        </Button>
+      ))}
+      <Host {...props} {...patch} />
+    </>
+  );
+}
+
+const openPatched = async (
+  props: Extra & { patches: Record<string, Extra> },
+): Promise<HTMLElement> => {
+  const host = await mount(<Patched {...props} />);
+  await act(async () => {
+    fireEvent.click(within(host).getByRole("button", { name: "Open" }));
+  });
+  await advance(400);
+  return host;
+};
+const apply = async (host: HTMLElement, name: string): Promise<void> => {
+  await act(async () => {
+    // The page behind the modal is inert to AT: the test reaches the host's control by its text.
+    const control = within(host).getByText(name).closest("button");
+    if (control !== null) fireEvent.click(control);
+  });
+};
+const count = (): Element | null => document.querySelector(".cv-confirm__countdown");
+
+describe("ConfirmDialog hold: a new intent drops the hold (the guard's rearm)", () => {
+  const NEXT = "Flatten 5 positions — all accounts, LIVE + DEMO";
+  const relabel = { Relabel: { confirmLabel: NEXT } };
+
+  it("a pointer hold under way when Confirm's label changes fires nothing", async () => {
+    const onConfirm = vi.fn();
+    const host = await openPatched({ onConfirm, patches: relabel });
+    await pointerDown(confirmButton());
+    await advance(300);
+    await apply(host, "Relabel");
+    await advance(1000);
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(ring()).toHaveAttribute("aria-valuenow", "0");
+    expect(screen().getByRole("button", { name: NEXT })).not.toHaveAttribute("data-holding");
+  });
+
+  it("an armed press does not carry over to the new label: the next press only arms", async () => {
+    const onConfirm = vi.fn();
+    const host = await openPatched({ onConfirm, patches: relabel });
+    const target = await focusConfirm();
+    await key("keyDown", "Enter");
+    await key("keyUp", "Enter");
+    expect(target).toHaveAccessibleName(ARMED);
+    await advance(300);
+    await apply(host, "Relabel");
+    expect(target).toHaveAccessibleName(NEXT);
+    await advance(500);
+    await key("keyDown", "Enter");
+    await key("keyUp", "Enter");
+    expect(onConfirm).not.toHaveBeenCalled();
+    expect(target).toHaveAccessibleName(
+      "Press again to flatten 5 positions — all accounts, LIVE + DEMO",
+    );
+  });
+});
+
+describe("ConfirmDialog autoCancelMs after a send (CMP-044, E30-D03 D3 (6))", () => {
+  const order: Extra = { variant: "standard", role: "dialog", autoCancelMs: 20_000 };
+
+  it("a send that fails after the count would have run out is never cancelled by it", async () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    const host = await openPatched({
+      ...order,
+      onConfirm,
+      onCancel,
+      patches: {
+        Busy: { busy: true },
+        Fail: { busy: false, failure: { message: "The exchange rejected the order." } },
+      },
+    });
+    await act(async () => {
+      fireEvent.click(confirmButton());
+    });
+    await apply(host, "Busy");
+    await advance(25_000);
+    await apply(host, "Fail");
+    expect(count()).toBeNull();
+    await advance(30_000);
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(screen().getByRole("dialog")).toBeVisible();
+    // The retry path stays open: one more confirm is allowed.
+    await act(async () => {
+      fireEvent.click(confirmButton());
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(2);
+  });
+
+  it("a busy that ends without a send restarts the count from the full time", async () => {
+    const onCancel = vi.fn();
+    const host = await openPatched({
+      ...order,
+      onCancel,
+      patches: { Busy: { busy: true }, Idle: { busy: false } },
+    });
+    await advance(15_000);
+    await apply(host, "Busy");
+    expect(count()).toBeNull();
+    await advance(25_000);
+    await apply(host, "Idle");
+    expect(count()).toHaveTextContent("Cancels in 0:20");
+    await advance(19_000);
+    expect(onCancel).not.toHaveBeenCalled();
+    await advance(1_000);
+    expect(onCancel).toHaveBeenLastCalledWith("timeout");
+  });
+
+  it("a key repeat does not restart the count", async () => {
+    await openHost(order);
+    await advance(15_000);
+    await key("keyDown", "Shift", true, document.body);
+    expect(count()).toHaveTextContent("Cancels in 0:05");
+    await key("keyDown", "Shift", false, document.body);
+    expect(count()).toHaveTextContent("Cancels in 0:20");
   });
 });

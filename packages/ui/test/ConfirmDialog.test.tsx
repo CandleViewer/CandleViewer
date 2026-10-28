@@ -125,21 +125,28 @@ describe("ConfirmDialog (CMP-044)", () => {
 
   it("a press that begins inside the guard does nothing when it ends after it (pointer and Space)", async () => {
     const onConfirm = vi.fn();
+    // One session, so the button or key pressed in one call is the one released in the next.
+    const user = userEvent.setup();
     await openHost({ onConfirm });
     const target = confirmButton();
+    const clicks = vi.fn();
+    target.addEventListener("click", clicks);
     t = 1300;
-    await userEvent.pointer({ keys: "[MouseLeft>]", target });
+    await user.pointer({ keys: "[MouseLeft>]", target });
     t = 1600;
-    await userEvent.pointer({ keys: "[/MouseLeft]", target });
+    await user.pointer({ keys: "[/MouseLeft]", target });
+    // The release did click: the guard, not a missing event, rejected it.
+    expect(clicks).toHaveBeenCalledTimes(1);
     expect(onConfirm).not.toHaveBeenCalled();
     await act(async () => target.focus());
     t = 1350;
-    await userEvent.keyboard("[Space>]");
+    await user.keyboard("[Space>]");
     t = 1700;
-    await userEvent.keyboard("[/Space]");
+    await user.keyboard("[/Space]");
+    expect(clicks).toHaveBeenCalledTimes(2);
     expect(onConfirm).not.toHaveBeenCalled();
     t = 1800;
-    await userEvent.click(target);
+    await user.click(target);
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
@@ -149,11 +156,12 @@ describe("ConfirmDialog (CMP-044)", () => {
     t = 2000;
     const confirm = confirmButton();
     await act(async () => confirm.focus());
-    await userEvent.keyboard("{Enter>}");
+    const user = userEvent.setup();
+    await user.keyboard("{Enter>}");
     // The repeats a held key sends: each is cancelled, so the browser activates nothing.
     for (let i = 0; i < 3; i += 1)
       expect(fireEvent.keyDown(confirm, { key: "Enter", repeat: true })).toBe(false);
-    await userEvent.keyboard("{/Enter}");
+    await user.keyboard("{/Enter}");
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(fireEvent.keyDown(confirm, { key: " ", repeat: true })).toBe(false);
     expect(fireEvent.keyDown(confirm, { key: "a", repeat: true })).toBe(true);

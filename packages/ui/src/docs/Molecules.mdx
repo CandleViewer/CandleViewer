@@ -161,20 +161,23 @@ action's `loading` itself.
 
 ### ConfirmDialog (CMP-044, APG Alert Dialog; APG Dialog (Modal) for an order confirm)
 
-| Keys                               | Action                                                                                                                   |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                    |
-| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.    |
-| Enter / Space / a press on Confirm | Confirms once, unless the press began in the first `confirmDelayMs` (at least 400 ms) of the guard; repeats never count. |
-| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.              |
-| Hold, pointer                      | Press and hold Confirm for `holdDurationMs` (800 ms, 300–2,000); an early release resets the ring and fires nothing.     |
-| Hold, keyboard                     | Hold Enter as long, or two non-repeat Enter / Space presses 250 ms – 5 s apart; the first arms ("Press again to …").     |
-| Space on a hold Confirm            | One press on its keyup, never a hold; a click or a pointer press never arms.                                             |
-| Esc or blur on a hold Confirm      | Disarms and drops the hold; Esc then cancels the dialog.                                                                 |
-| Any key or pointer input           | Restarts an `autoCancelMs` count; at 0:00 the dialog cancels (`"timeout"`), never confirms.                              |
-| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                    |
-| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                            |
-| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                  |
+| Keys                               | Action                                                                                                                                |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| On open                            | Focus on Cancel (H32); nothing is sent until Confirm.                                                                                 |
+| Tab / Shift+Tab                    | The trap in DOM order from Cancel: Confirm, the close button (an order confirm), the body's controls, back to Cancel.                 |
+| Enter / Space / a press on Confirm | Confirms once, unless the press began in the first `confirmDelayMs` (at least 400 ms) of the guard; repeats never count.              |
+| Typing in the typed field          | Confirm enables when the text matches the token exactly (paste allowed); Enter in the field never confirms.                           |
+| Hold, pointer                      | Press and hold Confirm for `holdDurationMs` (800 ms, 300–2,000); an early release resets the ring and fires nothing.                  |
+| Hold, keyboard                     | Hold Enter as long, or two non-repeat Enter / Space presses 250 ms – 5 s apart, a keyup between; the first arms ("Press again to …"). |
+| Second press under 250 ms          | A bounce: ignored, and the window keeps the first press's start; so is a press whose keydown follows a keyup within 50 ms.            |
+| Armed window runs out (5 s)        | Disarms; Confirm takes its own name back and "Disarmed — {effect}" is spoken politely once.                                           |
+| Space on a hold Confirm            | One press on its keyup, never a hold; a click or a pointer press never arms.                                                          |
+| Esc or blur on a hold Confirm      | Disarms and drops the hold, silently; Esc then cancels the dialog (`onCancel("escape")`, once).                                       |
+| Title or effect changes while open | Drops a hold under way and an armed press; the guard restarts, so the next press only arms (or starts a new hold).                    |
+| Any key or pointer input           | Restarts an `autoCancelMs` count (key repeats do not); at 0:00 the dialog cancels (`"timeout"`), never confirms.                      |
+| Esc                                | Cancels (`onCancel("escape")`); focus returns to the opener, else `fallbackFocusRef`.                                                 |
+| Enter / Space on a T2 Confirm      | Nothing; the reason is re-shown with one polite announcement.                                                                         |
+| A press on the scrim               | Nothing for an `alertdialog`; Cancel (`"scrim"`) for an order `dialog`.                                                               |
 
 | Element     | Role                                             | Name                                                   | ARIA                                                                                                                                               |
 | ----------- | ------------------------------------------------ | ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -183,13 +186,18 @@ action's `loading` itself.
 | typed field | textbox                                          | the instruction ("Type FLATTEN to confirm"), its label | —                                                                                                                                                  |
 | Confirm     | button                                           | the effect, never "Confirm"                            | native `disabled` until the summary loads and the token matches (validity); `aria-describedby` → the instruction; T2: `aria-disabled` + the reason |
 | status      | status, alert                                    | —                                                      | visually hidden: a T2 re-show (polite); a Confirm gated while it held focus (assertive, once)                                                      |
-| hold ring   | progressbar                                      | Confirm's name (`aria-labelledby`)                     | `aria-valuenow` 0–100 and its text twin at up to 2 updates a second; the arc at up to 10, hidden under reduced motion                              |
+| hold ring   | progressbar                                      | "Hold to {effect}", stable while armed (E39-D03 §5)    | `aria-valuenow` 0–100 and its text twin at up to 2 updates a second; the arc at up to 10, hidden under reduced motion                              |
+| armed count | text (CMP-035)                                   | the 5 s window, beside the ring while armed            | `aria-live="off"`, no thresholds: silent (a visible reading of the catalogue's "visible countdown"); the lapse is spoken once by the status        |
 | countdown   | text (CMP-035)                                   | "Cancels in 20 seconds unless you act"                 | `aria-live="off"`; polite at 0:10 and 0:00 only                                                                                                    |
 
 `onConfirm(meta)` reports `{ variant, gate, elapsedMs }` for the host's audit event, the gate being
 `click`, `typed`, `pointer-hold`, `key-hold` or `double-press`; `onCancel(reason)` reports `cancel`,
-`escape`, `close`, `scrim` or `timeout`. Events are not filtered on
-`isTrusted`. The guard runs from the moment the dialog opens and applies to pointer, Enter and Space
+`escape`, `close`, `scrim` or `timeout`. A hold that also asked for a `typedConfirmValue` reports its
+hold gate only: the meta does not say the token was matched too, which the host knows from its own
+props. Events are not filtered on `isTrusted`: the gate guards against accidental and browser-made
+activations, not in-page script, which could call the host directly. The accepted boundary is that a
+lone untrusted `pointerdown` that never gets its `up` satisfies a hold after `holdDurationMs`; that is
+a hold, not a single click. The guard runs from the moment the dialog opens and applies to pointer, Enter and Space
 alike. A typed mismatch, a loading summary and a sent confirm (`busy`) are not T2; only a reason
 given while open (H30) is, and focus stays on Confirm. A partial failure is CMP-027's inline error
 with its Retry, above the footer.
@@ -205,7 +213,10 @@ released on Cancel or Confirm activates only when its own press began there.
 A hold Confirm never reads a click, so a synthetic `click()` confirms nothing. The guard applies to the moment
 each hold or press begins. Completion is read from the clock: it fires at the duration, never
 before. A `typedConfirmValue` on a hold gates it too: no press starts until the field matches. The
-`autoCancelMs` count stops once Confirm has fired, so a sent confirm is never cancelled by it.
+`autoCancelMs` count stops once Confirm has fired and stays off for the rest of the opening, a
+failed send's retry included, so a sent confirm is never cancelled by it. A `busy` that ends without a
+send shows the count again from the full time. The count listens on the document, not the dialog
+surface: the dialog is modal, so a press on a toast action outside it also restarts the count.
 
 With `summaryLoading` set while
 Confirm holds focus, Confirm becomes natively disabled and focus is lost; that inherited spec gap is

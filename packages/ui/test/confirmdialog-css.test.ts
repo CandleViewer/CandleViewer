@@ -49,6 +49,10 @@ describe("confirmdialog.css contract (CMP-044)", () => {
     expect(text).toContain("color: var(--color-text-secondary)");
   });
 
+  it("a hold Confirm takes no touch scroll gesture, so a drifting finger keeps the hold", () => {
+    expect(find(normal, ".cv-button[data-hold]", "touch-action")).toContain("touch-action: none");
+  });
+
   it("the auto-cancel count: the footer's start in text.primary", () => {
     const line = find(normal, ".cv-confirm__countdown", "color");
     expect(line).toContain("color: var(--color-text-primary)");

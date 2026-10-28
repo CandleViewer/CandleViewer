@@ -301,7 +301,9 @@ export const Hold: Story = {
     const user = userEvent.setup();
     clock.t = 0;
     await opened(canvasElement, "Flatten all");
-    await expect(ring()).toHaveAccessibleName("Flatten 4 positions — all accounts, LIVE + DEMO");
+    await expect(ring()).toHaveAccessibleName(
+      "Hold to flatten 4 positions — all accounts, LIVE + DEMO",
+    );
     await expect(ring()).toHaveAttribute("aria-valuenow", "0");
     await expect(page.getByText("0 %")).toBeVisible();
     clock.t = 500;

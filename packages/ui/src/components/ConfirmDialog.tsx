@@ -95,8 +95,10 @@ export interface ConfirmDialogProps {
   armedLabel?: string | undefined;
   /**
    * An order confirm's auto-cancel, ms (SCR-114's setting, e.g. 20,000): "Cancels in 0:20" at the footer's
-   * start. Any key or pointer input restarts it; it speaks politely at 0:10 and 0:00, and at 0:00 the dialog
-   * cancels (`onCancel("timeout")`), never confirms. It stops once Confirm has fired.
+   * start. Any non-repeat key or pointer input on the page (the dialog is modal) restarts it; it speaks
+   * politely at 0:10 and 0:00, and at 0:00 the dialog cancels (`onCancel("timeout")`), never confirms. Once
+   * Confirm has fired it stays off for the rest of the opening, a failed send's retry included; a `busy`
+   * that ends without a send restarts it from the full count.
    */
   autoCancelMs?: number | undefined;
   /** The summary is still loading: Confirm is natively disabled (availability, not T2). */
@@ -184,7 +186,8 @@ const useKeyGuard = (
 };
 
 interface HoldRingProps {
-  readonly labelledBy: string;
+  /** Stable while armed: "Hold to {effect}" (E39-D03 §5), not Confirm's changing name. */
+  readonly label: string;
   readonly progress: number;
   readonly percent: number;
   /** The armed press's 5 s window end, on the dialog's clock: shown as its count while armed. */
@@ -193,23 +196,18 @@ interface HoldRingProps {
 }
 
 /**
- * The hold ring (E39-D03 §5): a `progressbar` named by Confirm, its value and text twin at up to 2 updates a
- * second, the arc redrawn at up to 10. Reduced motion hides the arc (CSS): the percentage text alone. While
- * armed, the second press's window counts down beside it, `aria-live="off"`.
+ * The hold ring (E39-D03 §5): a `progressbar` named "Hold to {effect}", its value and text twin at up to 2
+ * updates a second, the arc redrawn at up to 10. Reduced motion hides the arc (CSS): the percentage text
+ * alone. While armed, the second press's window counts down beside it in CMP-035, `aria-live="off"` and
+ * silent (no thresholds): the armed name was spoken once, and a lapse is spoken once by the dialog.
  */
-function HoldRing({
-  labelledBy,
-  progress,
-  percent,
-  windowEndsAt,
-  now,
-}: HoldRingProps): JSX.Element {
+function HoldRing({ label, progress, percent, windowEndsAt, now }: HoldRingProps): JSX.Element {
   return (
     <span className="cv-confirm__hold">
       <span
         className="cv-confirm__ring"
         role="progressbar"
-        aria-labelledby={labelledBy}
+        aria-label={label}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={percent}
@@ -229,14 +227,10 @@ function HoldRing({
             strokeDashoffset={100 - Math.min(1, Math.max(0, progress)) * 100}
           />
         </svg>
-        <span className="cv-confirm__percent" aria-hidden="true">
-          {`${String(percent)} %`}
-        </span>
+        <span aria-hidden="true">{`${String(percent)} %`}</span>
       </span>
       {windowEndsAt === null ? null : (
-        <span className="cv-confirm__window">
-          <Countdown expiresAt={windowEndsAt} now={now} thresholds={[]} />
-        </span>
+        <Countdown expiresAt={windowEndsAt} now={now} thresholds={[]} />
       )}
     </span>
   );
@@ -301,6 +295,12 @@ export function ConfirmDialog({
   /** onConfirm already ran for this opening (the single-fire latch); `sent` is its rendered twin. */
   const fired = useRef(false);
   const [sent, setSent] = useState(false);
+  /**
+   * onConfirm ran at least once this opening: unlike `fired`, a failure or `busy` ending never clears it, so
+   * the auto-cancel stays off for the rest of the opening (a sent confirm is never journalled as cancelled).
+   */
+  const sentOnce = useRef(false);
+  const [stopped, setStopped] = useState(false);
   /** The auto-cancel ran out: nothing confirms after it, whatever the host does next. */
   const expired = useRef(false);
   /** The auto-cancel's deadline on the dialog's clock, or null. */
@@ -336,8 +336,10 @@ export function ConfirmDialog({
     armedAt.current = openedAt.current;
     tripped.current = false;
     fired.current = false;
+    sentOnce.current = false;
     expired.current = false;
     setSent(false);
+    setStopped(false);
     if (open) {
       setTyped("");
       setPolite({ n: 0, text: "" });
@@ -376,15 +378,17 @@ export function ConfirmDialog({
       warn(`confirmDelayMs below ${String(CONFIRM_DELAY_FLOOR_MS)} ms is raised to it.`);
   }, [open, confirmLabel, isTyped, token, delayMs, confirmDelayMs, isHold, holdMs, holdDurationMs]);
 
-  // The auto-cancel starts at the opening; any key or pointer input restarts it (E30-D03 D3 (5)–(6)).
-  // The dialog is modal, so input anywhere on the page is input to it.
+  // The auto-cancel starts at the opening, and from the full count whenever it shows again (a `busy` that
+  // ended without a send); any non-repeat key or pointer input restarts it (E30-D03 D3 (5)–(6)). The dialog
+  // is modal, so input anywhere on the page is input to it. Off for good once Confirm has fired.
+  const counting = open && autoCancel !== null && !busy && !stopped;
   useLayoutEffect(() => {
-    setDeadline(open && autoCancel !== null ? clock.current() + autoCancel : null);
-  }, [open, autoCancel]);
-  const counting = open && autoCancel !== null && !busy && !sent;
+    setDeadline(counting ? clock.current() + autoCancel : null);
+  }, [counting, autoCancel]);
   useEffect(() => {
     if (!counting) return;
-    const restart = (): void => {
+    const restart = (event: Event): void => {
+      if (event instanceof globalThis.KeyboardEvent && event.repeat) return;
       if (!expired.current) setDeadline(clock.current() + autoCancel);
     };
     document.addEventListener("keydown", restart, true);
@@ -396,7 +400,7 @@ export function ConfirmDialog({
   }, [counting, autoCancel]);
   const expire = (): void => {
     // Cancels, never confirms; a confirm already sent is the host's to finish.
-    if (!open || fired.current || expired.current) return;
+    if (!open || fired.current || sentOnce.current || expired.current) return;
     expired.current = true;
     onCancel("timeout");
   };
@@ -435,7 +439,9 @@ export function ConfirmDialog({
     // `busy` and T2 are Button's too (it drops the click); kept here as defence in depth.
     if (!ready || busy || reason !== undefined) return;
     fired.current = true;
+    sentOnce.current = true;
     setSent(true);
+    setStopped(true);
     onConfirm({ variant, gate, elapsedMs: at - opened });
   };
 
@@ -446,8 +452,11 @@ export function ConfirmDialog({
     clock: () => clock.current(),
     canStart: (at) => !inWindow(at),
     onFire: (gate) => send(gate, clock.current()),
-    // H25: the armed name is spoken politely, once per arming.
+    // H25: the armed name is spoken politely, once per arming; a lapsed window once, so the disarm is heard.
     onArm: () => setPolite((s) => ({ n: s.n + 1, text: armedName })),
+    onLapse: () => setPolite((s) => ({ n: s.n + 1, text: `Disarmed — ${confirmLabel}` })),
+    // The guard's rearm (a new title or effect) drops a hold or an armed press made for the old intent.
+    resetKey: `${title}\n${confirmLabel}`,
   });
 
   const cancelKeys = useKeyGuard();
@@ -483,6 +492,7 @@ export function ConfirmDialog({
         {...(isTyped ? { "aria-describedby": instructionId } : {})}
         loading={busy}
         {...(isHold ? hold.handlers : { ...confirmKeys, onPointerDown: startPress })}
+        data-hold={isHold ? "" : undefined}
         data-holding={hold.holding ? "" : undefined}
         data-armed={hold.armedAt === null ? undefined : ""}
         onClickCapture={() => {
@@ -495,7 +505,7 @@ export function ConfirmDialog({
       </Button>
       {isHold ? (
         <HoldRing
-          labelledBy={confirmId}
+          label={`Hold to ${lowerFirst(confirmLabel)}`}
           progress={hold.progress}
           percent={hold.percent}
           windowEndsAt={hold.armedAt === null ? null : hold.armedAt + PRESS_WINDOW_MS}

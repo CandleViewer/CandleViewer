@@ -78,6 +78,11 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* A hold Confirm: a finger's drift starts no scroll gesture, whose pointercancel would drop the hold. */
+.cv-button[data-hold] {
+  touch-action: none;
+}
+
 .cv-confirm__ring {
   display: inline-flex;
   align-items: center;
