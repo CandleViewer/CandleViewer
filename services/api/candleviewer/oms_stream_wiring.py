@@ -1,12 +1,17 @@
-"""The private-stream consumer's composition (E29-T05 #848, S8a; 24-internal-schemas.md Sec.8.12,
-23-ws-protocol.md Sec.15.9, 20-architecture.md Sec.12.1). Built and unit-tested here; the OMS
-runtime starts it (S8b), so until then nothing outside the tests calls `build_stream_consumer`.
+"""The private-stream consumer's composition (E29-T05 #848, S8a and S8b; 24-internal-schemas.md
+Sec.8.12, 23-ws-protocol.md Sec.15.9, 20-architecture.md Sec.6.2 and Sec.12.1). The OMS runtime
+(`oms_wiring`) builds it in its composition's `stream` phase, on the order lane, starts it once
+`ready` and stops it first, beside its drain (`StreamWiring.start`, `StreamWiring.stop`).
 
 **On the order lane, with no hop.** `StreamPushes`, `PositionProjection` (never `NoPositionRows`),
 `RecordedStopStream` and the successor's check (`Successor`) take the one facade (`OrderMachines`:
 `push`, `protecting`, `push_protection`, `materialise`), the OMS order store and the recorded-stop
 facade. A fill's order is read on the account's own port (`VenueFillOrders`): its history by the
-exchange id, then its open orders on a miss.
+exchange id, then its open orders on a miss. Each account's stream is subscribed on that same port
+(`PortStreams`), which opens it across the lane's bridge from the serving loop's one registry
+(`oms_streams.LaneStreams`). The accounts streamed are account health's last good tracking read,
+read in place (`HealthAccounts`); the clock's re-sync is an epoch the consumer reads on each item,
+over the clock guard's health read in place (`ClockEpoch`), with no poll task (S8b, Q5, Q7).
 
 **The stand-ins** (24 Sec.8.12 "Its ports"), each an `Interim` announced at build as
 `SubmissionPorts`' are (a WARNING and `oms_interim_ports{port}` at 1): `NoReconciliation`
@@ -30,14 +35,17 @@ report that fails is logged by its class and the account id, and the report's fa
 
 **Counts and readiness.** The consumer's, the pushes' and the projection's counting ports are one
 counter, `oms_stream_outcomes_total{stage,outcome}`, each stage bound to its own closed `Outcome`
-set at build, with no account label; `oms_stream_event_lag_seconds{topic}` is bound for the lag
-(S8b observes it); `StreamReadiness` reads the consumer's fault and the oldest owed reading's age
-into `oms_position_reading_owed_age_seconds`, degraded at `OWED_DEGRADED_S` (the 2026-10-25 ruling
-Q7), with a detail that names no account (`/readyz` is anonymous).
+set at build, with no account label; the consumer observes `oms_stream_event_lag_seconds{topic}` on
+each row's dequeue, from `ts_ingest` on the host's own clock (`ExchangeWallClock.host_us`);
+`StreamReadiness` reads the consumer's fault and the oldest owed reading's age into
+`oms_position_reading_owed_age_seconds`, at each scrape from the consumer's start, degraded at
+`OWED_DEGRADED_S` (the 2026-10-25 ruling Q7), with a detail that names no account (`/readyz` is
+anonymous).
 
-**The clock.** `ExchangeWallClock` is the projection's record clock and the consumer's: the host's
-aware UTC time plus the exchange clock's measured offset (server minus local), 0 while unmeasured,
-or past the clock guard's critical drift, with one WARNING (ruling Q9). The offset is read on the
+**The clock.** `ExchangeWallClock` is the position store's clock, the projection's record clock and
+the consumer's, one instance (S8b): the host's aware UTC time plus the exchange clock's measured
+offset (server minus local), 0 while unmeasured, or past the clock guard's critical drift, with one
+WARNING (ruling Q9). The offset is read on the
 order lane, so its reader is `Ingestion.clock_offset_snapshot_ms` (`ClockGuard.offset_ms_snapshot`,
 #913 L1d CR-S3L1B-09), which changes nothing and answers None until the first measurement; never
 `Ingestion.clock_offset_ms`, whose host-step check writes the guard's state and spawns a resync on
@@ -62,6 +70,7 @@ import structlog
 
 from candleviewer.domain.primitives import AccountId, Environment, Symbol
 from candleviewer.exchange.base.models import AccountRef, Order, PrivateKind
+from candleviewer.exchange.base.ports import PrivateStream
 from candleviewer.observability.metrics import BoundedMetric, MetricChild, Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import positions as position_stage
@@ -101,7 +110,6 @@ from candleviewer.oms.recorded_stop_stream import (
 )
 from candleviewer.oms.recorded_stop_stream import ReleaseAudit as KeyedAudit
 from candleviewer.oms.stream_consumer import (
-    PrivateStreams,
     StreamConsumer,
     StreamEvidence,
     refuse_live_without_position_rows,
@@ -187,7 +195,8 @@ class StreamStops(SuccessorStops, RecordedStops, Protocol):
 
 
 class ReadPort(Protocol):
-    """The two reads of an environment's trading port a fill's order takes."""
+    """The two reads of an environment's trading port a fill's order takes, and the account's
+    private stream there (`PortStreams`, S8b)."""
 
     async def order_history(
         self, account: AccountRef, *, exchange_order_id: str | None = None
@@ -196,6 +205,8 @@ class ReadPort(Protocol):
     async def open_orders(
         self, account: AccountRef, symbol: Symbol | None = None
     ) -> Sequence[Order]: ...
+
+    async def subscribe_private(self, account: AccountRef) -> PrivateStream: ...
 
 
 class Ports(Protocol):
@@ -466,6 +477,18 @@ class OwedReadings(Protocol):
     def oldest_unhanded_age_s(self) -> float: ...
 
 
+def _none_owed() -> float:
+    return 0.0
+
+
+def _scraped(gauge: MetricChild, read: Callable[[], float]) -> None:
+    """`read` at each scrape of `gauge` (`Gauge.set_function`); a child the series cap refused, a
+    no-op, has none."""
+    set_function = getattr(gauge, "set_function", None)
+    if set_function is not None:
+        set_function(read)
+
+
 class Faulted(Protocol):
     @property
     def fault(self) -> str | None: ...
@@ -498,6 +521,81 @@ class StreamReadiness:
             return "a position reading has been owed to protection too long"
         return None
 
+    def bind(self) -> None:
+        """From the consumer's start (S8b): the owed gauge reads `owed_age_s` at each scrape, not
+        only when `/readyz` reads it, so the 60 s page sees an age no probe asked for."""
+        _scraped(self._gauge, self.owed_age_s)
+
+    def unbind(self) -> None:
+        """At the consumer's stop: the gauge reads 0 again, no longer the stopped projection."""
+        _scraped(self._gauge, _none_owed)
+
+
+# --- the consumer's ports (S8b) -----------------------------------------------------------------
+
+
+class PortStreams:
+    """`PrivateStreams` (24 Sec.8.12 "Its ports"): the account's stream on its own environment's
+    port (`TradingRouter.port_for`), the order lane's, which opens it across the lane's bridge from
+    the serving loop's one registry (`oms_streams.LaneStreams`, 20 Sec.6.2); an environment the
+    router has no port for is its `EnvironmentMismatch`."""
+
+    def __init__(self, ports: Ports) -> None:
+        self._ports = ports
+
+    async def subscribe(self, account: AccountRef) -> PrivateStream:
+        return await self._ports.port_for(account.environment).subscribe_private(account)
+
+
+class TrackedAccounts(Protocol):
+    """Account health's last good tracking read (`AccountHealthRuntime.streamed`)."""
+
+    def streamed(self) -> frozenset[UUID]: ...
+
+
+class HealthAccounts:
+    """`StreamedAccounts` (the orchestrator's Q5): the set account health monitors, its last good
+    tracking read, never an account it tracks for a replayed or owed dead-man's-switch call alone,
+    read in place from the lane: one read of a frozenset the serving loop replaces whole, never a
+    hop, so no stall of that loop faults the consumer. It raises until health's boot pass."""
+
+    def __init__(self, health: TrackedAccounts) -> None:
+        self._health = health
+
+    async def streamed_accounts(self) -> frozenset[AccountId]:
+        return frozenset(AccountId(account_id) for account_id in self._health.streamed())
+
+
+class ClockReading(Protocol):
+    """The clock guard's verdict (`ClockHealth.assert_healthy`), read in place: attribute reads of
+    values the guard replaces whole (20 Sec.6.2 "read in place")."""
+
+    def assert_healthy(self) -> None: ...
+
+
+class ClockEpoch:
+    """`ClockEpochs` (the orchestrator's Q7): how often the exchange clock has come back into sync,
+    read on each item the consumer takes, with no poll task. Each read reads the clock guard's
+    health in place, and the epoch moves once each time a read finds it healthy after one that
+    did not: an unhealthy-to-healthy edge, never every healthy read. A read that raises anything
+    (unmeasured, drifted, or no guard at all) is not healthy. On the order lane alone, where every
+    account's task runs, so the first account to read an edge moves the epoch for all. It starts
+    healthy, so a clock still unmeasured when the consumer starts and measured soon after is an
+    edge too: each account then re-applies once, a no-op while it holds no row."""
+
+    def __init__(self, clock: ClockReading) -> None:
+        self._clock, self._epoch, self._healthy = clock, 0, True
+
+    def epoch(self) -> int:
+        try:
+            self._clock.assert_healthy()
+        except Exception:  # not in sync: the next healthy read is the edge
+            self._healthy = False
+            return self._epoch
+        if not self._healthy:
+            self._healthy, self._epoch = True, self._epoch + 1
+        return self._epoch
+
 
 # --- the clock (Q9) -----------------------------------------------------------------------------
 
@@ -521,6 +619,12 @@ class ExchangeWallClock:
     def now_us(self) -> int:
         """The same time in microseconds since the epoch (the consumer's wallet check)."""
         return (self() - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
+
+    def host_us(self) -> int:
+        """The host's own time in microseconds since the epoch, with no offset: the clock the
+        adapter stamps `PrivateEvent.ts_ingest` on, so the consumer's lag (S8b) never takes the
+        venue's skew."""
+        return (self._now() - datetime(1970, 1, 1, tzinfo=UTC)) // timedelta(microseconds=1)
 
     def _offset(self) -> int:
         try:
@@ -585,8 +689,9 @@ def _the(orders: Sequence[Order], account_id: UUID, xid: str) -> Order | None:
 
 @dataclass(frozen=True, slots=True)
 class StreamWiring:
-    """What `build_stream_consumer` composed: the consumer S8b starts and stops, its parts, the
-    stand-ins as bound (the live refusals read them), the metrics and the readiness hooks."""
+    """What `build_stream_consumer` composed: the consumer the OMS runtime starts and stops (S8b),
+    its parts, the stand-ins as bound (the live refusals read them), the metrics and the readiness
+    hooks."""
 
     consumer: StreamConsumer
     pushes: StreamPushes
@@ -606,14 +711,29 @@ class StreamWiring:
         refuse_live_without_reconciliation(environment, self.reconciliation)
         refuse_live_without_position_rows(environment, self.positions)
 
+    def start(self) -> None:
+        """S8b, on the loop that consumes (the order lane): the consumer starts, and from then the
+        owed gauge reads the projection at each scrape; once, and never after `stop()`."""
+        if self.consumer.start():
+            self.readiness.bind()
+
+    async def stop(self) -> None:
+        """The consumer's stop, within its own bound (`stream_consumer.STOP_TIMEOUT_S`, counted
+        `stop_timeout` past it), then the owed gauge reads 0 again, whatever the stop met."""
+        try:
+            await self.consumer.stop()
+        finally:
+            self.readiness.unbind()
+
 
 def build_stream_consumer(
     *, facade: StreamFacade, orders: OrderReads, stops: StreamStops,
     positions: PositionWrites, snapshots: SnapshotWrites, accounts: StreamedAccounts,
-    trading: TradingAccounts, ports: Ports, streams: PrivateStreams, health: StreamEvidence,
+    trading: TradingAccounts, ports: Ports, health: StreamEvidence,
     hub: SystemBroadcast, serving: Notify, credentials: CredentialRejections,
     audit: KeyedAudit, emitter: AuditEmitter, environment: ProcessEnvironment, pager: Pager,
     metrics: Metrics, now: Callable[[], datetime], offset_ms: Callable[[], int | None],
+    clock_health: ClockReading, clock: ExchangeWallClock | None = None,
     wall_now: Callable[[], datetime] = lambda: datetime.now(UTC),
     monotonic: Callable[[], float] = time.monotonic,
     reconciliation: ReconciliationRequests | None = None,
@@ -622,11 +742,15 @@ def build_stream_consumer(
 ) -> StreamWiring:  # fmt: skip
     """The consumer and its parts, built and not started (module docstring). `environment` is the
     process's: its records' `env`, and the live refusals, run here on the bindings as bound, so a
-    live process with a stand-in that refuses live never gets a consumer. `now` is the OMS's clock
-    (the successor's bind); `offset_ms` the exchange clock's offset, bound to
+    live process with a stand-in that refuses live never gets a consumer. Each account's stream is
+    subscribed on `ports`, its environment's port (`PortStreams`). `now` is the OMS's clock (the
+    successor's bind); `offset_ms` the exchange clock's offset, bound to
     `Ingestion.clock_offset_snapshot_ms` and never `clock_offset_ms` (the lane reads it); `wall_now`
-    the host's aware UTC time (`ExchangeWallClock`). A stand-in a caller does not name is bound;
-    each is announced, a real port at 0."""
+    the host's aware UTC time (`ExchangeWallClock`); `clock`, when given, the position store's own
+    `ExchangeWallClock`, which the projection and the consumer then read too (S8b), else one is
+    built over those two; `clock_health` the clock guard's verdict, the re-sync epoch's source
+    (`ClockEpoch`). A stand-in a caller does not name is bound; each is announced, a real port at
+    0."""
     writer = NoIntentWriter(emitter, environment=environment.value)
     reconciliation = NoReconciliation() if reconciliation is None else reconciliation
     handovers = NoHandoverStore() if handovers is None else handovers
@@ -640,7 +764,8 @@ def build_stream_consumer(
     }
     for name, port in stand_ins.items():
         announce_interim_port(name, port, metrics=metrics)
-    counts, clock = StreamMetrics.bind(metrics), ExchangeWallClock(offset_ms, now=wall_now)
+    counts = StreamMetrics.bind(metrics)
+    clock = ExchangeWallClock(offset_ms, now=wall_now) if clock is None else clock
     projection = PositionProjection(
         orders=facade, positions=positions, snapshots=snapshots, readings=readings,
         counts=counts.position, pager=pager, stops=stops, order_rows=orders,
@@ -660,11 +785,11 @@ def build_stream_consumer(
         counts=counts.push, pager=pager, monotonic=monotonic,
     )  # fmt: skip
     consumer = StreamConsumer(
-        accounts=accounts, trading=trading, streams=streams,
+        accounts=accounts, trading=trading, streams=PortStreams(ports),
         health=ServedEvidence(health, serving), reconciliation=reconciliation,
         notices=StreamNotices(hub, serving), credentials=GuardedRejections(credentials, pager),
         positions=projection, pushes=pushes, counts=counts.consumer, pager=pager,
-        now_us=clock.now_us,
+        now_us=clock.now_us, lags=counts, host_us=clock.host_us, epochs=ClockEpoch(clock_health),
     )  # fmt: skip
     wired = StreamWiring(
         consumer, pushes, projection, recorded, successor, reconciliation,

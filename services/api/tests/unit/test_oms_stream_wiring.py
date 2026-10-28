@@ -1,9 +1,10 @@
-"""The private-stream consumer's composition (E29-T05 #848, S8a; 24-internal-schemas.md Sec.8.12,
-23-ws-protocol.md Sec.15.9, 20-architecture.md Sec.12.1): what `build_stream_consumer` binds, the
-stand-ins it announces, the lockout's paging stand-in and the exchange-placed records, the account
-notices' closed table and their producer check, the serving loop's hops, the wrappers that raise
-nothing, the exchange-synced clock, the counts and the readiness hooks. Recording doubles only: no
-network, no sleeps, no live exchange."""
+"""The private-stream consumer's composition (E29-T05 #848, S8a and S8b; 24-internal-schemas.md
+Sec.8.12, 23-ws-protocol.md Sec.15.9, 20-architecture.md Sec.12.1): what `build_stream_consumer`
+binds, the stand-ins it announces, the lockout's paging stand-in and the exchange-placed records,
+the account notices' closed table and their producer check, the serving loop's hops, the wrappers
+that raise nothing, the exchange-synced clock, the counts and the readiness hooks, and S8b's ports:
+the streams on the account's port, account health's streamed accounts, the clock's epoch and the
+owed gauge read at each scrape. Recording doubles only: no network, no sleeps, no live exchange."""
 
 from __future__ import annotations
 
@@ -20,15 +21,21 @@ import pytest
 from structlog.testing import capture_logs
 
 from candleviewer import oms_stream_wiring as wiring
+from candleviewer.account_health_wiring import StreamedAccountsUnread
 from candleviewer.accounts.service import AccountHealthFeed
 from candleviewer.domain.primitives import AccountId
+from candleviewer.exchange.base.errors import ClockDriftError
 from candleviewer.exchange.base.models import AccountRef, Order, PrivateKind
 from candleviewer.ingestion.clock import ClockGuard
 from candleviewer.observability.metrics import Metrics
 from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms import positions as position_stage
 from candleviewer.oms import stream_consumer, stream_push
-from candleviewer.oms.errors import ProtectionReadingsUnavailable, ReconciliationUnavailable
+from candleviewer.oms.errors import (
+    OmsNotReady,
+    ProtectionReadingsUnavailable,
+    ReconciliationUnavailable,
+)
 from candleviewer.oms.order_machine import OrderMachines
 from candleviewer.oms.ports import (
     INTERIM_PORT_LABELS,
@@ -53,7 +60,6 @@ from candleviewer.oms.routing import TradingRouter
 from candleviewer.oms.stream_consumer import (
     MAX_FUTURE_SKEW_US,
     NoPositionRows,
-    PrivateStreams,
     refuse_live_without_position_rows,
 )
 from candleviewer.oms_lane import Serving
@@ -68,7 +74,13 @@ from candleviewer.oms_stream_wiring import (
     build_stream_consumer,
     checked_notice,
 )
-from candleviewer.oms_wiring import SYSTEM_ACTOR, OmsAudit, OwnedAudit, TradingAccountsBinding
+from candleviewer.oms_wiring import (
+    SYSTEM_ACTOR,
+    ClockHealthBinding,
+    OmsAudit,
+    OwnedAudit,
+    TradingAccountsBinding,
+)
 from candleviewer.settings import Environment as ProcessEnvironment
 from candleviewer.storage.repositories.positions import MAX_FUTURE_SKEW
 from candleviewer.ws.gateway import GatewayHub
@@ -96,12 +108,16 @@ class World:
     raises: dict[str, BaseException] = field(default_factory=dict)
     offset: int | None = 250
     metrics: Metrics = field(default_factory=lambda: Metrics("demo"))
+    #: The clock guard's health: what `assert_healthy` raises, None while it is healthy.
+    drift: Exception | None = None
+    #: What an account's environment's port answers a subscribe with.
+    private_stream: object = field(default_factory=object)
 
     def build(self, **over: Any) -> StreamWiring:
         ports: dict[str, Any] = dict.fromkeys(("facade", "orders", "stops", "positions"), self)
-        ports |= dict.fromkeys(("snapshots", "accounts", "trading", "ports", "streams"), self)
+        ports |= dict.fromkeys(("snapshots", "accounts", "trading", "ports"), self)
         ports |= dict.fromkeys(("health", "hub", "serving", "credentials", "audit"), self)
-        ports |= {"emitter": self, "pager": self, "metrics": self.metrics}
+        ports |= {"emitter": self, "pager": self, "metrics": self.metrics, "clock_health": self}
         ports |= {"environment": ProcessEnvironment.DEMO, "now": lambda: WALL}
         ports |= {"offset_ms": lambda: self.offset, "wall_now": lambda: WALL}
         return build_stream_consumer(**(ports | over))
@@ -173,6 +189,15 @@ class World:
     async def open_orders(self, account: AccountRef, symbol: str | None = None) -> Any:
         self._hit("open_orders")
         return self.opened
+
+    async def subscribe_private(self, account: AccountRef) -> Any:
+        self._hit("subscribe_private")
+        return self.private_stream
+
+    # the clock guard's health (`ClockHealth.assert_healthy`), read in place
+    def assert_healthy(self) -> None:
+        if self.drift is not None:
+            raise self.drift
 
     async def get_by_exchange_order_id(self, account_id: UUID, xid: str) -> Any:
         self._hit("get_by_exchange_order_id")
@@ -660,6 +685,129 @@ def test_readiness_is_degraded_on_a_fault_or_an_owed_reading_past_its_bound() ->
     assert str(A) not in repr(readiness.degraded())
 
 
+# --- S8b: the consumer's ports as the runtime binds them -----------------------------------------
+
+
+async def test_port_streams_subscribe_on_the_accounts_environment_port() -> None:
+    """24 Sec.8.12 "Its ports" (S8b): the consumer subscribes each account on its own
+    environment's port (`TradingRouter.port_for`), the order lane's, whose stream source is the
+    bridge to the serving loop's registry; never another environment's."""
+    world = World()
+    streams = world.build().consumer._streams
+    assert isinstance(streams, wiring.PortStreams)
+    ref = AccountRef(account_id=A, uid="1", environment="testnet", key_ref=str(A))
+    assert await streams.subscribe(ref) is world.private_stream
+    assert world.trace == ["port_for:testnet", "subscribe_private"]
+
+
+async def test_health_accounts_are_account_healths_last_good_read_read_in_place() -> None:
+    """S8b (the orchestrator's Q5): `StreamedAccounts` is account health's last good tracking
+    read, one read in place from the lane and never a hop, so no stall of the serving loop faults
+    the consumer; until health's boot pass it raises, which the consumer counts."""
+
+    class Health:
+        read: frozenset[UUID] | None = None
+
+        def streamed(self) -> frozenset[UUID]:
+            if self.read is None:
+                raise StreamedAccountsUnread("not read yet")
+            return self.read
+
+    health = Health()
+    accounts = wiring.HealthAccounts(health)
+    with pytest.raises(StreamedAccountsUnread):
+        await accounts.streamed_accounts()
+    health.read = frozenset({A})
+    assert await accounts.streamed_accounts() == {A}
+
+
+def test_clock_epoch_moves_only_on_an_unhealthy_to_healthy_edge() -> None:
+    """S8b (the orchestrator's Q7): the epoch the consumer reads on each item moves once each time
+    the exchange clock comes back into sync, a healthy read after one that was not, never on each
+    healthy read; a read that raises anything at all is not healthy."""
+    world = World()
+    epochs = world.build().consumer._epochs
+    assert isinstance(epochs, wiring.ClockEpoch)
+    assert [epochs.epoch() for _ in range(3)] == [0, 0, 0]
+    world.drift = ClockDriftError("past the hard threshold")
+    assert epochs.epoch() == 0
+    world.drift = None
+    assert [epochs.epoch() for _ in range(3)] == [1, 1, 1]
+    for drift in (OmsNotReady(), ValueError(SENTINEL)):  # unmeasured; anything at all
+        world.drift = drift
+        assert epochs.epoch() == 1
+    world.drift = None
+    assert epochs.epoch() == 2
+
+
+def test_clock_epoch_over_no_clock_guard_never_moves() -> None:
+    """A process that composes no clock guard reads none as healthy, so nothing re-applies: no
+    clock means no re-sync."""
+    epochs = wiring.ClockEpoch(ClockHealthBinding(None))
+    assert [epochs.epoch() for _ in range(3)] == [0, 0, 0]
+
+
+def test_the_consumer_takes_the_lag_the_host_clock_and_the_clock_epoch() -> None:
+    """S8b binds what S8a left unbound: the lag on the metrics' histogram, the host's own clock
+    for it, and the epoch over the clock guard's health."""
+    world = World()
+    w = world.build()
+    assert w.consumer._lags is w.metrics and w.consumer._host_us == w.clock.host_us
+    assert cast(wiring.ClockEpoch, w.consumer._epochs)._clock is world
+    world.drift = ClockDriftError("x")
+    assert w.consumer._epochs.epoch() == 0
+
+
+def test_a_clock_the_caller_built_is_the_projections_and_the_consumers() -> None:
+    """S8b: the runtime builds the position store over the exchange-synced clock and hands that
+    same clock to the builder, so the store and the projection read one `ExchangeWallClock`."""
+    clock = ExchangeWallClock(lambda: 7, now=lambda: WALL)
+    w = World().build(clock=clock)
+    assert w.clock is clock and w.positions._clock is clock
+    assert w.consumer._now_us == clock.now_us and w.consumer._host_us == clock.host_us
+
+
+def test_the_host_clock_carries_no_offset() -> None:
+    """The lag's clock is the host's own, the one the adapter stamps `ts_ingest` on, with no
+    measured offset: the venue's skew never moves the lag."""
+    clock = ExchangeWallClock(lambda: 250, now=lambda: WALL)
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    assert clock.host_us() == (WALL - epoch) // timedelta(microseconds=1)
+    assert clock.now_us() == clock.host_us() + 250_000
+
+
+def test_the_owed_gauge_is_read_at_each_scrape_from_bind_to_unbind() -> None:
+    """S8b: from the consumer's start the owed gauge reads the projection at each scrape, never
+    only when `/readyz` reads it; from its stop it reads 0, no longer the stopped projection."""
+    world = World()
+    w = world.build()
+    owed = Owed()
+    readiness = wiring.StreamReadiness(Fault(), owed, w.metrics.owed)
+    owed.age = 42.0
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 0.0  # unbound: nothing set it
+    readiness.bind()
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 42.0
+    owed.age = 61.0
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 61.0
+    readiness.unbind()
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 0.0
+
+
+async def test_the_wiring_starts_then_binds_and_stops_then_unbinds() -> None:
+    """`StreamWiring.start` starts the consumer, then binds the owed gauge; `stop` stops the
+    consumer within its bound, then unbinds it; a start after the stop binds nothing."""
+    world = World()
+    w = world.build()
+    cast(Any, w.positions).oldest_unhanded_age_s = lambda: 5.0  # a reading owed for 5 s
+    w.start()
+    assert w.consumer._task is not None
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 5.0
+    await w.stop()
+    assert w.consumer._task.done() and _gauge(world.metrics, wiring.OWED_AGE) == 0.0
+    w.start()  # refused once stopped: the gauge stays unbound
+    assert _gauge(world.metrics, wiring.OWED_AGE) == 0.0
+
+
 # --- the lane's reads ---------------------------------------------------------------------------
 
 
@@ -752,15 +900,15 @@ async def test_no_position_protection_pages_an_sl_lost_once_per_episode_through_
 def _fits(
     machines: OrderMachines, orders: OrderRepository, stops: RecordedStopRepository,
     positions: PositionRepository, snapshots: PositionSnapshotRepository,
-    accounts: TradingAccountsBinding, router: TradingRouter, streams: PrivateStreams,
+    accounts: TradingAccountsBinding, router: TradingRouter,
     health: AccountHealthFeed, hub: GatewayHub, serving: Serving,
     credentials: CredentialRejections, audit: OmsAudit, emitter: OwnedAudit, metrics: Metrics,
 ) -> StreamWiring:  # fmt: skip
     return build_stream_consumer(
         facade=machines, orders=orders, stops=stops, positions=positions, snapshots=snapshots,
-        accounts=cast(Any, None), trading=accounts, ports=router, streams=streams,
-        health=health, hub=hub, serving=serving, credentials=credentials, audit=audit,
+        accounts=cast(Any, None), trading=accounts, ports=router, health=health, hub=hub,
+        serving=serving, credentials=credentials, audit=audit,
         emitter=emitter, environment=ProcessEnvironment.DEMO, pager=cast(Any, None),
-        metrics=metrics,
-        now=lambda: WALL, offset_ms=lambda: None,
+        metrics=metrics, now=lambda: WALL, offset_ms=lambda: None,
+        clock_health=ClockHealthBinding(None),
     )  # fmt: skip
