@@ -6,6 +6,7 @@ import {
   addMonths,
   addYears,
   clampIso,
+  daySpan,
   daysInMonth,
   endOfWeek,
   formatIsoDate,
@@ -18,6 +19,7 @@ import {
   monthLabel,
   monthWeeks,
   normaliseIso,
+  normaliseTime,
   parseIsoDate,
   startOfWeek,
   toDayNumber,
@@ -172,5 +174,41 @@ describe("isoDate: labels and the month matrix", () => {
     const weeks = monthWeeks(2026, 3);
     expect(weeks[0]?.[6]).toBe("2026-03-01");
     expect(weeks[5]?.[1]).toBe("2026-03-31");
+  });
+});
+
+describe("isoDate: range spans and times", () => {
+  it("counts a span's days with both ends, across month and leap edges", () => {
+    expect(daySpan("2026-10-01", "2026-10-07")).toBe(7);
+    expect(daySpan("2026-10-03", "2026-10-03")).toBe(1);
+    expect(daySpan("2024-02-28", "2024-03-01")).toBe(3);
+    expect(daySpan("2026-12-31", "2027-01-01")).toBe(2);
+    expect(daySpan("2026-10-07", "2026-10-01")).toBe(0);
+  });
+
+  it("normalises H:MM and HH:MM to 24-hour HH:MM", () => {
+    expect(normaliseTime("14:05")).toBe("14:05");
+    expect(normaliseTime("7:30")).toBe("07:30");
+    expect(normaliseTime(" 00:00 ")).toBe("00:00");
+    expect(normaliseTime("23:59")).toBe("23:59");
+  });
+
+  it("rejects anything else", () => {
+    for (const text of [
+      "24:00",
+      "12:60",
+      "14:5",
+      "1405",
+      "123:00",
+      ":30",
+      "14:",
+      "a4:05",
+      "14:05:00",
+      "-1:30",
+      "",
+    ])
+      expect(normaliseTime(text)).toBeNull();
+    expect(normaliseTime(null)).toBeNull();
+    expect(normaliseTime(undefined)).toBeNull();
   });
 });

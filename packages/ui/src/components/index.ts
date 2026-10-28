@@ -49,6 +49,9 @@ export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdow
 export { DatePicker } from "./DatePicker.js";
 export type { DatePickerProps } from "./DatePicker.js";
 
+export { DateRangePicker } from "./DateRangePicker.js";
+export type { DateRangePickerProps, DateRangeValue } from "./DateRangePicker.js";
+
 export { Dialog } from "./Dialog.js";
 export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
 

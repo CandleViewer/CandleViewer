@@ -13,6 +13,7 @@ import {
   addMonths,
   addYears,
   endOfWeek,
+  clampIso,
   isWithin,
   longLabel,
   monthLabel,
@@ -24,7 +25,14 @@ import {
 export interface CalendarGridProps {
   /** The day that takes focus when the grid mounts (the dialog opens). */
   readonly initialFocus: string;
+  /** The selected day; in a range, its start. */
   readonly selected: string | null;
+  /**
+   * A range's end (inclusive): every day from `selected` to it is selected, the days between on the band. Null in a
+   * range whose end is pending: the band then runs from `selected` to the day under the pointer, else the focused
+   * day (a preview, not a selection). Undefined for the single form.
+   */
+  readonly rangeEnd?: string | null | undefined;
   readonly today: string;
   readonly min?: string | undefined;
   readonly max?: string | undefined;
@@ -68,6 +76,7 @@ export function nextFocus(iso: string, key: string, shiftKey: boolean): string |
 export function CalendarGrid({
   initialFocus,
   selected,
+  rangeEnd,
   today,
   min,
   max,
@@ -81,6 +90,8 @@ export function CalendarGrid({
   const moveFocus = useRef(false);
   /** Presses of out-of-range days: each one inserts a fresh caption node into the status, so it is spoken again. */
   const [refusals, setRefusals] = useState(0);
+  /** The day under the pointer: a pending range previews its band to it. */
+  const [hovered, setHovered] = useState<string | null>(null);
   const { year, month } = parseIsoDate(focused) ?? { year: 1970, month: 1 };
   const weeks = monthWeeks(year, month);
 
@@ -99,7 +110,22 @@ export function CalendarGrid({
     setFocused(next);
   };
 
+  /** The band's far end: the range's end, else (pending) the day under the pointer or the focused day. */
+  const bandEnd =
+    selected === null || rangeEnd === undefined ? null : (rangeEnd ?? hovered ?? focused);
+  const band = bandEnd !== null && selected !== null && bandEnd > selected ? bandEnd : null;
+  const inBand = (iso: string): boolean =>
+    band !== null && selected !== null && clampIso(iso, selected, band) === iso;
+  const isEnd = (iso: string): boolean =>
+    iso === selected || (rangeEnd != null && iso === rangeEnd);
+  /** aria-selected: the selected day, or every day of a complete range (a reversed one: its two ends). */
+  const isSelected = (iso: string): boolean =>
+    isEnd(iso) ||
+    (rangeEnd != null && selected !== null && clampIso(iso, selected, rangeEnd) === iso);
+
   const choose = (iso: string): void => {
+    // A pressed day becomes the roving stop (a press focuses it), so a pending range's band follows it.
+    setFocused(iso);
     if (isWithin(iso, min, max)) onPick(iso);
     else setRefusals((n) => n + 1);
   };
@@ -128,6 +154,7 @@ export function CalendarGrid({
         aria-labelledby={headingId}
         className="cv-datepicker__grid"
         onKeyDown={onKeyDown}
+        onMouseLeave={() => setHovered(null)}
       >
         <thead>
           <tr>
@@ -149,7 +176,8 @@ export function CalendarGrid({
                     key={iso}
                     role="gridcell"
                     className="cv-datepicker__cell"
-                    aria-selected={iso === selected ? true : undefined}
+                    aria-selected={isSelected(iso) ? true : undefined}
+                    data-in-range={inBand(iso) && !isEnd(iso) ? "" : undefined}
                   >
                     <button
                       ref={iso === focused ? focusedRef : undefined}
@@ -159,9 +187,10 @@ export function CalendarGrid({
                       aria-label={iso === today ? `${longLabel(iso)}, today` : longLabel(iso)}
                       aria-current={iso === today ? "date" : undefined}
                       aria-disabled={isWithin(iso, min, max) ? undefined : true}
-                      data-selected={iso === selected ? "" : undefined}
+                      data-selected={isEnd(iso) ? "" : undefined}
                       data-today={iso === today ? "" : undefined}
                       onClick={() => choose(iso)}
+                      onMouseEnter={rangeEnd === undefined ? undefined : () => setHovered(iso)}
                     >
                       {Number(iso.slice(8))}
                     </button>

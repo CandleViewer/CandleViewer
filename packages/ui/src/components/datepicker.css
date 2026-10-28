@@ -4,7 +4,7 @@
  * a modal CMP-017 Popover (popover.css: surface, edge, elevation, fade) padded `space.inset.md`. Day cells are
  * `size.control.height` squares: today a 1px `text.tertiary` ring, the selected day the selected role (the tint and
  * a 2px inner `border.selected` outline), out-of-range numbers at `opacity.disabled`. Tokens only; no motion of its
- * own (a month change is instant).
+ * own (a month change is instant). Slice 14 adds the range (Start and End, the in-range band) and the time well.
  */
 .cv-datepicker .cv-field__input {
   font: var(--type-num-base-font-weight) var(--type-num-base-font-size) /
@@ -20,6 +20,57 @@
 
 .cv-datepicker .cv-field > .cv-field__trail {
   padding-inline-end: var(--space-inset-xs);
+}
+
+/* With time: the date well fills the row, the time well (an `HH:MM` input) keeps its width, space.inset.xs after. */
+.cv-datepicker__row {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-inset-xs);
+  min-width: 0;
+}
+
+.cv-datepicker__row > .cv-datepicker__date {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cv-datepicker__row > .cv-datepicker__time {
+  flex: 0 0 auto;
+}
+
+/*
+ * Range: Start and End space.inset.sm apart, each with its CMP-040 label. The row wraps, so End stacks under Start
+ * when the host is narrower than both (a field's basis is five control heights, eight with time).
+ */
+.cv-daterange__fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-inset-sm);
+}
+
+.cv-daterange__part {
+  display: flex;
+  flex: 1 1 calc(var(--size-control-height) * 5);
+  flex-direction: column;
+  gap: var(--space-stack-xs);
+  min-width: 0;
+}
+
+.cv-daterange[data-time] .cv-daterange__part {
+  flex-basis: calc(var(--size-control-height) * 8);
+}
+
+.cv-daterange__label {
+  color: var(--color-text-secondary);
+  font: var(--type-ui-label-font-weight) var(--type-ui-label-font-size) /
+    var(--type-ui-label-line-height) var(--type-ui-label-font-family);
+  overflow-wrap: anywhere;
+}
+
+/* Plain disabled: the labels dim with their fields (CMP-040); T2 never dims. */
+.cv-daterange[data-disabled] .cv-daterange__label {
+  opacity: var(--opacity-disabled);
 }
 
 /* The format hint: CMP-040's help line (caption, text.secondary). */
@@ -116,6 +167,11 @@
   color: var(--color-text-primary);
 }
 
+/* In range: the band behind the days between the ends (decorative: the ends, the fields and the status carry it). */
+.cv-datepicker__cell[data-in-range] {
+  background: var(--color-surface-selected);
+}
+
 /* Out of range: inactive (availability), not T2; the caption names the range in words. */
 .cv-datepicker__day[aria-disabled] {
   opacity: var(--opacity-disabled);
@@ -163,6 +219,19 @@
   .cv-datepicker__day[aria-disabled] {
     opacity: 1;
     color: GrayText;
+  }
+
+  .cv-datepicker__cell[data-in-range] > .cv-datepicker__day {
+    border: 1px solid Highlight;
+  }
+
+  .cv-daterange__label {
+    color: CanvasText;
+  }
+
+  .cv-daterange[data-disabled] .cv-daterange__label {
+    color: GrayText;
+    opacity: 1;
   }
 
   .cv-datepicker__hint,

@@ -125,6 +125,38 @@ export const WithMinMax: Story = {
   },
 };
 
+function TimeHost(): JSX.Element {
+  const [value, setValue] = useState<string | null>("2026-10-23");
+  const [time, setTime] = useState<string | null>("14:05");
+  return (
+    <FormField label="Go to">
+      <DatePicker
+        value={value}
+        onChange={setValue}
+        withTime
+        time={time}
+        onTimeChange={setTime}
+        now={NOW}
+      />
+    </FormField>
+  );
+}
+
+/** Time=true: an HH:MM UTC well beside the date ("14:05"); the calendar button ends it (date, time, button). */
+export const WithTime: Story = {
+  render: () => <TimeHost />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const time = canvas.getByRole("textbox", { name: "Time" });
+    await expect(time).toHaveValue("14:05");
+    await userEvent.clear(time);
+    await userEvent.type(time, "9:30");
+    await userEvent.tab();
+    await expect(time).toHaveValue("09:30");
+    await expect(canvas.getByRole("button", { name: "Choose date" })).toHaveFocus();
+  },
+};
+
 /** Invalid: the host's message under the well, the 2px boundary, the glyph and the words. */
 export const Invalid: Story = {
   render: () => (

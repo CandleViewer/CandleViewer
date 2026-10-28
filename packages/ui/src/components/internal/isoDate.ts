@@ -169,3 +169,24 @@ export function monthWeeks(
     }),
   );
 }
+
+/** The days from `start` to `end`, both counted (the same day is 1); 0 when `end` is before `start`. */
+export const daySpan = (start: string, end: string): number =>
+  Math.max(0, dayOf(end) - dayOf(start) + 1);
+
+const isDigits = (text: string): boolean =>
+  text.length > 0 && [...text].every((c) => c >= "0" && c <= "9");
+
+/** The canonical `HH:MM` (24-hour, UTC) of typed `H:MM` or `HH:MM`, or null. */
+export function normaliseTime(text: string | null | undefined): string | null {
+  if (text == null) return null;
+  const parts = text.trim().split(":");
+  if (parts.length !== 2) return null;
+  const [hours = "", minutes = ""] = parts;
+  if (!isDigits(hours) || hours.length > 2 || !isDigits(minutes) || minutes.length !== 2)
+    return null;
+  const h = Number(hours);
+  const m = Number(minutes);
+  if (h > 23 || m > 59) return null;
+  return `${String(h).padStart(2, "0")}:${minutes}`;
+}

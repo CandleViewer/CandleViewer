@@ -68,4 +68,38 @@ describe("datepicker.css contract", () => {
     expect(find(css.forced, BUTTON, "color")).toContain("ButtonText");
     expect(css.forced).not.toContain("var(--color");
   });
+
+  it("range: the in-range band is surface.selected; forced colours a 1px Highlight border", () => {
+    expect(find(css.normal, ".cv-datepicker__cell[data-in-range]", "background")).toContain(
+      "var(--color-surface-selected)",
+    );
+    expect(
+      find(css.forced, ".cv-datepicker__cell[data-in-range] > .cv-datepicker__day", "border"),
+    ).toContain("1px solid Highlight");
+  });
+
+  it("range: Start and End wrap space.inset.sm apart, so End stacks under Start when narrow", () => {
+    const fields = find(css.normal, ".cv-daterange__fields", "flex-wrap");
+    expect(fields).toContain("flex-wrap: wrap");
+    expect(fields).toContain("gap: var(--space-inset-sm)");
+    expect(find(css.normal, ".cv-daterange__part", "flex")).toContain(
+      "calc(var(--size-control-height) * 5)",
+    );
+  });
+
+  it("time: the time well keeps its width, space.inset.xs after the date", () => {
+    expect(find(css.normal, ".cv-datepicker__row", "gap")).toContain("var(--space-inset-xs)");
+    expect(find(css.normal, ".cv-datepicker__row > .cv-datepicker__time", "flex")).toContain(
+      "0 0 auto",
+    );
+  });
+
+  it("range labels dim with plain disabled only, GrayText in forced colours", () => {
+    expect(
+      find(css.normal, ".cv-daterange[data-disabled] .cv-daterange__label", "opacity"),
+    ).toContain("var(--opacity-disabled)");
+    expect(
+      find(css.forced, ".cv-daterange[data-disabled] .cv-daterange__label", "color"),
+    ).toContain("GrayText");
+  });
 });

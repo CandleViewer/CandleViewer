@@ -382,7 +382,7 @@ Submenu decisions (E05-S03):
 
 | Keys                                            | Action                                                                                                              |
 | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Tab / Shift+Tab (field)                         | The date field, then the calendar button.                                                                           |
+| Tab / Shift+Tab (field)                         | The date field, the time field (`withTime`), then the calendar button.                                              |
 | Typing                                          | `YYYY-MM-DD`, parsed on blur or Enter; never clamped. Unparsable or out-of-range text keeps its words and no value. |
 | Alt+↓ in the field; Enter / Space on the button | Opens the dialog; focus on the selected day, else today, else the nearest allowed day.                              |
 | ← / →                                           | Previous / next day, across month and year edges.                                                                   |
@@ -407,12 +407,40 @@ Submenu decisions (E05-S03):
 | caption status  | status                      | —                                  | empty until an out-of-range day is chosen                                                       |
 
 The value is an ISO `YYYY-MM-DD` string in UTC, never a `Date`; today comes from an injectable
-`now` clock. The date math is in-house: no date library. The range form and `withTime` follow in
-slice 14. `DatePickerProps` is provisional until then: `value: string | null` is the single form only,
-and adding `mode` will likely widen it to a union, a breaking change to this export.
+`now` clock. The date math is in-house: no date library. `withTime` adds an `HH:MM` well after the
+date (24-hour UTC, typed only, parsed on blur or Enter as `H:MM` or `HH:MM`) with its own `time` and
+`onTimeChange`, and the calendar button moves to the end of the time well, so the Tab order is the
+date, the time, then the button. The range form is its own export, `DateRangePicker`, so
+`DatePickerProps` keeps `value: string | null`.
 
 A press inside the open calendar stays the calendar's: React bubbles it through the portal to the
 well, which forwards only presses on its own padding and suffix to the field. A read-only field
 keeps its value selectable, and its calendar button is natively disabled, so it leaves the Tab
 order (T2's `aria-disabled` is for a gated field only). Empty cells before the 1st and after the
 last day are empty `gridcell`s, as in the APG example.
+
+### DateRangePicker (CMP-047 range; the same dialog and grid keys)
+
+| Keys                                            | Action                                                                                                               |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab (fields)                        | Start, Start time, End, End time (the times with `withTime`), then the calendar button on the End field's last well. |
+| Typing                                          | Each field parsed on blur or Enter and committed on its own; an end before the start is the host's check.            |
+| Alt+↓ in any field; Enter / Space on the button | Opens the dialog on the start, else today, else the nearest allowed day.                                             |
+| Enter / Space on a day                          | The first pick sets the start; the second sets the end and closes; a second pick before the start replaces it.       |
+| Esc                                             | Closes without a change, dropping a pending start; focus returns to the calendar button.                             |
+| Any key while T2                                | Every field read-only behind its lock, the button `aria-disabled`; one reason for all.                               |
+
+| Element         | Role                      | Name                               | ARIA                                                                                           |
+| --------------- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------- |
+| range           | group                     | CMP-040's label (or `aria-label`)  | `data-mode="range"`; one error line, one hint, one reason for every field                      |
+| Start / End     | textbox                   | the visible labels "Start" / "End" | as the date field; `startLabel` / `endLabel` rename them                                       |
+| time fields     | textbox                   | "Start time" / "End time"          | placeholder `HH:MM`; the "UTC" suffix in the description                                       |
+| calendar button | button                    | "Choose dates"                     | as the single form                                                                             |
+| day             | gridcell holding a button | as the single form                 | `aria-selected` on every day of the range (only the start while the end is pending)            |
+| start status    | status (in the dialog)    | —                                  | "Start 2026-10-01. Choose the end date." on the start pick, and on a pick that replaces it     |
+| range status    | status (in the group)     | —                                  | "2026-10-01 to 2026-10-07, 7 days." once the dialog has closed and the page is no longer inert |
+
+The band (`color.surface.selected` behind the days between the ends) is decorative: the ends, the
+fields and the two sentences carry the range. While the end is pending it previews to the day under
+the pointer, else the focused day, and selects nothing. The fields wrap, so End stacks under Start
+when the host is narrower than both.

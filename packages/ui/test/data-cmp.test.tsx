@@ -7,6 +7,7 @@ import {
   Checkbox,
   ConfirmDialog,
   DatePicker,
+  DateRangePicker,
   Dialog,
   Drawer,
   FormField,
@@ -101,6 +102,16 @@ const molecules: [string, () => JSX.Element][] = [
   ],
   ["CMP-045", () => <Toast title="Session extended" />],
   ["CMP-047", () => <DatePicker aria-label="Go to date" value="2026-10-23" onChange={noop} />],
+  [
+    "CMP-047",
+    () => (
+      <DateRangePicker
+        aria-label="Replay range"
+        value={{ start: "2026-10-01", end: "2026-10-07" }}
+        onChange={noop}
+      />
+    ),
+  ],
   ["CMP-050", () => <Card title="Accounts">Body</Card>],
 ];
 

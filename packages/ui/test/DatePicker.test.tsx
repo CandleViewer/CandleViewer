@@ -475,6 +475,81 @@ describe("DatePicker (CMP-047): gates", () => {
   });
 });
 
+describe("DatePicker (CMP-047): withTime", () => {
+  function TimeHost(props: Partial<DatePickerProps>): JSX.Element {
+    const [time, setTime] = useState<string | null>(props.time ?? null);
+    return (
+      <Host
+        withTime
+        {...props}
+        time={time}
+        onTimeChange={(next) => {
+          setTime(next);
+          props.onTimeChange?.(next);
+        }}
+      />
+    );
+  }
+  const time = (host: HTMLElement): HTMLInputElement =>
+    within(host).getByRole("textbox", { name: "Time" }) as HTMLInputElement;
+
+  it("adds an HH:MM UTC well after the date; the button moves to its end (date, time, button)", async () => {
+    const host = await mount(<TimeHost value="2026-10-23" time="14:05" />);
+    const input = time(host);
+    expect(input).toHaveValue("14:05");
+    expect(input).toHaveAttribute("placeholder", "HH:MM");
+    expect(input).toHaveAccessibleDescription(/YYYY-MM-DD HH:MM UTC$/);
+    expect(input.closest(".cv-field")).toContainElement(button(host));
+    expect(field(host).closest(".cv-field")).not.toContainElement(button(host));
+    const follows = (a: Element, b: Element): boolean =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+    expect(follows(field(host), input)).toBe(true);
+    expect(follows(input, button(host))).toBe(true);
+  });
+
+  it("parses the time on blur into 24-hour HH:MM; the calendar never touches it", async () => {
+    const onTimeChange = fn();
+    const onChange = fn();
+    const host = await mount(
+      <TimeHost value="2026-10-23" onTimeChange={onTimeChange} onChange={onChange} />,
+    );
+    await type(time(host), "7:30");
+    expect(onTimeChange).toHaveBeenLastCalledWith("07:30");
+    expect(time(host)).toHaveValue("07:30");
+    await type(time(host), "");
+    expect(onTimeChange).toHaveBeenLastCalledWith(null);
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("words an unparsable time, keeps it, and marks only the time well invalid", async () => {
+    const onTimeChange = fn();
+    const host = await mount(<TimeHost value="2026-10-23" onTimeChange={onTimeChange} />);
+    await type(time(host), "14:5");
+    expect(onTimeChange).not.toHaveBeenCalled();
+    expect(time(host)).toHaveValue("14:5");
+    expect(time(host)).toHaveAttribute("aria-invalid", "true");
+    expect(field(host)).not.toHaveAttribute("aria-invalid");
+    expect(within(host).getByText("Enter a time as HH:MM, 24-hour UTC.")).toBeInTheDocument();
+    await type(time(host), "14:50");
+    expect(onTimeChange).toHaveBeenLastCalledWith("14:50");
+    expect(time(host)).not.toHaveAttribute("aria-invalid");
+  });
+
+  it("opens the calendar with Alt+ArrowDown in the time field too", async () => {
+    const host = await mount(<TimeHost value="2026-10-23" />);
+    await act(async () => time(host).focus());
+    await key("ArrowDown", { altKey: true });
+    expect(focusedName()).toBe("23 October 2026");
+  });
+
+  it("T2: the time well is read-only behind its own lock too", async () => {
+    const host = await mount(<TimeHost value="2026-10-23" disabledReason={REASON} />);
+    expect(time(host)).toHaveAttribute("readonly");
+    expect(time(host)).toHaveAccessibleDescription(REASON);
+    expect(within(host).getAllByRole("img", { name: "Not available" })).toHaveLength(2);
+  });
+});
+
 describe("CalendarGrid keyboard matrix (APG Date Picker Dialog)", () => {
   it.each([
     // [from, key, shift, to]
