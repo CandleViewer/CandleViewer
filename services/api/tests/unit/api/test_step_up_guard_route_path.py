@@ -101,6 +101,29 @@ async def test_guard_exempts_extend_for_post_only_in_read_only_downgrade() -> No
     assert refused.status_code == 403 and refused.json()["code"] == "session_read_only"
 
 
+async def test_guard_exempts_leaving_view_as_for_delete_only_in_read_only_downgrade() -> None:
+    """#4810: a read-only session can end view-as but never start it. The exemption is `DELETE`
+    only, as extend's is `POST` only: leaving view-as passes the downgrade, and a write of any
+    other method on the same path is an ordinary write the downgrade refuses."""
+    c, *_ = await _build()
+
+    @cast(FastAPI, c.app).delete("/auth/session/view-as")
+    async def leave() -> dict[str, bool]:
+        return {"ok": True}
+
+    @cast(FastAPI, c.app).post("/auth/session/view-as")
+    async def start() -> dict[str, bool]:
+        return {"ok": True}
+
+    rc = _rooted(c)
+    bad = {"code": "000000", "password": _PW, "action_class": "keys"}
+    tries = [rc.post(f"{_ROOT}/auth/step-up", headers=_H, json=bad) for _ in range(3)]
+    assert [t.status_code for t in tries] == [401, 401, 403]
+    refused = rc.post(f"{_ROOT}/auth/session/view-as", headers=_H)
+    assert refused.status_code == 403 and refused.json()["code"] == "session_read_only"
+    assert rc.delete(f"{_ROOT}/auth/session/view-as", headers=_H).status_code == 200  # exempt
+
+
 class _Unwired:
     """The `AuthService` facade with nothing wired (the fake backend). Reading
     a service raises, as on the real facade, so a guard touching one 500s."""
