@@ -62,6 +62,12 @@ export type {
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
 
+export { FormField } from "./FormField.js";
+export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
+
+export { FormSection } from "./FormSection.js";
+export type { FormSectionProps } from "./FormSection.js";
+
 export {
   GlobalErrorAnnouncement,
   GlobalErrorBoundaryFallback,
@@ -72,11 +78,6 @@ export type {
   GlobalErrorBoundaryFallbackProps,
   GlobalErrorScope,
 } from "./GlobalErrorBoundaryFallback.js";
-export { FormField } from "./FormField.js";
-export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
-
-export { FormSection } from "./FormSection.js";
-export type { FormSectionProps } from "./FormSection.js";
 
 export { Avatar } from "./Avatar.js";
 export type { AvatarProps, AvatarSize } from "./Avatar.js";
