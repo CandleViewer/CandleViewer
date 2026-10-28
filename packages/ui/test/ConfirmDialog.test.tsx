@@ -628,7 +628,15 @@ describe("ConfirmDialog (CMP-044)", () => {
     const real = window.getComputedStyle.bind(window);
     vi.spyOn(window, "getComputedStyle").mockImplementation((element, pseudo) =>
       element.classList.contains("cv-dialog__scrim")
-        ? ({ transitionDuration: "200ms" } as unknown as CSSStyleDeclaration)
+        ? ({
+            transitionDuration: "200ms",
+            getPropertyValue: (name: string) =>
+              ({
+                "transition-property": "opacity",
+                "transition-duration": "200ms",
+                "transition-delay": "0s",
+              })[name] ?? "",
+          } as unknown as CSSStyleDeclaration)
         : real(element, pseudo),
     );
     await mount(<Closing />);
