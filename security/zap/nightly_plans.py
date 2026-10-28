@@ -18,7 +18,7 @@ bearer (the synthetic Viewer's, or the Manager's for `drawings`) and SR-041 CSRF
 environment and adds them to each request to the surface `ZAP_PROFILE` names: no token is written
 here. Stdlib and PyYAML only.
 
-Usage: nightly_plans.py --profile {drawings,market,recording,rules} --out DIR
+Usage: nightly_plans.py --profile {drawings,market,recording,rules} --out DIR [--role ROLE]
 
 `--out` is a relative directory without `..`: ZAP mounts the checkout at /zap/wrk, so the plan
 must sit inside it to be read there (an absolute or climbing path is refused).
@@ -42,14 +42,23 @@ CONTRACT = REPO_ROOT / "docs/plan/22-api-openapi.yaml"
 #: under one (`/rules/{ruleId}`), never because it only starts with the same letters.
 PROFILES: dict[str, tuple[Path, tuple[str, ...]]] = {
     "market": (REPO_ROOT / ".zap/market-data.yaml", ("/market/klines", "/market/bars")),
-    "rules": (REPO_ROOT / ".zap/rules-low-priv.yaml", ("/rules", "/schemas/rule-ir.json")),
+    "rules": (
+        REPO_ROOT / ".zap/rules-low-priv.yaml",
+        ("/rules", "/schemas/rule-ir.json"),
+    ),
     "drawings": (REPO_ROOT / ".zap/e14-drawings.yaml", ("/drawings",)),
     "recording": (REPO_ROOT / ".zap/recording.yaml", ("/recording", "/admin/recorder")),
 }
 #: A profile's fixture: the rows its examples aim at (E14-X03).
 SEEDS: dict[str, Path] = {"drawings": REPO_ROOT / ".zap/e14-drawings-seed.json"}
+#: A requestor's status per scan role, where the roles are answered differently (#4868).
+ROLE_CODES = "x-cv-role-response-code"
+ROLES = ("viewer", "manager")
 #: What a `$ref` that closes a cycle becomes.
-OPEN: dict[str, str] = {"type": "object", "description": "a recursive reference, cut for ZAP"}
+OPEN: dict[str, str] = {
+    "type": "object",
+    "description": "a recursive reference, cut for ZAP",
+}
 
 
 def on_surface(path: str, surface: tuple[str, ...]) -> bool:
@@ -59,7 +68,9 @@ def on_surface(path: str, surface: tuple[str, ...]) -> bool:
 def _refs(node: Any) -> Iterator[str]:
     if isinstance(node, dict):
         for key, value in node.items():
-            yield from [value] if key == "$ref" and isinstance(value, str) else _refs(value)
+            yield from (
+                [value] if key == "$ref" and isinstance(value, str) else _refs(value)
+            )
     elif isinstance(node, list):
         for value in node:
             yield from _refs(value)
@@ -74,7 +85,9 @@ def cut_cycles(components: dict[str, dict[str, Any]]) -> list[str]:
     def walk(node: Any, owner: str, stack: list[str]) -> None:
         if isinstance(node, dict):
             target = node.get("$ref")
-            if isinstance(target, str):  # a `$ref` object: its siblings are ignored (OAS 3.0)
+            if isinstance(
+                target, str
+            ):  # a `$ref` object: its siblings are ignored (OAS 3.0)
                 if target in stack:
                     node.clear()
                     node.update(OPEN)
@@ -106,7 +119,11 @@ def cut_contract(
     """`contract` cut to the `surface` paths and every component they reach through `$ref`, with
     its cycles cut (`cut_cycles`), and the edges cut. The security schemes stay whole: the
     requirements name them, nothing references them."""
-    paths = {path: item for path, item in contract["paths"].items() if on_surface(path, surface)}
+    paths = {
+        path: item
+        for path, item in contract["paths"].items()
+        if on_surface(path, surface)
+    }
     reached: set[str] = set()
     pending = list(_refs(paths))
     while pending:
@@ -117,7 +134,9 @@ def cut_contract(
     components: dict[str, dict[str, Any]] = {}
     for ref in sorted(reached):
         _, _, kind, name = ref.split("/", 3)
-        components.setdefault(kind, {})[name] = copy.deepcopy(contract["components"][kind][name])
+        components.setdefault(kind, {})[name] = copy.deepcopy(
+            contract["components"][kind][name]
+        )
     edges = cut_cycles(components)
     if "securitySchemes" in contract["components"]:
         components["securitySchemes"] = contract["components"]["securitySchemes"]
@@ -138,12 +157,30 @@ def pin_seed(api: dict[str, Any], seed: dict[str, Any]) -> None:
     schemas["DrawingInput"]["example"] = {**first["drawing"], "label": "zap probe"}
 
 
-def scan_plan(template: dict[str, Any], api_file: str) -> dict[str, Any]:
-    """The template, importing `api_file` (the cut contract, as ZAP sees the checkout)."""
+def role_dependent(template: dict[str, Any]) -> bool:
+    """Whether a requestor in `template` answers differently for the scan role."""
+    return any(ROLE_CODES in request for request in _requests(template))
+
+
+def _requests(plan: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    for job in plan["jobs"]:
+        if job["type"] == "requestor":
+            yield from job.get("requests", [])
+
+
+def scan_plan(
+    template: dict[str, Any], api_file: str, role: str | None = None
+) -> dict[str, Any]:
+    """The template, importing `api_file` (the cut contract, as ZAP sees the checkout). A request's
+    `ROLE_CODES` map sets its `responseCode` for `role` and is dropped: ZAP never sees it (#4868)."""
     plan = copy.deepcopy(template)
     for job in plan["jobs"]:
         if job["type"] == "openapi":
             job["parameters"]["apiFile"] = api_file
+    for request in _requests(plan):
+        codes = request.pop(ROLE_CODES, {})
+        if role in codes:
+            request["responseCode"] = codes[role]
     return plan
 
 
@@ -155,6 +192,11 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         required=True,
         help="a relative directory, without '..', in the checkout ZAP mounts at /zap/wrk",
+    )
+    parser.add_argument(
+        "--role",
+        choices=ROLES,
+        help="the scan role, required where a template's requestors answer the roles differently",
     )
     args = parser.parse_args(argv)
     if args.out.is_absolute() or ".." in args.out.parts:
@@ -175,15 +217,26 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+    if args.role is None and role_dependent(
+        yaml.safe_load(template_path.read_text("utf-8"))
+    ):
+        print(
+            f"nightly_plans: {args.profile}'s requestors need --role", file=sys.stderr
+        )
+        return 2
     args.out.mkdir(parents=True, exist_ok=True)
     api_path = args.out / f"{args.profile}-openapi.yaml"
     api_path.write_text(yaml.safe_dump(api, sort_keys=False), encoding="utf-8")
     template = yaml.safe_load(template_path.read_text(encoding="utf-8"))
-    plan = scan_plan(template, f"/zap/wrk/{api_path.as_posix()}")  # the checkout at /zap/wrk
+    plan = scan_plan(
+        template, f"/zap/wrk/{api_path.as_posix()}", args.role
+    )  # /zap/wrk: checkout
     plan_path = args.out / f"{args.profile}-scan.yaml"
     plan_path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
     components = sum(len(group) for group in api["components"].values())
-    print(f"nightly_plans: {args.profile}: {len(api['paths'])} paths, {components} components")
+    print(
+        f"nightly_plans: {args.profile}: {len(api['paths'])} paths, {components} components"
+    )
     for edge in edges:
         print(f"nightly_plans: {args.profile}: cut the cycle at {edge}")
     return 0

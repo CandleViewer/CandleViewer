@@ -82,7 +82,9 @@ def _has_cycle(api: dict[str, Any]) -> bool:
     def cyclic(ref: str) -> bool:
         state[ref] = 1
         targets = graph.get(ref, set())  # a ref to another kind of component ends here
-        found = any(state.get(to) == 1 or (to not in state and cyclic(to)) for to in targets)
+        found = any(
+            state.get(to) == 1 or (to not in state and cyclic(to)) for to in targets
+        )
         state[ref] = 2
         return found
 
@@ -115,7 +117,10 @@ def test_each_cut_keeps_its_surface_whole_and_every_ref_resolves(profile: str) -
     assert set(api["paths"]) == expected and expected
     for ref in _refs(api):
         assert _component(api, ref) is not None  # nothing the import reads is missing
-    assert api["components"]["securitySchemes"] == CONTRACT["components"]["securitySchemes"]
+    assert (
+        api["components"]["securitySchemes"]
+        == CONTRACT["components"]["securitySchemes"]
+    )
 
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
@@ -137,7 +142,9 @@ def test_the_rules_cut_ends_each_cycle_of_the_rule_ir_and_names_it() -> None:
     limit of ZAP's import, as the full contract did (#1026)."""
     api, edges = plans.cut_contract(CONTRACT, plans.PROFILES["rules"][1])
     assert edges and not _has_cycle(api)
-    assert all(re.fullmatch(r"#/components/\S+ -> #/components/\S+", edge) for edge in edges)
+    assert all(
+        re.fullmatch(r"#/components/\S+ -> #/components/\S+", edge) for edge in edges
+    )
     assert _has_cycle({"components": {"schemas": CONTRACT["components"]["schemas"]}})
 
 
@@ -146,7 +153,9 @@ def test_the_market_cut_has_no_cycle_to_end() -> None:
     assert edges == [] and not _has_cycle(api)
 
 
-def test_a_cycle_is_cut_at_the_reference_that_closes_it_and_nothing_else_moves() -> None:
+def test_a_cycle_is_cut_at_the_reference_that_closes_it_and_nothing_else_moves() -> (
+    None
+):
     a, b, c = (f"#/components/schemas/{name}" for name in "ABC")
     contract = {
         "openapi": "3.0.3",
@@ -164,7 +173,9 @@ def test_a_cycle_is_cut_at_the_reference_that_closes_it_and_nothing_else_moves()
     assert api["components"]["schemas"]["B"]["properties"]["a"] == plans.OPEN
     assert api["components"]["schemas"]["A"]["properties"]["b"] == {"$ref": b}
     assert api["components"]["schemas"]["B"]["items"] == {"type": "string"}
-    assert contract["components"]["schemas"]["B"]["properties"]["a"] == {"$ref": a}  # a copy
+    assert contract["components"]["schemas"]["B"]["properties"]["a"] == {
+        "$ref": a
+    }  # a copy
 
 
 def test_the_plan_imports_the_cut_contract_and_leaves_the_template_alone() -> None:
@@ -181,8 +192,12 @@ def test_main_writes_the_cut_and_the_plan_inside_the_checkout(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     assert plans.main(["--profile", "rules", "--out", "zap-work"]) == 0
-    api = yaml.safe_load((tmp_path / "zap-work/rules-openapi.yaml").read_text(encoding="utf-8"))
-    plan = yaml.safe_load((tmp_path / "zap-work/rules-scan.yaml").read_text(encoding="utf-8"))
+    api = yaml.safe_load(
+        (tmp_path / "zap-work/rules-openapi.yaml").read_text(encoding="utf-8")
+    )
+    plan = yaml.safe_load(
+        (tmp_path / "zap-work/rules-scan.yaml").read_text(encoding="utf-8")
+    )
     assert not _has_cycle(api)
     (job,) = [job for job in plan["jobs"] if job["type"] == "openapi"]
     assert job["parameters"]["apiFile"] == "/zap/wrk/zap-work/rules-openapi.yaml"
@@ -194,7 +209,9 @@ def test_main_refuses_a_surface_the_contract_has_no_path_on_and_writes_nothing(
 ) -> None:
     """A renamed contract path never yields an empty plan that scans nothing (#4025's m1)."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setitem(plans.PROFILES, "rules", (plans.PROFILES["rules"][0], ("/no-such-path",)))
+    monkeypatch.setitem(
+        plans.PROFILES, "rules", (plans.PROFILES["rules"][0], ("/no-such-path",))
+    )
     assert plans.main(["--profile", "rules", "--out", "zap-work"]) == 1
     assert list(tmp_path.iterdir()) == []
 
@@ -222,18 +239,26 @@ def _drawings_cut() -> dict[str, Any]:
 
 def test_the_drawings_cut_names_the_owners_row_in_its_examples() -> None:
     api = _drawings_cut()
-    assert set(api["paths"]) == {"/drawings", "/drawings/batch", "/drawings/{drawingId}"}
+    assert set(api["paths"]) == {
+        "/drawings",
+        "/drawings/batch",
+        "/drawings/{drawingId}",
+    }
     parameters, schemas = api["components"]["parameters"], api["components"]["schemas"]
     assert parameters["DrawingId"]["example"] == ROW["id"]
     assert parameters["SymbolQuery"]["example"] == ROW["drawing"]["symbol"]
-    put = schemas["DrawingInput"]["example"]  # valid, so a cross-owner PUT reaches the owner check
+    put = schemas["DrawingInput"][
+        "example"
+    ]  # valid, so a cross-owner PUT reaches the owner check
     assert put == {**ROW["drawing"], "label": "zap probe"}
     assert "example" not in CONTRACT["components"]["parameters"]["DrawingId"]  # a copy
 
 
 def test_the_seed_is_a_valid_create_batch_and_the_put_example_a_valid_drawing() -> None:
     schemas = {"components": CONTRACT["components"]}
-    jsonschema.validate(SEED, {"$ref": "#/components/schemas/DrawingBatchRequest", **schemas})
+    jsonschema.validate(
+        SEED, {"$ref": "#/components/schemas/DrawingBatchRequest", **schemas}
+    )
     assert [op["op"] for op in SEED["operations"]] == ["create"]
     put = _drawings_cut()["components"]["schemas"]["DrawingInput"]["example"]
     jsonschema.validate(put, {"$ref": "#/components/schemas/DrawingInput", **schemas})
@@ -246,8 +271,12 @@ def test_main_writes_the_drawings_cut_with_its_example_and_no_other_profile_gets
     assert plans.main(["--profile", "drawings", "--out", "w"]) == plans.main(
         ["--profile", "market", "--out", "w"]
     )
-    assert ROW["id"] in (tmp_path / "w/drawings-openapi.yaml").read_text(encoding="utf-8")
-    assert ROW["id"] not in (tmp_path / "w/market-openapi.yaml").read_text(encoding="utf-8")
+    assert ROW["id"] in (tmp_path / "w/drawings-openapi.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert ROW["id"] not in (tmp_path / "w/market-openapi.yaml").read_text(
+        encoding="utf-8"
+    )
 
 
 # --- the templates ------------------------------------------------------------------------------
@@ -262,15 +291,24 @@ def test_each_template_loads_the_session_script_first(profile: str) -> None:
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
 def test_no_template_names_a_token(profile: str) -> None:
-    text = yaml.safe_dump(TEMPLATES[profile])  # every job and parameter ZAP reads, no comment
-    assert not re.search(r"replacer|ZAP_LOWPRIV_TOKEN|ZAP_AUTH_TOKEN|ZAP_CSRF_TOKEN|Bearer", text)
+    text = yaml.safe_dump(
+        TEMPLATES[profile]
+    )  # every job and parameter ZAP reads, no comment
+    assert not re.search(
+        r"replacer|ZAP_LOWPRIV_TOKEN|ZAP_AUTH_TOKEN|ZAP_CSRF_TOKEN|Bearer", text
+    )
 
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
-def test_each_template_checks_the_session_before_and_after_the_scan(profile: str) -> None:
+def test_each_template_checks_the_session_before_and_after_the_scan(
+    profile: str,
+) -> None:
     jobs = TEMPLATES[profile]["jobs"]
     kinds = [job["type"] for job in jobs]
-    before, after = kinds.index("requestor"), len(kinds) - 1 - kinds[::-1].index("requestor")
+    before, after = (
+        kinds.index("requestor"),
+        len(kinds) - 1 - kinds[::-1].index("requestor"),
+    )
     assert before < kinds.index("openapi") and after > kinds.index("activeScan")
     for job in (jobs[before], jobs[after]):
         assert job["requests"] == [
@@ -279,7 +317,9 @@ def test_each_template_checks_the_session_before_and_after_the_scan(profile: str
 
 
 @pytest.mark.parametrize("profile", sorted(plans.PROFILES))
-def test_each_template_has_exactly_the_requestors_the_liveness_check_counts(profile: str) -> None:
+def test_each_template_has_exactly_the_requestors_the_liveness_check_counts(
+    profile: str,
+) -> None:
     """`check_liveness.py` counts its `REQUESTORS` unless the caller passes `requestors`: a third
     requestor would let the first `/me` and another stand in for an after-scan `/me` that never
     ran."""
@@ -293,18 +333,32 @@ def test_each_scan_fits_in_one_12_minute_bearer(profile: str) -> None:
     jobs = {job["type"]: job for job in TEMPLATES[profile]["jobs"]}
     passive = jobs["passiveScan-wait"]["parameters"]["maxDuration"]
     active = jobs["activeScan"]["parameters"]["maxScanDurationInMins"]
-    assert passive + active <= 10  # two minutes left for start-up, the import and /me (ADR-0020)
+    assert (
+        passive + active <= 10
+    )  # two minutes left for start-up, the import and /me (ADR-0020)
 
 
 @pytest.mark.parametrize(
     ("profile", "include"),
     [
-        ("rules", ["${ZAP_TARGET}/rules([/?].*)?", "${ZAP_TARGET}/schemas/rule-ir\\.json"]),
-        ("market", ["${ZAP_TARGET}/market/klines([/?].*)?", "${ZAP_TARGET}/market/bars([/?].*)?"]),
+        (
+            "rules",
+            ["${ZAP_TARGET}/rules([/?].*)?", "${ZAP_TARGET}/schemas/rule-ir\\.json"],
+        ),
+        (
+            "market",
+            [
+                "${ZAP_TARGET}/market/klines([/?].*)?",
+                "${ZAP_TARGET}/market/bars([/?].*)?",
+            ],
+        ),
         ("drawings", ["${ZAP_TARGET}/drawings([/?].*)?"]),
         (
             "recording",
-            ["${ZAP_TARGET}/recording([/?].*)?", "${ZAP_TARGET}/admin/recorder([/?].*)?"],
+            [
+                "${ZAP_TARGET}/recording([/?].*)?",
+                "${ZAP_TARGET}/admin/recorder([/?].*)?",
+            ],
         ),
     ],
 )
@@ -314,12 +368,16 @@ def test_each_context_is_its_surface(profile: str, include: list[str]) -> None:
     assert all(url.startswith("${ZAP_TARGET}/") for url in context["urls"])
 
 
-def test_the_market_filters_apply_before_the_first_request_and_name_no_absent_rule() -> None:
+def test_the_market_filters_apply_before_the_first_request_and_name_no_absent_rule() -> (
+    None
+):
     jobs = TEMPLATES["market"]["jobs"]
     kinds = [job["type"] for job in jobs]
     assert kinds.index("alertFilter") < kinds.index("requestor")
     (filters,) = [job["alertFilters"] for job in jobs if job["type"] == "alertFilter"]
-    assert [entry["ruleId"] for entry in filters] == [90022]  # 10049 is not in ZAP 2.17.0
+    assert [entry["ruleId"] for entry in filters] == [
+        90022
+    ]  # 10049 is not in ZAP 2.17.0
 
 
 def test_no_template_holds_a_literal_over_the_single_body_cap() -> None:
@@ -327,7 +385,9 @@ def test_no_template_holds_a_literal_over_the_single_body_cap() -> None:
     assert all(len(yaml.safe_dump(plan)) < 64 * 1024 for plan in TEMPLATES.values())
 
 
-def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_paths() -> None:
+def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_paths() -> (
+    None
+):
     """The surface's documented refusals (22-api; the 404 DR20, the batch 409 DR21) raise 90022 on
     their problem text: only that alert, on `/drawings*`, and only with one of their codes as its
     evidence, never the problem media type alone."""
@@ -340,9 +400,14 @@ def test_the_drawings_filter_waives_only_the_documented_refusals_on_its_own_path
     assert entry["urlRegex"] is True and entry["evidenceRegex"] is True
     codes = "not_found|conflict|target_unavailable|version_conflict|id_unavailable"
     codes += "|validation_failed|payload_too_large|invalid_cursor"
-    assert entry["evidence"] == f".*(?:{codes}).*"  # 22-api's refusals of the surface, no more
+    assert (
+        entry["evidence"] == f".*(?:{codes}).*"
+    )  # 22-api's refusals of the surface, no more
     evidence = re.compile(entry["evidence"])  # ZAP's filter matches the whole evidence
-    assert all(evidence.fullmatch(f'"code": "{c}"') for c in ("not_found", "target_unavailable"))
+    assert all(
+        evidence.fullmatch(f'"code": "{c}"')
+        for c in ("not_found", "target_unavailable")
+    )
     assert not evidence.fullmatch("Traceback (most recent call last)")
     assert not evidence.fullmatch("application/problem+json")
 
@@ -371,34 +436,89 @@ def test_no_plan_names_a_rule_the_pinned_image_lacks() -> None:
     absent = {10049, 40024}
     for template in TEMPLATES.values():
         for job in template["jobs"]:
-            named = {rule["id"] for rule in job.get("policyDefinition", {}).get("rules", [])}
+            named = {
+                rule["id"] for rule in job.get("policyDefinition", {}).get("rules", [])
+            }
             named |= {entry["ruleId"] for entry in job.get("alertFilters", [])}
             assert not named & absent
 
 
-def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the_scan() -> None:
+def test_the_recording_plan_sends_the_refusals_after_the_first_me_and_before_the_scan() -> (
+    None
+):
     """E16-X02 (#494): as the Viewer (no `recording:write`) and the Manager (purge is owner-only,
     a pin needs `recorder` step-up) each purge and pin is refused 403, never 202: the purge with a
     matching and a mismatched confirmation (RBAC and owner-only before the body is read), the pin
     on the matrix's filler id. Each request has its own Idempotency-Key."""
     jobs = TEMPLATES["recording"]["jobs"]
     kinds = [job["type"] for job in jobs]
-    (refusals,) = [job for job in jobs if job.get("name") == "purge-and-pin-refused-for-this-role"]
+    (refusals,) = [
+        job for job in jobs if job.get("name") == "purge-and-pin-refused-for-this-role"
+    ]
     assert kinds.index("requestor") < jobs.index(refusals) < kinds.index("openapi")
     requests = refusals["requests"]
     assert [(r["method"], r["url"], r["responseCode"]) for r in requests] == [
         ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
         ("POST", "${ZAP_TARGET}/admin/recorder/purge", 403),
-        ("PUT", "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin", 403),
+        (
+            "PUT",
+            "${ZAP_TARGET}/recording/symbols/00000000-0000-4000-8000-0000000000ff/pin",
+            403,
+        ),
     ]
+    assert [r.get(plans.ROLE_CODES) for r in requests] == [None, None, {"manager": 503}]
     bodies = [json.loads(r["data"]) for r in requests]
     assert bodies[0]["confirm_symbol"] == bodies[0]["symbol"] == "BTCUSDT"
     assert bodies[1]["confirm_symbol"] != bodies[1]["symbol"]
     assert bodies[2] == {"pinned": True}
-    keys = [h.split(": ", 1)[1] for r in requests for h in r["headers"] if h.startswith("Idem")]
+    keys = [
+        h.split(": ", 1)[1]
+        for r in requests
+        for h in r["headers"]
+        if h.startswith("Idem")
+    ]
     assert len(set(keys)) == 3 and all(uuid.UUID(key).version == 4 for key in keys)
-    for role in ("viewer", "manager_without_grant"):  # the matrix refuses both roles the purge
-        assert MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"][role] == "403"
+    for role in (
+        "viewer",
+        "manager_without_grant",
+    ):  # the matrix refuses both roles the purge
+        assert (
+            MATRIX["operations"]["POST /admin/recorder/purge"]["outcomes"][role]
+            == "403"
+        )
+
+
+@pytest.mark.parametrize(("role", "pin"), [("viewer", 403), ("manager", 503)])
+def test_the_recording_plan_expects_the_pin_status_of_its_scan_role(
+    role: str, pin: int
+) -> None:
+    """#4868: one template, two roles. The Viewer is refused by RBAC (403); the Manager reaches the
+    write, which the CI stack answers 503 with no recorder runtime (#2188 S4b). ZAP never sees the
+    role map, and the purges stay 403 for both."""
+    plan = plans.scan_plan(
+        TEMPLATES["recording"], "/zap/wrk/w/recording-openapi.yaml", role
+    )
+    (refusals,) = [
+        job
+        for job in plan["jobs"]
+        if job.get("name") == "purge-and-pin-refused-for-this-role"
+    ]
+    assert [r["responseCode"] for r in refusals["requests"]] == [403, 403, pin]
+    assert not any(plans.ROLE_CODES in r for r in refusals["requests"])
+
+
+def test_main_refuses_a_role_dependent_plan_without_a_role_and_writes_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert plans.main(["--profile", "recording", "--out", "w"]) == 2
+    assert list(tmp_path.iterdir()) == []
+    assert (
+        plans.main(["--profile", "recording", "--out", "w", "--role", "manager"]) == 0
+    )
+    assert (
+        plans.main(["--profile", "rules", "--out", "w"]) == 0
+    )  # no role map: no role needed
 
 
 def test_the_recording_scan_uses_the_admin_profiles_injection_policy() -> None:
@@ -406,7 +526,9 @@ def test_the_recording_scan_uses_the_admin_profiles_injection_policy() -> None:
         (scan,) = [job for job in template["jobs"] if job["type"] == "activeScan"]
         return dict(scan["policyDefinition"])
 
-    admin = yaml.safe_load((ROOT / ".zap/admin-surface.yaml").read_text(encoding="utf-8"))
+    admin = yaml.safe_load(
+        (ROOT / ".zap/admin-surface.yaml").read_text(encoding="utf-8")
+    )
     assert policy(TEMPLATES["recording"]) == policy(admin)
 
 
@@ -438,7 +560,11 @@ def _session_rule(name: str) -> re.Pattern[str]:
         ("MARKET", "/market", False),
         ("MARKET", "/rules", False),
         ("MARKET", "/market/klinesx", False),  # whole segments: the `$` after the name
-        ("RULES", "/me/sessions/0f4c", False),  # `/me` alone, never the session's own DELETE
+        (
+            "RULES",
+            "/me/sessions/0f4c",
+            False,
+        ),  # `/me` alone, never the session's own DELETE
         ("MARKET", "/me/sessions/0f4c", False),
         ("DRAWINGS", "/drawings?symbol=BTCUSDT&limit=500", True),
         ("DRAWINGS", "/drawings/batch", True),
@@ -472,7 +598,12 @@ def test_the_profile_picks_the_surface_and_any_other_name_gets_none() -> None:
     )
     own_keys = "hasOwnProperty.call(SURFACES, PROFILE) ? SURFACES[PROFILE] : null;"
     assert own_keys in script  # `constructor` and `__proto__` name no surface
-    assert set(plans.PROFILES) == {"rules", "market", "drawings", "recording"}  # each has one
+    assert set(plans.PROFILES) == {
+        "rules",
+        "market",
+        "drawings",
+        "recording",
+    }  # each has one
 
 
 # --- the workflows ------------------------------------------------------------------------------
@@ -526,7 +657,9 @@ def _jobs(profile: str) -> dict[str, dict[str, Any]]:
 
 
 def _caller(profile: str) -> dict[str, Any]:
-    workflow: dict[str, Any] = yaml.safe_load(CALLERS[profile].read_text(encoding="utf-8"))
+    workflow: dict[str, Any] = yaml.safe_load(
+        CALLERS[profile].read_text(encoding="utf-8")
+    )
     return workflow
 
 
@@ -535,14 +668,18 @@ def _zap_jobs(profile: str) -> list[dict[str, Any]]:
     return [job for job in _caller(profile)["jobs"].values() if "uses" in job]
 
 
-def test_the_drawings_nightly_runs_every_abuse_pack_and_nothing_else_beside_the_scan() -> None:
+def test_the_drawings_nightly_runs_every_abuse_pack_and_nothing_else_beside_the_scan() -> (
+    None
+):
     """E14-X02 (#474): the drawings abuse packs run nightly by glob, so a new pack is picked up."""
     jobs = _caller("drawings")["jobs"]
     assert set(jobs) == {"zap-drawings", "abuse-packs"}
     run = jobs["abuse-packs"]["steps"][-1]["run"]
     pack = "tests/drawings/test_drawings_abuse_*.py"
     assert run == f"uv run pytest {pack} --no-cov -p no:cacheprovider"
-    packs = sorted((ROOT / "services/api/tests/drawings").glob("test_drawings_abuse_*.py"))
+    packs = sorted(
+        (ROOT / "services/api/tests/drawings").glob("test_drawings_abuse_*.py")
+    )
     assert len(packs) >= 3  # part A (XSS, IDOR), part B (exhaustion), part C (backend)
 
 
@@ -562,8 +699,12 @@ def test_each_nightly_only_reads_the_repository(profile: str) -> None:
 
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
-def test_each_nightly_calls_the_low_privilege_workflow_with_its_own_files(profile: str) -> None:
-    jobs = {name: job for name, job in _caller(profile)["jobs"].items() if "uses" in job}
+def test_each_nightly_calls_the_low_privilege_workflow_with_its_own_files(
+    profile: str,
+) -> None:
+    jobs = {
+        name: job for name, job in _caller(profile)["jobs"].items() if "uses" in job
+    }
     assert set(jobs) == set(_jobs(profile))
     for name, files in _jobs(profile).items():
         assert jobs[name]["uses"] == "./.github/workflows/_dast-low-priv.yml"
@@ -584,7 +725,9 @@ def test_the_fixture_a_nightly_seeds_is_the_one_its_plan_aims_at() -> None:
 
 @pytest.mark.parametrize("profile", sorted(CALLERS))
 def test_each_nightly_gates_the_report_its_plan_writes(profile: str) -> None:
-    (report,) = [entry for entry in TEMPLATES[profile]["jobs"] if entry["type"] == "report"]
+    (report,) = [
+        entry for entry in TEMPLATES[profile]["jobs"] if entry["type"] == "report"
+    ]
     for job in _jobs(profile).values():
         assert report["parameters"]["reportFile"] == job["report"]
 
@@ -599,11 +742,15 @@ _SCAN = "The passive and active scan, as the scan role"
 _USERS = "Migrate, then seed the Owner the owner floor needs and the scan role's user (testnet)"
 _SEED = "Seed the Owner's rows (a profile with a fixture)"
 _PLAN = "Write the plan (nightly_plans.py, importing the contract cut to the surface)"
-_VERIFY = "The Owner's rows are unchanged and the scan role cannot list them (a fixture)"
+_VERIFY = (
+    "The Owner's rows are unchanged and the scan role cannot list them (a fixture)"
+)
 _CHECKS = "The scan stayed signed in, and no new medium+ alert"
 
 
-def test_the_low_privilege_workflow_is_only_called_and_only_reads_the_repository() -> None:
+def test_the_low_privilege_workflow_is_only_called_and_only_reads_the_repository() -> (
+    None
+):
     workflow = yaml.safe_load(CALLED.read_text(encoding="utf-8"))
     assert set(workflow[True]) == {"workflow_call"}
     assert workflow["permissions"] == {"contents": "read"}
@@ -612,7 +759,9 @@ def test_the_low_privilege_workflow_is_only_called_and_only_reads_the_repository
 def test_every_action_and_the_zap_image_are_pinned_by_digest() -> None:
     text = CALLED.read_text(encoding="utf-8")
     uses = re.findall(r"uses:\s*(\S+)", text)
-    assert uses and all(re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", use) for use in uses)
+    assert uses and all(
+        re.fullmatch(r"[\w.-]+/[\w./-]+@[0-9a-f]{40}", use) for use in uses
+    )
     assert re.search(r"zaproxy:2\.17\.0@sha256:[0-9a-f]{64}", text)
 
 
@@ -622,21 +771,29 @@ def test_the_run_reads_no_repository_secret() -> None:
 
 
 def test_the_target_is_the_runners_own_loopback() -> None:
-    assert re.search(r"ZAP_TARGET: http://127\.0\.0\.1:\d+\n", CALLED.read_text(encoding="utf-8"))
+    assert re.search(
+        r"ZAP_TARGET: http://127\.0\.0\.1:\d+\n", CALLED.read_text(encoding="utf-8")
+    )
 
 
 def test_every_uv_run_is_frozen() -> None:
     assert re.findall(r"uv run(?! --frozen)", CALLED.read_text(encoding="utf-8")) == []
 
 
-def test_the_scan_signs_in_as_its_role_the_viewer_unless_the_profile_names_another() -> None:
+def test_the_scan_signs_in_as_its_role_the_viewer_unless_the_profile_names_another() -> (
+    None
+):
     scan = _steps()[_SCAN]["run"]
     assert "security/zap/mint_sessions.py" in scan and '--username "${!user}"' in scan
     assert 'user="ZAP_${ZAP_ROLE^^}_USER"' in scan
     assert '--password-env "ZAP_${ZAP_ROLE^^}_PASSWORD"' in scan
-    inputs = yaml.safe_load(CALLED.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]
+    inputs = yaml.safe_load(CALLED.read_text(encoding="utf-8"))[True]["workflow_call"][
+        "inputs"
+    ]
     assert inputs["role"]["default"] == "viewer"
-    assert inputs["fixture"]["default"] == ""  # no Owner and no rows unless the caller names them
+    assert (
+        inputs["fixture"]["default"] == ""
+    )  # no Owner and no rows unless the caller names them
     assert inputs["requestors"] == {
         "description": inputs["requestors"]["description"],
         "type": "number",
@@ -648,10 +805,14 @@ def test_the_liveness_check_counts_the_requestors_the_caller_names() -> None:
     workflow = yaml.safe_load(CALLED.read_text(encoding="utf-8"))
     (job,) = workflow["jobs"].values()
     assert job["env"]["ZAP_REQUESTORS"] == "${{ inputs.requestors }}"
-    assert 'check_liveness.py --requestors "$ZAP_REQUESTORS" ' in _steps()[_CHECKS]["run"]
+    assert (
+        'check_liveness.py --requestors "$ZAP_REQUESTORS" ' in _steps()[_CHECKS]["run"]
+    )
 
 
-def test_zap_gets_the_session_file_the_target_and_the_profile_and_nothing_else() -> None:
+def test_zap_gets_the_session_file_the_target_and_the_profile_and_nothing_else() -> (
+    None
+):
     (run,) = re.findall(r"docker run [^\n]*", _steps()[_SCAN]["run"])
     assert '--env-file "$envfile"' in run
     assert re.findall(r" -e (\w+)", run) == ["ZAP_TARGET", "ZAP_PROFILE"]
@@ -670,7 +831,9 @@ def test_the_scan_container_is_removed_when_zap_exits() -> None:
 def test_the_checkout_keeps_no_token_for_zap_to_mount() -> None:
     """ZAP mounts the checkout at /zap/wrk, so the checkout keeps no token there."""
     checkout = next(
-        s for s in _steps().values() if str(s.get("uses", "")).startswith("actions/checkout@")
+        s
+        for s in _steps().values()
+        if str(s.get("uses", "")).startswith("actions/checkout@")
     )
     assert checkout["with"]["persist-credentials"] is False
 
@@ -716,7 +879,9 @@ sys.exit(int(os.environ.get(name.upper() + "_RC", "0")))
 """
 
 
-def _run_step(tmp_path: Path, step: str, **exit_codes: int | str) -> tuple[int, list[str]]:
+def _run_step(
+    tmp_path: Path, step: str, **exit_codes: int | str
+) -> tuple[int, list[str]]:
     """Run one step's script as the runner does (`bash -e`) in `tmp_path`, with stand-ins for
     `docker` and the scripts under `security/zap`, and no network: its exit code and the calls
     the stand-ins logged, in order. `exit_codes` sets a stand-in's (`docker_run_rc=3`,
@@ -726,11 +891,20 @@ def _run_step(tmp_path: Path, step: str, **exit_codes: int | str) -> tuple[int, 
     bin_dir, zap = tmp_path / "bin", tmp_path / "security/zap"
     for folder in (bin_dir, zap, tmp_path / "zap-work", tmp_path / "cv"):
         folder.mkdir(parents=True)
-    (bin_dir / "docker").write_text(f"#!{sys.executable}\n{_FAKE_DOCKER}", encoding="utf-8")
-    (bin_dir / "python3").write_text(f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8")
+    (bin_dir / "docker").write_text(
+        f"#!{sys.executable}\n{_FAKE_DOCKER}", encoding="utf-8"
+    )
+    (bin_dir / "python3").write_text(
+        f'#!/bin/sh\nexec "{sys.executable}" "$@"\n', encoding="utf-8"
+    )
     for tool in ("docker", "python3"):
         (bin_dir / tool).chmod(0o755)
-    for script in ("mint_sessions", "check_liveness", "baseline_gate", "drawings_isolation"):
+    for script in (
+        "mint_sessions",
+        "check_liveness",
+        "baseline_gate",
+        "drawings_isolation",
+    ):
         (zap / f"{script}.py").write_text(_FAKE_SCRIPT, encoding="utf-8")
     calls = tmp_path / "calls"
     calls.touch()
@@ -767,14 +941,25 @@ def _run_step(tmp_path: Path, step: str, **exit_codes: int | str) -> tuple[int, 
 
 def test_zap_is_pulled_before_the_viewers_bearer_is_minted(tmp_path: Path) -> None:
     """A bearer lives 12 minutes from its mint: the image pull never spends them."""
-    assert _run_step(tmp_path, _SCAN) == (0, ["docker pull", "mint_sessions", "docker run"])
+    assert _run_step(tmp_path, _SCAN) == (
+        0,
+        ["docker pull", "mint_sessions", "docker run"],
+    )
 
 
 @pytest.mark.parametrize(
     ("exit_codes", "code", "calls"),
     [
-        ({"docker_run_rc": 3}, 3, ["docker pull", "mint_sessions", "docker run"]),  # pipefail
-        ({"mint_sessions_rc": 1}, 1, ["docker pull", "mint_sessions"]),  # no session, no scan
+        (
+            {"docker_run_rc": 3},
+            3,
+            ["docker pull", "mint_sessions", "docker run"],
+        ),  # pipefail
+        (
+            {"mint_sessions_rc": 1},
+            1,
+            ["docker pull", "mint_sessions"],
+        ),  # no session, no scan
         ({"docker_pull_rc": 1}, 1, ["docker pull"]),  # no image, no bearer minted
     ],
 )
@@ -786,8 +971,12 @@ def test_the_scan_fails_with_zap_or_its_session_and_never_scans_without_one(
     assert _run_step(tmp_path, _SCAN, **exit_codes) == (code, calls)
 
 
-@pytest.mark.parametrize(("role", "user"), [("viewer", "viewer-user"), ("manager", "manager-user")])
-def test_the_scan_mints_the_session_of_its_role(tmp_path: Path, role: str, user: str) -> None:
+@pytest.mark.parametrize(
+    ("role", "user"), [("viewer", "viewer-user"), ("manager", "manager-user")]
+)
+def test_the_scan_mints_the_session_of_its_role(
+    tmp_path: Path, role: str, user: str
+) -> None:
     assert _run_step(tmp_path, _SCAN, zap_role=role)[0] == 0
     assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == [user]
     assert _files(tmp_path) == [
@@ -801,24 +990,42 @@ def _files(tmp_path: Path) -> list[str]:
     return (tmp_path / "calls.files").read_text(encoding="utf-8").splitlines()
 
 
-def test_a_fixture_is_seeded_before_the_plan_and_checked_after_the_scan_and_only_with_one() -> None:
+def test_a_fixture_is_seeded_before_the_plan_and_checked_after_the_scan_and_only_with_one() -> (
+    None
+):
     steps = _steps()
-    order = [list(steps).index(name) for name in (_SEED, _PLAN, _SCAN, _CHECKS, _VERIFY)]
+    order = [
+        list(steps).index(name) for name in (_SEED, _PLAN, _SCAN, _CHECKS, _VERIFY)
+    ]
     assert order == sorted(order)
-    assert (steps[_SEED]["id"], steps[_SEED]["if"]) == ("seed", "${{ inputs.fixture != '' }}")
-    assert steps[_VERIFY]["if"] == "${{ !cancelled() && steps.seed.outcome == 'success' }}"
+    assert (steps[_SEED]["id"], steps[_SEED]["if"]) == (
+        "seed",
+        "${{ inputs.fixture != '' }}",
+    )
+    assert (
+        steps[_VERIFY]["if"] == "${{ !cancelled() && steps.seed.outcome == 'success' }}"
+    )
 
 
-def test_a_fixture_enrols_the_owners_totp_and_the_role_is_checked_and_seeded_by_name() -> None:
+def test_a_fixture_enrols_the_owners_totp_and_the_role_is_checked_and_seeded_by_name() -> (
+    None
+):
     users = _steps()[_USERS]["run"]
     guard = (
         'if [ -n "$ZAP_FIXTURE" ]; then '
         'owner_totp=(--totp-secret-out "$RUNNER_TEMP/cv/owner.totp"); fi'
     )
-    assert "owner_totp=()" in users and guard in users  # an Owner TOTP only with a fixture
-    assert 'uv run --frozen python scripts/seed_fixture_user.py "${owner_totp[@]}"' in users
+    assert (
+        "owner_totp=()" in users and guard in users
+    )  # an Owner TOTP only with a fixture
+    assert (
+        'uv run --frozen python scripts/seed_fixture_user.py "${owner_totp[@]}"'
+        in users
+    )
     assert '--role "$ZAP_ROLE"' in users and '"$RUNNER_TEMP/cv/$ZAP_ROLE.totp"' in users
-    made = _steps()["Make this run's synthetic credentials (masked, never echoed)"]["run"]
+    made = _steps()["Make this run's synthetic credentials (masked, never echoed)"][
+        "run"
+    ]
     assert 'case "$ZAP_ROLE" in viewer | manager) ;;' in made and "exit 1" in made
 
 
@@ -826,21 +1033,31 @@ def test_the_seed_signs_the_owner_in_before_it_seeds_and_a_failed_mint_seeds_not
     tmp_path: Path,
 ) -> None:
     assert _run_step(tmp_path, _SEED) == (0, ["mint_sessions", "drawings_isolation"])
-    assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == ["owner-user"]
+    assert (tmp_path / "calls.users").read_text(encoding="utf-8").split() == [
+        "owner-user"
+    ]
     assert _files(tmp_path) == [
         f"mint_sessions --totp-secret-file {tmp_path}/cv/owner.totp",
         f"mint_sessions --out {tmp_path}/cv/owner-seed.env",
         "drawings_isolation --fixture .zap/e14-drawings-seed.json",
         f"drawings_isolation --out {tmp_path}/cv/owner-rows.json",
     ]
-    assert _run_step(tmp_path / "b", _SEED, mint_sessions_rc=1) == (1, ["mint_sessions"])
+    assert _run_step(tmp_path / "b", _SEED, mint_sessions_rc=1) == (
+        1,
+        ["mint_sessions"],
+    )
 
 
-def test_the_owners_rows_stay_out_of_the_scans_mount_until_the_check_has_read_them() -> None:
+def test_the_owners_rows_stay_out_of_the_scans_mount_until_the_check_has_read_them() -> (
+    None
+):
     """The scan mounts `$WORK` writable: the rows the check compares against are written and read
     under `$RUNNER_TEMP/cv`, and copied beside the report only after the check, for the artefact."""
     steps, rows = _steps(), '"$RUNNER_TEMP/cv/owner-rows.json"'
-    assert f"--out {rows}" in steps[_SEED]["run"] and f"--seeded {rows}" in steps[_VERIFY]["run"]
+    assert (
+        f"--out {rows}" in steps[_SEED]["run"]
+        and f"--seeded {rows}" in steps[_VERIFY]["run"]
+    )
     assert "$WORK/" not in steps[_SEED]["run"] + steps[_VERIFY]["run"]
     names = list(steps)
     (keep,) = [name for name in names if name.startswith("Keep the API's log")]
@@ -853,36 +1070,53 @@ def test_the_check_signs_the_owner_and_the_scan_role_in_afresh_and_fails_with_it
     tmp_path: Path, isolation: int, code: int
 ) -> None:
     """Their bearers from before the scan have expired (12 minutes): a session each, one verdict."""
-    ran = _run_step(tmp_path, _VERIFY, zap_role="manager", drawings_isolation_rc=isolation)
+    ran = _run_step(
+        tmp_path, _VERIFY, zap_role="manager", drawings_isolation_rc=isolation
+    )
     assert ran == (code, ["mint_sessions", "mint_sessions", "drawings_isolation"])
     users = (tmp_path / "calls.users").read_text(encoding="utf-8").split()
     assert users == ["owner-user", "manager-user"]
-    assert _files(tmp_path)[-1] == f"drawings_isolation --seeded {tmp_path}/cv/owner-rows.json"
-    totps = [line.split()[-1] for line in _files(tmp_path) if "--totp-secret-file" in line]
+    assert (
+        _files(tmp_path)[-1]
+        == f"drawings_isolation --seeded {tmp_path}/cv/owner-rows.json"
+    )
+    totps = [
+        line.split()[-1] for line in _files(tmp_path) if "--totp-secret-file" in line
+    ]
     assert totps == [f"{tmp_path}/cv/owner.totp", f"{tmp_path}/cv/manager.totp"]
 
 
-@pytest.mark.parametrize(("liveness", "gate", "code"), [(0, 0, 0), (1, 0, 1), (0, 1, 1), (2, 2, 1)])
+@pytest.mark.parametrize(
+    ("liveness", "gate", "code"), [(0, 0, 0), (1, 0, 1), (0, 1, 1), (2, 2, 1)]
+)
 def test_a_lost_session_or_a_new_alert_fails_the_run_after_both_checks_ran(
     tmp_path: Path, liveness: int, gate: int, code: int
 ) -> None:
     """#3991 AC2: a scan that lost its session fails loudly, as does a new medium+ alert, and
     each check runs whatever the other found."""
-    ran = _run_step(tmp_path, _CHECKS, check_liveness_rc=liveness, baseline_gate_rc=gate)
+    ran = _run_step(
+        tmp_path, _CHECKS, check_liveness_rc=liveness, baseline_gate_rc=gate
+    )
     assert ran == (code, ["check_liveness", "baseline_gate"])
 
 
-def test_the_artefact_check_searches_every_secret_the_run_makes_before_any_upload() -> None:
+def test_the_artefact_check_searches_every_secret_the_run_makes_before_any_upload() -> (
+    None
+):
     steps = _steps()
     made = steps["Make this run's synthetic credentials (masked, never echoed)"]["run"]
     generated = re.search(r"for name in (.+?); do secret", made, re.DOTALL)
     assert generated is not None
     names = set(generated.group(1).replace("\\", " ").split())
-    scrub = steps["No session value in the plan, logs or report (else nothing is uploaded)"]
+    scrub = steps[
+        "No session value in the plan, logs or report (else nothing is uploaded)"
+    ]
     assert set(re.findall(r"--env (\w+)", scrub["run"])) == names
     files = re.findall(r'--secret-file "([^"]+)"', scrub["run"])
     assert files == ["$RUNNER_TEMP/cv/*.totp", "$RUNNER_TEMP/cv-lane/lane.key"]
-    upload = steps["Upload the plan, logs and report (the session in them died with the stack)"]
+    upload = steps[
+        "Upload the plan, logs and report (the session in them died with the stack)"
+    ]
     assert upload["if"] == "${{ always() && steps.scrub.outcome == 'success' }}"
     scrubbed = scrub["run"].split("\\\n")[-1].split()[-2:]
     assert scrubbed == ['"$WORK"', "zap-reports"]
