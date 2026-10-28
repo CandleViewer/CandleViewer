@@ -1394,14 +1394,14 @@ def string_gates(
         fails.append("view-as: the T2 statement does not put rbac.view_as before workspaces:write")
     if not re.search(r"Esc[^.|]*never (?:gated|locked)", spec):
         fails.append("exits: the spec does not state that Esc is never gated")
-    # section 0: every board row PENDING; the frames named there = the state inventory = the hand-off's count
+    # section 0: every board row PENDING or drawn (the boards PR); the frames named there = the state inventory = the hand-off's count
     boards = section(spec, "## 0. ", "## 1. ")
     board_rows = [r for r in rows_of(boards) if r and re.fullmatch(r"\d\d", r[0])]
     if not board_rows:
         fails.append("boards: no board rows in section 0")
     for r in board_rows:
-        if "PENDING" not in r[-1]:
-            fails.append("boards: a section-0 board row is not PENDING")
+        if "PENDING" not in r[-1] and not re.search(r"\.png` drawn\b", r[-1]):
+            fails.append("boards: a section-0 board row is neither PENDING nor drawn")
             break
     f0, finv = frame_names(boards), {r[0].strip("`") for r in inventory_rows(spec)}
     listed = [r[0].strip("`") for r in inventory_rows(spec)]
@@ -4268,8 +4268,8 @@ MUTATIONS: tuple[tuple[str, str, tuple[Edit, ...]], ...] = (
      (("frame:SCR-011/rename-inplace", "`Enter` saves via `updateWorkspace`, `Esc` reverts; a name", "`Enter` saves via `updateWorkspace`; a name"),)),
     ("M32", "carrier: frame SCR-011/empty lacks the failed-create explanation",
      (("frame:SCR-011/empty", "after a first create that failed:", "after a first create:"), ("frame:SCR-011/empty", "the error line of the failed `createWorkspace`", "the error line of `createWorkspace`"),)),
-    ("M33", "boards: a section-0 board row is not PENDING",
-     (("line:| 01  ", "scr-022-gallery-1920.png` PENDING", "scr-022-gallery-1920.png`"),)),
+    ("M33", "boards: a section-0 board row is neither PENDING nor drawn",
+     (("line:| 01  ", "scr-022-gallery-1920.png` drawn", "scr-022-gallery-1920.png`"),)),
     ("M34", "closing: handoff carries a closing keyword",
      (("hand:# E15-D05", "(`16` §11.4;", ("(clo" "ses #321; `16` §11.4;")),)),
     ("M35", "spine: frame SCR-011/search does not name its noun (saved workspace)",
