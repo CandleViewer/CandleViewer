@@ -42,6 +42,7 @@ export function Card({
 }: CardProps): JSX.Element {
   const titleId = useId();
   const hasTitle = title !== undefined && title !== null && title !== false;
+  const hasActions = actions !== undefined && actions !== null && actions !== false;
   const isRegion = region && hasTitle;
   const Root = isRegion ? "section" : "div";
   const Title = headingLevel === 0 ? "span" : (`h${headingLevel}` as const);
@@ -53,14 +54,14 @@ export function Card({
       data-padding={padding}
       aria-labelledby={isRegion ? titleId : undefined}
     >
-      {hasTitle || actions !== undefined ? (
+      {hasTitle || hasActions ? (
         <div className="cv-card__header">
           {hasTitle ? (
             <Title id={titleId} className="cv-card__title">
               {title}
             </Title>
           ) : null}
-          {actions === undefined ? null : <div className="cv-card__actions">{actions}</div>}
+          {hasActions ? <div className="cv-card__actions">{actions}</div> : null}
         </div>
       ) : null}
       <div className="cv-card__body">{children}</div>

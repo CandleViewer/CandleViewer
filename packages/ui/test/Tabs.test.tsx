@@ -270,6 +270,149 @@ describe("Tabs (CMP-042)", () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  it("horizontal answers Left and Right only; Up and Down are left alone", async () => {
+    const onChange = fn();
+    const host = await mount(<Host onChange={onChange} />);
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowDown}{ArrowUp}");
+    expect(tab(host, "Alpha")).toHaveFocus();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("vertical answers Up and Down only; Left and Right are left alone", async () => {
+    const onChange = fn();
+    const host = await mount(<Host orientation="vertical" onChange={onChange} />);
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowRight}{ArrowLeft}");
+    expect(tab(host, "Alpha")).toHaveFocus();
+    expect(onChange).not.toHaveBeenCalled();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(tab(host, "Bravo")).toHaveFocus();
+    await userEvent.keyboard("{ArrowUp}{ArrowUp}");
+    expect(tab(host, "Charlie")).toHaveFocus();
+    expect(onChange.mock.calls.map((c) => c[0])).toEqual(["b", "a", "c"]);
+  });
+
+  it("a chord with Enter or Space on a gated tab announces nothing", async () => {
+    const host = await mount(<Host tabs={GATED} />);
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(tab(host, "Bravo")).toHaveFocus();
+    await userEvent.keyboard("{Control>}{Enter}{/Control}{Alt>} {/Alt}{Meta>}{Enter}{/Meta}");
+    expect(within(host).getByRole("status")).toBeEmptyDOMElement();
+  });
+
+  it("focus is back on the tab within the layout pass, before paint", async () => {
+    // A child that grabs focus in its layout pass (as autoFocus does); the probe's layout pass runs after the
+    // Tabs' own, still before paint, and records where focus is.
+    function Grabby(): JSX.Element {
+      const ref = useRef<HTMLInputElement>(null);
+      useLayoutEffect(() => ref.current?.focus(), []);
+      return <input ref={ref} aria-label="Grabby" />;
+    }
+    const seen: string[] = [];
+    function Probe({ value }: { readonly value: string }): null {
+      useLayoutEffect(() => {
+        const active = document.activeElement;
+        seen.push(`${value}:${active?.getAttribute("role") ?? active?.tagName ?? ""}`);
+      }, [value]);
+      return null;
+    }
+    function Probed(): JSX.Element {
+      const [value, setValue] = useState("a");
+      return (
+        <>
+          <Tabs
+            aria-label="Sections"
+            tabs={TABS}
+            value={value}
+            onChange={setValue}
+            renderPanel={(id) => (id === "a" ? <p>A</p> : <Grabby />)}
+          />
+          <Probe value={value} />
+        </>
+      );
+    }
+    const host = await mount(<Probed />);
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowRight}");
+    expect(tab(host, "Bravo")).toHaveFocus();
+    expect(seen.at(-1)).toBe("b:tab");
+  });
+
+  it("J10: the panel's tab stop follows a control turning disabled or leaving the Tab order", async () => {
+    function Toggle(): JSX.Element {
+      const [off, setOff] = useState<"no" | "disabled" | "tabindex">("no");
+      return (
+        <>
+          <button type="button" onClick={() => setOff("disabled")}>
+            Disable
+          </button>
+          <button type="button" onClick={() => setOff("tabindex")}>
+            Untab
+          </button>
+          <button type="button" onClick={() => setOff("no")}>
+            Restore
+          </button>
+          <Host
+            renderPanel={() => (
+              <button
+                type="button"
+                disabled={off === "disabled"}
+                tabIndex={off === "tabindex" ? -1 : undefined}
+              >
+                Inner
+              </button>
+            )}
+          />
+        </>
+      );
+    }
+    const host = await mount(<Toggle />);
+    const panel = within(host).getByRole("tabpanel");
+    expect(panel).not.toHaveAttribute("tabindex");
+    await userEvent.click(within(host).getByRole("button", { name: "Disable" }));
+    await act(async () => Promise.resolve());
+    expect(panel).toHaveAttribute("tabindex", "0");
+    await userEvent.click(within(host).getByRole("button", { name: "Restore" }));
+    await act(async () => Promise.resolve());
+    expect(panel).not.toHaveAttribute("tabindex");
+    await userEvent.click(within(host).getByRole("button", { name: "Untab" }));
+    await act(async () => Promise.resolve());
+    expect(panel).toHaveAttribute("tabindex", "0");
+  });
+
+  it("a host that refuses a switch leaves no hold: a later host change keeps the panel's own focus", async () => {
+    function Grabby(): JSX.Element {
+      const ref = useRef<HTMLInputElement>(null);
+      useEffect(() => ref.current?.focus(), []);
+      return <input ref={ref} aria-label="Grabby" />;
+    }
+    function Refuser(): JSX.Element {
+      const [value, setValue] = useState("a");
+      return (
+        <>
+          <button type="button" onClick={() => setValue("c")}>
+            Go
+          </button>
+          <Tabs
+            aria-label="Sections"
+            tabs={TABS}
+            value={value}
+            onChange={() => undefined}
+            renderPanel={(id) => (id === "c" ? <Grabby /> : <p>{id}</p>)}
+          />
+        </>
+      );
+    }
+    const host = await mount(<Refuser />);
+    await userEvent.click(tab(host, "Charlie"));
+    expect(selectedOf(host)).toEqual(["Alpha"]);
+    await userEvent.click(within(host).getByRole("button", { name: "Go" }));
+    expect(selectedOf(host)).toEqual(["Charlie"]);
+    expect(within(host).getByRole("textbox", { name: "Grabby" })).toHaveFocus();
+  });
+
   it("leading icons are decorative: the name stays the label", async () => {
     const tabs: TabItem[] = [
       { id: "a", label: "Alpha", icon: "search" },

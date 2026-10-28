@@ -86,6 +86,12 @@ describe("Card (CMP-050)", () => {
     expect(order).toEqual(["H3", "BUTTON", "P"]);
   });
 
+  it.each([null, false])("actions={%s} counts as no actions: no empty header", async (actions) => {
+    const host = await mount(<Card actions={actions}>Body</Card>);
+    expect(host.querySelector(".cv-card__header")).toBeNull();
+    expect(host.querySelector(".cv-card__actions")).toBeNull();
+  });
+
   it("actions without a title still render the header", async () => {
     const host = await mount(<Card actions={<Button>Manage</Button>}>Body</Card>);
     expect(within(host).getByRole("button", { name: "Manage" })).toBeVisible();

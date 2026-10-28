@@ -83,15 +83,17 @@ export function Tabs({
   });
   const hush = (): void => setSpoken((s) => (s.text === "" ? s : { n: s.n, text: "" }));
   const panelRef = useRef<HTMLDivElement>(null);
-  const holdRef = useRef<HTMLElement | null>(null);
+  // The tab that asked for a switch, and the id it asked for: only that switch may hand focus back to it.
+  const holdRef = useRef<{ readonly tab: HTMLElement; readonly id: string } | null>(null);
   const [panelEmpty, setPanelEmpty] = useState(false);
 
   const select = useCallback(
     (id: string): void => {
       if (id === value) return;
       // The tab that asked keeps focus through the switch, whatever the new panel does as it mounts.
+      // A host that refuses the switch (never sets `value` to `id`) leaves a hold that no later change matches.
       holdRef.current =
-        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        document.activeElement instanceof HTMLElement ? { tab: document.activeElement, id } : null;
       onChange(id);
     },
     [value, onChange],
@@ -102,16 +104,18 @@ export function Tabs({
     onSelect: select,
     selectOnFocus: activation === "automatic",
     groupRole: "tablist",
+    orientation,
   });
 
   const refuse = (reason: string): void => setSpoken((s) => ({ n: s.n + 1, text: reason }));
 
   // A panel that took focus as it mounted (autoFocus in a layout pass, or a child's effect) gives it back.
   const giveBack = useCallback((): void => {
-    const tab = holdRef.current;
+    const hold = holdRef.current;
+    if (hold === null || hold.id !== value) return;
     const active = document.activeElement;
-    if (tab !== null && active !== tab && panelRef.current?.contains(active) === true) tab.focus();
-  }, []);
+    if (active !== hold.tab && panelRef.current?.contains(active) === true) hold.tab.focus();
+  }, [value]);
   useLayoutEffect(giveBack, [value, giveBack]);
   useEffect(() => {
     giveBack();
@@ -135,6 +139,10 @@ export function Tabs({
       data-cmp="CMP-042"
       data-orientation={orientation}
       data-density={density}
+      onBlur={(event) => {
+        // Focus leaving the component ends any hold: a refused switch's tab never pulls focus back later.
+        if (!event.currentTarget.contains(event.relatedTarget)) holdRef.current = null;
+      }}
     >
       <div className="cv-tabs__bar">
         <div
@@ -151,7 +159,8 @@ export function Tabs({
             const selected = tab.id === value;
             const item = roving.itemProps(tab.id);
             const onKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
-              if (reason !== undefined && (event.key === "Enter" || event.key === " ")) {
+              const chord = event.altKey || event.ctrlKey || event.metaKey;
+              if (reason !== undefined && !chord && (event.key === "Enter" || event.key === " ")) {
                 event.preventDefault();
                 refuse(reason);
                 return;

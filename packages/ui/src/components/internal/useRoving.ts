@@ -23,6 +23,11 @@ export interface UseRovingOptions {
   readonly selectOnFocus?: boolean;
   /** The role of the element that holds the items; focus leaving it gives the tab stop back to the checked item. */
   readonly groupRole?: "radiogroup" | "tablist";
+  /**
+   * Which arrows move (APG Tabs): `horizontal` answers Left/Right only, `vertical` Up/Down only. Absent (the radio
+   * pattern) answers all four.
+   */
+  readonly orientation?: "horizontal" | "vertical";
 }
 
 export interface RovingItemProps {
@@ -46,12 +51,17 @@ const KEY_STEP: Readonly<Record<string, 1 | -1>> = {
   ArrowUp: -1,
   ArrowLeft: -1,
 };
+const OFF_AXIS: Readonly<Record<"horizontal" | "vertical", ReadonlySet<string>>> = {
+  horizontal: new Set(["ArrowUp", "ArrowDown"]),
+  vertical: new Set(["ArrowLeft", "ArrowRight"]),
+};
 
 /**
  * Roving tabindex for the APG radio pattern (CMP-006 RadioGroup, CMP-003 SegmentedControl) and CMP-042 Tabs.
  * Arrows move focus and select (focus only with `selectOnFocus: false`), wrapping; Home/End jump; Space selects;
  * Tab leaves the group.
- * Alt/Ctrl/Meta chords are ignored; Shift+arrow acts as the plain arrow. Orientation does not matter: Up/Left go back and Down/Right go forward in both.
+ * Alt/Ctrl/Meta chords are ignored; Shift+arrow acts as the plain arrow. Up/Left go back and Down/Right go forward;
+ * with an `orientation` only that axis's two arrows are answered and the others are left alone.
  */
 export function useRoving({
   items,
@@ -60,6 +70,7 @@ export function useRoving({
   gated = false,
   selectOnFocus = true,
   groupRole = "radiogroup",
+  orientation,
 }: UseRovingOptions): Roving {
   const nodes = useRef(new Map<string, HTMLElement>());
   // The item holding focus: while focus is inside, the tab stop follows it, so Tab from a locked item
@@ -94,6 +105,7 @@ export function useRoving({
         const at = reachable.findIndex((item) => item.value === value);
         // A plain-disabled item that took focus by pointer answers no key at all.
         if (at < 0) return;
+        if (orientation !== undefined && OFF_AXIS[orientation].has(event.key)) return;
         const step = KEY_STEP[event.key];
         let target: RovingItem | undefined;
         if (step !== undefined) {
@@ -117,7 +129,7 @@ export function useRoving({
         event.preventDefault();
         if (!gated && target !== undefined) land(target.value);
       },
-    [reachable, items, gated, land, onSelect, selectOnFocus],
+    [reachable, items, gated, land, onSelect, selectOnFocus, orientation],
   );
 
   const itemProps = useCallback(

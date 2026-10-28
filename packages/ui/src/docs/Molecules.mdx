@@ -107,15 +107,15 @@ roles and names.
 
 ### Tabs (CMP-042, APG Tabs)
 
-| Keys                                    | Action                                                                                                           |
-| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Tab                                     | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the panel.                    |
-| → / ← / ↓ / ↑                           | Next / previous tab, wrapping. Automatic: selects it. Manual (`activation="manual"`): moves focus only.          |
-| Home / End                              | First / last tab, as the arrows.                                                                                 |
-| Enter / Space                           | Manual: selects the focused tab. Automatic: nothing more.                                                        |
-| An arrow, Home or End onto a gated tab  | Focus lands on it and nothing is selected, silently: the name, "unavailable" and the reason are its description. |
-| Enter / Space or a press on a gated tab | Nothing is selected; the reason is announced once, politely, per press.                                          |
-| Alt / Ctrl / Meta chords                | Not handled: the browser's and the host's.                                                                       |
+| Keys                                    | Action                                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab                                     | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the panel.                                          |
+| → / ← (↓ / ↑ when vertical)             | Next / previous tab, wrapping; the other axis is not handled. Automatic: selects it. Manual (`activation="manual"`): moves focus only. |
+| Home / End                              | First / last tab, as the arrows.                                                                                                       |
+| Enter / Space                           | Manual: selects the focused tab. Automatic: nothing more.                                                                              |
+| An arrow, Home or End onto a gated tab  | Focus lands on it and nothing is selected, silently: the name, "unavailable" and the reason are its description.                       |
+| Enter / Space or a press on a gated tab | Nothing is selected; the reason is announced once, politely, per press.                                                                |
+| Alt / Ctrl / Meta chords                | Not handled, on a gated tab too: the browser's and the host's.                                                                         |
 
 | Element | Role     | Name                                                    | Notes                                                                                                             |
 | ------- | -------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
