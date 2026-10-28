@@ -239,6 +239,13 @@ CLOSE_ITEMS: Final = 3
 #: #2155 (§4.3): the `bye` reason of a socket shed at `GatewayHub.max_unauthenticated`.
 SHED_REASON: Final = "server_shedding_load"
 WATCHDOG_TICK_S: Final = 0.05
+#: #571: a writer yields the loop after this many sends in a row. A send to a writable socket
+#: never suspends (loopback, a fast peer), so a writer that suspended only on an empty queue would
+#: write a whole backlog (up to 2 000 frames, 8 MiB) in one loop turn, and every other connection,
+#: the loop's timers and the `/metrics` listener sharing the loop would wait for all of it: under
+#: load the loop then never keeps its timers and a scrape goes unanswered. A count, not a time: a
+#: send parked on a full socket has already given the loop its turns, which a clock cannot tell.
+WRITER_SLICE_FRAMES: Final = 32
 #: #3100: the close timer reads its deadlines again at least every this many ticks (1 s by default),
 #: so a clock no loop timer can wait on is read within it: the wall clock, which an NTP step or a
 #: resume moves on its own, or an injected `clock` that is not the loop's.
@@ -569,6 +576,26 @@ def _source_ip(scope: Mapping[str, Any]) -> str | None:
         return str(admitted)
     client = scope.get("client")
     return str(client[0]) if client else None
+
+
+class _WriterSlice:
+    """#571: a writer's sends since it last gave the loop a turn. `sent()` after each send yields
+    once `WRITER_SLICE_FRAMES` have gone by."""
+
+    __slots__ = ("_sends",)
+
+    def __init__(self) -> None:
+        self._sends = 0
+
+    def restart(self) -> None:
+        """A new slice: the writer is about to wait for a frame, so the loop gets its turns."""
+        self._sends = 0
+
+    async def sent(self) -> None:
+        self._sends += 1
+        if self._sends >= WRITER_SLICE_FRAMES:
+            await asyncio.sleep(0)
+            self._sends = 0
 
 
 class _Connection:
@@ -1864,6 +1891,7 @@ def make_ws_router(
             await budgeted_writer(conn, conn.pipeline)
             return
         pings = 0
+        turn = _WriterSlice()
         while True:
             if conn.watch():
                 pings += 1
@@ -1871,6 +1899,8 @@ def make_ws_router(
                 conn.push(
                     {"t": "ping", "id": f"s-hb-{pings}", "ts": now_ms, "p": {"server_ms": now_ms}}
                 )
+            if conn.outbound.empty():
+                turn.restart()  # the `get` below waits: the loop gets its turns
             try:
                 item = await asyncio.wait_for(conn.outbound.get(), timeout=tick_s)
             except TimeoutError:
@@ -1912,6 +1942,7 @@ def make_ws_router(
             except WebSocketDisconnect as exc:
                 conn.disconnect_code = exc.code  # the client left mid-send; the reader saw nothing
                 raise
+            await turn.sent()
 
     async def budgeted_writer(conn: _Connection, pipe: ConnectionPipeline) -> None:
         """The writer with the flag on (still the one writer task, TG5): the priority lane
@@ -1922,6 +1953,7 @@ def make_ws_router(
         observes only its fan-out span. Before each pop it runs the ladder's `service` (`drain`)."""
         queue = pipe.queue
         pings = 0
+        turn = _WriterSlice()
         try:
             async with asyncio.timeout(None) as deadline:
                 pipe.arm(deadline)
@@ -1941,6 +1973,7 @@ def make_ws_router(
                         wait = pipe.wait_s(conn.clock(), tick_s)  # to the next window, if sooner
                         with contextlib.suppress(TimeoutError):
                             await asyncio.wait_for(queue.ready.wait(), timeout=wait)
+                        turn.restart()
                         continue
                     conn.watch()  # a close may land after the pop: send only what it keeps
                     end = pipe.terminal
@@ -1958,6 +1991,7 @@ def make_ws_router(
                         if isinstance(item, Spanned) and item.key is not None:
                             fanout = now - item.received
                             _log_span(conn.connection_id, item.sp, item.key[0], item.s, fanout)
+                    await turn.sent()  # after the span: the yield is not fan-out time
         except TimeoutError:
             if not deadline.expired():
                 raise
