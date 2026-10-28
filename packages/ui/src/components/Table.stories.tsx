@@ -4,6 +4,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { EmptyState } from "./EmptyState.js";
+import type { MenuItem } from "./Menu.js";
 import { Table, type TableColumn, type TableProps, type TableSort } from "./Table.js";
 import { Heading } from "./Typography.js";
 
@@ -404,5 +405,154 @@ export const Perf200Rows: Story = {
     }
     const median = samples.slice(5).sort((a, b) => a - b)[7] ?? Infinity;
     await expect(median).toBeLessThanOrEqual(BUDGET_MS);
+  },
+};
+
+/** The row menu (D02F G21): an action, a T2 item with its `rbac.owner_only` reason (D09 §2.4, SCR-063), a danger. */
+const rowMenu = (p: Position): readonly MenuItem[] => [
+  { id: "chart", label: `Open ${p.symbol} chart`, onSelect: () => undefined },
+  {
+    id: "caps",
+    label: "Edit risk caps",
+    disabledReason: "Only the owner can change account settings.",
+    onSelect: () => undefined,
+  },
+  {
+    id: "close",
+    label: "Close position",
+    danger: true,
+    opensConfirm: true,
+    onSelect: () => undefined,
+  },
+];
+
+/** A host that owns the selection, as every consumer does. */
+function SelectHost({
+  initial = [],
+  ...props
+}: HostProps & { readonly initial?: readonly string[] }): JSX.Element {
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set(initial));
+  return <Host selected={selected} onRowSelect={setSelected} {...props} />;
+}
+
+/** The table's own polite line (a row menu with a T2 item keeps its own reason region, CMP-041). */
+const liveLine = (canvasElement: HTMLElement): HTMLElement | null =>
+  canvasElement.querySelector<HTMLElement>(".cv-table__live");
+
+/**
+ * Selection=multiple (G21): a leading CMP-005 column, two rows selected on `color.action.selected`, the select-all
+ * box mixed. The select column makes it a grid: `Space` toggles the focused row and the table says the count once.
+ */
+export const Selectable: Story = {
+  render: () => <SelectHost initial={["p1", "p4"]} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const grid = canvas.getByRole("grid", { name: CAPTION });
+    await expect(grid).toHaveAttribute("aria-multiselectable", "true");
+    const all = canvas.getByRole("checkbox", { name: "Select all rows" });
+    await expect(all).toBePartiallyChecked();
+    await expect(canvas.getByRole("checkbox", { name: "Select BTCUSDT" })).toBeChecked();
+    await userEvent.tab();
+    await userEvent.keyboard("{ArrowDown}{ArrowRight}");
+    // Sorted by PnL descending: BTCUSDT, then SOLUSDT.
+    await expect(canvas.getByRole("gridcell", { name: "SOLUSDT" })).toHaveFocus();
+    await userEvent.keyboard(" ");
+    await expect(canvas.getByRole("checkbox", { name: "Select SOLUSDT" })).toBeChecked();
+    await waitFor(() => expect(liveLine(canvasElement)).toHaveTextContent("3 selected"));
+    await userEvent.click(all);
+    await expect(all).toBeChecked();
+    await waitFor(() => expect(liveLine(canvasElement)).toHaveTextContent("5 selected"));
+  },
+};
+
+/**
+ * Mode=grid (the APG Grid pattern), implied by the actions column: one Tab stop, the arrows by cell with the header
+ * row in their path, the CMP-039 ring on the focused cell. In a bounded box a focused cell scrolls below the sticky
+ * header (`scroll-margin-top` is the header's height), so focus is never hidden under it (WCAG 2.4.11).
+ */
+export const Grid: Story = {
+  render: () => (
+    <div style={{ height: "16rem", display: "flex", flexDirection: "column" }}>
+      <Host rows={many} rowActions={rowMenu} />
+    </div>
+  ),
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const grid = canvas.getByRole("grid", { name: CAPTION });
+    const header = grid.querySelector("thead") as HTMLElement;
+    const focused = (): HTMLElement => document.activeElement as HTMLElement;
+    const cellOfFocus = (): HTMLElement => focused().closest("td, th") as HTMLElement;
+    /** The focused cell's top edge is at or below the sticky header's bottom edge. */
+    const notUnderHeader = async (): Promise<void> => {
+      const top = cellOfFocus().getBoundingClientRect().top;
+      await expect(top).toBeGreaterThanOrEqual(header.getBoundingClientRect().bottom - 1);
+    };
+    await step("one Tab stop: in on the first body cell, out on the next Tab", async () => {
+      await userEvent.tab();
+      await expect(focused()).toHaveTextContent(/USDT$/);
+      await expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    });
+    await step("the scroll margin is the header's height", async () => {
+      const margin = parseFloat(getComputedStyle(cellOfFocus()).scrollMarginTop);
+      await expect(Math.abs(margin - header.getBoundingClientRect().height)).toBeLessThanOrEqual(1);
+    });
+    await step("Page Down, then back up row by row: focus is never under the header", async () => {
+      await userEvent.keyboard("{PageDown}{PageDown}{PageDown}");
+      await notUnderHeader();
+      for (let i = 0; i < 6; i += 1) {
+        await userEvent.keyboard("{ArrowUp}");
+        await notUnderHeader();
+      }
+    });
+    await step("End reaches the actions button; Ctrl+Home the header's first cell", async () => {
+      await userEvent.keyboard("{End}");
+      await expect(focused()).toHaveAccessibleName(/^Actions for PAIR\d\dUSDT$/);
+      await userEvent.keyboard("{Control>}{Home}{/Control}");
+      await expect(canvas.getByRole("button", { name: "Symbol" })).toHaveFocus();
+    });
+  },
+};
+
+/**
+ * Row actions (G21): the trailing `more-horizontal` IconButton "Actions for {row}" opens the CMP-041 row menu, and
+ * `Shift+F10` on a focused row opens the same items at the row. "Edit risk caps" is T2 (2a): reachable by the
+ * arrows, its reason as the second line, never activated. `Esc` returns focus to the cell it opened from.
+ */
+export const RowActions: Story = {
+  render: () => <Host rowActions={rowMenu} />,
+  play: async ({ canvasElement, step }) => {
+    const canvas = within(canvasElement);
+    const page = within(document.body);
+    await step("the actions button opens the row menu; Esc returns to it", async () => {
+      const button = canvas.getByRole("button", { name: "Actions for ETHUSDT" });
+      button.focus();
+      await userEvent.keyboard("{Enter}");
+      const menu = await page.findByRole("menu", { name: "Actions for ETHUSDT" });
+      await userEvent.keyboard("{ArrowDown}");
+      const caps = within(menu).getByRole("menuitem", { name: /Edit risk caps/ });
+      await expect(caps).toHaveFocus();
+      await expect(caps).toHaveAttribute("aria-disabled", "true");
+      await expect(caps).toHaveAccessibleDescription(
+        /Only the owner can change account settings\./,
+      );
+      await userEvent.keyboard("{Enter}");
+      await expect(caps).toBeVisible(); // refused: the menu stays open
+      await userEvent.keyboard("{Escape}");
+      await waitFor(() => expect(button).toHaveFocus());
+    });
+    await step(
+      "Shift+F10 on a focused row opens the same menu; Esc returns to the cell",
+      async () => {
+        await userEvent.keyboard("{ArrowLeft}");
+        const cell = document.activeElement as HTMLElement;
+        await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+        const menu = await page.findByRole("menu", { name: "Actions for ETHUSDT" });
+        await expect(
+          within(menu).getByRole("menuitem", { name: "Open ETHUSDT chart" }),
+        ).toHaveFocus();
+        await userEvent.keyboard("{Escape}");
+        await waitFor(() => expect(cell).toHaveFocus());
+      },
+    );
   },
 };

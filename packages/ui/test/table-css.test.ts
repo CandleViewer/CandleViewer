@@ -52,6 +52,36 @@ describe("table.css contract", () => {
     );
   });
 
+  it("grid mode: a body cell's scroll margin is the header row's height, so focus never hides under it", () => {
+    expect(find(css.normal, ".cv-table__cell", "scroll-margin-block-start")).toContain(
+      "scroll-margin-block-start: var(--size-row-height)",
+    );
+    expect(find(css.normal, ".cv-table__header", "block-size")).toContain(
+      "block-size: var(--size-row-height)",
+    );
+    // The header's select box is held to the row height, so the header row stays one row tall.
+    expect(find(css.normal, ".cv-table__select .cv-choice", "min-block-size")).toContain(
+      "var(--size-row-height)",
+    );
+  });
+
+  it("selected rows take action.selected, over the zebra and hover; Highlight in forced colours", () => {
+    const selected = find(css.normal, '.cv-table__row[aria-selected="true"]', "background");
+    expect(selected).toContain("var(--color-action-selected)");
+    expect(find(css.normal, '.cv-table__row[aria-selected="true"]:hover', "background")).toContain(
+      "var(--color-action-selected)",
+    );
+    expect(find(css.forced, '.cv-table__row[aria-selected="true"]', "background")).toContain(
+      "Highlight",
+    );
+  });
+
+  it("the select box's label is clipped, never display: none, so it still names the box", () => {
+    const label = find(css.normal, ".cv-table__select .cv-choice__label", "clip-path");
+    expect(label).toContain("clip-path: inset(50%)");
+    expect(label).not.toContain("display: none");
+  });
+
   it("forced colours: CanvasText header and row rules, a Highlight ring, the glyph currentColor", () => {
     expect(find(css.forced, ".cv-table__header", "border-block-end")).toContain("CanvasText");
     expect(find(css.forced, ".cv-table__row .cv-table__cell", "border-block-end")).toContain(

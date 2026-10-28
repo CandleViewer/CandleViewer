@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { act, useState, type JSX } from "react";
 import { expect, fireEvent, userEvent, within } from "storybook/test";
-import { afterEach, describe, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, vi } from "vitest";
 import {
   EmptyState,
   Table,
+  type MenuItem,
   type TableColumn,
   type TableProps,
   type TableSort,
@@ -454,6 +455,65 @@ describe("Table (CMP-049) stacked reflow", () => {
     expect(within(row).getByRole("cell", { name: "+12.50" })).toBe(pnl);
   });
 
+  it("a stacked grid degrades to a table: table roles, no roving tabindex, each control a Tab stop in order", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(
+      <Table<User>
+        caption={CAPTION}
+        columns={COLUMNS}
+        rows={USERS.slice(0, 1)}
+        rowKey={(u) => u.id}
+        selected={new Set(["u1"])}
+        onRowSelect={() => undefined}
+        rowActions={() => [{ id: "open", label: "Open", onSelect: () => undefined }]}
+      />,
+    );
+    // 3 x 8 em + 2 control columns x 3 em = 30 em = 480 px at 16 px.
+    await observer().resize(479);
+    expect(layout(host)).toBe("stacked");
+    const canvas = within(host);
+    expect(canvas.queryByRole("grid")).toBeNull();
+    const table = canvas.getByRole("table", { name: CAPTION });
+    expect(table).toHaveAttribute("role", "table");
+    expect(within(table).getAllByRole("cell")).toHaveLength(5);
+    expect(within(table).getAllByRole("row")[1]).toHaveAttribute("aria-selected", "true");
+    expect(host.querySelectorAll('td[tabindex], th[tabindex], [tabindex="-1"]')).toHaveLength(0);
+    await userEvent.tab();
+    expect(canvas.getByRole("checkbox", { name: "Select all rows" })).toHaveFocus();
+    await userEvent.tab();
+    expect(canvas.getByRole("checkbox", { name: "Select alex" })).toHaveFocus();
+    await userEvent.tab();
+    expect(canvas.getByRole("button", { name: "Actions for alex" })).toHaveFocus();
+    // The heading line is the first data cell, not the select cell.
+    expect(host.querySelector("td[data-heading]")).toHaveTextContent("alex");
+    await observer().resize(480);
+    expect(layout(host)).toBeUndefined();
+    expect(canvas.getByRole("grid", { name: CAPTION })).toBeInTheDocument();
+  });
+
+  it("a stacked grid gives an interactive cell's controls back their Tab stops", async () => {
+    const observer = stub({ value: 16 });
+    const host = await mount(
+      base({
+        columns: [
+          ...COLUMNS,
+          {
+            id: "note",
+            header: "Note",
+            interactive: true,
+            cell: (u) => <input aria-label={`Note for ${u.name}`} />,
+          },
+        ],
+      }),
+    );
+    const input = within(host).getByRole("textbox", { name: "Note for alex" });
+    expect(input).toHaveAttribute("tabindex", "-1");
+    await observer().resize(100);
+    expect(input).not.toHaveAttribute("tabindex");
+    await observer().resize(1000);
+    expect(input).toHaveAttribute("tabindex", "-1");
+  });
+
   it("stays a table without ResizeObserver", async () => {
     vi.stubGlobal("ResizeObserver", undefined);
     const host = await mount(base());
@@ -811,5 +871,343 @@ describe("Table (CMP-049) v0 bound", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     await mount(base({ rows: rows(200) }));
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("Table (CMP-049) grid mode, selection and row actions", () => {
+  const page = within(document.body);
+  const opened = vi.fn<(id: string) => void>();
+  const gated = vi.fn<() => void>();
+  const actions = (u: User): readonly MenuItem[] => [
+    { id: "open", label: "Open", onSelect: () => opened(u.id) },
+    {
+      id: "caps",
+      label: "Edit risk caps",
+      disabledReason: "Only the owner can change account settings.",
+      onSelect: gated,
+    },
+  ];
+
+  type GridHostProps = Partial<TableProps<User>> & { readonly initial?: readonly string[] };
+
+  /** Columns: 0 select, 1 Name, 2 Accounts, 3 PnL, 4 actions; rows: 0 header, 1 alex, 2 sam, 3 kim. */
+  const GridHost = ({ initial = [], ...props }: GridHostProps): JSX.Element => {
+    const [selected, setSelected] = useState<ReadonlySet<string>>(new Set(initial));
+    const [sort, setSort] = useState<TableSort | undefined>(undefined);
+    return (
+      <>
+        <button type="button">Before</button>
+        <Table<User>
+          caption={CAPTION}
+          columns={COLUMNS}
+          rows={USERS}
+          rowKey={(u) => u.id}
+          sort={sort}
+          onSortChange={setSort}
+          selected={selected}
+          onRowSelect={setSelected}
+          rowActions={actions}
+          {...props}
+        />
+        <button type="button">After</button>
+      </>
+    );
+  };
+
+  const press = async (keys: string): Promise<void> => {
+    await userEvent.keyboard(keys);
+  };
+  const grid = (): HTMLElement => page.getByRole("grid", { name: CAPTION });
+  /** The element focus lands on for cell (r, c): its built-in control, else the cell. */
+  const target = (r: number, c: number): HTMLElement => {
+    const cell = grid().querySelector<HTMLElement>(`[data-cv-r="${r}"][data-cv-c="${c}"]`);
+    if (cell === null) throw new Error(`no cell ${r},${c}`);
+    return cell.hasAttribute("data-cv-widget")
+      ? (cell.querySelector<HTMLElement>("input, button") as HTMLElement)
+      : cell;
+  };
+  /** The table's own polite line (each row menu with a T2 item keeps its own reason region, CMP-041). */
+  const status = (): HTMLElement => {
+    const line = grid().closest(".cv-table")?.querySelector<HTMLElement>(".cv-table__live");
+    if (line == null) throw new Error("no table status");
+    return line;
+  };
+
+  beforeEach(() => {
+    opened.mockReset();
+    gated.mockReset();
+    Element.prototype.scrollIntoView = vi.fn();
+  });
+
+  it("an interactive column makes a grid: role grid, gridcells, aria-colcount and multiselectable", async () => {
+    await mount(<GridHost />);
+    const g = grid();
+    expect(g).toHaveAttribute("aria-colcount", "5");
+    expect(g).toHaveAttribute("aria-multiselectable", "true");
+    expect(within(g).getAllByRole("gridcell")).toHaveLength(15);
+    expect(within(g).getAllByRole("columnheader")).toHaveLength(5);
+    expect(page.queryByRole("table")).toBeNull();
+    for (const row of within(g).getAllByRole("row").slice(1))
+      expect(row).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("grid forces grid mode on a static table; a table without it stays a table", async () => {
+    await mount(base({ grid: true }));
+    expect(grid()).not.toHaveAttribute("aria-multiselectable");
+    expect(within(grid()).getAllByRole("gridcell")).toHaveLength(9);
+  });
+
+  it("is one Tab stop: in on the first body cell, out on the next Tab, back to the last focused cell", async () => {
+    await mount(<GridHost />);
+    page.getByRole("button", { name: "Before" }).focus();
+    await userEvent.tab();
+    expect(page.getByRole("checkbox", { name: "Select alex" })).toHaveFocus();
+    expect(grid().querySelectorAll('[tabindex="0"]')).toHaveLength(1);
+    await press("{ArrowDown}{ArrowRight}{ArrowRight}");
+    expect(target(2, 2)).toHaveFocus();
+    await userEvent.tab();
+    expect(page.getByRole("button", { name: "After" })).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    expect(target(2, 2)).toHaveFocus();
+    await userEvent.tab({ shift: true });
+    expect(page.getByRole("button", { name: "Before" })).toHaveFocus();
+  });
+
+  it("keyboard matrix: arrows by cell (the header row included), Home / End, Ctrl+Home / Ctrl+End, clamped at the edges", async () => {
+    await mount(<GridHost />);
+    act(() => target(1, 0).focus());
+    await press("{ArrowLeft}");
+    expect(target(1, 0)).toHaveFocus();
+    await press("{ArrowRight}");
+    expect(target(1, 1)).toHaveFocus();
+    expect(target(1, 1)).toHaveTextContent("alex");
+    await press("{End}");
+    expect(page.getByRole("button", { name: "Actions for alex" })).toHaveFocus();
+    await press("{ArrowRight}");
+    expect(target(1, 4)).toHaveFocus();
+    await press("{Home}");
+    expect(target(1, 0)).toHaveFocus();
+    await press("{ArrowUp}");
+    expect(page.getByRole("checkbox", { name: "Select all rows" })).toHaveFocus();
+    await press("{ArrowUp}{ArrowRight}");
+    expect(page.getByRole("button", { name: "Name" })).toHaveFocus();
+    await press("{ArrowRight}");
+    expect(target(0, 2)).toHaveFocus(); // a plain header cell takes focus itself
+    await press("{Control>}{End}{/Control}");
+    expect(page.getByRole("button", { name: "Actions for kim" })).toHaveFocus();
+    await press("{ArrowDown}");
+    expect(page.getByRole("button", { name: "Actions for kim" })).toHaveFocus();
+    expect(page.queryByRole("menu")).toBeNull(); // ↓ moved (nowhere), it did not open the menu
+    await press("{Control>}{Home}{/Control}");
+    expect(page.getByRole("checkbox", { name: "Select all rows" })).toHaveFocus();
+  });
+
+  it("↑ / ↓ on an actions button move between rows instead of opening its menu", async () => {
+    await mount(<GridHost />);
+    act(() => target(1, 4).focus());
+    await press("{ArrowDown}");
+    expect(page.getByRole("button", { name: "Actions for sam" })).toHaveFocus();
+    await press("{ArrowUp}");
+    expect(page.getByRole("button", { name: "Actions for alex" })).toHaveFocus();
+    expect(page.queryByRole("menu")).toBeNull();
+  });
+
+  it("Page Up / Page Down move by the rows that fit the region, less the header", async () => {
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(50);
+    vi.spyOn(HTMLTableRowElement.prototype, "getBoundingClientRect").mockReturnValue({
+      height: 25,
+    } as DOMRect);
+    await mount(<GridHost />);
+    act(() => target(1, 1).focus());
+    await press("{PageDown}");
+    expect(target(2, 1)).toHaveFocus();
+    await press("{PageDown}{PageDown}");
+    expect(target(3, 1)).toHaveFocus();
+    await press("{PageUp}");
+    expect(target(2, 1)).toHaveFocus();
+  });
+
+  it("Page Down with nothing laid out steps a fixed page, clamped to the last row", async () => {
+    await mount(<GridHost />);
+    act(() => target(0, 2).focus());
+    await press("{PageDown}");
+    expect(target(3, 2)).toHaveFocus();
+    await press("{PageUp}");
+    expect(target(0, 2)).toHaveFocus();
+  });
+
+  it("a focused cell is scrolled into view at the nearest edge (its scroll margin clears the sticky header)", async () => {
+    await mount(<GridHost />);
+    act(() => target(1, 1).focus());
+    await press("{ArrowDown}");
+    const cell = target(2, 1);
+    expect(cell.scrollIntoView).toHaveBeenLastCalledWith({ block: "nearest", inline: "nearest" });
+    expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts.at(-1)).toBe(cell);
+  });
+
+  it("Space toggles the focused row: aria-selected, the row's box, and one polite count", async () => {
+    await mount(<GridHost />);
+    act(() => target(2, 2).focus());
+    await press(" ");
+    const sam = page.getAllByRole("row")[2] as HTMLElement;
+    expect(sam).toHaveAttribute("aria-selected", "true");
+    expect(page.getByRole("checkbox", { name: "Select sam" })).toBeChecked();
+    expect(status()).toHaveTextContent("1 selected");
+    await press(" ");
+    expect(sam).toHaveAttribute("aria-selected", "false");
+    expect(status()).toHaveTextContent("0 selected");
+  });
+
+  it("Space on a row's box toggles it once (natively), not twice", async () => {
+    await mount(<GridHost />);
+    act(() => target(1, 0).focus());
+    await press(" ");
+    expect(page.getByRole("checkbox", { name: "Select alex" })).toBeChecked();
+    expect(status()).toHaveTextContent("1 selected");
+  });
+
+  it("select-all: unchecked, mixed when some rows are selected, checked when all; a press from mixed selects all", async () => {
+    await mount(<GridHost initial={["u2"]} />);
+    const all = page.getByRole("checkbox", { name: "Select all rows" });
+    expect(all).toBePartiallyChecked();
+    await userEvent.click(all);
+    expect(all).toBeChecked();
+    expect(all).not.toBePartiallyChecked();
+    expect(
+      page
+        .getAllByRole("row")
+        .slice(1)
+        .map((r) => r.getAttribute("aria-selected")),
+    ).toEqual(["true", "true", "true"]);
+    expect(status()).toHaveTextContent("3 selected");
+    await userEvent.click(all);
+    expect(all).not.toBeChecked();
+    expect(all).not.toBePartiallyChecked();
+    expect(status()).toHaveTextContent("0 selected");
+  });
+
+  it("says a selection change once: the first render and unrelated re-renders say nothing", async () => {
+    await mount(<GridHost initial={["u1"]} />);
+    expect(status()).toHaveTextContent("");
+    const said: string[] = [];
+    const watcher = new MutationObserver(() => said.push(status().textContent ?? ""));
+    watcher.observe(status(), { childList: true, subtree: true, characterData: true });
+    await userEvent.click(page.getByRole("checkbox", { name: "Select kim" }));
+    await act(async () => {
+      fireEvent.focus(target(1, 2));
+    });
+    await act(async () => {
+      fireEvent.focus(target(3, 3));
+    });
+    watcher.disconnect();
+    expect(said).toEqual(["2 selected"]);
+  });
+
+  it("select-all is disabled with no rows, and its header cell keeps the Tab stop", async () => {
+    await mount(<GridHost rows={[]} />);
+    expect(page.getByRole("checkbox", { name: "Select all rows" })).toBeDisabled();
+    await userEvent.tab();
+    await userEvent.tab();
+    expect(target(0, 0)).toHaveFocus();
+  });
+
+  it("the actions button opens the row menu; Esc returns focus to it", async () => {
+    await mount(<GridHost />);
+    const button = page.getByRole("button", { name: "Actions for sam" });
+    act(() => button.focus());
+    await press("{Enter}");
+    const menu = page.getByRole("menu", { name: "Actions for sam" });
+    expect(menu).toBeVisible();
+    expect(within(menu).getByRole("menuitem", { name: "Open" })).toHaveFocus();
+    await press("{Escape}");
+    expect(page.queryByRole("menu")).toBeNull();
+    expect(button).toHaveFocus();
+    await press("{Enter}{Enter}");
+    expect(opened).toHaveBeenCalledWith("u2");
+  });
+
+  it("T2 items are arrow-reachable, never activated, and keep their reason", async () => {
+    await mount(<GridHost />);
+    act(() => page.getByRole("button", { name: "Actions for alex" }).focus());
+    await press("{Enter}{ArrowDown}");
+    const caps = page.getByRole("menuitem", { name: /Edit risk caps/ });
+    expect(caps).toHaveFocus();
+    expect(caps).toHaveAttribute("aria-disabled", "true");
+    expect(caps).toHaveAccessibleDescription(/Only the owner can change account settings\./);
+    await press("{Enter}");
+    await userEvent.click(caps);
+    expect(gated).not.toHaveBeenCalled();
+  });
+
+  it("Shift+F10 on a focused row opens that row's menu at the row; Esc returns focus to the cell", async () => {
+    await mount(<GridHost />);
+    act(() => target(2, 2).focus());
+    await press("{Shift>}{F10}{/Shift}");
+    const menu = page.getByRole("menu", { name: "Actions for sam" });
+    expect(within(menu).getByRole("menuitem", { name: "Open" })).toHaveFocus();
+    await press("{Escape}");
+    expect(page.queryByRole("menu")).toBeNull();
+    expect(target(2, 2)).toHaveFocus();
+    await press("{ArrowDown}{Shift>}{F10}{/Shift}{Enter}");
+    expect(opened).toHaveBeenCalledWith("u3");
+  });
+
+  it("the ContextMenu key opens it too", async () => {
+    await mount(<GridHost />);
+    act(() => target(1, 3).focus());
+    await press("{ContextMenu}");
+    expect(page.getByRole("menu", { name: "Actions for alex" })).toBeVisible();
+  });
+
+  it("rowLabel names the row's box and actions", async () => {
+    await mount(<GridHost rowLabel={(u) => `user ${u.name}`} />);
+    expect(page.getByRole("checkbox", { name: "Select user alex" })).toBeInTheDocument();
+    expect(page.getByRole("button", { name: "Actions for user alex" })).toBeInTheDocument();
+  });
+
+  it("the default row name falls back to the key when the first column is not text", async () => {
+    const columns: readonly TableColumn<User>[] = [
+      { id: "badge", header: "Badge", cell: (u) => <b>{u.name}</b> },
+      ...COLUMNS,
+    ];
+    await mount(<GridHost columns={columns} />);
+    expect(page.getByRole("button", { name: "Actions for u1" })).toBeInTheDocument();
+  });
+
+  it("an interactive cell: its controls leave the Tab order; Enter or F2 moves in, Esc moves back", async () => {
+    const columns: readonly TableColumn<User>[] = [
+      ...COLUMNS,
+      {
+        id: "note",
+        header: "Note",
+        interactive: true,
+        cell: (u) => <input aria-label={`Note for ${u.name}`} />,
+      },
+    ];
+    await mount(<GridHost columns={columns} onRowSelect={undefined} rowActions={undefined} />);
+    const input = page.getByRole("textbox", { name: "Note for alex" });
+    expect(input).toHaveAttribute("tabindex", "-1");
+    act(() => target(1, 3).focus());
+    await press("{Enter}");
+    expect(input).toHaveFocus();
+    await press("ab{ArrowLeft}");
+    expect(input).toHaveFocus(); // the control owns its keys
+    await press("{Escape}");
+    expect(target(1, 3)).toHaveFocus();
+    await press("{F2}");
+    expect(input).toHaveFocus();
+  });
+
+  it("table mode is unchanged: no grid, no data-cv cells, the region keeps its Tab stop", async () => {
+    await mount(<Host />);
+    expect(page.queryByRole("grid")).toBeNull();
+    expect(document.querySelector("[data-cv-c]")).toBeNull();
+  });
+
+  it("in grid mode a scrolling region is a named landmark but no Tab stop (the grid is the one stop)", async () => {
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(100);
+    await mount(<GridHost />);
+    expect(page.getByRole("region", { name: CAPTION })).not.toHaveAttribute("tabindex");
   });
 });

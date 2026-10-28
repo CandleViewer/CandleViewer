@@ -3,13 +3,18 @@ import {
   useId,
   useRef,
   useState,
+  type FocusEvent,
   type JSX,
+  type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from "react";
 import { Icon } from "../icons/Icon.js";
+import { Checkbox } from "./Checkbox.js";
 import { EmptyState } from "./EmptyState.js";
 import { ErrorState } from "./ErrorState.js";
+import { IconButton } from "./IconButton.js";
+import { Menu, type MenuItem } from "./Menu.js";
 import { Skeleton } from "./Skeleton.js";
 import { Spinner } from "./Spinner.js";
 import { NumericText, type NumericFormat } from "./Typography.js";
@@ -41,6 +46,11 @@ export interface TableTextColumn<T> extends TableColumnBase {
   readonly cell: (row: T) => ReactNode;
   readonly numeric?: undefined;
   readonly precision?: never;
+  /**
+   * The cell holds controls (an inline control): the table becomes a grid. Its controls leave the Tab order; on the
+   * focused cell `Enter` or `F2` moves focus to the first of them and `Esc` brings it back to the cell.
+   */
+  readonly interactive?: boolean;
 }
 
 /** A numeric column: the value renders through CMP-020 NumericText, end-aligned in mono, never truncated. */
@@ -49,6 +59,7 @@ export interface TableNumericColumn<T> extends TableColumnBase {
   readonly numeric: NumericFormat;
   /** Decimals; NumericText's default for the format when omitted. */
   readonly precision?: number;
+  readonly interactive?: never;
 }
 
 export type TableColumn<T> = TableTextColumn<T> | TableNumericColumn<T>;
@@ -88,6 +99,25 @@ export interface TableProps<T> {
   readonly emptyState?: ReactNode;
   /** Emits `data-density` so `theme.css` re-points the row height; absent = inherit. */
   readonly density?: "comfortable" | "compact";
+  /**
+   * Forces grid mode (the WAI-ARIA APG Grid pattern) on a static table. Grid mode is implied, without it, by any
+   * interactive column: `onRowSelect`'s select column, `rowActions`' actions column, or an `interactive` column.
+   */
+  readonly grid?: boolean;
+  /** The selected rows' keys (`rowKey`), with `onRowSelect`. */
+  readonly selected?: ReadonlySet<string> | undefined;
+  /** Renders the leading select column (a CMP-005 per row and a select-all) and asks for the next selection. */
+  readonly onRowSelect?: ((selected: ReadonlySet<string>) => void) | undefined;
+  /**
+   * Renders the trailing actions column: an IconButton "Actions for {row}" opening a CMP-041 menu of these items;
+   * `Shift+F10` or the Menu key on a focused row opens the same items as a context menu at the row.
+   */
+  readonly rowActions?: ((row: T) => readonly MenuItem[]) | undefined;
+  /**
+   * The row's name in "Select {row}" and "Actions for {row}". Default: the first column's value when it is text or a
+   * number, else the row's key.
+   */
+  readonly rowLabel?: ((row: T) => string) | undefined;
 }
 
 /** The v0 bound (#266 out of scope: no virtualised rendering). */
@@ -95,6 +125,12 @@ const MAX_ROWS = 200;
 const SKELETON_ROWS = 5;
 /** A column's `minWidthEm` when it gives none: room for a short label or an 8-digit number. */
 const DEFAULT_MIN_WIDTH_EM = 8;
+/** The select and the actions columns' share of the reflow threshold. */
+const CONTROL_COLUMN_EM = 3;
+/** Page Up / Page Down's step when nothing is laid out to measure a page by. */
+const FALLBACK_PAGE_ROWS = 10;
+/** What a control inside an `interactive` cell looks like: these leave the Tab order while the grid roves. */
+const TABBABLE = "a[href], button, input, select, textarea, [tabindex]";
 
 const rowsWord = (n: number): string => (n === 0 ? "No rows" : n === 1 ? "1 row" : `${n} rows`);
 
@@ -196,6 +232,8 @@ interface ResultInputs<T> {
   readonly sortPending: string | undefined;
   readonly loading: boolean;
   readonly error: TableError | undefined;
+  /** The selected row count, or `undefined` without a select column. */
+  readonly selectedCount: number | undefined;
 }
 
 interface ResultLine {
@@ -206,9 +244,9 @@ interface ResultLine {
 }
 
 /**
- * The one polite line for sort and load results (D02F CMP-049): a settled sort, the end of a load (the row
- * count) and an error (its message, G17). Never the first render's state, except an error, which is spoken
- * once after mount. Each result is spoken once. The line clears as a load, a pending sort or a Retry starts,
+ * The one polite line for sort, selection and load results (D02F CMP-049): a settled sort, a changed selection
+ * count ("2 selected"), the end of a load (the row count) and an error (its message, G17). Never the first
+ * render's state, except an error, which is spoken once after mount. Each result is spoken once. The line clears as a load, a pending sort or a Retry starts,
  * so a result identical to the last one (the same row count after a reload, the same failure after a Retry)
  * changes the region and is said again.
  */
@@ -219,6 +257,7 @@ function useResultLine<T>({
   sortPending,
   loading,
   error,
+  selectedCount,
 }: ResultInputs<T>): ResultLine {
   const settled = sort !== undefined && sortPending === undefined ? sort : undefined;
   const sortKey = settled === undefined ? undefined : `${settled.columnId}:${settled.direction}`;
@@ -258,6 +297,13 @@ function useResultLine<T>({
     }
     if (sortLine !== undefined && sortKey !== before.sortKey) setLine(sortLine);
   }, [sortKey, sortLine, busy, loading, error, rowCount]);
+  // A selection change is said once per new count (never the first render's count).
+  const lastCount = useRef(selectedCount);
+  useEffect(() => {
+    if (selectedCount === lastCount.current) return;
+    lastCount.current = selectedCount;
+    if (selectedCount !== undefined) setLine(`${selectedCount} selected`);
+  }, [selectedCount]);
   const retryStarted = (): void => {
     retriedFrom.current = error;
     setLine("");
@@ -265,14 +311,98 @@ function useResultLine<T>({
   return { line, retryStarted };
 }
 
+/** One column of the grid: the select column, a data column, or the actions column. */
+type GridColumn<T> =
+  | { readonly kind: "select" }
+  | { readonly kind: "data"; readonly column: TableColumn<T>; readonly index: number }
+  | { readonly kind: "actions" };
+
+/** A cell's place: `r` 0 is the header row, 1… the body rows; `c` indexes the grid columns. */
+interface CellAt {
+  readonly r: number;
+  readonly c: number;
+}
+
+/** What a cell holds: a built-in control focused in its place, plain content, or a consumer's controls. */
+type CellKind = "widget" | "cell" | "interactive";
+
+/** The grid cell an event happened in (its own node or inside it), or null outside this table's cells. */
+const cellOf = (table: HTMLElement | null, target: EventTarget | null): HTMLElement | null => {
+  if (table === null || !(target instanceof Element)) return null;
+  const cell = target.closest<HTMLElement>("[data-cv-c]");
+  return cell !== null && table.contains(cell) ? cell : null;
+};
+
+const placeOf = (cell: HTMLElement): CellAt => ({
+  r: Number(cell.dataset["cvR"]),
+  c: Number(cell.dataset["cvC"]),
+});
+
+/** Where focus goes for a cell: its built-in control (checkbox, sort or actions button), else the cell. */
+const focusTargetOf = (cell: HTMLElement): HTMLElement =>
+  cell.hasAttribute("data-cv-widget")
+    ? (cell.querySelector<HTMLElement>("input, button") ?? cell)
+    : cell;
+
+/** The default row name: the first column's value when it is text or a number, else the row's key. */
+function defaultRowLabel<T>(columns: readonly TableColumn<T>[], row: T, key: string): string {
+  const first = columns[0];
+  if (first === undefined) return key;
+  const value: unknown = first.cell(row);
+  return typeof value === "string" || typeof value === "number" ? String(value) : key;
+}
+
 /**
- * CMP-049 Table, table mode (the WAI-ARIA APG Table pattern: static cells, no control in a body row). A native
- * `<table>` named by its caption inside a scroll region that takes a Tab stop when it scrolls, a sticky header
- * whose sortable labels are buttons with `aria-sort`, zebra rows, and one polite region for sort and load
+ * One page of rows for Page Up / Page Down: the rows that fit the visible part of the scroll region (or of the
+ * window, when the region grows with the page), less the sticky header; a fixed step when nothing is laid out.
+ */
+function pageRows(region: HTMLElement | null, cell: HTMLElement): number {
+  const rowHeight = cell.closest("tr")?.getBoundingClientRect().height ?? 0;
+  const view = Math.min(region?.clientHeight ?? 0, window.innerHeight);
+  if (rowHeight <= 0 || view <= 0) return FALLBACK_PAGE_ROWS;
+  return Math.max(1, Math.floor(view / rowHeight) - 1);
+}
+
+/**
+ * Takes an `interactive` cell's controls out of the Tab order while the grid roves (one Tab stop), and gives them
+ * back their own `tabindex` when it stops (the stacked layout). Runs after every render: a control may mount late.
+ */
+function useTamedControls(table: RefObject<HTMLTableElement | null>, roving: boolean): void {
+  useEffect(() => {
+    const node = table.current;
+    if (node === null) return;
+    for (const cell of node.querySelectorAll<HTMLElement>("[data-cv-interactive]")) {
+      for (const control of cell.querySelectorAll<HTMLElement>(TABBABLE)) {
+        const tamed = control.getAttribute("data-cv-tamed");
+        if (roving && tamed === null) {
+          control.setAttribute("data-cv-tamed", control.getAttribute("tabindex") ?? "");
+          control.tabIndex = -1;
+        } else if (!roving && tamed !== null) {
+          control.removeAttribute("data-cv-tamed");
+          if (tamed === "") control.removeAttribute("tabindex");
+          else control.setAttribute("tabindex", tamed);
+        }
+      }
+    }
+  });
+}
+
+/**
+ * CMP-049 Table. Table mode (the default; the WAI-ARIA APG Table pattern: static cells, no control in a body row): a
+ * native `<table>` named by its caption inside a scroll region that takes a Tab stop when it scrolls, a sticky header
+ * whose sortable labels are buttons with `aria-sort`, zebra rows, and one polite region for sort, selection and load
  * results. States: loading (skeleton rows, `aria-busy`), empty and filtered-empty (CMP-026), error (CMP-027 with
- * Retry). The consumer sorts the rows; the table only asks. Reflow: below the sum of the columns' `minWidthEm`
- * (at its own font size, so at 200 % zoom too) it stacks, one block per row: the first cell is the heading line,
- * the others header–value pairs, with explicit table roles kept.
+ * Retry). The consumer sorts the rows; the table only asks. Grid mode (the APG Grid pattern), implied by any
+ * interactive column (`onRowSelect`'s select column, `rowActions`' actions column, an `interactive` column) or forced
+ * by `grid`: `role="grid"` with one Tab stop that remembers the last focused cell; the arrows move by cell (the
+ * header row included), Home / End to the row's ends, Ctrl+Home / Ctrl+End to the grid's corners, Page Up / Page
+ * Down by a page of rows; a cell's built-in control (the select box, a sort or actions button) takes focus in its
+ * place; an `interactive` cell takes `Enter` or `F2` into its controls and `Esc` back; `Space` toggles the focused
+ * row's selection; `Shift+F10` or the Menu key opens the row's actions as a context menu. A focused cell scrolls
+ * below the sticky header (`scroll-margin-top`). Reflow: below the sum of the columns' `minWidthEm` (at its own font
+ * size, so at 200 % zoom too) it stacks, one block per row: the first data cell is the heading line, the others
+ * header–value pairs, with explicit table roles kept; a grid then degrades to a table whose controls are each a Tab
+ * stop, in order (arrow navigation needs a layout of rows and columns).
  */
 export function Table<T>({
   columns,
@@ -288,11 +418,18 @@ export function Table<T>({
   error,
   emptyState,
   density,
+  grid = false,
+  selected,
+  onRowSelect,
+  rowActions,
+  rowLabel,
 }: TableProps<T>): JSX.Element {
   const captionId = useId();
   const shell = useRef<HTMLDivElement>(null);
   const probe = useRef<HTMLSpanElement>(null);
   const region = useRef<HTMLDivElement>(null);
+  const tableRef = useRef<HTMLTableElement>(null);
+  const tbody = useRef<HTMLTableSectionElement>(null);
   const state = loading
     ? "loading"
     : error !== undefined
@@ -300,15 +437,37 @@ export function Table<T>({
       : rows.length === 0
         ? "empty"
         : "populated";
-  const scrolls = useScrolls(region, `${state}:${rows.length}:${columns.length}`);
+  const selectable = onRowSelect !== undefined;
+  const gridColumns: readonly GridColumn<T>[] = [
+    ...(selectable ? [{ kind: "select" } as const] : []),
+    ...columns.map((column, index) => ({ kind: "data", column, index }) as const),
+    ...(rowActions === undefined ? [] : [{ kind: "actions" } as const]),
+  ];
+  const gridMode =
+    grid ||
+    selectable ||
+    rowActions !== undefined ||
+    columns.some((column) => column.interactive === true);
+  const scrolls = useScrolls(region, `${state}:${rows.length}:${gridColumns.length}`);
   const stacked = useStacked(
     shell,
     probe,
-    columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0),
+    columns.reduce((sum, column) => sum + (column.minWidthEm ?? DEFAULT_MIN_WIDTH_EM), 0) +
+      (gridColumns.length - columns.length) * CONTROL_COLUMN_EM,
   );
-  // Explicit roles while stacked: `display: block` strips native table semantics in some engines.
+  /** Arrow navigation and one Tab stop: grid mode, laid out as rows and columns. */
+  const roving = gridMode && !stacked;
+  // Explicit roles: `grid` / `gridcell` while roving; while stacked, the table roles, because `display: block`
+  // strips native table semantics in some engines.
   const role = (name: "table" | "rowgroup" | "row" | "columnheader" | "cell"): { role?: string } =>
-    stacked ? { role: name } : {};
+    roving && name === "table"
+      ? { role: "grid" }
+      : roving && name === "cell"
+        ? { role: "gridcell" }
+        : stacked
+          ? { role: name }
+          : {};
+  const selection = selected ?? new Set<string>();
   const { line, retryStarted } = useResultLine({
     columns,
     rowCount: rows.length,
@@ -316,7 +475,21 @@ export function Table<T>({
     sortPending,
     loading,
     error,
+    selectedCount: selectable ? selection.size : undefined,
   });
+  useTamedControls(tableRef, roving);
+
+  // The remembered cell (the Tab stop), clamped to the grid as rows come and go; at first the first body cell.
+  const [active, setActive] = useState<CellAt | undefined>(undefined);
+  const bodyRows = state === "populated" ? rows.length : 0;
+  const lastC = gridColumns.length - 1;
+  const wanted = active ?? { r: bodyRows > 0 ? 1 : 0, c: 0 };
+  const stop: CellAt = {
+    r: Math.min(Math.max(wanted.r, 0), bodyRows),
+    c: Math.min(Math.max(wanted.c, 0), lastC),
+  };
+  // The context menu's row: the remembered body row (the header row keeps the last; the keys open it from the body).
+  const activeRow = state === "populated" ? rows[Math.max(stop.r, 1) - 1] : undefined;
 
   useEffect(() => {
     if (!import.meta.env?.DEV || rows.length <= MAX_ROWS) return;
@@ -332,20 +505,196 @@ export function Table<T>({
     onSortChange({ columnId: column.id, direction });
   };
 
+  const labelOf = (row: T): string => rowLabel?.(row) ?? defaultRowLabel(columns, row, rowKey(row));
+  const setRow = (key: string, on: boolean): void => {
+    const next = new Set(selection);
+    if (on) next.add(key);
+    else next.delete(key);
+    onRowSelect?.(next);
+  };
+  const keys = state === "populated" ? rows.map(rowKey) : [];
+  const allOn = keys.length > 0 && keys.every((key) => selection.has(key));
+  const someOn = !allOn && keys.some((key) => selection.has(key));
+  const selectAll = (): void => {
+    const next = new Set(selection);
+    for (const key of keys) {
+      if (allOn) next.delete(key);
+      else next.add(key);
+    }
+    onRowSelect?.(next);
+  };
+
+  /** A cell's grid attributes: its place, what it holds, and its roving `tabindex` (a widget carries its own). */
+  const tabFor = (r: number, c: number): 0 | -1 | undefined =>
+    roving ? (stop.r === r && stop.c === c ? 0 : -1) : undefined;
+  const at = (r: number, c: number, kind: CellKind): Record<string, string | number | undefined> =>
+    gridMode
+      ? {
+          "data-cv-r": r,
+          "data-cv-c": c,
+          "data-cv-widget": kind === "widget" ? "" : undefined,
+          "data-cv-interactive": kind === "interactive" ? "" : undefined,
+          tabIndex: kind === "widget" ? undefined : tabFor(r, c),
+        }
+      : {};
+  const ring = roving ? " cv-focus-ring cv-focus-ring--inset" : "";
+
+  const onGridFocus = (event: FocusEvent<HTMLTableElement>): void => {
+    if (!gridMode) return;
+    const cell = cellOf(tableRef.current, event.target);
+    if (cell === null) return;
+    const place = placeOf(cell);
+    if (active?.r !== place.r || active.c !== place.c) setActive(place);
+    // `nearest` honours the cell's `scroll-margin-top`, so it is never left under the sticky header.
+    if (roving && event.target === focusTargetOf(cell))
+      cell.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  };
+
+  const onGridKeyDown = (event: KeyboardEvent<HTMLElement>): void => {
+    if (!roving || event.defaultPrevented || event.altKey || event.metaKey || event.shiftKey)
+      return;
+    const cell = cellOf(tableRef.current, event.target);
+    if (cell === null) return;
+    if (event.target !== cell && !cell.hasAttribute("data-cv-widget")) {
+      // Focus is inside an interactive cell's control: the control owns its keys, Esc gives focus back to the cell.
+      if (event.key === "Escape" && !event.ctrlKey) {
+        event.preventDefault();
+        cell.focus();
+      }
+      return;
+    }
+    const { r, c } = placeOf(cell);
+    let next: CellAt;
+    if (event.ctrlKey) {
+      if (event.key === "Home") next = { r: 0, c: 0 };
+      else if (event.key === "End") next = { r: bodyRows, c: lastC };
+      else return;
+    } else if (event.key === "ArrowUp") next = { r: Math.max(r - 1, 0), c };
+    else if (event.key === "ArrowDown") next = { r: Math.min(r + 1, bodyRows), c };
+    else if (event.key === "ArrowLeft") next = { r, c: Math.max(c - 1, 0) };
+    else if (event.key === "ArrowRight") next = { r, c: Math.min(c + 1, lastC) };
+    else if (event.key === "Home") next = { r, c: 0 };
+    else if (event.key === "End") next = { r, c: lastC };
+    else if (event.key === "PageUp")
+      next = { r: Math.max(r - pageRows(region.current, cell), 0), c };
+    else if (event.key === "PageDown")
+      next = { r: Math.min(r + pageRows(region.current, cell), bodyRows), c };
+    else {
+      if (
+        (event.key === "Enter" || event.key === "F2") &&
+        cell.hasAttribute("data-cv-interactive")
+      ) {
+        const control = cell.querySelector<HTMLElement>(TABBABLE);
+        if (control !== null) {
+          event.preventDefault();
+          control.focus();
+        }
+      } else if (
+        event.key === " " &&
+        selectable &&
+        r >= 1 &&
+        !cell.hasAttribute("data-cv-widget")
+      ) {
+        // A widget cell's own Space (the box, a button) acts natively.
+        event.preventDefault();
+        const row = rows[r - 1];
+        if (row !== undefined) setRow(rowKey(row), !selection.has(rowKey(row)));
+      }
+      return;
+    }
+    // A handled key never scrolls the region itself: focus moves, and the cell scrolls into view.
+    event.preventDefault();
+    const target = tableRef.current?.querySelector<HTMLElement>(
+      `[data-cv-r="${next.r}"][data-cv-c="${next.c}"]`,
+    );
+    if (target != null) focusTargetOf(target).focus({ preventScroll: true });
+  };
+
   const stateRow = (content: ReactNode): JSX.Element => (
     <tr className="cv-table__state-row" aria-rowindex={2} {...role("row")}>
-      <td className="cv-table__state" colSpan={columns.length} {...role("cell")}>
+      <td className="cv-table__state" colSpan={gridColumns.length} {...role("cell")}>
         {content}
       </td>
     </tr>
   );
 
+  const bodyCell = (row: T, key: string, r: number, gc: GridColumn<T>, c: number): JSX.Element => {
+    if (gc.kind === "select") {
+      return (
+        <td
+          key="cv-select"
+          className="cv-table__cell cv-table__select"
+          {...role("cell")}
+          {...at(r, c, "widget")}
+        >
+          <Checkbox
+            label={`Select ${labelOf(row)}`}
+            checked={selection.has(key)}
+            onChange={(on) => setRow(key, on)}
+            tabIndex={tabFor(r, c)}
+          />
+        </td>
+      );
+    }
+    if (gc.kind === "actions") {
+      return (
+        <td
+          key="cv-actions"
+          className="cv-table__cell cv-table__actions"
+          {...role("cell")}
+          {...at(r, c, "widget")}
+        >
+          <Menu
+            items={rowActions?.(row) ?? []}
+            trigger={
+              <IconButton
+                icon="more-horizontal"
+                variant="ghost"
+                label={`Actions for ${labelOf(row)}`}
+                tabIndex={tabFor(r, c)}
+                // ↑ / ↓ move between rows here, before the menu button takes them as "open" (APG Menu Button).
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp" || event.key === "ArrowDown") onGridKeyDown(event);
+                }}
+              />
+            }
+          />
+        </td>
+      );
+    }
+    const { column, index } = gc;
+    const interactive = column.interactive === true;
+    return (
+      <td
+        key={column.id}
+        className={`cv-table__cell${ring}`}
+        data-numeric={column.numeric === undefined ? undefined : ""}
+        data-heading={index === 0 ? "" : undefined}
+        {...role("cell")}
+        {...at(r, c, interactive ? "interactive" : "cell")}
+      >
+        {/* Stacked: a visible header label on every data cell but the heading line; hidden from AT, which
+            already reads the cell's columnheader in table navigation (browse mode reads values alone). */}
+        {stacked && index > 0 ? (
+          <span className="cv-table__cell-label" aria-hidden="true">
+            {column.header}
+          </span>
+        ) : null}
+        {column.numeric === undefined ? (
+          <span className="cv-table__text">{column.cell(row)}</span>
+        ) : (
+          <NumericCell column={column} row={row} />
+        )}
+      </td>
+    );
+  };
+
   let body: ReactNode;
   if (state === "loading") {
     body = Array.from({ length: SKELETON_ROWS }, (_, i) => (
       <tr key={i} className="cv-table__row" aria-hidden="true" {...role("row")}>
-        {columns.map((column) => (
-          <td key={column.id} className="cv-table__cell" {...role("cell")}>
+        {gridColumns.map((gc, c) => (
+          <td key={c} className="cv-table__cell" {...role("cell")}>
             <Skeleton shape="text" count={1} />
           </td>
         ))}
@@ -369,32 +718,88 @@ export function Table<T>({
   } else if (state === "empty") {
     body = stateRow(emptyState ?? <EmptyState title="No rows to show" />);
   } else {
-    body = rows.map((row, i) => (
-      <tr key={rowKey(row)} className="cv-table__row" aria-rowindex={i + 2} {...role("row")}>
-        {columns.map((column, c) => (
-          <td
-            key={column.id}
-            className="cv-table__cell"
-            data-numeric={column.numeric === undefined ? undefined : ""}
-            {...role("cell")}
-          >
-            {/* Stacked: a visible header label on every cell but the heading line; hidden from AT, which
-                already reads the cell's columnheader in table navigation (browse mode reads values alone). */}
-            {stacked && c > 0 ? (
-              <span className="cv-table__cell-label" aria-hidden="true">
-                {column.header}
-              </span>
-            ) : null}
-            {column.numeric === undefined ? (
-              <span className="cv-table__text">{column.cell(row)}</span>
-            ) : (
-              <NumericCell column={column} row={row} />
-            )}
-          </td>
-        ))}
-      </tr>
-    ));
+    body = rows.map((row, i) => {
+      const key = rowKey(row);
+      return (
+        <tr
+          key={key}
+          className="cv-table__row"
+          aria-rowindex={i + 2}
+          aria-selected={selectable ? selection.has(key) : undefined}
+          {...role("row")}
+        >
+          {gridColumns.map((gc, c) => bodyCell(row, key, i + 1, gc, c))}
+        </tr>
+      );
+    });
   }
+
+  const headerCell = (gc: GridColumn<T>, c: number): JSX.Element => {
+    if (gc.kind === "select") {
+      const empty = keys.length === 0;
+      return (
+        <th
+          key="cv-select"
+          scope="col"
+          className={`cv-table__header cv-table__select${empty ? ring : ""}`}
+          {...role("columnheader")}
+          {...at(0, c, empty ? "cell" : "widget")}
+        >
+          <Checkbox
+            label="Select all rows"
+            checked={allOn}
+            indeterminate={someOn}
+            disabled={empty}
+            onChange={selectAll}
+            tabIndex={empty ? undefined : tabFor(0, c)}
+          />
+        </th>
+      );
+    }
+    if (gc.kind === "actions") {
+      return (
+        <th
+          key="cv-actions"
+          scope="col"
+          className={`cv-table__header cv-table__actions${ring}`}
+          {...role("columnheader")}
+          {...at(0, c, "cell")}
+        >
+          <span className="cv-visually-hidden">Actions</span>
+        </th>
+      );
+    }
+    const { column } = gc;
+    const sortable = column.sortable === true && onSortChange !== undefined;
+    const direction = sort?.columnId === column.id ? sort.direction : undefined;
+    const pending = sortable && sortPending === column.id;
+    return (
+      <th
+        key={column.id}
+        scope="col"
+        className={`cv-table__header${sortable ? "" : ring}`}
+        data-numeric={column.numeric === undefined ? undefined : ""}
+        aria-sort={sortable ? (direction ?? "none") : undefined}
+        {...role("columnheader")}
+        {...at(0, c, sortable ? "widget" : "cell")}
+      >
+        {sortable ? (
+          <button
+            type="button"
+            className="cv-table__sort cv-focus-ring cv-focus-ring--inset"
+            aria-busy={pending ? true : undefined}
+            tabIndex={tabFor(0, c)}
+            onClick={() => press(column)}
+          >
+            <span className="cv-table__label">{column.header}</span>
+            <SortGlyph direction={direction} pending={pending} />
+          </button>
+        ) : (
+          <span className="cv-table__label">{column.header}</span>
+        )}
+      </th>
+    );
+  };
 
   const rowCount = state === "loading" ? -1 : state === "populated" ? rows.length + 1 : 2;
 
@@ -405,20 +810,30 @@ export function Table<T>({
       data-cmp="CMP-049"
       data-density={density}
       data-state={state}
+      data-mode={gridMode ? "grid" : undefined}
       data-layout={stacked ? "stacked" : undefined}
     >
       <span ref={probe} className="cv-table__em-probe" aria-hidden="true" />
       <div
         ref={region}
         className="cv-table__region"
-        {...(scrolls ? { role: "region", "aria-labelledby": captionId, tabIndex: 0 } : {})}
+        {...(scrolls
+          ? { role: "region", "aria-labelledby": captionId, ...(roving ? {} : { tabIndex: 0 }) }
+          : {})}
       >
         <table
+          ref={tableRef}
           className="cv-table__table"
           aria-labelledby={captionId}
           aria-rowcount={rowCount}
+          aria-colcount={gridMode ? gridColumns.length : undefined}
           aria-busy={loading ? true : undefined}
+          aria-multiselectable={roving && selectable ? true : undefined}
           {...role("table")}
+          // Grid mode only: the grid's keys while it roves (role="grid"), and the remembered cell (which the
+          // stacked layout's context menu reads too). A table-mode table listens to nothing.
+          {...(roving ? { onKeyDown: onGridKeyDown } : {})}
+          {...(gridMode ? { onFocus: onGridFocus } : {})}
         >
           <caption className="cv-table__caption">
             <span id={captionId} className={captionHidden ? "cv-visually-hidden" : undefined}>
@@ -428,41 +843,27 @@ export function Table<T>({
           </caption>
           <thead {...role("rowgroup")}>
             <tr aria-rowindex={1} {...role("row")}>
-              {columns.map((column) => {
-                const sortable = column.sortable === true && onSortChange !== undefined;
-                const direction = sort?.columnId === column.id ? sort.direction : undefined;
-                const pending = sortable && sortPending === column.id;
-                return (
-                  <th
-                    key={column.id}
-                    scope="col"
-                    className="cv-table__header"
-                    data-numeric={column.numeric === undefined ? undefined : ""}
-                    aria-sort={sortable ? (direction ?? "none") : undefined}
-                    {...role("columnheader")}
-                  >
-                    {sortable ? (
-                      <button
-                        type="button"
-                        className="cv-table__sort cv-focus-ring cv-focus-ring--inset"
-                        aria-busy={pending ? true : undefined}
-                        onClick={() => press(column)}
-                      >
-                        <span className="cv-table__label">{column.header}</span>
-                        <SortGlyph direction={direction} pending={pending} />
-                      </button>
-                    ) : (
-                      <span className="cv-table__label">{column.header}</span>
-                    )}
-                  </th>
-                );
-              })}
+              {gridColumns.map(headerCell)}
             </tr>
           </thead>
-          <tbody {...role("rowgroup")}>{body}</tbody>
+          <tbody ref={tbody} {...role("rowgroup")}>
+            {body}
+          </tbody>
         </table>
       </div>
-      <div className="cv-visually-hidden" role="status" aria-live="polite" aria-atomic="true">
+      {rowActions !== undefined && activeRow !== undefined ? (
+        <Menu
+          contextTarget={tbody}
+          aria-label={`Actions for ${labelOf(activeRow)}`}
+          items={rowActions(activeRow)}
+        />
+      ) : null}
+      <div
+        className="cv-visually-hidden cv-table__live"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+      >
         {line}
       </div>
     </div>

@@ -322,6 +322,83 @@ The trigger is the host's (the CMP-227 chip): `trigger` renders it from the prop
 button. The static methodology (`content`) shows at once; the current values (`values`) load under
 it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRetry`).
 
+
+### Table (CMP-049, table mode: the WAI-ARIA APG Table pattern)
+
+| Keys                                             | Action                                                                                                                     |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab                                  | The scroll region when it scrolls (named by the caption), then the sortable header buttons in order; the body has no stop. |
+| Arrows, Page Up / Down, Home / End on the region | Scroll it (native).                                                                                                        |
+| Enter / Space on a header button                 | Sorts ascending, then descending; while that column is `sortPending` the press changes nothing.                            |
+
+| Element     | Role                            | Name             | ARIA                                                                                            |
+| ----------- | ------------------------------- | ---------------- | ----------------------------------------------------------------------------------------------- |
+| table       | table (native `<table>`)        | the caption      | `aria-rowcount` (rows and the header; -1 while loading); `aria-busy="true"` while loading       |
+| region      | region, only while it scrolls   | the caption      | `tabindex="0"`; no role and no stop when everything fits                                        |
+| header cell | columnheader (`th scope="col"`) | its label        | `aria-sort` on the sorted column, `none` on the other sortable ones, none on plain headers      |
+| sort button | button                          | the header label | `aria-busy="true"` while `sortPending`; a CMP-014 spinner replaces the glyph                    |
+| row         | row                             | —                | `aria-rowindex` (absolute: the header row is 1)                                                 |
+| live region | status, one per table           | —                | polite: a settled sort ("Sorted by Size, ascending"), a finished load ("3 rows"), an error once |
+
+The consumer sorts the rows: `onSortChange` asks for the next sort and the host passes the sorted
+`rows` and `sort` back. Numeric columns (`numeric`, a NumericText format) are end-aligned and never
+truncate; text cells truncate with an ellipsis and keep the full text in the DOM. Loading keeps the
+header row under CMP-015 skeleton rows and shows the caption's loading words; empty and
+filtered-empty render the host's CMP-026 (`emptyState`) across every column; an error renders CMP-027
+with Retry, spoken once by the table's region (the panel itself is not live). v0 renders every row
+and is not virtualised: above 200 rows it warns in development (#266).
+
+Below the sum of its columns' `minWidthEm` (default 8 each, in the table's own `em`, so 200 % zoom
+counts) the table stacks, one block per row, read in order: the header buttons (wrapped, still
+sorting), then each row with its first cell as the heading line and every other cell as its header
+label then its value. The label is visible but hidden from assistive technology, which takes the
+header from the cell's `columnheader` (the explicit table roles stay while stacked). In table
+navigation a screen reader says the header once, then the value; reading linearly in browse mode it
+reads the values without their headers. Not yet confirmed with NVDA or VoiceOver: an E05-D05 check.
+
+The polite line clears as a load, a pending sort or a Retry starts, so a result identical to the
+last one (the same row count after a reload, the same failure after a Retry) is said again. The
+default empty title "No rows to show" is PROPOSED copy, pending E05-D05 review.
+
+### Table, grid mode (CMP-049, the WAI-ARIA APG Grid pattern)
+
+Any interactive column makes the table a grid: `onRowSelect`'s select column, `rowActions`' actions
+column, or a column marked `interactive`; `grid` forces it on a static table.
+
+| Keys                    | Action                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Tab / Shift+Tab         | One stop: into the grid on the last focused cell, else the first body cell; the next Tab leaves.                   |
+| ↑ / ↓                   | Previous / next row, the header row included; stops at the edges.                                                  |
+| ← / →                   | Previous / next cell; stops at the edges.                                                                          |
+| Home / End              | First / last cell of the row.                                                                                      |
+| Ctrl+Home / Ctrl+End    | The grid's first cell (the header row) / its last cell (the last row).                                             |
+| Page Up / Page Down     | By the rows that fit the visible region, less the header; stops at the first / last row.                           |
+| Enter / Space           | On a header button, sorts; on the select box, toggles it; on the actions button, opens the row menu.               |
+| Space                   | On any other body cell, toggles the row's selection (with a select column).                                        |
+| Enter / F2              | On an `interactive` cell, moves focus to its first control (which owns its keys from then on).                     |
+| Esc                     | In an `interactive` cell's control, back to the cell; in the row menu, closes it, focus back where it opened from. |
+| Shift+F10, the Menu key | On a focused body cell, opens the row's menu at the row; T2 items stay arrow-reachable and are never activated.    |
+
+| Element      | Role                                  | Name                              | ARIA                                                                              |
+| ------------ | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------------------- |
+| table        | grid                                  | the caption                       | `aria-rowcount`, `aria-colcount`; `aria-multiselectable` with a select column     |
+| cell         | gridcell (header cells: columnheader) | its content                       | the roving `tabindex` (0 on the remembered cell); a control takes it in its place |
+| row          | row                                   | —                                 | `aria-rowindex`; `aria-selected` with a select column                             |
+| select boxes | checkbox (CMP-005)                    | "Select all rows"; "Select {row}" | select-all mixed when some rows are selected                                      |
+| actions      | button (CMP-002, `more-horizontal`)   | "Actions for {row}"               | `aria-haspopup="menu"`; opens CMP-041                                             |
+| live region  | status, the table's one               | —                                 | adds the selection count ("2 selected"), once per change                          |
+
+`{row}` is `rowLabel(row)`, by default the first column's value when it is text or a number, else
+the row's key. A focused cell scrolls into view below the sticky header (`scroll-margin-top` is the
+header's height), so focus is never hidden under it; in grid mode a scrolling region stays a named
+landmark but takes no Tab stop of its own. Selected rows take `color.action.selected` (Highlight in
+forced colours).
+
+Stacked (the reflow above), a grid degrades to a table: arrow navigation needs rows and columns
+laid out, so the explicit table roles return and every control (the select boxes, the actions
+buttons, an `interactive` cell's controls) is its own Tab stop, in reading order; the row menu
+still opens with `Shift+F10`, and `aria-selected` stays on the rows.
+
 ### Menu (CMP-041, APG Menu Button and Menu)
 
 | Keys                                         | Action                                                                                                        |
