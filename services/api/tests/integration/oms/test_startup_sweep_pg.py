@@ -62,6 +62,13 @@ from tests.unit.oms import command_rig as cr
 from tests.unit.oms.submit_rig import REGISTRY, STOP, Profiles, ReadOnly
 from tests.unit.oms.test_oms_runtime import Binder, Flag, Port, Venue, Writer
 
+#: E29-T05 S8b: account health as the runtime's private-stream consumer takes it, streaming no
+#: account, and the gateway's hub, which no notice reaches.
+_NO_STREAMS = SimpleNamespace(
+    feed=SimpleNamespace(), streamed=frozenset, stream_started=lambda: None
+)
+_NO_FRAMES = SimpleNamespace(broadcast_system=lambda _body: 0)
+
 pytestmark = pytest.mark.integration
 
 #: How long the sweep may take to set `ready`: the bound only turns a hang into a failure.
@@ -183,6 +190,8 @@ def _runtime(rig: Rig, pg_dsn: str, tmp_path: Path, writer: Writer) -> OmsRuntim
         persistence=None,
         feed=SimpleNamespace(bind=lambda _b: SimpleNamespace(publish=lambda *_a, **_k: None)),
         lane_signing=cast(Any, Binder()),
+        health=cast(Any, _NO_STREAMS),  # E29-T05 S8b: its consumer streams no account here
+        hub=cast(Any, _NO_FRAMES),
         stores=lambda: replace(  # the lane's own writer is the test's (#913 L2)
             pg_stores(settings, metrics),
             accounts=InMemoryTradingAccountReads(row),
