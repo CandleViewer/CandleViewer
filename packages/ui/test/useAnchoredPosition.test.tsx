@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import type * as FloatingUi from "@floating-ui/dom";
 import { act, useRef, type JSX } from "react";
 import { expect } from "storybook/test";
 import { afterEach, beforeEach, describe, it, vi } from "vitest";
@@ -15,7 +16,7 @@ const floating = vi.hoisted(() => ({
 }));
 
 vi.mock("@floating-ui/dom", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@floating-ui/dom")>();
+  const real = await importOriginal<typeof FloatingUi>();
   return { ...real, computePosition: floating.computePosition, autoUpdate: floating.autoUpdate };
 });
 
