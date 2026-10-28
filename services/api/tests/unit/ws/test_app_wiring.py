@@ -561,8 +561,9 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
     client, _ = world
     catalogued = {s.name for s in CATALOGUE if s.name.startswith(("cv_ws_", "cv_machine_ws_"))}
     # #415: two record counters; E40-T04: `cv_ws_alerts_subscriptions_in_use`; E16-T08: the
-    # recorder's; E08-T08: `cv_ws_snapshot_overdue_total` (23 W11).
-    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 39
+    # recorder's; E08-T08: `cv_ws_snapshot_overdue_total` (23 W11); #571: the principal-load
+    # failures and the publish-time denials.
+    assert catalogued == CV_WS_NAMES and len(CV_WS_NAMES) == 41
     with client.websocket_connect("/ws", subprotocols=JSON) as ws:
         _open(ws)
         ws.send_json({"t": "auth", "id": "x", "p": {}})  # one failed re-auth
@@ -599,6 +600,8 @@ def test_every_cv_ws_metric_is_catalogued_and_served(world: tuple[TestClient, _K
         "cv_ws_rtt_seconds",
         "cv_ws_queue_bytes",
         "cv_ws_queue_frames",
+        "cv_ws_principal_load_failures",  # #571: bound at import, so served before any failure
+        "cv_ws_publish_denied",
     ):
         samples = families[name].samples
         assert samples and all(x.labels["env"] == "demo" for x in samples), name

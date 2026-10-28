@@ -11,10 +11,13 @@ import uuid
 from typing import Any
 
 import pytest
+from prometheus_client import REGISTRY
 from structlog.testing import capture_logs
 
 from candleviewer.auth.generated_permissions import Permission, Scope
 from candleviewer.auth.scopes import Allow, Deny, DenyReason, PrincipalSnapshot, decide
+from candleviewer.observability.metrics_catalogue import CATALOGUE
+from candleviewer.ws.metrics import CV_WS_NAMES, PRINCIPAL_LOAD_FAILURE_REASONS
 from candleviewer.ws.permissions import (
     ConnectionAuthz,
     ConnectionRegistry,
@@ -217,3 +220,79 @@ async def test_reevaluation_through_the_loader_revokes_and_never_raises(change: 
     await registry.grants_changed(USER)
     assert [f["t"] for f in sent] == ["sub_ok", "permission_change", "revoked"]
     assert conn.topics == set()
+
+
+# -- #571 (E17-T06, #2525 review): a failed load is counted ------------------------------------
+
+
+def _failures() -> dict[str, float]:
+    return {
+        reason: REGISTRY.get_sample_value("cv_ws_principal_load_failures_total", {"reason": reason})
+        or 0.0
+        for reason in PRINCIPAL_LOAD_FAILURE_REASONS
+    }
+
+
+def _moved(before: dict[str, float]) -> dict[str, float]:
+    return {r: n - before[r] for r, n in _failures().items() if n != before[r]}
+
+
+@pytest.mark.parametrize(
+    ("where", "exc"),
+    [
+        ("identity", LookupError("unknown user")),
+        ("identity", ValueError("unknown role")),
+        ("identity", OSError("connection refused")),
+        ("grants", RuntimeError("pool closed")),
+    ],
+)
+async def test_a_failed_load_counts_error_and_still_denies_all(where: str, exc: Exception) -> None:
+    identity, grants = _Identity(), _Grants()
+    (identity if where == "identity" else grants).fail = exc
+    before = _failures()
+    with capture_logs() as logs:
+        principal = await StorePrincipalLoader(identity, grants)(USER)
+    assert principal == _deny_all()  # fail-closed, as before
+    assert [e["event"] for e in logs] == [FAILED]  # the one line, unchanged
+    assert _moved(before) == {"error": 1.0}
+
+
+async def test_a_load_past_its_bound_counts_timeout() -> None:
+    grants = _Grants()
+    grants.hang = True
+    before = _failures()
+    async with asyncio.timeout(10):
+        principal = await StorePrincipalLoader(_Identity(), grants, timeout_s=0)(USER)
+    assert principal == _deny_all()
+    assert _moved(before) == {"timeout": 1.0}
+
+
+@pytest.mark.parametrize("status", ["active", "disabled"])
+async def test_a_load_that_answers_counts_nothing(status: str) -> None:
+    """A deny-all answer for a non-active user is the store's answer, not a failure."""
+    before = _failures()
+    await StorePrincipalLoader(_Identity(status=status), _Grants())(USER)
+    assert _moved(before) == {}
+
+
+async def test_a_cancelled_load_counts_nothing() -> None:
+    grants = _Grants()
+    grants.hang = True
+    before = _failures()
+    task = asyncio.create_task(StorePrincipalLoader(_Identity(), grants)(USER))
+    await grants.entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert _moved(before) == {}
+
+
+def test_the_failure_reasons_are_closed_and_bound_at_zero() -> None:
+    assert PRINCIPAL_LOAD_FAILURE_REASONS == ("timeout", "error")
+    for reason in PRINCIPAL_LOAD_FAILURE_REASONS:
+        value = REGISTRY.get_sample_value("cv_ws_principal_load_failures_total", {"reason": reason})
+        assert value is not None  # a series from import, so increase() sees the first failure
+    spec = next(s for s in CATALOGUE if s.name == "cv_ws_principal_load_failures_total")
+    assert (spec.kind, spec.labels, spec.status) == ("counter", ("reason",), "live")
+    assert spec.max_series == len(PRINCIPAL_LOAD_FAILURE_REASONS)
+    assert "cv_ws_principal_load_failures_total" in CV_WS_NAMES

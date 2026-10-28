@@ -497,6 +497,8 @@ Prevention is not enough; these must be visible as abuse, each with an audit act
 | Denied cross-account subscribes     | `ws.subscribe.denied`                | `cv_ws_subscribe_total{result}`                  | E01, I03 | merged (within the 23 §4.3 budget)       |
 | Revocation close failures           | —                                    | `ws_session_revocation_close_failures_total`     | E02      | merged; ticket `WsRevocationCloseFailed` |
 | Refused stale snapshots (SR-E17-07) | `ws.permission_snapshot.refused`     | `cv_ws_permission_snapshots_refused_total`       | E02      | merged (#2318)                           |
+| Failed WS principal loads (#2525)   | none, by design; one line per load   | `cv_ws_principal_load_failures_total{reason}`    | D02, E02 | merged (#571); dashboard, no alert       |
+| Deltas denied at publish (#2521)    | none, by design; capped log line     | `cv_ws_publish_denied_total{topic}`              | E02      | merged (#571); dashboard, no alert       |
 | Withheld `system` frames (SR-188)   | none, by design (no row per frame)   | `cv_ws_system_frames_withheld_total{reason}`     | I05      | merged (#3125)                           |
 | Audit write failures on the WS path | —                                    | `cv_ws_audit_failures_total{reason}`             | R04      | merged (#2174); `WsAuditWriteFailed`     |
 | Refused WS upgrades (Origin check)  | `auth.ws_origin_refused` (#2269)     | `cv_ws_closes_total{reason="origin_forbidden"}`  | S06      | merged (#2239; audit #2269)              |
@@ -513,6 +515,13 @@ A refused private-family `sub` entry is still in its frame's one `ws.subscribe.d
 change's `ws.subscription.revoked` row instead (23 §5.2, #2896).
 At the 200-subscription cap (#415) a refusal is counted as `subscription_limit`, whatever the topic would have
 got; a private family's row records that reason (accepted residual: classification only).
+
+A principal load at a first `auth` or a re-evaluation that raises still answers the deny-all snapshot; it is now
+counted by `reason` (`timeout` for its bound, `error` for the rest) beside its one log line. A delta that the
+publish-time check denies to a subscription its connection still holds is still sent nothing; it is now counted
+under its private family and logged (`ws delta denied at publish`) at most once per connection a minute, with a
+`suppressed` count. Neither writes an audit row: one per load or per delta would grow with the fan-out. Both
+series are bound at zero at import and carry no identifier.
 
 A `system` frame left out for its kind or its socket (`cv_ws_system_frames_withheld_total`) is a producer or
 session fault, not a user action, so it writes no audit row: one per socket and frame would grow with both.

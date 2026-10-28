@@ -64,7 +64,7 @@ from candleviewer.ws.binary import BOOK_SNAPSHOT, Frame
 from candleviewer.ws.gateway import GatewayHub
 from candleviewer.ws.limits import MACHINE_AUDIT_PENDING_MAX
 from candleviewer.ws.machines import MachineStateRegistry
-from candleviewer.ws.metrics import count_audit_failure
+from candleviewer.ws.metrics import PRINCIPAL_LOAD_FAILURES, count_audit_failure
 from candleviewer.ws.permissions import ConnectionAuthz, ConnectionRegistry, Subscription
 from candleviewer.ws.sequencing import (
     SequencingHub,
@@ -406,6 +406,8 @@ class StorePrincipalLoader:
 
     Fails closed and never raises. An unknown or non-active user, a role outside the system set,
     a store error, or a load slower than `PRINCIPAL_LOAD_TIMEOUT_S` yields the deny-all snapshot.
+    Each of those that raised is counted in `cv_ws_principal_load_failures_total` (`timeout` for
+    the bound, `error` for the rest; #571) and logged once; a non-active user is not a failure.
     Not raising matters on re-evaluation: an exception there would leave the live sockets on
     their previous, possibly wider, principal.
     """
@@ -425,6 +427,9 @@ class StorePrincipalLoader:
         try:
             return await self._load(user_id)
         except Exception as exc:  # LookupError (unknown user), ValueError (unknown role), store
+            # #571: counted by the one kind this `except` can tell apart, its own bound expiring
+            reason = "timeout" if isinstance(exc, TimeoutError) else "error"
+            PRINCIPAL_LOAD_FAILURES[reason].inc()
             logger().warning(
                 "ws principal load failed; denying all",
                 user_id=str(user_id),

@@ -2358,6 +2358,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         exported=True,
     ),
     _s(
+        "cv_ws_principal_load_failures_total",
+        "counter",
+        "loads",
+        ("reason",),
+        "WS principal loads that failed and answered the deny-all snapshot (#571, #2525): "
+        "timeout or error.",
+        "sustained: the identity store is unreachable or slow (dashboard)",
+        _L,
+        "E17",
+        max_series=2,  # the closed set: `ws.metrics.PRINCIPAL_LOAD_FAILURE_REASONS`
+        exported=True,
+    ),
+    _s(
         "cv_ws_closes_total",
         "counter",
         "closes",
@@ -2521,6 +2534,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         _L,
         "E17",
         max_series=4,
+        exported=True,
+    ),
+    _s(
+        "cv_ws_publish_denied_total",
+        "counter",
+        "deltas",
+        ("topic",),
+        "Deltas the publish-time check denied to a WS subscription its connection still held "
+        "(#571, #2521); topic holds the private family.",
+        "any: a re-evaluation not yet finished for a connection (dashboard)",
+        _L,
+        "E17",
+        max_series=16,  # 10 private families (`ws.sequencing.PUBLISH_DENIED_FAMILIES`), headroom
         exported=True,
     ),
     _s(
