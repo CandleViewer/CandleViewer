@@ -1,6 +1,9 @@
 export { SwatchLegendItem } from "./SwatchLegendItem.js";
 export type { DirectionalSwatchColor, SwatchLegendItemProps } from "./SwatchLegendItem.js";
 
+export { Tabs } from "./Tabs.js";
+export type { TabItem, TabsBaseProps, TabsProps } from "./Tabs.js";
+
 export { Tag } from "./Tag.js";
 export type { TagProps } from "./Tag.js";
 
@@ -29,6 +32,9 @@ export type { CopyButtonProps, CopyStatus, UseCopyOptions, UseCopyResult } from 
 export { Countdown } from "./Countdown.js";
 export type { CountdownFormat, CountdownPhase, CountdownProps } from "./Countdown.js";
 
+export { Dialog } from "./Dialog.js";
+export type { DialogCloseReason, DialogProps, DialogRole, DialogSize } from "./Dialog.js";
+
 export { Divider, DividerLabel } from "./Divider.js";
 export type { DividerLabelProps, DividerProps } from "./Divider.js";
 
@@ -56,6 +62,12 @@ export type {
 export { useFocusRing } from "./FocusRing.js";
 export type { FocusRingOptions, FocusRingProps } from "./FocusRing.js";
 
+export { FormField } from "./FormField.js";
+export type { FormFieldLayout, FormFieldProps } from "./FormField.js";
+
+export { FormSection } from "./FormSection.js";
+export type { FormSectionProps } from "./FormSection.js";
+
 export {
   GlobalErrorAnnouncement,
   GlobalErrorBoundaryFallback,
@@ -81,6 +93,9 @@ export type { ButtonProps } from "./Button.js";
 
 export { Callout } from "./Callout.js";
 export type { CalloutAction, CalloutLive, CalloutProps, CalloutTone } from "./Callout.js";
+
+export { Card } from "./Card.js";
+export type { CardProps } from "./Card.js";
 
 export { IconButton } from "./IconButton.js";
 export type { IconButtonProps } from "./IconButton.js";
@@ -142,6 +157,9 @@ export { RbacGate } from "./RbacGate.js";
 export type { RbacGateChild, RbacGateProps } from "./RbacGate.js";
 export { RBAC_REASONS, formatRbacReason } from "./rbacReasons.js";
 export type { RbacReasonArgs, RbacReasonFills, RbacReasonKey } from "./rbacReasons.js";
+
+export { SearchBox } from "./SearchBox.js";
+export type { SearchBoxProps } from "./SearchBox.js";
 
 export { SegmentedControl } from "./SegmentedControl.js";
 export type {

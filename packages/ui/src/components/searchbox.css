@@ -1,0 +1,28 @@
+/*
+ * CMP-054 SearchBox (E05-S03, D02F CMP-054, conventions 21, 29): the CMP-007 well (fields.css) with a leading
+ * `search` glyph and a trailing CMP-002 ghost clear button. Tokens only; no motion.
+ * The clear button is size.control.height square and flush with the well's end: it overlaps the well's boundary
+ * by the boundary's width and paints no fill under its own transparent edge, so the boundary shows over it, the
+ * target stays 24 x 24 (32 x 32) and the well never grows.
+ */
+.cv-searchbox .cv-field > .cv-icon-button {
+  margin-block: calc(var(--cv-field-bw) * -1);
+  margin-inline-end: calc(var(--cv-field-bw) * -1);
+  background-clip: padding-box;
+}
+
+/* The native field's own clear control and decoration: the component draws its own, named, button. */
+.cv-searchbox .cv-field__input::-webkit-search-cancel-button,
+.cv-searchbox .cv-field__input::-webkit-search-decoration {
+  appearance: none;
+}
+
+@media (forced-colors: active) {
+  .cv-searchbox .cv-field > .cv-icon-button {
+    color: ButtonText;
+  }
+
+  .cv-searchbox .cv-field[data-disabled] > .cv-icon-button {
+    color: GrayText;
+  }
+}

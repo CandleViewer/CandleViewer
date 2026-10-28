@@ -1,0 +1,115 @@
+/*
+ * CMP-065 FormSection (E05-S03, D02F CMP-065, G14, conventions 24, 29): a fieldset with no border or padding of its
+ * own (the panel pads), a legend that holds the heading, then the description, the T2 notice and the fields.
+ * Tokens only. Expand and collapse are instant in both motion modes: no transition of any kind.
+ */
+.cv-formsection {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.cv-formsection + .cv-formsection {
+  margin-block-start: var(--space-stack-lg);
+}
+
+/* The heading line: the heading, then the errors-within line; it wraps, never clips. */
+.cv-formsection__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-inset-sm);
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0;
+}
+
+.cv-formsection__heading {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* The disclosure button spans the heading line, at least size.control.height (24 px compact) tall. */
+.cv-formsection__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  box-sizing: border-box;
+  min-height: var(--size-control-height);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+
+.cv-formsection__chevron {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--color-text-secondary);
+}
+
+.cv-formsection__errors {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-inset-xs);
+  color: var(--color-text-primary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+}
+
+.cv-formsection__glyph {
+  display: inline-flex;
+  flex: none;
+  width: var(--size-icon);
+  height: var(--size-icon);
+  color: var(--color-status-danger-strong);
+}
+
+/* Description and the T2 notice: caption in text.secondary, space.stack.xs under the line above. */
+.cv-formsection__description,
+.cv-formsection__notice {
+  margin: 0;
+  padding-block-start: var(--space-stack-xs);
+  color: var(--color-text-secondary);
+  font: var(--type-ui-caption-font-weight) var(--type-ui-caption-font-size) /
+    var(--type-ui-caption-line-height) var(--type-ui-caption-font-family);
+  overflow-wrap: anywhere;
+}
+
+.cv-formsection__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-stack-md);
+  padding-block-start: var(--space-stack-md);
+}
+
+/* Collapsed: the fields leave the layout and the Tab order (the author rule would lose to display: flex). */
+.cv-formsection__body[hidden] {
+  display: none;
+}
+
+@media (forced-colors: active) {
+  .cv-formsection__heading,
+  .cv-formsection__notice,
+  .cv-formsection__description,
+  .cv-formsection__errors,
+  .cv-formsection__toggle {
+    color: CanvasText;
+  }
+
+  .cv-formsection__chevron,
+  .cv-formsection__glyph {
+    color: currentcolor;
+  }
+}

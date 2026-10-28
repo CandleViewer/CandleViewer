@@ -8,8 +8,8 @@ import {
   type MouseEvent,
 } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
-import { cx } from "./internal/cx.js";
+import { ReasonText } from "./internal/disabledReason.js";
+import { useFieldControl } from "./internal/fieldContext.js";
 import { FieldMessage, focusFieldInput, useRefusalAnnounce } from "./internal/fieldParts.js";
 import {
   formatNumeric,
@@ -27,6 +27,7 @@ export interface NumericStepperInputProps {
   /** Names the field by an element instead; `label` still names the step buttons. */
   "aria-labelledby"?: string;
   "aria-describedby"?: string;
+  /** Outside a field only: inside a CMP-040 FormField the field's id wins; set it there through `htmlFor`. */
   id?: string;
   name?: string;
   placeholder?: string;
@@ -103,7 +104,6 @@ export function NumericStepperInput({
   readOnly = false,
   density,
 }: NumericStepperInputProps): JSX.Element {
-  const reason = useDisabledReason(disabled, disabledReason);
   const errorId = useId();
   const noteId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -112,6 +112,15 @@ export function NumericStepperInput({
   // An edit belongs to the value it was typed against: a host that moves the value discards it.
   // `Object.is`, not `===`: a draft typed against a NaN value must survive (NaN !== NaN).
   const edit = typed !== null && Object.is(typed.base, value) ? typed : null;
+  const typedError = edit?.error ?? null;
+  // Inside a CMP-040 FormField the field draws the message and the reason; the atom draws neither.
+  const control = useFieldControl(
+    disabled,
+    disabledReason,
+    invalid || typedError !== null,
+    typedError ?? errorMessage,
+  );
+  const { reason } = control;
   const rounded = edit === null && roundedTo === value;
   const frozen = reason.gated || readOnly;
   const range = { ...(min === undefined ? {} : { min }), ...(max === undefined ? {} : { max }) };
@@ -223,15 +232,14 @@ export function NumericStepperInput({
     else stepBy(direction, step, 1);
   };
 
-  const typedError = edit?.error ?? null;
-  const shownInvalid = invalid || typedError !== null;
+  const shownInvalid = control.invalid;
   const message = typedError ?? errorMessage;
   const hasSuffix = suffix !== undefined && suffix !== "";
   const atMin = min !== undefined && value <= min;
   const atMax = max !== undefined && value >= max;
-  const description = reason.gated
-    ? reason.ariaDescribedBy
-    : cx(errorId, noteId, describedBy) || undefined;
+  // In a field the `<label for>` names the input; `label` still names the step buttons.
+  const ownName = labelledBy === undefined && control.field === null ? label : undefined;
+  const description = control.describe(control.ownLines && errorId, noteId, describedBy);
   const button = (direction: StepDirection, atBound: boolean): JSX.Element => (
     <button
       type="button"
@@ -272,7 +280,7 @@ export function NumericStepperInput({
           ) : null}
           <input
             ref={inputRef}
-            id={id}
+            id={control.field?.controlId ?? id}
             name={name}
             placeholder={placeholder}
             type="text"
@@ -284,7 +292,7 @@ export function NumericStepperInput({
             value={edit?.text ?? formatNumeric(value, precision)}
             disabled={reason.disabled}
             readOnly={frozen}
-            aria-label={labelledBy === undefined ? label : undefined}
+            aria-label={ownName}
             aria-labelledby={labelledBy}
             aria-valuenow={Number.isFinite(value) && edit?.text !== "" ? value : undefined}
             aria-valuemin={min}
@@ -301,6 +309,7 @@ export function NumericStepperInput({
             aria-readonly={readOnly && !reason.gated ? true : undefined}
             aria-disabled={reason.ariaDisabled}
             aria-invalid={shownInvalid ? true : undefined}
+            aria-required={control.required}
             aria-describedby={description}
             onChange={onInput}
             {...refusal.handlers}
@@ -314,11 +323,15 @@ export function NumericStepperInput({
         {button("down", atMin)}
         {button("up", atMax)}
       </div>
-      <FieldMessage id={errorId} message={shownInvalid ? message : undefined} />
+      {control.ownLines ? (
+        <FieldMessage id={errorId} message={shownInvalid ? message : undefined} />
+      ) : null}
       <div id={noteId} className="cv-field__caption" aria-live="polite">
         {rounded ? ROUNDED : null}
       </div>
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {control.reasonFromField ? null : (
+        <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      )}
       {refusal.status}
     </div>
   );

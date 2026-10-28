@@ -10,8 +10,8 @@ import {
   type MouseEvent,
 } from "react";
 import { Icon } from "../icons/Icon.js";
-import { ReasonText, useDisabledReason } from "./internal/disabledReason.js";
-import { cx } from "./internal/cx.js";
+import { ReasonText } from "./internal/disabledReason.js";
+import { useFieldControl } from "./internal/fieldContext.js";
 import { FieldMessage, useRefusalAnnounce } from "./internal/fieldParts.js";
 import {
   extendTyped,
@@ -119,7 +119,11 @@ const labelOf = (option: SelectOption): string => option.label;
 /** Never chosen, by key or pointer: every kind of denied option. */
 const blocked = (option: SelectOption): boolean => look(option).kind !== undefined;
 
-/** CMP-009: the select-only combobox (APG). Focus stays on the trigger; `aria-activedescendant` names the option. */
+/**
+ * CMP-009: the select-only combobox (APG). Focus stays on the trigger; `aria-activedescendant` names the option.
+ * Inside a CMP-040 FormField the field's label names it (`aria-labelledby`: a div is not labelable) and the field
+ * draws the error and reason lines; the atom draws neither.
+ */
 export function Select({
   options,
   value,
@@ -134,7 +138,13 @@ export function Select({
   disabledReason,
   density,
 }: SelectProps): JSX.Element {
-  const reason = useDisabledReason(disabled, disabledReason);
+  const control = useFieldControl(disabled, disabledReason, invalid, errorMessage, {
+    labelable: false,
+  });
+  const { reason } = control;
+  const labelledBy =
+    ariaLabelledBy ??
+    (control.field !== null && ariaLabel === undefined ? control.field.labelId : undefined);
   const errorId = useId();
   const listId = useId();
   const anchorRef = useRef<HTMLDivElement>(null);
@@ -336,7 +346,7 @@ export function Select({
 
   // Announced politely: only a press on the active reason option (Enter, Space, Alt+Up or a click), never an arrival.
   const said = open && recall.index === current ? look(options[current] ?? NONE).reason : undefined;
-  const description = reason.gated ? reason.ariaDescribedBy : cx(errorId, describedBy) || undefined;
+  const description = control.describe(control.ownLines && errorId, describedBy);
   const unavailable = reason.gated || reason.disabled;
   // A plain-disabled trigger is not focusable at all (a press never focuses it), like a native disabled control.
   const triggerTabIndex = reason.disabled ? undefined : 0;
@@ -346,7 +356,7 @@ export function Select({
       <div className="cv-select__anchor" ref={anchorRef}>
         <div
           className="cv-field"
-          data-invalid={invalid ? "" : undefined}
+          data-invalid={control.invalid ? "" : undefined}
           data-gated={reason.gated ? "" : undefined}
           data-disabled={reason.disabled ? "" : undefined}
         >
@@ -354,6 +364,7 @@ export function Select({
           {/* eslint-disable-next-line jsx-a11y/aria-activedescendant-has-tabindex -- see above */}
           <div
             role="combobox"
+            id={control.field?.controlId}
             className="cv-select__trigger"
             tabIndex={triggerTabIndex}
             aria-haspopup="listbox"
@@ -361,9 +372,10 @@ export function Select({
             aria-controls={open ? listId : undefined}
             aria-activedescendant={open && current >= 0 ? optionId(current) : undefined}
             aria-label={ariaLabel}
-            aria-labelledby={ariaLabelledBy}
+            aria-labelledby={labelledBy}
             aria-describedby={description}
-            aria-invalid={invalid ? true : undefined}
+            aria-invalid={control.invalid ? true : undefined}
+            aria-required={control.required}
             aria-disabled={unavailable ? true : undefined}
             onClick={onTriggerClick}
             onKeyDown={refusal.handlers.onKeyDown}
@@ -397,7 +409,7 @@ export function Select({
             data-placement={fit.placement}
             style={fitStyle(fit)}
             aria-label={ariaLabel}
-            aria-labelledby={ariaLabelledBy}
+            aria-labelledby={labelledBy}
             onMouseDown={keepFocus}
           >
             {options.map((option, index) => {
@@ -450,8 +462,12 @@ export function Select({
           </div>
         ) : null}
       </div>
-      <FieldMessage id={errorId} message={invalid ? errorMessage : undefined} />
-      <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      {control.ownLines ? (
+        <FieldMessage id={errorId} message={invalid ? errorMessage : undefined} />
+      ) : null}
+      {control.reasonFromField ? null : (
+        <ReasonText id={reason.reasonId}>{reason.reason}</ReasonText>
+      )}
       {refusal.status}
       {options.some((option) => look(option).reason !== undefined) ? (
         <span className="cv-visually-hidden" role="status">

@@ -18,3 +18,143 @@ the sentence to the atom's own `disabledReason`, so the atom stays focusable wit
 `aria-disabled="true"` and its reason as the accessible description. It has no keys of its own:
 Enter, Space and a click on a denied control do nothing. Only the inline form ships; the tooltip and
 notice forms follow CMP-016 Tooltip.
+
+## Keyboard
+
+Each component's keyboard table lives here (the WAI-ARIA pattern it follows, then keys and actions),
+with its accessible name and role table.
+
+### FormField (CMP-040, no widget pattern: a labelled-field wrapper)
+
+| Keys                      | Action                                                                                                |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab           | The child's Tab order; the field adds no stop of its own.                                             |
+| Any key in the control    | The child's own keys (CMP-007, CMP-008, CMP-009); the field handles none.                             |
+| Pointer press (the label) | Focuses the control: natively through `<label for>`, and by a handler for an `aria-labelledby` child. |
+
+| Element      | Role                                                   | Name                         | ARIA                                                                                                  |
+| ------------ | ------------------------------------------------------ | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
+| label        | `<label for>`; without `for` for a non-labelable child | —                            | `id` = `labelId`, the `aria-labelledby` target of a radiogroup, slider, grid or div combobox          |
+| control      | its own                                                | the label, with "(optional)" | `aria-describedby`: the error id, then the help id (the reason id alone while T2); `aria-required`    |
+| error node   | none                                                   | —                            | `aria-live="polite"`, `aria-atomic="true"`, in the DOM at mount, empty while valid; never shown in T2 |
+| help, reason | text                                                   | —                            | referenced, not live; while T2 the help line stays visible but leaves the description                 |
+| lock glyph   | img (the child's, in its well)                         | "Not available"              | CMP-019 `decorative=false`                                                                            |
+| error glyph  | none                                                   | —                            | `aria-hidden="true"`                                                                                  |
+
+Inside a FormField, TextInput, Select and NumericStepperInput draw no error or reason line of their
+own: the field draws each once. A stepper's own parse message ("Maximum 100") shows in the field's
+error line. Outside a FormField the atoms keep their own lines.
+
+The field owns the control's id: a field atom takes the field's `htmlFor` (or a generated id) over
+any id of its own, so set a control's id on the field. RadioGroup, Slider, SegmentedControl and
+Checkbox do not read the field yet; name them with `aria-labelledby` set to the field's `labelId`
+until a later E05-S03 (#266) slice wires them.
+
+### FormSection (CMP-065, collapsible: the WAI-ARIA APG Disclosure pattern)
+
+| Keys                       | Action                                                                                               |
+| -------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Tab / Shift+Tab            | The disclosure button (collapsible only), then the fields; a collapsed section's fields are skipped. |
+| Enter / Space (the button) | Shows or hides the fields; focus stays on the button.                                                |
+| Submit (the host's form)   | A collapsed section around an invalid field opens, and focus reaches the field.                      |
+
+| Element           | Role                           | Name                      | ARIA                                                                                     |
+| ----------------- | ------------------------------ | ------------------------- | ---------------------------------------------------------------------------------------- |
+| section           | group (`<fieldset>`)           | the legend's heading text | `aria-labelledby` → the heading; `aria-describedby` → the description                    |
+| heading           | heading, `h{headingLevel}` (3) | `title`                   | inside the `<legend>`                                                                    |
+| disclosure button | button                         | `title`                   | `aria-expanded`, `aria-controls` → the body; `aria-describedby` → the errors-within line |
+| errors within     | text                           | —                         | "2 problems" with the `danger` glyph (`aria-hidden`), shown only while collapsed         |
+| T2 notice         | text                           | —                         | the `aria-describedby` target of every gated field inside (one notice, many pointers)    |
+
+The count is `errorCount`, else the FormFields inside that show an error. A native constraint
+failure (`required`) opens the section before the browser moves focus; a host-validated error opens
+it in the render after the submit, and focus moves to the first invalid control unless it is
+already on one. Plain disabled is `<fieldset disabled>`; the disclosure button, inside the legend,
+stays usable. The T2 gate reaches FormFields only: a bare control inside the section is not wired.
+
+### SearchBox (CMP-054, no widget pattern: a native search field)
+
+| Keys                   | Action                                                                  |
+| ---------------------- | ----------------------------------------------------------------------- |
+| Tab / Shift+Tab        | The field, then the clear button when it shows.                         |
+| Typing                 | Changes the query; the host filters after its debounce or on Enter.     |
+| Esc                    | Clears a non-empty query and keeps focus; on an empty query it bubbles. |
+| Enter / Space on Clear | Clears; focus returns to the field.                                     |
+
+| Element      | Role                                       | Name                         | ARIA                                                        |
+| ------------ | ------------------------------------------ | ---------------------------- | ----------------------------------------------------------- |
+| field        | searchbox (native `<input type="search">`) | `label` through `aria-label` | the placeholder is never the name; `disabled` when disabled |
+| search glyph | none                                       | —                            | `aria-hidden="true"`                                        |
+| clear button | button                                     | "Clear search"               | rendered only with a value                                  |
+
+The host announces its result count, politely, once per settled query. A search is a read and is
+never gated, so SearchBox has no `disabledReason`.
+
+Each component's keyboard table lives here (the WAI-ARIA pattern it follows, then keys and actions), then its
+roles and names.
+
+### Card (CMP-050, no pattern of its own)
+
+| Keys | Action                                                                                                                                               |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| None | Not focusable and never clickable as a whole. Its actions and content own their keys, in DOM order: the header (title, then actions), then the body. |
+
+| Element | Role                                   | Name                            | Notes                                                                                       |
+| ------- | -------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------- |
+| card    | none, or `region` when `region` is set | its heading (`aria-labelledby`) | A region only for a landmark-worthy tile (J11); `region` requires a `title`.                |
+| title   | heading at `headingLevel` (2–4)        | its text                        | Default level 3. `headingLevel={0}` renders plain text, for a card inside a listbox option. |
+| actions | their own                              | their own                       | An icon-only action's `aria-label` includes the card's title (CMP-002's rule).              |
+
+### Tabs (CMP-042, APG Tabs)
+
+| Keys                                    | Action                                                                                                                                 |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Tab                                     | Into the tablist onto the selected tab (roving `tabindex`); the next Tab goes into the panel.                                          |
+| → / ← (↓ / ↑ when vertical)             | Next / previous tab, wrapping; the other axis is not handled. Automatic: selects it. Manual (`activation="manual"`): moves focus only. |
+| Home / End                              | First / last tab, as the arrows.                                                                                                       |
+| Enter / Space                           | Manual: selects the focused tab. Automatic: nothing more.                                                                              |
+| An arrow, Home or End onto a gated tab  | Focus lands on it and nothing is selected, silently: the name, "unavailable" and the reason are its description.                       |
+| Enter / Space or a press on a gated tab | Nothing is selected; the reason is announced once, politely, per press.                                                                |
+| Alt / Ctrl / Meta chords                | Not handled, on a gated tab too: the browser's and the host's.                                                                         |
+
+| Element | Role     | Name                                                    | Notes                                                                                                             |
+| ------- | -------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| tablist | tablist  | the host's `aria-label` or `aria-labelledby` (required) | `aria-orientation="vertical"` when vertical.                                                                      |
+| tab     | tab      | its visible label                                       | `aria-selected`, `aria-controls` its panel; gated: `aria-disabled="true"` and `aria-describedby` the reason line. |
+| panel   | tabpanel | its tab (`aria-labelledby`)                             | Only the selected panel is mounted; `tabindex="0"` while it holds nothing focusable (J10).                        |
+| reason  | none     | —                                                       | One caption line under the strip per distinct reason; tabs gated for the same sentence point at one line.         |
+| status  | status   | —                                                       | Visually hidden; filled only when a gated tab is pressed, cleared when focus moves on.                            |
+
+A switch never moves focus off the tab, and a panel that takes focus as it mounts (an `autoFocus` or an effect)
+gives it back to the tab. Selection and the panel swap are cuts. The strip scrolls in one row; it never wraps or hides
+a tab.
+
+### Dialog (CMP-043, APG Dialog (Modal); Alert Dialog for `role="alertdialog"`)
+
+| Keys                 | Action                                                                                                                                        |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| On open              | Focus to `initialFocusRef` (or the first tab stop inside it), else the first field, else the heading. An alertdialog passes its Cancel (H32). |
+| Tab / Shift+Tab      | Cycle inside the card, in DOM order; the page under it is inert.                                                                              |
+| Esc                  | Closes the topmost layer only: a tooltip, then a popover or menu, then the dialog. Focus returns to the opener, else `fallbackFocusRef`.      |
+| A press on the scrim | Cancel for a `dialog`; nothing for an `alertdialog`.                                                                                          |
+| Enter / Space        | The focused control's own; the dialog adds none.                                                                                              |
+
+| Element | Role                   | Name                                           | ARIA                                                                                            |
+| ------- | ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| card    | dialog or alertdialog  | the title (`aria-labelledby`), or `aria-label` | `aria-modal="true"`; `aria-describedby` → the description; `aria-busy` while busy               |
+| title   | heading, `h2`          | its text                                       | `tabindex="-1"`: the fallback focus target                                                      |
+| close   | button (`dialog` only) | "Close {title}"                                | CMP-002 `ghost`                                                                                 |
+| body    | none, or group         | the title, when it is a Tab stop               | a body that scrolls with no control in it takes `tabindex="0"` so the keyboard can scroll it    |
+| scrim   | none                   | —                                              | `aria-hidden="true"`; the page under it `inert` (`aria-hidden` where the engine has no `inert`) |
+
+`onOpenChange(false, reason)` reports `escape`, `scrim` or `close`; the host decides. A lock ignores
+`Esc` by keeping `open`; a form with unsaved changes opens its own stacked CMP-044 alertdialog
+("Discard unsaved changes?", H36), whose `Esc` returns to the form as it was. While open, every
+subtree outside the dialog's layer is inert except elements marked `data-cv-inert-exempt` (the
+shell's TopBar, env band, StatusBar and announcer regions, H23); the shell can inset the scrim with
+`--cv-scrim-inset-top` and `--cv-scrim-inset-bottom`. The page does not scroll, and the scrollbar's
+width is given back as padding (`--cv-scroll-lock-gutter` for fixed bars), so nothing shifts. A
+Popover, Tooltip or nested Dialog rendered inside portals into the dialog's layer. There is no
+NoEscClose: `Esc` always cancels before a send, and closes the view after one (H22). `busy` sets only
+`aria-busy` on the card; the dialog does not drive its footer, so the host sets its primary
+action's `loading` itself.

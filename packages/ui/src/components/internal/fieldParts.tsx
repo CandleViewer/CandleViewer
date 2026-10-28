@@ -28,7 +28,7 @@ export function FieldMessage({
 }): JSX.Element {
   const shown = message !== undefined && message !== "";
   return (
-    <div id={id} className="cv-field__message" aria-live="polite">
+    <div id={id} className="cv-field__message" aria-live="polite" aria-atomic="true">
       {shown ? (
         <>
           <span className="cv-field__glyph">
@@ -96,7 +96,9 @@ export function useRefusalAnnounce<E extends HTMLElement = HTMLInputElement>(
       onKeyDown: (event) => {
         callers.onKeyDown?.(event);
         const refused =
-          typeof extra === "function" ? isRefusedKey(event, NO_KEYS) || extra(event) : isRefusedKey(event, extra);
+          typeof extra === "function"
+            ? isRefusedKey(event, NO_KEYS) || extra(event)
+            : isRefusedKey(event, extra);
         if (!gated || !refused) return;
         // readonly stops the edit, not implicit form submission or an unlisted default: stop them here.
         event.preventDefault();
