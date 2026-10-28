@@ -165,6 +165,19 @@ describe("Menu (CMP-041) keyboard", () => {
     expect(trigger()).toHaveFocus();
   });
 
+  it("a pointer click on a checkable item behaves like Enter: it toggles and closes", async () => {
+    const onSelect = fn();
+    const items: MenuItem[] = [
+      { id: "lock", label: "Lock scale", kind: "checkbox", checked: true, onSelect },
+    ];
+    await renderMenu({ items });
+    await openWith("{Enter}");
+    await userEvent.click(page.getByRole("menuitemcheckbox", { name: "Lock scale" }));
+    expect(onSelect).toHaveBeenCalledOnce();
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(trigger()).toHaveFocus();
+  });
+
   it("Space activates an action item and closes", async () => {
     const onSelect = fn();
     await renderMenu({ items: treeRow(onSelect) });
@@ -193,6 +206,14 @@ describe("Menu (CMP-041) keyboard", () => {
     await openWith("{Enter}");
     await userEvent.tab({ shift: true });
     expect(page.getByRole("button", { name: "Before" })).toHaveFocus();
+  });
+
+  it("Shift+Tab with no earlier tab stop closes it and leaves focus on the trigger", async () => {
+    await mount(<Menu trigger={<Button>Row actions</Button>} items={treeRow()} />);
+    await openWith("{Enter}");
+    await userEvent.tab({ shift: true });
+    expect(trigger()).toHaveFocus();
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
   });
 });
 
@@ -252,6 +273,18 @@ describe("Menu (CMP-041) items", () => {
     expect(status).toHaveTextContent("Only the owner can change account settings.");
     await press("{ArrowDown}");
     expect(status).toHaveTextContent("");
+  });
+
+  it("hovering moves focus to the row's item, gated, disabled and busy rows too, without activating", async () => {
+    const onSelect = fn();
+    await renderMenu({ items: states.map((item) => ({ ...item, onSelect })) });
+    await openWith("{Enter}");
+    for (const name of ["Edit risk caps", "Flatten account…", "Export"]) {
+      const item = page.getByRole("menuitem", { name });
+      await userEvent.hover(item);
+      expect(item).toHaveFocus();
+    }
+    expect(onSelect).not.toHaveBeenCalled();
   });
 
   it("a busy item is described by its host's line; the label ends with … when it opens a confirm", async () => {
@@ -314,10 +347,86 @@ describe("Menu (CMP-041) items", () => {
 });
 
 describe("Menu (CMP-041) dismissal and layers", () => {
-  it("an outside press closes it", async () => {
-    await renderMenu();
+  it("an outside press closes it once and leaves focus where the press lands", async () => {
+    const onOpenChange = fn();
+    await renderMenu({ onOpenChange });
     await openWith("{Enter}");
-    await userEvent.click(page.getByRole("button", { name: "After" }));
+    const after = page.getByRole("button", { name: "After" });
+    await userEvent.click(after);
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(after).toHaveFocus();
+    expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("a press on the trigger while open closes it exactly once", async () => {
+    const onOpenChange = fn();
+    await renderMenu({ onOpenChange });
+    await userEvent.click(trigger());
+    await userEvent.click(trigger());
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(onOpenChange.mock.calls).toEqual([[true], [false]]);
+  });
+
+  it("focus leaving the menu closes it and stays where it went", async () => {
+    const onOpenChange = fn();
+    await renderMenu({ onOpenChange });
+    await openWith("{Enter}");
+    const after = page.getByRole("button", { name: "After" });
+    act(() => after.focus());
+    expect(trigger()).toHaveAttribute("aria-expanded", "false");
+    expect(after).toHaveFocus();
+    expect(onOpenChange).toHaveBeenLastCalledWith(false);
+  });
+
+  it("focus moving into a layer opened above it does not close it", async () => {
+    function Host(): JSX.Element {
+      const [dialog, setDialog] = useState(false);
+      const items: MenuItem[] = [
+        { id: "cfg", label: "Configure", kind: "checkbox", onSelect: () => setDialog(true) },
+      ];
+      return (
+        <>
+          <Menu trigger={<Button>Row actions</Button>} items={items} />
+          <Dialog open={dialog} title="Configure" onOpenChange={setDialog}>
+            <Button>Inside</Button>
+          </Dialog>
+        </>
+      );
+    }
+    await mount(<Host />);
+    await openWith("{Enter}");
+    await act(async () => {
+      await press(" ");
+    });
+    const dialog = page.getByRole("dialog", { name: "Configure" });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    // The page under the dialog is inert, so the trigger is out of the accessibility tree.
+    const button = page.getByRole("button", { name: "Row actions", hidden: true });
+    expect(button).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("a trigger remounted while a controlled menu is open still takes focus back", async () => {
+    let rekey = noop;
+    function Host(): JSX.Element {
+      const [open, setOpen] = useState(false);
+      const [key, setKey] = useState(0);
+      rekey = () => setKey((k) => k + 1);
+      return (
+        <Menu
+          open={open}
+          onOpenChange={setOpen}
+          trigger={<Button key={key}>Row actions</Button>}
+          items={treeRow()}
+        />
+      );
+    }
+    await mount(<Host />);
+    await openWith("{Enter}");
+    const first = trigger();
+    act(() => rekey());
+    expect(trigger()).not.toBe(first);
+    await press("{Escape}");
+    expect(trigger()).toHaveFocus();
     expect(trigger()).toHaveAttribute("aria-expanded", "false");
   });
 

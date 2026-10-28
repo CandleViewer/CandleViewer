@@ -302,18 +302,20 @@ it as CMP-015 rows, or fail as a CMP-027 inline error with Retry (`error`, `onRe
 
 ### Menu (CMP-041, APG Menu Button and Menu)
 
-| Keys                                         | Action                                                                                                   |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Enter / Space / ↓ on the trigger             | Opens on the first item; a menu whose items all pick one value (radio) opens on its checked item.        |
-| ↑ on the trigger                             | Opens on the last item.                                                                                  |
-| ↓ / ↑, Home / End                            | Next / previous item, wrapping; first / last. Separators and group captions are skipped.                 |
-| A printable character                        | Type-ahead: the next item whose label starts with the typed text (a 500 ms window; one letter cycles).   |
-| Enter                                        | Activates the item and closes; focus returns to the trigger before the item runs (or a dialog takes it). |
-| Space                                        | Activates an action item and closes; toggles a checkbox or radio item and keeps the menu open.           |
-| Enter / Space on a disabled, busy or T2 item | Nothing runs; a T2 item's reason is announced once, politely, per press.                                 |
-| Esc                                          | Closes the menu (the topmost layer only); focus returns to the trigger.                                  |
-| Tab / Shift+Tab                              | Closes the menu and moves on from the trigger.                                                           |
-| A press outside                              | Closes the menu; focus goes where the press lands.                                                       |
+| Keys                                         | Action                                                                                                    |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Enter / Space / ↓ on the trigger             | Opens on the first item; a menu whose items all pick one value (radio) opens on its checked item.         |
+| ↑ on the trigger                             | Opens on the last item.                                                                                   |
+| ↓ / ↑, Home / End                            | Next / previous item, wrapping; first / last. Separators and group captions are skipped.                  |
+| A printable character                        | Type-ahead: the next item whose label starts with the typed text (a 500 ms window; one letter cycles).    |
+| Enter                                        | Activates the item and closes; focus returns to the trigger before the item runs (or a dialog takes it).  |
+| Space                                        | Activates an action item and closes; toggles a checkbox or radio item and keeps the menu open.            |
+| Enter / Space on a disabled, busy or T2 item | Nothing runs; a T2 item's reason is announced once, politely, per press.                                  |
+| Esc                                          | Closes the menu (the topmost layer only); focus returns to the trigger.                                   |
+| Tab / Shift+Tab                              | Closes the menu and moves on from the trigger (focus stays on the trigger when there is no earlier stop). |
+| A pointer click on an item                   | Like Enter: activates and closes, a checkbox or radio item too (only Space keeps the menu open).          |
+| Pointer hover on an item                     | Moves focus to it, a disabled, busy or T2 item too; nothing runs.                                         |
+| A press outside                              | Closes the menu; focus goes where the press lands.                                                        |
 
 | Element       | Role                                        | Name                                             | ARIA                                                                                                        |
 | ------------- | ------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
@@ -330,6 +332,6 @@ Each item is a row (`role="none"`, the hit target and the look) around the `menu
 alone, so the name is the visible label; the second line and the shortcut are its description and
 `aria-keyshortcuts`. The host owns `checked`: an item's `onSelect` toggles it. The menu is anchored below its
 trigger (above when there is no room), at least as wide as the trigger, its height capped to the room and
-scrolling. It opens at once and fades out over `fast` (a cut under reduced motion). Inside a CMP-043 Dialog it
+scrolling. It opens at once and fades out over `fast` (a cut under reduced motion). Focus leaving the menu closes it, unless it moves into a layer opened above it (a dialog a checkable item opens). Inside a CMP-043 Dialog it
 portals into the dialog's layer. Submenus and the context trigger (`Shift+F10`, the Menu key, a right-click) are
 the next slice.

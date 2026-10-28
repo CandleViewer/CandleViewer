@@ -205,19 +205,24 @@ export function Menu({
   const triggerId = triggerElement.props.id ?? `${id}-trigger`;
   const itemId = (index: number): string => `${id}-item-${String(index)}`;
 
+  // What this menu last reported or rendered: an outside press and the focus loss it causes report one close.
+  const reported = useRef(open);
+  reported.current = open;
   const change = (next: boolean): void => {
+    if (reported.current === next) return;
+    reported.current = next;
     setHeld(next);
     onOpenChange?.(next);
   };
   const latest = useRef(change);
   latest.current = change;
 
-  // A controlled open has no press to read the trigger from: it is the element that controls this id.
+  // A controlled open has no press to read the trigger from, and a trigger may remount while the menu stays
+  // open: every open render re-resolves it by its id unless the held element is still in the document.
   useLayoutEffect(() => {
-    if (!open) return;
-    for (const element of document.querySelectorAll<HTMLElement>("[aria-controls]"))
-      if (element.getAttribute("aria-controls") === id) trigger.current = element;
-  }, [open, id]);
+    if (!open || trigger.current?.isConnected === true) return;
+    trigger.current = document.getElementById(triggerId);
+  });
 
   useAnchoredPosition({ open, reference: trigger, floating: surface, side: "bottom", fit: true });
 
@@ -297,6 +302,7 @@ export function Menu({
       item.onSelect();
       return;
     }
+    // A pointer click behaves like Enter, so it closes even on a checkable item (only Space keeps it open).
     // Focus is on the trigger before the host runs, so a dialog the item opens returns there.
     closeTo();
     item.onSelect();
@@ -351,6 +357,7 @@ export function Menu({
         break;
     }
     if (key.length !== 1) return;
+    // Space is the activation key above (APG), so type-ahead never matches past a space ("Move u" at most).
     // Type-ahead (APG): printables extend a short-lived string; the next label that starts with it takes focus.
     const next = extendTyped(typed.current, key, now());
     typed.current = next;
