@@ -1149,7 +1149,7 @@ _DECLARED_AHEAD_OF_THE_EMITTER = frozenset({"trades"})
 def test_the_families_that_disclose_are_those_whose_schema_declares_coalesced() -> None:
     """§8.2 (#3268): the emitter discloses a merge on exactly the families whose payload schema
     declares `coalesced` (§14, §15), never on another (`machines`, §15.10), but for the families
-    the contract declares it on ahead of their publisher."""
+    the contract declares it on ahead of their publisher (`trades`, #654)."""
     from candleviewer.ws.sequencing import COALESCE_FIELDS, MERGE_DISCLOSED  # local: added by #3268
 
     declared = {

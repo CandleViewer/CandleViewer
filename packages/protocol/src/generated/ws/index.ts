@@ -2004,7 +2004,7 @@ export interface TradesSymbol {
     is_liquidation?: boolean;
     cluster_size?: number;
     /**
-     * The big-trade engine's flag against the effective threshold (24 §2.10); never recomputed by a client. On a cluster, true when any member is flagged (§6.1).
+     * The big-trade engine's flag against the effective threshold (24 §2.10); never recomputed by a client. On a cluster, true when any member print is flagged: the engine exposes no cluster-level evaluation, only per-print flags (§6.1).
      */
     is_big_trade?: boolean;
     tick_direction?: "PlusTick" | "ZeroPlusTick" | "MinusTick" | "ZeroMinusTick";

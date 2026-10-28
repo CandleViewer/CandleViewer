@@ -1921,7 +1921,7 @@ class PublicTrade(BaseModel):
     is_big_trade: Annotated[
         StrictBool,
         Field(
-            description="The big-trade engine's flag against `meta.big_trade_threshold`; never recomputed by a client. On a cluster, true when any member is flagged."
+            description="The big-trade engine's flag against `meta.big_trade_threshold`; never recomputed by a client. On a cluster, true when any member print is flagged (the engine has no cluster-level evaluation)."
         ),
     ] = False
     cluster_size: Annotated[
