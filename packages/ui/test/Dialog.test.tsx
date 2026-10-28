@@ -719,3 +719,239 @@ describe("Dialog readable body", () => {
     expect(bodyNode()).not.toHaveAttribute("tabindex");
   });
 });
+
+describe("inert ownership (stacked modals)", () => {
+  /** Two dialogs that are not nested: each portals to `body`; the host drives both. */
+  function Pair({ a, b }: { a: boolean; b: boolean }): JSX.Element {
+    return (
+      <>
+        <div data-testid="page">
+          <button type="button">Page control</button>
+        </div>
+        <Dialog open={a} title="Dialog A" onOpenChange={() => undefined}>
+          <label>
+            Alpha <input type="text" />
+          </label>
+        </Dialog>
+        <Dialog open={b} title="Dialog B" onOpenChange={() => undefined}>
+          <label>
+            Beta <input type="text" />
+          </label>
+        </Dialog>
+      </>
+    );
+  }
+
+  const modes = [
+    { mode: "aria-hidden fallback", native: false },
+    { mode: "native inert", native: true },
+  ] as const;
+
+  const withInert = async (native: boolean, run: () => Promise<void>): Promise<void> => {
+    if (native)
+      Object.defineProperty(HTMLElement.prototype, "inert", { configurable: true, value: false });
+    try {
+      await run();
+    } finally {
+      if (native) delete (HTMLElement.prototype as { inert?: boolean }).inert;
+    }
+  };
+
+  const hiddenBy =
+    (native: boolean) =>
+    (element: Element | null | undefined): boolean =>
+      element !== null &&
+      element !== undefined &&
+      (native ? element.hasAttribute("inert") : element.getAttribute("aria-hidden") === "true");
+
+  const layerOf = (title: string): Element | null | undefined =>
+    [...document.querySelectorAll("[data-cv-layer]")].find(
+      (layer) => layer.querySelector(".cv-dialog__title")?.textContent === title,
+    );
+
+  it.each(modes)(
+    "$mode: open A then B (non-nested); close A → the page stays hidden; close B → restored",
+    async ({ native }) =>
+      withInert(native, async () => {
+        const hidden = hiddenBy(native);
+        const container = document.body.appendChild(document.createElement("div"));
+        const root = createRoot(container);
+        try {
+          await act(async () => root.render(<Pair a b={false} />));
+          await act(async () => root.render(<Pair a b />));
+          expect(hidden(container)).toBe(true);
+          expect(hidden(layerOf("Dialog A"))).toBe(true);
+          expect(hidden(layerOf("Dialog B"))).toBe(false);
+
+          await act(async () => root.render(<Pair a={false} b />));
+          expect(layerOf("Dialog A")).toBeUndefined();
+          expect(hidden(container)).toBe(true);
+
+          await act(async () => root.render(<Pair a={false} b={false} />));
+          expect(hidden(container)).toBe(false);
+          expect(container.hasAttribute("aria-hidden")).toBe(false);
+          expect(container.hasAttribute("inert")).toBe(false);
+        } finally {
+          await act(async () => root.unmount());
+        }
+      }),
+  );
+
+  it.each(modes)(
+    "$mode: open A then B; close B first → A's root is restored and the page stays hidden",
+    async ({ native }) =>
+      withInert(native, async () => {
+        const hidden = hiddenBy(native);
+        const container = document.body.appendChild(document.createElement("div"));
+        const root = createRoot(container);
+        try {
+          await act(async () => root.render(<Pair a b={false} />));
+          await act(async () => root.render(<Pair a b />));
+          await act(async () => root.render(<Pair a b={false} />));
+          const a = layerOf("Dialog A");
+          expect(a).toBeDefined();
+          expect(hidden(a)).toBe(false);
+          expect(a?.hasAttribute("aria-hidden")).toBe(false);
+          expect(hidden(container)).toBe(true);
+          expect(dialogNode("Dialog A")).toBeVisible();
+
+          await act(async () => root.render(<Pair a={false} b={false} />));
+          expect(hidden(container)).toBe(false);
+        } finally {
+          await act(async () => root.unmount());
+        }
+      }),
+  );
+
+  it.each(modes)(
+    "$mode: a node hidden before any layer is never made visible, in either close order",
+    async ({ native }) =>
+      withInert(native, async () => {
+        const hidden = hiddenBy(native);
+        const before = document.body.appendChild(document.createElement("aside"));
+        before.setAttribute(native ? "inert" : "aria-hidden", "true");
+        const container = document.body.appendChild(document.createElement("div"));
+        const root = createRoot(container);
+        try {
+          for (const [first, second] of [
+            [
+              { a: false, b: true },
+              { a: false, b: false },
+            ],
+            [
+              { a: true, b: false },
+              { a: false, b: false },
+            ],
+          ] as const) {
+            await act(async () => root.render(<Pair a b={false} />));
+            await act(async () => root.render(<Pair a b />));
+            await act(async () => root.render(<Pair {...first} />));
+            expect(hidden(before)).toBe(true);
+            await act(async () => root.render(<Pair {...second} />));
+            expect(hidden(before)).toBe(true);
+            expect(hidden(container)).toBe(false);
+          }
+        } finally {
+          await act(async () => root.unmount());
+        }
+      }),
+  );
+
+  it("nested dialogs mounting open in one commit: the child is topmost, Esc reaches it first", async () => {
+    const onParent = vi.fn();
+    const onChild = vi.fn();
+    function Nested(): JSX.Element {
+      const [child, setChild] = useState(true);
+      return (
+        <Dialog open title="Parent" onOpenChange={onParent}>
+          <label>
+            Outer <input type="text" />
+          </label>
+          <Dialog
+            open={child}
+            title="Child"
+            onOpenChange={(next, reason) => {
+              onChild(next, reason);
+              setChild(next);
+            }}
+          >
+            <label>
+              Inner <input type="text" />
+            </label>
+          </Dialog>
+        </Dialog>
+      );
+    }
+    await mount(<Nested />);
+    await act(async () => Promise.resolve());
+    // The parent's card is out of the tree under its child; focus is in the child.
+    expect(screen().queryByRole("dialog", { name: "Parent" })).toBeNull();
+    const inner = within(dialogNode("Child")).getByRole("textbox", { name: "Inner" });
+    expect(inner).toHaveFocus();
+
+    await key("Escape");
+    expect(onChild).toHaveBeenCalledWith(false, "escape");
+    expect(onParent).not.toHaveBeenCalled();
+    expect(screen().queryByRole("dialog", { name: "Child" })).toBeNull();
+    expect(dialogNode("Parent")).toBeVisible();
+
+    await key("Escape");
+    expect(onParent).toHaveBeenCalledWith(false, "escape");
+  });
+
+  it("disconnects its observer on close: a subtree added afterwards is left alone", async () => {
+    await openHost();
+    await key("Escape");
+    expect(screen().queryByRole("dialog")).toBeNull();
+    const late = document.body.appendChild(document.createElement("section"));
+    await act(async () => Promise.resolve());
+    expect(late).not.toHaveAttribute("aria-hidden");
+    expect(late).not.toHaveAttribute("inert");
+  });
+
+  it("a Popover or Tooltip anchored in an exempt region stays live over an open Dialog", async () => {
+    function Shell(): JSX.Element {
+      return (
+        <>
+          <header data-cv-inert-exempt="">
+            <Popover heading="Bar menu" anchor={<Button>Menu</Button>}>
+              <button type="button">Bar action</button>
+            </Popover>
+            <Tooltip content="Kill switch" delay={0}>
+              <button type="button">Panic</button>
+            </Tooltip>
+          </header>
+          <Host />
+        </>
+      );
+    }
+    const host = await openHost(<Shell />);
+    expect(dialogNode("Rename layout")).toBeVisible();
+    const panel = document.querySelector<HTMLElement>(".cv-popover");
+    // Closed, the panel is a page subtree like any other: the dialog's pass hid it.
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+
+    await click(within(host).getByRole("button", { name: "Menu" }));
+    const menu = screen().getByRole("dialog", { name: "Bar menu" });
+    expect(menu).toHaveAttribute("data-cv-inert-exempt");
+    expect(menu).not.toHaveAttribute("aria-hidden");
+    expect(within(menu).getByRole("button", { name: "Bar action" })).toBeVisible();
+    await key("Escape");
+    expect(menu.hidden).toBe(true);
+    expect(dialogNode("Rename layout")).toBeVisible();
+
+    const panic = within(host).getByRole("button", { name: "Panic" });
+    await act(async () => {
+      fireEvent.pointerOver(panic);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    const tip = screen().getByRole("tooltip", { name: "Kill switch" });
+    expect(tip).toHaveAttribute("data-cv-inert-exempt");
+    expect(tip).not.toHaveAttribute("aria-hidden");
+
+    await key("Escape");
+    await key("Escape");
+    expect(screen().queryByRole("dialog")).toBeNull();
+    expect(panel).not.toHaveAttribute("aria-hidden");
+  });
+});

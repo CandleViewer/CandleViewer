@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useRef, type JSX } from "react";
+import { act, useRef, type JSX, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { expect } from "storybook/test";
 import { afterEach, describe, it, vi } from "vitest";
@@ -60,10 +60,18 @@ describe("visibleTabbables and trapTab", () => {
   });
 });
 
-function Layer({ modal, onEscape }: { modal: boolean; onEscape: () => void }): JSX.Element {
+function Layer({
+  modal,
+  onEscape,
+  children = "layer",
+}: {
+  modal: boolean;
+  onEscape: () => void;
+  children?: ReactNode;
+}): JSX.Element {
   const ref = useRef<HTMLDivElement>(null);
   useLayer(true, { element: ref, modal, onEscape });
-  return <div ref={ref}>layer</div>;
+  return <div ref={ref}>{children}</div>;
 }
 
 describe("the layer stack", () => {
@@ -94,6 +102,21 @@ describe("the layer stack", () => {
     await act(async () => document.body.dispatchEvent(composing));
     expect(upper).toHaveBeenCalledTimes(1);
     stop();
+  });
+
+  it("a layer mounting in the same commit as one nested in it goes under it, not over", async () => {
+    const outer = vi.fn();
+    const inner = vi.fn();
+    // Layout effects run children first: the inner layer registers before the outer one.
+    await mount(
+      <Layer modal onEscape={outer}>
+        <Layer modal onEscape={inner} />
+      </Layer>,
+    );
+    const esc = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    await act(async () => document.body.dispatchEvent(esc));
+    expect(inner).toHaveBeenCalledTimes(1);
+    expect(outer).not.toHaveBeenCalled();
   });
 });
 

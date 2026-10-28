@@ -86,8 +86,10 @@ const focusable = (element: HTMLElement | null | undefined): element is HTMLElem
 
 /**
  * Return focus on close (conventions 32): to the element that held focus when the overlay opened, else
- * to the host's fallback, never to `body`. Focus moves only when it is inside the overlay or lost; a
- * close that left focus elsewhere on purpose (an outside press on a control) keeps it there.
+ * to the host's fallback; `body` is never a target. With neither able to take focus, nothing moves it
+ * (supplying a fallback that outlives the opener is the host's job). Focus moves only when it is inside
+ * the overlay or lost; a close that left focus elsewhere on purpose (an outside press on a control)
+ * keeps it there.
  *
  * The opener is read in a layout effect, before an inert page would blur it; the return runs in a
  * passive cleanup, after the layout cleanups (the inert page's among them) have run.

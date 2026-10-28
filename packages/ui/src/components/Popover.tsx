@@ -14,6 +14,7 @@ import {
 import { createPortal } from "react-dom";
 import { cx } from "./internal/cx.js";
 import { trapTab, useFocusTrap } from "./internal/focusTrap.js";
+import { useExemptWithAnchor } from "./internal/inertOutside.js";
 import { useLayer, useLayerPortal } from "./internal/layers.js";
 import { tabStopAfter, tabbables } from "./internal/tabbable.js";
 import { useAnchoredPosition } from "./internal/useAnchoredPosition.js";
@@ -136,6 +137,9 @@ export function Popover(props: PopoverProps): JSX.Element {
     for (const element of document.querySelectorAll<HTMLElement>("[aria-controls]"))
       if (element.getAttribute("aria-controls") === id) trigger.current = element;
   }, [open, id]);
+
+  // Opened from an exempt region (a TopBar control) while a Dialog is open: the panel stays live too.
+  useExemptWithAnchor(open, trigger, surface);
 
   useAnchoredPosition({
     open,

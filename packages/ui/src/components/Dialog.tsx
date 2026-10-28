@@ -47,7 +47,11 @@ export interface DialogProps {
    * is no tab stop (a wrapper around a CMP-001, which takes no ref) focuses its first tab stop.
    */
   initialFocusRef?: RefObject<HTMLElement | null>;
-  /** Where focus returns when the opener is gone (E40-D02's bell); never `body`. */
+  /**
+   * Where focus returns when the opener is gone (E40-D02's bell). The return never picks `body`, but
+   * with neither the opener nor this ref able to take focus, focus stays where the browser left it:
+   * a host whose opener can go passes a fallback that outlives it.
+   */
   fallbackFocusRef?: RefObject<HTMLElement | null>;
   /**
    * A request is in flight: `aria-busy` on the card; `Esc` still closes the view and cancels nothing

@@ -30,9 +30,23 @@ const notify = (): void => {
   for (const watcher of [...watchers]) watcher();
 };
 
+/**
+ * Opens a layer on top, except below any open layer whose root its own root holds: layout effects
+ * run children first, so a parent mounting open in the same commit as its child registers after it,
+ * and still goes under it (`Esc` reaches the child first).
+ */
 const push = (layer: Layer): void => {
   if (stack.length === 0) document.addEventListener("keydown", onKeyDown);
-  stack.push(layer);
+  const root = layer.element();
+  const below =
+    root === null
+      ? -1
+      : stack.findIndex((other) => {
+          const node = other.element();
+          return node !== null && node !== root && root.contains(node);
+        });
+  if (below === -1) stack.push(layer);
+  else stack.splice(below, 0, layer);
   notify();
 };
 

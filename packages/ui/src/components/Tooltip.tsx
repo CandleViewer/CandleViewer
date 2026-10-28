@@ -12,6 +12,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { cx } from "./internal/cx.js";
+import { useExemptWithAnchor } from "./internal/inertOutside.js";
 import { useLayerPortal } from "./internal/layers.js";
 import { useAnchoredPosition, type AnchoredSide } from "./internal/useAnchoredPosition.js";
 
@@ -185,6 +186,8 @@ export function Tooltip({
   }, [open, hide]);
 
   useAnchoredPosition({ open, reference: trigger, floating: surface, side });
+  // On a trigger in an exempt region (the TopBar) it stays live while a Dialog is open.
+  useExemptWithAnchor(open, trigger, surface);
 
   const own = children.props;
   const triggerProps: TooltipTriggerProps = {
