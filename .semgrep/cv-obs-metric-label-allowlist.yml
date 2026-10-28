@@ -146,6 +146,8 @@ rules:
       #   bound once; max_series=6.
       # reason, also (E28-T05 #909, cv_tradegroup_legs_skipped_total): {skipped} and the sizer's
       #   SkipReason (`api/trade_group_preview.SKIP_REASONS`), each child bound once; max_series=5.
+      # kind, also (E28-T05 #909, cv_tradegroup_ws_frames_total): {snapshot, delta}, bound once in
+      #   `ws_wiring.TradeGroupFrameCounts`; never an account or a user; max_series=2.
       - metavariable-regex:
           metavariable: $LABEL
           regex: "^(?!(action|bucket|builtin|cap|cause|class|code|depth|domain|endpoint_group|engine|entity_kind|event|filter_class|flag|from|from_source|generation|history|indicator|kind|method|operation|outcome|permission|port|reason|resource|result|role|route|rule|rule_id|screen|sha256|socket|source|stage|state|status_class|step|stream|symbol|table|tier|to|to_source|tool|topic|transport|trigger_mode|version|where|wire)$).*$"

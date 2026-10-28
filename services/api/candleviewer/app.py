@@ -539,6 +539,7 @@ from candleviewer.ws_wiring import (
     KillSwitchView,
     MachineRevocationAudit,
     StorePrincipalLoader,
+    TradeGroupFrameCounts,
     WsEvents,
     WsRuntime,
     alerts_topic,
@@ -551,6 +552,7 @@ from candleviewer.ws_wiring import (
     recorder_topic,
     series_stale,
     ticker_topic,
+    trade_groups_topic,
     trades_topic,
     wallet_topic,
 )
@@ -1826,6 +1828,11 @@ def create_app(
     ws_revisions = InstrumentRevisions(
         ctx.bus.bus, resolved.environment.value, ws_sequencing.instrument_revision
     )
+    # E28-T05 (#909): the accounts module's `trade_groups` topic; the OMS runtime below seeds it
+    # and hands it each committed group write, and its frame counts bind to the metrics facade.
+    ws_trade_group_frames = TradeGroupFrameCounts()
+    ws_trade_groups = trade_groups_topic(ws_sequencing, ws_trade_group_frames)
+    snapshot_adapters["trade_groups"] = ws_trade_groups
     # E17-T08: `sub` is authorised and snapped from `machine_states`, built above with the feed.
     ws_services = SubscriptionServices(
         upstream=ws_upstream,
@@ -2563,6 +2570,8 @@ def create_app(
     # lane's own (#913 L2). The lifespan starts it after the account health runtime and stops it
     # right after the gateway. None on the fake backend. Its private-stream consumer (E29-T05 S8b)
     # takes account health (its feed, its tracked accounts and its boot window) and the hub.
+    # E28-T05: it seeds the `trade_groups` topic and hands it each committed group write.
+    ws_trade_group_frames.bind(metrics_facade)
     app.state.oms_runtime = build_oms_runtime(
         ctx,
         resolved,
@@ -2581,6 +2590,7 @@ def create_app(
         health=account_health,
         hub=ws_hub,
         topics=ws_oms,  # E29-T13 (#4207): its WS topics, published from its lane
+        trade_groups=ws_trade_groups,
     )
     # #913 slice 3F (24 Sec.8.4): `placeOrder` over that runtime, mounted whatever
     # `trading.oms_enabled` says (it gates admission). The principal is the session's with its

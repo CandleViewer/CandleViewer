@@ -42,11 +42,15 @@ injected by the composition root.
   written while it was on, and `placeOrder`'s one-leg groups.
 - **Failure.** A change whose frame fails is logged by its error type (never its message, C-12.6)
   and its path, at most once per `LOG_INTERVAL_S` with the count held back, and goes no further:
-  the OMS neither waits on the topic nor sees it fail. A cancellation is never held back.
+  the OMS neither waits on the topic nor sees it fail. The model moved first, so `resync` (the
+  family's `upstream_desync` re-snapshot, §7.4, which the hub counts) then serves every
+  subscription from it: a lost frame, a terminal one included, never leaves a client showing a
+  group the model dropped. A cancellation is never held back.
 """
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
@@ -189,8 +193,10 @@ class TradeGroupTopic[B, P]:
         viewer_for: Callable[[frozenset[UUID]], Callable[[P], bool]],
         *,
         clock: Callable[[], float] = time.monotonic,
+        resync: Callable[[], object] = lambda: None,
     ) -> None:
         self._publish, self._body, self._viewer_for, self._clock = publish, body, viewer_for, clock
+        self._resync = resync
         self._groups: dict[UUID, _Held] = {}
         self._ended: dict[UUID, None] = {}  # insertion order: the oldest is forgotten first
         self._seeded = False
@@ -292,10 +298,13 @@ class TradeGroupTopic[B, P]:
     def _contained(self, path: str) -> Iterator[None]:
         """A publish that fails stays here, logged by its error type (never its message, C-12.6)
         and path, at most once per `LOG_INTERVAL_S`, with the count of those held back since the
-        last line; a cancellation still propagates."""
+        last line; every subscription is then re-snapshotted (`resync`), and a resync that fails
+        is the hub's to log; a cancellation still propagates."""
         try:
             yield
         except Exception as exc:
+            with contextlib.suppress(Exception):
+                self._resync()
             now = self._clock()
             if now < self._log_from:
                 self._suppressed += 1

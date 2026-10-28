@@ -723,6 +723,19 @@ CATALOGUE: Final[tuple[MetricSpec, ...]] = (
         "E28",
         max_series=2,
     ),
+    # --- Trade-group WS topic (E28-T05 #909 S4b): `ws_wiring.TradeGroupFrameCounts` ----------
+    _s(
+        "cv_tradegroup_ws_frames_total",
+        "counter",
+        "frames",
+        ("kind",),
+        "Frames the trade_groups topic sent, by kind: snapshot (a body built for a subscription) "
+        "or delta (one subscription a publish reached); never by account or user.",
+        "dashboard only",
+        _L,
+        "E28",
+        max_series=2,
+    ),
     # --- Trade-group overrides (#2635, F-01; live since E28-T05 #909, then E34-S01 #999) ------
     _s(
         "cv_override_refused_total",

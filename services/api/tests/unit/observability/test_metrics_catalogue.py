@@ -247,6 +247,7 @@ def test_exposition_parses_and_every_live_metric_present_with_env_and_help() -> 
     r["cv_override_refused_total"].labels("max_leverage_cap").inc()
     r["ticker_bulk_cache_refresh_total"].labels("ok").inc()
     r["scanner_evaluations_total"].labels("ok").inc()
+    r["cv_tradegroup_ws_frames_total"].labels("delta").inc()
     text = generate_latest(m.registry).decode()
     families = {f.name: f for f in text_string_to_metric_families(text)}
     for spec in registered_specs():

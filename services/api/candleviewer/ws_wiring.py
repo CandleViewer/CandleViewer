@@ -25,6 +25,8 @@ Only the composition root sees ingestion, bars, auth/audit and the ws package to
   `grants_changed`, `user_disabled`, `account_revoked` (E27-S04), `kill_switch_changed`.
 * **Rule readers** (#3488): `rule_frame_visible` reads a WS principal as `/rules` reads a session;
   it is the `viewer` a `rules` publish must name (23 §15.6).
+* **Trade groups** (E28-T05 #909): `trade_groups_topic`, its viewer `trade_group_frame_visible`
+  (SR-E28-21); the OMS runtime seeds it and hands it each group write (`oms_wiring`).
 * **Shutdown** (§9.4): `candleviewer.server.PlannedShutdownServer` runs `WsRuntime.stop()` before
   uvicorn's own shutdown (#2546): the gateway sends `shutdown_notice` on `system`, waits the grace
   period, then `bye` + `1001`. The lifespan teardown's later call only stops the sweeper. The grace
@@ -42,10 +44,12 @@ from collections import deque
 from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
+from functools import partial
 from typing import TYPE_CHECKING, Any, Final, Protocol
 
 import structlog
 
+from candleviewer.accounts.trade_group_topic import TradeGroupTopic
 from candleviewer.accounts.wallet_topic import WalletTopic
 from candleviewer.alerts.ws_topic import AlertsTopic
 from candleviewer.auth.generated_permissions import Permission
@@ -64,6 +68,8 @@ from candleviewer.ingestion.metrics import (
 )
 from candleviewer.ingestion.ticker_topic import TickerTopic
 from candleviewer.observability.context import spawn
+from candleviewer.observability.metrics import MetricChild, Metrics
+from candleviewer.observability.metrics_catalogue import CATALOGUE
 from candleviewer.oms.ws_topics import OmsTopics
 from candleviewer.orderbook_wiring import BookStream
 from candleviewer.orderflow.heatmap import HeatmapStore, HeatmapTopic
@@ -571,6 +577,67 @@ def rule_frame_visible(row: RuleRow, principal: PrincipalSnapshot) -> bool:
         is_owner=principal.is_owner,
     )
     return rule_visible(row, actor)
+
+
+#: E28-T05: the `trade_groups` topic's frames, by `kind` (`TRADE_GROUP_FRAME_KINDS`).
+TRADE_GROUP_FRAMES: Final = "cv_tradegroup_ws_frames_total"
+TRADE_GROUP_FRAME_KINDS: Final = ("snapshot", "delta")
+
+
+def trade_group_frame_visible(accounts: frozenset[uuid.UUID], principal: PrincipalSnapshot) -> bool:
+    """SR-E28-21 (23 §15.5): a frame about a group with legs on `accounts` may reach the Owner,
+    or a principal whose current grants (`scoped_account_ids`) hold every one; no account is no
+    one's (fails closed). The grant rows know no soft delete: the account-delete work narrows the
+    subscriptions as `account_disabled` does (23 §9.5)."""
+    return bool(accounts) and (principal.is_owner or accounts <= scoped_account_ids(principal))
+
+
+class TradeGroupFrameCounts:
+    """`cv_tradegroup_ws_frames_total{kind}` (E28-T05), never by account or user (C-12.6). Bound
+    once the metrics facade exists, which is before the OMS runtime that alone feeds the topic."""
+
+    def __init__(self) -> None:
+        self._kinds: dict[str, MetricChild] = {}
+
+    def bind(self, metrics: Metrics) -> None:
+        spec = next(spec for spec in CATALOGUE if spec.name == TRADE_GROUP_FRAMES)
+        frames = metrics.counter(spec.name, spec.help, spec.labels, max_series=spec.max_series)
+        self._kinds = {kind: frames.labels(kind) for kind in TRADE_GROUP_FRAME_KINDS}
+
+    def add(self, kind: str, n: int) -> None:
+        if (child := self._kinds.get(kind)) is not None:
+            child.inc(n)
+
+
+def trade_groups_topic(
+    hub: SequencingHub, counts: TradeGroupFrameCounts
+) -> TradeGroupTopic[SnapshotBody, PrincipalSnapshot]:
+    """E28-T05 (#909): the accounts module's `trade_groups` topic over `hub`, each publish with
+    its viewer, a resync through it, and `counts` taking each snapshot built and delta sent."""
+
+    def snapshot(structured: Mapping[str, Any]) -> SnapshotBody:
+        counts.add("snapshot", 1)
+        return SnapshotBody(structured)
+
+    def publish(
+        ch: str,
+        body: Mapping[str, Any],
+        *,
+        account: uuid.UUID,
+        select: Callable[[Subscription], bool],
+        viewer: Callable[[PrincipalSnapshot], bool],
+    ) -> int:
+        sent = hub.publish(ch, body, account=account, select=select, viewer=viewer)
+        counts.add("delta", sent)
+        return sent
+
+    def viewer_for(accounts: frozenset[uuid.UUID]) -> Callable[[PrincipalSnapshot], bool]:
+        return partial(trade_group_frame_visible, accounts)
+
+    def resync() -> int:
+        return hub.resnapshot(lambda sub: sub.ch == "trade_groups", "upstream_desync")
+
+    return TradeGroupTopic(publish, snapshot, viewer_for, resync=resync)
 
 
 class _Identity(Protocol):

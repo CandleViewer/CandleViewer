@@ -164,8 +164,8 @@ _CAUSAL_RANK: Final = {fam: i for i, fam in enumerate(PRIVATE_CAUSAL_ORDER)}
 #: S4: the families whose updates never wait in a window, the only ones published without a body.
 _UNPACED: Final = frozenset(f.family for f in FAMILIES.values() if f.never_throttled)
 #: The families whose every publish names who may receive it (`publish(viewer=)`): a rule is read by
-#: its owner (24 §15.2), so the family's account scope never decides alone.
-_VIEWED: Final = frozenset({"rules"})
+#: its owner (24 §15.2), a trade group by who sees every leg (23 §15.5): scope never decides alone.
+_VIEWED: Final = frozenset({"rules", "trade_groups"})
 
 #: §7.2 universal snapshot fields, restricted to what each family's §14 payload schema declares
 #: (`additionalProperties: false`). `source` always travels in `meta.source` (snapMeta); binary
@@ -1538,7 +1538,7 @@ def _refuse_bodyless(ch: str, body: Mapping[str, Any] | None) -> None:
 
 
 def _refuse_unviewed(ch: str, viewer: object) -> None:
-    """A `rules` publish names who may receive it (`_VIEWED`; 23 §15.6, #3488). One without a
+    """A viewed publish names who may receive it (`_VIEWED`; 23 §15.5, §15.6). One without a
     `viewer` is refused before the fan-out, so no producer can leave the check out."""
     if viewer is None and (family := ch.split(".", 1)[0]) in _VIEWED:
         raise ValueError(f"a {family} publish needs its viewer")
@@ -1693,7 +1693,7 @@ class SequencingHub:
         a window merges structured bodies (§8.2), so one without is refused before the fan-out,
         whatever the flag (`ValueError`, #3268). `viewer` is asked of each connection's principal as
         it is now (§9.5 swaps it in first), after the scope check: a connection it refuses is sent
-        nothing and spends no sequence number. A `rules` publish needs one (`_VIEWED`, `ValueError`;
+        nothing and spends no sequence number. A viewed family's needs one (`_VIEWED`, `ValueError`;
         23 §15.6, #3488). Pure and total, like `select`."""
         _refuse_bodyless(ch, body)
         _refuse_unviewed(ch, viewer)
@@ -1757,7 +1757,7 @@ class SequencingHub:
 
     def publish_private(self, account: uuid.UUID, frames: Iterable[tuple[str, Any]]) -> int:
         """One account event spanning several private topics, in §16.1 S5 causal order. The
-        whole event is checked first: a paced frame without its body, or a `rules` frame (an event
+        whole event is checked first: a paced frame without its body, or a viewed frame (an event
         names no viewer), refuses it before any of its frames is published (`ValueError`, #3268,
         #3488)."""
         ordered = causal_sort(frames)
