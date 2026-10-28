@@ -46,6 +46,7 @@ from tests.unit.accounts._fakes import (
     ACC_B,
     DAY,
     T0,
+    Episode,
     FakeClock,
     Journal,
     SqlEdges,
@@ -238,6 +239,49 @@ async def test_an_account_owing_a_dead_mans_switch_call_stays_tracked_until_it_r
     assert [e for e in logs if e["event"] == "account.dms_hook_dropped"] == []
     changes = [(e["tracked"], e["added"], e["removed"]) for e in logs if "tracked" in e]
     assert changes == [(2, 1, 0), (1, 0, 1)]  # the held account counts as tracked until it goes
+
+
+async def test_streamed_accounts_are_the_last_good_read_never_a_replayed_or_owed_one() -> None:
+    """24 Sec.8.12 (E29-T05 S8b, the orchestrator's Q5): what the private-stream consumer streams
+    is the last good tracking read, published whole after its `track` calls: never an account
+    tracked for a replayed dead-man's-switch call alone, owed while that call keeps failing; and a
+    failed read keeps the last good one."""
+    journal = Journal(Episode(ACC_B, "degraded", "no_success", T0))  # a killed process left it
+    rig = Rig(ACC, journal=journal)
+    rig.dms.failing.add(ACC_B)  # its replayed call keeps failing: it stays owed and tracked
+    await rig.boot()
+    assert rig.runtime.monitor.current(ACC_B) is HealthState.DOWN
+    assert rig.runtime.streamed() == {ACC}
+    rig.wanted = frozenset({ACC, _ACC_C})
+    await rig.run(TRACKING_REFRESH_S)
+    assert rig.runtime.streamed() == {ACC, _ACC_C}
+    rig.read_error = ConnectionError(_ECHO)
+    await rig.run(TRACKING_REFRESH_S)  # a failed pass: the set stays as the last good read left it
+    assert rig.runtime.streamed() == {ACC, _ACC_C}
+    assert rig.runtime.monitor.current(ACC_B) is HealthState.DOWN  # still owed, still not streamed
+    await rig.close()
+
+
+async def test_streamed_accounts_raise_until_the_boot_pass() -> None:
+    """Until health's boot pass has read the accounts, the consumer's read raises, never an empty
+    set, which would read as no account to stream: a boot pass that fails leaves it raising, and
+    the fake backend, which reads none, raises for good."""
+    rig = Rig(ACC)
+    with pytest.raises(wiring.StreamedAccountsUnread):
+        rig.runtime.streamed()
+    rig.read_error = ConnectionError(_ECHO)
+    await rig.boot()  # the boot pass fails
+    with pytest.raises(wiring.StreamedAccountsUnread):
+        rig.runtime.streamed()
+    rig.read_error = None
+    await rig.run(TRACKING_REFRESH_S)
+    assert rig.runtime.streamed() == {ACC}
+    await rig.close()
+    fake = Rig(source=False)
+    await fake.boot()
+    with pytest.raises(wiring.StreamedAccountsUnread):
+        fake.runtime.streamed()
+    await fake.close()
 
 
 async def test_the_tracking_loop_reads_at_start_and_then_every_refresh_interval() -> None:

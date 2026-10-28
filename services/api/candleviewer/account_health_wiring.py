@@ -21,7 +21,12 @@ read the boot-time clock, and the loops sleep on the event loop's: a wall-clock 
   tracks none.
 - Dead-man's-switch episodes outlive the process (#837 W5): the monitor journals each before its
   hook call (`system_events`). The tracking loop's first pass that works is the boot: it replays the
-  open ones once and tracks `at_boot`, so an account with no evidence for `down_s` is owed one.
+  open ones once and tracks `at_boot`, so an account with no evidence is owed one, `down_s` after
+  the private-stream consumer's start (`stream_started`, which the OMS runtime calls once ready),
+  or, while it has not started, `CV_OMS_STARTUP_WAIT_S` and `down_s` after the boot (20 Sec.6.2).
+- Each pass that works publishes its read whole, after its `track` calls: the accounts the
+  private-stream consumer streams (`streamed`, 24 Sec.8.12 `StreamedAccounts`), which the order
+  lane reads in place, never an account tracked for a replayed or owed call alone.
 
 A pass that raises is logged by its error type (a message may echo exchange text, C-12.6) and the
 next one runs. A loop that ends, or whose passes keep failing, is a fault: `AccountsService`
@@ -158,6 +163,11 @@ _STATES: Final = {state.value: state for state in HealthState}
 _REASONS: Final = frozenset(get_args(HealthReason))
 
 
+class StreamedAccountsUnread(RuntimeError):
+    """The private-stream consumer's read of the accounts it streams, before account health's boot
+    pass has read them: never an empty set, which would read as none to stream (24 Sec.8.12)."""
+
+
 class EpisodeStore(EpisodeJournal, Protocol):
     """The journal the monitor writes, and the replay read the boot makes of it."""
 
@@ -282,6 +292,10 @@ class AccountHealthRuntime:
     frame dated ahead of the host clock before it gets here (a dated-ahead snapshot would block
     every later refresh).
 
+    The OMS runtime (E29-T05 S8b) reads `streamed`, the accounts its private-stream consumer
+    streams, from the order lane, and calls `stream_started` once the consumer starts, which opens
+    the boot episode's dead-man's-switch window (20 Sec.6.2).
+
     `monitored` reads the ids of the accounts to track (`None`: the fake backend, nothing is
     tracked and no tracking loop runs); `release` frees what it holds once the runtime has stopped;
     `episodes` is the journal the boot replays (the monitor writes it). `standings` is the key
@@ -315,6 +329,9 @@ class AccountHealthRuntime:
         self._booted = False  # a tracking pass has worked: the boot's replay is done
         self._replay: asyncio.Task[tuple[DmsEpisodeRow, ...]] | None = None  # the last replay read
         self._replay_only: set[UUID] = set()  # tracked for a replayed call alone: the monitor's
+        #: The last good tracking read, published whole after its `track` calls (`streamed`);
+        #: None until the boot pass has worked.
+        self._streamed: frozenset[UUID] | None = None
         self._tasks: list[asyncio.Task[None]] = []
         self._loops: dict[str, _Loop] = {}
         self._failures: dict[str, int] = {}  # passes failed in a row, by loop
@@ -327,6 +344,24 @@ class AccountHealthRuntime:
         """The health the `wallet` topic shows (`HealthViews`): the monitor's, but none for an
         account it tracks for a replayed call alone."""
         return None if account_id in self._replay_only else self.monitor.view(account_id)
+
+    def streamed(self) -> frozenset[UUID]:
+        """The accounts the private-stream consumer streams (24 Sec.8.12 `StreamedAccounts`): the
+        last good tracking read's, the enabled accounts of the process environment that hold a
+        signable key, so never one tracked for a replayed or owed dead-man's-switch call alone.
+        Read in place from the order lane (E29-T05 S8b): one read of an attribute each pass that
+        works replaces whole after its `track` calls, so the consumer streams no account the
+        monitor does not track. `StreamedAccountsUnread` until the boot pass has worked."""
+        streamed = self._streamed
+        if streamed is None:
+            raise StreamedAccountsUnread("account health has not read the accounts yet")
+        return streamed
+
+    def stream_started(self) -> None:
+        """The private-stream consumer has started: the boot episode's dead-man's-switch window
+        opens now (`AccountHealthMonitor.stream_started`, 20 Sec.6.2). The OMS runtime calls it
+        once `ready`, on this runtime's loop, the serving loop."""
+        self.monitor.stream_started()
 
     # -- the evidence of the private-WS consumer (`AccountHealthFeed`, through `feed`) and of the
     # wallet reconciler (`HealthEvidence`). Once a stop has begun it gives nothing: evidence could
@@ -433,7 +468,8 @@ class AccountHealthRuntime:
         The first pass that works is the boot: it also reads the journal's open episodes, before
         anything is tracked (a failed read fails the pass), tracks its accounts `at_boot` and each
         episode's account too, owed that episode until its call has returned; once only. The wallet
-        cache and topic hold the reported accounts, not one tracked for its replay alone."""
+        cache and topic hold the reported accounts, not one tracked for its replay alone, and so
+        does `streamed`, published whole once the pass has tracked them."""
         if self._monitored is None:
             return
         async with asyncio.timeout(READ_TIMEOUT_S):
@@ -458,6 +494,7 @@ class AccountHealthRuntime:
             self.monitor.replay(episode, row)
         self._tracked = (self._tracked - removed) | added
         self._booted = True
+        self._streamed = frozenset(wanted)  # whole, once tracked: the order lane reads it in place
         if added or removed:
             logger().info(
                 "account_health.tracking_changed",

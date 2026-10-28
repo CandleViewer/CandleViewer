@@ -48,6 +48,11 @@ ACCOUNT_DOWN_MAX_S: Final = 30.0
 #: them, so the bounds below and `WalletThresholds` share one value.
 WALLET_STALE_S: Final = 10.0
 WALLET_RECONCILE_S: Final = 60.0
+#: `CV_OMS_STARTUP_WAIT_S`'s default: the OMS startup sweep's wait for the clock and the keys, and
+#: the boot dead-man's-switch episode's wait, beyond the down window, for the private-stream
+#: consumer's start (20 Sec.6.2). Written once, here, for the same reason: `accounts/health.py`
+#: imports it as its backstop's default.
+OMS_STARTUP_WAIT_DEFAULT_S: Final = 30.0
 
 # #2565: timings of the planned shutdown that are code constants, not settings. They live in M1
 # because `Settings` checks them against the configured terms (`_refuse_unfittable_stop_budget` sums
@@ -803,8 +808,12 @@ class Settings(BaseSettings):
         default=30.0, le=OMS_INFLIGHT_STUCK_MAX_S, allow_inf_nan=False
     )
     # The startup sweep's wait for the clock guard's first measurement and the key standing's
-    # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window.
-    oms_startup_wait_s: float = Field(default=30.0, ge=5.0, le=45.0, allow_inf_nan=False)
+    # first read; the sweep must fit a deploy's 60 s `/readyz` smoke window. Account health's boot
+    # dead-man's-switch episode waits as long, beyond the down window, for the private-stream
+    # consumer's start (`HealthThresholds.startup_wait_s`, 20 Sec.6.2).
+    oms_startup_wait_s: float = Field(
+        default=OMS_STARTUP_WAIT_DEFAULT_S, ge=5.0, le=45.0, allow_inf_nan=False
+    )
     # On stop, submits in flight get this long, then are cancelled. With `OMS_STOP_RESERVE_S` the
     # runtime's stop keeps within the supervised OMS module's grace (20 Sec.6.2); it is the
     # lifespan's first stop after the gateway's, which `_refuse_unfittable_stop_budget` counts.

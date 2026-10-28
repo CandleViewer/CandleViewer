@@ -1,6 +1,7 @@
 """E27-T04 W5 (#837): dead-man's-switch episodes across restarts (AC Down within 30 s; C-13.6
 scenario 12): the row written before the hook call and resolved after it, the replay, the boot
-episode. Fakes, no sleeps; the SQL: `tests/integration/storage/test_dms_episode_journal_pg.py`."""
+episode, owed from the private-stream consumer's start (E29-T05 S8b, 20 Sec.6.2) with its backstop.
+Fakes, no sleeps; the SQL: `tests/integration/storage/test_dms_episode_journal_pg.py`."""
 
 from __future__ import annotations
 
@@ -21,8 +22,10 @@ from candleviewer.accounts.health import (
     DMS_JOURNAL_TIMEOUT_S,
     AccountHealthMonitor,
     HealthState,
+    HealthThresholds,
     HealthTransition,
 )
+from candleviewer.settings import Settings
 from tests.unit.accounts._fakes import ACC, ACC_B, T0, Dms, Episode, FakeClock, Jitter, Journal
 from tests.unit.accounts._runtime_rig import START, Rig
 from tests.unit.accounts._wallet_ws import Conn, owner
@@ -448,6 +451,7 @@ async def test_an_account_still_down_with_no_evidence_30_s_after_boot_is_owed_on
     journal = Journal()
     rig = Rig(journal=journal)
     await rig.boot()
+    rig.runtime.stream_started()  # the consumer starts with the boot: its window opens then
     await rig.run(29.5)
     assert rig.dms.calls == []
     await rig.run(60)  # the tick at 30 s finds the window lapsed: one call, not one per tick
@@ -462,6 +466,7 @@ async def test_a_boot_episode_a_late_tick_finds_is_dated_when_its_window_lapsed(
     clock, dms = FakeClock(), Dms()
     monitor = AccountHealthMonitor(clock, dms)
     monitor.track(ACC, at_boot=True)
+    monitor.stream_started()  # with the boot
     clock.advance(32)  # the first tick after the window comes 2 s late
     monitor.tick()
     await monitor.drain()
@@ -490,3 +495,89 @@ async def test_a_replayed_episode_takes_the_place_of_the_boot_episode(
     await rig.run(61)  # still no evidence, well past the boot window
     await rig.close()
     assert (rig.dms.calls, journal.open(), len(journal.rows)) == ([(ACC, "no_success")], [], 1)
+
+
+# --- the boot episode from the private-stream consumer's start (E29-T05 S8b, 20 Sec.6.2) --------
+
+
+def _boot_at(second: float) -> HealthTransition:
+    """ACC's boot episode, dated `second` into the scenario."""
+    at = T0 + timedelta(seconds=second)
+    return HealthTransition(ACC, HealthState.DOWN, HealthState.DOWN, "never_connected", at)
+
+
+async def test_a_boot_episode_is_owed_from_the_consumers_start_not_its_tracking() -> None:
+    """20 Sec.6.2: the consumer's dead-man's-switch window opens at its start, so an account the
+    boot pass tracked is owed its boot episode `CV_ACCOUNT_DOWN_S` after that start with no
+    evidence, dated then: not 30 s after its tracking, while the OMS was still getting ready."""
+    rig = Rig()
+    await rig.boot()
+    await rig.run(20)  # the OMS gets ready and starts its consumer 20 s after the boot pass
+    rig.runtime.stream_started()
+    await rig.run(29.5)  # 49.5 s: past a window counted from the tracking, inside this one
+    assert rig.dms.calls == []
+    await rig.run(10)
+    await rig.close()
+    assert rig.dms.transitions == [_boot_at(50)] and rig.dms.called_at == [START + 50]
+
+
+async def test_a_boot_episode_is_still_owed_when_the_consumer_never_starts() -> None:
+    """20 Sec.6.2's backstop: an OMS that never gets ready never starts its consumer, and the boot
+    rule still fails closed: the episode is owed once `CV_OMS_STARTUP_WAIT_S` plus
+    `CV_ACCOUNT_DOWN_S` have passed since the boot pass with no evidence, dated then."""
+    settings = Settings()
+    assert settings.oms_startup_wait_s + settings.account_down_s == 60
+    rig = Rig(settings=settings)
+    await rig.boot()
+    await rig.run(59.5)
+    assert rig.dms.calls == []
+    await rig.run(10)
+    await rig.close()
+    assert rig.dms.transitions == [_boot_at(60)] and rig.dms.called_at == [START + 60]
+
+
+async def test_evidence_after_the_consumers_start_owes_no_boot_episode() -> None:
+    """The window the consumer's start opened closes with the account's first evidence."""
+    rig = Rig()
+    await rig.boot()
+    await rig.run(5)
+    rig.runtime.stream_started()
+    await rig.run(20)  # 25 s: its private socket's first heartbeat, inside the window
+    rig.ws.connect()
+    await rig.run(100)
+    await rig.close()
+    assert rig.dms.calls == []
+
+
+async def test_an_account_tracked_at_boot_after_the_consumers_start_is_owed_from_its_tracking() -> (
+    None
+):
+    """A boot pass that works only once the consumer has started (its replay read failed until
+    then) tracks its accounts with the window already open: each owes its episode
+    `CV_ACCOUNT_DOWN_S` after its own tracking, with no backstop's wait. A second start moves no
+    window: the window opens once."""
+    clock, dms = FakeClock(), Dms()
+    monitor = AccountHealthMonitor(clock, dms)
+    monitor.stream_started()
+    clock.advance(10)
+    monitor.track(ACC, at_boot=True)
+    clock.advance(10)
+    monitor.stream_started()  # 20 s: no later due
+    clock.advance(19.5)
+    monitor.tick()
+    assert dms.transitions == []
+    clock.advance(0.5)
+    monitor.tick()
+    await monitor.drain()
+    assert [t.at for t in dms.transitions] == [T0 + timedelta(seconds=40)]
+
+
+@pytest.mark.parametrize("wait", [-1.0, math.inf, math.nan])
+def test_the_backstops_startup_wait_is_finite_and_never_negative(wait: float) -> None:
+    with pytest.raises(ValueError, match="startup_wait_s"):
+        HealthThresholds(startup_wait_s=wait)
+
+
+def test_the_backstops_startup_wait_is_cv_oms_startup_wait_s() -> None:
+    assert HealthThresholds.from_settings(Settings(oms_startup_wait_s=12)).startup_wait_s == 12
+    assert HealthThresholds().startup_wait_s == Settings().oms_startup_wait_s
