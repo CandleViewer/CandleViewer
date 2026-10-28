@@ -8,12 +8,15 @@ backend's loop, publishes it into the real `SequencingHub` and `Bus` as the in-p
 
 - **Child.** `python -m bench.ws.feed_proc --plan JSON [--cpus SPEC]` (started by `RemoteFeeder`).
   Every topic counts as live, so it always computes the depth windows. Lines: a hello (the
-  streams, and per symbol its opening window, xu, scales and tick), then `t0`, then a line per
+  streams, and per symbol its opening window, xu, scales and tick), then it waits for a `go` line
+  on stdin (`RemoteFeeder.run` sends it when it starts reading: the backend's bars and server
+  start first, and nothing is scheduled meanwhile), takes `t0` at it and writes it, then a line per
   slot (`b` a book step's window deltas with their CVWB records, `t` a trades batch's prints with
   `price_ticks`, notional and scaled ints) and, when a stream skipped slots, `s` (missed by kind).
   Writes are blocking: a full pipe stalls the child's schedule, and slots that end up over
-  `MAX_LATE_S` late are skipped and counted, as in process. Stdin is its lifeline: EOF on it, or
-  EPIPE on stdout, ends it (exit 0). `--cpus` pins it with `sched_setaffinity`.
+  `MAX_LATE_S` late are skipped and counted, as in process. Stdin is its lifeline: EOF on it
+  (before the `go` too), or EPIPE on stdout, ends it (exit 0). `--cpus` pins it with
+  `sched_setaffinity`.
 - **Pipe.** `PIPE_BYTES` (16 KiB, about 0.15 s of profile B's lines), not the kernel's 64 KiB,
   so a backend loop that stops reading stalls the child within that, and the shortfall shows in
   `cv_bench_feed_published_total`, which counts lines the receiver has published, not lines
@@ -59,10 +62,10 @@ from bench.ws.feeder import (
     TRADES_SNAPSHOT,
     Book,
     BookMove,
+    Feed,
     Feeder,
     Tier,
-    _Feed,
-    _places,
+    places,
     print_fields,
     scale_int,
     schedule_stats,
@@ -116,12 +119,12 @@ class LineSink:
     def __init__(self, out: Callable[[bytes], None]) -> None:
         self._out = out
 
-    def book(self, feed: _Feed, moves: Sequence[BookMove]) -> None:
+    def book(self, feed: Feed, moves: Sequence[BookMove]) -> None:
         self._out(_line(["b", feed.name, feed.xu, [[d, b, a, r] for d, b, a, r in moves]]))
 
     async def trades(
         self,
-        feed: _Feed,
+        feed: Feed,
         prints: Sequence[tuple[TradePrint, str]],
         items: list[dict[str, str | int]],
         now_ms: int,
@@ -180,7 +183,8 @@ async def _report_missed(f: Feeder, out: Callable[[bytes], None]) -> None:
 
 
 async def child(plan: dict[str, Any], steps: int | None = None) -> None:
-    """The child's whole life: hello, then the schedule until stdin ends or stdout breaks.
+    """The child's whole life: hello, then (on a `go` line from the backend) the schedule until
+    stdin ends or stdout breaks; EOF on stdin, before the `go` too, ends it.
     `steps` replays the first `steps` slots of the plan with no clock and returns (a test's)."""
     f = child_feeder(plan, _write_all)
     _write_all(hello(f, max(plan["depths"])))
@@ -188,9 +192,11 @@ async def child(plan: dict[str, Any], steps: int | None = None) -> None:
         for _, i in f.schedule(steps):
             await f.step(f.streams[i])
         return
-    loop, eof = asyncio.get_running_loop(), asyncio.Event()
+    loop, eof, go = asyncio.get_running_loop(), asyncio.Event(), asyncio.Event()
+    heard = b""
 
     def on_stdin() -> None:
+        nonlocal heard
         try:
             data = os.read(0, 4096)
         except BlockingIOError:
@@ -199,9 +205,23 @@ async def child(plan: dict[str, Any], steps: int | None = None) -> None:
             data = b""
         if not data:
             eof.set()
+        elif not go.is_set():
+            heard += data
+            if b"go\n" in heard:
+                go.set()
 
     os.set_blocking(0, False)
     loop.add_reader(0, on_stdin)
+    # the backend starts its bars and server first: nothing is scheduled until its `go`
+    waiting = [asyncio.ensure_future(go.wait()), asyncio.ensure_future(eof.wait())]
+    try:
+        await asyncio.wait(waiting, return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for w in waiting:
+            w.cancel()
+    if not go.is_set():  # EOF before the go: the backend is gone
+        loop.remove_reader(0)
+        return
     t0 = time.monotonic()
     _write_all(_line(["0", t0]))
     tasks = [
@@ -306,7 +326,7 @@ class RemoteFeeder:
 
     def scales(self, symbol: str) -> tuple[int, int] | None:
         feed = self.feeds.get(symbol)
-        return None if feed is None else (max(1, _places(feed.tick)), feed.qty_scale)
+        return None if feed is None else (max(1, places(feed.tick)), feed.qty_scale)
 
     def tick_size(self, symbol: str) -> Decimal | None:
         feed = self.feeds.get(symbol)
@@ -371,7 +391,15 @@ class RemoteFeeder:
             *lines, self._carry = (self._carry + data).split(b"\n")
             return [orjson.loads(x) for x in lines]
 
+    async def go(self) -> None:
+        """Tell the child to start its schedule (it waits for this after its hello): sent when the
+        receiver starts reading, so the pipe is not filled before anyone reads it."""
+        if self.proc is not None and self.proc.stdin is not None:
+            self.proc.stdin.write(b"go\n")
+            await self.proc.stdin.drain()
+
     async def run(self) -> None:
+        await self.go()
         while True:
             for msg in await self._lines():
                 await self.handle(msg)

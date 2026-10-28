@@ -144,7 +144,7 @@ own mode (an artefact without `feeder` is `inproc`, the only mode there was).
 4. k6 offers `permessage-deflate` as its WebSocket library can (no context takeover), so wire bytes are an upper
    bound and server deflate CPU differs from a browser session's.
 5. The feeder's own work (parse, book upkeep) runs on the gateway's loop and is inside the backend CPU numbers,
-   as ingestion's would be. `--feeder proc` (below) takes it out.
+   as ingestion's would be. `--feeder proc` (above) takes it out.
 6. The fixture runs on the stdlib asyncio loop, so that its Python socket guard sees every lookup, while production
    (`server.run()`, uvicorn `loop=auto`) picks uvloop, which the lock file installs. Fan-out, event-loop lag, the
    window timers and backend CPU (so the W5 CPU per family) are loop-sensitive and err on the pessimistic side

@@ -248,6 +248,14 @@ def plan(
         raise ValueError(f"feeder {feeder!r}: one of {', '.join(FEEDERS)}")
     # the child keeps off the backend's cpus: on k6's unless told otherwise
     feeder_cpus = (getattr(a, "feeder_cpus", None) or k6) if feeder == "proc" else None
+    if feeder == "proc" and backend and not feeder_cpus:
+        # the child inherits the backend's affinity: the backend's own cpus, which the child must
+        # not share (as k6 is kept off them); the runner refuses what it cannot record truthfully
+        print(
+            f"::error::--feeder proc: the backend is pinned to cpus {backend} and the child would "
+            "inherit them: give it its own with --feeder-cpus (or --k6-cpus, or --staging)"
+        )
+        raise SystemExit(2)
     return Plan(
         profile, prof, a.flag == "on", out, a.staging, a.seed, backend, k6, a.trace_sp,
         float(nominal["duration_s"]), float(nominal["warmup_s"]), feeder, feeder_cpus,
@@ -573,7 +581,8 @@ def judge(out: Path) -> tuple[Result, dict[str, Any]]:
 
 
 def baseline_name(facts: Mapping[str, Any]) -> str:
-    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off")
+    mode = "-proc" if feeder_of(facts) == "proc" else ""  # inproc keeps the names it always had
+    return str(facts["profile"]) + ("" if facts["flag"] == "on" else "-flag-off") + mode
 
 
 def run_profile(facts: Mapping[str, Any]) -> str:
@@ -690,7 +699,8 @@ def render(res: Result, facts: Mapping[str, Any], g: gate.GateResult) -> str:
         used = "not read" if cores is None else f"{cores:.2f} core(s)"
         lines.append(
             f"- Feeder out of process (`--feeder proc`) on cpus "
-            f"{facts.get('feeder_cpus') or 'any'}: {used}, outside the backend CPU"
+            f"{facts.get('feeder_cpus') or 'any (inherited, not pinned)'}: {used}, "
+            "outside the backend CPU"
             + (" (inside the backend's systemd scope and its quota)" if facts["staging"] else "")
         )
     if not facts["staging"]:

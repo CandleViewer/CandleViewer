@@ -311,6 +311,51 @@ async def test_the_child_process_writes_the_lines_the_child_feeder_writes() -> N
     assert done.stdout == b"".join((await child_lines(7, 300, 2))[1])
 
 
+async def spawn_child(seed: int = 7) -> tuple[asyncio.subprocess.Process, bytes]:
+    """The real child, started the way `RemoteFeeder.start` does, and its hello line."""
+    argv = [sys.executable, "-m", "bench.ws.feed_proc", "--plan", json.dumps(proc_plan(seed, 2))]
+    proc = await asyncio.create_subprocess_exec(
+        *argv, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
+        cwd=feed_proc.API, limit=1 << 24,
+    )  # fmt: skip
+    assert proc.stdout is not None
+    async with asyncio.timeout(180):
+        return proc, await proc.stdout.readline()
+
+
+async def test_the_child_schedules_nothing_before_go_and_starts_its_clock_at_it() -> None:
+    proc, line = await spawn_child()
+    try:
+        assert proc.stdout is not None and proc.stdin is not None
+        assert orjson.loads(line)[0] == "h"
+        with pytest.raises(TimeoutError):  # a bounded wait: no `0`, no slot, before the go
+            async with asyncio.timeout(2.0):
+                await proc.stdout.readline()
+        assert proc.returncode is None
+        before = time.monotonic()
+        proc.stdin.write(b"go\n")
+        await proc.stdin.drain()
+        async with asyncio.timeout(60):
+            first = orjson.loads(await proc.stdout.readline())
+        assert first[0] == "0" and float(first[1]) >= before  # t0 is taken at the go
+    finally:
+        if proc.stdin is not None:
+            proc.stdin.close()
+        async with asyncio.timeout(60):
+            code = await proc.wait()
+    assert code == 0
+
+
+async def test_the_child_exits_on_eof_before_the_go() -> None:
+    proc, line = await spawn_child()
+    assert orjson.loads(line)[0] == "h" and proc.stdin is not None
+    proc.stdin.close()
+    async with asyncio.timeout(60):
+        assert await proc.wait() == 0
+    assert proc.stdout is not None
+    assert await proc.stdout.read() == b""  # it never wrote a `0` or a slot
+
+
 @pytest.mark.parametrize("end", ["stdin", "stdout"])
 async def test_the_child_exits_when_the_backend_closes_its_end(end: str) -> None:
     """No orphan: EOF on its stdin (the backend's lifeline) ends it while its lines are still
@@ -327,6 +372,7 @@ async def test_the_child_exits_when_the_backend_closes_its_end(end: str) -> None
             assert rf.proc.stdin is not None
             rf.proc.stdin.close()
         else:  # stdin stays open: only the broken pipe can end it
+            await rf.go()  # the schedule runs, so its next write finds the pipe closed
             os.close(rf._fd)
             rf._fd = -1
         async with asyncio.timeout(60):  # a hang guard
@@ -1300,8 +1346,11 @@ def test_a_proc_feeder_runs_off_the_backends_cpus_on_k6s_unless_given_its_own(
     p = plan(feeder="proc", staging=True)
     assert (p.feeder, p.backend_cpus, p.feeder_cpus) == ("proc", "0-7", "8-15")
     assert plan(feeder="proc", k6_cpus="4-7", feeder_cpus="3").feeder_cpus == "3"
-    assert plan(feeder="proc").feeder_cpus is None  # no cpusets at all: the backend's affinity
+    assert plan(feeder="proc").feeder_cpus is None  # no cpusets at all: the runner's own set
     assert plan(k6_cpus="4-7").feeder_cpus is None  # in process there is no child to pin
+    assert plan(feeder="proc", backend_cpus="0-3", k6_cpus="4-7").feeder_cpus == "4-7"
+    assert plan(feeder="proc", backend_cpus="0-3", feeder_cpus="5").feeder_cpus == "5"
+    assert plan(backend_cpus="0-3").feeder_cpus is None  # in process nothing is refused
     with pytest.raises(ValueError, match="feeder 'x'"):
         plan(feeder="x")
     seen: list[list[str]] = []
@@ -1318,6 +1367,31 @@ def test_a_proc_feeder_runs_off_the_backends_cpus_on_k6s_unless_given_its_own(
     assert seen[1][-4:] == ["--feeder", "proc", "--feeder-cpus", "4-7"]
     cfg = fixture_app.BackendConfig.for_profile(TABLE, "B", flag=True, seed=1, feeder="proc")
     assert (cfg.feeder, cfg.feeder_cpus) == ("proc", None)
+
+
+def test_a_proc_feeder_with_a_pinned_backend_and_no_cpus_of_its_own_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The child would inherit the backend's own cpus while the report said `any`: exit 2."""
+    with pytest.raises(SystemExit) as refused:
+        runner.plan(TABLE, args(feeder="proc", backend_cpus="0-3"), "smoke", tmp_path)
+    assert refused.value.code == 2
+    out = capsys.readouterr().out
+    assert "--feeder-cpus" in out and "0-3" in out and out.startswith("::error::")
+
+
+def test_an_unpinned_proc_feeder_is_reported_as_inheriting_not_as_any(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    t0 = "process_cpu_seconds_total 1\ncv_bench_feeder_cpu_seconds_total 0\n"
+    t1 = "process_cpu_seconds_total 31\ncv_bench_feeder_cpu_seconds_total 15.5\n"
+    out = execute_virtually(tmp_path / "p", monkeypatch, [t0, t1], 30.0, feeder="proc")
+    res, facts = runner.judge(out)
+    report = runner.render(res, facts, runner.compare(res, facts, 0.05))
+    assert "on cpus 0:" in report
+    facts = facts | {"feeder_cpus": None}
+    report = runner.render(res, facts, runner.compare(res, facts, 0.05))
+    assert "cpus any:" not in report and "inherited, not pinned" in report
 
 
 def test_a_plan_keeps_the_profiles_own_length_apart_from_the_overridden_one(tmp_path: Path) -> None:
@@ -1852,17 +1926,42 @@ def test_a_baseline_of_the_other_feeder_mode_is_not_compared_and_one_records_its
     res, facts = runner.judge(runs[0])
     assert "feeder" not in facts and runner.compare(res, facts, 0.05, 3).failures  # both legacy
     g = runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3)
-    assert (
-        not g.gated and g.failures == [] and "baseline feeder inproc, this run's proc" in g.reason
+    assert not g.gated and g.failures == [] and g.reason == "no baseline recorded"  # no `A-proc`
+    base = tmp_path / "base"
+    legacy = (base / "A.json").read_text(encoding="utf-8")
+    (base / "A-proc.json").write_text(legacy, encoding="utf-8")  # a misfiled one: mode inproc
+    g = runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3)
+    assert not g.gated and "baseline feeder inproc, this run's proc" in g.reason
+    (base / "A-proc.json").write_text(
+        json.dumps(json.loads(legacy) | {"feeder": "proc"}), encoding="utf-8"
     )
-    path = tmp_path / "base" / "A.json"
-    path.write_text(json.dumps(json.loads(path.read_text(encoding="utf-8")) | {"feeder": "proc"}))
-    assert not runner.compare(res, facts | {"feeder": "inproc"}, 0.05, 3).gated
+    assert runner.compare(res, facts | {"feeder": "inproc"}, 0.05, 3).failures  # A.json, as before
     assert runner.compare(res, facts | {"feeder": "proc"}, 0.05, 3).failures  # its own mode gates
     monkeypatch.delenv("CI", raising=False)
     monkeypatch.setattr(runner, "BASELINES", tmp_path / "rec")
     written = runner.record_baseline(res, facts | {"feeder": "proc"})
     assert json.loads(written.read_text(encoding="utf-8"))["feeder"] == "proc"
+
+
+def test_a_proc_baseline_has_its_own_file_and_leaves_the_inproc_one_where_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert runner.baseline_name({"profile": "A", "flag": "on"}) == "A"
+    assert runner.baseline_name({"profile": "A", "flag": "on", "feeder": "inproc"}) == "A"
+    assert runner.baseline_name({"profile": "A", "flag": "off", "feeder": "inproc"}) == "A-flag-off"
+    assert runner.baseline_name({"profile": "A", "flag": "on", "feeder": "proc"}) == "A-proc"
+    off = {"profile": "A", "flag": "off", "feeder": "proc"}
+    assert runner.baseline_name(off) == "A-flag-off-proc"
+    runs = baseline_15_percent_better(tmp_path, monkeypatch)
+    res, facts = runner.judge(runs[0])
+    monkeypatch.delenv("CI", raising=False)
+    base = tmp_path / "coexist"
+    monkeypatch.setattr(runner, "BASELINES", base)
+    first = runner.record_baseline(res, facts)
+    second = runner.record_baseline(res, facts | {"feeder": "proc"})
+    assert (first.name, second.name) == ("A.json", "A-proc.json")
+    assert json.loads(first.read_text(encoding="utf-8"))["feeder"] == "inproc"
+    assert json.loads(second.read_text(encoding="utf-8"))["feeder"] == "proc"
 
 
 def test_runs_that_record_no_loop_are_not_compared_with_ones_that_do(

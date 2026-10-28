@@ -83,7 +83,7 @@ def scale_int(value: str | Decimal, scale: int) -> int:
     return whole
 
 
-def _places(value: Decimal) -> int:
+def places(value: Decimal) -> int:
     exp = value.as_tuple().exponent
     return max(0, -exp) if isinstance(exp, int) else 0
 
@@ -150,8 +150,8 @@ class Corpus:
         for sym, frames in self.tapes.items():
             prints = [p for f in frames for p in _corpus.normalize(f) if isinstance(p, TradePrint)]
             self.scales[sym] = (
-                max(_places(p.price) for p in prints),
-                max(_places(p.qty) for p in prints),
+                max(places(p.price) for p in prints),
+                max(places(p.qty) for p in prints),
             )
 
     def book_at(self, offsets: Sequence[int]) -> list[Book]:
@@ -168,7 +168,7 @@ class Corpus:
         return [books[o].copy() for o in offsets]
 
 
-class _Feed:
+class Feed:
     """One symbol: its book, tape cursor and the numbers its snapshots and frames are built from."""
 
     def __init__(self, name: str, rank: int, tier: Tier, corpus: Corpus, book: Book, at: int):
@@ -201,7 +201,7 @@ class _Feed:
 
 
 class SnapshotFeed(Protocol):
-    """What the snapshot sources read of a symbol: a `_Feed`, or `feed_proc`'s mirror of one."""
+    """What the snapshot sources read of a symbol: a `Feed`, or `feed_proc`'s mirror of one."""
 
     @property
     def name(self) -> str: ...
@@ -293,7 +293,7 @@ class TradesSource:
 
 @dataclass(slots=True)
 class _Stream:
-    feed: _Feed
+    feed: Feed
     kind: str  # "book" | "trades"
     interval: float
     start: float
@@ -331,11 +331,11 @@ BookMove = tuple[int, list[list[str]], list[list[str]], tuple[tuple[int, int, in
 class Sink(Protocol):
     """Where a step's output goes (module docstring, "Two seams")."""
 
-    def book(self, feed: _Feed, moves: Sequence[BookMove]) -> None: ...
+    def book(self, feed: Feed, moves: Sequence[BookMove]) -> None: ...
 
     async def trades(
         self,
-        feed: _Feed,
+        feed: Feed,
         prints: Sequence[tuple[TradePrint, str]],
         items: list[dict[str, str | int]],
         now_ms: int,
@@ -384,7 +384,7 @@ class HubSink:
     def __init__(self, hub: SequencingHub, bus: Bus) -> None:
         self._hub, self._bus = hub, bus
 
-    def book(self, feed: _Feed, moves: Sequence[BookMove]) -> None:
+    def book(self, feed: Feed, moves: Sequence[BookMove]) -> None:
         for d, bids, asks, records in moves:
             part = Frame(
                 BOOK_DELTA, records, price_scale=BOOK_PRICE_SCALE, qty_scale=BOOK_QTY_SCALE
@@ -394,7 +394,7 @@ class HubSink:
 
     async def trades(
         self,
-        feed: _Feed,
+        feed: Feed,
         prints: Sequence[tuple[TradePrint, str]],
         items: list[dict[str, str | int]],
         now_ms: int,
@@ -461,8 +461,8 @@ class Feeder:
         self.corpus = corpus or Corpus()
         offsets = [rng.randrange(len(self.corpus.deltas)) for _ in symbols]
         books = self.corpus.book_at(offsets)
-        self.feeds: dict[str, _Feed] = {
-            s: _Feed(s, r, tiers[r], self.corpus, books[r], offsets[r])
+        self.feeds: dict[str, Feed] = {
+            s: Feed(s, r, tiers[r], self.corpus, books[r], offsets[r])
             for r, s in enumerate(symbols)
         }
         self.streams: list[_Stream] = []
@@ -476,7 +476,7 @@ class Feeder:
     def scales(self, symbol: str) -> tuple[int, int] | None:
         """A symbol's bars scales: its tick's places and the qty places of its tape."""
         feed = self.feeds.get(symbol)
-        return None if feed is None else (max(1, _places(feed.tick)), feed.qty_scale)
+        return None if feed is None else (max(1, places(feed.tick)), feed.qty_scale)
 
     def tick_size(self, symbol: str) -> Decimal | None:
         feed = self.feeds.get(symbol)
@@ -529,7 +529,7 @@ class Feeder:
             await self._trades_step(stream.feed)
         stream.published += 1
 
-    def _book_step(self, feed: _Feed) -> None:
+    def _book_step(self, feed: Feed) -> None:
         live = [d for d in self._depths if self._live(f"book.{feed.name}.{d}")]
         before = {d: feed.book.top(d) for d in live}
         moved: dict[int, tuple[list[list[str]], list[list[str]]]] = {}
@@ -553,12 +553,12 @@ class Feeder:
 
     @staticmethod
     def _windows(
-        feed: _Feed, depth: int, before: tuple[dict[str, str], dict[str, str]]
+        feed: Feed, depth: int, before: tuple[dict[str, str], dict[str, str]]
     ) -> tuple[list[list[str]], list[list[str]]]:
         bids, asks = feed.book.top(depth)
         return window_delta(before[0], bids), window_delta(before[1], asks)
 
-    async def _trades_step(self, feed: _Feed) -> None:
+    async def _trades_step(self, feed: Feed) -> None:
         now_ms = self._wall_ms()
         prints: list[tuple[TradePrint, str]] = []
         items: list[dict[str, str | int]] = []
